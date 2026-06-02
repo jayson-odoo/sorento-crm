@@ -624,6 +624,10 @@ def process_attachment_bulk_import(
                         existing_to_replace.uploaded_at = _dt.utcnow()  # type: ignore[assignment]
                         existing_to_replace.access_levels = access_levels_payload  # type: ignore[assignment]
                         existing_to_replace.storage_provider = storage_provider  # type: ignore[assignment]
+                        # Tag with the import_job.job_id so the upload-activity
+                        # endpoint can group every file in this ZIP into one
+                        # session row. See docs/plans/PLAN-upload-activity-drawer.md §4.2.
+                        existing_to_replace.upload_batch_id = job_id_str  # type: ignore[assignment]
                         db.commit()
                         db.refresh(existing_to_replace)
                         attachment = existing_to_replace
@@ -662,6 +666,10 @@ def process_attachment_bulk_import(
                         directory_id=directory_id,
                         access_levels=access_levels_payload,
                         storage_provider=storage_provider,
+                        # Tag with the import_job.job_id so the upload-activity
+                        # endpoint can group every file in this ZIP into one
+                        # session row. See docs/plans/PLAN-upload-activity-drawer.md §4.2.
+                        upload_batch_id=job_id_str,
                     )
                     attachment = attachment_service.create_attachment(attachment_data, user_id)
                     if attachment is not None:

@@ -40,6 +40,7 @@ export default function SPOAllocationForm({
   const isEditMode = !!spoAllocationId;
   const { data: spoAllocation, isLoading: isLoadingSPO } = useSPOAllocation(spoAllocationId ?? null);
   const [products, setProducts] = useState<Array<{ id: string; product_code: string; product_name?: string }>>([]);
+  const [productSearch, setProductSearch] = useState('');
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [packingLists, setPackingLists] = useState<PackingList[]>([]);
 
@@ -57,16 +58,11 @@ export default function SPOAllocationForm({
     },
   });
 
+  // Warehouses + packing-lists fully enumerated once (small tables, max 100).
+  // Products fetched on demand from the combobox search input so the entire
+  // 10k+ catalog is reachable instead of a single 500-row first page.
   useEffect(() => {
-    // Warehouses and packing-lists APIs have max limit 100; products allows up to 1000
     Promise.all([
-      getProducts({
-        pageIndex: 0,
-        pageSize: 500,
-        sorting: [],
-        searchQuery: '',
-        status: 'active',
-      }),
       getWarehouses({
         pageIndex: 0,
         pageSize: 100,
@@ -81,12 +77,27 @@ export default function SPOAllocationForm({
         searchQuery: '',
         shipment_status: 'in_transit',
       }),
-    ]).then(([productsRes, warehousesRes, packingListsRes]) => {
-      setProducts(productsRes.data ?? []);
+    ]).then(([warehousesRes, packingListsRes]) => {
       setWarehouses(warehousesRes.data ?? []);
       setPackingLists(packingListsRes.data ?? []);
     });
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getProducts({
+      pageIndex: 0,
+      pageSize: 100,
+      sorting: [],
+      searchQuery: productSearch,
+      status: 'active',
+    }).then((res) => {
+      if (!cancelled) setProducts(res.data ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [productSearch]);
 
   // Same pattern as ProductForm: useLayoutEffect + ref so reset runs before paint,
   // avoiding flash of empty dropdowns. Combobox components use display fallbacks
@@ -203,6 +214,7 @@ export default function SPOAllocationForm({
                         products={products}
                         productFallback={spoAllocation?.product}
                         placeholder="Select product"
+                        onSearch={setProductSearch}
                       />
                     </FormControl>
                     <FormMessage />

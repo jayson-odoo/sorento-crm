@@ -41,7 +41,7 @@ class ProductCategory(Base):
 
 class Brand(Base):
     __tablename__ = "brands"
-    
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     brand_code = Column(String(50), unique=True, nullable=False)
     brand_name = Column(String(150), nullable=False)
@@ -50,14 +50,20 @@ class Brand(Base):
     description = Column(Text, nullable=True)
     logo_url = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    # Visibility codes overlapping `contact_access_types.code`. Used by the
+    # resolver's promotion-domain product fallback to scope product search to
+    # brands the active contact can see. Default mirrors the Attachment +
+    # Promotion default so existing brands stay broadly visible.
+    access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
     created_by = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
-    
+
     products = relationship("Product", back_populates="brand")
-    
+
     __table_args__ = (
         Index("ix_brands_is_active", "is_active"),
+        Index("ix_brands_access_levels", "access_levels", postgresql_using="gin"),
     )
 
 

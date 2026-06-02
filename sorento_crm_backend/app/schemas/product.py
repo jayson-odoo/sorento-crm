@@ -44,6 +44,10 @@ class BrandBase(BaseModel):
     description: Optional[str] = None
     logo_url: Optional[str] = None
     is_active: bool = True
+    # Visibility codes overlapping `contact_access_types.code`. Used by the
+    # resolver's promotion-domain product fallback to scope product search
+    # to brands the active contact can see.
+    access_levels: list[str] = []
 
 
 class BrandCreate(BrandBase):
@@ -57,6 +61,7 @@ class BrandUpdate(BaseModel):
     description: Optional[str] = None
     logo_url: Optional[str] = None
     is_active: Optional[bool] = None
+    access_levels: Optional[list[str]] = None
 
 
 class BrandResponse(BrandBase):

@@ -47,7 +47,12 @@ class Customer(Base):
     __tablename__ = "customers"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    customer_code = Column(String(50), unique=True, nullable=False)
+    # Not column-unique. Real customers can share a single code across
+    # multiple debtor names (e.g. "300-D093" maps to both "Deluxe Home Center
+    # (KTN)" and "Deluxe Home Center AC (I)"). Uniqueness enforced via the
+    # composite functional index in __table_args__ below: lower(customer_code)
+    # + lower(customer_name) must be distinct.
+    customer_code = Column(String(50), nullable=False)
     customer_name = Column(String(255), nullable=False)
     email = Column(String(150), nullable=True)
     phone_number = Column(String(50), nullable=True)
@@ -83,6 +88,15 @@ class Customer(Base):
         Index("ix_customers_is_active", "is_active"),
         Index("ix_customers_customer_code", "customer_code"),
         Index("ix_customers_account_owner_user_id", "account_owner_user_id"),
+        # Composite uniqueness — see column docstring. Created as a functional
+        # UNIQUE INDEX by migration 220 so case + whitespace differences don't
+        # produce silent duplicates.
+        Index(
+            "uq_customers_code_name_lower",
+            func.lower(func.btrim(customer_code)),
+            func.lower(func.btrim(customer_name)),
+            unique=True,
+        ),
     )
 
 

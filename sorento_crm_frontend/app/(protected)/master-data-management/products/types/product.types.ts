@@ -97,10 +97,11 @@ export interface Brand {
   description?: string | null;
   logo_url?: string | null;
   is_active: boolean;
+  access_levels?: string[];
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;
-  
+
   product_count?: number;
 }
 

@@ -61,7 +61,101 @@ _ENTITY_TYPE_ALIASES: dict[str, str] = {
     "do": "customer_order",
     "order": "customer_order",
     "sales_order": "customer_order",
+    # Product-domain hints. Caller uses these labels as `domain_hint` to scope
+    # ambiguous aliases (brand / category) to product probes.
+    "product_attachment": "product",
+    "product_attachments": "product",
+    "master_products": "product",
+    "master_product": "product",
+    "products": "product",
+    # Attachment type catalog (AttachmentType row, NOT a file row). Resolves a
+    # free-text doc-class label like "catalogue", "brochure", "spec sheet" into
+    # the canonical AttachmentType UUID, suitable for `attachment_type_ids` /
+    # `attachment_type_id` filters on attachment list tools.
+    "attachment-type": "attachment_type",
+    "attachmenttype": "attachment_type",
+    "doc_type": "attachment_type",
+    "document_type": "attachment_type",
+    "file_type": "attachment_type",
+    # Brand / category handled via `_ENTITY_TYPE_EXPANSIONS` below (one-to-many
+    # fan-out), NOT the 1:1 alias map. Listed here as identity so
+    # `_canonical_entity_type` does not drop them before expansion runs.
+    "brand": "brand",
+    "brands": "brand",
+    "category": "category",
+    "categories": "category",
+    "product_category": "category",
+    "product_categories": "category",
 }
+
+
+# One-to-many fan-out for canonical names that have NO dedicated probe but map
+# to one or more concrete entity types in the resolver. Applied after
+# `_canonical_entity_type` when building the `allowed` set. Brand / category
+# resolve to promotion only — keeping the surface narrow (promotions group
+# products by brand + category, which is what the n8n promo agent needs).
+_ENTITY_TYPE_EXPANSIONS: dict[str, frozenset[str]] = {
+    "brand": frozenset({"promotion"}),
+    "category": frozenset({"promotion"}),
+}
+
+
+# Domain-scoped overrides for one-to-many expansions. When the caller passes
+# `domain_hint`, ambiguous aliases like brand / category gain a different
+# meaning. Example — domain_hint="order" + token="super ceramic": the user is
+# almost certainly naming a customer / debtor, not a promotion bucket. Routing
+# the expansion to {customer, customer_order, transporter} keeps the resolver
+# inside the order domain.
+_DOMAIN_HINT_EXPANSIONS: dict[str, dict[str, frozenset[str]]] = {
+    "order": {
+        "brand": frozenset({"customer", "customer_order", "transporter"}),
+        "category": frozenset({"customer", "customer_order", "transporter"}),
+    },
+    "customer_order": {
+        "brand": frozenset({"customer", "customer_order", "transporter"}),
+        "category": frozenset({"customer", "customer_order", "transporter"}),
+    },
+    "delivery_order": {
+        "brand": frozenset({"customer", "customer_order", "transporter"}),
+        "category": frozenset({"customer", "customer_order", "transporter"}),
+    },
+    # Product domain — `product_attachment` / `master_products` / `products`
+    # all canonicalize to `product` via `_ENTITY_TYPE_ALIASES`. Brand / category
+    # in that context should hit product probes (products carry brand_id +
+    # category_id directly) instead of fanning out to promotion.
+    "product": {
+        "brand": frozenset({"product"}),
+        "category": frozenset({"product"}),
+    },
+}
+
+
+def _expand_entity_types(
+    types: Iterable[str],
+    domain_hint: Optional[str] = None,
+) -> frozenset[str]:
+    """Canonicalize + fan-out one-to-many expansions into a concrete probe set.
+
+    `_canonical_entity_type` only does 1:1 alias rewriting. Brand / category
+    have no probes of their own and need to map to a SET of concrete probe
+    types. When `domain_hint` is supplied AND it has an override in
+    `_DOMAIN_HINT_EXPANSIONS`, the override takes precedence over the default
+    `_ENTITY_TYPE_EXPANSIONS` map — keeps brand / category scoped to the
+    domain the caller actually cares about.
+    """
+    hint_canon = _canonical_entity_type(domain_hint) if domain_hint else None
+    overrides = _DOMAIN_HINT_EXPANSIONS.get(hint_canon or "", {}) if hint_canon else {}
+    out: set[str] = set()
+    for raw in types:
+        if not raw:
+            continue
+        canon = _canonical_entity_type(raw)
+        expansion = overrides.get(canon) or _ENTITY_TYPE_EXPANSIONS.get(canon)
+        if expansion:
+            out.update(expansion)
+        else:
+            out.add(canon)
+    return frozenset(out)
 
 
 def _canonical_entity_type(et: str) -> str:
@@ -380,7 +474,7 @@ def extract_freeword_candidates(query: str, *, max_candidates: int = 6) -> list[
 class ResolvedEntity:
     """One hit for a candidate token."""
 
-    entity_type: str  # product | customer_order | customer | inbound_shipment | spo_allocation | grn | warehouse | supplier | promotion | transporter | form | attachment
+    entity_type: str  # product | customer_order | customer | inbound_shipment | spo_allocation | grn | warehouse | supplier | promotion | transporter | form | attachment | attachment_type
     canonical_code: str  # the business code the user should pass to tools (e.g. order_number)
     uuid: Optional[str] = None  # the row's primary key — required for tools that accept UUID-only inputs
     display: dict[str, Any] = field(default_factory=dict)
@@ -543,20 +637,43 @@ def _first_nonempty(values: Iterable[Any]) -> Any:
 # --------------------------------------------------------------------------- #
 # Per-entity probes
 # --------------------------------------------------------------------------- #
+def _strip_all_ws(value: str) -> str:
+    """Collapse every whitespace run to empty. For code-style tokens where the
+    agent typed (or the user pasted) a stray space inside what should be one
+    contiguous code — e.g. 'cgb9032b- new' → 'cgb9032b-new'."""
+    return re.sub(r"\s+", "", value or "")
+
+
+def _ws_insensitive_lower(col):
+    """Postgres expression: `lower(regexp_replace(col, '\\s+', '', 'g'))`.
+
+    Pair with python-side `_strip_all_ws(token.lower())` so code-style fields
+    (product_code, order_number, shipment_number, supplier_code, ...) match
+    whether either side carries stray whitespace. Cheap on small lookup
+    tables; for large tables consider a functional index if hot."""
+    return func.lower(func.regexp_replace(col, r"\s+", "", "g"))
+
+
 def _probe_product(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
-    """Exact match on product_code (case-insensitive)."""
+    """Exact match on product_code (case-insensitive, whitespace-insensitive).
+
+    Both sides are whitespace-stripped so 'cgb9032b- new' matches DB code
+    'CGB9032B-NEW' (and vice versa, if a DB row was seeded with a stray space)."""
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
-    lowered = [t.lower() for t in tokens]
+    # Build (original_token, normalized_token) pairs so we can map matched rows
+    # back to the caller's token after the SQL comparison.
+    normalized_tokens = [_strip_all_ws(t.lower()) for t in tokens]
+    norm_to_token = dict(zip(normalized_tokens, tokens))
     rows = (
         db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
-        .filter(func.lower(Product.product_code).in_(lowered))
+        .filter(_ws_insensitive_lower(Product.product_code).in_(list(norm_to_token.keys())))
         .all()
     )
-    code_to_token = {t.lower(): t for t in tokens}
     for pid, code, name, is_active in rows:
-        token = code_to_token.get(str(code).lower())
+        norm = _strip_all_ws(str(code).lower())
+        token = norm_to_token.get(norm)
         if not token:
             continue
         result[token].append(
@@ -576,7 +693,8 @@ def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[Reso
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
-    lowered = [t.lower() for t in tokens]
+    normalized = [_strip_all_ws(t.lower()) for t in tokens]
+    norm_to_token = dict(zip(normalized, tokens))
     rows = (
         db.query(
             Order.id,
@@ -592,12 +710,11 @@ def _probe_customer_order(db: Session, tokens: list[str]) -> dict[str, list[Reso
             OrderStatus.status_code,
         )
         .outerjoin(OrderStatus, OrderStatus.id == Order.order_status_id)
-        .filter(func.lower(Order.order_number).in_(lowered), Order.deleted_at.is_(None))
+        .filter(_ws_insensitive_lower(Order.order_number).in_(list(norm_to_token.keys())), Order.deleted_at.is_(None))
         .all()
     )
-    code_to_token = {t.lower(): t for t in tokens}
     for row in rows:
-        token = code_to_token.get(str(row.order_number).lower())
+        token = norm_to_token.get(_strip_all_ws(str(row.order_number).lower()))
         if not token:
             continue
         result[token].append(
@@ -627,7 +744,9 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
     if not tokens:
         return result
     lowered = [t.lower() for t in tokens]
-    # Exact by customer_code
+    # Exact by customer_code — whitespace-insensitive on both sides so a typed
+    # "300- C043" still hits "300-C043".
+    norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
     rows = (
         db.query(
             Customer.id,
@@ -637,12 +756,11 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
             Customer.email,
             Customer.is_active,
         )
-        .filter(func.lower(Customer.customer_code).in_(lowered))
+        .filter(_ws_insensitive_lower(Customer.customer_code).in_(list(norm_to_token.keys())))
         .all()
     )
-    code_to_token = {t.lower(): t for t in tokens}
     for cid, code, name, phone, email, is_active in rows:
-        token = code_to_token.get(str(code).lower())
+        token = norm_to_token.get(_strip_all_ws(str(code).lower()))
         if not token:
             continue
         result[token].append(
@@ -659,10 +777,23 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
                 },
             )
         )
-    # Fuzzy on name / phone (only if still unresolved to avoid noise)
+    # Fuzzy on name / phone (only if still unresolved to avoid noise).
+    # Phone probe restricted to digit-bearing tokens — keeps name tokens like
+    # "chin chun" from accidentally substring-hitting phone numbers, which
+    # otherwise floods the fuzzy result with unrelated rows.
+    _CUSTOMER_FUZZY_LIMIT = 25
     unresolved = [t for t in tokens if not result[t]]
     for token in unresolved:
         term = f"%{token}%"
+        token_has_digit = any(ch.isdigit() for ch in token)
+        name_or_phone = (
+            or_(
+                Customer.customer_name.ilike(term),
+                Customer.phone_number.ilike(term),
+            )
+            if token_has_digit
+            else Customer.customer_name.ilike(term)
+        )
         rows = (
             db.query(
                 Customer.id,
@@ -671,23 +802,23 @@ def _probe_customer(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
                 Customer.phone_number,
                 Customer.email,
             )
-            .filter(
-                or_(
-                    Customer.customer_name.ilike(term),
-                    Customer.phone_number.ilike(term),
-                )
-            )
-            .limit(3)
+            .filter(name_or_phone)
+            .limit(_CUSTOMER_FUZZY_LIMIT + 1)
             .all()
         )
+        truncated = len(rows) > _CUSTOMER_FUZZY_LIMIT
+        rows = rows[:_CUSTOMER_FUZZY_LIMIT]
         for cid, code, name, phone, email in rows:
+            display = {"customer_name": name, "phone_number": phone, "email": email}
+            if truncated:
+                display["truncated_more_available"] = True
             result[token].append(
                 ResolvedEntity(
                     entity_type="customer",
                     canonical_code=code or name,
                     uuid=str(cid) if cid else None,
                     match_field="customer_name" if (name and token.lower() in (name or "").lower()) else "phone_number",
-                    display={"customer_name": name, "phone_number": phone, "email": email},
+                    display=display,
                 )
             )
     return result
@@ -755,6 +886,7 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
         like_clauses = [Order.debtor_name.ilike(f"%{v}%") for v in variants if v]
         if not like_clauses:
             continue
+        _DEBTOR_FUZZY_LIMIT = 25
         rows = (
             db.query(Order.debtor_name, Order.debtor_code, Customer.id)
             .outerjoin(Customer, func.lower(func.btrim(Customer.customer_name)) == func.lower(func.btrim(Order.debtor_name)))
@@ -764,19 +896,24 @@ def _probe_customer_debtor_name(db: Session, tokens: list[str]) -> dict[str, lis
                 or_(*like_clauses),
             )
             .distinct()
-            .limit(5)
+            .limit(_DEBTOR_FUZZY_LIMIT + 1)
             .all()
         )
+        truncated = len(rows) > _DEBTOR_FUZZY_LIMIT
+        rows = rows[:_DEBTOR_FUZZY_LIMIT]
         for debtor_name, debtor_code, customer_id in rows:
             if any(m.canonical_code == debtor_name for m in result[token]):
                 continue
+            display = {"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"}
+            if truncated:
+                display["truncated_more_available"] = True
             result[token].append(
                 ResolvedEntity(
                     entity_type="customer",
                     canonical_code=debtor_name,
                     uuid=str(customer_id) if customer_id else None,
                     match_field="debtor_name",
-                    display={"debtor_name": debtor_name, "debtor_code": debtor_code, "source": "orders"},
+                    display=display,
                 )
             )
     return result
@@ -806,7 +943,7 @@ def _probe_transporter_freeword(db: Session, tokens: list[str]) -> dict[str, lis
                     Transporter.code.ilike(term),
                 )
             )
-            .limit(5)
+            .limit(25)
             .all()
         )
         for tid, code, name, _norm in rows:
@@ -832,11 +969,14 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
     if not tokens:
         return result
     lowered = [t.lower() for t in tokens if t]
+    # Code is whitespace-insensitive; name / normalized_name keep spaces because
+    # human names ("GT Delivery") legitimately contain them.
+    normalized_codes = [_strip_all_ws(t) for t in lowered]
     rows = (
         db.query(Transporter.id, Transporter.code, Transporter.name, Transporter.normalized_name)
         .filter(
             or_(
-                func.lower(Transporter.code).in_(lowered),
+                _ws_insensitive_lower(Transporter.code).in_(normalized_codes),
                 func.lower(Transporter.name).in_(lowered),
                 func.lower(Transporter.normalized_name).in_(lowered),
             )
@@ -846,7 +986,9 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
     for tid, code, name, norm in rows:
         for token in tokens:
             tl = token.lower()
-            if tl not in {(code or "").lower(), (name or "").lower(), (norm or "").lower()}:
+            tl_no_ws = _strip_all_ws(tl)
+            code_no_ws = _strip_all_ws((code or "").lower())
+            if tl_no_ws != code_no_ws and tl not in {(name or "").lower(), (norm or "").lower()}:
                 continue
             if any(m.canonical_code == code for m in result[token]):
                 continue
@@ -873,7 +1015,7 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
                     Transporter.normalized_name.ilike(term),
                 )
             )
-            .limit(5)
+            .limit(25)
             .all()
         )
         for tid, code, name, _norm in rows:
@@ -896,7 +1038,9 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
-    lowered = [t.lower() for t in tokens]
+    # All four match fields are number-style identifiers — strip whitespace
+    # both sides so 'SHP- 2026-001' matches 'SHP-2026-001' etc.
+    normalized = [_strip_all_ws(t.lower()) for t in tokens]
     rows = (
         db.query(
             InboundShipment.id,
@@ -910,25 +1054,25 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
         )
         .filter(
             or_(
-                func.lower(InboundShipment.shipment_number).in_(lowered),
-                func.lower(InboundShipment.shipping_container_number).in_(lowered),
-                func.lower(InboundShipment.bill_of_lading_number).in_(lowered),
-                func.lower(InboundShipment.invoice_number).in_(lowered),
+                _ws_insensitive_lower(InboundShipment.shipment_number).in_(normalized),
+                _ws_insensitive_lower(InboundShipment.shipping_container_number).in_(normalized),
+                _ws_insensitive_lower(InboundShipment.bill_of_lading_number).in_(normalized),
+                _ws_insensitive_lower(InboundShipment.invoice_number).in_(normalized),
             )
         )
         .all()
     )
     for row in rows:
         for token in tokens:
-            tl = token.lower()
+            tl_no_ws = _strip_all_ws(token.lower())
             match_field = None
-            if row.shipment_number and row.shipment_number.lower() == tl:
+            if row.shipment_number and _strip_all_ws(row.shipment_number.lower()) == tl_no_ws:
                 match_field = "shipment_number"
-            elif row.shipping_container_number and row.shipping_container_number.lower() == tl:
+            elif row.shipping_container_number and _strip_all_ws(row.shipping_container_number.lower()) == tl_no_ws:
                 match_field = "shipping_container_number"
-            elif row.bill_of_lading_number and row.bill_of_lading_number.lower() == tl:
+            elif row.bill_of_lading_number and _strip_all_ws(row.bill_of_lading_number.lower()) == tl_no_ws:
                 match_field = "bill_of_lading_number"
-            elif row.invoice_number and row.invoice_number.lower() == tl:
+            elif row.invoice_number and _strip_all_ws(row.invoice_number.lower()) == tl_no_ws:
                 match_field = "invoice_number"
             if not match_field:
                 continue
@@ -954,16 +1098,15 @@ def _probe_spo(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
-    lowered = [t.lower() for t in tokens]
+    norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
     rows = (
         db.query(SPOAllocation.id, SPOAllocation.spo_number)
-        .filter(func.lower(SPOAllocation.spo_number).in_(lowered))
+        .filter(_ws_insensitive_lower(SPOAllocation.spo_number).in_(list(norm_to_token.keys())))
         .distinct()
         .all()
     )
-    code_to_token = {t.lower(): t for t in tokens}
     for sid, spo_number in rows:
-        token = code_to_token.get(str(spo_number or "").lower())
+        token = norm_to_token.get(_strip_all_ws(str(spo_number or "").lower()))
         if not token:
             continue
         result[token].append(
@@ -982,7 +1125,7 @@ def _probe_grn(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
-    lowered = [t.lower() for t in tokens]
+    norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
     rows = (
         db.query(
             PickingHeader.id,
@@ -992,14 +1135,13 @@ def _probe_grn(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]
             PickingHeader.picking_type,
         )
         .filter(
-            func.lower(PickingHeader.picking_number).in_(lowered),
+            _ws_insensitive_lower(PickingHeader.picking_number).in_(list(norm_to_token.keys())),
             PickingHeader.picking_type == "goods_received",
         )
         .all()
     )
-    code_to_token = {t.lower(): t for t in tokens}
     for row in rows:
-        token = code_to_token.get(str(row.picking_number).lower())
+        token = norm_to_token.get(_strip_all_ws(str(row.picking_number).lower()))
         if not token:
             continue
         result[token].append(
@@ -1022,15 +1164,14 @@ def _probe_warehouse(db: Session, tokens: list[str]) -> dict[str, list[ResolvedE
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
-    lowered = [t.lower() for t in tokens]
+    norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
     rows = (
         db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location, Warehouse.is_active)
-        .filter(func.lower(Warehouse.warehouse_code).in_(lowered))
+        .filter(_ws_insensitive_lower(Warehouse.warehouse_code).in_(list(norm_to_token.keys())))
         .all()
     )
-    code_to_token = {t.lower(): t for t in tokens}
     for wid, code, name, location, is_active in rows:
-        token = code_to_token.get(str(code).lower())
+        token = norm_to_token.get(_strip_all_ws(str(code).lower()))
         if not token:
             continue
         result[token].append(
@@ -1053,7 +1194,7 @@ def _probe_supplier(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
-    lowered = [t.lower() for t in tokens]
+    norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
     rows = (
         db.query(
             Supplier.id,
@@ -1064,12 +1205,11 @@ def _probe_supplier(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEn
             Supplier.phone_number,
             Supplier.is_active,
         )
-        .filter(func.lower(Supplier.supplier_code).in_(lowered))
+        .filter(_ws_insensitive_lower(Supplier.supplier_code).in_(list(norm_to_token.keys())))
         .all()
     )
-    code_to_token = {t.lower(): t for t in tokens}
     for sid, code, name, contact, email, phone, is_active in rows:
-        token = code_to_token.get(str(code).lower())
+        token = norm_to_token.get(_strip_all_ws(str(code).lower()))
         if not token:
             continue
         result[token].append(
@@ -1143,6 +1283,62 @@ def _probe_attachment(db: Session, tokens: list[str]) -> dict[str, list[Resolved
     return result
 
 
+def _probe_attachment_type(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Exact case-insensitive match on AttachmentType.code OR type_name.
+
+    AttachmentType is a small reference table (BROCHURE / SPEC SHEET / DATASHEET /
+    CATALOGUE / etc.). Free-text doc-class words like "catalogue", "brochure",
+    "spec sheet" resolve to the canonical AttachmentType UUID, which downstream
+    callers feed as `attachment_type_ids` / `attachment_type_id` to attachment
+    list tools.
+    """
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    lowered = [t.lower() for t in tokens]
+    rows = (
+        db.query(
+            AttachmentType.id,
+            AttachmentType.code,
+            AttachmentType.type_name,
+            AttachmentType.description,
+        )
+        .filter(
+            or_(
+                func.lower(AttachmentType.code).in_(lowered),
+                func.lower(AttachmentType.type_name).in_(lowered),
+            )
+        )
+        .all()
+    )
+    norm_to_token = {t.lower(): t for t in tokens}
+    for tid, code, type_name, description in rows:
+        key = (code or "").lower()
+        token = norm_to_token.get(key)
+        match_field = "code"
+        if not token:
+            key = (type_name or "").lower()
+            token = norm_to_token.get(key)
+            match_field = "type_name"
+        if not token:
+            continue
+        canonical = code or type_name
+        result[token].append(
+            ResolvedEntity(
+                entity_type="attachment_type",
+                canonical_code=canonical,
+                uuid=str(tid) if tid else None,
+                match_field=match_field,
+                display={
+                    "code": code,
+                    "type_name": type_name,
+                    "description": description,
+                },
+            )
+        )
+    return result
+
+
 # --------------------------------------------------------------------------- #
 # Tier 2 — prefix / substring probes (run only for tokens Tier 1 missed)
 # --------------------------------------------------------------------------- #
@@ -1154,11 +1350,14 @@ PREFIX_LIMIT = 20
 
 
 def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
-    prefix = f"{token}%"
-    substr = f"%{token}%"
+    # Strip whitespace from both sides so 'cgb9032b- new' matches 'CGB9032B-NEW'.
+    norm_token = _strip_all_ws(token)
+    prefix = f"{norm_token}%"
+    substr = f"%{norm_token}%"
+    code_norm = _ws_insensitive_lower(Product.product_code)
     rows = (
         db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
-        .filter(Product.product_code.ilike(prefix))
+        .filter(code_norm.ilike(prefix))
         .limit(PREFIX_LIMIT)
         .all()
     )
@@ -1166,11 +1365,40 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
     if not rows:
         rows = (
             db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
-            .filter(Product.product_code.ilike(substr))
+            .filter(code_norm.ilike(substr))
             .limit(PREFIX_LIMIT)
             .all()
         )
         tier = "substring"
+    if not rows:
+        # Name-search fallback for free-text product phrases ("basin",
+        # "kitchen sink", "matte black bathtub"). Code-only matching above
+        # misses these because the token isn't a SKU. AND across words, OR
+        # across columns. Single words must be ≥4 chars (filters short noise
+        # like "the" / "and"); multi-word phrases keep the ≥3 cutoff per word.
+        # Caller intent (e.g. brand / category hint) flows through the
+        # `_TIER2_PROBES` filter, so this only fires when the agent asked for
+        # product candidates.
+        if " " in token:
+            words = [w for w in token.split() if len(w) >= 3]
+            min_words = 2
+        else:
+            words = [token] if len(token) >= 4 else []
+            min_words = 1
+        if len(words) >= min_words:
+            q = db.query(
+                Product.id, Product.product_code, Product.product_name, Product.is_active
+            )
+            for w in words:
+                ws = f"%{w}%"
+                q = q.filter(
+                    or_(
+                        Product.product_name.ilike(ws),
+                        Product.description.ilike(ws),
+                    )
+                )
+            rows = q.limit(PREFIX_LIMIT).all()
+            tier = "word"
     return [
         ResolvedEntity(
             entity_type="product",
@@ -1315,6 +1543,23 @@ def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[Resolved
             .all()
         )
         tier = "substring"
+    if not rows:
+        # Per-word AND fallback — handles typos / dropped letters in multi-word
+        # debtor phrases. Token "Delux home centre" against "DELUXE HOME CENTRE
+        # SDN BHD": full-string substring miss (extra 'E' in DELUXE breaks the
+        # contiguous phrase) but every word still appears individually. AND
+        # across words ≥3 chars on debtor_name.
+        words = [w for w in token.split() if len(w) >= 3]
+        if len(words) >= 2:
+            q = (
+                db.query(Order.debtor_name, Order.debtor_code, Customer.id)
+                .outerjoin(Customer, func.lower(func.btrim(Customer.customer_name)) == func.lower(func.btrim(Order.debtor_name)))
+                .filter(Order.deleted_at.is_(None), Order.debtor_name.isnot(None))
+            )
+            for w in words:
+                q = q.filter(Order.debtor_name.ilike(f"%{w}%"))
+            rows = q.distinct().limit(PREFIX_LIMIT).all()
+            tier = "word"
     seen: set[str] = set()
     out: list[ResolvedEntity] = []
     for debtor_name, debtor_code, customer_id in rows:
@@ -1528,6 +1773,18 @@ def _prefix_probe_promotion(db: Session, token: str) -> list[ResolvedEntity]:
             .all()
         )
         rows = list(rows) + list(substring_rows)
+    # Multi-word union (always runs alongside contiguous ILIKE when the token
+    # has 2+ words; results merge + dedupe). Contiguous ILIKE misses
+    # descriptions where the user's words are separated by other tokens
+    # (e.g. token "sorento kitchen sink" vs description
+    # "SORENTO NEW ARRIVAL KITCHEN SINK ..."). Require every word (>=2 chars)
+    # to appear anywhere in Promotion.description.
+    words = [w for w in token.split() if len(w) >= 2]
+    if len(words) >= 2:
+        word_query = db.query(Promotion.id, Promotion.description, Promotion.is_active)
+        for w in words:
+            word_query = word_query.filter(Promotion.description.ilike(f"%{w}%"))
+        rows = list(rows) + list(word_query.limit(PREFIX_LIMIT).all())
     for pid, description, is_active in rows:
         key = str(pid)
         if key in seen:
@@ -1682,9 +1939,31 @@ def _prefix_probe_attachment(db: Session, token: str) -> list[ResolvedEntity]:
         .limit(PREFIX_LIMIT)
         .all()
     )
+    # Multi-word union (always runs alongside the contiguous prefix/substring
+    # queries when the token has 2+ words; results are merged + deduped, not
+    # gated on the contiguous result being empty). Contiguous ILIKE misses
+    # filenames where the user's words are separated by other tokens
+    # (e.g. token "sorento kitchen sink" vs filename
+    # "SORENTO NEW ARRIVAL KITCHEN SINK_..."). Split on whitespace and require
+    # every word (>=2 chars) to appear in any of the searched columns.
+    # AND across words, OR across columns per word.
+    words = [w for w in token.split() if len(w) >= 2]
+    word_and_rows: list = []
+    if len(words) >= 2:
+        word_query = base
+        for w in words:
+            wsub = f"%{w}%"
+            word_query = word_query.filter(
+                or_(
+                    Attachment.original_filename.ilike(wsub),
+                    Attachment.description.ilike(wsub),
+                    AttachmentType.type_name.ilike(wsub),
+                )
+            )
+        word_and_rows = word_query.limit(PREFIX_LIMIT).all()
     seen: set[str] = set()
     out: list[ResolvedEntity] = []
-    for aid, filename, description, mime, dir_path, type_name in list(prefix_rows) + list(substring_rows):
+    for aid, filename, description, mime, dir_path, type_name in list(prefix_rows) + list(substring_rows) + list(word_and_rows):
         key = str(aid)
         if key in seen:
             continue
@@ -1716,6 +1995,117 @@ def _prefix_probe_attachment(db: Session, token: str) -> list[ResolvedEntity]:
     return out[: PREFIX_LIMIT * 2]
 
 
+def _prefix_probe_attachment_type(db: Session, token: str) -> list[ResolvedEntity]:
+    """Prefix → substring → per-word ILIKE on AttachmentType.code / type_name / description.
+
+    Handles partial / fuzzy doc-class words (e.g. token "cataloge" → "catalogue",
+    "broch" → "Brochure"). Three-stage matching:
+      1. Contiguous prefix ILIKE on code OR type_name.
+      2. Contiguous substring ILIKE on code OR type_name OR description.
+      3. Per-word substring ILIKE — for every word ≥4 chars in the token,
+         match rows whose code / type_name / description contains it. Lets a
+         loose user phrase like "technical drawing" resolve to
+         "Technical Specifications" (one shared word is enough — caller already
+         narrowed to attachment_type so semantic drift risk is bounded).
+    Returns up to PREFIX_LIMIT candidates so ambiguous labels surface for LLM
+    disambiguation.
+    """
+    if not token or len(token) < 2:
+        return []
+    prefix = f"{token}%"
+    substr = f"%{token}%"
+    base = db.query(
+        AttachmentType.id,
+        AttachmentType.code,
+        AttachmentType.type_name,
+        AttachmentType.description,
+    )
+    prefix_rows = (
+        base.filter(
+            or_(
+                AttachmentType.code.ilike(prefix),
+                AttachmentType.type_name.ilike(prefix),
+            )
+        )
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    substring_rows = (
+        base.filter(
+            or_(
+                AttachmentType.code.ilike(substr),
+                AttachmentType.type_name.ilike(substr),
+                AttachmentType.description.ilike(substr),
+            )
+        )
+        .limit(PREFIX_LIMIT)
+        .all()
+    )
+    # Per-word fallback for multi-word phrases (e.g. "technical drawing" with
+    # no contiguous match against "Technical Specifications"). OR across words
+    # so a single shared word is enough — attachment_type was explicitly hinted
+    # by the caller, so loose matching is safer here than for general entities.
+    word_rows: list = []
+    words = [w for w in token.split() if len(w) >= 4]
+    if words:
+        word_clauses = []
+        for w in words:
+            ws = f"%{w}%"
+            word_clauses.extend(
+                [
+                    AttachmentType.code.ilike(ws),
+                    AttachmentType.type_name.ilike(ws),
+                    AttachmentType.description.ilike(ws),
+                ]
+            )
+        word_rows = base.filter(or_(*word_clauses)).limit(PREFIX_LIMIT).all()
+
+    seen: set[str] = set()
+    out: list[ResolvedEntity] = []
+    token_lower = token.lower()
+    token_word_set = {w.lower() for w in words}
+    for tid, code, type_name, description in (
+        list(prefix_rows) + list(substring_rows) + list(word_rows)
+    ):
+        key = str(tid)
+        if key in seen:
+            continue
+        seen.add(key)
+        code_l = (code or "").lower()
+        type_l = (type_name or "").lower()
+        desc_l = (description or "").lower()
+        if code_l.startswith(token_lower) or type_l.startswith(token_lower):
+            tier = "prefix"
+            match_field = "code" if code_l.startswith(token_lower) else "type_name"
+        elif token_lower in code_l or token_lower in type_l or token_lower in desc_l:
+            tier = "substring"
+            match_field = "type_name"
+        else:
+            tier = "word"
+            # Surface which token word actually hit so the agent can explain
+            # the loose match.
+            hit_word = next(
+                (w for w in token_word_set if w in code_l or w in type_l or w in desc_l),
+                "",
+            )
+            match_field = f"word:{hit_word}" if hit_word else "type_name"
+        out.append(
+            ResolvedEntity(
+                entity_type="attachment_type",
+                canonical_code=code or type_name,
+                uuid=key,
+                match_field=match_field,
+                match_tier=tier,
+                display={
+                    "code": code,
+                    "type_name": type_name,
+                    "description": description,
+                },
+            )
+        )
+    return out[:PREFIX_LIMIT]
+
+
 # Tier-2 probes paired with the entity_type(s) they produce, so callers can opt
 # out of probes that can't return anything they accept.
 _TIER2_PROBES: tuple[tuple[Callable[[Session, str], list[ResolvedEntity]], frozenset[str]], ...] = (
@@ -1732,6 +2122,7 @@ _TIER2_PROBES: tuple[tuple[Callable[[Session, str], list[ResolvedEntity]], froze
     (_prefix_probe_promotion, frozenset({"promotion"})),
     (_prefix_probe_form, frozenset({"form"})),
     (_prefix_probe_attachment, frozenset({"attachment"})),
+    (_prefix_probe_attachment_type, frozenset({"attachment_type"})),
 )
 
 
@@ -2114,7 +2505,13 @@ def _trgm_lookup(
 # text contains EVERY token. Skips code-only entity types (SPO, GRN, inbound
 # shipment) where multi-token AND has no semantic meaning.
 
-AND_MODE_LIMIT = 20
+# Cap per AND probe BEFORE downstream post-filters (access_levels, promotion-
+# domain product expansion). 200 is the same ceiling the API's `limit` param
+# uses — keeps the SQL bounded while ensuring the post-filters see enough rows
+# to find legitimate matches. Without this slack, e.g. 22 Sorento+End-User
+# promotions get clipped to ~3 because the first 20 raw Sorento rows happen to
+# have dealer-only access_levels.
+AND_MODE_LIMIT = 200
 
 
 def _concat_ws(*cols):
@@ -2498,6 +2895,7 @@ def resolve_references_intersection(
     tokens: list[str],
     *,
     allowed_entity_types: Optional[Iterable[str]] = None,
+    domain_hint: Optional[str] = None,
 ) -> IntersectionResolutionResult:
     """AND-mode resolver. Returns rows matching EVERY token in the concatenated
     searchable columns of each entity type. Skips code-only types.
@@ -2518,7 +2916,8 @@ def resolve_references_intersection(
     if pair_map is not None:
         allowed: Optional[frozenset[str]] = frozenset(pair_map.values())
     elif allowed_entity_types is not None:
-        allowed = frozenset(_canonical_entity_type(e) for e in allowed_entity_types if e)
+        # Apply one-to-many expansion (brand / category → product + promotion).
+        allowed = _expand_entity_types(allowed_entity_types, domain_hint=domain_hint)
     else:
         allowed = None
 
@@ -2563,6 +2962,7 @@ _TIER1_PROBES: tuple[tuple[Callable[[Session, list[str]], dict[str, list[Resolve
     (_probe_customer, frozenset({"customer"})),
     (_probe_customer_debtor_name, frozenset({"customer"})),
     (_probe_attachment, frozenset({"attachment"})),
+    (_probe_attachment_type, frozenset({"attachment_type"})),
 )
 
 
@@ -2574,6 +2974,8 @@ def resolve_references(
     enable_prefix_fallback: bool = True,
     enable_embedding_fallback: bool = True,
     allowed_entity_types: Optional[Iterable[str]] = None,
+    cross_type_expand: bool = False,
+    domain_hint: Optional[str] = None,
 ) -> ResolutionResult:
     """Main entry point.
 
@@ -2606,7 +3008,8 @@ def resolve_references(
     if pair_map is not None:
         allowed: Optional[frozenset[str]] = frozenset(pair_map.values())
     elif allowed_entity_types is not None:
-        allowed = frozenset(_canonical_entity_type(e) for e in allowed_entity_types if e)
+        # Apply one-to-many expansion (brand / category → product + promotion).
+        allowed = _expand_entity_types(allowed_entity_types, domain_hint=domain_hint)
     else:
         allowed = None
 
@@ -2640,10 +3043,34 @@ def resolve_references(
     # ----- Tier 2: prefix / substring fallback (only for tokens still empty) -----
     if enable_prefix_fallback:
         for tok in tokens:
-            if per_token[tok]:
-                continue
             tok_allowed = _types_for(tok)
             if tok_allowed is not None and not tok_allowed:
+                continue
+            # Product variant expansion: Tier 1 exact returns only the row whose
+            # code equals the token (e.g. SRTKS6145). Variants like SRTKS6145-NEW
+            # / -UF / -OLD share a base stem and never match exact. When Tier 1
+            # already produced a product hit, additionally probe prefix on the
+            # product table so siblings surface alongside the exact match. Other
+            # entity types keep strict single-hit semantics — variant siblings
+            # are a product-domain concept (SKU suffixes); customers / orders /
+            # promotions don't have the same family pattern.
+            existing_product_hit = any(
+                m.entity_type == "product" for m in per_token[tok]
+            )
+            if existing_product_hit and (tok_allowed is None or "product" in tok_allowed):
+                seen_uuids = {m.uuid for m in per_token[tok] if m.uuid}
+                for variant in _prefix_probe_product(db, tok):
+                    if variant.uuid and variant.uuid in seen_uuids:
+                        continue
+                    per_token[tok].append(variant)
+                    if variant.uuid:
+                        seen_uuids.add(variant.uuid)
+                # Multi-row product result must flag ambiguous so the LLM asks
+                # the user to pick / treats them as a set rather than picking
+                # the first match silently.
+                if len([m for m in per_token[tok] if m.entity_type == "product"]) > 1:
+                    ambiguous_tokens.add(tok)
+            if per_token[tok]:
                 continue
             candidates = _tier2_fuzzy_lookup(db, tok, allowed_entity_types=tok_allowed)
             if not candidates:
@@ -2652,8 +3079,90 @@ def resolve_references(
                 per_token[tok] = candidates
                 continue
             # 2+ matches — let the LLM ask the user to pick, cap surface size.
-            per_token[tok] = candidates[:PREFIX_LIMIT]
+            # Per-type balanced cap: when several entity types matched (e.g.
+            # `kitchen sink` hits 20 products + 6 promotions), a flat top-N
+            # would crowd out the smaller types entirely. Allocate the budget
+            # across active types so every type that matched gets seen.
+            per_type: dict[str, list[ResolvedEntity]] = {}
+            for c in candidates:
+                per_type.setdefault(c.entity_type, []).append(c)
+            n_types = len(per_type)
+            per_type_cap = max(1, PREFIX_LIMIT // max(1, n_types))
+            balanced: list[ResolvedEntity] = []
+            for items in per_type.values():
+                balanced.extend(items[:per_type_cap])
+            per_token[tok] = balanced[:PREFIX_LIMIT]
             ambiguous_tokens.add(tok)
+
+    # Snapshot which tokens already had matches BEFORE cross-type expansion —
+    # used below to flag tokens that grew into multi-type candidate sets so the
+    # LLM disambiguates instead of picking the first match.
+    pre_expand_type_count: dict[str, int] = {
+        tok: len({m.entity_type for m in per_token[tok]}) for tok in tokens
+    }
+
+    # ----- Cross-type expansion (fallback discovery mode) -----
+    # In `cross_type_expand` mode we keep probing OTHER entity types for tokens
+    # that already got a tier-1 / tier-2 hit. The fallback path
+    # (`fallback_to_all_types=True`) uses this so a token like "Sorento" which
+    # exact-matches a `transporter` code can ALSO surface as a `promotion` /
+    # `brand` / `customer` candidate. Without this, the per-token early exit
+    # after tier-1 swallows every other type and `fallback_types_found` only
+    # reports the first probe that fired.
+    if cross_type_expand and tokens:
+        for tok in tokens:
+            existing_types = {m.entity_type for m in per_token[tok]}
+            seen_uuids = {m.uuid for m in per_token[tok] if m.uuid}
+            # Tier-1 (exact) across remaining types.
+            for probe, produces in _TIER1_PROBES:
+                if produces.issubset(existing_types):
+                    continue
+                if allowed is not None and produces.isdisjoint(allowed):
+                    # Respect explicit whitelist when caller still passed one;
+                    # fallback path clears `allowed` so this is a no-op there.
+                    continue
+                try:
+                    hits = probe(db, [tok]).get(tok, [])
+                except Exception:
+                    logger.exception("Cross-type tier-1 probe %s failed", probe.__name__)
+                    continue
+                for m in hits:
+                    if m.uuid and m.uuid in seen_uuids:
+                        continue
+                    per_token[tok].append(m)
+                    if m.uuid:
+                        seen_uuids.add(m.uuid)
+                    existing_types.add(m.entity_type)
+            # Tier-2 (prefix / substring) across remaining types.
+            if enable_prefix_fallback:
+                for probe, produces in _TIER2_PROBES:
+                    if produces.issubset(existing_types):
+                        continue
+                    if allowed is not None and produces.isdisjoint(allowed):
+                        continue
+                    try:
+                        hits = probe(db, tok)
+                    except Exception:
+                        logger.exception("Cross-type tier-2 probe %s failed", probe.__name__)
+                        continue
+                    for m in hits[:PREFIX_LIMIT]:
+                        if m.uuid and m.uuid in seen_uuids:
+                            continue
+                        per_token[tok].append(m)
+                        if m.uuid:
+                            seen_uuids.add(m.uuid)
+                        existing_types.add(m.entity_type)
+
+    # Mark cross-type-expanded tokens ambiguous when expansion grew them from a
+    # single-type confident match into a multi-type candidate union. Without
+    # this, `TokenResolution.confident_match` would silently pick the first
+    # match (e.g. transporter) even though the agent should reroute via the
+    # newly-surfaced types (promotion, brand, ...).
+    if cross_type_expand:
+        for tok in tokens:
+            current_types = {m.entity_type for m in per_token[tok]}
+            if len(current_types) > 1 and len(current_types) > pre_expand_type_count.get(tok, 0):
+                ambiguous_tokens.add(tok)
 
     # ----- Tier 3: embedding fallback (only for tokens still empty AND not ambiguous) -----
     if enable_embedding_fallback:

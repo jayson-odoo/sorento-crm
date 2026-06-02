@@ -47,6 +47,10 @@ import RecordNavigation from '@/components/common/RecordNavigation';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
 import ManageFieldLinksDialog from './ManageFieldLinksDialog';
 import EditAttachmentTypeDialog from './EditAttachmentTypeDialog';
+import {
+  IntegrationPanel,
+  IntegrationStatusChip,
+} from '@/components/upload-activity';
 import { useCreateProductAttachment, useDeleteProductAttachment } from '@/app/(protected)/master-data-management/product-attachments/hooks/useProductAttachments';
 import { useCreatePromotionAttachment, useDeletePromotionAttachment } from '@/app/(protected)/marketing-management/promotion-attachments/hooks/usePromotionAttachments';
 import { useForms } from '@/app/(protected)/forms-management/forms/hooks/useForms';
@@ -857,6 +861,11 @@ export default function AttachmentDetailModal({
   const [descriptionEdit, setDescriptionEdit] = useState<string | null>(null);
   const [accessLevelsEdit, setAccessLevelsEdit] = useState<string[] | null>(null);
   const [editAttachmentTypeOpen, setEditAttachmentTypeOpen] = useState(false);
+  // Tab inside the top card — Attachment Details vs. Integration. Default
+  // to "details" since that's the primary surface for the modal.
+  const [detailsTab, setDetailsTab] = useState<'details' | 'integration'>(
+    'details',
+  );
 
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
@@ -989,15 +998,41 @@ export default function AttachmentDetailModal({
                       Move to Trash
                     </Button>
                   )}
+                  <div className="ms-auto">
+                    <IntegrationStatusChip
+                      attachmentId={attachment.id}
+                      attachment={attachment}
+                    />
+                  </div>
                 </div>
 
                 <Card>
-                  <CardHeader className="py-4">
-                    <CardTitle className="text-base">Attachment Details</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4 pt-0">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Directory</p>
+                  <Tabs
+                    value={detailsTab}
+                    onValueChange={(v) =>
+                      setDetailsTab(v as 'details' | 'integration')
+                    }
+                  >
+                    <CardHeader className="py-3 pb-0">
+                      <TabsList variant="line" className="px-0">
+                        <TabsTrigger value="details">
+                          Attachment Details
+                        </TabsTrigger>
+                        <TabsTrigger value="integration">
+                          Integration
+                        </TabsTrigger>
+                      </TabsList>
+                    </CardHeader>
+                    <CardContent className="pt-4">
+                      <TabsContent value="integration" className="mt-0">
+                        <IntegrationPanel
+                          attachmentId={attachment.id}
+                          attachment={attachment}
+                        />
+                      </TabsContent>
+                      <TabsContent value="details" className="mt-0 space-y-4">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Directory</p>
                       <p className="font-medium text-sm break-words">
                         {attachment.full_directory_path?.trim() || '—'}
                       </p>
@@ -1158,7 +1193,9 @@ export default function AttachmentDetailModal({
                         </div>
                       )}
                     </div>
-                  </CardContent>
+                      </TabsContent>
+                    </CardContent>
+                  </Tabs>
                 </Card>
 
                 <Card>

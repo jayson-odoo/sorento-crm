@@ -53,6 +53,11 @@ async def test_tool_runs_with_fake_context(spec):
     kwargs: dict[str, str] = {p: _PP_UUID for p in spec.path_params}
     for b in spec.body_params:
         kwargs.setdefault(b, "{}")
+    # Parent-relation tools (orders_by_product, incoming_stock_by_product, GRN,
+    # promotion_products, promotion_attachments, product_attachments) short-circuit
+    needed = TOOL_REQUIRED_NARROWING_FILTERS.get(spec.name)
+    if needed:
+        kwargs.setdefault(needed[0], _PP_UUID)
     out = await fn(_FakeCtx(_FakeClient()), **kwargs)  # type: ignore[arg-type]
     assert spec.path in out
     assert "ok" in out

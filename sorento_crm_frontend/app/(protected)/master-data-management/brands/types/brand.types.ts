@@ -10,4 +10,5 @@ export interface BrandFormData {
   description?: string;
   logo_url?: string;
   is_active: boolean;
+  access_levels?: string[];
 }

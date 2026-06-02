@@ -1506,6 +1506,7 @@ class ProductAttachmentService:
         entities: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
+        attachment_type_ids: Optional[list[str]] = None,
     ):
         """List product attachments with filtering and pagination.
 
@@ -1554,6 +1555,15 @@ class ProductAttachmentService:
             q = q.filter(ProductAttachment.product_id.in_(product_ids))
         if attachment_ids:
             q = q.filter(ProductAttachment.attachment_id.in_(attachment_ids))
+        if attachment_type_ids:
+            # Narrow to product-attachment rows whose underlying Attachment
+            # carries one of the supplied AttachmentType UUIDs (brochure / spec
+            # sheet / installation guide / etc.). Empty list → no filter.
+            q = q.filter(
+                ProductAttachment.attachment.has(
+                    Attachment.attachment_type_id.in_(attachment_type_ids)
+                )
+            )
 
         if user_type:
             q = q.filter(ProductAttachment.attachment.has(Attachment.access_levels.contains([user_type])))

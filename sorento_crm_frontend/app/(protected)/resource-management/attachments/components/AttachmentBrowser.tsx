@@ -75,6 +75,7 @@ export default function AttachmentBrowser() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [directoryId, setDirectoryId] = useState<string | null>(null);
   const [attachmentTypeId, setAttachmentTypeId] = useState<string>('__all__');
+  const [linkStatus, setLinkStatus] = useState<'__all__' | 'linked' | 'unlinked'>('__all__');
   const [uploadedBy, setUploadedBy] = useState('');
   const [uploadedAtFrom, setUploadedAtFrom] = useState('');
   const [uploadedAtTo, setUploadedAtTo] = useState('');
@@ -93,6 +94,7 @@ export default function AttachmentBrowser() {
     directory_id: isTrashView ? undefined : directoryId ?? undefined,
     is_deleted: isTrashView ? true : undefined,
     attachment_type_id: attachmentTypeId !== '__all__' ? attachmentTypeId : undefined,
+    link_status: linkStatus !== '__all__' ? linkStatus : undefined,
     uploaded_by: uploadedBy.trim() || undefined,
     uploaded_at_from: uploadedAtFrom || undefined,
     uploaded_at_to: uploadedAtTo || undefined,
@@ -516,6 +518,22 @@ export default function AttachmentBrowser() {
                       {type.type_name}
                     </SelectItem>
                   ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={linkStatus}
+                onValueChange={(value) => {
+                  setLinkStatus(value as '__all__' | 'linked' | 'unlinked');
+                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                }}
+              >
+                <SelectTrigger className="w-[170px]">
+                  <SelectValue placeholder="Link status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All files</SelectItem>
+                  <SelectItem value="linked">Linked</SelectItem>
+                  <SelectItem value="unlinked">Not linked</SelectItem>
                 </SelectContent>
               </Select>
               <Input

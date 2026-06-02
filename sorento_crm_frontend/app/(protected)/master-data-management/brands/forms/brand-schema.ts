@@ -17,6 +17,10 @@ export const BrandSchema = z.object({
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
   logo_url: z.string().url({ message: 'Logo URL must be a valid URL.' }).optional().nullable().or(z.literal('')),
   is_active: z.boolean(),
+  // Access codes overlapping `contact_access_types.code`. Empty allowed (no
+  // visibility restriction). Used by the resolver's promotion-domain product
+  // fallback to scope brand-search to the active contact's permissions.
+  access_levels: z.array(z.string()),
 });
 
 export type BrandSchemaType = z.infer<typeof BrandSchema>;

@@ -10,10 +10,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useProduct, useProducts } from '../../hooks/useProducts';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { useQuery } from '@tanstack/react-query';
 import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
 import ProductStockTab from './ProductStockTab';
 import ProductSuppliersTab from './ProductSuppliersTab';
 import ProductPromotionsTab from './ProductPromotionsTab';
+import { useProductAttachmentsByProduct } from '../../../product-attachments/hooks/useProductAttachments';
+import { getPromotionsByProductId } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
 import ProductDeleteDialog from '../../components/product-delete-dialog';
 import RecordNavigation from '../../../../../../components/common/RecordNavigation';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -53,6 +56,17 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
 
   const { data: navigationData } = useProducts(navigationParams);
   const navigationItems = navigationData?.data ?? [];
+
+  // Tab badge counts — same hooks the tab content components use, so React
+  // Query dedupes the request when the user opens the tab.
+  const { data: attachmentsData } = useProductAttachmentsByProduct(productId || null);
+  const attachmentsCount = Array.isArray(attachmentsData) ? attachmentsData.length : 0;
+  const { data: promotionsData } = useQuery({
+    queryKey: ['product-promotions', productId],
+    queryFn: () => getPromotionsByProductId(productId),
+    enabled: !!productId,
+  });
+  const promotionsCount = Array.isArray(promotionsData) ? promotionsData.length : 0;
 
   const navigationBasePath = '/master-data-management/products';
   const navigationQueryString = searchParams.toString();
@@ -195,9 +209,13 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             <TabsList>
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="stock">Stock</TabsTrigger>
-              <TabsTrigger value="attachments">Attachments</TabsTrigger>
+              <TabsTrigger value="attachments">
+                Attachments{attachmentsCount ? ` (${attachmentsCount})` : ''}
+              </TabsTrigger>
               <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
-              <TabsTrigger value="promotions">Promotions</TabsTrigger>
+              <TabsTrigger value="promotions">
+                Promotions{promotionsCount ? ` (${promotionsCount})` : ''}
+              </TabsTrigger>
               <TabsTrigger value="audit">Audit Trail</TabsTrigger>
             </TabsList>
 

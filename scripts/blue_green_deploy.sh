@@ -40,7 +40,11 @@ echo "==> Pulling images"
 docker compose --profile "${NEW}" pull "backend_${NEW}" "frontend_${NEW}" "mcp_${NEW}"
 docker compose pull worker
 
-# 2. Bring up new color (alembic runs inside backend_NEW before it goes healthy)
+# 2. Bring up new color. start.sh runs `alembic upgrade head` before gunicorn
+#    so the new container only goes healthy after schema is at HEAD. If alembic
+#    fails the container exits → healthcheck fails → this script aborts at
+#    step 3 and OLD color keeps serving traffic. Set SKIP_MIGRATIONS=1 in
+#    backend env for manual two-phase (expand-contract) rollouts.
 echo "==> Starting ${NEW} color"
 docker compose --profile "${NEW}" up -d --no-deps \
   "backend_${NEW}" "frontend_${NEW}" "mcp_${NEW}"

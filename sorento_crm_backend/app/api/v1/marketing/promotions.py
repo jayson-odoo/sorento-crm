@@ -53,7 +53,11 @@ async def get_promotions(
     ),
     product_ids: Optional[list[str]] = Query(
         None,
-        description="Filter to promotions whose products include any of these UUIDs.",
+        description=(
+            "Filter to promotions whose products include any of these UUIDs. "
+            "Combines with `promotion_ids` via OR — a promotion is returned if it "
+            "is in `promotion_ids` OR contains any product in `product_ids`."
+        ),
     ),
     user_type: Optional[str] = Query(None, description="Filter by a single access level code (FE listing)."),
     access_levels: Optional[list[str]] = Query(
@@ -115,17 +119,16 @@ async def get_promotions(
             or (query and query.strip())
             or norm_entities
         )
-        # Gate the "no filter = empty page" guard to API-key / MCP callers only.
-        # Interactive JWT users (FE DataGrid) land on /promotions with no filters
-        # and expect the full catalog; only the chatbot/MCP path needs the guard
-        # against accidental whole-catalog enumeration.
+        # API-key / MCP callers without a narrowing filter are answering open
+        # questions like "what is sorento's latest promo" — return a bounded
+        # newest-first page rather than empty. Cap limit so the chatbot can't
+        # accidentally enumerate the whole catalog. Interactive JWT users (FE
+        # DataGrid) keep their existing unbounded list behaviour.
         is_api_key_caller = (current_user or {}).get("auth_method") == "api_key"
         if is_api_key_caller and not has_narrowing_filter:
-            return {
-                "data": [],
-                "pagination": {"total": 0, "page": page, "limit": limit},
-                "empty": True,
-            }
+            limit = min(limit, 10)
+            sort = sort or "created_at"
+            dir = dir or "desc"
 
         result = service.list_promotions(
             page=page,

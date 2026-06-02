@@ -464,30 +464,38 @@ class IntegrationLogService:
     
     def process_pending_logs(self) -> dict:
         """
-        Process all pending integration logs that are ready for retry.
+        Process pending/processing integration logs that are ready for retry,
+        AND mark `sent` rows whose n8n callback never arrived as failed.
+
+        Two passes per tick:
+        1. Re-send `pending` / `processing` rows past `next_retry_at` (legacy behaviour).
+        2. Mark `sent` rows older than the configured callback timeout as `failed`
+           with error_code=N8N_CALLBACK_TIMEOUT — drives the upload-activity drawer
+           freshness invariant so users never see infinite "Processing…".
+
+        See docs/plans/PLAN-upload-activity-drawer.md §4.5.
+
         Called by cron job.
-        
-        Returns:
-            Dict with processing results
         """
+        from datetime import timedelta
         from sqlalchemy import and_
-        
-        # Find logs that are pending and ready for retry
+
+        # ----- pass 1: retry pending/processing -----
         now = datetime.utcnow()
         pending_logs = self.db.query(IntegrationLog).filter(
             and_(
                 IntegrationLog.status.in_(["pending", "processing"]),
                 (IntegrationLog.next_retry_at.is_(None)) | (IntegrationLog.next_retry_at <= now)
             )
-        ).limit(100).all()  # Process up to 100 at a time
-        
+        ).limit(100).all()
+
         processed = 0
         succeeded = 0
         failed = 0
-        
+
         for log in pending_logs:
             try:
-                success, error_msg = self.send_webhook_for_log(log.id)
+                success, _err = self.send_webhook_for_log(log.id)
                 processed += 1
                 if success:
                     succeeded += 1
@@ -496,10 +504,63 @@ class IntegrationLogService:
             except Exception as e:
                 logger.error(f"Error processing integration log {log.id}: {str(e)}", exc_info=True)
                 failed += 1
-        
+
+        # ----- pass 2: sweep stale `sent` rows -----
+        timeout_minutes = self._get_n8n_callback_timeout_minutes()
+        timeout_cutoff = now - timedelta(minutes=timeout_minutes)
+        stale_sent_logs = self.db.query(IntegrationLog).filter(
+            and_(
+                IntegrationLog.status == "sent",
+                IntegrationLog.processed_at.isnot(None),
+                IntegrationLog.processed_at <= timeout_cutoff,
+            )
+        ).limit(100).all()
+
+        timed_out = 0
+        for log in stale_sent_logs:
+            try:
+                from app.schemas.integration import IntegrationLogUpdate
+
+                self.update_integration_log(
+                    log.id,
+                    IntegrationLogUpdate(
+                        status="failed",
+                        error_code="N8N_CALLBACK_TIMEOUT",
+                        error_message=(
+                            f"n8n did not call back within {timeout_minutes} minutes"
+                        ),
+                        processed_at=datetime.utcnow(),
+                    ),
+                )
+                timed_out += 1
+            except Exception as e:
+                logger.error(
+                    f"Error marking integration log {log.id} as timed out: {str(e)}",
+                    exc_info=True,
+                )
+
         return {
             "processed": processed,
             "succeeded": succeeded,
             "failed": failed,
-            "total_found": len(pending_logs)
+            "total_found": len(pending_logs),
+            "timed_out": timed_out,
         }
+
+    def _get_n8n_callback_timeout_minutes(self) -> int:
+        """
+        Resolve the n8n callback timeout in minutes.
+
+        Source: `N8N_CALLBACK_TIMEOUT_MINUTES` env var. Default 10.
+        Returns an int >= 1. A future migration may add a column on
+        SystemSetting; the env fallback keeps this safe for legacy installs.
+        """
+        import os
+
+        env_val = os.environ.get("N8N_CALLBACK_TIMEOUT_MINUTES")
+        if env_val:
+            try:
+                return max(1, int(env_val))
+            except ValueError:
+                pass
+        return 10

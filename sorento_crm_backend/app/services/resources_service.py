@@ -427,11 +427,13 @@ class AttachmentService:
         directory_id: Optional[str] = None,
         is_deleted: Optional[bool] = None,
         attachment_type_id: Optional[str] = None,
+        attachment_type_code: Optional[str] = None,
         uploaded_by: Optional[str] = None,
         uploaded_at_from: Optional[Any] = None,
         uploaded_at_to: Optional[Any] = None,
         access_levels: Optional[List[str]] = None,
         access_levels_match: Optional[str] = "any",
+        link_status: Optional[str] = None,
         entities: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
     ):
@@ -481,6 +483,41 @@ class AttachmentService:
             q = q.filter(Attachment.directory_id == directory_id)
         if attachment_type_id:
             q = q.filter(Attachment.attachment_type_id == attachment_type_id)
+        if attachment_type_code and attachment_type_code.strip():
+            # Resolve attachment_type_code → AttachmentType.id, then filter by
+            # that type. Lookup is permissive so the caller (MCP, n8n) does not
+            # need to know whether the type was seeded with `code` set or only
+            # `type_name`, what casing it uses, or whether the canonical label
+            # is "catalogue" vs "catalog":
+            #   1. case-insensitive `code` match
+            #   2. case-insensitive `type_name` match
+            #   3. spelling variants (catalog ↔ catalogue) tried against both
+            # No match → impossible-id filter so the tool returns 0 rows
+            # instead of silently dropping the filter (catalogue domain hint
+            # must never leak non-catalogue attachments).
+            code_norm = attachment_type_code.strip()
+            variants = {code_norm}
+            low = code_norm.lower()
+            if low == "catalog":
+                variants.add("catalogue")
+            elif low == "catalogue":
+                variants.add("catalog")
+            type_row = None
+            for variant in variants:
+                type_row = (
+                    self.db.query(AttachmentType)
+                    .filter(AttachmentType.code.ilike(variant))
+                    .first()
+                    or self.db.query(AttachmentType)
+                    .filter(AttachmentType.type_name.ilike(variant))
+                    .first()
+                )
+                if type_row is not None:
+                    break
+            if type_row is None:
+                q = q.filter(Attachment.id == "00000000-0000-0000-0000-000000000000")
+            else:
+                q = q.filter(Attachment.attachment_type_id == str(type_row.id))
         if uploaded_by:
             q = q.filter(Attachment.uploaded_by == uploaded_by)
         if uploaded_at_from is not None:
@@ -514,7 +551,31 @@ class AttachmentService:
                     Attachment.description.ilike(term),
                 )
             )
-        
+
+        if link_status in ("linked", "unlinked"):
+            from sqlalchemy import exists, and_ as _and, not_ as _not
+            from app.models.product import ProductAttachment
+            from app.models.marketing import PromotionAttachment
+            from app.models.forms import Form
+            from app.models.procurement import InboundShipment
+            from app.models.entity_attachment import EntityAttachmentLink
+            from app.models.attachment_field_link import AttachmentFieldLink
+
+            # An attachment counts as "linked" if it is referenced from ANY of the
+            # entity↔attachment join tables, a direct attachment_id FK, the generic
+            # polymorphic link table, the field-level link table, or carries a legacy
+            # entity_type/entity_id direct association.
+            any_link = or_(
+                exists().where(ProductAttachment.attachment_id == Attachment.id),
+                exists().where(PromotionAttachment.attachment_id == Attachment.id),
+                exists().where(Form.attachment_id == Attachment.id),
+                exists().where(InboundShipment.attachment_id == Attachment.id),
+                exists().where(EntityAttachmentLink.attachment_id == Attachment.id),
+                exists().where(AttachmentFieldLink.attachment_id == Attachment.id),
+                _and(Attachment.entity_type.isnot(None), Attachment.entity_id.isnot(None)),
+            )
+            q = q.filter(any_link if link_status == "linked" else _not(any_link))
+
         sort_desc = (dir or "desc").lower() == "desc"
         sort_alias = {
             "name": "original_filename",
@@ -522,7 +583,9 @@ class AttachmentService:
             "size": "file_size_bytes",
         }
         if sort == "attachment_type":
-            from app.models.resources import AttachmentType
+            # AttachmentType already imported at module top; redundant local
+            # import here shadowed the name and caused UnboundLocalError when
+            # any earlier branch (e.g. attachment_type_code resolver) touched it.
             q = q.outerjoin(AttachmentType, Attachment.attachment_type_id == AttachmentType.id)
             order_col = AttachmentType.type_name
             q = q.order_by(order_col.desc() if sort_desc else order_col.asc())

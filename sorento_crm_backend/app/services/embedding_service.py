@@ -405,18 +405,12 @@ class EmbeddingReadService:
                     "crm_incoming_stock_shipments",
                     "crm_incoming_stock_shipment_products",
                     "crm_incoming_stock_shipment_attachment",
-                    "crm_incoming_stock_grn",
                 ):
                     score -= 0.25
             if (
                 ("packing list" in q_lower or "attachment" in q_lower or "document" in q_lower or "file" in q_lower)
                 and ("shipment" in q_lower or "container" in q_lower or "packing list" in q_lower)
                 and tool_name == "crm_incoming_stock_shipment_attachment"
-            ):
-                score += 0.08
-            if (
-                ("grn" in q_lower or "goods received" in q_lower or "receipt document" in q_lower)
-                and tool_name == "crm_incoming_stock_grn"
             ):
                 score += 0.08
             if "ledger" in q_lower or "transaction history" in q_lower or "movement history" in q_lower:
@@ -668,7 +662,6 @@ class EmbeddingReadService:
                     "crm_incoming_stock_shipments",
                     "crm_incoming_stock_shipment_products",
                     "crm_incoming_stock_shipment_attachment",
-                    "crm_incoming_stock_grn",
                 ):
                     score -= 0.35
             if "is inbound_shipment" in q_lower:
@@ -705,8 +698,6 @@ class EmbeddingReadService:
                     score += 0.10
                 if tool_name == "crm_marketing_promotion_products_list":
                     score -= 0.06
-            if "is grn" in q_lower and tool_name == "crm_incoming_stock_grn":
-                score += 0.20
             if "is spo_allocation" in q_lower and tool_name.startswith("crm_procurement_spo"):
                 score += 0.15
             # If a code is explicitly unresolved, strongly penalize every data tool —

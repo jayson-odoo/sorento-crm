@@ -118,6 +118,23 @@ export function AttachmentDropzone({
           document.querySelector('[role="dialog"][data-state="open"]')) {
         return;
       }
+      // Let the native paste happen when the user is typing in a form field.
+      // This window-level listener is a catch-all for screenshot/file paste; it
+      // must NOT hijack text paste into DO number / customer name / any input,
+      // textarea or contenteditable on the portal form.
+      const target = e.target as HTMLElement | null;
+      const active = (typeof document !== 'undefined'
+        ? (document.activeElement as HTMLElement | null)
+        : null);
+      const isEditable = (el: HTMLElement | null) =>
+        !!el && (
+          el.tagName === 'INPUT' ||
+          el.tagName === 'TEXTAREA' ||
+          el.isContentEditable
+        );
+      if (isEditable(target) || isEditable(active)) {
+        return;
+      }
       const items = Array.from(e.clipboardData.items);
       const files: File[] = [];
       for (const item of items) {
@@ -127,7 +144,8 @@ export function AttachmentDropzone({
         }
       }
       // No file on the clipboard but there is text → save the paste as a .txt
-      // file so it flows through the same upload path.
+      // file so it flows through the same upload path. (Only reached when focus
+      // is NOT in an editable field — see guard above.)
       if (!files.length) {
         const text = e.clipboardData.getData('text/plain');
         if (text && text.trim()) {

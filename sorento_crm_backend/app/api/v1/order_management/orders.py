@@ -15,7 +15,7 @@ from app.services.uuid_list_param import parse_uuid_list
 from app.config import settings as app_settings
 
 
-_EXTERNAL_ORDERS_LIST_LIMIT_CAP = 10
+_EXTERNAL_ORDERS_LIST_LIMIT_CAP = 20
 
 
 def _request_has_valid_external_api_key(request: Optional[Request]) -> bool:
@@ -472,6 +472,7 @@ async def list_distinct_debtors(
 
 @router.get("/by-product", response_model=ListResponse[OrderSimpleRef])
 async def get_orders_by_product(
+    request: Request,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     query: Optional[str] = Query(None, description="Matches product code, name, description, order number, or debtor name"),
@@ -545,8 +546,15 @@ async def get_orders_by_product(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Get distinct orders matched by product search."""
+    """Get distinct orders matched by product search.
+
+    External API-key callers (e.g. AI agent / MCP) are capped at limit=20 to keep
+    tool responses small enough to reason over, matching the cap on the main
+    orders list endpoint.
+    """
     try:
+        if _request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_LIST_LIMIT_CAP:
+            limit = _EXTERNAL_ORDERS_LIST_LIMIT_CAP
         norm_entities = _normalize_entities(entities)
         parsed_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
         # Endpoint is product-centric: require a product narrower to prevent

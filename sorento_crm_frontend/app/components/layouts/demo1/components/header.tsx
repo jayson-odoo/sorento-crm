@@ -9,6 +9,7 @@ import { AppsDropdownMenu } from '@/partials/topbar/apps-dropdown-menu';
 import { NotificationsSheet } from '@/partials/topbar/notifications-sheet';
 import { UserDropdownMenu } from '@/partials/topbar/user-dropdown-menu';
 import { SessionUserAvatar } from '@/partials/topbar/session-user-avatar';
+import { UploadActivityIcon } from '@/components/upload-activity';
 import {
   Bell,
   LayoutGrid,
@@ -169,6 +170,7 @@ export function Header() {
                   }
                 />
               )}
+              <UploadActivityIcon />
               <NotificationsSheet
                 trigger={
                   <Button

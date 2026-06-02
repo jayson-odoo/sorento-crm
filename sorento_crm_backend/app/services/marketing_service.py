@@ -363,16 +363,27 @@ class PromotionService:
                 q = q.filter(Promotion.start_date <= period_to)
             if entity_promotion_ids:
                 q = q.filter(Promotion.id.in_(entity_promotion_ids))
-            if promotion_ids:
-                q = q.filter(Promotion.id.in_(promotion_ids))
+            # promotion_ids + product_ids always combine via OR (n8n promo
+            # discovery: "these specific promotions OR any promotion containing
+            # these products"). When only one of the two is supplied, the OR
+            # collapses to that single clause — equivalent to a plain filter.
+            product_ids_clause = None
             if product_ids:
-                q = q.filter(
-                    exists().where(
-                        PromotionProduct.promotion_id == Promotion.id
-                    ).where(
-                        PromotionProduct.product_id.in_(product_ids)
-                    )
+                product_ids_clause = exists().where(
+                    PromotionProduct.promotion_id == Promotion.id
+                ).where(
+                    PromotionProduct.product_id.in_(product_ids)
                 )
+            promotion_ids_clause = (
+                Promotion.id.in_(promotion_ids) if promotion_ids else None
+            )
+            if promotion_ids_clause is not None and product_ids_clause is not None:
+                from sqlalchemy import or_ as _sa_or
+                q = q.filter(_sa_or(promotion_ids_clause, product_ids_clause))
+            elif promotion_ids_clause is not None:
+                q = q.filter(promotion_ids_clause)
+            elif product_ids_clause is not None:
+                q = q.filter(product_ids_clause)
             if advanced_filter_clause is not None:
                 q = q.filter(advanced_filter_clause)
             return q

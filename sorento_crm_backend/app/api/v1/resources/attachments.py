@@ -169,11 +169,16 @@ async def get_attachments(
     directory_id: Optional[str] = Query(None),
     is_deleted: Optional[bool] = Query(None),
     attachment_type_id: Optional[str] = Query(None),
+    attachment_type_code: Optional[str] = Query(
+        None,
+        description="Filter by AttachmentType.code (canonical) or type_name (fallback, case-insensitive). Unknown code → 0 rows.",
+    ),
     uploaded_by: Optional[str] = Query(None),
     uploaded_at_from: Optional[datetime] = Query(None),
     uploaded_at_to: Optional[datetime] = Query(None),
     access_levels: Optional[List[str]] = Query(None, description="Filter to attachments whose access_levels match these codes (see access_levels_match)."),
     access_levels_match: Optional[str] = Query("any", description="How to combine access_levels: 'any' (overlap, default), 'all' (contains every code), 'exact' (set equality)."),
+    link_status: Optional[str] = Query(None, description="Filter by linkage: 'linked' (referenced by any product/promotion/form/packing-list/field link) or 'unlinked' (orphans)."),
     resolve_signed_urls: bool = Query(False, description="When false, return stored file_path without CloudFront signing."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -193,11 +198,13 @@ async def get_attachments(
             directory_id=directory_id,
             is_deleted=is_deleted,
             attachment_type_id=attachment_type_id,
+            attachment_type_code=attachment_type_code,
             uploaded_by=uploaded_by,
             uploaded_at_from=uploaded_at_from,
             uploaded_at_to=uploaded_at_to,
             access_levels=access_levels,
             access_levels_match=access_levels_match,
+            link_status=link_status,
             entities=normalize_entities_query_param(entities),
             attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
         )
@@ -1263,10 +1270,31 @@ async def resubmit_attachment_webhook(
         )
 
         if not logs_result.get("data") or len(logs_result["data"]) == 0:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No integration log found for this attachment. The attachment may not have been processed yet."
+            # No prior log (e.g. local dev DB never imported integration_logs, or
+            # attachment uploaded before webhook URL was configured). Fall back to
+            # the same path the upload API uses: create a fresh integration log
+            # and POST the webhook payload built from current attachment state.
+            current_webhook_url = get_n8n_attachment_webhook_url(db)
+            if not current_webhook_url:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "No attachment webhook URL configured. Set the n8n "
+                        "attachment webhook in Settings before resubmitting."
+                    ),
+                )
+            _create_and_send_webhook(
+                db,
+                attachment,
+                getattr(attachment, "attachment_type", None),
+                getattr(attachment, "access_levels", None),
+                current_user["id"],
+                event_type="attachment_resubmitted",
             )
+            return {
+                "message": "No prior integration log; created fresh webhook send.",
+                "integration_log_id": None,
+            }
 
         integration_log = logs_result["data"][0]
         log_id = str(integration_log.id)

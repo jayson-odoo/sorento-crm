@@ -41,8 +41,37 @@ DOMAIN_STOPWORDS: dict[str, set[str]] = {
     "marketing_form": {
         "form", "forms", "submission", "submissions",
     },
-    "product_image": {
-        "image", "images", "photo", "photos", "picture", "pictures",
+    # NOTE: image / photo / picture / drawing / certificate are NOT stopwords.
+    # They are real `attachment_type.type_name` tokens ("Product Photos",
+    # "Technical Drawing", "Certificate of Conformity"). Stripping them broke
+    # multi-word entity-token resolution like "actual photo" → "actual",
+    # which then substring-matched the wrong attachment_type row.
+    # Entity-label noise that the upstream agent often prepends to the actual
+    # value ("Customer Chin Chun", "Supplier Sorento Sdn Bhd"). Without these,
+    # the resolver's fuzzy ILIKE / embedding both run against the label-polluted
+    # token and miss the real row. Union into _ENTITY_STOPWORDS in
+    # `app/api/v1/system/references.py:_strip_entity_stopwords`.
+    "customer": {
+        "customer", "customers",
+        "client", "clients",
+        "debtor", "debtors",
+        "company", "account",
+    },
+    "supplier": {
+        "supplier", "suppliers",
+        "vendor", "vendors",
+    },
+    "brand": {
+        "brand", "brands",
+    },
+    "warehouse": {
+        "warehouse", "warehouses",
+        "location", "locations",
+    },
+    "transporter": {
+        "transporter", "transporters",
+        "carrier", "carriers",
+        "courier", "couriers",
     },
 }
 

@@ -90,6 +90,10 @@ _EMBEDDING_SKIP_TOOLS: set[str] = {
     "crm_workflow_forms_submissions_list",
     "crm_workflow_forms_submissions_get",
     "crm_workflow_forms_submissions_allowed_transitions",
+    # Discontinued — removed from MCP catalog. Skip set keeps the persisted
+    # mcp_tools row out of RAG + auto-removes it from ai_assistant_configs
+    # enabled_tools on the next `_sync_enabled_tools` pass.
+    "crm_incoming_stock_grn",
 }
 
 
@@ -280,13 +284,17 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     ),
     "crm_master_product_attachments_list": ToolIntent(
         category="general_enquiries.attachment",
-        intent="Find product attachments (brochures, datasheets, certificates) linked to a product.",
+        intent="Find product attachments (brochures, datasheets, certificates) linked to a product, optionally narrowed by attachment type.",
         description=(
-            "List product↔attachment links filtered by product_id (UUID or exact product code), "
-            "attachment_id, or user_type. Use this when the user asks for product brochures, "
-            "datasheets, certificates, test reports, or installation guides tied to a SKU. "
-            "Not for global stock-list documents (use crm_resource_attachments_current_stock_list) "
-            "and not for promotion flyers (use crm_marketing_promotion_attachments_list)."
+            "List product↔attachment links filtered by product_ids (canonical product UUIDs), "
+            "attachment_ids (canonical attachment UUIDs), and / or attachment_type_ids (canonical "
+            "AttachmentType UUIDs — narrows to a doc class such as brochure, spec sheet, datasheet, "
+            "manual, installation guide, or certificate). Use this when the user asks for product "
+            "brochures, datasheets, certificates, test reports, or installation guides tied to a SKU "
+            "— combine product_ids + attachment_type_ids to fetch only the SKU's brochure (or only its "
+            "spec sheet, etc.). Not for global stock-list documents (use "
+            "crm_resource_attachments_current_stock_list) and not for promotion flyers (use "
+            "crm_marketing_promotion_attachments_list)."
         ),
         typical_user_questions=(
             "Can I get the brochure for this product?",
@@ -294,8 +302,16 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Find the technical certificate / test report for this product code.",
             "Show attachments for this product.",
             "Is there an installation guide document linked to this product?",
+            "Show only the spec sheets for this product.",
+            "Give me the brochure attachment type for this SKU, not the certificate.",
+            "Filter product documents by attachment type id.",
         ),
-        aliases=("product brochures", "product datasheets"),
+        aliases=(
+            "product brochures",
+            "product datasheets",
+            "product attachments by type",
+            "product docs filtered by attachment type",
+        ),
     ),
     "crm_master_product_attachments_by_product": ToolIntent(
         category="general_enquiries.attachment",
@@ -509,6 +525,37 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "price list document",
             "document library",
             "global attachments",
+        ),
+    ),
+    "crm_resource_attachments_catalogue": ToolIntent(
+        category="general_enquiries.attachment",
+        intent="Resolve catalogue attachment UUIDs to metadata / signed URLs (catalogue domain only).",
+        description=(
+            "DOMAIN-SCOPED catalogue tool. Pre-filtered server-side to "
+            "AttachmentType=catalogue (the Sorento product catalogue PDFs). "
+            "n8n's catalogue-hinted agent passes one or more known attachment "
+            "UUIDs in `attachment_ids` (csv / JSON / repeated) and gets back "
+            "the catalogue rows for those UUIDs only — non-catalogue UUIDs are "
+            "dropped by the backend code filter. REQUIRED: `attachment_ids`; "
+            "without UUIDs the tool returns an empty page (it does NOT browse "
+            "the catalogue library). For free-text catalogue / brochure / "
+            "price-list discovery use crm_resource_attachments_list instead. "
+            "Set resolve_signed_urls=true to include signed preview/download "
+            "URLs in the response."
+        ),
+        typical_user_questions=(
+            "Resolve these catalogue attachment UUIDs to file metadata.",
+            "Give me the signed download URL for this catalogue document UUID.",
+            "Fetch the catalogue PDF row for this attachment id.",
+            "Confirm these UUIDs are catalogue documents and return their files.",
+            "Get metadata for the catalogue attachments I already identified.",
+        ),
+        aliases=(
+            "catalogue attachment lookup",
+            "catalogue by uuid",
+            "catalogue domain tool",
+            "scoped catalogue resolver",
+            "n8n catalogue domain hint",
         ),
     ),
     "crm_resource_attachments_current_stock_list": ToolIntent(
@@ -863,9 +910,9 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "(3) per-shipment breakdown with shipment_number, shipping_container_number, ETA, "
             "batch_number, remaining_incoming_quantity, packing-list attachment, and that "
             "shipment's warehouse_allocations; (4) nearest estimated_arrival_date. Do NOT also "
-            "call crm_incoming_stock_shipments, crm_incoming_stock_shipment_products, "
-            "crm_incoming_stock_shipment_attachment, or crm_incoming_stock_grn when answering a "
-            "product-incoming question \u2014 this tool already includes all of their data. Never "
+            "call crm_incoming_stock_shipments, crm_incoming_stock_shipment_products, or "
+            "crm_incoming_stock_shipment_attachment when answering a product-incoming question "
+            "\u2014 this tool already includes all of their data. Never "
             "exposes received / rejected quantities, SPO numbers, or internal IDs. Accepts "
             "`product_id` (UUID or product_code / SKU) or a free-text `query`."
         ),
@@ -955,25 +1002,11 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "packing list download",
         ),
     ),
-    "crm_incoming_stock_grn": ToolIntent(
-        category="general_enquiries.incoming_stock",
-        intent="Look up GRN (goods received note) records only when the user EXPLICITLY asks about GRNs.",
-        description=(
-            "Use ONLY when the user EXPLICITLY mentions GRN / goods received note / receipt "
-            "document / 'has a GRN been created?'. Do NOT use this for 'any incoming for product "
-            "X' questions \u2014 those are about stock still coming, not stock already received, and "
-            "crm_incoming_stock_by_product handles them in one call. Returns minimal GRN info "
-            "(grn_number, grn_date, grn_status, shipment_number). NO quantities, NO received / "
-            "rejected / discrepancy counts, NO SPO numbers. Requires `shipment_id` or `product_id` "
-            "(each accepts UUID or business code)."
-        ),
-        typical_user_questions=(
-            "Has a GRN been created for this shipment?",
-            "Show me the goods received note for this packing list.",
-            "Is there a receipt document for this container?",
-        ),
-        aliases=("GRN enquiry", "goods received note status", "receipt document lookup"),
-    ),
+    # crm_incoming_stock_grn \u2014 DISCONTINUED. Removed from MCP catalog. GRN
+    # lookups now go through `crm_procurement_grn_list` (admin) only; the
+    # user-facing question "has a GRN been created?" is answered by
+    # `crm_incoming_stock_by_product` (which already exposes per-shipment GRN
+    # context in its response).
     # ==================================================================
     # PROCUREMENT — ADMIN / INTERNAL raw data (do NOT use for user enquiries).
     # These expose received/rejected quantities, SPO numbers, internal IDs. Kept
@@ -1048,7 +1081,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="ADMIN ONLY — raw GRN / picking header list with statuses and totals.",
         description=(
             "Raw GRN / picking headers with picking_status, inspection_status, totals. For user-"
-            "facing 'has a GRN been created?' use crm_incoming_stock_grn instead."
+            "facing 'has a GRN been created?' use crm_incoming_stock_by_product (the per-shipment "
+            "breakdown already surfaces GRN linkage)."
         ),
         typical_user_questions=("Admin: raw GRN list with totals.",),
         aliases=("admin raw GRN list",),

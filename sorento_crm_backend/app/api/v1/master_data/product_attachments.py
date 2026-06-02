@@ -31,6 +31,10 @@ async def get_product_attachments(
         None,
         description="Canonical attachment UUIDs (csv/JSON/repeated).",
     ),
+    attachment_type_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical AttachmentType UUIDs (csv/JSON/repeated) — narrows to brochure/spec sheet/installation guide/etc.",
+    ),
     product_id: Optional[str] = Query(None, description="Legacy: single product UUID."),
     attachment_id: Optional[str] = Query(None, description="Legacy: single attachment UUID."),
     user_type: Optional[str] = Query(None, description="Legacy single access-level filter."),
@@ -50,6 +54,7 @@ async def get_product_attachments(
             attachment_id=attachment_id,
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
             attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
+            attachment_type_ids=parse_uuid_list(attachment_type_ids, param_name="attachment_type_ids"),
             user_type=user_type,
             contact_access_codes=None,
             entities=normalize_entities_query_param(entities),

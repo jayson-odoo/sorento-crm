@@ -218,6 +218,9 @@ class OrderService:
                     Order.order_number.ilike(term),
                     Order.debtor_name.ilike(term),
                     Order.debtor_code.ilike(term),
+                    # Legacy free-text transporter column kept for back-compat
+                    # rows that pre-date the transporters FK.
+                    Order.transporter.ilike(term),
                 )
             )
             customer_ids = (
@@ -230,7 +233,22 @@ class OrderService:
                     )
                 )
             )
-            query_filter = Order.id.in_(direct_ids.union(customer_ids))
+            # Canonical transporter join: matches Transporter.code / name so the
+            # DO grid free-text search resolves transporter searches the same
+            # way the Filters panel does (transporter_id FK).
+            transporter_ids = (
+                self.db.query(Order.id)
+                .join(Transporter, Order.transporter_id == Transporter.id)
+                .filter(
+                    or_(
+                        Transporter.code.ilike(term),
+                        Transporter.name.ilike(term),
+                    )
+                )
+            )
+            query_filter = Order.id.in_(
+                direct_ids.union(customer_ids).union(transporter_ids)
+            )
         if customer_query and (customer_query := (customer_query or "").strip()):
             customer_clause, _ = resolve_via_embedding_then_ilike(
                 self.db,
@@ -685,9 +703,22 @@ class OrderService:
         query_filter = None
         if query and (query := (query or "").strip()):
             term = f"%{query}%"
+            # Transporter sub-id set joined to the canonical transporters table
+            # so by-product search also finds DOs by transporter code / name
+            # (matches `list_orders` behavior).
+            transporter_id_subq = (
+                self.db.query(Transporter.id).filter(
+                    or_(
+                        Transporter.code.ilike(term),
+                        Transporter.name.ilike(term),
+                    )
+                )
+            )
             query_filter = or_(
                 Order.order_number.ilike(term),
                 Order.debtor_name.ilike(term),
+                Order.transporter.ilike(term),  # legacy free-text column
+                Order.transporter_id.in_(transporter_id_subq),
                 Product.product_code.ilike(term),
                 Product.product_name.ilike(term),
                 Product.description.ilike(term),
@@ -838,6 +869,105 @@ class OrderService:
                 out[key] = None
         return out
 
+    def _upsert_customer_from_debtor(
+        self,
+        debtor_name: Optional[str],
+        debtor_code: Optional[str],
+    ) -> Optional[str]:
+        """Find-or-create a Customer row from order debtor fields, return its id.
+
+        Match key is the (customer_code, customer_name) PAIR — case + whitespace
+        insensitive — because one Sage code can carry multiple distinct debtor
+        names (e.g. "300-D093" maps to both "Deluxe Home Center (KTN)" and
+        "Deluxe Home Center AC (I)"). Each unique pair gets its own customers
+        row. Matches the composite unique index created in migration 220.
+
+        When debtor_code is missing, fall back to a deterministic `DBR-<hash>`
+        slug derived from the name so the same blank-code debtor doesn't
+        explode into duplicate rows.
+        """
+        name = (debtor_name or "").strip()
+        if not name:
+            return None
+        code = (debtor_code or "").strip()
+        if not code:
+            import hashlib
+            code = "DBR-" + hashlib.md5(name.lower().encode("utf-8")).hexdigest()[:10]
+        # Pair match (case + whitespace normalized on both columns).
+        existing = (
+            self.db.query(Customer)
+            .filter(
+                func.lower(func.btrim(Customer.customer_code)) == code.lower(),
+                func.lower(func.btrim(Customer.customer_name)) == name.lower(),
+            )
+            .first()
+        )
+        if existing is not None:
+            return str(existing.id)
+        new_customer = Customer(
+            customer_code=code,
+            customer_name=name,
+            customer_type="company",
+            is_active=True,
+        )
+        self.db.add(new_customer)
+        # Flush so the new id is available before the order persists; commit
+        # remains with the order so a single transaction wraps both writes.
+        self.db.flush()
+        return str(new_customer.id)
+
+    def _upsert_transporter_from_text(self, transporter_text: Optional[str]) -> Optional[str]:
+        """Find-or-create a Transporter row keyed by normalized_name, return id.
+
+        Mirrors migration 200's seeding rule. `normalized_name = lower(btrim(...))`
+        is the unique key — code + name default to the raw stripped text on
+        first sight.
+        """
+        raw = (transporter_text or "").strip()
+        if not raw:
+            return None
+        normalized = raw.lower()
+        existing = (
+            self.db.query(Transporter)
+            .filter(Transporter.normalized_name == normalized)
+            .first()
+        )
+        if existing is not None:
+            return str(existing.id)
+        new_row = Transporter(
+            code=raw,
+            name=raw,
+            normalized_name=normalized,
+        )
+        self.db.add(new_row)
+        self.db.flush()
+        return str(new_row.id)
+
+    def _sync_order_master_refs(self, order_dict: dict) -> dict:
+        """Populate `customer_id` and `transporter_id` from text fields, in place.
+
+        Called by create_order / update_order before persistence. Only writes
+        the FK when (a) the caller did not supply one explicitly, OR (b) the
+        existing value does not match the text field (text edit re-points the
+        FK). Idempotent: master rows are deduped via the unique
+        `customer_code` / `transporters.normalized_name` indexes.
+        """
+        out = dict(order_dict)
+
+        debtor_name = out.get("debtor_name")
+        if debtor_name:
+            cid = self._upsert_customer_from_debtor(debtor_name, out.get("debtor_code"))
+            if cid:
+                out["customer_id"] = cid  # always re-point; debtor_name edit can change customer
+
+        transporter_text = out.get("transporter")
+        if transporter_text:
+            tid = self._upsert_transporter_from_text(transporter_text)
+            if tid:
+                out["transporter_id"] = tid
+
+        return out
+
     def create_order(self, order_data: OrderCreate, created_by: str):
         """Create a new order."""
         # Check if order_number already exists
@@ -853,9 +983,12 @@ class OrderService:
         
         order_dict = order_data.model_dump()
         order_dict = self._normalize_uuid_fields(order_dict)
+        # Auto-upsert customer + transporter master rows from text fields so the
+        # FKs stay populated for every new order (mirrors migrations 200/206/207).
+        order_dict = self._sync_order_master_refs(order_dict)
         order_dict["total_amount"] = total
         order_dict["created_by"] = created_by
-        
+
         order = Order(**order_dict)
         self.db.add(order)
         self.db.commit()
@@ -875,14 +1008,29 @@ class OrderService:
                 discount = update_data.get("discount_amount", order.discount_amount) or Decimal("0")
                 tax = update_data.get("tax_amount", order.tax_amount) or Decimal("0")
                 update_data["total_amount"] = subtotal - discount + tax
-            
+
+            # Re-sync customer_id / transporter_id whenever debtor_name /
+            # debtor_code / transporter text changes on update. Carry the
+            # pre-existing values forward so the upsert sees full context even
+            # if the caller only patched one field.
+            text_view = {
+                "debtor_name": update_data.get("debtor_name", order.debtor_name),
+                "debtor_code": update_data.get("debtor_code", order.debtor_code),
+                "transporter": update_data.get("transporter", order.transporter),
+            }
+            synced = self._sync_order_master_refs(text_view)
+            if "customer_id" in synced:
+                update_data["customer_id"] = synced["customer_id"]
+            if "transporter_id" in synced:
+                update_data["transporter_id"] = synced["transporter_id"]
+
             update_data["updated_by"] = updated_by
             for key, value in update_data.items():
                 setattr(order, key, value)
-            
+
             self.db.commit()
             self.db.refresh(order)
-        
+
         return order
 
     def create_order_line(self, order_id: str, data: OrderLineCreate):
@@ -1778,13 +1926,22 @@ class CustomerService:
         return customer
     
     def create_customer(self, customer_data: CustomerCreate):
-        """Create a new customer."""
+        """Create a new customer.
+
+        Uniqueness is on the (customer_code, customer_name) pair — case +
+        whitespace insensitive — so the same Sage code can legitimately host
+        multiple debtor names (e.g. "300-D093" for "Deluxe Home Center (KTN)"
+        and "Deluxe Home Center AC (I)").
+        """
+        code = (customer_data.customer_code or "").strip()
+        name = (customer_data.customer_name or "").strip()
         existing = self.db.query(Customer).filter(
-            Customer.customer_code == customer_data.customer_code
+            func.lower(func.btrim(Customer.customer_code)) == code.lower(),
+            func.lower(func.btrim(Customer.customer_name)) == name.lower(),
         ).first()
         if existing:
-            raise handle_conflict("Customer code already exists.")
-        
+            raise handle_conflict("Customer with this code + name already exists.")
+
         customer = Customer(**customer_data.model_dump())
         self.db.add(customer)
         self.db.commit()

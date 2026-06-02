@@ -104,11 +104,13 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "List per-SKU product↔attachment links (BROCHURE / SPEC SHEET / DATASHEET / MANUAL / "
             "INSTALLATION GUIDE / CERTIFICATE for a specific product). FILTER BY UUID: `product_ids` "
-            "(canonical product UUIDs) and / or `attachment_ids` (canonical attachment UUIDs)."
+            "(canonical product UUIDs), `attachment_ids` (canonical attachment UUIDs), and / or "
+            "`attachment_type_ids` (canonical AttachmentType UUIDs — narrows to a doc class such as "
+            "brochure or spec sheet). All three accept csv / JSON list / repeated query params."
         ),
         "/api/v1/master-data/product-attachments",
         (),
-        ("page", "limit", "sort", "dir", "product_ids", "attachment_ids"),
+        ("page", "limit", "sort", "dir", "product_ids", "attachment_ids", "attachment_type_ids"),
         domain="products",
         related_tools=("crm_master_products_list",),
         escalation_team="sales",
@@ -136,12 +138,17 @@ CATALOG: tuple[ToolSpec, ...] = (
             "start/end); when a narrowing filter yields zero active matches it falls back to INACTIVE and sets "
             "fallback_used=true. Pass active=false for historical-only. period_from / period_to (YYYY-MM-DD) "
             "scope by overlap with [start_date, end_date].\n\n"
-            "REQUIRED — at least ONE narrowing filter or the tool returns an empty page:\n"
+            "OPTIONAL narrowing filters (call without any to get the latest 10 active promotions):\n"
             "  • `promotion_ids` (canonical promotion UUIDs, csv / JSON / repeated)\n"
-            "  • `product_ids` (canonical product UUIDs — promotions containing any)\n\n"
+            "  • `product_ids` (canonical product UUIDs — promotions containing any)\n"
+            "  When BOTH `promotion_ids` and `product_ids` are supplied, they combine\n"
+            "  via OR: a promotion is returned if it is in `promotion_ids` OR contains\n"
+            "  any product in `product_ids` (no AND option).\n\n"
+            "Unfiltered MCP calls are auto-capped to limit=10 newest-first so open questions like "
+            "\"what is sorento's latest promo\" return a bounded page instead of the full catalog.\n\n"
             "ACCESS LEVELS: `access_levels` filters promotions whose `access_levels` JSONB overlaps the "
-            "supplied names (case-insensitive). NOT a narrowing filter on its own — must accompany a `*_ids` "
-            "filter. Phrases like `sorento dealer`, `mocha office`, `end user` are `access_levels` ONLY."
+            "supplied names (case-insensitive). Phrases like `sorento dealer`, `mocha office`, `end user` "
+            "are `access_levels` ONLY — never `*_ids` values."
         ),
         "/api/v1/marketing/promotions",
         (),
@@ -222,6 +229,33 @@ CATALOG: tuple[ToolSpec, ...] = (
         escalation_team="support",
     ),
     ToolSpec(
+        "crm_resource_attachments_catalogue",
+        (
+            "DOMAIN: catalogue. Narrow attachment lookup pre-filtered to "
+            "AttachmentType=catalogue (Sorento product catalogue PDFs / catalog "
+            "documents only). Use when the n8n flow has already resolved one or "
+            "more catalogue attachment UUIDs and needs metadata / signed URLs "
+            "for them.\n\n"
+            "REQUIRED — `attachment_ids` (canonical attachment UUIDs csv / JSON "
+            "/ repeated) MUST be supplied or the tool returns an empty page. "
+            "This tool does NOT browse the catalogue library; it resolves a "
+            "known set of UUIDs scoped to the catalogue type.\n\n"
+            "Set resolve_signed_urls=true to include signed preview/download "
+            "URLs in the response. Backend hard-filters by "
+            "attachment_type_code=catalogue server-side, so non-catalogue UUIDs "
+            "passed in `attachment_ids` are excluded automatically."
+        ),
+        "/api/v1/resource-management/attachments",
+        (),
+        (
+            "page", "limit", "attachment_ids", "sort", "dir",
+            "uploaded_at_from", "uploaded_at_to", "resolve_signed_urls",
+        ),
+        domain="resources",
+        related_tools=("crm_resource_attachments_list",),
+        escalation_team="sales",
+    ),
+    ToolSpec(
         "crm_resource_attachments_current_stock_list",
         "Latest Stock List attachment row (singleton) if configured, with a signed download URL.",
         "/api/v1/resource-management/attachments/current-stock-list",
@@ -267,7 +301,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_order_management_orders_list",
         (
             "List orders. Response uses `pickup_time` (was delivery_time); `order_status` is a plain string. "
-            "External/AI callers are HARD-CAPPED at limit=10 server-side — narrow via UUID + date filters.\n\n"
+            "External/AI callers are HARD-CAPPED at limit=20 server-side — narrow via UUID + date filters.\n\n"
             "FILTER BY UUID (typed canonical UUIDs, csv / JSON / repeated):\n"
             "  • `order_ids` — specific orders\n"
             "  • `customer_ids` — customers (Order.customer_id, falls back to debtor_name for legacy rows)\n"
@@ -291,6 +325,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "List distinct CUSTOMER SALES orders containing a specific product (outgoing / sold, NOT incoming "
             "stock). A product narrower is REQUIRED — pass `product_ids` (canonical product UUIDs, csv / JSON "
             "/ repeated) or the tool returns an empty page.\n\n"
+            "External/AI callers are HARD-CAPPED at limit=20 server-side — narrow via UUID + date filters "
+            "and paginate via `page` when more results are needed.\n\n"
             "OPTIONAL UUID FILTERS: `customer_ids`, `transporter_ids` (canonical UUIDs). "
             "Date window: actual_delivery_date_from / actual_delivery_date_to (YYYY-MM-DD). "
             "For 'any incoming for product X' use crm_incoming_stock_by_product instead."
@@ -328,9 +364,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "SHIPMENT-CENTRIC incoming list: 'any incoming shipments this month?' / 'what is arriving with ETA "
             "on date X?' / 'open shipments from supplier Y'. Returns shipment headers (shipment_number, "
             "container, ETA, total_remaining_incoming_quantity, distinct_products_incoming, packing-list "
-            "attachment). FILTER BY UUID: `shipment_ids` (canonical inbound-shipment UUIDs), `supplier_ids` "
-            "(canonical supplier UUIDs). eta_from / eta_to scope by ETA. For product questions use "
-            "crm_incoming_stock_by_product."
+            "attachment).\n\n"
+            "REQUIRED — at least ONE narrowing filter or the tool returns an empty page:\n"
+            "  • `shipment_ids` (canonical inbound-shipment UUIDs)\n"
+            "  • `supplier_ids` (canonical supplier UUIDs)\n"
+            "  • `eta_from` / `eta_to` (ETA window, YYYY-MM-DD)\n\n"
+            "For 'incoming for product X' use crm_incoming_stock_by_product instead — do NOT call this tool "
+            "without a narrower just to enumerate every open shipment."
         ),
         "/api/v1/incoming-stock/shipments",
         (),
@@ -339,27 +379,14 @@ CATALOG: tuple[ToolSpec, ...] = (
         related_tools=("crm_incoming_stock_by_product",),
         escalation_team="warehouse",
     ),
-    ToolSpec(
-        "crm_incoming_stock_grn",
-        (
-            "GRN / goods-received-note lookup: 'has a GRN been created?'. Returns minimal GRN info "
-            "(grn_number, grn_date, grn_status, shipment_number). NO quantities, NO received/rejected counts. "
-            "FILTER BY UUID: `shipment_ids` OR `product_ids` (canonical UUIDs csv / JSON / repeated) — one "
-            "required."
-        ),
-        "/api/v1/incoming-stock/grn",
-        (),
-        ("shipment_ids", "product_ids", "limit"),
-        domain="incoming_stock",
-        related_tools=("crm_incoming_stock_shipments", "crm_incoming_stock_by_product"),
-        escalation_team="warehouse",
-    ),
     # --- forms ---
     ToolSpec(
         "crm_forms_management_forms_list",
         (
-            "List forms. REQUIRED — `form_ids` (canonical form UUIDs csv / JSON / repeated) must be supplied "
-            "or the tool returns an empty page."
+            "List forms (newest-first by updated_at when sort omitted). Caller-supplied "
+            "`limit` is respected verbatim (server max 100). OPTIONAL narrowing filter:\n"
+            "  • `form_ids` (canonical form UUIDs csv / JSON / repeated)\n\n"
+            "Without `form_ids`, returns the page as requested — use page + limit to paginate."
         ),
         "/api/v1/forms-management/forms",
         (),
@@ -440,7 +467,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "orders.debtor_name / debtor_code). Each row returns debtor_name, debtor_code, order_count. "
             "FILTER BY UUID: `customer_ids` (canonical customer UUIDs, csv / JSON / repeated) filters the "
             "source orders by Order.customer_id before aggregation. External AI/MCP callers are HARD-CAPPED "
-            "at limit=10 server-side. Sort: debtor_name | debtor_code | order_count."
+            "at limit=20 server-side. Sort: debtor_name | debtor_code | order_count."
         ),
         "/api/v1/order-management/orders/debtors",
         (),

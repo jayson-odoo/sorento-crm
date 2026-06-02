@@ -31,6 +31,7 @@ import {
   type FieldLinkageEntityType,
 } from '@/app/(protected)/master-data-management/products/hooks/useFieldLinkageSchema';
 import { AccessLevelsMultiSelect } from './AccessLevelsMultiSelect';
+import { useUploadManager } from '@/components/upload-activity';
 
 interface AttachmentUploadDialogProps {
   open: boolean;
@@ -69,8 +70,17 @@ export default function AttachmentUploadDialog({
   const { data: attachmentTypes = [], isLoading: isLoadingTypes } = useAttachmentTypesList();
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
+  // Phase 2: real uploader wired into the Upload Activity drawer. The
+  // startSession `uploader` closure runs uploadMutation.mutateAsync for each
+  // file; the drawer's optimistic session reconciles each entry into a real
+  // attachment_id on resolve, or a post_failed state on reject.
   const uploadMutation = useUploadAttachment();
+  // ConflictDialog stays in JSX so existing inline-replace flows (Resubmit
+  // header button etc.) keep working. runUpload itself isn't used by the
+  // submit handler in Phase 2; see comment in handleUpload.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { runUpload, ConflictDialog } = useUploadConflict();
+  const uploadManager = useUploadManager();
 
   const selectedType = attachmentTypes.find((type: AttachmentType) => type.id === selectedTypeId);
   // Field linkage is now opt-in per attachment type (admin toggle), not a
@@ -276,9 +286,6 @@ export default function AttachmentUploadDialog({
       return;
     }
 
-    setIsUploading(true);
-    const uploadedIds: string[] = [];
-    let hasError = false;
     // One UUID per multi-file submit so the BE notification helpers can coalesce
     // the per-attachment n8n callbacks into a single email (see attachment_notification_helper).
     const uploadBatchId =
@@ -286,63 +293,52 @@ export default function AttachmentUploadDialog({
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
-    try {
-      // Upload files sequentially so each triggers N8N integration
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i];
-        try {
-          setUploadProgress(prev => ({ ...prev, [file.name]: 0 }));
+    // Snapshot dialog-level state into a closure so the optimistic
+    // uploader survives modal close + state resets cleanly.
+    const snapshot = {
+      attachmentTypeId: selectedTypeId,
+      entityType: entityType || propEntityType || undefined,
+      entityId: entityId || propEntityId || undefined,
+      accessLevels: [...accessLevels],
+      directoryId: defaultDirectoryId ?? undefined,
+      targetEntityType:
+        showFieldLinkageSection && targetEntityType ? targetEntityType : null,
+      targetFieldKeys:
+        showFieldLinkageSection && targetEntityType && targetFieldKeys.length > 0
+          ? [...targetFieldKeys]
+          : null,
+    };
 
-          const attachment = await runUpload((onConflict) =>
-            uploadMutation.mutateAsync({
-              file: file,
-              attachmentTypeId: selectedTypeId,
-              entityType: entityType || propEntityType || undefined,
-              entityId: entityId || propEntityId || undefined,
-              accessLevels,
-              directoryId: defaultDirectoryId ?? undefined,
-              targetEntityType: showFieldLinkageSection && targetEntityType ? targetEntityType : null,
-              targetFieldKeys:
-                showFieldLinkageSection && targetEntityType && targetFieldKeys.length > 0
-                  ? targetFieldKeys
-                  : null,
-              onConflict,
-              uploadBatchId,
-            })
-          );
-
-          if (attachment == null) {
-            // User cancelled the conflict prompt — mark this file as skipped and continue.
-            setUploadProgress(prev => ({ ...prev, [file.name]: -1 }));
-            continue;
-          }
-          uploadedIds.push(attachment.id);
-          setUploadProgress(prev => ({ ...prev, [file.name]: 100 }));
-        } catch (error) {
-          hasError = true;
-          setUploadProgress(prev => ({ ...prev, [file.name]: -1 })); // -1 indicates error
-          // Continue with next file even if one fails
+    uploadManager.startSession({
+      files: [...selectedFiles],
+      sessionType: selectedFiles.length === 1 ? 'single' : 'multi',
+      uploadBatchId,
+      uploader: async (file) => {
+        // Phase 2 baseline: bypass the interactive ConflictDialog because the
+        // modal closes immediately. Default to silent rename on conflict
+        // (`copy`); 409s on other paths surface as drawer "Upload failed"
+        // with a Retry button. Re-introducing interactive conflict resolution
+        // belongs in a follow-up (toast → reopen-modal flow).
+        const attachment = await uploadMutation.mutateAsync({
+          file,
+          attachmentTypeId: snapshot.attachmentTypeId,
+          entityType: snapshot.entityType,
+          entityId: snapshot.entityId,
+          accessLevels: snapshot.accessLevels,
+          directoryId: snapshot.directoryId,
+          targetEntityType: snapshot.targetEntityType,
+          targetFieldKeys: snapshot.targetFieldKeys,
+          onConflict: 'copy',
+          uploadBatchId,
+        });
+        if (!attachment) {
+          throw new Error('Upload returned no attachment');
         }
-      }
-
-      if (uploadedIds.length > 0) {
-        if (uploadedIds.length === selectedFiles.length) {
-          toast.success(`Successfully uploaded ${uploadedIds.length} file${uploadedIds.length !== 1 ? 's' : ''}`);
-        } else {
-          toast.warning(`Uploaded ${uploadedIds.length} of ${selectedFiles.length} files. Some files failed.`);
-        }
-        onSuccess?.(uploadedIds[0]); // Pass first ID for compatibility
-        onOpenChange(false);
-      } else if (hasError) {
-        setValidationError('All files failed to upload. Please try again.');
-        toast.error('All files failed to upload. Please try again.');
-      }
-    } catch (error) {
-      // Error is handled by the mutation hook (toast)
-      setValidationError('Upload failed. Please try again.');
-    } finally {
-      setIsUploading(false);
-    }
+        return { attachment_id: attachment.id };
+      },
+    });
+    onSuccess?.();
+    onOpenChange(false);
   };
 
   return (
