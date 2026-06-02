@@ -17,15 +17,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_index(
-        "ix_conversation_sla_tracking_source_entity",
-        "conversation_sla_tracking",
-        ["source_entity_type", "source_entity_id"],
+    # Idempotent: the index may already exist from a prior partial run that
+    # failed before alembic stamped this revision.
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ix_conversation_sla_tracking_source_entity "
+        "ON conversation_sla_tracking (source_entity_type, source_entity_id)"
     )
 
 
 def downgrade() -> None:
-    op.drop_index(
-        "ix_conversation_sla_tracking_source_entity",
-        table_name="conversation_sla_tracking",
+    op.execute(
+        "DROP INDEX IF EXISTS ix_conversation_sla_tracking_source_entity"
     )
