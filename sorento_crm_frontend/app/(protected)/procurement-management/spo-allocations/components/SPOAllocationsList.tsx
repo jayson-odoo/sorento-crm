@@ -32,7 +32,7 @@ import { useSPOAllocations, useSPOAllocationsGroupedBySPONumber } from '../hooks
 import SPOBulkDeleteDialog from './SPOBulkDeleteDialog';
 import { SPOImportDialog } from './SPOImportDialog';
 import { importSPOAllocations, validateSPOAllocations } from '../services/spoAllocationService';
-import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
+import { useImportJobDrawer } from '@/components/upload-activity';
 import { useQueryClient } from '@tanstack/react-query';
 import type {
   SPOAllocation,
@@ -63,6 +63,7 @@ export default function SPOAllocationsList() {
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const queryClient = useQueryClient();
+  const { notifyImportQueued } = useImportJobDrawer();
 
   const groupedQuery = useSPOAllocationsGroupedBySPONumber({
     page: pagination.pageIndex + 1,
@@ -466,13 +467,13 @@ export default function SPOAllocationsList() {
             </Button>
           </div>
         </CardHeader>
-        <LatestImportStatusPanel jobType="spo_import" title="Latest SPO import" className="mx-5 mb-2" />
         <SPOImportDialog
           open={importDialogOpen}
           onOpenChange={setImportDialogOpen}
           onTest={validateSPOAllocations}
           onUpload={async (files) => {
             const result = await importSPOAllocations(files);
+            notifyImportQueued();
             queryClient.invalidateQueries({ queryKey: ['spo-allocations'] });
             queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
             return result;

@@ -16,6 +16,7 @@ export {
   useOptimisticSessions,
 } from './UploadManagerContext';
 export { useUploadActivity } from './useUploadActivity';
+export { useImportJobDrawer } from './useImportJobDrawer';
 export { UPLOAD_ACTIVITY_QUERY_KEY } from './queryKeys';
 export { useAttachmentIntegrationLog } from './useAttachmentIntegrationLog';
 export type {

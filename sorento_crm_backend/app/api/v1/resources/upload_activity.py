@@ -21,14 +21,14 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import and_, desc
+from sqlalchemy import and_, desc, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.integration import IntegrationLog
 from app.models.job import ImportJob
-from app.models.resources import Attachment
+from app.models.resources import Attachment, AttachmentType
 from app.schemas.upload_activity import (
     LinkedEntity,
     SessionAggregate,
@@ -237,23 +237,39 @@ def get_upload_activity(
     user_id = str(current_user["id"])
     cutoff = since or (datetime.utcnow() - timedelta(days=7))
 
+    # Stock List uploads are background reference-data replacements (stock page
+    # import), not user file-management activity — n8n never "links" them, so
+    # they'd sit in the drawer stuck on "Processing" forever. Exclude the type.
+    excluded_type_ids = [
+        str(t.id)
+        for t in db.query(AttachmentType.id)
+        .filter(AttachmentType.type_name.in_(("Stock List", "Stock_List")))
+        .all()
+    ]
+
     # ---- pull user's recent attachments ------------------------------------
-    attachments: List[Attachment] = (
-        db.query(Attachment)
-        .filter(
-            and_(
-                Attachment.uploaded_by == user_id,
-                Attachment.created_at >= cutoff,
-                Attachment.is_deleted.is_(False),
+    attachments_filter = [
+        Attachment.uploaded_by == user_id,
+        Attachment.created_at >= cutoff,
+        Attachment.is_deleted.is_(False),
+    ]
+    if excluded_type_ids:
+        # NULL-safe: untyped attachments must stay in the feed (NOT IN drops NULLs).
+        attachments_filter.append(
+            or_(
+                Attachment.attachment_type_id.is_(None),
+                ~Attachment.attachment_type_id.in_(excluded_type_ids),
             )
         )
+    attachments: List[Attachment] = (
+        db.query(Attachment)
+        .filter(and_(*attachments_filter))
         .order_by(desc(Attachment.created_at))
         .limit(limit * 50)  # over-fetch to allow grouping into <= `limit` sessions
         .all()
     )
-    if not attachments:
-        return UploadActivityResponse(sessions=[])
-
+    # NOTE: no early-return on empty attachments — import_job sessions below
+    # must still surface for users whose only recent activity is data imports.
     attachment_ids = [str(a.id) for a in attachments]
 
     # ---- pull latest integration_log per attachment ------------------------
@@ -267,6 +283,8 @@ def get_upload_activity(
         )
         .order_by(IntegrationLog.business_id, desc(IntegrationLog.created_at))
         .all()
+        if attachment_ids
+        else []
     )
     # Keep latest per business_id only.
     latest_log_by_attachment: Dict[str, IntegrationLog] = {}
@@ -276,18 +294,30 @@ def get_upload_activity(
             latest_log_by_attachment[bid] = log
 
     # ---- pull import_jobs touched by the user in the window ---------------
+    # attachment_bulk_import jobs merge with their attachment batch (bulk_zip
+    # session); every other job type (stock/GRN/DO/product/... Excel imports)
+    # becomes a standalone "import_job" session — the drawer replaces the
+    # per-page LatestImportStatusPanel bar.
     import_jobs: List[ImportJob] = (
         db.query(ImportJob)
         .filter(
             and_(
                 ImportJob.user_id == user_id,
-                ImportJob.job_type == "attachment_bulk_import",
                 ImportJob.created_at >= cutoff,
             )
         )
+        .order_by(desc(ImportJob.created_at))
+        # Over-fetch ×2: bulk-import jobs are looked up by batch_id (not turned
+        # into sessions 1:1), so a plain `limit` could starve bulk_zip merges.
+        .limit(limit * 2)
         .all()
     )
-    import_jobs_by_job_id: Dict[str, ImportJob] = {str(j.job_id): j for j in import_jobs}
+    import_jobs_by_job_id: Dict[str, ImportJob] = {
+        str(j.job_id): j for j in import_jobs if j.job_type == "attachment_bulk_import"
+    }
+    standalone_jobs: List[ImportJob] = [
+        j for j in import_jobs if j.job_type != "attachment_bulk_import"
+    ]
 
     # ---- group attachments by upload_batch_id ------------------------------
     by_batch: Dict[str, List[Attachment]] = {}
@@ -362,7 +392,59 @@ def get_upload_activity(
             )
         )
 
+    # import_job sessions (Excel/data imports — no attachment rows)
+    for j in standalone_jobs:
+        sessions.append(_import_job_session(j))
+
     sessions.sort(key=lambda s: s.started_at, reverse=True)
     sessions = sessions[:limit]
 
     return UploadActivityResponse(sessions=sessions)
+
+
+# Human labels for job_type when the job has no filename (JSON-body imports
+# like stock/products/warehouses don't always carry one).
+_IMPORT_JOB_TYPE_LABELS: Dict[str, str] = {
+    "stock_import": "Stock import",
+    "product_import": "Product import",
+    "warehouse_import": "Warehouse import",
+    "order_tracking_import": "Order tracking import",
+    "delivery_order_detail_import": "Delivery order lines import",
+    "grn_listing_import": "GRN listing import",
+    "grn_lines_import": "GRN lines import",
+    "spo_import": "SPO allocations import",
+}
+
+
+def _import_job_session(j: ImportJob) -> UploadActivitySession:
+    """Map one non-attachment ImportJob row to a drawer session."""
+    job_status = (j.status or "").lower()
+    if job_status == "finished":
+        status = "partial" if (j.failed_rows or 0) > 0 else "linked"
+    elif job_status == "failed":
+        status = "failed"
+    else:  # pending / queued / started
+        status = "processing"
+
+    label = _IMPORT_JOB_TYPE_LABELS.get(j.job_type, j.job_type.replace("_", " ").capitalize())
+    title = j.filename or label
+
+    return UploadActivitySession(
+        session_id=str(j.job_id),
+        session_type="import_job",
+        title=title,
+        started_at=j.created_at,
+        finished_at=j.completed_at,
+        status=status,  # type: ignore[arg-type]
+        aggregate=SessionAggregate(total=0),
+        files=[],
+        import_job_id=str(j.job_id),
+        needs_action=status == "failed",
+        job_type=j.job_type,
+        total_rows=j.total_rows,
+        processed_rows=j.processed_rows,
+        successful_rows=j.successful_rows,
+        failed_rows=j.failed_rows,
+        skipped_rows=j.skipped_rows,
+        job_error=getattr(j, "error", None),
+    )

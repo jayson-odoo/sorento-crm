@@ -45,7 +45,7 @@ def _seed_user(db: Session) -> None:
 def client():
     from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
     from app.models.user import User, UserRole, UserRoleAssignment
-    from app.models.resources import Attachment
+    from app.models.resources import Attachment, AttachmentType
     from app.models.integration import IntegrationLog
     from app.models.job import ImportJob
     from app.models.lookup import LookupBinding  # validator listener checks this table
@@ -74,6 +74,7 @@ def client():
         UserRole.__table__,
         UserRoleAssignment.__table__,
         Attachment.__table__,
+        AttachmentType.__table__,
         IntegrationLog.__table__,
         ImportJob.__table__,
         LookupBinding.__table__,
@@ -108,6 +109,7 @@ def _add_attachment(
     filename: str,
     batch_id: str | None = None,
     created_at: datetime | None = None,
+    attachment_type_id: str | None = None,
 ) -> str:
     from app.models.resources import Attachment
 
@@ -115,6 +117,7 @@ def _add_attachment(
     db.add(
         Attachment(
             id=attachment_id,
+            attachment_type_id=attachment_type_id,
             original_filename=filename,
             stored_filename=filename,
             file_path=f"/x/{filename}",
@@ -129,6 +132,22 @@ def _add_attachment(
     )
     db.commit()
     return attachment_id
+
+
+def _add_attachment_type(db: Session, type_name: str) -> str:
+    from app.models.resources import AttachmentType
+
+    type_id = str(uuid.uuid4())
+    db.add(
+        AttachmentType(
+            id=type_id,
+            type_name=type_name,
+            allowed_extensions="xls,xlsx,xlsm",
+            max_file_size_mb=10,
+        )
+    )
+    db.commit()
+    return type_id
 
 
 def _add_log(
@@ -166,6 +185,27 @@ def test_returns_empty_when_no_attachments(client):
     r = c.get("/api/v1/resource-management/upload-activity")
     assert r.status_code == 200, r.text
     assert r.json() == {"sessions": []}
+
+
+def test_stock_list_uploads_excluded_from_feed(client):
+    """Stock List replacements are background reference-data uploads — they
+    never get an n8n 'linked' callback, so they must not appear in the drawer
+    (they'd be stuck on Processing forever). Untyped uploads still show."""
+    c, db = client
+    stock_type_id = _add_attachment_type(db, "Stock_List")
+    _add_attachment(
+        db,
+        filename="stock balance - Macro Version.xlsx",
+        attachment_type_id=stock_type_id,
+    )
+    _add_attachment(db, filename="receipt.pdf")  # untyped — must remain visible
+
+    r = c.get("/api/v1/resource-management/upload-activity")
+    assert r.status_code == 200, r.text
+    sessions = r.json()["sessions"]
+    filenames = [f["filename"] for s in sessions for f in s["files"]]
+    assert "receipt.pdf" in filenames
+    assert "stock balance - Macro Version.xlsx" not in filenames
 
 
 def test_single_attachment_renders_as_single_session(client):
@@ -252,6 +292,99 @@ def test_bulk_zip_session_when_batch_matches_import_job(client):
     assert len(bulk) == 1
     assert bulk[0]["import_job_id"] == job_id
     assert bulk[0]["title"] == "brand_2026.zip"
+
+
+def _add_import_job(db: Session, *, job_type: str, status: str, **kw) -> str:
+    from app.models.job import ImportJob
+
+    job_id = str(uuid.uuid4())
+    db.add(
+        ImportJob(
+            id=uuid.uuid4(),
+            job_id=job_id,
+            job_type=job_type,
+            status=status,
+            user_id=_USER_ID,
+            **kw,
+        )
+    )
+    db.commit()
+    return job_id
+
+
+def test_import_job_sessions_in_feed(client):
+    """Excel/data import jobs (stock/DO/GRN/...) render as import_job sessions —
+    replaces the per-page LatestImportStatusPanel bar."""
+    c, db = client
+    running = _add_import_job(
+        db,
+        job_type="delivery_order_detail_import",
+        status="started",
+        filename="Order Listing - Macro Version.xlsx",
+        total_rows=100,
+        processed_rows=40,
+    )
+    finished = _add_import_job(
+        db,
+        job_type="stock_import",
+        status="finished",
+        total_rows=10,
+        processed_rows=10,
+        successful_rows=10,
+    )
+    partial = _add_import_job(
+        db,
+        job_type="grn_listing_import",
+        status="finished",
+        total_rows=5,
+        processed_rows=5,
+        successful_rows=3,
+        failed_rows=2,
+    )
+    failed = _add_import_job(
+        db, job_type="order_tracking_import", status="failed", error="boom"
+    )
+
+    r = c.get("/api/v1/resource-management/upload-activity")
+    assert r.status_code == 200, r.text
+    by_id = {s["session_id"]: s for s in r.json()["sessions"]}
+
+    s = by_id[running]
+    assert s["session_type"] == "import_job"
+    assert s["status"] == "processing"
+    assert s["title"] == "Order Listing - Macro Version.xlsx"
+    assert s["total_rows"] == 100 and s["processed_rows"] == 40
+
+    assert by_id[finished]["status"] == "linked"
+    assert by_id[finished]["title"] == "Stock import"  # no filename → label
+    assert by_id[partial]["status"] == "partial"
+    assert by_id[failed]["status"] == "failed"
+    assert by_id[failed]["needs_action"] is True
+    assert by_id[failed]["job_error"] == "boom"
+
+
+def test_attachment_bulk_import_job_not_duplicated_as_import_job_session(client):
+    from app.models.job import ImportJob
+
+    c, db = client
+    job_id = str(uuid.uuid4())
+    db.add(
+        ImportJob(
+            id=uuid.uuid4(),
+            job_id=job_id,
+            job_type="attachment_bulk_import",
+            status="finished",
+            user_id=_USER_ID,
+            filename="brand.zip",
+        )
+    )
+    db.commit()
+    a1 = _add_attachment(db, filename="x.jpg", batch_id=job_id)
+    _add_log(db, attachment_id=a1, status="success", payload={"schema_version": 1, "outcome": "linked", "summary": "ok", "linked": [], "unlinked_reasons": [], "errors": []})
+
+    r = c.get("/api/v1/resource-management/upload-activity")
+    sessions = r.json()["sessions"]
+    assert [s["session_type"] for s in sessions if s["session_id"] == job_id] == ["bulk_zip"]
 
 
 def test_since_query_filters_old_attachments(client):

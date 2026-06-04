@@ -24,7 +24,7 @@ export type SessionStatus =
   | 'partial'
   | 'failed';
 
-export type SessionType = 'single' | 'multi' | 'bulk_zip';
+export type SessionType = 'single' | 'multi' | 'bulk_zip' | 'import_job';
 
 export interface LinkedEntity {
   entity_type: string; // "product" | "promotion" | "form" | "packing_list" | ...
@@ -64,7 +64,7 @@ export interface SessionAggregate {
 }
 
 export interface UploadActivitySession {
-  session_id: string; // upload_batch_id (multi/single) or import_job.job_id (bulk_zip)
+  session_id: string; // upload_batch_id (multi/single) or import_job.job_id (bulk_zip / import_job)
   session_type: SessionType;
   title: string; // filename | "5 files" | "brand_2026.zip"
   started_at: string;
@@ -72,6 +72,15 @@ export interface UploadActivitySession {
   status: SessionStatus;
   aggregate: SessionAggregate;
   files: UploadActivityFile[];
-  import_job_id: string | null; // bulk_zip only
+  import_job_id: string | null; // bulk_zip + import_job
   needs_action: boolean; // any file in `failed` or `unlinked`
+  // ---- import_job sessions only (Excel/data imports, no attachment rows).
+  // Replaces the per-page LatestImportStatusPanel bar.
+  job_type?: string | null;
+  total_rows?: number | null;
+  processed_rows?: number | null;
+  successful_rows?: number | null;
+  failed_rows?: number | null;
+  skipped_rows?: number | null;
+  job_error?: string | null;
 }

@@ -35,7 +35,7 @@ import { TemplateDownloadDialog } from '@/components/template/TemplateDownloadDi
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { exportStockBalance, bulkImportStock, validateStockImport } from '../services/stockService';
 import { replaceLatestStockList, getCurrentStockListAttachment } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
-import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
+import { useImportJobDrawer } from '@/components/upload-activity';
 import StockBulkDeleteDialog from './StockBulkDeleteDialog';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
@@ -47,6 +47,7 @@ import { useRouter } from 'next/navigation';
 export default function StockBalanceGrid() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { notifyImportQueued } = useImportJobDrawer();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'product.product_code', desc: false }]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -135,6 +136,7 @@ export default function StockBalanceGrid() {
   const handleUploadTemplate = async (data: any[], _helpers?: unknown, file?: File) => {
     try {
       await bulkImportStock(data);
+      notifyImportQueued();
       if (file) {
         try {
           await replaceLatestStockList(file);
@@ -433,7 +435,6 @@ export default function StockBalanceGrid() {
               }
             />
         </CardHeader>
-        <LatestImportStatusPanel jobType="stock_import" title="Latest stock import" className="mx-5 mb-2" />
         <CardTable>
           <ScrollArea>
             <DataGridTable />

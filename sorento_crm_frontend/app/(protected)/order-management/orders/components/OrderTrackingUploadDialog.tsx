@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { parseExcelSheets } from '@/lib/excel-utils';
+import { useExcelAccept } from '@/hooks/use-excel-accept';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
 import { Label } from '@/components/ui/label';
@@ -38,8 +39,12 @@ export function OrderTrackingUploadDialog({
   onOpenChange,
   onTest,
   onUpload,
-  accept = '.xlsx,.xls',
+  accept: acceptProp,
 }: OrderTrackingUploadDialogProps) {
+  const acceptFromSettings = useExcelAccept();
+  // Macro workbooks supported: backend strips VBA via maybe_strip and reads
+  // the named Master / Overall Tracking sheets (PLAN-do-macro-upload).
+  const accept = acceptProp ?? acceptFromSettings;
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);

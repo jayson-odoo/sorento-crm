@@ -251,6 +251,7 @@ async def bulk_import_products(
             current_user["id"],
             queue_name='imports',
             job_timeout=3600,
+            job_id=str(job.job_id),  # pre-assign RQ id = DB job_id; see update_job_with_rq_id
         )
         job_service.update_job_with_rq_id(job, rq_job.id)
 

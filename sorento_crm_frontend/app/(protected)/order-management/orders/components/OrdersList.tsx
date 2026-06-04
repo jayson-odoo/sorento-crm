@@ -73,12 +73,13 @@ import {
   type OrderListNavState,
 } from '../utils/orderListNavQuery';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
-import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
+import { useImportJobDrawer } from '@/components/upload-activity';
 
 export default function OrdersList() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
+  const { notifyImportQueued } = useImportJobDrawer();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -132,7 +133,8 @@ export default function OrdersList() {
 
   const handleUploadTracking = async (file: File) => {
     const result = await importOrderTracking(file);
-    // Job is queued, will be processed in background
+    // Job is queued, will be processed in background — progress in the upload drawer
+    notifyImportQueued();
     queryClient.invalidateQueries({ queryKey: ['orders'] });
     queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
     return result;
@@ -502,10 +504,6 @@ export default function OrdersList() {
             {error instanceof Error ? error.message : 'Failed to load delivery orders'}
           </div>
         ) : null}
-        <div className="mx-5 mb-2 flex flex-wrap gap-4">
-          <LatestImportStatusPanel jobType="order_tracking_import" title="Latest tracking import" />
-          <LatestImportStatusPanel jobType="delivery_order_detail_import" title="Latest delivery order lines import" />
-        </div>
         <CardTable>
           <ScrollArea>
             <DataGridTable />
@@ -557,6 +555,7 @@ export default function OrdersList() {
         onOpenChange={setOrderLinesImportOpen}
         onTest={validateDeliveryOrderDetail}
         onSuccess={() => {
+          notifyImportQueued();
           queryClient.invalidateQueries({ queryKey: ['orders'] });
           queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
         }}

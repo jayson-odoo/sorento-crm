@@ -13,6 +13,8 @@ Monorepo. Four siblings:
 
 Shared docs live in `docs/`. Treat `docs/ADR-PRODUCT-STANDARDS.md` and `docs/ARCHITECTURE-RULES.md` as binding.
 
+**Plans:** every implementation/design plan (from planning sessions, grill-me, etc.) is written to `docs/plans/PLAN-<slug>.md` before implementation starts. Update the plan's Status line as work progresses.
+
 ## Common commands
 
 ### Backend (`sorento_crm_backend/`)
@@ -75,6 +77,21 @@ pytest                            # tests/
 ```bash
 docker compose up -d            # from sorento_crm/ (root compose at sorento_crm/docker-compose.yml)
 ```
+
+## Dev sessions (Claude-managed)
+
+For any development task, Claude boots and owns the local stack as **background Bash sessions** so the user can test immediately. Boot all three at session start (or on first dev task):
+
+| Service  | Command (run from its own dir)                                                                 | Port | Reload behavior |
+|----------|------------------------------------------------------------------------------------------------|------|-----------------|
+| Backend  | `venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` (in `sorento_crm_backend/`) | 8000 | `--reload` — backend file edits auto-restart uvicorn; nothing to do |
+| Frontend | `npm run build && npm start` (in `sorento_crm_frontend/`)                                       | 3000 | **No HMR.** After any FE change: kill the session, `npm run build && npm start` again |
+| MCP      | `CRM_BASE_URL=http://localhost:8000 EXTERNAL_API_KEY=<from backend .env> backend venv's python -m sorento_crm_mcp` (in `sorento_crm_mcp/`; package installed in the backend venv) | 8765 | Restart manually after MCP code/catalog changes |
+
+- Run each as `run_in_background: true` Bash so logs are inspectable and sessions survive across turns.
+- Before booting, check ports (`lsof -i :3000 -i :8000 -i :8765 -sTCP:LISTEN`) — if already listening, reuse, don't double-boot.
+- After every frontend change set, rebuild + restart the FE session **proactively** (don't wait to be asked) and tell the user when :3000 is ready to test.
+- Backend changes need no action beyond confirming uvicorn's reload log line.
 
 ## Architecture
 
@@ -226,7 +243,7 @@ This project runs FE as a **production build** via `npm run build && npm start` 
 
 - If FE changes don't appear: stop the server, `rm -rf sorento_crm_frontend/.next` (and optionally `node_modules/.cache`), `npm run build && npm start`, hard-refresh browser.
 - `npm run dev` exists but is not how this stack is normally run; using it can hide build-time errors (e.g. server component / RSC mistakes) that only surface during `next build`.
-- Playwright MCP verification flow: if the running server is `npm start`, file edits will NOT be visible. Either ask the user to rebuild, or run a separate `npm run dev -- -p <free-port>` and point Playwright at the new port. Don't kill the user's `npm start` process without confirmation — it's their primary dev surface.
+- Playwright MCP verification flow: if the running server is `npm start`, file edits will NOT be visible until rebuild. The FE session is Claude-managed (see "Dev sessions"): kill it, `npm run build && npm start`, then verify. Only ask first if the :3000 process is one the user started themselves.
 
 ## PR checklist
 

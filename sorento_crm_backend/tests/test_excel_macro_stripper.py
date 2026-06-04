@@ -10,6 +10,8 @@ from openpyxl import Workbook
 
 from app.services.excel_macro_stripper import (
     XLSX_MIME,
+    MacroWorkbookError,
+    extract_macro_template_xlsx,
     is_xlsm_filename,
     maybe_strip,
     maybe_strip_upload,
@@ -104,7 +106,17 @@ def test_maybe_strip_upload_passthrough_for_xlsx():
     assert mime == "text/plain"
 
 
-_LOCAL_FIXTURE = "/Users/tehjayson/Downloads/stock balance - Macro Version.xlsm"
+# Real macro workbook committed as the FE e2e fixture (3 sheets: Active Loc /
+# Master / Template). Falls back to skip when the monorepo layout differs.
+_LOCAL_FIXTURE = os.path.join(
+    os.path.dirname(__file__),
+    "..",
+    "..",
+    "sorento_crm_frontend",
+    "e2e",
+    "fixtures",
+    "stock balance - Macro Version.xlsm",
+)
 
 
 @pytest.mark.skipif(
@@ -199,6 +211,165 @@ def test_keep_data_sheet_case_insensitive_match():
     )
     wb2 = load_workbook(io.BytesIO(cleaned))
     assert wb2.sheetnames == ["template"]
+
+
+# ---------------------------------------------------------------------------
+# extract_macro_template_xlsx — Stock List macro pipeline
+# (docs/plans/PLAN-stock-list-xlsm-macro-upload.md)
+# ---------------------------------------------------------------------------
+
+
+def _multi_sheet_xlsm_bytes(*, with_template: bool) -> bytes:
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    wb.active.title = "Active Loc"
+    wb.active["A1"] = "locations"
+    wb.create_sheet("Master")["A1"] = "macro-ui"
+    if with_template:
+        ws = wb.create_sheet("Template")
+        ws["A1"] = "Item Code"
+        ws["A2"] = "ABC-123"
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_extract_template_passthrough_for_non_xlsm():
+    payload = b"raw-xlsx-bytes"
+    out_bytes, out_name, out_mime = extract_macro_template_xlsx(payload, "stock.xlsx", "m/t")
+    assert out_bytes is payload
+    assert out_name == "stock.xlsx"
+    assert out_mime == "m/t"
+
+    out_bytes, out_name, out_mime = extract_macro_template_xlsx(payload, "stock.xls", "m/t")
+    assert out_bytes is payload
+    assert out_name == "stock.xls"
+
+
+def test_extract_template_keeps_only_template_sheet():
+    from openpyxl import load_workbook
+
+    cleaned, name, mime = extract_macro_template_xlsx(
+        _multi_sheet_xlsm_bytes(with_template=True),
+        "stock balance - Macro Version.xlsm",
+        "application/vnd.ms-excel.sheet.macroEnabled.12",
+    )
+    assert name == "stock balance - Macro Version.xlsx"
+    assert mime == XLSX_MIME
+    assert "xl/vbaProject.bin" not in _zip_names(cleaned)
+    wb = load_workbook(io.BytesIO(cleaned))
+    assert wb.sheetnames == ["Template"]
+    assert wb["Template"]["A2"].value == "ABC-123"
+
+
+def test_extract_template_single_sheet_kept_without_template_name():
+    from openpyxl import Workbook, load_workbook
+
+    wb = Workbook()
+    wb.active.title = "Sheet1"
+    wb.active["A1"] = "x"
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    cleaned, name, mime = extract_macro_template_xlsx(buf.getvalue(), "single.xlsm", None)
+    assert name == "single.xlsx"
+    assert mime == XLSX_MIME
+    assert load_workbook(io.BytesIO(cleaned)).sheetnames == ["Sheet1"]
+
+
+def test_extract_template_multi_sheet_without_template_raises():
+    with pytest.raises(MacroWorkbookError) as exc:
+        extract_macro_template_xlsx(
+            _multi_sheet_xlsm_bytes(with_template=False), "bad.xlsm", None
+        )
+    assert "Template" in str(exc.value)
+    assert "Active Loc" in str(exc.value)
+
+
+def test_extract_template_unreadable_xlsm_raises():
+    with pytest.raises(MacroWorkbookError):
+        extract_macro_template_xlsx(b"definitely-not-a-zip", "corrupt.xlsm", None)
+
+
+def test_extract_template_require_data_rejects_empty_template():
+    """DO-lines rule: macro Template present but unpopulated → actionable error."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    wb.active.title = "Master"
+    wb.active["A1"] = "noise"
+    t = wb.create_sheet("Template")
+    t.append(["Doc No", "Item Code", "Location", "Qty"])  # headers only
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    with pytest.raises(MacroWorkbookError) as exc:
+        extract_macro_template_xlsx(buf.getvalue(), "lines.xlsm", None, require_data=True)
+    assert "no data rows" in str(exc.value)
+
+
+def test_extract_template_require_data_accepts_populated_template():
+    from openpyxl import Workbook, load_workbook
+
+    wb = Workbook()
+    wb.active.title = "Master"
+    t = wb.create_sheet("Template")
+    t.append(["Doc No", "Item Code", "Location", "Qty"])
+    t.append(["PS202605-0001", "SRT-1", "BRW", 5])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    cleaned, name, _ = extract_macro_template_xlsx(
+        buf.getvalue(), "lines.xlsm", None, require_data=True
+    )
+    assert name == "lines.xlsx"
+    assert load_workbook(io.BytesIO(cleaned)).sheetnames == ["Template"]
+
+
+def test_extract_template_bakes_formulas_to_values():
+    """data_only=True load means formula text never survives into the output."""
+    from openpyxl import Workbook, load_workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Template"
+    ws["A1"] = 2
+    ws["B1"] = "='Template'!A1*2"
+    wb.create_sheet("Master")["A1"] = 99
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    cleaned, _, _ = extract_macro_template_xlsx(buf.getvalue(), "f.xlsm", None)
+    out = load_workbook(io.BytesIO(cleaned), data_only=False)
+    val = out["Template"]["B1"].value
+    assert not (isinstance(val, str) and val.startswith("="))
+
+
+@pytest.mark.skipif(
+    not os.path.exists(_LOCAL_FIXTURE),
+    reason="Real .xlsm fixture only available on the developer machine",
+)
+def test_extract_template_real_fixture():
+    from openpyxl import load_workbook
+
+    with open(_LOCAL_FIXTURE, "rb") as fh:
+        src = fh.read()
+    cleaned, name, mime = extract_macro_template_xlsx(
+        src, "stock balance - Macro Version.xlsm", "application/vnd.ms-excel.sheet.macroEnabled.12"
+    )
+    assert name == "stock balance - Macro Version.xlsx"
+    assert mime == XLSX_MIME
+    names = _zip_names(cleaned)
+    assert not any("vba" in n.lower() for n in names)
+    wb = load_workbook(io.BytesIO(cleaned), read_only=True)
+    try:
+        assert wb.sheetnames == ["Template"]
+        ws = wb["Template"]
+        headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        assert headers == ["Item Code", "Item Description", "Location", "On Hand Qty"]
+    finally:
+        wb.close()
 
 
 @pytest.mark.skipif(

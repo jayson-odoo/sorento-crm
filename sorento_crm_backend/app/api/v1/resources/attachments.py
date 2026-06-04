@@ -18,6 +18,11 @@ from app.services.uuid_list_param import parse_uuid_list
 from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.integration_service import IntegrationLogService
 from app.services.attachment_webhook_helper import build_signed_attachment_url_for_webhook
+from app.services.excel_macro_stripper import (
+    MacroWorkbookError,
+    extract_macro_template_xlsx,
+    is_xlsm_filename,
+)
 from app.services.n8n_webhook_settings import get_n8n_attachment_webhook_url
 from app.schemas.resources import (
     AttachmentCreate,
@@ -473,13 +478,43 @@ async def create_attachment(
 
         # Read file content
         file_content = await file.read()
+        upload_filename = file.filename or "unknown"
+        upload_mime = file.content_type
+
+        # Stock List macro pipeline (docs/plans/PLAN-stock-list-xlsm-macro-upload.md):
+        # `.xlsm` uploads typed Stock List are stripped of VBA and reduced to the
+        # values-only Template sheet before storage, so macro bytes never reach
+        # S3/R2 or the n8n webhook. `.xls`/`.xlsx` pass through untouched.
+        if type_id and is_xlsm_filename(upload_filename):
+            from app.models.resources import AttachmentType
+
+            is_stock_list_type = (
+                db.query(AttachmentType)
+                .filter(
+                    AttachmentType.id == type_id,
+                    AttachmentType.type_name.in_(STOCK_LIST_TYPE_NAMES),
+                )
+                .first()
+                is not None
+            )
+            if is_stock_list_type:
+                try:
+                    file_content, upload_filename, upload_mime = extract_macro_template_xlsx(
+                        file_content, upload_filename, upload_mime
+                    )
+                except MacroWorkbookError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=str(exc),
+                    )
+
         file_size = len(file_content)
 
         # Calculate SHA-256 hash for duplicate detection
         file_hash = hashlib.sha256(file_content).hexdigest()
 
         # Use original filename (sanitized) for S3 so objects appear with the name users expect
-        original_filename = file.filename or "unknown"
+        original_filename = upload_filename or "unknown"
         safe_filename = "".join(c for c in original_filename if c.isalnum() or c in (' ', '-', '_', '.')).strip() or "file"
         stored_filename = safe_filename
 
@@ -575,7 +610,7 @@ async def create_attachment(
             s3_key, _ = backend.upload_file(
                 file_content=file_content,
                 file_path=s3_file_path,
-                content_type=file.content_type,
+                content_type=upload_mime,
             )
         except Exception as s3_error:
             logger.error("Storage upload failed (provider=%s): %s", provider, s3_error)
@@ -640,7 +675,7 @@ async def create_attachment(
             existing_to_replace.stored_filename = stored_filename  # type: ignore[assignment]
             existing_to_replace.file_path = stored_file_path  # type: ignore[assignment]
             existing_to_replace.file_size_bytes = file_size  # type: ignore[assignment]
-            existing_to_replace.mime_type = file.content_type or "application/octet-stream"  # type: ignore[assignment]
+            existing_to_replace.mime_type = upload_mime or "application/octet-stream"  # type: ignore[assignment]
             existing_to_replace.file_hash = file_hash  # type: ignore[assignment]
             existing_to_replace.uploaded_by = current_user["id"]  # type: ignore[assignment]
             existing_to_replace.uploaded_at = datetime.utcnow()  # type: ignore[assignment]
@@ -682,7 +717,7 @@ async def create_attachment(
             stored_filename=stored_filename,
             file_path=stored_file_path,
             file_size_bytes=file_size,
-            mime_type=file.content_type or "application/octet-stream",  # Default if None
+            mime_type=upload_mime or "application/octet-stream",  # Default if None
             file_hash=file_hash,
             entity_type=entity_type,  # Store original entity_type if provided
             entity_id=entity_id,
@@ -791,9 +826,25 @@ async def replace_latest_stock_list(
 
         # Upload file (same flow as create_attachment); use sanitized original filename only (no UUID prefix)
         file_content = await file.read()
+        upload_filename = file.filename
+        upload_mime = file.content_type
+
+        # Stock List macro pipeline (docs/plans/PLAN-stock-list-xlsm-macro-upload.md):
+        # `.xlsm` → VBA stripped, values-only Template sheet, re-emitted as `.xlsx`
+        # so the chatbot/n8n never receives macro bytes. `.xls`/`.xlsx` untouched.
+        try:
+            file_content, upload_filename, upload_mime = extract_macro_template_xlsx(
+                file_content, upload_filename, upload_mime
+            )
+        except MacroWorkbookError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            )
+
         file_size = len(file_content)
         file_hash = hashlib.sha256(file_content).hexdigest()
-        original_filename = file.filename or "stock_list.xlsx"
+        original_filename = upload_filename or "stock_list.xlsx"
         safe_filename = "".join(c for c in original_filename if c.isalnum() or c in (" ", "-", "_", ".")).strip() or "stock_list.xlsx"
         stored_filename = safe_filename
         entity_type = (attachment_type.type_name or "general").lower().replace(" ", "_")
@@ -810,7 +861,7 @@ async def replace_latest_stock_list(
             s3_key, _ = backend.upload_file(
                 file_content=file_content,
                 file_path=s3_file_path,
-                content_type=file.content_type,
+                content_type=upload_mime,
             )
         except Exception as s3_error:
             logger.error(
@@ -833,7 +884,7 @@ async def replace_latest_stock_list(
             stored_filename=stored_filename,
             file_path=stored_file_path,
             file_size_bytes=file_size,
-            mime_type=file.content_type or "application/octet-stream",
+            mime_type=upload_mime or "application/octet-stream",
             file_hash=file_hash,
             entity_type=entity_type,
             entity_id=None,
@@ -961,6 +1012,7 @@ async def bulk_import_attachments(
         storage_provider,
         queue_name="imports",
         job_timeout=7200,
+        job_id=str(job.job_id),  # pre-assign RQ id = DB job_id; see update_job_with_rq_id
     )
     job_service.update_job_with_rq_id(job, rq_job.id)
 

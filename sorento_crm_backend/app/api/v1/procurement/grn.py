@@ -131,6 +131,7 @@ async def import_grn_listing(
         current_user["id"],
         queue_name="imports",
         job_timeout=3600,
+        job_id=str(job.job_id),  # pre-assign RQ id = DB job_id; see update_job_with_rq_id
     )
     job_service.update_job_with_rq_id(job, rq_job.id)
     return {"message": "GRN listing import queued.", "job_id": job.job_id, "id": str(job.id)}
@@ -179,6 +180,7 @@ async def import_grn_lines(
         current_user["id"],
         queue_name="imports",
         job_timeout=3600,
+        job_id=str(job.job_id),  # pre-assign RQ id = DB job_id; see update_job_with_rq_id
     )
     job_service.update_job_with_rq_id(job, rq_job.id)
     return {"message": "GRN lines import queued.", "job_id": job.job_id, "id": str(job.id)}

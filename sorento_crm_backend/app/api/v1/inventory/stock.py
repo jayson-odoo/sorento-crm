@@ -309,7 +309,8 @@ async def bulk_import_stock(
             import_data.stock,
             current_user["id"],
             queue_name='imports',
-            job_timeout=3600
+            job_timeout=3600,
+            job_id=str(job.job_id),  # pre-assign RQ id = DB job_id; see update_job_with_rq_id
         )
         
         # Update job with RQ job ID

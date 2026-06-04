@@ -38,13 +38,14 @@ import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import { GRNImportDialog } from './GRNImportDialog';
 import GRNBulkDeleteDialog from './GRNBulkDeleteDialog';
 import { importGRNListing, importGRNLines, validateGRNListing, validateGRNLines } from '../services/grnService';
-import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
+import { useImportJobDrawer } from '@/components/upload-activity';
 import { useQueryClient } from '@tanstack/react-query';
 
 export default function GRNList() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
+  const { notifyImportQueued } = useImportJobDrawer();
   const spoAllocationId = searchParams.get('spo_allocation_id');
 
   const [uploadMode, setUploadMode] = useState<'listing' | 'lines' | null>(null);
@@ -152,12 +153,12 @@ export default function GRNList() {
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
-        accessorKey: 'lines_count',
+        accessorKey: 'items_count',
         header: ({ column }) => (
           <DataGridColumnHeader title="Number of Items" column={column} />
         ),
         cell: ({ row }) =>
-          row.original.lines_count != null ? String(row.original.lines_count) : '0',
+          row.original.items_count != null ? String(row.original.items_count) : '0',
         size: 120,
         meta: { skeleton: <Skeleton className="h-4 w-12" /> },
       },
@@ -305,10 +306,6 @@ export default function GRNList() {
             exportConfig={{ filename: 'grn_export.xlsx' }}
           />
         </CardHeader>
-        <div className="mx-5 mb-2 flex flex-wrap gap-4">
-          <LatestImportStatusPanel jobType="grn_listing_import" title="Latest GRN listing import" />
-          <LatestImportStatusPanel jobType="grn_lines_import" title="Latest GRN lines import" />
-        </div>
         {uploadMode === 'listing' && (
           <GRNImportDialog
             open={true}
@@ -318,6 +315,7 @@ export default function GRNList() {
             onTest={validateGRNListing}
             onUpload={async (file) => {
               const result = await importGRNListing(file);
+              notifyImportQueued();
               queryClient.invalidateQueries({ queryKey: ['grn'] });
               queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
               return result;
@@ -333,6 +331,7 @@ export default function GRNList() {
             onTest={validateGRNLines}
             onUpload={async (file) => {
               const result = await importGRNLines(file);
+              notifyImportQueued();
               queryClient.invalidateQueries({ queryKey: ['grn'] });
               queryClient.invalidateQueries({ queryKey: ['import-jobs'] });
               return result;

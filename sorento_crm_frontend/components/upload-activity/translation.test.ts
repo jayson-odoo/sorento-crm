@@ -149,3 +149,42 @@ describe('summariseSession', () => {
     expect(summariseSession(session)).toMatch(/1 \/ 3/);
   });
 });
+
+describe('summariseSession — import_job sessions', () => {
+  function makeJobSession(p: Partial<UploadActivitySession>): UploadActivitySession {
+    return {
+      ...makeSession([]),
+      session_type: 'import_job',
+      title: 'stock.xlsx',
+      import_job_id: 'job-1',
+      job_type: 'stock_import',
+      ...p,
+    };
+  }
+
+  it('shows row progress while processing', () => {
+    const s = makeJobSession({ status: 'processing', total_rows: 100, processed_rows: 40 });
+    expect(summariseSession(s)).toBe('Importing… 40 / 100 rows');
+  });
+
+  it('shows generic importing when totals unknown', () => {
+    const s = makeJobSession({ status: 'processing' });
+    expect(summariseSession(s)).toBe('Importing…');
+  });
+
+  it('summarises finished jobs with failed/skipped counts', () => {
+    const s = makeJobSession({
+      status: 'partial',
+      total_rows: 50,
+      processed_rows: 50,
+      failed_rows: 2,
+      skipped_rows: 3,
+    });
+    expect(summariseSession(s)).toBe('50 rows · 2 failed · 3 skipped');
+  });
+
+  it('shows job error for failed jobs', () => {
+    const s = makeJobSession({ status: 'failed', job_error: 'boom' });
+    expect(summariseSession(s)).toBe('boom');
+  });
+});

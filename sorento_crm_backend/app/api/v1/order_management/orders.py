@@ -859,7 +859,8 @@ async def import_order_tracking(
             file_data,
             current_user["id"],
             queue_name='imports',
-            job_timeout=3600
+            job_timeout=3600,
+            job_id=str(job.job_id),  # pre-assign RQ id = DB job_id; see update_job_with_rq_id
         )
         job_service.update_job_with_rq_id(job, rq_job.id)
 
@@ -891,8 +892,30 @@ async def import_delivery_order_detail(
                 detail="Invalid file type. Please upload an Excel file (.xlsx, .xls, or .xlsm)."
             )
         file_data = await file.read()
-        from app.services.excel_macro_stripper import maybe_strip
-        file_data, cleaned_name = maybe_strip(file_data, file.filename or "upload.xlsx")
+        from app.services.excel_macro_stripper import (
+            MacroWorkbookError,
+            extract_macro_template_xlsx,
+            is_xlsm_filename,
+            maybe_strip,
+        )
+
+        # Macro workbooks carry the import rows on the 'Template' sheet
+        # (docs/plans/PLAN-do-macro-upload-and-drawer-import-jobs.md): strip
+        # VBA + keep Template only so the parser's workbook.active IS the data
+        # sheet. Strict: 422 when Template is missing or the macro hasn't
+        # populated it. Plain .xlsx/.xls flow unchanged (active sheet).
+        if is_xlsm_filename(file.filename):
+            try:
+                file_data, cleaned_name, _ = extract_macro_template_xlsx(
+                    file_data, file.filename, file.content_type, require_data=True
+                )
+            except MacroWorkbookError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                )
+        else:
+            file_data, cleaned_name = maybe_strip(file_data, file.filename or "upload.xlsx")
         if validate_only:
             service = OrderService(db)
             result = service.validate_delivery_order_detail_excel(file_data)
@@ -926,6 +949,7 @@ async def import_delivery_order_detail(
             current_user["id"],
             queue_name="imports",
             job_timeout=3600,
+            job_id=str(job.job_id),  # pre-assign RQ id = DB job_id; see update_job_with_rq_id
         )
         job_service.update_job_with_rq_id(job, rq_job.id)
 

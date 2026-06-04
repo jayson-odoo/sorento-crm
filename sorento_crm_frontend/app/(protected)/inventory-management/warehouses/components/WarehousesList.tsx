@@ -27,7 +27,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
-import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
+import { useImportJobDrawer } from '@/components/upload-activity';
 import { useWarehouses } from '../hooks/useWarehouses';
 import { bulkImportWarehouses, validateWarehouseImport } from '../services/warehouseService';
 import type { Warehouse } from '../types/warehouse.types';
@@ -36,6 +36,7 @@ import WarehouseBulkDeleteDialog from './WarehouseBulkDeleteDialog';
 export default function WarehousesList() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { notifyImportQueued } = useImportJobDrawer();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -45,6 +46,7 @@ export default function WarehousesList() {
 
   const handleImportUpload = async (rows: Record<string, unknown>[]) => {
     await bulkImportWarehouses(rows);
+    notifyImportQueued();
     toast.success(
       'Import job queued successfully. Processing in background. Refresh shortly to see results.',
       {
@@ -234,7 +236,6 @@ export default function WarehousesList() {
             </Button>
           </div>
         </CardHeader>
-        <LatestImportStatusPanel jobType="warehouse_import" title="Latest warehouse import" className="mx-5 mb-2" />
         <CardTable>
           <ScrollArea>
             <DataGridTable />

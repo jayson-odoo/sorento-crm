@@ -15,6 +15,7 @@ import {
   ChevronDown,
   ChevronRight,
   ExternalLink,
+  FileSpreadsheet,
   FolderArchive,
   Loader2,
   XCircle,
@@ -36,12 +37,13 @@ interface Props {
 }
 
 function StatusBadge({ session }: { session: UploadActivitySession }) {
+  const isImportJob = session.session_type === 'import_job';
   switch (session.status) {
     case 'linked':
       return (
         <Badge variant="success" size="sm" className="shrink-0">
           <CheckCircle2 className="size-3" />
-          Linked
+          {isImportJob ? 'Finished' : 'Linked'}
         </Badge>
       );
     case 'partial':
@@ -92,6 +94,41 @@ export function UploadSessionRow({
   const [bulkSubtab, setBulkSubtab] = useState<'needs_action' | 'all'>(
     'needs_action',
   );
+
+  // Excel/data import jobs: no file rows to expand — flat row, whole row
+  // navigates to the import-job detail page. (After all hooks — keep order stable.)
+  if (session.session_type === 'import_job') {
+    return (
+      <div className="border-b border-border">
+        <button
+          type="button"
+          onClick={() => {
+            if (!session.import_job_id) return;
+            onCloseDrawer?.();
+            router.push(`/system-management/import-jobs/${session.import_job_id}`);
+          }}
+          className="w-full flex items-start gap-2 px-4 py-3 hover:bg-muted/40 text-start"
+        >
+          <FileSpreadsheet className="size-4 mt-0.5 shrink-0 text-muted-foreground" />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-sm truncate" title={session.title}>
+                {session.title}
+              </span>
+              <StatusBadge session={session} />
+              <span className="ms-auto text-xs text-muted-foreground shrink-0">
+                {timeAgo(session.started_at)}
+              </span>
+            </div>
+            <div className="text-xs text-muted-foreground mt-1 truncate">
+              {summariseSession(session)}
+            </div>
+          </div>
+          <ExternalLink className="size-3.5 mt-1 shrink-0 text-muted-foreground" />
+        </button>
+      </div>
+    );
+  }
 
   const needsActionFiles = session.files.filter(
     (f) =>

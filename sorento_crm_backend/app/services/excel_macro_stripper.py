@@ -15,6 +15,17 @@ from openpyxl import load_workbook
 
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
+TEMPLATE_SHEET_NAME = "Template"
+
+
+class MacroWorkbookError(ValueError):
+    """Raised when a `.xlsm` upload can't be reduced to a single data sheet.
+
+    Either the workbook is unreadable, or it has multiple sheets and none is
+    named `Template`. Routes translate this to a 422 so the uploader gets an
+    actionable message instead of a 500.
+    """
+
 
 def is_xlsm_filename(filename: str | None) -> bool:
     return bool(filename) and filename.lower().endswith(".xlsm")
@@ -82,6 +93,71 @@ def _resolve_data_sheet(
             if hit:
                 return hit
     return names[0]
+
+
+def extract_macro_template_xlsx(
+    file_bytes: bytes,
+    filename: str | None,
+    content_type: str | None,
+    *,
+    template_sheet: str = TEMPLATE_SHEET_NAME,
+    require_data: bool = False,
+) -> Tuple[bytes, str | None, str | None]:
+    """Stock-list macro pipeline: `.xlsm` → values-only `.xlsx` with just the Template sheet.
+
+    Non-`.xlsm` files pass through untouched (the `.xls`/`.xlsx` flow must not
+    change). For `.xlsm`:
+    - VBA is dropped (`keep_vba=False`) and formulas are baked to their cached
+      values (`data_only=True`) so pruning sibling sheets can't leave `#REF!`
+      in the file n8n/the chatbot reads.
+    - Sheet selection: `template_sheet` (case-insensitive) if present; a
+      single-sheet workbook keeps its only sheet; multi-sheet without the
+      template raises `MacroWorkbookError`.
+    - `require_data=True` additionally raises `MacroWorkbookError` when the
+      kept sheet has no data rows below the header — macro workbooks whose
+      Template the user forgot to populate (run the macro) before uploading.
+    Returns (bytes, filename, mime) with the `.xlsm` suffix and MIME rewritten
+    to `.xlsx`.
+    """
+    if not is_xlsm_filename(filename):
+        return file_bytes, filename, content_type
+    assert filename is not None
+
+    try:
+        wb = load_workbook(BytesIO(file_bytes), data_only=True, keep_vba=False)
+    except Exception as exc:
+        raise MacroWorkbookError(
+            "Uploaded .xlsm file could not be read as an Excel workbook."
+        ) from exc
+
+    names = list(wb.sheetnames)
+    lookup = {n.lower(): n for n in names}
+    target = lookup.get(template_sheet.lower())
+    if target is None:
+        if len(names) == 1:
+            target = names[0]
+        else:
+            raise MacroWorkbookError(
+                f"Macro workbook must contain a '{template_sheet}' sheet "
+                f"(found sheets: {', '.join(names)})."
+            )
+
+    if require_data:
+        ws = wb[target]
+        has_data = any(
+            any(cell is not None and str(cell).strip() for cell in row)
+            for row in ws.iter_rows(min_row=2, values_only=True)
+        )
+        if not has_data:
+            raise MacroWorkbookError(
+                f"The '{target}' sheet has no data rows. Run the macro to "
+                "populate it, save, and upload again."
+            )
+
+    _prune_sheets(wb, [target])
+    out = BytesIO()
+    wb.save(out)
+    return out.getvalue(), filename[:-5] + ".xlsx", XLSX_MIME
 
 
 def maybe_strip(file_bytes: bytes, filename: str | None) -> Tuple[bytes, str]:

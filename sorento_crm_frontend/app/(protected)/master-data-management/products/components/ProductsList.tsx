@@ -71,7 +71,7 @@ import { getProducts, bulkImportProducts, validateProductsImport, type GetProduc
 import ProductDeleteDialog from './product-delete-dialog';
 import ProductBulkDeleteDialog from './ProductBulkDeleteDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
-import { LatestImportStatusPanel } from '@/components/import-jobs/LatestImportStatusPanel';
+import { useImportJobDrawer } from '@/components/upload-activity';
 import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
 import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
 import { postListQuerySearch } from '@/lib/list-query/listQueryService';
@@ -108,6 +108,7 @@ const ProductsList = () => {
     isReloadRef.current = nav?.type === 'reload';
   }
   const queryClient = useQueryClient();
+  const { notifyImportQueued } = useImportJobDrawer();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -851,7 +852,6 @@ const ProductsList = () => {
             {error instanceof Error ? error.message : 'Failed to load products'}
           </div>
         ) : null}
-        <LatestImportStatusPanel jobType="product_import" title="Latest products import" className="mx-5 mb-2" />
         <CardTable>
           <ScrollArea>
             <DataGridTable />
@@ -878,6 +878,7 @@ const ProductsList = () => {
         onTest={async (data: Record<string, unknown>[]) => validateProductsImport(data)}
         onUpload={async (data: Record<string, unknown>[]) => {
           await bulkImportProducts(data);
+          notifyImportQueued();
           toast.success(
             'Import job queued successfully. Processing in background. Refresh or check Import Jobs for status.',
             {

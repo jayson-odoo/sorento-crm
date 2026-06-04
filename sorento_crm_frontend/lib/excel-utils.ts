@@ -64,21 +64,42 @@ export async function generateExcelFile(
   xlsx.writeFile(workbook, filename);
 }
 
+/** Sheet name macro workbooks must expose their import data on (mirrors backend rule). */
+const XLSM_DATA_SHEET = 'Template';
+
+/**
+ * Pick the sheet to import. `.xlsx`/`.xls` keep today's behavior (first sheet).
+ * `.xlsm` mirrors the backend macro pipeline: the "Template" sheet
+ * (case-insensitive) if present; a single-sheet workbook keeps its only sheet;
+ * multi-sheet without Template throws (backend would 422 the same upload).
+ */
+export function resolveImportSheetName(filename: string, sheetNames: string[]): string {
+  if (!filename.toLowerCase().endsWith('.xlsm')) {
+    return sheetNames[0];
+  }
+  const template = sheetNames.find((n) => n.toLowerCase() === XLSM_DATA_SHEET.toLowerCase());
+  if (template) return template;
+  if (sheetNames.length === 1) return sheetNames[0];
+  throw new Error(
+    `Macro workbook must contain a '${XLSM_DATA_SHEET}' sheet (found sheets: ${sheetNames.join(', ')}).`,
+  );
+}
+
 /**
  * Parse Excel file and return data as array of objects
  */
 export async function parseExcelFile(file: File): Promise<any[]> {
   const xlsx = await getXLSX();
-  
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    
+
     reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
         const workbook = xlsx.read(data, { type: 'array' });
-        const firstSheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[firstSheetName];
+        const sheetName = resolveImportSheetName(file.name, workbook.SheetNames);
+        const worksheet = workbook.Sheets[sheetName];
         const jsonData = xlsx.utils.sheet_to_json(worksheet);
         resolve(jsonData);
       } catch (error) {

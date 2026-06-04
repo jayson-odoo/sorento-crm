@@ -74,6 +74,9 @@ export function summariseFile(file: UploadActivityFile): string {
  * summary when total==1.
  */
 export function summariseSession(session: UploadActivitySession): string {
+  if (session.session_type === 'import_job') {
+    return summariseImportJob(session);
+  }
   if (session.aggregate.total === 1 && session.files[0]) {
     return summariseFile(session.files[0]);
   }
@@ -92,6 +95,28 @@ export function summariseSession(session: UploadActivitySession): string {
   if (linked > 0) parts.push(`${linked} linked`);
   if (unlinked > 0) parts.push(`${unlinked} unlinked`);
   if (failed > 0) parts.push(`${failed} failed`);
+  return parts.join(' · ');
+}
+
+/**
+ * One-line summary for an import_job session (Excel/data import — row counts
+ * instead of file statuses).
+ */
+export function summariseImportJob(session: UploadActivitySession): string {
+  const total = session.total_rows ?? 0;
+  const processed = session.processed_rows ?? 0;
+  const failed = session.failed_rows ?? 0;
+  const skipped = session.skipped_rows ?? 0;
+
+  if (session.status === 'failed') {
+    return session.job_error || 'Import failed';
+  }
+  if (session.status === 'processing') {
+    return total > 0 ? `Importing… ${processed} / ${total} rows` : 'Importing…';
+  }
+  const parts: string[] = [`${total} ${pluralise('row', total)}`];
+  if (failed > 0) parts.push(`${failed} failed`);
+  if (skipped > 0) parts.push(`${skipped} skipped`);
   return parts.join(' · ');
 }
 

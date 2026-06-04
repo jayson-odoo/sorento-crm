@@ -78,9 +78,23 @@ class JobService:
         return job
     
     def update_job_with_rq_id(self, job: ImportJob, rq_job_id: str) -> ImportJob:
-        """Update job with RQ job ID."""
+        """Link the RQ job id to the DB row.
+
+        The imports queue is drained by an immediate daemon thread
+        (queue_service._IMMEDIATE_DRAIN_QUEUES), so the worker can already be
+        running — or even finished — by the time this commits. Two guards:
+        - Callers should pass job_id=str(job.job_id) to enqueue_job so the RQ
+          id equals the DB job_id from creation; rewriting it here is then a
+          no-op. (Historically the temp uuid was swapped for the RQ id, which
+          made the worker's complete_job/update_job_progress — keyed on the
+          job_id it resolved at start — silently miss the row.)
+        - Only promote PENDING → QUEUED; never clobber a status the worker
+          already advanced (started/finished/failed).
+        """
+        self.db.refresh(job)
         job.job_id = rq_job_id
-        job.status = JobStatus.QUEUED.value
+        if job.status == JobStatus.PENDING.value:
+            job.status = JobStatus.QUEUED.value
         job.updated_at = datetime.utcnow()
         self.db.commit()
         return job

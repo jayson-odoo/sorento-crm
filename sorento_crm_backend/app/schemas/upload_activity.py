@@ -29,7 +29,7 @@ SessionStatus = Literal[
     "failed",
 ]
 
-SessionType = Literal["single", "multi", "bulk_zip"]
+SessionType = Literal["single", "multi", "bulk_zip", "import_job"]
 
 
 class LinkedEntity(BaseModel):
@@ -79,6 +79,16 @@ class UploadActivitySession(BaseModel):
     files: List[UploadActivityFile] = Field(default_factory=list)
     import_job_id: Optional[str] = None
     needs_action: bool = False
+    # ---- import_job sessions only (Excel/data imports, no attachment rows).
+    # Replaces the per-page LatestImportStatusPanel bar — see
+    # docs/plans/PLAN-do-macro-upload-and-drawer-import-jobs.md.
+    job_type: Optional[str] = None
+    total_rows: Optional[int] = None
+    processed_rows: Optional[int] = None
+    successful_rows: Optional[int] = None
+    failed_rows: Optional[int] = None
+    skipped_rows: Optional[int] = None
+    job_error: Optional[str] = None
 
 
 class UploadActivityResponse(BaseModel):
