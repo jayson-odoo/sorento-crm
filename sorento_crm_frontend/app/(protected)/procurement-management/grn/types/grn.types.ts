@@ -63,6 +63,7 @@ export interface GRN {
   created_at: Date;
   updated_at: Date;
   lines_count?: number;
+  items_count?: number;
 }
 
 export interface GRNDetail extends GRN {

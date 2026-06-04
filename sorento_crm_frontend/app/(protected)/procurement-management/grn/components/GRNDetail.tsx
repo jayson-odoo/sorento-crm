@@ -3,8 +3,9 @@
 import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Edit, Trash2, Settings, Check } from 'lucide-react';
+import { Edit, Trash2, Settings, Check, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -43,6 +44,26 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
   const { data: grn, isLoading } = useGRN(grnId);
   const updateMutation = useUpdateGRN();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [lineSearch, setLineSearch] = useState('');
+  const allLines = grn?.picking_lines ?? [];
+  const filteredLines = useMemo(() => {
+    const q = lineSearch.trim().toLowerCase();
+    if (!q) return allLines;
+    return allLines.filter((line) => {
+      const haystack = [
+        line.product?.product_code,
+        line.product?.product_name,
+        line.source_warehouse?.warehouse_code,
+        line.source_warehouse?.warehouse_name,
+        line.destination_warehouse?.warehouse_code,
+        line.destination_warehouse?.warehouse_name,
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }, [allLines, lineSearch]);
   const navParams = useMemo(
     () => ({
       pageIndex: 0,
@@ -213,12 +234,49 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
       </Card>
 
       {/* Picking Lines */}
-      {grn.picking_lines && grn.picking_lines.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Picking Lines</CardTitle>
-          </CardHeader>
-          <CardContent>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between gap-4">
+          <CardTitle>Picking Lines</CardTitle>
+          <div className="flex items-center gap-3">
+            {allLines.length > 0 && (
+              <div className="relative">
+                <Search className="size-4 absolute start-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={lineSearch}
+                  onChange={(e) => setLineSearch(e.target.value)}
+                  placeholder="Search product or warehouse"
+                  className="ps-8 pe-8 w-64 h-8"
+                />
+                {lineSearch && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 absolute end-1 top-1/2 -translate-y-1/2"
+                    onClick={() => setLineSearch('')}
+                    aria-label="Clear search"
+                  >
+                    <X className="size-3.5" />
+                  </Button>
+                )}
+              </div>
+            )}
+            <span className="text-sm text-muted-foreground whitespace-nowrap">
+              {lineSearch.trim()
+                ? `${filteredLines.length} of ${allLines.length} lines`
+                : `${allLines.length} ${allLines.length === 1 ? 'line' : 'lines'}`}
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {allLines.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No picking lines on this GRN yet. Import lines or edit the GRN to add them.
+            </p>
+          ) : filteredLines.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No lines match &quot;{lineSearch}&quot;.
+            </p>
+          ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -231,7 +289,7 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {grn.picking_lines.map((line) => (
+                  {filteredLines.map((line) => (
                     <TableRow key={line.id}>
                       <TableCell>
                         {line.spo_allocation ? (
@@ -258,9 +316,9 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
                 </TableBody>
               </Table>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

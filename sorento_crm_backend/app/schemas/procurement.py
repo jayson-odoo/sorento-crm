@@ -470,6 +470,7 @@ class PickingHeaderResponse(PickingHeaderBase):
     updated_at: datetime
     picking_lines: Optional[List[PickingLineResponse]] = None
     lines_count: Optional[int] = 0
+    items_count: Optional[int] = 0
     
     class Config:
         from_attributes = True

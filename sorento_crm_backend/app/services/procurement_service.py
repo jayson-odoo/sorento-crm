@@ -1310,29 +1310,31 @@ class PickingHeaderService:
             "created_at": PickingHeader.created_at,
             "updated_at": PickingHeader.updated_at,
         }
-        use_lines_count_sort = sort_field == "lines_count"
-        if use_lines_count_sort:
-            line_count_subq = (
+        use_count_sort = sort_field in ("lines_count", "items_count")
+        if use_count_sort:
+            count_subq = (
                 self.db.query(
                     PickingLine.picking_header_id,
-                    func.count(PickingLine.id).label("cnt"),
+                    func.count(PickingLine.id).label("lines_cnt"),
+                    func.count(func.distinct(PickingLine.product_id)).label("items_cnt"),
                 )
                 .group_by(PickingLine.picking_header_id)
             ).subquery()
-            q = q.outerjoin(line_count_subq, PickingHeader.id == line_count_subq.c.picking_header_id)
-            sort_column = line_count_subq.c.cnt
+            q = q.outerjoin(count_subq, PickingHeader.id == count_subq.c.picking_header_id)
+            sort_column = count_subq.c.items_cnt if sort_field == "items_count" else count_subq.c.lines_cnt
             if sort_dir == "desc":
                 q = q.order_by(sort_column.desc().nulls_last())
             else:
                 q = q.order_by(sort_column.asc().nulls_last())
             total = q.count()
             offset = (page - 1) * limit
-            q = q.add_columns(line_count_subq.c.cnt)
+            q = q.add_columns(count_subq.c.lines_cnt, count_subq.c.items_cnt)
             rows = q.offset(offset).limit(limit).all()
             grns = []
             for row in rows:
-                header, cnt = row[0], row[1]
-                setattr(header, "lines_count", int(cnt) if cnt is not None else 0)
+                header, lines_cnt, items_cnt = row[0], row[1], row[2]
+                setattr(header, "lines_count", int(lines_cnt) if lines_cnt is not None else 0)
+                setattr(header, "items_count", int(items_cnt) if items_cnt is not None else 0)
                 setattr(header, "picking_lines", [])
                 grns.append(header)
         else:
@@ -1347,18 +1349,25 @@ class PickingHeaderService:
             header_ids = [g.id for g in grns]
             if header_ids:
                 count_rows = (
-                    self.db.query(PickingLine.picking_header_id, func.count(PickingLine.id))
+                    self.db.query(
+                        PickingLine.picking_header_id,
+                        func.count(PickingLine.id),
+                        func.count(func.distinct(PickingLine.product_id)),
+                    )
                     .filter(PickingLine.picking_header_id.in_(header_ids))
                     .group_by(PickingLine.picking_header_id)
                     .all()
                 )
-                counts_by_header = {str(r[0]): r[1] for r in count_rows}
+                counts_by_header = {str(r[0]): (r[1], r[2]) for r in count_rows}
                 for g in grns:
-                    setattr(g, "lines_count", counts_by_header.get(str(g.id), 0))
+                    lines_cnt, items_cnt = counts_by_header.get(str(g.id), (0, 0))
+                    setattr(g, "lines_count", lines_cnt)
+                    setattr(g, "items_count", items_cnt)
                     setattr(g, "picking_lines", [])
             else:
                 for g in grns:
                     setattr(g, "lines_count", 0)
+                    setattr(g, "items_count", 0)
                     setattr(g, "picking_lines", [])
         
         return {
