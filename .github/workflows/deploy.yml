@@ -166,7 +166,7 @@ jobs:
             ${{ env.IMAGE_REPO }}:mcp-${{ env.RELEASE_TAG }}
             ${{ env.IMAGE_REPO }}:mcp-${{ github.sha }}
 
-      - name: Sync compose + deploy script to server
+      - name: Sync deploy script to server
         if: steps.targets.outputs.should_deploy == 'true'
         uses: appleboy/scp-action@v0.1.7
         with:
@@ -174,8 +174,12 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           timeout: 1m
-          # Server has no git repo. CI is the source of truth for compose + script.
-          source: "docker-compose.yml,scripts/blue_green_deploy.sh"
+          # Server has no git repo. CI is the source of truth for the deploy
+          # script ONLY. docker-compose.yml is gitignored (carries secret
+          # defaults) so it never exists in CI checkouts — prod compose at
+          # /opt/sorento-crm2/docker-compose.yml is edited manually on the
+          # server. Keep the local root copy and prod in sync by hand.
+          source: "scripts/blue_green_deploy.sh"
           target: "/opt/sorento-crm2"
           overwrite: true
           strip_components: 0
