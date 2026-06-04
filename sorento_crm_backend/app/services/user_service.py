@@ -32,7 +32,14 @@ from app.schemas.user import (
     TeamCreate, TeamUpdate,
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
-from app.services.integration_service import RespondClient
+
+# NOTE: RespondClient is imported lazily inside the two methods that use it.
+# A module-level `from app.services.integration_service import RespondClient`
+# creates a circular import when the worker entrypoint imports
+# app.scheduler.task_scheduler -> integration_service -> app.models ->
+# modules.runtime.guards -> app.dependencies -> user_service -> (back to
+# partially-initialized integration_service), which silently killed APScheduler
+# in the worker container and left email_outbox rows pending forever.
 
 
 def _normalize_respond_user_id(value: Optional[str]) -> Optional[str]:
@@ -569,6 +576,8 @@ class UserService:
             setattr(user, "respond_user_id", rid or respond_user_id)
             self.db.commit()
             self.db.refresh(user)
+
+        from app.services.integration_service import RespondClient
 
         client = RespondClient()
         payload = client.get_user_by_id(respond_id)
@@ -1317,6 +1326,8 @@ class AccessAgentService:
 
     def lookup_respond_contact_name(self, identifier: str) -> Optional[str]:
         """Lookup contact name from Respond.io by identifier."""
+        from app.services.integration_service import RespondClient
+
         client = RespondClient()
         payload = client.get_contact_by_identifier(identifier)
         return (

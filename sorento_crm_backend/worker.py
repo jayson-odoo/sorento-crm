@@ -30,8 +30,12 @@ def _maybe_start_scheduler():
         logger.info("APScheduler started in worker process")
         return sched
     except Exception:
-        logger.exception("Failed to start APScheduler")
-        return None
+        # Fail fast: this container is the single owner of all cron ticks
+        # (email outbox drainer, scheduled tasks heartbeat). Running on with a
+        # dead scheduler silently strands work (e.g. email_outbox rows pending
+        # forever) — crash instead so `restart: unless-stopped` surfaces it.
+        logger.exception("Failed to start APScheduler; exiting so the container restarts visibly")
+        sys.exit(1)
 
 
 if __name__ == '__main__':

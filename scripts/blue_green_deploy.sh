@@ -94,6 +94,41 @@ sleep "$DRAIN_SECONDS"
 echo "==> Recreating worker on new image"
 docker compose up -d --force-recreate --no-deps worker
 
+# 6b. Verify the worker's APScheduler actually started. The worker has no HTTP
+#     healthcheck; historically a circular import could kill the scheduler while
+#     the RQ loop kept running, leaving email_outbox draining dead with a
+#     "running" container. worker.py now exits(1) on scheduler failure, so we
+#     watch for either the success log line or a restart/exit.
+echo "==> Verifying worker scheduler startup"
+WORKER_WAIT_TICKS="${WORKER_WAIT_TICKS:-45}"   # 45 * 2s = 90s max
+worker_cid=$(docker compose ps -q worker)
+if [ -z "$worker_cid" ]; then
+  echo "ERROR: worker container not found after recreate"; exit 1
+fi
+i=0
+worker_ok=""
+while [ $i -lt "$WORKER_WAIT_TICKS" ]; do
+  if docker logs "$worker_cid" 2>&1 | grep -q "APScheduler started in worker process"; then
+    worker_ok=1
+    echo "    worker scheduler started after $((i * TICK_SECONDS))s"
+    break
+  fi
+  restarts=$(docker inspect --format='{{.RestartCount}}' "$worker_cid" 2>/dev/null || echo 0)
+  status=$(docker inspect --format='{{.State.Status}}' "$worker_cid" 2>/dev/null || echo unknown)
+  if [ "$restarts" -gt 0 ] || [ "$status" != "running" ]; then
+    echo "ERROR: worker unhealthy (status=${status} restarts=${restarts}) — scheduler failed to start"
+    docker logs --tail=100 "$worker_cid" || true
+    exit 1
+  fi
+  sleep $TICK_SECONDS
+  i=$((i + 1))
+done
+if [ -z "$worker_ok" ]; then
+  echo "ERROR: worker scheduler did not log startup within $((WORKER_WAIT_TICKS * TICK_SECONDS))s"
+  docker logs --tail=100 "$worker_cid" || true
+  exit 1
+fi
+
 # 7. Stop and remove old color (tolerate first-deploy where OLD doesn't exist)
 echo "==> Stopping ${OLD} color"
 docker compose stop "backend_${OLD}" "frontend_${OLD}" "mcp_${OLD}" || true

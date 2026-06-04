@@ -52,6 +52,23 @@ jobs:
             sorento-backend:ci \
             -c "from app.main import app; print('import ok')"
 
+      # The worker entrypoint imports modules in a DIFFERENT order than app.main
+      # (worker.py -> queue_service, then task_scheduler). A circular import can
+      # pass the app.main smoke above yet kill APScheduler in the worker container
+      # (seen 2026-06: email_outbox rows stuck pending because user_service <->
+      # integration_service cycle only fired on the worker's import order).
+      # Must be a fresh interpreter replicating worker.py's exact sequence.
+      - name: Smoke import worker entrypoint (scheduler import chain)
+        run: |
+          docker run --rm --entrypoint python \
+            -e DATABASE_URL=postgresql://x:x@localhost/x \
+            -e DIRECT_URL=postgresql://x:x@localhost/x \
+            -e JWT_SECRET=ci-dummy-secret \
+            -e JWT_ALGORITHM=HS256 \
+            -e REDIS_URL=redis://localhost:6379/0 \
+            sorento-backend:ci \
+            -c "import worker; from app.scheduler.task_scheduler import start_scheduler; print('worker import chain ok')"
+
       - name: Pytest collect-only (catches import errors in tests)
         run: |
           docker run --rm --entrypoint python \
