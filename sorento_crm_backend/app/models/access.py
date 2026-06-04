@@ -126,6 +126,9 @@ class RespondContact(Base):
     first_name = Column(Text, nullable=True)
     last_name = Column(Text, nullable=True)
     respond_io_id = Column(Text, nullable=True)  # Respond.io contact id for inbox URL
+    # Stable opaque slug for the bookmarkable portal URL /portal/c/{slug}.
+    # Identity hint, not a credential — lazily minted on first portal-link use.
+    portal_slug = Column(String(16), nullable=True, unique=True, index=True)
     workspace_id = Column(UUID(as_uuid=False), ForeignKey("respond_workspaces.id", ondelete="SET NULL"), nullable=True)
     # Arbitrary per-contact conversation state. Read/overwritten wholesale by
     # GET|PUT /api/v1/external/conversation-variables/{respond_io_id}.

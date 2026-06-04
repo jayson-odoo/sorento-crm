@@ -42,6 +42,7 @@ import {
   submitDraft,
   uploadAttachment,
 } from '../lib/portal-client';
+import { portalHomePath, portalVerifyPath } from '../lib/portal-paths';
 import { AIExtractDialog, AIExtractApplyPayload } from './AIExtractDialog';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import { AsyncCombobox } from './AsyncCombobox';
@@ -331,7 +332,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
         setAttachments((data.attachments as PortalAttachment[]) ?? []);
       } catch (e) {
         if (e instanceof PortalUnauthorizedError) {
-          router.replace('/portal/verify?reason=expired');
+          router.replace(portalVerifyPath({ reason: 'expired' }));
           return;
         }
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load.');
@@ -417,10 +418,10 @@ export function SubmissionForm({ kind, submissionId }: Props) {
       const saved = await saveDraft(kind, cleanedFields, cleanedProducts, submissionId);
       await flushPendingFiles(saved.id);
       toast.success('Draft saved.');
-      router.replace(`/portal?type=${kind}`);
+      router.replace(portalHomePath({ type: kind }));
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
-        router.replace('/portal/verify?reason=expired');
+        router.replace(portalVerifyPath({ reason: 'expired' }));
         return;
       }
       toast.error(e instanceof Error ? e.message : 'Failed to save.');
@@ -471,10 +472,10 @@ export function SubmissionForm({ kind, submissionId }: Props) {
       await flushPendingFiles(id);
       await submitDraft(kind, id, cleanedFields, cleanedProducts);
       toast.success('Submitted.');
-      router.replace(`/portal?type=${kind}`);
+      router.replace(portalHomePath({ type: kind }));
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
-        router.replace('/portal/verify?reason=expired');
+        router.replace(portalVerifyPath({ reason: 'expired' }));
         return;
       }
       toast.error(e instanceof Error ? e.message : 'Failed to submit.');
@@ -490,10 +491,10 @@ export function SubmissionForm({ kind, submissionId }: Props) {
     try {
       await deleteDraftSubmission(kind, submissionId);
       toast.success('Draft deleted.');
-      router.replace(`/portal?type=${kind}`);
+      router.replace(portalHomePath({ type: kind }));
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
-        router.replace('/portal/verify?reason=expired');
+        router.replace(portalVerifyPath({ reason: 'expired' }));
         return;
       }
       toast.error(e instanceof Error ? e.message : 'Failed to delete draft.');
@@ -760,7 +761,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
     <div className="min-h-screen max-w-7xl mx-auto px-4 py-6 space-y-4">
       <div className="flex items-center justify-between">
         <Button variant="ghost" size="sm" asChild>
-          <Link href={`/portal?type=${kind}`}>
+          <Link href={portalHomePath({ type: kind })}>
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
           </Link>
@@ -1050,7 +1051,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
         )}
         <Button
           variant="ghost"
-          onClick={() => router.replace(`/portal?type=${kind}`)}
+          onClick={() => router.replace(portalHomePath({ type: kind }))}
           disabled={saving || submitting || deleting}
         >
           Cancel

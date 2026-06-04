@@ -65,6 +65,7 @@ class RespondWorkspaceService:
             space_id=data.space_id.strip(),
             name=(data.name or "").strip() or None,
             base_url=(data.base_url or "").strip() or None,
+            whatsapp_number=(data.whatsapp_number or "").strip() or None,
             is_active=data.is_active,
             is_default=data.is_default,
             api_key_ciphertext=encrypt_secret(data.api_key.strip()),
@@ -94,6 +95,8 @@ class RespondWorkspaceService:
             row.name = data.name.strip() or None
         if data.base_url is not None:
             row.base_url = data.base_url.strip() or None
+        if data.whatsapp_number is not None:
+            row.whatsapp_number = data.whatsapp_number.strip() or None
         if data.is_active is not None:
             row.is_active = data.is_active
         if data.is_default is not None:
@@ -131,6 +134,7 @@ class RespondWorkspaceService:
             "space_id": row.space_id,
             "name": row.name,
             "base_url": row.base_url,
+            "whatsapp_number": row.whatsapp_number,
             "is_active": row.is_active,
             "is_default": bool(row.is_default),
             "api_key_masked": _mask_key(row.api_key_ciphertext),

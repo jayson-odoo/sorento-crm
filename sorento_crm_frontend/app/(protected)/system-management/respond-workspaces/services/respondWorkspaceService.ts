@@ -6,6 +6,7 @@ export interface RespondWorkspace {
   space_id: string;
   name: string | null;
   base_url: string | null;
+  whatsapp_number: string | null;
   is_active: boolean;
   is_default: boolean;
   api_key_masked: string | null;
@@ -24,6 +25,7 @@ export interface RespondWorkspaceCreateBody {
   space_id: string;
   name?: string | null;
   base_url?: string | null;
+  whatsapp_number?: string | null;
   is_active?: boolean;
   is_default?: boolean;
   api_key: string;
@@ -33,6 +35,7 @@ export interface RespondWorkspaceUpdateBody {
   space_id?: string;
   name?: string | null;
   base_url?: string | null;
+  whatsapp_number?: string | null;
   is_active?: boolean;
   is_default?: boolean;
   api_key?: string | null;

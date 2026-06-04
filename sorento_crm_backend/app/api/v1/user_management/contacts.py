@@ -360,7 +360,7 @@ async def get_contact_portal_link(
         token=token.token,
         expires_at=token.expires_at.isoformat(),
         portal_url=service.build_portal_url(
-            token.token, base_url, payload.submission_type
+            token.token, base_url, payload.submission_type, token_row=token
         ),
         reused=reused,
     )

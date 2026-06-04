@@ -116,6 +116,9 @@ class PortalTokenInfoResponse(BaseModel):
     expires_at: str
     expired: bool
     revoked: bool
+    portal_slug: Optional[str] = None
+    masked_phone: Optional[str] = None
+    whatsapp_number: Optional[str] = None
 
 
 @router.get("/token-info", response_model=PortalTokenInfoResponse)
@@ -124,6 +127,7 @@ def portal_token_info(token: str, db: Session = Depends(get_db)):
     token is expired or revoked. Lets the verify page recover the
     ``contact_id`` / ``space_id`` pair without granting access.
     """
+    from app.models.access import RespondContact
     from app.services.portal_service import _utcnow
 
     row = (
@@ -133,13 +137,57 @@ def portal_token_info(token: str, db: Session = Depends(get_db)):
     )
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Token not found.")
+    service = PortalService(db)
+    contact = (
+        db.query(RespondContact)
+        .filter(RespondContact.id == row.contact_id)
+        .first()
+    )
+    hint = service.identity_hint(contact) if contact else {}
     return PortalTokenInfoResponse(
         contact_id=row.contact_id,
         space_id=row.space_id,
         expires_at=row.expires_at.isoformat(),
         expired=row.expires_at <= _utcnow(),
         revoked=row.revoked_at is not None,
+        portal_slug=contact.portal_slug if contact else None,
+        masked_phone=hint.get("masked_phone"),
+        whatsapp_number=hint.get("whatsapp_number"),
     )
+
+
+class PortalSlugInfoResponse(BaseModel):
+    contact_id: str
+    space_id: str
+    masked_phone: Optional[str]
+    whatsapp_number: Optional[str]
+
+
+@router.get("/slug-info/{slug}", response_model=PortalSlugInfoResponse)
+def portal_slug_info(slug: str = Path(..., min_length=4, max_length=32), db: Session = Depends(get_db)):
+    """Identity hint behind the stable URL /portal/c/{slug}.
+
+    Public by design: the slug is bookmarkable/shareable. Knowing it grants
+    nothing beyond the ability to trigger an OTP that goes to the contact's
+    own WhatsApp (cooldown + daily cap enforced in request_otp). 404 carries
+    no detail — never confirm revoked-vs-missing.
+    """
+    return PortalSlugInfoResponse(**PortalService(db).slug_info(slug))
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def portal_logout(
+    x_portal_token: Annotated[Optional[str], Header(alias="X-Portal-Token")] = None,
+    db: Session = Depends(get_db),
+):
+    """Server-side logout: revoke the presented token. Idempotent, and accepts
+    expired/unverified tokens too — clearing client storage alone would leave
+    a copied token valid until natural expiry.
+    """
+    raw = (x_portal_token or "").strip()
+    if raw:
+        PortalService(db).revoke_token(raw)
+    return None
 
 
 # ---------- Contact ----------
@@ -159,6 +207,8 @@ class PortalMeResponse(BaseModel):
     name: Optional[str]
     phone_number: Optional[str]
     expires_at: str
+    portal_slug: Optional[str] = None
+    whatsapp_number: Optional[str] = None
     impersonation: Optional[PortalImpersonationInfo] = None
 
 
@@ -167,7 +217,12 @@ def portal_me(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    contact = PortalService(db).get_contact(token)
+    service = PortalService(db)
+    contact = service.get_contact(token)
+    # Lazily mint the stable slug so even legacy tokens surface a
+    # bookmarkable URL on first /me. Impersonation sessions stay slug-less on
+    # the FE (legacy tree), but the slug itself is harmless to mint.
+    portal_slug = service.get_or_create_slug(contact)
 
     # Surface admin-impersonation context so the portal can show a banner.
     from app.models.impersonation import ContactImpersonationSession
@@ -202,6 +257,8 @@ def portal_me(
         name=contact.name or " ".join(filter(None, [contact.first_name, contact.last_name])).strip() or None,
         phone_number=contact.phone_number,
         expires_at=token.expires_at.isoformat(),
+        portal_slug=portal_slug,
+        whatsapp_number=service.whatsapp_number_for_contact(contact),
         impersonation=impersonation_info,
     )
 

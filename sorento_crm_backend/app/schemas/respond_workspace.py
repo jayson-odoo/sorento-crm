@@ -11,6 +11,11 @@ class RespondWorkspaceBase(BaseModel):
     space_id: str = Field(..., max_length=64)
     name: Optional[str] = Field(None, max_length=255)
     base_url: Optional[str] = Field(None, max_length=512)
+    whatsapp_number: Optional[str] = Field(
+        None,
+        max_length=32,
+        description="Business WhatsApp number (digits, E.164 without '+') for the portal wa.me escape hatch.",
+    )
     is_active: bool = True
     is_default: bool = False
 
@@ -23,6 +28,7 @@ class RespondWorkspaceUpdate(BaseModel):
     space_id: Optional[str] = Field(None, max_length=64)
     name: Optional[str] = Field(None, max_length=255)
     base_url: Optional[str] = Field(None, max_length=512)
+    whatsapp_number: Optional[str] = Field(None, max_length=32)
     is_active: Optional[bool] = None
     is_default: Optional[bool] = None
     api_key: Optional[str] = Field(None, description="When set, replaces stored key")
@@ -35,6 +41,7 @@ class RespondWorkspaceResponse(BaseModel):
     space_id: str
     name: Optional[str] = None
     base_url: Optional[str] = None
+    whatsapp_number: Optional[str] = None
     is_active: bool
     is_default: bool = False
     api_key_masked: Optional[str] = None

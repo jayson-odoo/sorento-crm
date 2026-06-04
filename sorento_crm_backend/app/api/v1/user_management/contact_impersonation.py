@@ -146,6 +146,9 @@ async def start_contact_impersonation(
         space_id=space_id,
         expires_at=now + PORTAL_TOKEN_TTL,
         verified_at=now,
+        # Excluded from the sliding 30-day TTL and kept out of localStorage on
+        # the FE (the ?impersonation=1 marker below routes it to sessionStorage).
+        is_impersonation=True,
     )
     db.add(token_row)
     db.flush()
@@ -184,7 +187,11 @@ async def start_contact_impersonation(
     base = (app_settings.frontend_base_url or "").strip().rstrip("/")
     if not base:
         base = str(request.base_url).rstrip("/")
-    portal_url = f"{base}/portal?token={token_row.token}" if base else f"/portal?token={token_row.token}"
+    portal_url = (
+        f"{base}/portal?token={token_row.token}&impersonation=1"
+        if base
+        else f"/portal?token={token_row.token}&impersonation=1"
+    )
 
     return _serialize(session_row, contact, space_id, portal_url)
 
@@ -263,5 +270,9 @@ async def current_contact_impersonation(
     base = (app_settings.frontend_base_url or "").strip().rstrip("/")
     if not base:
         base = str(request.base_url).rstrip("/")
-    portal_url = f"{base}/portal?token={token_row.token}" if base else f"/portal?token={token_row.token}"
+    portal_url = (
+        f"{base}/portal?token={token_row.token}&impersonation=1"
+        if base
+        else f"/portal?token={token_row.token}&impersonation=1"
+    )
     return _serialize(session_row, contact, session_row.space_id, portal_url)

@@ -46,9 +46,17 @@ logger = logging.getLogger(__name__)
 
 
 PORTAL_TOKEN_TTL = timedelta(days=7)
+# Device trust: OTP-verified tokens live 30 days, sliding — each authenticated
+# request re-extends to now+30d (throttled to ~once per day via the threshold
+# below). Active contacts never re-verify; dormant ones re-OTP after 30 days.
+PORTAL_VERIFIED_TOKEN_TTL = timedelta(days=30)
+PORTAL_SLIDE_THRESHOLD = timedelta(days=29)
 OTP_TTL = timedelta(minutes=10)
 OTP_REQUEST_COOLDOWN = timedelta(seconds=60)
 OTP_MAX_ATTEMPTS = 5
+# Hard daily cap per contact — the slug URL is bookmarkable/shareable, so an
+# attacker with a leaked slug could otherwise spam the contact with OTP sends.
+OTP_DAILY_CAP = 10
 SUPPORTED_TYPES = ("complaint", "stock_inquiry", "purchase_request", "sponsorship_form")
 PORTAL_ATTACHMENT_TYPE_CODE = "portal_submission"
 
@@ -59,6 +67,10 @@ PORTAL_ATTACHMENT_TYPE_CODE = "portal_submission"
 # token_urlsafe(30).
 _CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 _CROCKFORD_TOKEN_LEN = 48
+# Contact slug: 10 chars × 5 bits = 50 bits — unguessable identity hint for the
+# stable URL /portal/c/{slug}. NOT a credential: knowing it only lets you
+# request an OTP that goes to the contact's own WhatsApp.
+_PORTAL_SLUG_LEN = 10
 
 
 def _crockford_token(length: int = _CROCKFORD_TOKEN_LEN) -> str:
@@ -103,24 +115,131 @@ class PortalService:
             raise handle_not_found("Contact", contact_id)
         return contact
 
+    # ---------- Contact slug (stable bookmarkable URL) ----------
+
+    def get_or_create_slug(self, contact: RespondContact) -> str:
+        """Return the contact's stable portal slug, lazily minting it.
+
+        The slug is immutable once minted — it is the bookmarkable identity
+        behind /portal/c/{slug}. Retries on the (astronomically unlikely)
+        unique collision.
+        """
+        existing = (contact.portal_slug or "").strip()
+        if existing:
+            return existing
+        for _ in range(5):
+            candidate = _crockford_token(_PORTAL_SLUG_LEN)
+            clash = (
+                self.db.query(RespondContact.id)
+                .filter(RespondContact.portal_slug == candidate)
+                .first()
+            )
+            if clash is None:
+                contact.portal_slug = candidate
+                self.db.commit()
+                return candidate
+        raise handle_validation_error("Could not allocate a portal slug. Try again.")
+
+    def contact_by_slug(self, slug: str) -> Optional[RespondContact]:
+        slug = (slug or "").strip()
+        if not slug:
+            return None
+        return (
+            self.db.query(RespondContact)
+            .filter(RespondContact.portal_slug == slug)
+            .first()
+        )
+
+    def whatsapp_number_for_contact(self, contact: RespondContact) -> Optional[str]:
+        """Business WhatsApp number for the contact's workspace (wa.me hatch).
+
+        Workspace column first, env fallback. Digits only.
+        """
+        number = None
+        ws = getattr(contact, "workspace", None)
+        if ws is not None:
+            number = (getattr(ws, "whatsapp_number", None) or "").strip()
+        if not number:
+            number = (getattr(settings, "portal_whatsapp_number", None) or "").strip()
+        digits = "".join(ch for ch in number if ch.isdigit())
+        return digits or None
+
+    def identity_hint(self, contact: RespondContact) -> dict:
+        """Public identity-hint pair shared by slug-info and token-info: masked
+        phone for owner recognition + business WhatsApp for the wa.me hatch."""
+        return {
+            "masked_phone": self._mask_phone(contact.phone_number),
+            "whatsapp_number": self.whatsapp_number_for_contact(contact),
+        }
+
+    def slug_info(self, slug: str) -> dict:
+        """Public identity hint behind GET /slug-info/{slug}.
+
+        Returns just enough to render the verify page: who to OTP
+        (contact/space ids), a masked phone for recognition, and the business
+        WhatsApp number for the escape hatch. 404s with no detail on unknown
+        slugs — never confirm revoked-vs-missing.
+        """
+        contact = self.contact_by_slug(slug)
+        if contact is None:
+            raise handle_not_found("Portal link", slug)
+        # space_id: prefer what the latest token used; fall back to the
+        # workspace's Respond space identifier (NOT the workspace PK — the
+        # system-wide convention is space_id == respond_workspaces.space_id).
+        latest = (
+            self.db.query(PortalToken)
+            .filter(PortalToken.contact_id == contact.id)
+            .order_by(PortalToken.created_at.desc())
+            .first()
+        )
+        if latest is not None:
+            space_id = latest.space_id
+        else:
+            ws = getattr(contact, "workspace", None)
+            space_id = (getattr(ws, "space_id", None) or "") if ws is not None else ""
+        return {
+            "contact_id": contact.id,
+            "space_id": space_id,
+            **self.identity_hint(contact),
+        }
+
     # ---------- Token lifecycle ----------
 
-    def mint_token(self, contact_id: str, space_id: str) -> PortalToken:
+    def mint_token(
+        self, contact_id: str, space_id: str, *, is_impersonation: bool = False
+    ) -> PortalToken:
         contact_id = (contact_id or "").strip()
         space_id = (space_id or "").strip()
         if not contact_id or not space_id:
             raise handle_validation_error("contact_id and space_id are required.")
         contact = self._resolve_contact(contact_id)
+        # Every minted link should carry the stable slug URL — mint it now.
+        self.get_or_create_slug(contact)
         token = PortalToken(
             token=_crockford_token(),
             contact_id=contact.id,
             space_id=space_id,
             expires_at=_utcnow() + PORTAL_TOKEN_TTL,
+            is_impersonation=is_impersonation,
         )
         self.db.add(token)
         self.db.commit()
         self.db.refresh(token)
         return token
+
+    def revoke_token(self, token_value: str) -> bool:
+        """Server-side logout: revoke the token row. Idempotent."""
+        row = (
+            self.db.query(PortalToken)
+            .filter(PortalToken.token == (token_value or "").strip())
+            .first()
+        )
+        if row is None:
+            return False
+        if row.revoked_at is None:
+            row.revoked_at = _utcnow()
+            self.db.commit()
+        return True
 
     def get_or_mint_token(self, contact_id: str, space_id: str) -> tuple[PortalToken, bool]:
         """Return latest live token for (contact_id, space_id) or mint a new one.
@@ -177,7 +296,9 @@ class PortalService:
                 "Contact has no Respond.io identifier; cannot send link."
             )
         token, reused = self.get_or_mint_token(contact.id, space_id)
-        portal_url = self.build_portal_url(token.token, base_url, submission_type)
+        portal_url = self.build_portal_url(
+            token.token, base_url, submission_type, token_row=token
+        )
         text = self._build_send_message_text(contact, portal_url, token.expires_at)
         RespondClient().send_message(respond_io_id, text)
         return {
@@ -210,6 +331,15 @@ class PortalService:
             raise PortalAuthError(
                 "Portal access requires OTP verification. Verify with OTP to continue."
             )
+        # Sliding device trust: verified tokens re-extend to now+30d on use.
+        # The 29d threshold throttles the write to roughly once per day.
+        # Impersonation tokens are excluded — an admin browsing as a contact
+        # must not mint themselves an immortal credential.
+        if not getattr(row, "is_impersonation", False):
+            now = _utcnow()
+            if row.expires_at < now + PORTAL_SLIDE_THRESHOLD:
+                row.expires_at = now + PORTAL_VERIFIED_TOKEN_TTL
+                self.db.commit()
         return row
 
     def build_portal_url(
@@ -217,7 +347,19 @@ class PortalService:
         token: str,
         base_url_override: Optional[str] = None,
         submission_type: Optional[str] = None,
+        *,
+        token_row: Optional[PortalToken] = None,
     ) -> str:
+        """Build the link sent to contacts.
+
+        Durable form: /portal/c/{slug}?token={token} — the token half expires,
+        the slug half keeps working as a bookmarkable re-entry point. Falls
+        back to the legacy /portal?token= shape when the token row or slug
+        cannot be resolved (e.g. unit tests minting bare tokens).
+
+        Pass ``token_row`` when the caller already holds the freshly minted
+        PortalToken to skip the redundant lookup SELECT.
+        """
         base = (base_url_override or "").strip().rstrip("/")
         if not base:
             base = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
@@ -227,7 +369,23 @@ class PortalService:
                 f"Unsupported submission type: {submission_type!r}. "
                 f"Allowed: {', '.join(SUPPORTED_TYPES)}."
             )
-        path = f"/portal?token={token}"
+        slug = None
+        row = token_row
+        if row is None:
+            row = (
+                self.db.query(PortalToken)
+                .filter(PortalToken.token == token)
+                .first()
+            )
+        if row is not None:
+            contact = (
+                self.db.query(RespondContact)
+                .filter(RespondContact.id == row.contact_id)
+                .first()
+            )
+            if contact is not None:
+                slug = self.get_or_create_slug(contact)
+        path = f"/portal/c/{slug}?token={token}" if slug else f"/portal?token={token}"
         if kind:
             path += f"&type={kind}"
         return f"{base}{path}" if base else path
@@ -252,6 +410,21 @@ class PortalService:
         if recent is not None and (_utcnow() - recent.created_at) < OTP_REQUEST_COOLDOWN:
             raise handle_validation_error("Please wait before requesting another verification code.")
 
+        # Daily cap: the slug URL is shareable, so cap sends per contact per
+        # 24h to stop OTP-spam harassment via a leaked link.
+        sent_today = (
+            self.db.query(PortalOtpCode)
+            .filter(
+                PortalOtpCode.contact_id == contact.id,
+                PortalOtpCode.created_at >= _utcnow() - timedelta(hours=24),
+            )
+            .count()
+        )
+        if sent_today >= OTP_DAILY_CAP:
+            raise handle_validation_error(
+                "Daily verification limit reached. Please try again tomorrow."
+            )
+
         code = f"{secrets.randbelow(1_000_000):06d}"
         otp = PortalOtpCode(
             contact_id=contact.id,
@@ -275,6 +448,15 @@ class PortalService:
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to dispatch portal OTP for contact %s: %s", contact.id, e)
+            # Remove the undelivered code so hard send failures (Respond outage,
+            # API errors) don't consume the daily cap — only dispatched codes
+            # count. Note: closed-CSW sends are accepted async by Respond and
+            # never reach this branch; those legitimately count.
+            try:
+                self.db.delete(otp)
+                self.db.commit()
+            except Exception:  # noqa: BLE001
+                self.db.rollback()
             raise handle_validation_error(
                 "Could not send the verification code right now. Please try again shortly."
             ) from e
@@ -323,19 +505,24 @@ class PortalService:
         ).update({"verified_at": now}, synchronize_session=False)
         self.db.commit()
         new_token = self.mint_token(contact.id, space_id)
-        # Newly minted token also bypasses the gate (verifier just succeeded).
+        # Newly minted token also bypasses the gate (verifier just succeeded)
+        # and gets the full sliding device-trust window straight away.
         new_token.verified_at = now
+        new_token.expires_at = now + PORTAL_VERIFIED_TOKEN_TTL
         self.db.commit()
         return new_token
 
     @staticmethod
     def _mask_phone(phone: Optional[str]) -> Optional[str]:
+        """Mask to '+60••••1234' — country prefix + last 4, recognizable to the
+        owner but useless to a stranger holding a leaked slug link."""
         if not phone:
             return None
         digits = "".join(ch for ch in phone if ch.isdigit())
         if len(digits) <= 4:
             return phone
-        return f"••••••{digits[-4:]}"
+        prefix = f"+{digits[:2]}" if len(digits) > 9 else "+"
+        return f"{prefix}••••{digits[-4:]}"
 
     # ---------- Identity ----------
 

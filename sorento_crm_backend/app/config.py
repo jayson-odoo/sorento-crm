@@ -87,6 +87,9 @@ class Settings(BaseSettings):
 
     # Frontend app URL (for password reset and other links in emails)
     frontend_base_url: str | None = None
+    # Fallback business WhatsApp number (E.164 digits, no '+') for the portal
+    # verify page's wa.me escape hatch when the workspace has none configured.
+    portal_whatsapp_number: str | None = None
 
     # Feature flags (progressive rollout)
     notifications_v1_enabled: bool = True  # NOTIFICATIONS_V1_ENABLED

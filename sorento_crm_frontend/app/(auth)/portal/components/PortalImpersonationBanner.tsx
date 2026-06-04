@@ -6,7 +6,7 @@ import { ChevronDown, ChevronUp, LogOut, UserCog } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   PortalImpersonationInfo,
-  clearPortalToken,
+  clearImpersonationToken,
   fetchMe,
   readPortalToken,
   stopPortalImpersonation,
@@ -71,7 +71,9 @@ export function PortalImpersonationBanner() {
     } catch {
       // ignore — token revoke is best-effort
     } finally {
-      clearPortalToken();
+      // Session-scoped clear only: the admin's own device-trust token (if they
+      // are also a portal contact on this browser) must survive the exit.
+      clearImpersonationToken();
       if (typeof window !== 'undefined') {
         window.location.href = '/';
       }

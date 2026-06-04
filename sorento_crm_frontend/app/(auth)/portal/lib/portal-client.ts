@@ -1,8 +1,15 @@
 /**
  * Portal API client — token-scoped, no NextAuth session.
  *
- * The token is stored in sessionStorage and sent as `X-Portal-Token` on every
- * request. On 401 the caller is responsible for redirecting to /portal/verify.
+ * The token is stored in localStorage (device trust — survives tab close;
+ * the BE gives verified tokens a sliding 30-day TTL) and sent as
+ * `X-Portal-Token` on every request. On 401 the caller is responsible for
+ * redirecting to the verify page.
+ *
+ * Impersonation sessions are the exception: their token lives in
+ * sessionStorage only, so an admin "view as contact" never leaves a 30-day
+ * credential on the admin's machine. sessionStorage wins on read so an
+ * active impersonation takes precedence in its tab.
  */
 import { extractApiError } from '@/lib/api-client';
 
@@ -13,6 +20,20 @@ export type PortalSubmissionKind =
   | 'stock_inquiry'
   | 'purchase_request'
   | 'sponsorship_form';
+
+/** Canonical kind list — single source for route guards, tab lists, labels. */
+export const SUBMISSION_KINDS: readonly PortalSubmissionKind[] = [
+  'complaint',
+  'stock_inquiry',
+  'purchase_request',
+  'sponsorship_form',
+] as const;
+
+export function isSubmissionKind(
+  value: string | null | undefined,
+): value is PortalSubmissionKind {
+  return (SUBMISSION_KINDS as readonly string[]).includes(value ?? '');
+}
 
 export interface PortalImpersonationInfo {
   session_id: string;
@@ -28,6 +49,10 @@ export interface PortalContact {
   name: string | null;
   phone_number: string | null;
   expires_at: string;
+  /** Stable slug behind the bookmarkable URL /portal/c/{slug}. */
+  portal_slug?: string | null;
+  /** Business WhatsApp number (digits) for the wa.me escape hatch. */
+  whatsapp_number?: string | null;
   impersonation?: PortalImpersonationInfo | null;
 }
 
@@ -80,17 +105,59 @@ export class PortalUnauthorizedError extends Error {
 
 export function readPortalToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return window.sessionStorage.getItem(TOKEN_KEY);
+  // Impersonation (sessionStorage) wins over device trust (localStorage).
+  return (
+    window.sessionStorage.getItem(TOKEN_KEY) ?? window.localStorage.getItem(TOKEN_KEY)
+  );
 }
 
-export function writePortalToken(token: string): void {
+export function writePortalToken(
+  token: string,
+  opts: { impersonation?: boolean } = {},
+): void {
   if (typeof window === 'undefined') return;
-  window.sessionStorage.setItem(TOKEN_KEY, token);
+  if (opts.impersonation) {
+    window.sessionStorage.setItem(TOKEN_KEY, token);
+  } else {
+    window.localStorage.setItem(TOKEN_KEY, token);
+    // Drop any stale impersonation token so the new identity wins.
+    window.sessionStorage.removeItem(TOKEN_KEY);
+  }
 }
 
 export function clearPortalToken(): void {
   if (typeof window === 'undefined') return;
   window.sessionStorage.removeItem(TOKEN_KEY);
+  window.localStorage.removeItem(TOKEN_KEY);
+}
+
+/**
+ * Clear ONLY the session-scoped (impersonation) token. Used on impersonation
+ * exit so an admin's own device-trust token in localStorage survives.
+ */
+export function clearImpersonationToken(): void {
+  if (typeof window === 'undefined') return;
+  window.sessionStorage.removeItem(TOKEN_KEY);
+}
+
+/** True when the active token is an impersonation (sessionStorage) token. */
+export function isImpersonationToken(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.sessionStorage.getItem(TOKEN_KEY) != null;
+}
+
+/**
+ * Migrate the active token into sessionStorage. Safety net for impersonation
+ * links that lack the `?impersonation=1` marker: once /me reveals an
+ * impersonation session, the token must not persist on the admin's machine.
+ */
+export function demoteTokenToSession(): void {
+  if (typeof window === 'undefined') return;
+  const t = window.localStorage.getItem(TOKEN_KEY);
+  if (t) {
+    window.sessionStorage.setItem(TOKEN_KEY, t);
+    window.localStorage.removeItem(TOKEN_KEY);
+  }
 }
 
 /**
@@ -176,6 +243,34 @@ async function unwrap<T>(res: Response, fallback: string): Promise<T> {
 export async function fetchMe(): Promise<PortalContact> {
   const res = await portalFetch('/api/v1/public/portal/me');
   return unwrap<PortalContact>(res, 'Failed to load profile.');
+}
+
+/**
+ * fetchMe with the fresh-token grace retry: a token written by /verify-otp in
+ * the last 30s can transiently 401 (commit-visibility race between the verify
+ * commit and a fast follow-up /me). portalFetch clears the token on 401, so
+ * restore it and retry once before treating the session as dead.
+ */
+export async function fetchMeWithGrace(): Promise<PortalContact> {
+  const existing = readPortalToken();
+  const wasImpersonation = isImpersonationToken();
+  const writtenAt =
+    typeof window !== 'undefined'
+      ? Number(window.sessionStorage.getItem('sorento.portalTokenWrittenAt') || '0')
+      : 0;
+  const tokenIsFresh = writtenAt > 0 && Date.now() - writtenAt < 30_000;
+  try {
+    return await fetchMe();
+  } catch (firstErr) {
+    if (firstErr instanceof PortalUnauthorizedError && tokenIsFresh && existing) {
+      // Restore to the SAME store it came from — an impersonation token must
+      // not be promoted into localStorage by the retry.
+      writePortalToken(existing, { impersonation: wasImpersonation });
+      await new Promise((r) => setTimeout(r, 500));
+      return fetchMe();
+    }
+    throw firstErr;
+  }
 }
 
 export async function stopPortalImpersonation(): Promise<void> {
@@ -303,6 +398,43 @@ export interface PortalTokenInfo {
   expires_at: string;
   expired: boolean;
   revoked: boolean;
+  portal_slug?: string | null;
+  masked_phone?: string | null;
+  whatsapp_number?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Bookmarkable slug links (see docs/plans/PLAN-portal-bookmarkable-links.md)
+// ---------------------------------------------------------------------------
+
+export interface PortalSlugInfo {
+  contact_id: string;
+  space_id: string;
+  masked_phone: string | null;
+  whatsapp_number: string | null;
+}
+
+/** GET /api/v1/public/portal/slug-info/{slug} — null mirrors the 404. */
+export async function fetchSlugInfo(slug: string): Promise<PortalSlugInfo | null> {
+  const res = await fetch(
+    `/api/v1/public/portal/slug-info/${encodeURIComponent(slug)}`,
+    { method: 'GET' },
+  );
+  if (res.status === 404) return null;
+  return unwrap<PortalSlugInfo>(res, 'Could not look up portal link.');
+}
+
+/**
+ * POST /api/v1/public/portal/logout — revokes the active token server-side
+ * (clearing client storage alone would leave a copied token valid).
+ */
+export async function portalLogout(): Promise<void> {
+  const token = readPortalToken();
+  if (!token) return;
+  await fetch('/api/v1/public/portal/logout', {
+    method: 'POST',
+    headers: { 'X-Portal-Token': token },
+  });
 }
 
 export async function fetchTokenInfo(token: string): Promise<PortalTokenInfo> {

@@ -54,6 +54,6 @@ def mint_portal_token(
         token=token.token,
         expires_at=token.expires_at.isoformat(),
         portal_url=service.build_portal_url(
-            token.token, payload.base_url, payload.submission_type
+            token.token, payload.base_url, payload.submission_type, token_row=token
         ),
     )

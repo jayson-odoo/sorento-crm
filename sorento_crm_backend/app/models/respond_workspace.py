@@ -28,6 +28,9 @@ class RespondWorkspace(Base):
     name = Column(String(255), nullable=True)
     api_key_ciphertext = Column(Text, nullable=False)
     base_url = Column(String(512), nullable=True)
+    # Business WhatsApp number for this workspace's channel (E.164 digits).
+    # Drives the portal verify page's wa.me click-to-chat escape hatch.
+    whatsapp_number = Column(String(32), nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="true")
     is_default = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

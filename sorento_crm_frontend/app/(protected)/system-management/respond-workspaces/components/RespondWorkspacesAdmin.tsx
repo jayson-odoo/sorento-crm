@@ -37,6 +37,7 @@ interface FormState {
   space_id: string;
   name: string;
   base_url: string;
+  whatsapp_number: string;
   api_key: string;
   is_active: boolean;
   is_default: boolean;
@@ -46,6 +47,7 @@ const EMPTY_FORM: FormState = {
   space_id: '',
   name: '',
   base_url: '',
+  whatsapp_number: '',
   api_key: '',
   is_active: true,
   is_default: false,
@@ -123,6 +125,7 @@ export default function RespondWorkspacesAdmin() {
       space_id: row.space_id,
       name: row.name ?? '',
       base_url: row.base_url ?? '',
+      whatsapp_number: row.whatsapp_number ?? '',
       api_key: '',
       is_active: row.is_active,
       is_default: row.is_default,
@@ -136,6 +139,7 @@ export default function RespondWorkspacesAdmin() {
         space_id: form.space_id.trim(),
         name: form.name.trim() || null,
         base_url: form.base_url.trim() || null,
+        whatsapp_number: form.whatsapp_number.trim() || null,
         is_active: form.is_active,
         is_default: form.is_default,
       };
@@ -150,6 +154,7 @@ export default function RespondWorkspacesAdmin() {
         space_id: form.space_id.trim(),
         name: form.name.trim() || null,
         base_url: form.base_url.trim() || null,
+        whatsapp_number: form.whatsapp_number.trim() || null,
         is_active: form.is_active,
         is_default: form.is_default,
         api_key: form.api_key.trim(),
@@ -190,6 +195,19 @@ export default function RespondWorkspacesAdmin() {
         cell: ({ row }) => (
           <span className="truncate" title={row.original.base_url ?? ''}>
             {row.original.base_url || '—'}
+          </span>
+        ),
+      },
+      {
+        id: 'whatsapp_number',
+        accessorFn: (row) => row.whatsapp_number ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="WhatsApp" column={column} />,
+        size: 140,
+        enableSorting: false,
+        meta: { headerTitle: 'WhatsApp', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => (
+          <span className="font-mono truncate" title={row.original.whatsapp_number ?? ''}>
+            {row.original.whatsapp_number || '—'}
           </span>
         ),
       },
@@ -346,6 +364,22 @@ export default function RespondWorkspacesAdmin() {
               />
               <p className="text-xs text-muted-foreground">
                 Optional override. Defaults to the global Respond.io base URL when blank.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="ws-wa">WhatsApp Number</Label>
+              <Input
+                id="ws-wa"
+                value={form.whatsapp_number}
+                onChange={(e) => setForm((f) => ({ ...f, whatsapp_number: e.target.value }))}
+                placeholder="e.g. 60123456789"
+                inputMode="numeric"
+              />
+              <p className="text-xs text-muted-foreground">
+                Business WhatsApp number for this workspace&apos;s channel (digits only,
+                country code included). Shown on the customer portal as the
+                &quot;Message us on WhatsApp&quot; button when a verification code cannot be
+                delivered. Leave blank to hide that button.
               </p>
             </div>
             <div className="flex items-center gap-2">

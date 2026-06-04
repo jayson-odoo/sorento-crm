@@ -1,6 +1,8 @@
 """Tests for PortalService reuse logic + send-link-via-respond-io flow."""
 from __future__ import annotations
 
+import re
+
 import uuid
 from datetime import timedelta
 
@@ -327,7 +329,11 @@ def test_portal_link_endpoint_returns_url(client, db, cleanup):
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["token"]
-    assert body["portal_url"].endswith(f"/portal?token={body['token']}")
+    # Durable slug URL: /portal/c/{slug}?token={token} — slug half stays a
+    # bookmarkable re-entry point after the token half expires.
+    assert re.search(
+        rf"/portal/c/[0-9A-Z]{{10}}\?token={body['token']}$", body["portal_url"]
+    ), body["portal_url"]
     assert body["reused"] is False
 
     # Track minted token for teardown.
@@ -544,4 +550,8 @@ def test_portal_link_endpoint_falls_back_to_request_base_url(client, db, cleanup
     assert res.status_code == 200
     # TestClient base URL is http://testserver/
     assert body["portal_url"].startswith("http"), f"expected absolute URL, got {body['portal_url']}"
-    assert body["portal_url"].endswith(f"/portal?token={body['token']}")
+    # Durable slug URL: /portal/c/{slug}?token={token} — slug half stays a
+    # bookmarkable re-entry point after the token half expires.
+    assert re.search(
+        rf"/portal/c/[0-9A-Z]{{10}}\?token={body['token']}$", body["portal_url"]
+    ), body["portal_url"]

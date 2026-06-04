@@ -5,7 +5,7 @@ to view and edit their own submissions across complaints, stock inquiries,
 purchase requests and sponsorship forms — without a CRM login. After token
 expiry the contact re-verifies via OTP sent to their phone via Respond.io.
 """
-from sqlalchemy import Column, String, DateTime, Index, Integer, Text
+from sqlalchemy import Boolean, Column, String, DateTime, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from app.database import Base
@@ -22,6 +22,9 @@ class PortalToken(Base):
     expires_at = Column(DateTime(timezone=False), nullable=False)
     revoked_at = Column(DateTime(timezone=False), nullable=True)
     verified_at = Column(DateTime(timezone=False), nullable=True)  # OTP-verified gate; NULL = first visit must verify
+    # Admin "view as contact" tokens: excluded from the sliding 30-day TTL and
+    # session-scoped on the FE (never written to localStorage).
+    is_impersonation = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
