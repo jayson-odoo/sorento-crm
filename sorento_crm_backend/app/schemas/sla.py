@@ -223,7 +223,10 @@ class ConversationSLAEscalateRequest(BaseModel):
     """
     respond_contact_id: str
     policy_id: str
-    current_tier: int  # Target tier after escalation (1–3), must be greater than the row's current tier
+    # Target tier after escalation (1–3), must be greater than the row's current tier.
+    # Omit (None) for signal-only escalation: the server escalates to current tier + 1,
+    # or returns escalated=false when already at tier 3.
+    current_tier: Optional[int] = None
     escalation_reason: str
     team_set_code: Optional[str] = None  # Optional team set key to resolve tier within a set
 

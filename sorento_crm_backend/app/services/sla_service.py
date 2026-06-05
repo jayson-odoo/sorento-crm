@@ -1231,12 +1231,17 @@ class ConversationSLATrackingService:
             return {"updated": False, "message": "Sync successful. Assignee already in sync."}
 
         self.update_tracking(tracking_id, ConversationSLATrackingUpdate(assigned_to=assignee_respond_id))
+        # Assignee-driven routing correction (see apply_assignee_team_derivation).
+        derivation = self.apply_assignee_team_derivation(
+            tracking_id, str(user.id), source="sync-assignee"
+        )
         tracking = self.get_tracking(tracking_id)
         return {
             "updated": True,
             "message": "Assignee synced from Respond.io.",
             "assigned_to_id": str(user.id),
             "assigned_to": user.name or user.email or assignee_respond_id,
+            "routing": derivation,
         }
 
     def set_assignee_for_tracking(self, tracking_id: str, assignee_respond_user_id: str) -> dict:
@@ -1244,9 +1249,11 @@ class ConversationSLATrackingService:
         Update the assignee on Conversation SLA Tracking in our system only (no Respond.io call).
         Used by external API: look up tracking by contact phone, then update assigned_to/assigned_to_id.
 
-        Assignee updates are intentionally assignee-only: they must not alter SLA tier progression.
-        `current_tier` and SLA clocks are owned by create/escalate/update tracking flows and should
-        follow the explicit tier in those requests, not `users.tier`.
+        After the assignee update, routing is re-derived from the new assignee's team
+        membership (apply_assignee_team_derivation): a tier-1 member pulls the tracking to
+        their (agent, team_set) at tier 1; a tier-2/3 member of the current team set moves
+        the tier to match; otherwise agent/team/tier stay as-is. Tier/team changes restart
+        the tier clock and log a 'reassignment' event.
 
         For resolved trackings, this still updates only assignee fields and keeps resolution status.
         assignee_respond_user_id: Respond.io user id (e.g. 1023495). Use empty string to unassign.
@@ -1267,6 +1274,16 @@ class ConversationSLATrackingService:
 
         update_kw: dict = {"assigned_to": assignee_id if assignee_id else None}
         self.update_tracking(tracking_id, ConversationSLATrackingUpdate(**update_kw))
+
+        # Assignee-driven routing correction: re-derive agent/team(/tier) from the new
+        # assignee's team membership so escalation follows the correct team afterwards.
+        # Unassign carries no routing signal — skip derivation.
+        derivation = None
+        if user is not None:
+            derivation = self.apply_assignee_team_derivation(
+                tracking_id, str(user.id), source="conversation-assignee"
+            )
+
         tracking = self.get_tracking(tracking_id)
         phone = None
         if tracking.contact:
@@ -1282,10 +1299,215 @@ class ConversationSLATrackingService:
             "original_assignee": original_assignee,
             "original_tier": original_tier,
             "current_tier": tracking.current_tier,
+            "team_set_code": getattr(tracking, "team_set_code", None),
+            "routing": derivation,
             "assigned_to": (user.name or user.email or assignee_id) if user else (assignee_id or None),
             "assigned_to_id": str(user.id) if user else None,
             "assignee_respond_user_id": assignee_id or None,
             "assignee_changed_at": assignee_changed_at,
+        }
+
+    def derive_team_for_assignee(
+        self,
+        user_id: str,
+        current_agent_id: Optional[str] = None,
+        current_team_set_code: Optional[str] = None,
+    ) -> Optional[dict]:
+        """
+        Resolve the (agent_id, team_set_code, tier, team_id) an assignee belongs to, for
+        assignee-driven routing correction (PLAN-sla-assignee-team-derivation).
+
+        Step 1 — global tier-1 lookup: the user's unique tier-1-linked TEAM wins (team-level
+        invariant enforced in TeamService/AccessAgentService: a user belongs to at most one
+        team that is linked at tier 1). The same team is commonly linked at tier 1 under
+        many agents (shared executive pools), so among that team's tier-1 links prefer the
+        tracking's current agent (agent stays put, only the team set flips); otherwise pick
+        the deterministic first link (code, then agent_id) — tier-2/3 configuration is
+        expected to be equivalent across those agents.
+        Step 2 — scoped tier-2/3 lookup: otherwise, if the user is in the tier-2/3 team of
+        the tracking's current (agent_id, team_set_code), keep agent/team and return the
+        matched tier (lowest when in both).
+        Step 3 — None: unknown user, or a manager of some other team set (ambiguous).
+        """
+        import logging
+        from app.models.access import AgentTeam, TeamMember
+
+        uid = (user_id or "").strip()
+        if not uid:
+            return None
+
+        tier1_links = (
+            self.db.query(AgentTeam)
+            .join(TeamMember, TeamMember.team_id == AgentTeam.team_id)
+            .filter(TeamMember.user_id == uid, AgentTeam.tier == 1)
+            .order_by(AgentTeam.code.asc(), AgentTeam.agent_id.asc())
+            .all()
+        )
+        distinct_teams = {str(l.team_id) for l in tier1_links}
+        if len(distinct_teams) > 1:
+            # Team-level invariant violated (config predates enforcement) — ambiguous.
+            logging.getLogger(__name__).warning(
+                "User %s is a member of multiple tier-1-linked teams %s; "
+                "skipping assignee-driven routing.",
+                uid,
+                sorted(distinct_teams),
+            )
+            return None
+        if tier1_links:
+            link = next(
+                (
+                    l
+                    for l in tier1_links
+                    if current_agent_id and str(l.agent_id) == str(current_agent_id)
+                ),
+                tier1_links[0],
+            )
+            return {
+                "agent_id": str(link.agent_id),
+                "team_set_code": str(link.code),
+                "tier": 1,
+                "team_id": str(link.team_id),
+            }
+
+        if current_agent_id and current_team_set_code:
+            scoped = (
+                self.db.query(AgentTeam)
+                .join(TeamMember, TeamMember.team_id == AgentTeam.team_id)
+                .filter(
+                    TeamMember.user_id == uid,
+                    AgentTeam.agent_id == str(current_agent_id),
+                    AgentTeam.code == str(current_team_set_code),
+                    AgentTeam.tier.in_([2, 3]),
+                )
+                .order_by(AgentTeam.tier.asc())
+                .first()
+            )
+            if scoped:
+                return {
+                    "agent_id": str(scoped.agent_id),
+                    "team_set_code": str(scoped.code),
+                    "tier": int(getattr(scoped, "tier")),
+                    "team_id": str(scoped.team_id),
+                }
+        return None
+
+    def apply_assignee_team_derivation(
+        self, tracking_id: str, user_id: str, source: str
+    ) -> Optional[dict]:
+        """
+        After an assignee change, re-derive (agent_id, team_set_code, current_tier) from the
+        new assignee's team membership and apply when different.
+
+        - Tier or team change restarts the tier clock (current_tier_started_at = now;
+          due_at / due_at_resolution from the policy's matched-tier hours) and writes a
+          'reassignment' event log row (including team-only changes at the same tier).
+        - Team change advances the round-robin cursor of the new (agent, team) to the
+          manually picked assignee so auto-assign continues fairly after them.
+        - Returns a change summary dict, or None when no derivation / nothing changed.
+        """
+        from app.models.access import AgentTeamRoundRobinCursor
+
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        tracking = self.get_tracking(tracking_id)
+        # Resolved trackings clear escalation routing on resolve — never resurrect it.
+        if bool(getattr(tracking, "is_resolved", False)):
+            return None
+        # Form SLA trackings own their routing via FormSLAConfig stages — assignee changes
+        # must not flip stage-configured agent/team. Conversation trackings only.
+        if (getattr(tracking, "source_entity_type", None) or "") in FORM_SLA_TYPES:
+            return None
+        current_agent_id = getattr(tracking, "agent_id", None)
+        current_team_set = getattr(tracking, "team_set_code", None)
+        derived = self.derive_team_for_assignee(
+            user_id,
+            current_agent_id=str(current_agent_id) if current_agent_id else None,
+            current_team_set_code=str(current_team_set) if current_team_set else None,
+        )
+        if not derived:
+            return None
+
+        from_tier = int(getattr(tracking, "current_tier", 0) or 0)
+        team_changed = (
+            str(current_agent_id or "") != derived["agent_id"]
+            or str(current_team_set or "") != derived["team_set_code"]
+        )
+        tier_changed = from_tier != derived["tier"]
+        if not team_changed and not tier_changed:
+            return None
+
+        now_utc = _now_utc()
+        setattr(tracking, "agent_id", derived["agent_id"])
+        setattr(tracking, "team_set_code", derived["team_set_code"])
+        setattr(tracking, "current_tier", derived["tier"])
+
+        # Restart the tier clock from the matched tier's policy hours. If the tier row is
+        # missing (misconfigured policy), keep existing clocks — routing fix still applies.
+        tier_row = self.db.query(SLAPolicyTier).filter(
+            SLAPolicyTier.policy_id == tracking.policy_id,
+            SLAPolicyTier.tier_level == derived["tier"],
+        ).first()
+        if tier_row is not None:
+            response_hours = float(getattr(tier_row, "response_hours", None) or 24.0)
+            resolution_hours = float(getattr(tier_row, "resolution_hours", None) or 24.0)
+            setattr(tracking, "current_tier_started_at", now_utc)
+            setattr(tracking, "due_at", now_utc + timedelta(hours=response_hours))
+            setattr(tracking, "due_at_resolution", now_utc + timedelta(hours=resolution_hours))
+
+        # Advance the new team's round-robin cursor to the manual pick before the event-log
+        # commit so everything lands in one transaction.
+        if team_changed:
+            cursor = (
+                self.db.query(AgentTeamRoundRobinCursor)
+                .filter(
+                    AgentTeamRoundRobinCursor.agent_id == derived["agent_id"],
+                    AgentTeamRoundRobinCursor.team_id == derived["team_id"],
+                )
+                .with_for_update()
+                .first()
+            )
+            if cursor:
+                setattr(cursor, "last_assigned_user_id", str(user_id))
+            else:
+                self.db.add(
+                    AgentTeamRoundRobinCursor(
+                        agent_id=derived["agent_id"],
+                        team_id=derived["team_id"],
+                        last_assigned_user_id=str(user_id),
+                    )
+                )
+
+        reason_parts = [f"assignee correction via {source}"]
+        if team_changed:
+            reason_parts.append(
+                f"team_set: {current_team_set or '—'} → {derived['team_set_code']}"
+            )
+        self.db.flush()
+        self.create_event_log(
+            ConversationSLAEventLogCreate(
+                sla_tracking_id=str(getattr(tracking, "id")),
+                event_type="reassignment",
+                from_tier=from_tier if from_tier >= 1 else None,
+                to_tier=derived["tier"],
+                event_at=now_utc,
+                reason="; ".join(reason_parts),
+                assigned_to_id=str(user_id),
+                due_at=(
+                    getattr(tracking, "due_at")
+                    if isinstance(getattr(tracking, "due_at", None), datetime)
+                    else None
+                ),
+            )
+        )
+        return {
+            "routing_updated": True,
+            "team_changed": team_changed,
+            "tier_changed": tier_changed,
+            "from_tier": from_tier or None,
+            "to_tier": derived["tier"],
+            "from_team_set_code": current_team_set,
+            "team_set_code": derived["team_set_code"],
+            "agent_id": derived["agent_id"],
         }
 
     def create_tracking(self, tracking_data: ConversationSLATrackingCreate):

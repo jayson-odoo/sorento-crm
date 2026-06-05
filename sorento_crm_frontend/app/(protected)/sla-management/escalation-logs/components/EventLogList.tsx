@@ -168,6 +168,7 @@ export default function EventLogList() {
                     <SelectContent>
                       <SelectItem value="__all__">All events</SelectItem>
                       <SelectItem value="escalation">Escalation</SelectItem>
+                      <SelectItem value="reassignment">Reassignment</SelectItem>
                       <SelectItem value="response">Response</SelectItem>
                       <SelectItem value="resolution">Resolution</SelectItem>
                     </SelectContent>

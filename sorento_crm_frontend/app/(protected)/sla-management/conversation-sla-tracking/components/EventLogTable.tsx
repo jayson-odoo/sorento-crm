@@ -53,11 +53,12 @@ function toYYYYMMDD(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-const EVENT_TYPE_OPTIONS = [
+export const EVENT_TYPE_OPTIONS = [
   { value: '__all__', label: 'All' },
   { value: 'assign', label: 'Assign' },
   { value: 'adjust', label: 'Adjust' },
   { value: 'escalation', label: 'Escalation' },
+  { value: 'reassignment', label: 'Reassignment' },
   { value: 'response', label: 'Response' },
   { value: 'resolution', label: 'Resolution' },
 ];
