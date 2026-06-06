@@ -195,3 +195,71 @@ def test_overlap_default_keeps_active_gate(db, seeded):
     # its window so the default gate excludes it while active rows match.
     ids = _list_ids(db, **WINDOW)
     assert ids == {seeded["old_runner"], seeded["fresh"]}
+
+
+def test_promotion_ids_only_falls_back_to_expired_promo(db, seeded):
+    # Explicit UUID = strongest narrowing filter: an expired promotion fetched
+    # by id must come back via the inactive fallback, not an empty page.
+    result = PromotionService(db).list_promotions(
+        promotion_ids=[seeded["just_ended"]]
+    )
+    assert {p.id for p in result["data"]} == {seeded["just_ended"]}
+    assert result["fallback_used"] is True
+
+
+def test_product_ids_only_falls_back_to_expired_promo(db, seeded):
+    # product_ids filter only consults promotion_products.product_id — no
+    # products row needed (sqlite doesn't enforce the FK here).
+    product_id = str(uuid.uuid4())
+    group = PromotionGroup(
+        id=uuid.uuid4(),  # UUID(as_uuid=True) column wants the object, not str
+        promotion_id=seeded["just_ended"],
+        group_name="FB Group",
+    )
+    db.add(group)
+    db.flush()
+    db.add(
+        PromotionProduct(
+            id=str(uuid.uuid4()),
+            promotion_id=seeded["just_ended"],
+            promotion_group_id=group.id,
+            product_id=product_id,
+        )
+    )
+    db.commit()
+    result = PromotionService(db).list_promotions(product_ids=[product_id])
+    assert {p.id for p in result["data"]} == {seeded["just_ended"]}
+    assert result["fallback_used"] is True
+
+
+def test_promotion_ids_active_promo_no_fallback(db, seeded):
+    result = PromotionService(db).list_promotions(promotion_ids=[seeded["fresh"]])
+    assert {p.id for p in result["data"]} == {seeded["fresh"]}
+    assert result["fallback_used"] is False
+
+
+def test_is_expired_flag_marks_fallback_rows(db, seeded):
+    # Fallback row (past end_date) -> is_expired=True even though is_active flag on.
+    result = PromotionService(db).list_promotions(
+        promotion_ids=[seeded["just_ended"]]
+    )
+    assert result["data"][0].is_expired is True
+
+    # Live row -> is_expired=False.
+    result = PromotionService(db).list_promotions(promotion_ids=[seeded["fresh"]])
+    assert result["data"][0].is_expired is False
+
+
+def test_is_expired_flag_no_window_follows_is_active(db):
+    no_window = Promotion(
+        id=str(uuid.uuid4()),
+        description="NO_WINDOW",
+        start_date=None,
+        end_date=None,
+        is_active=True,
+        access_levels=["dealer"],
+    )
+    db.add(no_window)
+    db.commit()
+    result = PromotionService(db).list_promotions(promotion_ids=[no_window.id])
+    assert result["data"][0].is_expired is False

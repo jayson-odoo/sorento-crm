@@ -139,6 +139,10 @@ class PromotionListItemResponse(PromotionBase):
     updated_at: datetime
     products_count: Optional[int] = 0
     attachments: list["PromotionAttachmentResponse"] = []
+    # True when the row is not currently live: is_active flag off OR today
+    # outside [start_date, end_date]. Lets callers (n8n) answer "found but
+    # expired" instead of presenting fallback rows as live promotions.
+    is_expired: bool = False
 
     @field_serializer("start_date", "end_date")
     def _serialize_promotion_boundary_dates_list(self, v: Optional[date]) -> Optional[str]:

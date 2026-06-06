@@ -323,6 +323,9 @@ class PromotionService:
             or contact_access_codes
             or period_from
             or period_to
+            or promotion_ids
+            or product_ids
+            or entity_promotion_ids
         )
 
         today = datetime.utcnow().date()
@@ -485,6 +488,18 @@ class PromotionService:
             promotion.attachments = self._filter_attachments_by_codes(
                 attachments_by_promotion.get(promotion.id, []),
                 contact_access_codes,
+            )
+            # Python mirror of active_clause: live = flag on AND (no window at
+            # all OR today inside it). Anything else is presented as expired so
+            # n8n can say "found but expired" for fallback / historical rows.
+            no_window_py = promotion.start_date is None and promotion.end_date is None
+            within_window_py = (
+                promotion.start_date is not None
+                and promotion.end_date is not None
+                and promotion.start_date <= today <= promotion.end_date
+            )
+            promotion.is_expired = not (
+                bool(promotion.is_active) and (no_window_py or within_window_py)
             )
 
         payload = {
