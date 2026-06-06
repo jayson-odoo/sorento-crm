@@ -1034,12 +1034,20 @@ class ConversationSLATrackingService:
         respond_contact_id: str,
         policy_id: str,
         current_tier: int,
-        escalation_reason: str,
+        escalation_reason: Optional[str] = None,
+        assigned_to_id: Optional[str] = None,
+        assigned_to_respond_user_id: Optional[str] = None,
     ) -> ConversationSLATracking:
         """
         Escalate a conversation SLA tracking by respond_contact_id and policy_id: set new tier,
         timestamps, and recalculate due_at (response) and due_at_resolution from policy tier KPIs.
         Creates an escalation event log. Called by external system via integration API.
+
+        escalation_reason None → auto-escalation default mentioning from_tier (signal-only
+        callers like the scheduled n8n runner don't know the tier before the call).
+        assigned_to_id / assigned_to_respond_user_id: the new tier assignee, applied BEFORE
+        the event log is written so the escalation log records the new assignee, not the
+        previous tier's (the caller resolves the assignee from the target tier first).
         """
         from datetime import timedelta
 
@@ -1074,13 +1082,26 @@ class ConversationSLATrackingService:
         resolution_hours_raw = getattr(tier, "resolution_hours", None)
         resolution_hours = float(resolution_hours_raw) if resolution_hours_raw is not None else 24.0
 
+        reason = (escalation_reason or "").strip() or (
+            f"Auto-escalation: tier {from_tier} response due time breached"
+        )
+
         setattr(tracking, "current_tier", current_tier)
         setattr(tracking, "current_tier_started_at", now_utc)
         setattr(tracking, "escalated_at", now_utc)
-        setattr(tracking, "escalation_reason", escalation_reason)
+        setattr(tracking, "escalation_reason", reason)
         setattr(tracking, "due_at", now_utc + timedelta(hours=response_hours))
         # On escalation, due_at_resolution = escalation time (now) + resolution_hours from policy
         setattr(tracking, "due_at_resolution", now_utc + timedelta(hours=resolution_hours))
+        if assigned_to_id is not None:
+            setattr(tracking, "assigned_to_id", str(assigned_to_id))
+            setattr(
+                tracking,
+                "assigned_to",
+                str(assigned_to_respond_user_id)
+                if assigned_to_respond_user_id is not None
+                else None,
+            )
 
         self.db.flush()
         self.create_event_log(
@@ -1094,7 +1115,7 @@ class ConversationSLATrackingService:
                 ),
                 to_tier=current_tier,
                 event_at=now_utc,
-                reason=escalation_reason,
+                reason=reason,
                 assigned_to_id=(
                     str(getattr(tracking, "assigned_to_id"))
                     if getattr(tracking, "assigned_to_id", None) is not None
@@ -1109,6 +1130,92 @@ class ConversationSLATrackingService:
         )
         self.db.refresh(tracking)
         return tracking
+
+    def list_due_escalations(self) -> list[dict]:
+        """Work-list for the scheduled escalation runner (n8n).
+
+        Conversation-SLA rows (scope filter — never form rows) that are unresolved, in
+        breach, and still escalatable (tier 1 or 2; tier 3 has nowhere to go). Split-clock
+        breach rule — the response clock stops on response (compute_tracking_timings), so
+        escalation must not fire on a stopped clock:
+        - not responded → breach when due_at (response deadline) passes
+        - responded     → breach when due_at_resolution passes; never before
+        Each item carries everything the runner needs downstream — contact phone and
+        Respond.io id included — so n8n needs no SQL nodes, plus `breach_type`
+        ("response" | "resolution") for message templating. Datetime columns store naive
+        UTC; compared against naive-UTC now and serialized as aware-UTC ISO.
+        """
+        from sqlalchemy import and_
+        from app.models.access import RespondContact
+
+        now_naive = _now_utc().replace(tzinfo=None)
+        rows = (
+            self.db.query(ConversationSLATracking, RespondContact)
+            .outerjoin(
+                RespondContact,
+                RespondContact.id == ConversationSLATracking.respond_contact_id,
+            )
+            .filter(
+                conversation_tracking_scope(),
+                ConversationSLATracking.is_resolved.is_(False),
+                ConversationSLATracking.current_tier.in_([1, 2]),
+                or_(
+                    and_(
+                        ConversationSLATracking.is_responded.is_(False),
+                        ConversationSLATracking.due_at.isnot(None),
+                        ConversationSLATracking.due_at < now_naive,
+                    ),
+                    and_(
+                        ConversationSLATracking.is_responded.is_(True),
+                        ConversationSLATracking.due_at_resolution.isnot(None),
+                        ConversationSLATracking.due_at_resolution < now_naive,
+                    ),
+                ),
+            )
+            .order_by(ConversationSLATracking.due_at.asc())
+            .all()
+        )
+
+        items: list[dict] = []
+        for tracking, contact in rows:
+            due_at_utc = _to_aware_utc(getattr(tracking, "due_at", None))
+            due_at_resolution_utc = _to_aware_utc(getattr(tracking, "due_at_resolution", None))
+            is_responded = bool(getattr(tracking, "is_responded", False))
+            items.append(
+                {
+                    "tracking_id": str(getattr(tracking, "id")),
+                    "respond_contact_id": (
+                        str(getattr(tracking, "respond_contact_id"))
+                        if getattr(tracking, "respond_contact_id", None)
+                        else None
+                    ),
+                    "policy_id": (
+                        str(getattr(tracking, "policy_id"))
+                        if getattr(tracking, "policy_id", None)
+                        else None
+                    ),
+                    "current_tier": getattr(tracking, "current_tier", None),
+                    "breach_type": "resolution" if is_responded else "response",
+                    "is_responded": is_responded,
+                    "due_at": due_at_utc.isoformat() if due_at_utc else None,
+                    "due_at_resolution": (
+                        due_at_resolution_utc.isoformat() if due_at_resolution_utc else None
+                    ),
+                    "message_id": getattr(tracking, "message_id", None),
+                    "source_entity_type": getattr(tracking, "source_entity_type", None),
+                    "team_set_code": getattr(tracking, "team_set_code", None),
+                    "assigned_to_id": (
+                        str(getattr(tracking, "assigned_to_id"))
+                        if getattr(tracking, "assigned_to_id", None)
+                        else None
+                    ),
+                    "assigned_to_respond_user_id": getattr(tracking, "assigned_to", None),
+                    "phone_number": getattr(contact, "phone_number", None) if contact else None,
+                    "respond_io_id": getattr(contact, "respond_io_id", None) if contact else None,
+                    "contact_name": getattr(contact, "name", None) if contact else None,
+                }
+            )
+        return items
 
     def get_existing_assignee_for_contact_phone(self, contact_phone: str) -> Optional[dict]:
         """

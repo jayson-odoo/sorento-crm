@@ -370,6 +370,32 @@ async def create_sla_tracking(
         raise handle_internal_error(str(e))
 
 
+@router.get("/integration/due-escalations", status_code=status.HTTP_200_OK)
+async def list_due_escalations_integration(
+    db: Session = Depends(get_db),
+):
+    """Work-list for the scheduled escalation runner (n8n).
+
+    Returns unresolved conversation-SLA rows past their response due time at tier 1 or 2
+    (tier 3 has nowhere to escalate to; form-SLA rows are excluded by scope). Each item
+    includes `phone_number` and `respond_io_id` so the runner needs no DB access: feed
+    `respond_contact_id` + `policy_id` straight into POST /integration/escalate
+    (signal-only — omit current_tier), and `phone_number` into contact resolution.
+    """
+    try:
+        service = ConversationSLATrackingService(db)
+        items = service.list_due_escalations()
+        return {
+            "status": "success",
+            "count": len(items),
+            "items": items,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.post("/integration/escalate", status_code=status.HTTP_200_OK)
 async def escalate_sla_tracking_integration(
     body: ConversationSLAEscalateRequest,
@@ -468,20 +494,20 @@ async def escalate_sla_tracking_integration(
             agent_id_override=resolved_agent_id,
         )
 
+        # Assignee is passed into the service so the escalation event log (written inside
+        # escalate_tracking) records the NEW tier assignee, not the previous tier's.
         tracking = service.escalate_tracking(
             respond_contact_id=internal_contact_id,
             policy_id=body.policy_id,
             current_tier=target_tier,
             escalation_reason=body.escalation_reason,
+            assigned_to_id=str(assignee["id"]),
+            assigned_to_respond_user_id=(
+                str(assignee["respond_user_id"])
+                if assignee.get("respond_user_id") is not None
+                else None
+            ),
         )
-        setattr(tracking, "assigned_to_id", assignee["id"])
-        setattr(
-            tracking,
-            "assigned_to",
-            str(assignee["respond_user_id"]) if assignee.get("respond_user_id") is not None else None,
-        )
-        db.commit()
-        db.refresh(tracking)
         tracking_id_str = str(getattr(tracking, "id"))
 
         log_service.create_integration_log(
@@ -544,6 +570,8 @@ async def escalate_sla_tracking_integration(
             "assigned_to_respond_user_id": assigned_to_respond_user_id,
             "message_id": getattr(tracking, "message_id", None),
             "current_tier": tracking.current_tier,
+            "escalated_at": _iso(getattr(tracking, "escalated_at", None)),
+            "escalation_reason": getattr(tracking, "escalation_reason", None),
             "due_at": _iso(tracking.due_at),
             "due_at_resolution": _iso(tracking.due_at_resolution),
             "remaining_response_hours": remaining_response_hours,
