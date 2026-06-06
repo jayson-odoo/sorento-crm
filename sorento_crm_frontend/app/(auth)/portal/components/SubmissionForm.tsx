@@ -119,7 +119,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
     },
     { name: 'contact_person', label: 'Contact person', required: true },
     { name: 'contact_number', label: 'Contact number', required: true },
-    { name: 'customer_address', label: 'Customer address', widget: 'textarea' },
+    { name: 'customer_address', label: 'Delivery address', widget: 'textarea' },
     {
       name: 'customer_type',
       label: 'Customer type',

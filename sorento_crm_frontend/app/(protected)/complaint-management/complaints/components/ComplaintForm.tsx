@@ -444,10 +444,10 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
               name="customer_address"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Customer Address</FormLabel>
+                  <FormLabel>Delivery Address</FormLabel>
                   <FormControl>
                     <Textarea
-                      placeholder="Enter customer address"
+                      placeholder="Enter delivery address"
                       {...field}
                       value={field.value || ''}
                       rows={3}
