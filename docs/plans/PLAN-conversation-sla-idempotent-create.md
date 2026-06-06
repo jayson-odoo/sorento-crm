@@ -1,6 +1,6 @@
 # PLAN — Conversation SLA: idempotent create + conversation-row scoping
 
-**Status:** Implemented 2026-06-06 — backend + pytest done (7 new tests green, no regressions). Pending: n8n-side node removal (see n8n section) + PR. (Grill session 2026-06-06; supersedes the abandoned multi-active/source-entity-key design.)
+**Status:** Merged to main 2026-06-06 (PR #4, commit efe20ad). Pending: n8n-side node removal (see n8n section). (Grill session 2026-06-06; supersedes the abandoned multi-active/source-entity-key design.)
 
 ## Context / problem
 
