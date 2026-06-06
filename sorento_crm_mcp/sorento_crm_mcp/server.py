@@ -71,8 +71,9 @@ def _empty_narrowing_response(tool_name: str, query: dict[str, Any] | None, need
 
 
 TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
-    # Promotion list must always return active promotions only.
-    "crm_marketing_promotions_list": {"status": "active"},
+    # NOTE: promotions list intentionally has NO status/active default — the
+    # backend owns the semantics (active-first, fallback to expired rows with
+    # per-row `is_expired` so the agent can answer "found but expired").
     # Orders list (DO discovery) should surface the latest order first by default.
     # UI grid passes its own sort/dir, so this only affects MCP/agent calls that omit them.
     "crm_order_management_orders_list": {"sort": "order_date", "dir": "desc"},
@@ -81,8 +82,12 @@ TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     "crm_resource_attachments_catalogue": {"attachment_type_code": "catalogue"},
 }
 
+# Tools whose responses are blocked / row-filtered to ACTIVE promotions only.
+# `crm_marketing_promotions_list` is deliberately NOT here: the backend returns
+# expired rows via its active-first fallback with `is_expired=true` per row,
+# and the agent must present them as "found but expired" (director requirement)
+# instead of silently getting an empty list.
 PROMOTION_TOOL_NAMES: set[str] = {
-    "crm_marketing_promotions_list",
     "crm_marketing_promotions_get",
     "crm_marketing_promotion_products_nested",
     "crm_marketing_promotion_products_list",

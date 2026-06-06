@@ -84,8 +84,14 @@ def test_nested_updated_at_is_normalized_for_non_stock_tool():
         }
     )
 
+    # promotion_ids present -> NOT browse mode, so the inline attachments
+    # survive the browse-mode strip and the walker must normalize them too.
     sanitized = json.loads(
-        _sanitize_tool_response("crm_marketing_promotions_list", raw)
+        _sanitize_tool_response(
+            "crm_marketing_promotions_list",
+            raw,
+            query={"promotion_ids": ["promo-1"]},
+        )
     )
     row = sanitized["data"][0]
 
