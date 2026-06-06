@@ -124,6 +124,7 @@ def test_create_tracking_agent_code_with_explicit_assignee_skips_round_robin():
     def query_side_effect(_model):
         qm = MagicMock()
         qm.filter.return_value = qm
+        qm.order_by.return_value = qm
         qm.first.return_value = next(returns)
         return qm
 
@@ -135,7 +136,7 @@ def test_create_tracking_agent_code_with_explicit_assignee_skips_round_robin():
         service,
         "get_escalation_assignee_for_tier",
         side_effect=AssertionError("round-robin should not run when assignee is explicit"),
-    ):
+    ), patch.object(service, "_write_assign_event_log"):
         payload = ConversationSLATrackingCreate(
             contact_phone_number="+60166753328",
             policy_id="policy-1",

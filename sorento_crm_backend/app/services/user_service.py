@@ -1596,6 +1596,111 @@ class AccessAgentService:
             })
         return result
 
+    def _validate_tier1_invariant_for_assignments(self, agent_id: str, assignments: list[dict]) -> None:
+        """
+        Tier-1 membership invariant (PLAN-sla-assignee-team-derivation), TEAM-level: linking
+        teams at tier 1 must not leave any user a member of two DIFFERENT tier-1-linked
+        teams. The same team linked at tier 1 under many agents is fine (shared executive
+        pools). Cross-tier reuse of a tier-1 team (same team at tier 2/3 elsewhere) does not
+        break routing derivation — warn only.
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+        tier1_assignments: list[tuple[str, str]] = []  # (code, team_id)
+        for a in assignments:
+            raw_code = a.get("code")
+            code = str(raw_code).strip() if raw_code is not None else ""
+            team_id = a.get("team_id")
+            tier = a.get("tier")
+            if code and team_id and tier == 1:
+                tier1_assignments.append((code, str(team_id)))
+        if not tier1_assignments:
+            return
+
+        # member user_ids per tier-1 team in this payload
+        team_ids = [tid for _, tid in tier1_assignments]
+        member_rows = (
+            self.db.query(TeamMember.team_id, TeamMember.user_id)
+            .filter(TeamMember.team_id.in_(team_ids))
+            .all()
+        )
+        members_by_team: dict[str, set[str]] = {}
+        for tid, uid in member_rows:
+            members_by_team.setdefault(str(tid), set()).add(str(uid))
+
+        # Other tier-1-linked teams each user belongs to. Exclude the teams in this
+        # payload (same team under many agents is allowed); exclude this agent's links
+        # (being replaced wholesale).
+        all_user_ids = {u for users in members_by_team.values() for u in users}
+        other_links = []
+        if all_user_ids:
+            other_links = (
+                self.db.query(TeamMember.user_id, AgentTeam.agent_id, AgentTeam.code, AgentTeam.team_id, Team.name)
+                .join(AgentTeam, AgentTeam.team_id == TeamMember.team_id)
+                .join(Team, Team.id == AgentTeam.team_id)
+                .filter(
+                    TeamMember.user_id.in_(all_user_ids),
+                    AgentTeam.tier == 1,
+                    AgentTeam.agent_id != agent_id,
+                    AgentTeam.team_id.notin_(team_ids),
+                )
+                .all()
+            )
+        conflict_by_user: dict[str, tuple[str, str, str]] = {}
+        for uid, other_agent_id, code, _tid, team_name in other_links:
+            conflict_by_user.setdefault(str(uid), (str(other_agent_id), str(code), str(team_name)))
+
+        # Teams each user belongs to within this payload's tier-1 assignments.
+        local_teams_by_user: dict[str, set[str]] = {}
+        for _code, tid in tier1_assignments:
+            for uid in members_by_team.get(tid, set()):
+                local_teams_by_user.setdefault(uid, set()).add(tid)
+
+        for uid, local_teams in local_teams_by_user.items():
+            other = conflict_by_user.get(uid)
+            if len(local_teams) <= 1 and not other:
+                continue
+            user = self.db.query(User).filter(User.id == uid).first()
+            user_label = (user.name or user.email) if user else uid
+            if other:
+                other_agent_id, other_code, other_team = other
+                agent = self.db.query(AccessAgent).filter(AccessAgent.id == other_agent_id).first()
+                agent_label = agent.code if agent else other_agent_id
+                raise handle_validation_error(
+                    f"User '{user_label}' is already in tier-1 team '{other_team}' "
+                    f"(agent '{agent_label}', team set '{other_code}'). "
+                    "A user may only belong to one tier-1 team."
+                )
+            raise handle_validation_error(
+                f"User '{user_label}' would belong to multiple tier-1 teams "
+                f"({sorted(local_teams)}). A user may only belong to one tier-1 team."
+            )
+
+        # Warn-only: tier-1 team reused at other tiers (here or under other agents).
+        reused = (
+            self.db.query(AgentTeam.team_id, AgentTeam.agent_id, AgentTeam.code, AgentTeam.tier)
+            .filter(
+                AgentTeam.team_id.in_(team_ids),
+                AgentTeam.tier.in_([2, 3]),
+                AgentTeam.agent_id != agent_id,
+            )
+            .all()
+        )
+        local_reuse = [
+            (a.get("code"), str(a.get("team_id")), a.get("tier"))
+            for a in assignments
+            if a.get("tier") in (2, 3) and str(a.get("team_id")) in team_ids
+        ]
+        if reused or local_reuse:
+            logger.warning(
+                "Tier-1 team(s) %s for agent %s are also linked at tier 2/3 (%s); allowed, "
+                "but tier-1 members will implicitly appear at higher tiers.",
+                team_ids,
+                agent_id,
+                [(str(t), str(aid), str(c), int(tr)) for t, aid, c, tr in reused] + local_reuse,
+            )
+
     def set_agent_teams(self, agent_id: str, assignments: list[dict]) -> None:
         """Replace agent's team links with the given assignments [{code, team_id, tier?}...]."""
         seen_keys: set[tuple[str, str | int]] = set()
@@ -1616,6 +1721,8 @@ class AccessAgentService:
                     f"cannot have duplicate code {code} in different groups"
                 )
             seen_keys.add(key)
+
+        self._validate_tier1_invariant_for_assignments(agent_id, assignments or [])
 
         self.db.query(AgentTeam).filter(AgentTeam.agent_id == agent_id).delete()
         for a in assignments or []:
@@ -1737,6 +1844,49 @@ class TeamService:
             .all()
         )
 
+    def _validate_tier1_membership_invariant(self, team_id: str, user_id: str) -> None:
+        """
+        Tier-1 membership invariant (PLAN-sla-assignee-team-derivation), TEAM-level: a user
+        may belong to at most ONE team that is linked at tier 1 (under any agent), so
+        assignee-driven routing derivation is unambiguous. The same team being linked at
+        tier 1 under many agents is fine (shared executive pools) — derivation prefers the
+        tracking's current agent and falls back to the deterministic first link.
+        """
+        new_links = (
+            self.db.query(AgentTeam)
+            .filter(AgentTeam.team_id == team_id, AgentTeam.tier == 1)
+            .all()
+        )
+        if not new_links:
+            return
+
+        existing = (
+            self.db.query(AgentTeam, Team.name)
+            .join(TeamMember, TeamMember.team_id == AgentTeam.team_id)
+            .join(Team, Team.id == AgentTeam.team_id)
+            .filter(
+                TeamMember.user_id == user_id,
+                AgentTeam.tier == 1,
+                AgentTeam.team_id != team_id,
+            )
+            .all()
+        )
+        if not existing:
+            return
+
+        user = self.db.query(User).filter(User.id == user_id).first()
+        user_label = (user.name or user.email) if user else user_id
+        link, team_name = existing[0]
+        agent = (
+            self.db.query(AccessAgent).filter(AccessAgent.id == link.agent_id).first()
+        )
+        agent_label = agent.code if agent else str(link.agent_id)
+        raise handle_validation_error(
+            f"User '{user_label}' is already in tier-1 team '{team_name}' "
+            f"(agent '{agent_label}', team set '{link.code}'). "
+            "A user may only belong to one tier-1 team."
+        )
+
     def add_team_member(self, team_id: str, user_id: str, sort_order: Optional[int] = None) -> TeamMember:
         """Add a user to a team."""
         self.get_team(team_id)
@@ -1747,6 +1897,7 @@ class TeamService:
         )
         if existing:
             raise handle_conflict("User is already a member of this team.")
+        self._validate_tier1_membership_invariant(team_id, user_id)
         m = TeamMember(team_id=team_id, user_id=user_id, sort_order=sort_order)
         self.db.add(m)
         self.db.commit()

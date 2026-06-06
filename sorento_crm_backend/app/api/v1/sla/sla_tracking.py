@@ -330,6 +330,7 @@ async def create_sla_tracking(
         service = ConversationSLATrackingService(db)
         tracking = service.create_tracking(tracking_data)
         tracking_id_str = str(getattr(tracking, "id"))
+        already_active = bool(getattr(tracking, "_already_active", False))
         log_service.create_integration_log(
             IntegrationLogCreate(
                 integration_channel="sla_management",
@@ -339,11 +340,13 @@ async def create_sla_tracking(
                 direction="inbound",
                 endpoint=str(request.url),
                 http_method="POST",
-                status="success",
+                status="success" if not already_active else "idempotent_already_active",
             ),
             request_payload_dict=tracking_data.model_dump(),
         )
-        return service.get_tracking(str(tracking.id))
+        fresh = service.get_tracking(str(tracking.id))
+        setattr(fresh, "already_active", already_active)
+        return fresh
     except HTTPException:
         raise
     except Exception as e:
@@ -376,11 +379,17 @@ async def escalate_sla_tracking_integration(
     """
     Escalate a conversation SLA tracking by respond_contact_id and policy_id (for external systems).
 
-    Resolves the next assignee from the target tier's team for body.current_tier under the agent
-    mapped from tracking.source_entity_type (complaint, stock_inquiry, purchase_request), using
-    that tier's round-robin cursor only (not the previous tier's assignee). Updates tracking to
-    that tier (supports multi-step jumps, e.g. 1→3). Returns the
-    assignee's Respond user ID for n8n to update Respond.io, plus tracking message_id when set.
+    Preferred (signal-only) mode: omit body.current_tier — the server escalates to the row's
+    current tier + 1. When already at tier 3, no escalation happens and the response carries
+    `escalated: false` with `from_tier = to_tier = 3` (n8n branches on the flag, e.g. keeps
+    reminding). Legacy mode: pass body.current_tier as an explicit target (1–3, must be greater
+    than the row's current tier; supports multi-step jumps, e.g. 1→3).
+
+    Resolves the next assignee from the target tier's team under the tracking's stored
+    agent_id / team_set_code (fallback: body.team_set_code, then source_entity_type→agent
+    mapping), using that tier's round-robin cursor only (not the previous tier's assignee).
+    Returns `escalated`, `from_tier`, `to_tier` for n8n message templating, the assignee's
+    Respond user ID for n8n to update Respond.io, plus tracking message_id when set.
 
     respond_contact_id may be respond_contacts.id, RespondContact.respond_io_id, or contact
     phone (E.164 such as +60166753328, optional spacing; MY local 0-prefix also resolved).
@@ -407,16 +416,42 @@ async def escalate_sla_tracking_integration(
             )
 
         from_tier = int(getattr(tracking, "current_tier", 0) or 0)
-        target_tier = int(body.current_tier)
         if from_tier < 1:
             raise handle_validation_error("Current SLA tier is invalid for escalation.")
-        if target_tier < 1 or target_tier > 3:
-            raise handle_validation_error("current_tier must be between 1 and 3.")
-        if target_tier <= from_tier:
-            raise handle_validation_error(
-                f"Escalation target tier must be greater than current tier {from_tier}. "
-                f"Received current_tier={target_tier}."
-            )
+        if body.current_tier is None:
+            # Signal-only escalation: the server owns tier math (n8n keeps no tier state,
+            # which would go stale once assignee changes can move the tier server-side).
+            if from_tier >= 3:
+                assigned_user = getattr(tracking, "assigned_user", None)
+                return {
+                    "status": "success",
+                    "escalated": False,
+                    "message": "Already at max tier (3); no escalation performed.",
+                    "tracking_id": str(getattr(tracking, "id")),
+                    "from_tier": from_tier,
+                    "to_tier": from_tier,
+                    "current_tier": from_tier,
+                    "assigned_to_id": (
+                        str(getattr(tracking, "assigned_to_id"))
+                        if getattr(tracking, "assigned_to_id", None)
+                        else None
+                    ),
+                    "assigned_to_name": (
+                        (assigned_user.name or assigned_user.email) if assigned_user else None
+                    ),
+                    "assigned_to_respond_user_id": getattr(tracking, "assigned_to", None),
+                    "message_id": getattr(tracking, "message_id", None),
+                }
+            target_tier = from_tier + 1
+        else:
+            target_tier = int(body.current_tier)
+            if target_tier < 1 or target_tier > 3:
+                raise handle_validation_error("current_tier must be between 1 and 3.")
+            if target_tier <= from_tier:
+                raise handle_validation_error(
+                    f"Escalation target tier must be greater than current tier {from_tier}. "
+                    f"Received current_tier={target_tier}."
+                )
 
         # Prefer agent_id FK / team_set_code stored on the tracking record.
         # Fall back to body.team_set_code if not yet persisted, and to source_entity_type→agent mapping.
@@ -499,8 +534,11 @@ async def escalate_sla_tracking_integration(
 
         return {
             "status": "success",
+            "escalated": True,
             "message": "SLA tracking escalated successfully.",
             "tracking_id": tracking_id_str,
+            "from_tier": from_tier,
+            "to_tier": target_tier,
             "assigned_to_id": assigned_to_id,
             "assigned_to_name": assigned_to_name,
             "assigned_to_respond_user_id": assigned_to_respond_user_id,
@@ -547,34 +585,26 @@ async def create_sla_tracking_integration(
     """
     try:
         service = ConversationSLATrackingService(db)
-        
-        # Check if tracking exists for this contact before calling create_tracking
         contact_phone_number = tracking_data.contact_phone_number.strip()
-        from app.models.access import RespondContact
-        contact = db.query(RespondContact).filter(
-            RespondContact.phone_number == contact_phone_number
-        ).first()
-        
-        is_update = False
-        if contact:
-            existing = db.query(ConversationSLATracking).filter(
-                ConversationSLATracking.respond_contact_id == contact.id
-            ).first()
-            if existing:
-                is_update = True
-        
+
         tracking = service.create_tracking(tracking_data)
 
         log_service = IntegrationLogService(db)
         tracking_id_str = str(getattr(tracking, "id"))
-        external_reference = (
-            str(getattr(getattr(tracking, "contact", None), "phone_number"))
-            if getattr(getattr(tracking, "contact", None), "phone_number", None) is not None
-            else tracking_id_str
-        )
+        already_active = bool(getattr(tracking, "_already_active", False))
+        # "Update" = create_tracking reused an existing row: idempotent hit on an
+        # active one, or overwrite of a resolved one. Markers come from the service —
+        # no duplicate pre-query of the singleton check here.
+        is_update = already_active or bool(getattr(tracking, "_overwrote_resolved", False))
+        if already_active:
+            integration_channel = "sla_tracking_idempotent_hit"
+        elif is_update:
+            integration_channel = "sla_tracking_update"
+        else:
+            integration_channel = "sla_tracking_creation"
         log_service.create_integration_log(
             IntegrationLogCreate(
-                integration_channel="sla_tracking_creation" if not is_update else "sla_tracking_update",
+                integration_channel=integration_channel,
                 business_table="conversation_sla_tracking",
                 business_id=tracking_id_str,
                 external_reference=contact_phone_number,
@@ -586,8 +616,19 @@ async def create_sla_tracking_integration(
             request_payload_dict=tracking_data.model_dump()
         )
 
-        message = "SLA tracking updated successfully." if is_update else "SLA tracking created successfully."
-        return {"status": "success", "message": message, "tracking_id": tracking_id_str, "is_update": is_update}
+        if already_active:
+            message = "Active SLA tracking already exists for this contact; returned existing tracking."
+        elif is_update:
+            message = "SLA tracking updated successfully."
+        else:
+            message = "SLA tracking created successfully."
+        return {
+            "status": "success",
+            "message": message,
+            "tracking_id": tracking_id_str,
+            "is_update": is_update,
+            "already_active": already_active,
+        }
     except Exception as e:
         raise handle_internal_error(str(e))
 

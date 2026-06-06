@@ -223,7 +223,10 @@ class ConversationSLAEscalateRequest(BaseModel):
     """
     respond_contact_id: str
     policy_id: str
-    current_tier: int  # Target tier after escalation (1–3), must be greater than the row's current tier
+    # Target tier after escalation (1–3), must be greater than the row's current tier.
+    # Omit (None) for signal-only escalation: the server escalates to current tier + 1,
+    # or returns escalated=false when already at tier 3.
+    current_tier: Optional[int] = None
     escalation_reason: str
     team_set_code: Optional[str] = None  # Optional team set key to resolve tier within a set
 
@@ -429,6 +432,10 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     # branch its own routing without parsing a 4xx error envelope.
     already_resolved: Optional[bool] = False
     updated_in_request: Optional[bool] = True
+    # Idempotent-create indicator: true when create found an open conversation
+    # tracking for the contact and returned it (message_id refreshed) instead of
+    # creating a new row. n8n branches on this to skip new-conversation steps.
+    already_active: Optional[bool] = False
 
     @model_serializer(mode='wrap', when_used='json')
     def serialize_model(self, serializer, info):
