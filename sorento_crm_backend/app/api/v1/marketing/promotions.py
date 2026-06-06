@@ -85,6 +85,19 @@ async def get_promotions(
         None,
         description="End of period window (YYYY-MM-DD). Filters promotions whose date range overlaps.",
     ),
+    date_mode: Optional[str] = Query(
+        None,
+        pattern="^(overlap|started|ended)$",
+        description=(
+            "Which promotion date the period window tests. `overlap` (default): "
+            "promotion's [start_date, end_date] overlaps the window — 'valid/"
+            "running during X'. `started`: start_date within the window — "
+            "'released/launched in X'. `ended`: end_date within the window — "
+            "'ended/expired in X'. started/ended skip the active gate (include "
+            "both active and historical rows) unless `active`/`status` is "
+            "passed explicitly."
+        ),
+    ),
     sort: Optional[str] = Query(None, description="Sort field e.g. created_at, name, products_count"),
     dir: Optional[str] = Query("desc", description="asc or desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -140,6 +153,7 @@ async def get_promotions(
             active=active,
             period_from=period_from,
             period_to=period_to,
+            date_mode=date_mode,
             sort_field=sort,
             sort_dir=dir,
             entities=norm_entities,

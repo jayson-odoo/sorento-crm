@@ -361,8 +361,12 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "user_type) and zero active match, the tool automatically falls back to INACTIVE matches "
             "and sets fallback_used=true on the response so the agent can phrase the answer accordingly. "
             "Pass active=false for HISTORICAL-only retrieval (no fallback). Use period_from / period_to "
-            "(YYYY-MM-DD) to scope by overlap with the promotion's [start_date, end_date] window — useful "
-            "when the user asks about promotions that ran during a specific period. For SKU coverage / "
+            "(YYYY-MM-DD) to scope by date; `date_mode` picks which promotion date the window tests: "
+            "`overlap` (default) = promotion active any time during the window ('promotions valid/running "
+            "during X'); `started` = start_date within the window ('promotions released/launched/new in "
+            "the last X days'); `ended` = end_date within the window ('promotions that ended/expired in "
+            "X'). started/ended automatically include BOTH active and historical rows — do not pass "
+            "`active` with them unless the user explicitly narrows to one state. For SKU coverage / "
             "promotion line items use crm_marketing_promotion_products_list."
         ),
         typical_user_questions=(
@@ -372,6 +376,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Are there any historical promotions for this product?",
             "List historical promotions between 2025-01-01 and 2025-03-31.",
             "What promotions ran in Q1 2025?",
+            "What promotions were released in the last 10 days?",
+            "Which promotions expired last month?",
             "Find the promotion with code MIX01.",
             "Did we run a promo for this SKU last year?",
         ),

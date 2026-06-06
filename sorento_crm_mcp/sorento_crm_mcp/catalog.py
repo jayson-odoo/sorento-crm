@@ -137,7 +137,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "its `attachments` array. Default returns ACTIVE promotions (is_active=true AND today within "
             "start/end); when a narrowing filter yields zero active matches it falls back to INACTIVE and sets "
             "fallback_used=true. Pass active=false for historical-only. period_from / period_to (YYYY-MM-DD) "
-            "scope by overlap with [start_date, end_date].\n\n"
+            "scope by date; `date_mode` picks which promotion date the window tests:\n"
+            "  • `overlap` (default) — promo active any time during window ('valid/running during X')\n"
+            "  • `started` — start_date within window ('released/launched/new in last X days')\n"
+            "  • `ended` — end_date within window ('ended/expired in X')\n"
+            "  started/ended automatically include BOTH active and historical rows (no active gate); "
+            "do not pass `active` with them unless the user explicitly narrows to one state.\n\n"
             "OPTIONAL narrowing filters (call without any to get the latest 10 active promotions):\n"
             "  • `promotion_ids` (canonical promotion UUIDs, csv / JSON / repeated)\n"
             "  • `product_ids` (canonical product UUIDs — promotions containing any)\n"
@@ -152,7 +157,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         "/api/v1/marketing/promotions",
         (),
-        ("page", "limit", "promotion_ids", "product_ids", "active", "period_from", "period_to", "sort", "dir", "access_levels"),
+        ("page", "limit", "promotion_ids", "product_ids", "active", "period_from", "period_to", "date_mode", "sort", "dir", "access_levels"),
         domain="promotions",
         related_tools=("crm_marketing_promotion_products_list", "crm_marketing_promotion_attachments_list"),
         escalation_team="sales",
