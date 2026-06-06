@@ -192,7 +192,7 @@ function ViewComplaintContent() {
           <DetailRow label="Customer name" value={summary?.customer_name ?? undefined} />
           <DetailRow label="Contact person" value={summary?.contact_person ?? undefined} />
           <DetailRow label="Contact number" value={summary?.contact_number ?? undefined} />
-          <DetailRow label="Customer address" value={summary?.customer_address ?? undefined} />
+          <DetailRow label="Delivery address" value={summary?.customer_address ?? undefined} />
           <DetailRow label="Project title" value={summary?.project_title ?? undefined} />
           <DetailRow label="Technical team response" value={summary?.technical_team_response ?? undefined} />
           <DetailRow label="Status" value={summary?.status ?? undefined} />

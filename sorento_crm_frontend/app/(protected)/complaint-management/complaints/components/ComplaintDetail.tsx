@@ -646,7 +646,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           </div>
           {complaint.customer_address && (
             <div>
-              <p className="text-sm text-muted-foreground">Customer Address</p>
+              <p className="text-sm text-muted-foreground">Delivery Address</p>
               <p className="font-medium">{complaint.customer_address}</p>
             </div>
           )}

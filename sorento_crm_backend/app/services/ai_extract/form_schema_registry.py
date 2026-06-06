@@ -67,7 +67,7 @@ _PORTAL_COMPLAINT: list[ExtractFieldSpec] = [
     ExtractFieldSpec(name="contact_number", label="Contact number", kind="text"),
     ExtractFieldSpec(
         name="customer_address",
-        label="Customer address",
+        label="Delivery address",
         kind="textarea",
         note="Full delivery / site address as printed on the DO or attached message.",
     ),

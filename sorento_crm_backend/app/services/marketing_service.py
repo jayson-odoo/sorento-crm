@@ -247,6 +247,7 @@ class PromotionService:
         active: Optional[bool] = None,
         period_from: Optional[date] = None,
         period_to: Optional[date] = None,
+        date_mode: Optional[str] = None,
         sort_field: Optional[str] = None,
         sort_dir: Optional[str] = "desc",
         advanced_filter_clause: Optional[Any] = None,
@@ -266,8 +267,17 @@ class PromotionService:
         [start_date, end_date]. Anything outside that window — even if the
         boolean flag is True — is treated as inactive.
 
-        period_from/period_to: optional date bounds. Filters to promotions
-        whose [start_date, end_date] overlaps with the requested window.
+        period_from/period_to: optional date bounds. `date_mode` selects which
+        promotion date the window tests:
+        - "overlap" (default): [start_date, end_date] overlaps the window —
+          "promotions valid/running during X".
+        - "started": start_date falls within the window — "promotions
+          released/launched in X".
+        - "ended": end_date falls within the window — "promotions that
+          ended/expired in X".
+        started/ended skip the active gate by default (the window is the
+        intent; both active and ended rows match) unless active/status is
+        passed explicitly.
         """
         # Entity resolution: when caller passes `entities`, filter by the resolved
         # Promotion.id set (IN clause). Folding promotion UUIDs into `query` would
@@ -295,6 +305,18 @@ class PromotionService:
                 active = False
 
         query_norm = (query or "").strip() or None
+        # Unknown / absent date_mode silently falls back to overlap (same
+        # tolerance as sort_dir) — the route layer validates explicit values.
+        date_mode_norm = (date_mode or "overlap").strip().lower()
+        if date_mode_norm not in ("overlap", "started", "ended"):
+            date_mode_norm = "overlap"
+        # started/ended target a historical window ("released/expired in X") —
+        # the intent spans both currently-active and already-ended rows. With
+        # the default active gate, matching rows in the other state would be
+        # silently dropped (active-first fallback only kicks in at zero
+        # matches). Skip the gate unless the caller explicitly narrowed it.
+        if date_mode_norm in ("started", "ended") and active is None and not status:
+            show_all = True
         narrowing_filter_present = bool(
             query_norm
             or user_type
@@ -357,10 +379,24 @@ class PromotionService:
                             cast(contact_access_codes, ARRAY(String))
                         )
                     )
-            if period_from is not None:
-                q = q.filter(Promotion.end_date >= period_from)
-            if period_to is not None:
-                q = q.filter(Promotion.start_date <= period_to)
+            if date_mode_norm == "started":
+                # Launch date within window: "promotions released in X".
+                if period_from is not None:
+                    q = q.filter(Promotion.start_date >= period_from)
+                if period_to is not None:
+                    q = q.filter(Promotion.start_date <= period_to)
+            elif date_mode_norm == "ended":
+                # Expiry within window: "promotions that ended in X".
+                if period_from is not None:
+                    q = q.filter(Promotion.end_date >= period_from)
+                if period_to is not None:
+                    q = q.filter(Promotion.end_date <= period_to)
+            else:
+                # overlap (default): promotion ran at any point during window.
+                if period_from is not None:
+                    q = q.filter(Promotion.end_date >= period_from)
+                if period_to is not None:
+                    q = q.filter(Promotion.start_date <= period_to)
             if entity_promotion_ids:
                 q = q.filter(Promotion.id.in_(entity_promotion_ids))
             # promotion_ids + product_ids always combine via OR (n8n promo
