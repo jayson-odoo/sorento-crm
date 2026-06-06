@@ -8,7 +8,7 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -20,6 +20,7 @@ from app.schemas.external.conversation_variables import (
 from app.schemas.integration import IntegrationLogCreate
 from app.services.conversation_variables_service import (
     get_for_contact,
+    get_referenced_result_set,
     overwrite_for_contact,
 )
 from app.services.integration_service import IntegrationLogService
@@ -36,12 +37,31 @@ router = APIRouter()
 )
 def get_conversation_state(
     respond_io_id: str,
+    message_id: str | None = Query(
+        None,
+        description="Respond.io message id; when set, the `result` stored on that "
+        "chat-history message is injected into the response as "
+        "`session_vars.referenced_result_set` (response-only, DB untouched).",
+    ),
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
-    """Return the raw `session_vars` JSON for the given respond.io contact id."""
+    """Return the raw `session_vars` JSON for the given respond.io contact id.
+
+    With `?message_id=...`, also resolves that message's stored result set and
+    returns it under `session_vars.referenced_result_set` — always present
+    (null when the message is unknown or carried no result) so n8n can branch
+    deterministically. The persisted `session_vars` is never modified by GET.
+    """
     _ = current_user
     state = get_for_contact(db, respond_io_id=respond_io_id)
+    if message_id is not None:
+        state = {
+            **state,
+            "referenced_result_set": get_referenced_result_set(
+                db, respond_io_id=respond_io_id, message_id=message_id
+            ),
+        }
     return ConversationStateResponse(respond_io_id=respond_io_id, session_vars=state)
 
 

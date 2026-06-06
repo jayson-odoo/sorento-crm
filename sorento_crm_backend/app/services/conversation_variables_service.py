@@ -76,3 +76,37 @@ def overwrite_for_contact(
     )
     db.commit()
     return state
+
+
+def get_referenced_result_set(
+    db: Session,
+    *,
+    respond_io_id: str,
+    message_id: str,
+) -> list[Any] | None:
+    """Return the `result` set stored on the chat-history message with this
+    Respond.io message id for the contact, or None when no match / no result.
+
+    `chat_histories.contact_id` stores the Respond.io contact id, so it joins
+    directly against the conversation-variables path param.
+    """
+    row = db.execute(
+        text(
+            """
+            SELECT result FROM chat_histories
+            WHERE contact_id = :cid AND message_id = :mid
+            ORDER BY sent_at DESC, id DESC
+            LIMIT 1
+            """
+        ),
+        {"cid": respond_io_id, "mid": message_id},
+    ).first()
+    if row is None:
+        return None
+    raw = row.result
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return None
+    return raw if isinstance(raw, list) else None

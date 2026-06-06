@@ -1,7 +1,7 @@
 """External chat history schemas."""
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -15,6 +15,14 @@ class ChatHistoryMessageIngestRequest(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     type: str
+    message_id: Optional[str] = Field(
+        None, max_length=64, description="Respond.io message id of this message"
+    )
+    result: Optional[list[dict[str, Any]]] = Field(
+        None,
+        description="Numbered-options result set sent in this message "
+        "(idx/uuid/label/...), referencable later via conversation-variables.",
+    )
 
 
 class ChatHistoryMessageIngestResponse(BaseModel):
@@ -39,6 +47,8 @@ class ChatHistoryMessageItem(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     type: str
+    message_id: Optional[str] = None
+    result: Optional[list[dict[str, Any]]] = None
 
 
 class ChatHistoryMessagesResponse(BaseModel):

@@ -25,6 +25,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _coerce_result_list(raw) -> list | None:
+    """Coerce a stored jsonb `result` value into a list (None when absent/malformed)."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return None
+    return raw if isinstance(raw, list) else None
+
+
 def _safe_utc_datetime_from_epoch_ms(epoch_ms: int) -> datetime:
     if epoch_ms <= 0:
         raise ValueError("sent_at must be a valid epoch milliseconds value.")
@@ -48,9 +58,11 @@ def ingest_chat_message(
     insert_query = text(
         """
         INSERT INTO chat_histories (
-            channel, contact_id, phone_number, message, sent_at, first_name, last_name, type
+            channel, contact_id, phone_number, message, sent_at, first_name, last_name, type,
+            message_id, result
         ) VALUES (
-            :channel, :contact_id, :phone_number, :message, :sent_at, :first_name, :last_name, :type
+            :channel, :contact_id, :phone_number, :message, :sent_at, :first_name, :last_name, :type,
+            :message_id, :result
         )
         RETURNING id
         """
@@ -72,6 +84,8 @@ def ingest_chat_message(
                 "first_name": payload.first_name,
                 "last_name": payload.last_name,
                 "type": payload.type,
+                "message_id": payload.message_id,
+                "result": json.dumps(payload.result) if payload.result is not None else None,
             },
         )
         message_id = result.scalar_one()
@@ -132,7 +146,8 @@ def get_chat_history_messages(
     # Fetch latest rows first using descending index order, then optionally reverse for ascending response.
     query = text(
         """
-        SELECT id, channel, contact_id, phone_number, message, sent_at, first_name, last_name, type
+        SELECT id, channel, contact_id, phone_number, message, sent_at, first_name, last_name, type,
+               message_id, result
         FROM chat_histories
         WHERE channel = :channel
           AND contact_id = :contact_id
@@ -164,6 +179,8 @@ def get_chat_history_messages(
             first_name=row.first_name,
             last_name=row.last_name,
             type=row.type,
+            message_id=row.message_id,
+            result=_coerce_result_list(row.result),
         )
         for row in rows
     ]
