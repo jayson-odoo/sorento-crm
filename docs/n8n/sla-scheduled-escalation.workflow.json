@@ -1,0 +1,260 @@
+{
+  "name": "sorento-sla-scheduled-escalation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [-400, 0],
+      "id": "e381b88d-2f7e-4545-b713-5770d9166df5",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "url": "https://fe-sorento.foundryx.my/api/v1/sla-management/conversation-sla-tracking/integration/due-escalations",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "REPLACE_WITH_EXTERNAL_API_KEY"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [-176, 0],
+      "id": "a1f0c2d4-0000-4000-8000-000000000001",
+      "name": "Get due escalations"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "items",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [48, 0],
+      "id": "a1f0c2d4-0000-4000-8000-000000000002",
+      "name": "Split Out"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://fe-sorento.foundryx.my/api/v1/sla-management/conversation-sla-tracking/integration/escalate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "REPLACE_WITH_EXTERNAL_API_KEY"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"respond_contact_id\": \"{{ $json.respond_contact_id }}\",\n  \"policy_id\": \"{{ $json.policy_id }}\",\n  \"current_tier\": {{ $json.current_tier + 1 }},\n  \"escalation_reason\": \"no {{ $json.breach_type }} by {{ $json.current_tier === 1 ? 'executive' : 'manager' }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [272, 0],
+      "id": "9e28ff10-0ced-495d-a0e9-0ede14d1dd4d",
+      "name": "conversation-sla-tracking-escalate",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "D62_NHUOrugeULSFwfjEJ",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/D62_NHUOrugeULSFwfjEJ",
+          "cachedResultName": "sorento-sub-respond-findcontact-respond"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "contact_identifer": "={{ $('Split Out').item.json.phone_number }}"
+          },
+          "matchingColumns": ["contact_identifer"],
+          "schema": [
+            {
+              "id": "contact_identifer",
+              "displayName": "contact_identifer",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [496, 0],
+      "id": "582362b3-f4ba-4a66-9f01-ce4777916896",
+      "name": "Call 'sorento-sub-respond-findcontact-respond'"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7a500220-cf42-4d32-a36a-d3e6785bd089",
+              "leftValue": "={{ $json.assignee.id.toString() }}",
+              "rightValue": "={{ $('conversation-sla-tracking-escalate').item.json.assigned_to_respond_user_id }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [720, -96],
+      "id": "df7caa8c-188a-4859-a31c-55c4fdc29861",
+      "name": "If assignee changed"
+    },
+    {
+      "parameters": {
+        "resource": "CONVERSATIONS",
+        "contactId": "={{ $('Call \\'sorento-sub-respond-findcontact-respond\\'').item.json.id }}",
+        "assignmentType": "userId",
+        "assigneeUserId": "={{ $('conversation-sla-tracking-escalate').item.json.assigned_to_respond_user_id }}"
+      },
+      "type": "@respond-io/n8n-nodes-respond-io.respondio",
+      "typeVersion": 1,
+      "position": [944, -96],
+      "id": "d4b12857-162f-480f-97ee-0c0b0f05df96",
+      "name": "Assign or unassign a Conversation",
+      "credentials": {
+        "respondIoApi": {
+          "id": "OiS59QkzpKfKSdaa",
+          "name": "sorento-api"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "COMMENTS",
+        "contactId": "={{ $('Call \\'sorento-sub-respond-findcontact-respond\\'').item.json.id }}",
+        "comment": "={{ '{' + '{@user.' + $('conversation-sla-tracking-escalate').item.json.assigned_to_respond_user_id + '}' + '}' }}\n⏰ SLA Alert: This contact is routed to you at {{\n  $('conversation-sla-tracking-escalate').item.json.escalated_at\n    .toDateTime()\n    .plus({ hours: 8 })\n    .toFormat('yyyy-MM-dd HH:mm:ss')\n}}. You have until {{\n  $('conversation-sla-tracking-escalate').item.json.due_at\n    .toDateTime()\n    .plus({ hours: 8 })\n    .toFormat('yyyy-MM-dd HH:mm:ss')\n}} to respond. \nYou have until {{\n  $('conversation-sla-tracking-escalate').item.json.due_at_resolution\n    .toDateTime()\n    .plus({ hours: 8 })\n    .toFormat('yyyy-MM-dd HH:mm:ss')\n}} to resolve\nRemaining time for response: {{ $('conversation-sla-tracking-escalate').item.json.remaining_response_hours }} hour(s)\nRemaining time for resolution: {{ $('conversation-sla-tracking-escalate').item.json.remaining_resolution_hours }} hour(s)\nThis is due to no {{ $('Split Out').item.json.breach_type }} from {{ $('conversation-sla-tracking-escalate').item.json.from_tier === 1 ? 'executive' : 'manager' }}\n\nReference message: https://app.respond.io/space/364817/inbox/386900418#{{ $('conversation-sla-tracking-escalate').item.json.message_id }}"
+      },
+      "type": "@respond-io/n8n-nodes-respond-io.respondio",
+      "typeVersion": 1,
+      "position": [720, 96],
+      "id": "ba241782-0b4c-43d4-b56d-aaefa629ccc7",
+      "name": "Add a Comment",
+      "credentials": {
+        "respondIoApi": {
+          "id": "OiS59QkzpKfKSdaa",
+          "name": "sorento-api"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get due escalations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get due escalations": {
+      "main": [
+        [
+          {
+            "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out": {
+      "main": [
+        [
+          {
+            "node": "conversation-sla-tracking-escalate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "conversation-sla-tracking-escalate": {
+      "main": [
+        [
+          {
+            "node": "Call 'sorento-sub-respond-findcontact-respond'",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Call 'sorento-sub-respond-findcontact-respond'": {
+      "main": [
+        [
+          {
+            "node": "If assignee changed",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Add a Comment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If assignee changed": {
+      "main": [
+        [
+          {
+            "node": "Assign or unassign a Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f780e4d42fbf704a14bb53ace47d6a8024b0146217bd35a2bc9e6c39d7a5d022"
+  }
+}

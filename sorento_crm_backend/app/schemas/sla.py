@@ -227,7 +227,9 @@ class ConversationSLAEscalateRequest(BaseModel):
     # Omit (None) for signal-only escalation: the server escalates to current tier + 1,
     # or returns escalated=false when already at tier 3.
     current_tier: Optional[int] = None
-    escalation_reason: str
+    # Omit for signal-only callers (e.g. the scheduled n8n runner, which doesn't know the
+    # tier before the call): the server fills an auto-escalation reason using from_tier.
+    escalation_reason: Optional[str] = None
     team_set_code: Optional[str] = None  # Optional team set key to resolve tier within a set
 
     @field_validator("respond_contact_id")
@@ -247,8 +249,11 @@ class ConversationSLAEscalateRequest(BaseModel):
     @field_validator("escalation_reason")
     @classmethod
     def validate_reason(cls, v):
+        # Optional: explicit null / blank normalizes to None (same as omitting the field);
+        # the service fills the auto-escalation default. Validators don't run on the
+        # default, so None must be accepted here too or explicit-null callers get a 422.
         if v is None or (isinstance(v, str) and not v.strip()):
-            raise ValueError("escalation_reason is required")
+            return None
         return str(v).strip()
 
 
