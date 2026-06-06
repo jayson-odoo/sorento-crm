@@ -355,6 +355,24 @@ def compute_tracking_timings(tracking, tier) -> dict:
     }
 
 
+def conversation_tracking_scope():
+    """SQLAlchemy filter selecting conversation-SLA rows only.
+
+    Conversation SLA (created by n8n, max one open per contact — mirrors the
+    Respond.io conversation) and form SLA stage rows (created by
+    form_sla_service, per-entity, multi-active) share this table. Form rows are
+    identified by source_entity_type in FORM_SLA_TYPES; everything contact-keyed
+    on the conversation side must apply this filter or it can falsely match a
+    form row (e.g. the create-time singleton check, thread-assignee lookups).
+    """
+    from app.services.form_sla_service import FORM_SLA_TYPES
+
+    return or_(
+        ConversationSLATracking.source_entity_type.is_(None),
+        ConversationSLATracking.source_entity_type.notin_(FORM_SLA_TYPES),
+    )
+
+
 def event_log_assignee_fields(db: Session, user_ref: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     """Resolve (display label, user id) for SLA event log assigned_to / assigned_to_id."""
     if user_ref is None or (isinstance(user_ref, str) and not str(user_ref).strip()):
@@ -442,14 +460,7 @@ class ConversationSLATrackingService:
         # sponsorship_form / complaint). Those have their own per-form SLA Tracking tab and
         # detail flow; surfacing them in this list inflates contact-keyed rows and breaks
         # back-navigation to the originating form.
-        from app.services.form_sla_service import FORM_SLA_TYPES
-
-        q = q.filter(
-            or_(
-                ConversationSLATracking.source_entity_type.is_(None),
-                ConversationSLATracking.source_entity_type.notin_(FORM_SLA_TYPES),
-            )
-        )
+        q = q.filter(conversation_tracking_scope())
 
         if policy_id:
             q = q.filter(ConversationSLATracking.policy_id == policy_id)
@@ -800,7 +811,10 @@ class ConversationSLATrackingService:
                 joinedload(ConversationSLATracking.assigned_user),
                 joinedload(ConversationSLATracking.event_logs).joinedload(ConversationSLAEventLog.assigned_user),
             )
-            .filter(ConversationSLATracking.respond_contact_id == contact.id)
+            .filter(
+                ConversationSLATracking.respond_contact_id == contact.id,
+                conversation_tracking_scope(),
+            )
             .order_by(
                 ConversationSLATracking.is_resolved.asc(),
                 ConversationSLATracking.created_at.desc(),
@@ -914,6 +928,7 @@ class ConversationSLATrackingService:
             .filter(
                 ConversationSLATracking.respond_contact_id == respond_contact_id,
                 ConversationSLATracking.policy_id == policy_id,
+                conversation_tracking_scope(),
             )
             .order_by(
                 ConversationSLATracking.is_resolved.asc(),  # False first
@@ -1117,6 +1132,7 @@ class ConversationSLATrackingService:
             .filter(
                 ConversationSLATracking.respond_contact_id == contact.id,
                 ConversationSLATracking.assigned_to_id.isnot(None),
+                conversation_tracking_scope(),
             )
             .first()
         )
@@ -1666,21 +1682,32 @@ class ConversationSLATrackingService:
             tracking_dict["due_at"] = None
             tracking_dict["due_at_resolution"] = None
 
-        # Check if tracking already exists for this contact
+        # Singleton check: one open conversation tracking per contact (mirrors the
+        # Respond.io conversation). Scoped to conversation rows — an active form-SLA
+        # stage row for the same contact must not block (or be returned by) this.
         existing = self.db.query(ConversationSLATracking).filter(
-            ConversationSLATracking.respond_contact_id == tracking_dict["respond_contact_id"]
+            ConversationSLATracking.respond_contact_id == tracking_dict["respond_contact_id"],
+            conversation_tracking_scope(),
+        ).order_by(
+            ConversationSLATracking.is_resolved.asc(),  # open first
+            ConversationSLATracking.created_at.desc(),
         ).first()
-        
+
         if existing:
-            # Block if the existing tracking is still active — caller must resolve it first.
             if not bool(getattr(existing, "is_resolved", False)):
-                from app.services.error_handler import handle_conflict
-                raise handle_conflict(
-                    f"An active (unresolved) SLA tracking already exists for this contact "
-                    f"(tracking id: {existing.id}). Resolve it before creating a new one."
-                )
+                # Active conversation already tracked — idempotent hit. The new inbound
+                # message belongs to the same open Respond.io conversation: return the
+                # existing tracking untouched (clocks, assignee, agent, team) except for
+                # message_id, refreshed so inbox deep-links point at the latest message.
+                if tracking_dict.get("message_id") is not None:
+                    setattr(existing, "message_id", tracking_dict["message_id"])
+                    self.db.commit()
+                    self.db.refresh(existing)
+                setattr(existing, "_already_active", True)
+                return existing
 
             # Existing tracking is resolved — overwrite it for the new conversation.
+            # History is carried by event logs (kept: FK by tracking id), not by rows.
             preserve_fields = {"id", "created_at", "respond_contact_id"}
             for key, value in tracking_dict.items():
                 if key not in preserve_fields:
@@ -1688,8 +1715,10 @@ class ConversationSLATrackingService:
 
             self.db.commit()
             self.db.refresh(existing)
+            self._write_assign_event_log(existing)
+            setattr(existing, "_overwrote_resolved", True)
             return existing
-        
+
         # Create new tracking record (set due_at_resolution explicitly so it is never omitted)
         tracking = ConversationSLATracking(**tracking_dict)
         if tracking_dict.get("due_at_resolution") is not None:
@@ -1699,7 +1728,51 @@ class ConversationSLATrackingService:
         self.db.add(tracking)
         self.db.commit()
         self.db.refresh(tracking)
+        self._write_assign_event_log(tracking)
         return tracking
+
+    def _write_assign_event_log(self, tracking: ConversationSLATracking) -> None:
+        """Write the initial 'assign' event log for a newly started conversation.
+
+        Owned by the backend (n8n's flow no longer posts it) so an idempotent
+        create hit cannot produce duplicate assign logs.
+
+        Best-effort: the tracking row is already committed when this runs, so a
+        failure here must not fail the create — n8n would get a 500 for a create
+        that succeeded, and its retry would take the idempotent path which never
+        backfills the log. Log a warning and continue instead.
+        """
+        import logging
+
+        try:
+            assignee_ref = (
+                getattr(tracking, "assigned_to_id", None)
+                or getattr(tracking, "assigned_to", None)
+            )
+            label, user_id = event_log_assignee_fields(self.db, assignee_ref)
+            tier = getattr(tracking, "current_tier", 1)
+            due_at = getattr(tracking, "due_at", None)
+            self.create_event_log(ConversationSLAEventLogCreate(
+                sla_tracking_id=str(tracking.id),
+                event_type="assign",
+                from_tier=tier,
+                to_tier=tier,
+                event_at=_now_utc(),
+                assigned_to=label,
+                assigned_to_id=user_id,
+                # DB stores naive UTC; pass aware UTC so create_event_log's
+                # naive-means-MYT normalization doesn't shift it by -8h.
+                due_at=_to_aware_utc(due_at) if isinstance(due_at, datetime) else None,
+                reason=f"New Assignee {label}" if label else "New conversation tracking",
+            ))
+        except Exception:
+            self.db.rollback()
+            logging.getLogger(__name__).warning(
+                "Failed to write assign event log for tracking %s; "
+                "tracking exists without its initial assign log.",
+                getattr(tracking, "id", None),
+                exc_info=True,
+            )
     
     def update_tracking(self, tracking_id: str, tracking_data: ConversationSLATrackingUpdate):
         """Update a tracking record."""
@@ -2401,16 +2474,9 @@ class ConversationSLATrackingService:
         thirty_days_ago = now_utc - timedelta(days=30)
 
         # Conversation dashboard excludes form trackers (those have their own per-form view).
-        from app.services.form_sla_service import FORM_SLA_TYPES
-
         all_trackings = (
             self.db.query(ConversationSLATracking)
-            .filter(
-                or_(
-                    ConversationSLATracking.source_entity_type.is_(None),
-                    ConversationSLATracking.source_entity_type.notin_(FORM_SLA_TYPES),
-                )
-            )
+            .filter(conversation_tracking_scope())
             .all()
         )
         all_logs = self.db.query(ConversationSLAEventLog).all()

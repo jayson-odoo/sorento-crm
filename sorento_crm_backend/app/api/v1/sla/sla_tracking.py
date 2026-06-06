@@ -330,6 +330,7 @@ async def create_sla_tracking(
         service = ConversationSLATrackingService(db)
         tracking = service.create_tracking(tracking_data)
         tracking_id_str = str(getattr(tracking, "id"))
+        already_active = bool(getattr(tracking, "_already_active", False))
         log_service.create_integration_log(
             IntegrationLogCreate(
                 integration_channel="sla_management",
@@ -339,11 +340,13 @@ async def create_sla_tracking(
                 direction="inbound",
                 endpoint=str(request.url),
                 http_method="POST",
-                status="success",
+                status="success" if not already_active else "idempotent_already_active",
             ),
             request_payload_dict=tracking_data.model_dump(),
         )
-        return service.get_tracking(str(tracking.id))
+        fresh = service.get_tracking(str(tracking.id))
+        setattr(fresh, "already_active", already_active)
+        return fresh
     except HTTPException:
         raise
     except Exception as e:
@@ -582,34 +585,26 @@ async def create_sla_tracking_integration(
     """
     try:
         service = ConversationSLATrackingService(db)
-        
-        # Check if tracking exists for this contact before calling create_tracking
         contact_phone_number = tracking_data.contact_phone_number.strip()
-        from app.models.access import RespondContact
-        contact = db.query(RespondContact).filter(
-            RespondContact.phone_number == contact_phone_number
-        ).first()
-        
-        is_update = False
-        if contact:
-            existing = db.query(ConversationSLATracking).filter(
-                ConversationSLATracking.respond_contact_id == contact.id
-            ).first()
-            if existing:
-                is_update = True
-        
+
         tracking = service.create_tracking(tracking_data)
 
         log_service = IntegrationLogService(db)
         tracking_id_str = str(getattr(tracking, "id"))
-        external_reference = (
-            str(getattr(getattr(tracking, "contact", None), "phone_number"))
-            if getattr(getattr(tracking, "contact", None), "phone_number", None) is not None
-            else tracking_id_str
-        )
+        already_active = bool(getattr(tracking, "_already_active", False))
+        # "Update" = create_tracking reused an existing row: idempotent hit on an
+        # active one, or overwrite of a resolved one. Markers come from the service —
+        # no duplicate pre-query of the singleton check here.
+        is_update = already_active or bool(getattr(tracking, "_overwrote_resolved", False))
+        if already_active:
+            integration_channel = "sla_tracking_idempotent_hit"
+        elif is_update:
+            integration_channel = "sla_tracking_update"
+        else:
+            integration_channel = "sla_tracking_creation"
         log_service.create_integration_log(
             IntegrationLogCreate(
-                integration_channel="sla_tracking_creation" if not is_update else "sla_tracking_update",
+                integration_channel=integration_channel,
                 business_table="conversation_sla_tracking",
                 business_id=tracking_id_str,
                 external_reference=contact_phone_number,
@@ -621,8 +616,19 @@ async def create_sla_tracking_integration(
             request_payload_dict=tracking_data.model_dump()
         )
 
-        message = "SLA tracking updated successfully." if is_update else "SLA tracking created successfully."
-        return {"status": "success", "message": message, "tracking_id": tracking_id_str, "is_update": is_update}
+        if already_active:
+            message = "Active SLA tracking already exists for this contact; returned existing tracking."
+        elif is_update:
+            message = "SLA tracking updated successfully."
+        else:
+            message = "SLA tracking created successfully."
+        return {
+            "status": "success",
+            "message": message,
+            "tracking_id": tracking_id_str,
+            "is_update": is_update,
+            "already_active": already_active,
+        }
     except Exception as e:
         raise handle_internal_error(str(e))
 
