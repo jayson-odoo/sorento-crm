@@ -309,7 +309,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_order_management_orders_list",
         (
             "List orders. Response uses `pickup_time` (was delivery_time); `order_status` is a plain string. "
-            "External/AI callers are HARD-CAPPED at limit=20 server-side — narrow via UUID + date filters.\n\n"
+            "Rows carry NO UUIDs — identify orders by `order_number`. "
+            "External/AI callers are HARD-CAPPED at limit=100 server-side — narrow via UUID + date filters.\n\n"
             "FILTER BY UUID (typed canonical UUIDs, csv / JSON / repeated):\n"
             "  • `order_ids` — specific orders\n"
             "  • `customer_ids` — customers (Order.customer_id, falls back to debtor_name for legacy rows)\n"

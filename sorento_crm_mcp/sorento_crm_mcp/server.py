@@ -102,6 +102,12 @@ ORDERS_LIST_TOOL = "crm_order_management_orders_list"
 ORDERS_GET_TOOL = "crm_order_management_orders_get"
 _ORDERS_SLIM_TOOLS = (ORDERS_LIST_TOOL, ORDERS_GET_TOOL)
 _ORDERS_LIST_DROP_ROW_KEYS = {
+    # No UUIDs in agent-facing rows — order_number is the human identifier;
+    # UUID narrowing on the way IN comes from crm_resolve_references, never
+    # from echoing row ids back.
+    "id",
+    "created_by",
+    "updated_by",
     "customer_id",
     "billing_address_id",
     "shipping_address_id",
@@ -121,6 +127,12 @@ _ORDERS_LIST_DROP_ROW_KEYS = {
     "estimated_delivery_date",
 }
 _ORDERS_LIST_DROP_LINE_KEYS = {
+    # UUID columns — product/warehouse identity stays via the nested
+    # product/warehouse blocks (code + name, id stripped separately).
+    "id",
+    "order_id",
+    "product_id",
+    "warehouse_id",
     "unit_price",
     "discount",
     "total",
@@ -666,9 +678,15 @@ def _slim_orders_list_row(row: Any, product_query: str | None = None) -> Any:
                 if term_lower and not _line_matches_product_query(line, term_lower):
                     continue
                 if isinstance(line, dict):
-                    slim_lines.append(
-                        {k: v for k, v in line.items() if k not in _ORDERS_LIST_DROP_LINE_KEYS}
-                    )
+                    slim_line: dict[str, Any] = {}
+                    for k, v in line.items():
+                        if k in _ORDERS_LIST_DROP_LINE_KEYS:
+                            continue
+                        # Nested product/warehouse refs: keep code + name, drop UUID.
+                        if k in ("product", "warehouse") and isinstance(v, dict):
+                            v = {nk: nv for nk, nv in v.items() if nk != "id"}
+                        slim_line[k] = v
+                    slim_lines.append(slim_line)
                 else:
                     slim_lines.append(line)
             out[key] = slim_lines
@@ -847,25 +865,40 @@ _RESOURCE_ATTACHMENT_LIST_EXTRA_KEYS = frozenset(
 )
 _RESOURCE_ATTACHMENT_LIST_TOOL = "crm_resource_attachments_list"
 
-# Catalogue-domain tool drops UUIDs from the response. Caller already supplied
+# Catalogue-domain tool slims each row to a keep-list. Caller already supplied
 # attachment_ids on the way in (REQUIRED narrowing); the n8n catalogue flow only
-# needs file metadata + URL to forward the doc, never the row UUID back. Keeps
-# the agent from echoing internal ids into chat output.
+# needs file metadata + URL to forward the doc — never the row UUID, linkage
+# arrays, audit columns, or soft-delete bookkeeping. Keep-list (not drop-list)
+# so new backend columns don't leak into chat context by default.
 _RESOURCE_ATTACHMENT_CATALOGUE_TOOL = "crm_resource_attachments_catalogue"
-_RESOURCE_ATTACHMENT_CATALOGUE_DROP_KEYS = frozenset(
-    {"id", "attachment_type_id", "entity_id"}
+_RESOURCE_ATTACHMENT_CATALOGUE_KEEP_KEYS = frozenset(
+    {
+        "stored_filename",
+        "file_path",
+        "mime_type",
+        "access_levels",
+        "uploaded_at",
+        "attachment_type",
+    }
 )
 
 
-def _strip_resource_attachment_catalogue_ids(node: Any) -> Any:
-    if isinstance(node, list):
-        return [_strip_resource_attachment_catalogue_ids(item) for item in node]
-    if isinstance(node, dict):
-        return {
-            k: _strip_resource_attachment_catalogue_ids(v)
-            for k, v in node.items()
-            if k not in _RESOURCE_ATTACHMENT_CATALOGUE_DROP_KEYS
-        }
+def _slim_resource_attachment_catalogue_rows(node: Any) -> Any:
+    """Apply the keep-list to each row in the catalogue list response.
+
+    Only row dicts (items of the top-level `data` list) are slimmed; envelope
+    keys (`pagination`, `empty`, `fallback_used`, `resolved_entities`) pass
+    through untouched.
+    """
+    if isinstance(node, dict) and isinstance(node.get("data"), list):
+        out = dict(node)
+        out["data"] = [
+            {k: v for k, v in row.items() if k in _RESOURCE_ATTACHMENT_CATALOGUE_KEEP_KEYS}
+            if isinstance(row, dict)
+            else row
+            for row in node["data"]
+        ]
+        return out
     return node
 
 
@@ -1019,7 +1052,7 @@ def _sanitize_tool_response(
     if tool_name == _RESOURCE_ATTACHMENT_LIST_TOOL:
         data = _strip_resource_attachment_list_extras(data)
     if tool_name == _RESOURCE_ATTACHMENT_CATALOGUE_TOOL:
-        data = _strip_resource_attachment_catalogue_ids(data)
+        data = _slim_resource_attachment_catalogue_rows(data)
     if any(tool_name.startswith(p) for p in _PROMO_PRODUCT_TOOL_PREFIXES):
         data = _slim_promotion_products_response(data)
     if tool_name == _PROMOTIONS_LIST_TOOL:

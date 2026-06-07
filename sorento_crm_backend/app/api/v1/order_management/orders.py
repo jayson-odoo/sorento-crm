@@ -15,7 +15,11 @@ from app.services.uuid_list_param import parse_uuid_list
 from app.config import settings as app_settings
 
 
-_EXTERNAL_ORDERS_LIST_LIMIT_CAP = 20
+# Main orders list: MCP rows are slimmed (no UUIDs / pricing / customer block),
+# so external callers can take 100 rows without blowing up agent context.
+_EXTERNAL_ORDERS_LIST_LIMIT_CAP = 100
+# Aggregation + by-product endpoints keep the tighter cap.
+_EXTERNAL_ORDERS_AGG_LIMIT_CAP = 20
 
 
 def _request_has_valid_external_api_key(request: Optional[Request]) -> bool:
@@ -346,8 +350,9 @@ async def get_orders(
 ):
     """Get orders with pagination, filtering, and sorting.
 
-    External API-key callers (e.g. AI agent / MCP) are capped at limit=10 to keep tool
-    responses small enough to reason over.
+    External API-key callers (e.g. AI agent / MCP) are capped at limit=100; MCP
+    slims each row (no UUIDs / pricing / customer block) so 100 rows stay
+    reasonable for the agent to reason over.
     """
     try:
         if _request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_LIST_LIMIT_CAP:
@@ -409,13 +414,13 @@ async def list_distinct_debtors(
     total order count, so AI tools can search 'who are our customers' without
     relying on the underused customers master table.
 
-    External AI/MCP callers are capped at limit=10 to keep responses small enough
-    to reason over (matching the cap on the orders list).
+    External AI/MCP callers are capped at limit=20 to keep responses small enough
+    to reason over.
     """
     from app.models.order import Order as _Order
 
-    if _request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_LIST_LIMIT_CAP:
-        limit = _EXTERNAL_ORDERS_LIST_LIMIT_CAP
+    if _request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_AGG_LIMIT_CAP:
+        limit = _EXTERNAL_ORDERS_AGG_LIMIT_CAP
 
     # Group by lower(trim(debtor_name)) so 'V Bath  ' and 'v bath' collapse to one row.
     name_key = func.lower(func.trim(_Order.debtor_name))
@@ -549,12 +554,11 @@ async def get_orders_by_product(
     """Get distinct orders matched by product search.
 
     External API-key callers (e.g. AI agent / MCP) are capped at limit=20 to keep
-    tool responses small enough to reason over, matching the cap on the main
-    orders list endpoint.
+    tool responses small enough to reason over.
     """
     try:
-        if _request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_LIST_LIMIT_CAP:
-            limit = _EXTERNAL_ORDERS_LIST_LIMIT_CAP
+        if _request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_AGG_LIMIT_CAP:
+            limit = _EXTERNAL_ORDERS_AGG_LIMIT_CAP
         norm_entities = _normalize_entities(entities)
         parsed_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
         # Endpoint is product-centric: require a product narrower to prevent
