@@ -77,9 +77,9 @@ def test_orders_row_keeps_human_identifiers():
 
 
 def test_orders_list_end_to_end_sanitize():
-    raw = json.dumps({"data": [_raw_order_row()], "pagination": {"total": 1, "page": 1, "limit": 100}})
+    raw = json.dumps({"data": [_raw_order_row()], "pagination": {"total": 1, "page": 1, "limit": 20}})
     out = json.loads(
         _sanitize_tool_response("crm_order_management_orders_list", raw)
     )
     _assert_no_uuid_values(out["data"])
-    assert out["pagination"]["limit"] == 100
+    assert out["pagination"]["limit"] == 20

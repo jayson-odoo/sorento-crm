@@ -15,10 +15,11 @@ from app.services.uuid_list_param import parse_uuid_list
 from app.config import settings as app_settings
 
 
-# Main orders list: MCP rows are slimmed (no UUIDs / pricing / customer block),
-# so external callers can take 100 rows without blowing up agent context.
-_EXTERNAL_ORDERS_LIST_LIMIT_CAP = 100
-# Aggregation + by-product endpoints keep the tighter cap.
+# External/AI callers capped at 20 rows: even with slimmed MCP rows (no UUIDs /
+# pricing / customer block), 100 DOs with full lines is too much for the agent
+# to reason over. Tried 100, reverted.
+_EXTERNAL_ORDERS_LIST_LIMIT_CAP = 20
+# Aggregation + by-product endpoints share the same tight cap.
 _EXTERNAL_ORDERS_AGG_LIMIT_CAP = 20
 
 
@@ -350,9 +351,8 @@ async def get_orders(
 ):
     """Get orders with pagination, filtering, and sorting.
 
-    External API-key callers (e.g. AI agent / MCP) are capped at limit=100; MCP
-    slims each row (no UUIDs / pricing / customer block) so 100 rows stay
-    reasonable for the agent to reason over.
+    External API-key callers (e.g. AI agent / MCP) are capped at limit=20 to keep
+    tool responses small enough to reason over.
     """
     try:
         if _request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_LIST_LIMIT_CAP:
