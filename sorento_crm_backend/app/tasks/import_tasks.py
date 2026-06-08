@@ -1630,6 +1630,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
         failed = 0
         errors: List[str] = []
         successful_detail: List[Dict[str, Any]] = []
+        first_line_error: Optional[str] = None
 
         def _record_success(grn_number: str, product_id: str, warehouse_id: str, qty: int) -> None:
             successful_detail.append({
@@ -1638,6 +1639,45 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                 "warehouse": warehouse_id_to_display.get(warehouse_id, warehouse_id),
                 "quantity": qty,
             })
+
+        def _safe_upsert_line(
+            *,
+            picking_header_id: Any,
+            product_id: str,
+            source_warehouse_id: str,
+            quantity: int,
+            spo_allocation_id: Optional[str],
+        ) -> bool:
+            """Upsert one GRN line inside a SAVEPOINT.
+
+            A single bad row (constraint / type / FK error) must not abort the
+            whole job's transaction: without the savepoint, the swallowed error
+            below would leave the Postgres tx in a failed state and every later
+            statement — including ``update_job_progress`` and ``fail_job`` —
+            would blow up with StaleDataError / PendingRollbackError.
+            """
+            nonlocal first_line_error
+            try:
+                with db.begin_nested():
+                    proc.upsert_grn_line_for_import(
+                        picking_header_id=picking_header_id,
+                        product_id=product_id,
+                        source_warehouse_id=source_warehouse_id,
+                        quantity=quantity,
+                        spo_allocation_id=spo_allocation_id,
+                    )
+                return True
+            except Exception as e:
+                if first_line_error is None:
+                    first_line_error = str(e)
+                    logger.warning(
+                        "GRN lines import job %s: first line upsert error (savepoint rolled back): %s",
+                        job_id_str,
+                        e,
+                        exc_info=True,
+                    )
+                errors.append(str(e))
+                return False
 
         # Group GR lines by (doc_no, product_id, effective_spo) for FIFO SPO matching
         # Keep warehouse info for creating picking lines
@@ -1660,19 +1700,17 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             if not spo_number:
                 # No SPO number, create all lines without spo_allocation_id
                 for warehouse_id, qty, hdr in gr_line_list:
-                    try:
-                        proc.upsert_grn_line_for_import(
-                            picking_header_id=hdr.id,
-                            product_id=product_id,
-                            source_warehouse_id=warehouse_id,
-                            quantity=qty,
-                            spo_allocation_id=None,
-                        )
+                    if _safe_upsert_line(
+                        picking_header_id=hdr.id,
+                        product_id=product_id,
+                        source_warehouse_id=warehouse_id,
+                        quantity=qty,
+                        spo_allocation_id=None,
+                    ):
                         successful += 1
                         _record_success(doc_no, product_id, warehouse_id, qty)
-                    except Exception as e:
+                    else:
                         failed += 1
-                        errors.append(str(e))
                 continue
 
             # Get all SPO allocations for this product, then filter by normalized spo_number
@@ -1706,21 +1744,19 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                     if alloc_wh != warehouse_id or avail <= 0 or remaining_qty <= 0:
                         continue
                     take_qty = min(remaining_qty, avail)
-                    try:
-                        proc.upsert_grn_line_for_import(
-                            picking_header_id=hdr.id,
-                            product_id=product_id,
-                            source_warehouse_id=warehouse_id,
-                            quantity=take_qty,
-                            spo_allocation_id=alloc_id,
-                        )
+                    if _safe_upsert_line(
+                        picking_header_id=hdr.id,
+                        product_id=product_id,
+                        source_warehouse_id=warehouse_id,
+                        quantity=take_qty,
+                        spo_allocation_id=alloc_id,
+                    ):
                         successful += 1
                         _record_success(doc_no, product_id, warehouse_id, take_qty)
                         remaining_qty -= take_qty
                         entry[2] = avail - take_qty
-                    except Exception as e:
+                    else:
                         failed += 1
-                        errors.append(str(e))
 
                 # Second pass: consume from other allocations FIFO
                 for entry in spo_pool:
@@ -1728,36 +1764,32 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                     if alloc_wh == warehouse_id or avail <= 0 or remaining_qty <= 0:
                         continue
                     take_qty = min(remaining_qty, avail)
-                    try:
-                        proc.upsert_grn_line_for_import(
-                            picking_header_id=hdr.id,
-                            product_id=product_id,
-                            source_warehouse_id=warehouse_id,
-                            quantity=take_qty,
-                            spo_allocation_id=alloc_id,
-                        )
+                    if _safe_upsert_line(
+                        picking_header_id=hdr.id,
+                        product_id=product_id,
+                        source_warehouse_id=warehouse_id,
+                        quantity=take_qty,
+                        spo_allocation_id=alloc_id,
+                    ):
                         successful += 1
                         _record_success(doc_no, product_id, warehouse_id, take_qty)
                         remaining_qty -= take_qty
                         entry[2] = avail - take_qty
-                    except Exception as e:
+                    else:
                         failed += 1
-                        errors.append(str(e))
 
                 if remaining_qty > 0:
-                    try:
-                        proc.upsert_grn_line_for_import(
-                            picking_header_id=hdr.id,
-                            product_id=product_id,
-                            source_warehouse_id=warehouse_id,
-                            quantity=remaining_qty,
-                            spo_allocation_id=None,
-                        )
+                    if _safe_upsert_line(
+                        picking_header_id=hdr.id,
+                        product_id=product_id,
+                        source_warehouse_id=warehouse_id,
+                        quantity=remaining_qty,
+                        spo_allocation_id=None,
+                    ):
                         successful += 1
                         _record_success(doc_no, product_id, warehouse_id, remaining_qty)
-                    except Exception as e:
+                    else:
                         failed += 1
-                        errors.append(str(e))
 
             job_service.update_job_progress(
                 job_id_str,
@@ -1781,6 +1813,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             job_id=job_id_str,
             result={
                 "message": "GRN lines import completed",
+                "first_line_error": first_line_error,
                 "errors": _json_safe(errors[-100:]),
                 "skipped_rows_detail": _json_safe(skipped_detail[-500:]),
                 "successful_rows_detail": _json_safe(successful_detail[-500:]),
