@@ -80,18 +80,20 @@ docker compose up -d            # from sorento_crm/ (root compose at sorento_crm
 
 ## Dev sessions (Claude-managed)
 
-For any development task, Claude boots and owns the local stack as **background Bash sessions** so the user can test immediately. Boot all three at session start (or on first dev task):
+For any development task, Claude boots and owns the local stack as **background Bash sessions** so the user can test immediately. Boot all four at session start (or on first dev task):
 
 | Service  | Command (run from its own dir)                                                                 | Port | Reload behavior |
 |----------|------------------------------------------------------------------------------------------------|------|-----------------|
 | Backend  | `venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` (in `sorento_crm_backend/`) | 8000 | `--reload` — backend file edits auto-restart uvicorn; nothing to do |
+| Worker   | `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES venv/bin/python worker.py` (in `sorento_crm_backend/`) | —    | **No reload.** Restart manually after editing any RQ task (`app/tasks/*`). |
 | Frontend | `npm run build && npm start` (in `sorento_crm_frontend/`)                                       | 3000 | **No HMR.** After any FE change: kill the session, `npm run build && npm start` again |
 | MCP      | `CRM_BASE_URL=http://localhost:8000 EXTERNAL_API_KEY=<from backend .env> backend venv's python -m sorento_crm_mcp` (in `sorento_crm_mcp/`; package installed in the backend venv) | 8765 | Restart manually after MCP code/catalog changes |
 
 - Run each as `run_in_background: true` Bash so logs are inspectable and sessions survive across turns.
-- Before booting, check ports (`lsof -i :3000 -i :8000 -i :8765 -sTCP:LISTEN`) — if already listening, reuse, don't double-boot.
+- Before booting, check ports (`lsof -i :3000 -i :8000 -i :8765 -sTCP:LISTEN`) and the worker (`ps aux | grep worker.py`) — if already running, reuse, don't double-boot.
+- **Worker is required for imports.** RQ jobs on the `imports` / `respond_io` queues (Excel imports, GRN lines, Respond.io sends) run ONLY on the worker — the API process no longer drains them in-process. No worker = uploads enqueue but never process. The `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` prefix is mandatory on macOS: RQ forks a work-horse and the Obj-C runtime aborts it (signal 6) without it. Needs `REDIS_URL` reachable (`redis-cli ping`). Run `worker.py` with `ENABLE_SCHEDULER` unset locally (cron ticks aren't needed for most dev).
 - After every frontend change set, rebuild + restart the FE session **proactively** (don't wait to be asked) and tell the user when :3000 is ready to test.
-- Backend changes need no action beyond confirming uvicorn's reload log line.
+- Backend changes need no action beyond confirming uvicorn's reload log line — **except** edits to `app/tasks/*` (RQ tasks), which require restarting the Worker session.
 
 ## Architecture
 
