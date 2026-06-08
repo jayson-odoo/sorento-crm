@@ -80,9 +80,10 @@ class JobService:
     def update_job_with_rq_id(self, job: ImportJob, rq_job_id: str) -> ImportJob:
         """Link the RQ job id to the DB row.
 
-        The imports queue is drained by an immediate daemon thread
-        (queue_service._IMMEDIATE_DRAIN_QUEUES), so the worker can already be
-        running — or even finished — by the time this commits. Two guards:
+        The dedicated worker container runs a blocking RQ Worker on the imports
+        queue and picks the job up the moment it is enqueued, so the worker can
+        already be running — or even finished — by the time this commits. Two
+        guards:
         - Callers should pass job_id=str(job.job_id) to enqueue_job so the RQ
           id equals the DB job_id from creation; rewriting it here is then a
           no-op. (Historically the temp uuid was swapped for the RQ id, which

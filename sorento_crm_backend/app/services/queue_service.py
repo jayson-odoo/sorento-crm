@@ -12,7 +12,15 @@ logger = logging.getLogger(__name__)
 
 # Queues whose enqueue should immediately kick a daemon-thread drain in the same
 # process. Pinned set keeps unrelated queues (e.g. embeddings) on their own scheduler.
-_IMMEDIATE_DRAIN_QUEUES: Dict[str, int] = {"imports": 1, "notifications": 5}
+#
+# `imports` is intentionally NOT here: the dedicated worker container runs a
+# blocking RQ Worker on ['imports', 'respond_io'] and picks jobs up instantly,
+# so in-process draining adds no latency — it only risks running a heavy,
+# many-query import on a daemon thread inside the multithreaded uvicorn process,
+# sharing the global engine pool with request threads. That cross-thread use of
+# pooled psycopg2 connections corrupts the libpq protocol ("PGRES_TUPLES_OK and
+# no message from the libpq"). Let the worker own imports.
+_IMMEDIATE_DRAIN_QUEUES: Dict[str, int] = {"notifications": 5}
 
 # Initialize Redis connection for RQ (binary mode required for pickled jobs)
 # RQ stores pickled Python objects which are binary, so decode_responses must be False
