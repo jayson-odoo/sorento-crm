@@ -153,7 +153,16 @@ class JobService:
         return job
 
     def fail_job(self, job_id: str, error: str) -> Optional[ImportJob]:
-        """Mark job as failed."""
+        """Mark job as failed.
+
+        Roll back first: the caller usually lands here because a prior flush
+        aborted the transaction, which would otherwise make the query below
+        raise PendingRollbackError and mask the real error.
+        """
+        try:
+            self.db.rollback()
+        except Exception:
+            pass
         job = self.db.query(ImportJob).filter(ImportJob.job_id == job_id).first()
         if job:
             now = datetime.utcnow()
