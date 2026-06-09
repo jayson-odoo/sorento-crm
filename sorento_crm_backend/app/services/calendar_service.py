@@ -1,5 +1,5 @@
 """Calendar service for business-day calculations."""
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import List, Optional, Set, Tuple
 from zoneinfo import ZoneInfo
 import logging
@@ -260,6 +260,51 @@ class CalendarService:
             return datetime.combine(end_date, start_value.time())
         return datetime.combine(end_date, datetime.min.time())
 
+    def add_working_days_from_hours(
+        self,
+        start_value: datetime,
+        hours: float,
+        *,
+        tz: ZoneInfo = DEFAULT_WORKING_TZ,
+    ) -> Optional[datetime]:
+        """SLA due date = start + (hours / 24) *working days*, skipping weekends +
+        public holidays, keeping the time-of-day.
+
+        The policy expresses the SLA in hours but each 24h = one *working* day
+        (e.g. 72h → 3 working days). Working days are counted on the ``tz`` (KL)
+        calendar. Input may be naive (interpreted as UTC, matching SLA columns)
+        or aware; output is naive UTC. Falls back to plain calendar hours if the
+        work calendar is misconfigured.
+        """
+        if start_value is None:
+            return None
+        if start_value.tzinfo is None:
+            start_utc = start_value.replace(tzinfo=timezone.utc)
+        else:
+            start_utc = start_value.astimezone(timezone.utc)
+
+        if hours is None or hours <= 0:
+            return start_utc.astimezone(timezone.utc).replace(tzinfo=None)
+
+        days = int(round(float(hours) / 24.0))
+        local = start_utc.astimezone(tz)
+        try:
+            out_local = self.add_business_days(local, days)
+        except Exception:
+            logger.warning(
+                "add_working_days_from_hours: business-day calc failed; "
+                "falling back to calendar hours.",
+                exc_info=True,
+            )
+            return (start_utc + timedelta(hours=float(hours))).astimezone(timezone.utc).replace(tzinfo=None)
+        if out_local is None:
+            return None
+        # add_business_days returns a naive datetime (same wall-clock, tz dropped) —
+        # re-attach the local tz before converting back to UTC.
+        if out_local.tzinfo is None:
+            out_local = out_local.replace(tzinfo=tz)
+        return out_local.astimezone(timezone.utc).replace(tzinfo=None)
+
     def business_days_between(
         self,
         start_value: date | datetime,
@@ -284,3 +329,93 @@ class CalendarService:
             if self._is_business_day(current, working_weekdays, holidays):
                 total += 1
         return total
+
+    def add_working_hours(
+        self,
+        start_value: datetime,
+        hours: float,
+        *,
+        tz: ZoneInfo = DEFAULT_WORKING_TZ,
+    ) -> Optional[datetime]:
+        """Add ``hours`` *working* hours to ``start_value`` and return naive UTC.
+
+        The clock advances only inside configured working windows — a working
+        weekday (``get_working_weekdays``), not a public holiday, and between
+        ``work_day_start_time`` and ``work_day_end_time`` in ``tz``. Nights,
+        weekends and holidays are skipped. If ``start_value`` falls outside a
+        window, accumulation begins at the next window open.
+
+        Input may be naive (interpreted as UTC, matching SLA tracking columns)
+        or aware. Output is naive UTC. Returns ``start`` unchanged for
+        ``hours <= 0``. Falls back to plain calendar arithmetic only if the work
+        calendar is misconfigured (no working weekday, or non-positive window).
+        """
+        if start_value is None:
+            return None
+
+        # Normalise to aware UTC, then to local wall time.
+        if start_value.tzinfo is None:
+            start_utc = start_value.replace(tzinfo=timezone.utc)
+        else:
+            start_utc = start_value.astimezone(timezone.utc)
+
+        def _to_naive_utc(dt_local: datetime) -> datetime:
+            return dt_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+        if hours is None or hours <= 0:
+            return _to_naive_utc(start_utc.astimezone(tz))
+
+        working_weekdays = self.get_working_weekdays()
+        start_t, end_t = self.get_working_hours()
+        window_seconds = (
+            datetime.combine(date.min, end_t) - datetime.combine(date.min, start_t)
+        ).total_seconds()
+
+        # Degenerate calendar config -> fall back to calendar hours (never hang).
+        if not working_weekdays or window_seconds <= 0:
+            logger.warning(
+                "add_working_hours: degenerate work calendar (weekdays=%s, window=%ss); "
+                "falling back to calendar-hour arithmetic.",
+                working_weekdays,
+                window_seconds,
+            )
+            return _to_naive_utc(start_utc + timedelta(hours=float(hours)))
+
+        remaining = timedelta(hours=float(hours))
+        cursor = start_utc.astimezone(tz)
+
+        # Pre-fetch holidays generously across the projected span.
+        max_days = int(remaining.total_seconds() // window_seconds) + 14
+        span_start = cursor.date()
+        holidays = self.get_public_holidays_between(
+            span_start, span_start + timedelta(days=max_days * 3 + 14)
+        )
+
+        # Hard iteration cap (defensive; ~ max_days working days max).
+        guard = (max_days + 14) * 3
+        while guard > 0:
+            guard -= 1
+            d = cursor.date()
+            if not self._is_business_day(d, working_weekdays, holidays):
+                # Skip to next day's window open.
+                cursor = datetime.combine(d + timedelta(days=1), start_t, tzinfo=tz)
+                continue
+
+            day_open = datetime.combine(d, start_t, tzinfo=tz)
+            day_close = datetime.combine(d, end_t, tzinfo=tz)
+
+            if cursor < day_open:
+                cursor = day_open
+            if cursor >= day_close:
+                cursor = datetime.combine(d + timedelta(days=1), start_t, tzinfo=tz)
+                continue
+
+            available = day_close - cursor
+            if remaining <= available:
+                return _to_naive_utc(cursor + remaining)
+            remaining -= available
+            cursor = datetime.combine(d + timedelta(days=1), start_t, tzinfo=tz)
+
+        # Should never reach here; fall back rather than loop forever.
+        logger.warning("add_working_hours: iteration guard exhausted; returning calendar fallback.")
+        return _to_naive_utc(start_utc + timedelta(hours=float(hours)))

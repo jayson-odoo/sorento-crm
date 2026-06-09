@@ -24,12 +24,18 @@ from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, Co
 from app.models.resources import Attachment, AttachmentType
 from app.models.access import AccessAgent, ContactAgentAccess, ContactAccessType, RespondContact, respond_contact_access_types
 from app.models.respond_workspace import RespondWorkspace
+from app.models.respond_template import (
+    RespondChannel,
+    RespondMessageTemplate,
+    RespondTemplateDefault,
+)
 from app.models.workflow_stage import WorkflowStage
 from app.models.entity_conversation import EntityConversationMessage
 from app.models.integration import IntegrationLog
 from app.models.import_log import ImportLog
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
 from app.models.job import ImportJob
+from app.models.download import UserDownload, DownloadStatus
 from app.models.audit import AuditLog
 from app.models.notification import Notification, NotificationDelivery, PushSubscription
 from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
@@ -124,11 +130,16 @@ __all__ = [
     "RespondContact",
     "respond_contact_access_types",
     "RespondWorkspace",
+    "RespondChannel",
+    "RespondMessageTemplate",
+    "RespondTemplateDefault",
     "WorkflowStage",
     "EntityConversationMessage",
     "IntegrationLog",
     "ImportLog",
     "ImportJob",
+    "UserDownload",
+    "DownloadStatus",
     "VerificationToken",
     "PublicHoliday",
     "WorkCalendarConfig",

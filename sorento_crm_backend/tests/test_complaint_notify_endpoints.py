@@ -67,6 +67,17 @@ def _patch_send(monkeypatch, captured: list[dict]):
         return {"id": "respond-msg-1", "status": "sent"}
 
     monkeypatch.setattr(integration_service.RespondClient, "send_message", fake_send_message)
+
+    # The 24h-window pre-check scans list_messages; return a recent incoming so
+    # the window is open and the plain-text branch is exercised (the template
+    # branch has its own coverage in test_respond_templates.py).
+    import time
+
+    def fake_list_messages(self, identifier, *a, **kw):  # noqa: ANN001
+        recent_ms = int((time.time() - 3600) * 1000)
+        return {"items": [{"traffic": "incoming", "status": [{"timestamp": recent_ms}]}]}
+
+    monkeypatch.setattr(integration_service.RespondClient, "list_messages", fake_list_messages)
     monkeypatch.setattr(
         crm_chat_outbound_webhook,
         "enqueue_crm_chat_outbound_webhook",

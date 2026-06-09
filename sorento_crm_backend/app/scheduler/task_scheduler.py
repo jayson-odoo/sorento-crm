@@ -175,6 +175,13 @@ def _handler_email_outbox_drainer(db, task):
     return drain_email_outbox()
 
 
+def _handler_respond_templates_sync(db, task):
+    """Sync Respond.io channels + WhatsApp templates for all active workspaces."""
+    from app.services.respond_template_service import run_respond_templates_sync
+
+    return run_respond_templates_sync(db, task)
+
+
 def _drain_email_outbox_tick():
     """APScheduler tick wrapper. Owns its own DB session (drain_email_outbox handles errors)."""
     try:
@@ -233,6 +240,7 @@ def register_task_handlers():
     register_handler("user_sla_daily_summary", _handler_user_sla_daily_summary)
     register_handler("promotion_active_window", _handler_promotion_active_window)
     register_handler("respond_contacts_sync", run_respond_contacts_sync)
+    register_handler("respond_templates_sync", _handler_respond_templates_sync)
     register_handler("automation_runner", _handler_automation_runner)
     register_handler("form_sla_overdue_scan", _handler_form_sla_overdue_scan)
     register_handler("email_outbox_drainer", _handler_email_outbox_drainer)

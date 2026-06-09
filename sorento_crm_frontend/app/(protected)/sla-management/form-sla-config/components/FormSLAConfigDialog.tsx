@@ -149,6 +149,7 @@ export default function FormSLAConfigDialog({
   const [respondEvents, setRespondEvents] = useState<string[]>([]);
   const [resolveEvents, setResolveEvents] = useState<string[]>([]);
   const [nextConfigId, setNextConfigId] = useState<string>(NONE_VALUE);
+  const [advanceOnEvent, setAdvanceOnEvent] = useState<string>(NONE_VALUE);
   const [isActive, setIsActive] = useState(true);
 
   useEffect(() => {
@@ -162,6 +163,7 @@ export default function FormSLAConfigDialog({
       setRespondEvents(parseEventList(existing.respond_event));
       setResolveEvents(parseEventList(existing.resolve_event));
       setNextConfigId(existing.next_config_id ?? NONE_VALUE);
+      setAdvanceOnEvent(existing.advance_on_event ?? NONE_VALUE);
       setIsActive(existing.is_active);
     } else if (open) {
       setSourceType('stock_inquiry');
@@ -173,6 +175,7 @@ export default function FormSLAConfigDialog({
       setRespondEvents([]);
       setResolveEvents([]);
       setNextConfigId(NONE_VALUE);
+      setAdvanceOnEvent(NONE_VALUE);
       setIsActive(true);
     }
   }, [existing, open]);
@@ -230,6 +233,7 @@ export default function FormSLAConfigDialog({
       respond_event: joinEventList(respondEvents),
       resolve_event: joinEventList(resolveEvents),
       next_config_id: nextConfigId === NONE_VALUE ? null : nextConfigId,
+      advance_on_event: advanceOnEvent === NONE_VALUE ? null : advanceOnEvent,
       is_active: isActive,
     });
   };
@@ -371,6 +375,27 @@ export default function FormSLAConfigDialog({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="grid gap-1.5">
+            <Label>Advance to next stage only on event (optional)</Label>
+            <Select value={advanceOnEvent} onValueChange={setAdvanceOnEvent}>
+              <SelectTrigger>
+                <SelectValue placeholder="Any resolve event" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE_VALUE}>Any resolve event</SelectItem>
+                {eventOptions.map((e) => (
+                  <SelectItem key={e} value={e}>
+                    {e}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="text-xs text-muted-foreground">
+              Spawn the next stage only when resolved by this event (e.g. approved →
+              customer service, while rejected just closes the stage). Blank = any.
+            </span>
           </div>
 
           <div className="flex items-center gap-2">

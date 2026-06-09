@@ -92,6 +92,11 @@ class ComplaintRejectRequest(BaseModel):
     rejection_reason: str
 
 
+class ComplaintFinalizeRequest(BaseModel):
+    """Request body for resolve / close; optional note sent to the contact."""
+    note: Optional[str] = None
+
+
 class ComplaintProductLineBase(BaseModel):
     product_code: str
     quantity: Optional[str] = None
@@ -218,6 +223,8 @@ class ComplaintResponse(ComplaintBase):
     rejection_reason: Optional[str] = None
     rejected_at: Optional[datetime] = None
     rejected_by: Optional[str] = None
+    resolved_at: Optional[datetime] = None
+    resolved_by: Optional[str] = None
     assigned_to_name: Optional[str] = None
     root_cause_id: Optional[str] = None
     resolution_id: Optional[str] = None

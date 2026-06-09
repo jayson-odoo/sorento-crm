@@ -25,6 +25,8 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
   sponsorship_form: 'Sponsorship Form',
   stock_inquiry: 'Stock Inquiry',
+  complaint: 'Complaint',
+  external_promotion: 'External Promotion',
 };
 
 export const RESET_POLICY_OPTIONS = [

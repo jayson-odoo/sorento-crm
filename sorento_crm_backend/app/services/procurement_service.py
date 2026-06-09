@@ -3505,7 +3505,7 @@ class PurchaseRequestService:
             resolve_sla_assignee_respond_user_id,
         )
         from app.services.error_handler import handle_validation_error
-        from app.services.integration_service import IntegrationLogService, RespondClient
+        from app.services.integration_service import IntegrationLogService
 
         log_service = IntegrationLogService(self.db)
         identifier = self._identifier_from_respond_inbox_url(getattr(header, "respond_inbox_url", None))
@@ -3522,10 +3522,32 @@ class PurchaseRequestService:
             self.db, "purchase_request", str(header.id)
         )
 
-        response = None
+        # Window-aware send: plain text inside the 24h window, default WhatsApp
+        # template outside it (plan: PLAN-whatsapp-template-fallback.md).
+        from app.services.respond_messaging_service import (
+            build_context_vars,
+            send_text_or_template,
+            use_case_for_purchase_request,
+        )
+
+        use_case = use_case_for_purchase_request(header)
+        request_payload = {"message": {"type": "text", "text": message_to_send}}
         try:
-            client = RespondClient()
-            response = client.send_message(identifier, message_to_send)
+            context_vars = build_context_vars(
+                self.db,
+                use_case=use_case,
+                business_id=str(header.id),
+                identifier=identifier,
+            )
+            result = send_text_or_template(
+                self.db,
+                identifier=identifier,
+                text=message_to_send,
+                use_case=use_case,
+                context_vars=context_vars,
+            )
+            request_payload = result["request_payload"]
+            response = result["response"]
 
             enqueue_crm_chat_outbound_webhook(
                 self.db,
@@ -3553,11 +3575,11 @@ class PurchaseRequestService:
                     response_payload=str(response)[:50000] if response else None,
                     created_by=str(crm_sender_user_id).strip() if crm_sender_user_id else None,
                 ),
-                request_payload_dict={"message": {"type": "text", "text": message_to_send}},
+                request_payload_dict=request_payload,
             )
         except Exception as e:
             logger.exception(
-                "Respond.io send_message failed for purchase_request %s", getattr(header, "id", None)
+                "Respond.io send failed for purchase_request %s", getattr(header, "id", None)
             )
             log_service.create_integration_log(
                 IntegrationLogCreate(
@@ -3572,7 +3594,7 @@ class PurchaseRequestService:
                     error_message=str(e),
                     created_by=str(crm_sender_user_id).strip() if crm_sender_user_id else None,
                 ),
-                request_payload_dict={"message": {"type": "text", "text": message_to_send}},
+                request_payload_dict=request_payload,
             )
             raise
 
@@ -4848,7 +4870,7 @@ class PurchaseRequestService:
         Message is reply_message if provided, otherwise built from request_number.
         """
         import logging
-        from app.services.integration_service import RespondClient, IntegrationLogService
+        from app.services.integration_service import IntegrationLogService
         from app.schemas.integration import IntegrationLogCreate
         from app.services.error_handler import handle_validation_error
 
@@ -4906,9 +4928,32 @@ class PurchaseRequestService:
             )
 
         display_message = reply_message
+        # Window-aware send: plain text inside the 24h window, default WhatsApp
+        # template outside it (plan: PLAN-whatsapp-template-fallback.md).
+        from app.services.respond_messaging_service import (
+            build_context_vars,
+            send_text_or_template,
+            use_case_for_purchase_request,
+        )
+
+        use_case = use_case_for_purchase_request(header)
+        request_payload = {"message": {"type": "text", "text": display_message}}
         try:
-            client = RespondClient()
-            response = client.send_message(identifier, display_message)
+            context_vars = build_context_vars(
+                self.db,
+                use_case=use_case,
+                business_id=request_id,
+                identifier=identifier,
+            )
+            result = send_text_or_template(
+                self.db,
+                identifier=identifier,
+                text=display_message,
+                use_case=use_case,
+                context_vars=context_vars,
+            )
+            request_payload = result["request_payload"]
+            response = result["response"]
             from app.services.crm_chat_outbound_webhook import (
                 enqueue_crm_chat_outbound_webhook,
                 resolve_sla_assignee_respond_user_id,
@@ -4940,10 +4985,10 @@ class PurchaseRequestService:
                     status="success",
                     response_payload=str(response)[:50000] if response else None,
                 ),
-                request_payload_dict={"message": {"type": "text", "text": display_message}},
+                request_payload_dict=request_payload,
             )
         except Exception as e:
-            logger.exception("Respond.io send_message failed for purchase_request %s", request_id)
+            logger.exception("Respond.io send failed for purchase_request %s", request_id)
             log_service.create_integration_log(
                 IntegrationLogCreate(
                     integration_channel="respond_io",
@@ -4956,7 +5001,7 @@ class PurchaseRequestService:
                     status="failed",
                     error_message=str(e),
                 ),
-                request_payload_dict={"message": {"type": "text", "text": display_message}},
+                request_payload_dict=request_payload,
             )
             raise
 

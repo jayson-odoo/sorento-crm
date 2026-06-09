@@ -17,9 +17,16 @@ logger = logging.getLogger(__name__)
 class RespondClient:
     """Client for Respond.io API."""
 
-    def __init__(self) -> None:
-        self.base_url = (settings.respond_base_url or "https://api.respond.io").rstrip("/")
-        self.api_key = settings.respond_api_key
+    def __init__(
+        self,
+        *,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ) -> None:
+        """Defaults to env-configured credentials; pass overrides to act on a
+        specific `respond_workspaces` row (template sync)."""
+        self.base_url = (base_url or settings.respond_base_url or "https://api.respond.io").rstrip("/")
+        self.api_key = api_key or settings.respond_api_key
         self.space_id = settings.respond_space_id
 
     def _headers(self) -> dict:
@@ -182,6 +189,75 @@ class RespondClient:
             if cursor:
                 payload["cursor"] = cursor
         with httpx.Client(timeout=30) as client:
+            response = client.post(url, headers=self._headers(), json=payload)
+            response.raise_for_status()
+            return response.json() if response.content else {}
+
+    def list_channels(self) -> list[dict]:
+        """List workspace channels. GET /v2/space/channel.
+
+        Returns items like {"id": 453209, "name": "...", "source": "whatsapp_business"}.
+        """
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        url = f"{self.base_url}/v2/space/channel"
+        with httpx.Client(timeout=15) as client:
+            response = client.get(url, headers=self._headers())
+            response.raise_for_status()
+            data = response.json() if response.content else {}
+            return data.get("items", []) if isinstance(data, dict) else []
+
+    def list_message_templates(self, channel_id: int | str) -> list[dict]:
+        """List WhatsApp message templates of a channel.
+
+        GET /v2/space/channel/{channelId}/template. Items carry name,
+        languageCode, category, status, statusDetail, templateId, namespace
+        and a components array (body text contains {{1}}..{{n}}).
+        """
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        url = f"{self.base_url}/v2/space/channel/{channel_id}/template"
+        with httpx.Client(timeout=15) as client:
+            response = client.get(url, headers=self._headers())
+            response.raise_for_status()
+            data = response.json() if response.content else {}
+            return data.get("items", []) if isinstance(data, dict) else []
+
+    def send_template_message(
+        self,
+        identifier: str,
+        *,
+        channel_id: int,
+        template_name: str,
+        language_code: str,
+        body_text: str,
+        parameters: list[str],
+    ) -> dict:
+        """Send an approved WhatsApp template message to a contact.
+
+        POST /v2/contact/{identifier}/message with type=whatsapp_template.
+        Respond.io requires the FULL template body text alongside the
+        positional parameters (verified against the live API 2026-06-08).
+        """
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        api_id = self._contact_api_identifier(identifier)
+        url = f"{self.base_url}/v2/contact/{api_id}/message"
+        body_component: dict = {"type": "body", "text": body_text}
+        if parameters:
+            body_component["parameters"] = [{"type": "text", "text": p} for p in parameters]
+        payload = {
+            "channelId": channel_id,
+            "message": {
+                "type": "whatsapp_template",
+                "template": {
+                    "name": template_name,
+                    "languageCode": language_code,
+                    "components": [body_component],
+                },
+            },
+        }
+        with httpx.Client(timeout=15) as client:
             response = client.post(url, headers=self._headers(), json=payload)
             response.raise_for_status()
             return response.json() if response.content else {}

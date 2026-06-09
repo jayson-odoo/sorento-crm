@@ -137,6 +137,73 @@ export async function rejectComplaint(
   return response.json();
 }
 
+export async function processComplaintByCs(
+  id: string,
+  note?: string,
+): Promise<Complaint> {
+  const response = await apiFetch(
+    `/api/v1/complaints-management/complaints/${id}/process`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note: note?.trim() || null }),
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to mark complaint processed by CS' }));
+    throw new Error(
+      error.detail || error.message || 'Failed to mark complaint processed by CS',
+    );
+  }
+  return response.json();
+}
+
+export async function closeComplaint(
+  id: string,
+  note?: string,
+): Promise<Complaint> {
+  const response = await apiFetch(
+    `/api/v1/complaints-management/complaints/${id}/close`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note: note?.trim() || null }),
+    },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to close complaint' }));
+    throw new Error(error.detail || error.message || 'Failed to close complaint');
+  }
+  return response.json();
+}
+
+export interface ComplaintExportDownload {
+  id: string;
+  kind: string;
+  status: string;
+  filename?: string | null;
+}
+
+export async function exportComplaintPdf(
+  id: string,
+): Promise<ComplaintExportDownload> {
+  const response = await apiFetch(
+    `/api/v1/complaints-management/complaints/${id}/export/pdf`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    const error = await response
+      .json()
+      .catch(() => ({ message: 'Failed to start PDF export' }));
+    throw new Error(error.detail || error.message || 'Failed to start PDF export');
+  }
+  return response.json();
+}
+
 export async function notifyComplaintRootCause(id: string): Promise<Complaint> {
   const response = await apiFetch(
     `/api/v1/complaints-management/complaints/${id}/notify-root-cause`,

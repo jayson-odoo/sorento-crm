@@ -42,6 +42,81 @@ def _utc_naive_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _working_due_naive(db: Session, start_dt: datetime, hours: float) -> datetime:
+    """Forward form-SLA due date in *working days*: convert the policy hours to days
+    (÷24) and add that many working days (skipping weekends + KL public holidays),
+    keeping the time-of-day. E.g. 72h → +3 working days. Returns naive UTC to match
+    the tracker columns. Falls back to calendar hours if the work calendar is
+    unavailable/misconfigured."""
+    try:
+        from app.services.calendar_service import CalendarService
+        out = CalendarService(db).add_working_days_from_hours(start_dt, hours)
+        if out is not None:
+            return out
+    except Exception:  # pragma: no cover - defensive; never break form SLA start/escalate
+        logger.warning(
+            "form working-days due calc failed; falling back to calendar hours.", exc_info=True
+        )
+    return start_dt + timedelta(hours=float(hours))
+
+
+# (table, number column) per form type — for resolving a human-readable document
+# number instead of showing the raw UUID in notifications.
+_ENTITY_NUMBER_SOURCE: dict = {
+    "complaint": ("complaints", "complaint_number"),
+    "stock_inquiry": ("stock_inquiries", "inquiry_number"),
+    "purchase_request": ("purchase_requests", "request_number"),
+    "sponsorship_form": ("purchase_requests", "request_number"),
+    "ticket": ("tickets", "ticket_number"),
+}
+
+
+def _resolve_entity_number(db: Session, source_entity_type: str, source_entity_id: str) -> Optional[str]:
+    """Human-readable document number (e.g. CMP-2026-0001) for a form row; None if
+    not resolvable (caller falls back to a generic label, never the UUID)."""
+    src = _ENTITY_NUMBER_SOURCE.get(source_entity_type)
+    if not src or not source_entity_id:
+        return None
+    table, col = src
+    try:
+        from sqlalchemy import text as _text
+
+        row = db.execute(
+            _text(f"SELECT {col} FROM {table} WHERE id = CAST(:id AS uuid)"),
+            {"id": str(source_entity_id)},
+        ).fetchone()
+        val = (row[0] if row else None)
+        return str(val).strip() if val else None
+    except Exception:  # pragma: no cover - never break notifications on lookup
+        logger.warning("SLA notify: number lookup failed for %s/%s", source_entity_type, source_entity_id, exc_info=True)
+        return None
+
+
+def _full_form_link(source_entity_type: str, source_entity_id: str) -> str:
+    """Absolute frontend URL for the form detail page (falls back to a relative path)."""
+    from app.config import settings
+
+    path = _form_detail_link(source_entity_type, source_entity_id)
+    base = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+    return f"{base}{path}" if base else path
+
+
+def _fmt_due(due_at) -> Optional[str]:
+    """Format a naive-UTC due_at as readable KL wall time, e.g. '22 May 2026, 10:00 AM'."""
+    if due_at is None:
+        return None
+    try:
+        from datetime import timezone as _tz
+        from zoneinfo import ZoneInfo
+
+        dt = due_at
+        aware = dt.replace(tzinfo=_tz.utc) if dt.tzinfo is None else dt
+        local = aware.astimezone(ZoneInfo("Asia/Kuala_Lumpur"))
+        return local.strftime("%d %b %Y, %I:%M %p")
+    except Exception:  # pragma: no cover
+        return str(due_at)
+
+
 def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
     """Build a frontend deep link for the form's detail page (consumed by notification UI)."""
     if source_entity_type == "stock_inquiry":
@@ -130,6 +205,7 @@ class FormSLAOrchestrator:
                         source_entity_id,
                         actor_user_id=actor_user_id,
                         contact_id=contact_id,
+                        resolve_event=event_name,
                     )
             except Exception as e:
                 logger.warning(
@@ -235,8 +311,8 @@ class FormSLAOrchestrator:
                 tracker.current_tier_started_at = now
                 tracker.escalated_at = now
                 tracker.escalation_reason = "Response/resolution overdue"
-                tracker.due_at = now + timedelta(hours=response_hrs)
-                tracker.due_at_resolution = now + timedelta(hours=resolution_hrs)
+                tracker.due_at = _working_due_naive(self.db, now, response_hrs)
+                tracker.due_at_resolution = _working_due_naive(self.db, now, resolution_hrs)
                 tracker.assigned_to_id = assignee["id"]
                 tracker.assigned_to = (
                     str(assignee.get("respond_user_id"))
@@ -368,8 +444,8 @@ class FormSLAOrchestrator:
             assigned_to_id=assignee["id"],
             initiated_at=now,
             current_tier_started_at=now,
-            due_at=now + timedelta(hours=response_hrs),
-            due_at_resolution=now + timedelta(hours=resolution_hrs),
+            due_at=_working_due_naive(self.db, now, response_hrs),
+            due_at_resolution=_working_due_naive(self.db, now, resolution_hrs),
             is_responded=False,
             is_resolved=False,
             respond_contact_id=contact_id,
@@ -414,6 +490,7 @@ class FormSLAOrchestrator:
         *,
         actor_user_id: Optional[str] = None,
         contact_id: Optional[str] = None,
+        resolve_event: Optional[str] = None,
     ) -> None:
         from app.schemas.sla import ConversationSLATrackingUpdate
         from app.services.sla_service import ConversationSLATrackingService
@@ -440,7 +517,14 @@ class FormSLAOrchestrator:
             ConversationSLATrackingUpdate(**update_payload),
         )
 
-        if config.next_config_id:
+        # Spawn the next stage only if this resolve should advance the chain.
+        # advance_on_event set -> only the matching event advances (e.g. 'approved'
+        # spawns customer service, 'rejected' just closes this stage). NULL -> any
+        # resolve advances (backward-compatible).
+        advance_on = (getattr(config, "advance_on_event", None) or "").strip()
+        should_advance = (not advance_on) or (advance_on == (resolve_event or "").strip())
+
+        if config.next_config_id and should_advance:
             next_cfg = (
                 self.db.query(FormSLAConfig)
                 .filter(
@@ -463,28 +547,34 @@ class FormSLAOrchestrator:
     ) -> None:
         if not tracker.assigned_to_id:
             return
-        link = _form_detail_link(
-            str(tracker.source_entity_type or ""),
-            str(tracker.source_entity_id or ""),
-        )
-        type_label = (tracker.source_entity_type or "form").replace("_", " ")
+        s_type = str(tracker.source_entity_type or "")
+        s_id = str(tracker.source_entity_id or "")
+        # Relative path for in-app navigation; absolute URL for the email body.
+        link = _form_detail_link(s_type, s_id)
+        full_link = _full_form_link(s_type, s_id)
+        type_label = (s_type or "form").replace("_", " ")
+        # Human-readable document number, never the raw UUID.
+        number = _resolve_entity_number(self.db, s_type, s_id) or type_label.capitalize()
+        due_str = _fmt_due(tracker.due_at)
+
         if kind == "assigned":
-            title = f"New SLA assignment: {type_label}"
-            body = (
-                f"A {type_label} ({tracker.source_entity_id}) is assigned to you. "
-                f"Respond by {tracker.due_at}." if tracker.due_at else
-                f"A {type_label} ({tracker.source_entity_id}) is assigned to you."
-            )
+            title = f"New SLA assignment: {number}"
+            body = f"{type_label.capitalize()} {number} is assigned to you."
+            if due_str:
+                body += f" Respond by {due_str}."
+            body += f"\n\nOpen: {full_link}"
         elif kind == "escalated":
-            title = f"SLA escalated to you: {type_label}"
+            title = f"SLA escalated to you: {number}"
             body = (
-                f"A {type_label} ({tracker.source_entity_id}) has been escalated to you. "
-                f"Reason: {reason or 'overdue'}. New deadline: {tracker.due_at}." if tracker.due_at else
-                f"A {type_label} ({tracker.source_entity_id}) has been escalated to you."
+                f"{type_label.capitalize()} {number} has been escalated to you. "
+                f"Reason: {reason or 'overdue'}."
             )
+            if due_str:
+                body += f" New deadline: {due_str}."
+            body += f"\n\nOpen: {full_link}"
         else:
-            title = f"SLA update: {type_label}"
-            body = f"{type_label} {tracker.source_entity_id} status updated."
+            title = f"SLA update: {number}"
+            body = f"{type_label.capitalize()} {number} status updated.\n\nOpen: {full_link}"
 
         try:
             NotificationService(self.db).create_with_channel_preferences(

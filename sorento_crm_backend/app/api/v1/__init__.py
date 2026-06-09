@@ -25,6 +25,7 @@ from app.api.v1 import (
     lookup,
     activities,
     tickets,
+    downloads,
 )
 from app.api.v1.system import modules_runtime
 from app.api.v1.user_management.access_agent_mcp_tools import router as _agent_mcp_tools_router
@@ -133,6 +134,12 @@ api_router.include_router(
     # JWT or X-API-Key so n8n / external tools can call logs (same key as /external/*)
     dependencies=[Depends(require_module_enabled_with_api_key("base"))],
 )
+api_router.include_router(
+    integrations.respond_templates.router,
+    prefix="/integrations/respond",
+    tags=["integrations"],
+    dependencies=[Depends(require_module_enabled_with_api_key("base"))],
+)
 # Alias so /api/v1/integration-management/integration-logs/* works when requests hit backend directly (e.g. nginx)
 api_router.include_router(
     integrations.logs.router,
@@ -149,6 +156,11 @@ api_router.include_router(
     prefix="/notifications",
     tags=["notifications"],
     dependencies=[Depends(require_module_enabled("notifications"))],
+)
+api_router.include_router(
+    downloads.router,
+    prefix="/downloads",
+    tags=["downloads"],
 )
 api_router.include_router(
     list_query.router,

@@ -70,6 +70,16 @@ def _stub_respond(monkeypatch):
         "send_message",
         lambda self, identifier, message, *a, **kw: {"status": "sent"},
     )
+    # 24h-window pre-check: recent incoming -> window open -> plain-text branch.
+    import time
+
+    monkeypatch.setattr(
+        integration_service.RespondClient,
+        "list_messages",
+        lambda self, identifier, *a, **kw: {
+            "items": [{"traffic": "incoming", "status": [{"timestamp": int((time.time() - 3600) * 1000)}]}]
+        },
+    )
     monkeypatch.setattr(
         crm_chat_outbound_webhook,
         "enqueue_crm_chat_outbound_webhook",

@@ -122,6 +122,11 @@ def test_create_tracking_agent_code_with_explicit_assignee_skips_round_robin():
     returns = iter([contact, agent, user, policy, tier, existing])
 
     def query_side_effect(_model):
+        # The working-hours due-date calc (create_tracking) reads the work calendar
+        # via the same session; return a benign mock for those models so it falls
+        # back to calendar math without consuming the business query sequence.
+        if getattr(_model, "__name__", "") in ("WorkCalendarConfig", "PublicHoliday"):
+            return MagicMock()
         qm = MagicMock()
         qm.filter.return_value = qm
         qm.order_by.return_value = qm

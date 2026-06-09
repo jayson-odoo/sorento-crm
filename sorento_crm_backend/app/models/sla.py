@@ -133,6 +133,11 @@ class FormSLAConfig(Base):
         ForeignKey("form_sla_configs.id", ondelete="SET NULL"),
         nullable=True,
     )
+    # When set, the next stage (next_config_id) is spawned ONLY when the resolve
+    # was triggered by this specific event (e.g. 'approved' — so 'rejected' closes
+    # the stage without advancing to customer service). NULL = spawn on any resolve
+    # (backward-compatible with existing single-event chains).
+    advance_on_event = Column(String(100), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)

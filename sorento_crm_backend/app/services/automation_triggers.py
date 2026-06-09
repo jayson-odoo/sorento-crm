@@ -176,6 +176,35 @@ register(
 )
 
 
+def _trigger_complaint_technical_response_updated(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven trigger; pull-mode evaluation yields nothing.
+
+    Matches are produced via :meth:`AutomationService.dispatch_event` from the
+    complaint update-and-reply code path (when the technical-team response is
+    sent to the customer), so scheduled ``evaluate_due`` runs return nothing.
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="complaint_technical_response_updated",
+        label="Complaint technical response sent",
+        description="Fires when a complaint's technical-team response is sent to the customer via Update & Reply (event-driven, dispatched from the reply flow).",
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_complaint_technical_response_updated,
+)
+
+
 def _trigger_purchase_request_approved(
     db: Session,
     config: dict[str, Any],

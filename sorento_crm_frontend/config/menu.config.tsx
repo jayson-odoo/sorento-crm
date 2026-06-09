@@ -656,6 +656,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/integration-management/integration-logs',
       },
       {
+        title: 'WhatsApp Templates',
+        path: '/integration-management/whatsapp-templates',
+      },
+      {
         title: 'Scheduled Tasks',
         path: '/system-management/scheduled-tasks',
       },
@@ -668,6 +672,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Email Outbox',
         path: '/system-management/email-outbox',
         permission: 'system.email_outbox.view',
+      },
+      {
+        title: 'Respond Outbox',
+        path: '/system-management/respond-outbox',
+        permission: 'system.respond_outbox.view',
       },
       {
         title: 'Email Event Configs',
@@ -1454,6 +1463,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/integration-management/integration-logs',
       },
       {
+        title: 'WhatsApp Templates',
+        path: '/integration-management/whatsapp-templates',
+      },
+      {
         title: 'Scheduled Tasks',
         path: '/system-management/scheduled-tasks',
       },
@@ -1466,6 +1479,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Email Outbox',
         path: '/system-management/email-outbox',
         permission: 'system.email_outbox.view',
+      },
+      {
+        title: 'Respond Outbox',
+        path: '/system-management/respond-outbox',
+        permission: 'system.respond_outbox.view',
       },
       {
         title: 'Email Event Configs',

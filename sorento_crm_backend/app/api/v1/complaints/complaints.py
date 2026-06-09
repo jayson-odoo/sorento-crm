@@ -16,6 +16,7 @@ from app.schemas.complaints import (
     ComplaintAttachmentLinkRequest,
     BulkDeleteComplaintsRequest,
     ComplaintRejectRequest,
+    ComplaintFinalizeRequest,
 )
 from app.schemas.external.complaints import ComplaintIntegrationCreate
 from app.schemas.integration import IntegrationLogCreate
@@ -333,6 +334,26 @@ async def get_complaint_conversation(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+def _resolve_complaint_chat_contact(db: Session, complaint_id: str):
+    """(respond_io identifier, internal respond_contact_id) for a complaint."""
+    service = ComplaintService(db)
+    complaint = service.get_complaint(complaint_id)
+    identifier = service._identifier_from_respond_inbox_url(
+        getattr(complaint, "respond_inbox_url", None)
+    )
+    return identifier, getattr(complaint, "contact_id", None)
+
+
+from app.api.v1._respond_chat_template_routes import build_chat_template_router
+
+router.include_router(
+    build_chat_template_router(
+        business_table="complaints",
+        resolver=_resolve_complaint_chat_contact,
+    )
+)
 
 
 @router.get("/{complaint_id}", response_model=ComplaintResponse)
@@ -1083,6 +1104,115 @@ async def reject_complaint(
         )
         db.commit()
         return service.get_complaint_with_attachments(complaint_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{complaint_id}/process", response_model=ComplaintResponse)
+async def process_complaint_by_cs(
+    complaint_id: str,
+    payload: ComplaintFinalizeRequest,
+    request: Request,
+    current_user: dict = Depends(require_permission("complaint_management.complaints.resolve")),
+    db: Session = Depends(get_db),
+):
+    """Mark an approved complaint as processed by customer service.
+
+    Sets status='processed_by_cs', closes the customer-service form-SLA stage, and
+    sends a status-update message (+ optional note) to the contact via Respond.io.
+    """
+    try:
+        respond_user_id = _respond_user_id_from_current_user(current_user)
+        service = ComplaintService(db)
+        service.mark_processed_by_cs(
+            complaint_id,
+            note=payload.note,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=current_user.get("id"),
+        )
+        db.commit()
+        return service.get_complaint_with_attachments(complaint_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{complaint_id}/close", response_model=ComplaintResponse)
+async def close_complaint(
+    complaint_id: str,
+    payload: ComplaintFinalizeRequest,
+    request: Request,
+    current_user: dict = Depends(require_permission("complaint_management.complaints.close")),
+    db: Session = Depends(get_db),
+):
+    """Close an approved complaint that can't be resolved (status='closed').
+
+    Not a CS-processed completion, but closes the customer-service form-SLA stage
+    and sends a status-update message (+ optional note) to the contact via Respond.io.
+    """
+    try:
+        respond_user_id = _respond_user_id_from_current_user(current_user)
+        service = ComplaintService(db)
+        service.close_complaint(
+            complaint_id,
+            note=payload.note,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=current_user.get("id"),
+        )
+        db.commit()
+        return service.get_complaint_with_attachments(complaint_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{complaint_id}/export/pdf")
+async def export_complaint_pdf(
+    complaint_id: str,
+    current_user: dict = Depends(require_permission("complaint_management.complaints.view")),
+    db: Session = Depends(get_db),
+):
+    """Queue an async PDF export of the complaint (supporting-document copy).
+
+    Creates a UserDownload row and enqueues generation; the result appears in the
+    My Downloads drawer. Decoupled from the request path so a slow/failed render
+    never blocks the caller.
+    """
+    from app.schemas.download import DownloadResponse
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_complaint_pdf
+
+    try:
+        service = ComplaintService(db)
+        complaint = service.get_complaint(complaint_id)  # 404 if missing
+
+        download = DownloadService(db).create(
+            user_id=str(current_user["id"]),
+            kind="complaint_pdf",
+            source_entity_type="complaint",
+            source_entity_id=str(complaint_id),
+            filename=f"complaint-{(getattr(complaint, 'complaint_number', None) or complaint_id)}.pdf",
+        )
+        try:
+            enqueue_job(
+                generate_complaint_pdf,
+                str(download.id),
+                str(complaint_id),
+                str(current_user["id"]),
+                queue_name="imports",
+                job_timeout=600,
+            )
+        except Exception as e:
+            # Enqueue failed (e.g. Redis down): mark the row failed so the drawer shows it.
+            DownloadService(db).mark_failed(str(download.id), f"Could not queue PDF generation: {e}")
+            raise handle_internal_error("Could not queue PDF generation. Please try again.")
+
+        return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
     except HTTPException:
         raise
     except Exception as e:

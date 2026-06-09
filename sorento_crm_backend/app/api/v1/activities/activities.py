@@ -24,6 +24,7 @@ from app.schemas.activities import (
     ActivityEventCreate,
     ActivityEventResponse,
     EntityMessageSendRequest,
+    EntityTemplateMessageSendRequest,
     InternalNoteCreate,
     InternalNoteResponse,
     InternalNoteUpdate,
@@ -180,6 +181,46 @@ def send_message(
         contact_id=body.contact_id,
         body=body.body,
         attachment_ids=body.attachment_ids,
+        current_user=current_user,
+    )
+
+
+@router.get("/{entity_type}/{entity_id}/window-state")
+def get_window_state(
+    entity_type: str,
+    entity_id: str,
+    contact_id: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """24h WhatsApp messaging window state for a linked contact."""
+    from app.services.activities_service import get_window_state as _impl
+    return _impl(
+        db,
+        entity_type,
+        entity_id,
+        contact_id=contact_id,
+        current_user=current_user,
+    )
+
+
+@router.post("/{entity_type}/{entity_id}/template-messages")
+def send_template_message(
+    entity_type: str,
+    entity_id: str,
+    body: EntityTemplateMessageSendRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Send an approved WhatsApp template to a linked contact."""
+    from app.services.activities_service import send_template_message as _impl
+    return _impl(
+        db,
+        entity_type,
+        entity_id,
+        contact_id=body.contact_id,
+        template_id=body.template_id,
+        params=body.params,
         current_user=current_user,
     )
 

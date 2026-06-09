@@ -46,6 +46,8 @@ class Complaint(Base):
     rejection_reason = Column(Text, nullable=True)
     rejected_at = Column(DateTime(timezone=False), nullable=True)
     rejected_by = Column(Text, nullable=True)
+    resolved_at = Column(DateTime(timezone=False), nullable=True)
+    resolved_by = Column(Text, nullable=True)
     root_cause_id = Column(UUID(as_uuid=False), ForeignKey("complaint_root_causes.id", ondelete="RESTRICT"), nullable=True)
     resolution_id = Column(UUID(as_uuid=False), ForeignKey("complaint_resolutions.id", ondelete="RESTRICT"), nullable=True)
     root_cause_notified_at = Column(DateTime(timezone=False), nullable=True)

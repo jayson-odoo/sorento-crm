@@ -67,6 +67,16 @@ PERMISSION_REGISTRY.append({
     "name": "Reject Complaints",
     "description": "Permission to reject a complaint after technical team response and notify the contact via Respond.io.",
 })
+PERMISSION_REGISTRY.append({
+    "slug": "complaint_management.complaints.resolve",
+    "name": "Process Complaints (CS)",
+    "description": "Permission for the customer-service team to mark an approved complaint as processed by CS (closes the customer-service SLA stage).",
+})
+PERMISSION_REGISTRY.append({
+    "slug": "complaint_management.complaints.close",
+    "name": "Close Complaints",
+    "description": "Permission to close an approved complaint that can't be resolved (status='closed'; closes the customer-service SLA stage). Separate from CS-processed so it can be granted/hidden independently.",
+})
 
 # SLA Management
 PERMISSION_REGISTRY.extend(_crud("sla_management", "sla_policies", "SLA Policies"))
@@ -173,6 +183,11 @@ PERMISSION_REGISTRY.extend(_crud("resource", "attachment_types", "Attachment Typ
 
 # Integration
 PERMISSION_REGISTRY.extend(_crud("integration", "integration_logs", "Integration Logs"))
+PERMISSION_REGISTRY.extend([
+    {"slug": "integration.respond_templates.view", "name": "View WhatsApp Templates", "description": "View synced Respond.io WhatsApp message templates and auto-send defaults."},
+    {"slug": "integration.respond_templates.edit", "name": "Edit WhatsApp Template Defaults", "description": "Set or clear the default template + param mapping per auto-send use case."},
+    {"slug": "integration.respond_templates.sync", "name": "Sync WhatsApp Templates", "description": "Trigger a Respond.io channel + template sync."},
+])
 
 # System
 PERMISSION_REGISTRY.extend(_crud("system", "import_jobs", "Import Jobs"))
@@ -186,6 +201,7 @@ PERMISSION_REGISTRY.append({
 PERMISSION_REGISTRY.extend([
     {"slug": "system.email_outbox.view", "name": "View Email Outbox", "description": "View pending and historical outbox rows for the email guardrail."},
     {"slug": "system.email_outbox.manage", "name": "Manage Email Outbox", "description": "Retry, cancel, and otherwise manage outbox rows."},
+    {"slug": "system.respond_outbox.view", "name": "View Respond Outbox", "description": "View outgoing Respond.io / WhatsApp messages and templates (read-only over integration logs)."},
     {"slug": "system.email_event_configs.view", "name": "View Email Event Configs", "description": "View per-event email kill switches and rate overrides."},
     {"slug": "system.email_event_configs.manage", "name": "Manage Email Event Configs", "description": "Toggle per-event email kill switches and adjust rate overrides."},
 ])

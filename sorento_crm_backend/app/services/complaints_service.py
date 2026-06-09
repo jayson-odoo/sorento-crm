@@ -828,6 +828,15 @@ class ComplaintService:
             logging.getLogger(__name__).warning("Form SLA emit 'submit' failed for complaint %s: %s", complaint.id, e)
         return complaint
 
+    # States in the response stage of the lifecycle. Saving/sending a technical
+    # response only moves the status forward (updated/responded) FROM these.
+    # Once a decision/terminal state is reached (approved, rejected,
+    # processed_by_cs, closed), editing or re-sending the response must NOT
+    # regress the status — the lifecycle is:
+    #   submitted -> responded -> approved | rejected
+    #   approved  -> processed_by_cs | closed
+    _RESPONSE_STAGE_STATUSES: tuple[str, ...] = ("new", "submitted", "updated", "responded")
+
     def update_complaint(self, complaint_id: str, complaint_data: ComplaintUpdate):
         """Update a complaint."""
         complaint = self.get_complaint(complaint_id)
@@ -847,8 +856,13 @@ class ComplaintService:
                 str(update_data["technical_team_response"])
             )
 
-        if "technical_team_response" in update_data and getattr(complaint, "status", None) != "responded":
-            update_data["status"] = "updated"
+        if "technical_team_response" in update_data:
+            cur_status = (getattr(complaint, "status", None) or "").strip().lower()
+            # Only move to 'updated' while still in the response stage; never
+            # regress a decided/terminal complaint (approved/rejected/
+            # processed_by_cs/closed) by editing its response text.
+            if cur_status in self._RESPONSE_STAGE_STATUSES and cur_status != "responded":
+                update_data["status"] = "updated"
 
         for key, value in update_data.items():
             setattr(complaint, key, value)
@@ -992,27 +1006,50 @@ class ComplaintService:
                     request_payload_dict={"is_responded": True, "responded_by": respond_user_id},
                 )
 
-        complaint.status = "responded"
+        # Only move to 'responded' from a response-stage status; re-sending a
+        # reply on a decided complaint (approved/rejected/processed_by_cs/closed)
+        # still delivers the message but must NOT regress the status.
+        _cur_status = (getattr(complaint, "status", None) or "").strip().lower()
+        if _cur_status in self._RESPONSE_STAGE_STATUSES:
+            complaint.status = "responded"
         complaint.last_responded_by = respond_user_id
         complaint.last_responded_at = now_utc
         self.db.commit()
         self.db.refresh(complaint)
 
+        # ----- Decoupled side effects -----
+        # The complaint update (status=responded + technical_team_response) is already
+        # committed above. Each remaining action is independent and best-effort: a
+        # failure in one must not affect the DB state or the other actions.
+        #   (a) save technical response  -> committed above (primary, synchronous)
+        #   (b) send Respond.io message  -> enqueue below (best-effort)
+        #   (c) email automation         -> dispatch below (best-effort)
+        # plus the existing form-SLA respond event (best-effort).
+
+        # (b) Send the technical-team reply to the customer via Respond.io.
         if identifier:
-            self._enqueue_respond_message_for_complaint(
-                complaint_id=complaint_id,
-                identifier=identifier,
-                display_message=display_message,
-                respond_user_id=respond_user_id,
-                crm_sender_user_id=crm_sender_user_id,
-                space_id=getattr(complaint, "space_id", None),
-            )
+            try:
+                self._enqueue_respond_message_for_complaint(
+                    complaint_id=complaint_id,
+                    identifier=identifier,
+                    display_message=display_message,
+                    respond_user_id=respond_user_id,
+                    crm_sender_user_id=crm_sender_user_id,
+                    space_id=getattr(complaint, "space_id", None),
+                )
+            except Exception:
+                logger.exception(
+                    "Complaint %s update-and-reply: enqueue Respond.io message failed; "
+                    "complaint committed, other actions unaffected.",
+                    complaint_id,
+                )
         else:
             logger.info(
                 "Complaint %s update-and-reply: no respond_inbox_url; complaint updated but no message queued.",
                 complaint_id,
             )
 
+        # Form-SLA respond event (best-effort).
         try:
             from app.services.form_sla_service import emit_form_event
             emit_form_event(
@@ -1025,6 +1062,45 @@ class ComplaintService:
             )
         except Exception as e:
             logging.getLogger(__name__).warning("Form SLA emit 'technical_team_response' failed for complaint %s: %s", complaint.id, e)
+
+        # (c) Email automation to target users (best-effort, fully decoupled).
+        try:
+            from datetime import date as _date
+            from app.services.automation_service import AutomationService
+            from app.services.automation_triggers import _build_complaint_link
+
+            rc = getattr(complaint, "root_cause", None)
+            res = getattr(complaint, "resolution", None)
+            ctx = {
+                "complaint": {
+                    "id": complaint_id,
+                    "complaint_number": getattr(complaint, "complaint_number", None),
+                    "delivery_order_number": getattr(complaint, "delivery_order_number", None),
+                    "customer_name": getattr(complaint, "customer_name", None),
+                    "salesperson": getattr(complaint, "salesperson", None),
+                    "product_code": getattr(complaint, "product_code", None),
+                    "complaint_type": getattr(complaint, "complaint_type", None),
+                    "status": "responded",
+                    "technical_team_response": stored_body,
+                    "link": _build_complaint_link(complaint_id),
+                    "root_cause": getattr(rc, "name", None) if rc is not None else None,
+                    "resolution": getattr(res, "name", None) if res is not None else None,
+                },
+                "today": _date.today().isoformat(),
+            }
+            AutomationService(self.db).dispatch_event(
+                "complaint_technical_response_updated",
+                context=ctx,
+                source_kind="complaint",
+                source_id=complaint_id,
+            )
+        except Exception:
+            logger.exception(
+                "Automation dispatch_event(complaint_technical_response_updated) failed for %s; "
+                "complaint committed, other actions unaffected.",
+                complaint_id,
+            )
+
         return complaint
 
     _DECIDE_ALLOWED_DECISIONS: tuple[str, ...] = ("approved", "rejected")
@@ -1171,6 +1247,164 @@ class ComplaintService:
                     complaint_id,
                 )
                 # Approval already committed; never fail the whole flow on automation errors.
+
+        return complaint
+
+    # Customer-service close actions: only an approved complaint (post-approval,
+    # customer-service stage) can be finalized. 'processed_by_cs' (CS handled it)
+    # and 'closed' (can't resolve) both close the CS SLA stage.
+    _RESOLVE_ALLOWED_FROM_STATUSES: tuple[str, ...] = ("approved",)
+    _FINALIZE_STATUSES: tuple[str, ...] = ("processed_by_cs", "closed")
+    # Customer-facing wording for the Respond.io status-update message.
+    _FINALIZE_STATUS_LABELS: dict[str, str] = {
+        "processed_by_cs": "processed by our customer service team",
+        "closed": "closed",
+    }
+
+    def mark_processed_by_cs(
+        self,
+        complaint_id: str,
+        *,
+        note: Optional[str] = None,
+        respond_user_id: Optional[str] = None,
+        crm_sender_user_id: Optional[str] = None,
+    ):
+        """Mark an approved complaint as processed by customer service.
+
+        This is the normal CS completion (not a literal "resolved" — CS handled
+        the case). Closes the customer-service SLA stage.
+        """
+        return self._finalize_complaint(
+            complaint_id,
+            "processed_by_cs",
+            note=note,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=crm_sender_user_id,
+        )
+
+    def close_complaint(
+        self,
+        complaint_id: str,
+        *,
+        note: Optional[str] = None,
+        respond_user_id: Optional[str] = None,
+        crm_sender_user_id: Optional[str] = None,
+    ):
+        """Close an approved complaint that can't be resolved (status='closed').
+
+        Not a true resolution for the complaint, but it DOES close the
+        customer-service SLA stage (same 'resolved' form-SLA event).
+        """
+        return self._finalize_complaint(
+            complaint_id,
+            "closed",
+            note=note,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=crm_sender_user_id,
+        )
+
+    def _finalize_complaint(
+        self,
+        complaint_id: str,
+        new_status: str,
+        *,
+        note: Optional[str] = None,
+        respond_user_id: Optional[str] = None,
+        crm_sender_user_id: Optional[str] = None,
+    ):
+        """Finalize an approved complaint to ``new_status`` ('resolved' | 'closed').
+
+        Three decoupled best-effort side effects after the status commit:
+          (a) set status + resolved_at/by   -> committed (primary)
+          (b) send a Respond.io status-update message to the contact (+ optional note)
+          (c) emit the 'resolved' form-SLA event (closes the customer-service stage)
+        (b) and (c) never fail the operation; the committed status is source of truth.
+        """
+        import logging
+        from datetime import datetime, timezone
+
+        logger = logging.getLogger(__name__)
+        if new_status not in self._FINALIZE_STATUSES:
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error(f"Unsupported finalize status: {new_status!r}.")
+
+        complaint = self.get_complaint(complaint_id)
+        current_status = (getattr(complaint, "status", None) or "").strip().lower()
+        if current_status == new_status:
+            # Idempotent: already in the target state.
+            return complaint
+        if current_status not in self._RESOLVE_ALLOWED_FROM_STATUSES:
+            from app.services.error_handler import handle_validation_error
+            raise handle_validation_error(
+                f"Complaint must be approved before it can be marked {new_status} "
+                f"(current status: {current_status or 'unknown'})."
+            )
+
+        # Build the customer-facing status-update message (before commit/refresh).
+        do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()
+        do_spec = f" for delivery order {do_number}" if do_number else ""
+        link_part = ""
+        if self._complaint_public_view_links_enabled():
+            view_url = (self._build_complaint_view_url(complaint_id) or "").strip()
+            if view_url:
+                link_part = f" {view_url}"
+        note_clean = (note or "").strip()
+        note_part = f" Note: {note_clean}" if note_clean else ""
+        status_label = self._FINALIZE_STATUS_LABELS.get(new_status, new_status)
+        display_message = (
+            f"There has been an update regarding your complaint{do_spec}{link_part}: "
+            f"status changed to {status_label}.{note_part}"
+        )
+        identifier = self._identifier_from_respond_inbox_url(
+            getattr(complaint, "respond_inbox_url", None)
+        )
+
+        # (a) Commit the status (primary, synchronous).
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        complaint.status = new_status
+        complaint.resolved_at = now_utc
+        complaint.resolved_by = respond_user_id or crm_sender_user_id
+        self.db.commit()
+        self.db.refresh(complaint)
+
+        # (b) Send the status-update message to the contact (best-effort, decoupled).
+        if identifier:
+            try:
+                self._enqueue_respond_message_for_complaint(
+                    complaint_id=complaint_id,
+                    identifier=identifier,
+                    display_message=display_message,
+                    respond_user_id=respond_user_id,
+                    crm_sender_user_id=crm_sender_user_id,
+                    space_id=getattr(complaint, "space_id", None),
+                )
+            except Exception:
+                logger.exception(
+                    "Complaint %s finalize=%s: enqueue Respond.io message failed; status committed.",
+                    complaint_id,
+                    new_status,
+                )
+        else:
+            logger.info(
+                "Complaint %s finalize=%s: no respond_inbox_url; status updated but no message queued.",
+                complaint_id,
+                new_status,
+            )
+
+        # (c) Close the customer-service form-SLA stage (best-effort). Both resolved
+        # and closed emit the same 'resolved' SLA event — the stage is done either way.
+        try:
+            from app.services.form_sla_service import emit_form_event
+            emit_form_event(
+                self.db,
+                "complaint",
+                str(complaint.id),
+                "resolved",
+                contact_id=getattr(complaint, "contact_id", None),
+                actor_user_id=crm_sender_user_id or respond_user_id,
+            )
+        except Exception as e:
+            logger.warning("Form SLA emit 'resolved' failed for complaint %s: %s", complaint.id, e)
 
         return complaint
 

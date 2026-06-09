@@ -36,6 +36,7 @@ export interface FormSLAConfig {
   respond_event: string | null;
   resolve_event: string | null;
   next_config_id: string | null;
+  advance_on_event: string | null;
   is_active: boolean;
   policy_code?: string | null;
   policy_name?: string | null;
@@ -54,6 +55,7 @@ export interface FormSLAConfigInput {
   respond_event?: string | null;
   resolve_event?: string | null;
   next_config_id?: string | null;
+  advance_on_event?: string | null;
   is_active?: boolean;
 }
 
@@ -157,6 +159,7 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'technical_team_response',
     'approved',
     'rejected',
+    'resolved',
   ],
   ticket: [
     'submit',

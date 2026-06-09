@@ -26,3 +26,7 @@ openai>=1.40.0
 py-spy
 jinja2>=3.1
 html2text>=2024.2.26
+# PDF generation for complaint supporting-document exports.
+# Native deps required at runtime: libcairo2, libpango-1.0-0, libpangocairo-1.0-0,
+# libgdk-pixbuf-2.0-0 (add to the backend Docker image / brew install pango gdk-pixbuf on macOS).
+weasyprint>=66

@@ -34,7 +34,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getUsersSelect } from '@/services/userSelectService';
 import { useComplaints } from '../hooks/useComplaints';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
+import { complaintStatusPillClass, complaintStatusLabel } from '@/lib/complaint-status';
 import type { Complaint } from '../types/complaint.types';
 import ComplaintBulkDeleteDialog from './ComplaintBulkDeleteDialog';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -46,7 +46,7 @@ export default function ComplaintsList() {
     pageSize: 50,
   });
   const [sorting, setSorting] = useState<SortingState>([
-    { id: 'complaint_date', desc: true },
+    { id: 'created_at', desc: true },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
   const [assignedToFilter, setAssignedToFilter] = useState<string>('__all__');
@@ -221,9 +221,11 @@ export default function ComplaintsList() {
           const status = row.original.status;
           if (!status) return '-';
           return (
-            <Badge variant={getStatusBadgeVariant(status)} className="capitalize">
-              {status}
-            </Badge>
+            <span
+              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${complaintStatusPillClass(status)}`}
+            >
+              {complaintStatusLabel(status)}
+            </span>
           );
         },
         meta: { skeleton: <Skeleton className="h-4 w-16" /> },

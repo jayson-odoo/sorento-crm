@@ -287,6 +287,25 @@ def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
+def _working_due(db, start_dt: Optional[datetime], hours: float) -> Optional[datetime]:
+    """Forward SLA due date in *working days*: convert the policy hours to days
+    (÷24) and add that many working days (skipping weekends + KL public holidays),
+    keeping the time-of-day. E.g. 72h → +3 working days. Returns aware UTC (naive
+    ``start_dt`` treated as UTC) so storage stays consistent with the rest of this
+    module. Falls back to calendar arithmetic if the work calendar is unavailable."""
+    if start_dt is None:
+        return None
+    try:
+        from app.services.calendar_service import CalendarService
+        return _to_aware_utc(CalendarService(db).add_working_days_from_hours(start_dt, hours))
+    except Exception:  # pragma: no cover - defensive; never break SLA create/escalate
+        import logging
+        logging.getLogger(__name__).warning(
+            "working-days due calc failed; falling back to calendar hours.", exc_info=True
+        )
+        return _to_aware_utc(start_dt) + timedelta(hours=float(hours))
+
+
 def compute_tracking_timings(tracking, tier) -> dict:
     """
     Compute time-in-tier and time-remaining for response and resolution.
@@ -1090,9 +1109,9 @@ class ConversationSLATrackingService:
         setattr(tracking, "current_tier_started_at", now_utc)
         setattr(tracking, "escalated_at", now_utc)
         setattr(tracking, "escalation_reason", reason)
-        setattr(tracking, "due_at", now_utc + timedelta(hours=response_hours))
-        # On escalation, due_at_resolution = escalation time (now) + resolution_hours from policy
-        setattr(tracking, "due_at_resolution", now_utc + timedelta(hours=resolution_hours))
+        setattr(tracking, "due_at", _working_due(self.db, now_utc, response_hours))
+        # On escalation, due_at_resolution = escalation time (now) + resolution_hours (working hours)
+        setattr(tracking, "due_at_resolution", _working_due(self.db, now_utc, resolution_hours))
         if assigned_to_id is not None:
             setattr(tracking, "assigned_to_id", str(assigned_to_id))
             setattr(
@@ -1574,6 +1593,9 @@ class ConversationSLATrackingService:
             response_hours = float(getattr(tier_row, "response_hours", None) or 24.0)
             resolution_hours = float(getattr(tier_row, "resolution_hours", None) or 24.0)
             setattr(tracking, "current_tier_started_at", now_utc)
+            # Routing-correction clock restart (team flip / misroute fix), not a real
+            # SLA escalation — keep calendar-hour math here. Working-hours math applies
+            # to the SLA countdown itself (create_tracking + escalate_tracking).
             setattr(tracking, "due_at", now_utc + timedelta(hours=response_hours))
             setattr(tracking, "due_at_resolution", now_utc + timedelta(hours=resolution_hours))
 
@@ -1783,8 +1805,8 @@ class ConversationSLATrackingService:
         resolution_hours_raw = getattr(tier, "resolution_hours", None)
         resolution_hours = float(resolution_hours_raw) if resolution_hours_raw is not None else 24.0
         if current_tier_started_at:
-            tracking_dict["due_at"] = current_tier_started_at + timedelta(hours=response_hours)
-            tracking_dict["due_at_resolution"] = current_tier_started_at + timedelta(hours=resolution_hours)
+            tracking_dict["due_at"] = _working_due(self.db, current_tier_started_at, response_hours)
+            tracking_dict["due_at_resolution"] = _working_due(self.db, current_tier_started_at, resolution_hours)
         else:
             tracking_dict["due_at"] = None
             tracking_dict["due_at_resolution"] = None
@@ -2159,8 +2181,8 @@ class ConversationSLATrackingService:
             response_hours = float(response_hours_raw) if response_hours_raw is not None else 24.0
             resolution_hours_raw = getattr(tier, "resolution_hours", None)
             resolution_hours = float(resolution_hours_raw) if resolution_hours_raw is not None else 24.0
-            setattr(tracking, "due_at", started + timedelta(hours=response_hours))
-            setattr(tracking, "due_at_resolution", started + timedelta(hours=resolution_hours))
+            setattr(tracking, "due_at", _working_due(self.db, started, response_hours))
+            setattr(tracking, "due_at_resolution", _working_due(self.db, started, resolution_hours))
             current_tier_started_changed = (
                 _to_aware_utc(
                     old_current_tier_started_at

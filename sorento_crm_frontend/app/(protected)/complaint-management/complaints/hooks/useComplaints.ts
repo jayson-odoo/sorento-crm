@@ -10,6 +10,9 @@ import {
   updateComplaintAndReply,
   approveComplaint,
   rejectComplaint,
+  processComplaintByCs,
+  closeComplaint,
+  exportComplaintPdf,
   notifyComplaintRootCause,
   notifyComplaintResolution,
   deleteComplaint,
@@ -133,6 +136,51 @@ export function useRejectComplaint() {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to reject complaint'),
+  });
+}
+
+export function useProcessComplaintByCs() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, note }: { id: string; note?: string }) =>
+      processComplaintByCs(id, note),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
+      toast.success('Complaint marked as processed by CS.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to mark complaint processed by CS'),
+  });
+}
+
+export function useCloseComplaint() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, note }: { id: string; note?: string }) =>
+      closeComplaint(id, note),
+    onSuccess: (_, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      queryClient.invalidateQueries({ queryKey: ['complaint-conversation', id] });
+      toast.success('Complaint marked as closed.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to close complaint'),
+  });
+}
+
+export function useExportComplaintPdf() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => exportComplaintPdf(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
+      toast.success('Preparing PDF… it will appear in My Downloads.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to start PDF export'),
   });
 }
 

@@ -503,3 +503,23 @@ async def get_or_create_view_link(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+def _resolve_purchase_request_chat_contact(db: Session, request_id: str):
+    """(respond_io identifier, internal respond_contact_id) for a purchase request."""
+    service = PurchaseRequestService(db)
+    header = service.get_request(request_id)
+    identifier = service._identifier_from_respond_inbox_url(
+        getattr(header, "respond_inbox_url", None)
+    )
+    return identifier, getattr(header, "contact_id", None)
+
+
+from app.api.v1._respond_chat_template_routes import build_chat_template_router
+
+router.include_router(
+    build_chat_template_router(
+        business_table="purchase_requests",
+        resolver=_resolve_purchase_request_chat_contact,
+    )
+)

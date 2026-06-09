@@ -475,6 +475,28 @@ def _ms_to_datetime(ms: Any) -> datetime:
         return datetime.utcnow()
 
 
+def _render_whatsapp_template_body(msg: Dict[str, Any]) -> Optional[str]:
+    """Filled body text of a whatsapp_template message item.
+
+    Respond.io returns the template definition (components with {{n}}
+    placeholders) plus the positional parameters used at send time.
+    """
+    template = msg.get("template") or {}
+    components = template.get("components") or []
+    body = next(
+        (c for c in components if isinstance(c, dict) and c.get("type") == "body"),
+        None,
+    )
+    if not body:
+        return None
+    text = str(body.get("text") or "")
+    for i, param in enumerate(body.get("parameters") or [], start=1):
+        value = param.get("text") if isinstance(param, dict) else None
+        if value is not None:
+            text = text.replace(f"{{{{{i}}}}}", str(value))
+    return text or None
+
+
 def _respond_item_to_message(item: Dict[str, Any], contact_id: str) -> Dict[str, Any]:
     msg = item.get("message") or {}
     traffic = (item.get("traffic") or "").lower()
@@ -487,11 +509,14 @@ def _respond_item_to_message(item: Dict[str, Any], contact_id: str) -> Dict[str,
         if ts is not None:
             sent_at = _ms_to_datetime(ts)
     raw_id = item.get("messageId") or item.get("channelMessageId") or ""
+    body = msg.get("text")
+    if not body and (msg.get("type") or "").lower() == "whatsapp_template":
+        body = _render_whatsapp_template_body(msg)
     return {
         "id": str(raw_id),
         "contact_id": str(item.get("contactId") or contact_id),
         "direction": direction,
-        "body": msg.get("text"),
+        "body": body,
         "body_html": None,
         "sent_at": sent_at,
         "attachments": [],
@@ -646,6 +671,104 @@ def send_message(
         "contact_id": contact_id,
         "queued": False,
         "respond_response": response,
+    }
+
+
+def get_window_state(
+    db: Session,
+    entity_type: str,
+    entity_id: str,
+    *,
+    contact_id: str,
+    current_user: dict,
+) -> Dict[str, Any]:
+    """24h WhatsApp window state for a contact linked to the entity.
+
+    Drives the chat compose gating: closed window disables plain sends (they
+    would be silently dropped by WhatsApp) and points the user at the
+    template flow.
+    """
+    adapter = _resolve_adapter(entity_type)
+    _ensure_can_view(db, adapter, entity_id, current_user)
+    _validate_contact_for_entity(db, adapter, entity_id, contact_id)
+
+    from app.services.respond_identifier import resolve_send_identifier
+    from app.services.respond_messaging_service import get_window_state as _impl
+
+    send_id = resolve_send_identifier(db, contact_id)
+    if not send_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Contact has no respond_io_id; cannot check window state.",
+        )
+    return _impl(db, send_id, respond_contact_id=contact_id)
+
+
+def send_template_message(
+    db: Session,
+    entity_type: str,
+    entity_id: str,
+    *,
+    contact_id: str,
+    template_id: str,
+    params: Dict[str, str],
+    current_user: dict,
+) -> Dict[str, Any]:
+    """Send an approved WhatsApp template to a contact linked to the entity.
+
+    Mirrors ``send_message``: integration log + ``message.sent`` activity row
+    so the panel feed reflects it immediately. Params are positional
+    ("1".."n") free-text values from the template dialog.
+    """
+    adapter = _resolve_adapter(entity_type)
+    _ensure_can_view(db, adapter, entity_id, current_user)
+    _validate_contact_for_entity(db, adapter, entity_id, contact_id)
+
+    actor_id = str(current_user.get("id") or "") or None
+
+    from app.services.respond_chat_template_service import send_manual_template_for
+    from app.services.respond_identifier import resolve_send_identifier
+
+    send_id = resolve_send_identifier(db, contact_id)
+    if not send_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Contact has no respond_io_id; cannot send to Respond.io.",
+        )
+    from app.services.error_handler import AppException
+
+    try:
+        result = send_manual_template_for(
+            db,
+            identifier=send_id,
+            template_id=template_id,
+            params=params,
+            business_table=f"activity_{entity_type}",
+            business_id=entity_id,
+            created_by=actor_id,
+        )
+    except (AppException, HTTPException):
+        raise  # validation errors keep their own status
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Respond.io template send failed: {e}",
+        )
+
+    record_system_event(
+        db,
+        entity_type,
+        entity_id,
+        template="message.sent",
+        payload={"contact_id": contact_id, "template_name": result["template_name"]},
+        actor_id=actor_id,
+        body_text=result["rendered_body"],
+        commit=True,
+    )
+    return {
+        "contact_id": contact_id,
+        "template_name": result["template_name"],
+        "respond_response": result["response"],
     }
 
 

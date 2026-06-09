@@ -72,3 +72,10 @@ class EntityMessageSendRequest(BaseModel):
     contact_id: str
     body: str
     attachment_ids: list[str] = Field(default_factory=list)
+
+
+class EntityTemplateMessageSendRequest(BaseModel):
+    contact_id: str
+    template_id: str
+    # Positional template params: {"1": "...", "2": "..."}.
+    params: dict[str, str] = Field(default_factory=dict)

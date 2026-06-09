@@ -2,9 +2,10 @@
 
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle } from 'lucide-react';
+import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { complaintStatusPillClass, complaintStatusLabel } from '@/lib/complaint-status';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -25,6 +26,9 @@ import {
   useUpdateComplaintAndReply,
   useApproveComplaint,
   useRejectComplaint,
+  useProcessComplaintByCs,
+  useCloseComplaint,
+  useExportComplaintPdf,
   useNotifyComplaintRootCause,
   useNotifyComplaintResolution,
 } from '../hooks/useComplaints';
@@ -57,6 +61,11 @@ interface ComplaintDetailProps {
   complaintId: string;
 }
 
+// Status label + pill colour come from the shared map so the internal view and
+// the customer portal always tally. See lib/complaint-status.
+const statusPillClass = complaintStatusPillClass;
+const statusLabel = complaintStatusLabel;
+
 export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const router = useRouter();
 
@@ -67,12 +76,20 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const updateComplaintAndReplyMutation = useUpdateComplaintAndReply();
   const approveComplaintMutation = useApproveComplaint();
   const rejectComplaintMutation = useRejectComplaint();
+  const processComplaintMutation = useProcessComplaintByCs();
+  const closeComplaintMutation = useCloseComplaint();
+  const exportPdfMutation = useExportComplaintPdf();
   const notifyRootCauseMutation = useNotifyComplaintRootCause();
   const notifyResolutionMutation = useNotifyComplaintResolution();
   const canApprove = useHasPermission('complaint_management.complaints.approve');
   const canReject = useHasPermission('complaint_management.complaints.reject');
+  const canProcess = useHasPermission('complaint_management.complaints.resolve');
+  const canClose = useHasPermission('complaint_management.complaints.close');
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
+  const [processDialogOpen, setProcessDialogOpen] = useState(false);
+  const [closeDialogOpen, setCloseDialogOpen] = useState(false);
+  const [finalizeNote, setFinalizeNote] = useState('');
   const [notifyRootCauseOpen, setNotifyRootCauseOpen] = useState(false);
   const [notifyResolutionOpen, setNotifyResolutionOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
@@ -167,7 +184,11 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             {complaint.status && (
               <>
                 {' · '}
-                <span className="capitalize font-medium">{complaint.status}</span>
+                <span
+                  className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${statusPillClass(complaint.status)}`}
+                >
+                  {statusLabel(complaint.status)}
+                </span>
               </>
             )}
           </p>
@@ -221,7 +242,42 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               Reject
             </Button>
           )}
+          {complaint.status === 'approved' && canProcess && (
+            <Button
+              size="sm"
+              disabled={processComplaintMutation.isPending}
+              onClick={() => {
+                setFinalizeNote('');
+                setProcessDialogOpen(true);
+              }}
+              className="bg-emerald-600 text-white hover:bg-emerald-700"
+            >
+              <BadgeCheck className="size-4 mr-1" />
+              Processed by CS
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={exportPdfMutation.isPending}
+            onClick={() => exportPdfMutation.mutate(complaintId)}
+          >
+            <FileDown className="size-4 mr-1" />
+            {exportPdfMutation.isPending ? 'Preparing…' : 'Download PDF'}
+          </Button>
           <DetailActionsMenu ariaLabel="Complaint actions">
+            {complaint.status === 'approved' && canClose && (
+              <DropdownMenuItem
+                disabled={closeComplaintMutation.isPending}
+                onClick={() => {
+                  setFinalizeNote('');
+                  setCloseDialogOpen(true);
+                }}
+              >
+                <XCircle className="size-4" />
+                Mark as closed
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               onClick={() =>
                 router.push(`/complaint-management/complaints/${complaintId}/edit`)
@@ -404,6 +460,99 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               }}
             >
               Approve
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={processDialogOpen} onOpenChange={setProcessDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Mark complaint as processed by CS?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This closes the customer-service stage and sets the status to{' '}
+              <span className="font-medium">processed by CS</span>. A status update is
+              sent to the contact. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-1">
+            <Label htmlFor="process-note">Message to contact (optional)</Label>
+            <Textarea
+              id="process-note"
+              value={finalizeNote}
+              onChange={(e) => setFinalizeNote(e.target.value)}
+              placeholder="Add an optional note for the customer…"
+              rows={3}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={processComplaintMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={processComplaintMutation.isPending}
+              className="bg-emerald-600 text-white hover:bg-emerald-700"
+              onClick={async (e) => {
+                e.preventDefault();
+                try {
+                  await processComplaintMutation.mutateAsync({
+                    id: complaintId,
+                    note: finalizeNote,
+                  });
+                  setProcessDialogOpen(false);
+                } catch {
+                  // toast handled in hook
+                }
+              }}
+            >
+              Processed by CS
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={closeDialogOpen} onOpenChange={setCloseDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Mark complaint as closed?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Use this when the complaint can&apos;t be resolved. The status is set to{' '}
+              <span className="font-medium">closed</span> (not resolved), but the
+              customer-service SLA stage is closed. A status update is sent to the
+              contact. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-1">
+            <Label htmlFor="close-note">Message to contact (optional)</Label>
+            <Textarea
+              id="close-note"
+              value={finalizeNote}
+              onChange={(e) => setFinalizeNote(e.target.value)}
+              placeholder="Add an optional note for the customer…"
+              rows={3}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={closeComplaintMutation.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={closeComplaintMutation.isPending}
+              className="bg-slate-600 text-white hover:bg-slate-700"
+              onClick={async (e) => {
+                e.preventDefault();
+                try {
+                  await closeComplaintMutation.mutateAsync({
+                    id: complaintId,
+                    note: finalizeNote,
+                  });
+                  setCloseDialogOpen(false);
+                } catch {
+                  // toast handled in hook
+                }
+              }}
+            >
+              Mark as closed
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -692,7 +841,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           {complaint.status && (
             <div>
               <p className="text-sm text-muted-foreground">Status</p>
-              <p className="font-medium capitalize">{complaint.status}</p>
+              <p className="font-medium">{statusLabel(complaint.status)}</p>
             </div>
           )}
           <div>

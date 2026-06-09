@@ -11,6 +11,8 @@ import {
   UploadActivityDrawer,
   UploadManagerProvider,
 } from '@/components/upload-activity';
+import { MyDownloadsProvider } from '@/components/my-downloads/MyDownloadsContext';
+import { MyDownloadsDrawer } from '@/components/my-downloads/MyDownloadsDrawer';
 
 export default function ProtectedLayout({
   children,
@@ -57,9 +59,12 @@ fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{metho
 
   return (
     <UploadManagerProvider>
-      <GuideTargetSpotlight />
-      <Demo1Layout>{children}</Demo1Layout>
-      <UploadActivityDrawer />
+      <MyDownloadsProvider>
+        <GuideTargetSpotlight />
+        <Demo1Layout>{children}</Demo1Layout>
+        <UploadActivityDrawer />
+        <MyDownloadsDrawer />
+      </MyDownloadsProvider>
     </UploadManagerProvider>
   );
 }

@@ -18,6 +18,7 @@ class FakeLookupTarget(Base):
     __tablename__ = "fake_lookup_target"
     id = Column(String, primary_key=True)
     status = Column(String, nullable=True)
+    note = Column(String, nullable=True)
 
 
 @pytest.fixture
@@ -77,3 +78,43 @@ def test_listener_allows_known(db_session):
     good = FakeLookupTarget(id=str(uuid.uuid4()), status="open")
     db_session.add(good)
     db_session.flush()  # should not raise
+
+
+def test_update_of_unrelated_column_does_not_revalidate_legacy_value(db_session):
+    """Regression: updating an unrelated column must NOT re-validate an unchanged
+    lookup column that holds a legacy value predating its binding."""
+    from sqlalchemy import text
+
+    s = LookupSetService(db_session).create(LookupSetCreate(set_key="fs", name="F"))
+    LookupOptionService(db_session).create(s.id, LookupOptionCreate(value="open", label="Open"))
+    LookupBindingService(db_session).create(s.id, LookupBindingCreate(
+        table_name="fake_lookup_target", column_name="status"))
+
+    # Seed a row with an invalid (legacy) status via raw SQL, bypassing the listener.
+    rid = str(uuid.uuid4())
+    db_session.execute(
+        text("INSERT INTO fake_lookup_target (id, status, note) VALUES (:id, 'legacy_bad', NULL)"),
+        {"id": rid},
+    )
+    db_session.commit()
+
+    row = db_session.query(FakeLookupTarget).filter(FakeLookupTarget.id == rid).first()
+    row.note = "touched"  # change an unrelated column only
+    db_session.flush()  # must NOT raise despite status='legacy_bad'
+    assert row.note == "touched"
+
+
+def test_update_of_bound_column_to_invalid_still_rejected(db_session):
+    """The bound column is still enforced when it IS the one being changed."""
+    s = LookupSetService(db_session).create(LookupSetCreate(set_key="fs", name="F"))
+    LookupOptionService(db_session).create(s.id, LookupOptionCreate(value="open", label="Open"))
+    LookupBindingService(db_session).create(s.id, LookupBindingCreate(
+        table_name="fake_lookup_target", column_name="status"))
+    good = FakeLookupTarget(id=str(uuid.uuid4()), status="open")
+    db_session.add(good)
+    db_session.flush()
+
+    good.status = "nope"  # change the bound column to an invalid value
+    with pytest.raises(AppException) as e:
+        db_session.flush()
+    assert e.value.status_code == 422

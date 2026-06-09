@@ -464,3 +464,24 @@ async def delete_stock_inquiry(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+def _resolve_stock_inquiry_chat_contact(db: Session, inquiry_id: str):
+    """(respond_io identifier, internal respond_contact_id) for a stock inquiry."""
+    service = StockInquiryService(db)
+    inquiry = service.get_inquiry(inquiry_id)
+    respond_inbox_url = getattr(inquiry, "respond_inbox_url", None)
+    identifier = service._identifier_from_respond_inbox_url(
+        str(respond_inbox_url) if respond_inbox_url is not None else None
+    )
+    return identifier, getattr(inquiry, "contact_id", None)
+
+
+from app.api.v1._respond_chat_template_routes import build_chat_template_router
+
+router.include_router(
+    build_chat_template_router(
+        business_table="stock_inquiries",
+        resolver=_resolve_stock_inquiry_chat_contact,
+    )
+)

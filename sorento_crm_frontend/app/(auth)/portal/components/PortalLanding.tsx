@@ -54,6 +54,7 @@ import {
   readPortalToken,
   statusLabel,
 } from '../lib/portal-client';
+import { complaintStatusLabel, complaintStatusPillClass } from '@/lib/complaint-status';
 import {
   portalDetailPath,
   portalNewPath,
@@ -565,7 +566,14 @@ function SubmissionCard({
     }
   };
 
-  const statusText = row.is_draft ? 'Draft' : statusLabel(row.status);
+  // Complaints use the shared status map so portal labels + colours tally with
+  // the internal system view; other kinds keep the generic badge variant.
+  const isComplaint = row.kind === 'complaint';
+  const statusText = row.is_draft
+    ? 'Draft'
+    : isComplaint
+      ? complaintStatusLabel(row.status)
+      : statusLabel(row.status);
 
   return (
     <div
@@ -599,12 +607,20 @@ function SubmissionCard({
     >
       {/* Status badge anchored top-right; allows multi-word status to wrap
           onto two lines without colliding with the primary text. */}
-      <Badge
-        variant={statusVariant(row)}
-        className="absolute top-2 right-2 max-w-[45%] whitespace-normal text-right leading-tight justify-end"
-      >
-        {statusText}
-      </Badge>
+      {isComplaint && !row.is_draft ? (
+        <span
+          className={`absolute top-2 right-2 max-w-[45%] inline-flex items-center justify-end rounded-md px-2 py-0.5 text-xs font-semibold whitespace-normal text-right leading-tight ${complaintStatusPillClass(row.status)}`}
+        >
+          {statusText}
+        </span>
+      ) : (
+        <Badge
+          variant={statusVariant(row)}
+          className="absolute top-2 right-2 max-w-[45%] whitespace-normal text-right leading-tight justify-end"
+        >
+          {statusText}
+        </Badge>
+      )}
       <div className="space-y-1 pr-[45%]">
         <p className="text-base font-semibold break-words" title={primary}>
           {primary}
@@ -688,11 +704,18 @@ function SubmissionPreviewDialog({
             <span className="break-words">
               {row?.document_number ?? row?.title ?? 'Submission'}
             </span>
-            {row && (
-              <Badge variant={statusVariant(row)}>
-                {row.is_draft ? 'Draft' : statusLabel(row.status)}
-              </Badge>
-            )}
+            {row &&
+              (row.kind === 'complaint' && !row.is_draft ? (
+                <span
+                  className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold ${complaintStatusPillClass(row.status)}`}
+                >
+                  {complaintStatusLabel(row.status)}
+                </span>
+              ) : (
+                <Badge variant={statusVariant(row)}>
+                  {row.is_draft ? 'Draft' : statusLabel(row.status)}
+                </Badge>
+              ))}
           </DialogTitle>
         </DialogHeader>
         <div className="flex-1 min-h-0 overflow-y-auto space-y-3 -mx-1 px-1">
