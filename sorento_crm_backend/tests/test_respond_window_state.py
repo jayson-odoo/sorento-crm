@@ -71,13 +71,3 @@ def test_window_closed_when_inbound_is_old(monkeypatch):
     _patch_messages(monkeypatch, items)
     ws = get_window_state(None, "437264483")
     assert ws["open"] is False
-
-
-def test_force_window_closed_env_override(monkeypatch):
-    # Even with a very recent inbound, the env override forces closed (dev/test).
-    now_id = int(datetime.utcnow().timestamp()) * 1_000_000
-    _patch_messages(monkeypatch, [{"traffic": "incoming", "messageId": now_id, "status": []}])
-    monkeypatch.setenv("RESPOND_FORCE_WINDOW_CLOSED", "1")
-    ws = get_window_state(None, "437264483")
-    assert ws["open"] is False
-    assert ws["source"] == "forced_closed"

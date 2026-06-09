@@ -165,21 +165,6 @@ def get_window_state(
     enables the chat_history fallback when the Respond API errors.
     """
     now = datetime.utcnow()
-
-    # Dev/test override: force the window closed so the template-fallback path can
-    # be exercised on demand (e.g. to preview the use-case default template send)
-    # without waiting 23h for a contact's window to actually expire. Set
-    # RESPOND_FORCE_WINDOW_CLOSED=1 in the env. Never enable in production.
-    import os
-
-    if (os.getenv("RESPOND_FORCE_WINDOW_CLOSED") or "").strip().lower() in ("1", "true", "yes"):
-        return {
-            "open": False,
-            "last_incoming_at": None,
-            "checked_at": now.isoformat(),
-            "source": "forced_closed",
-        }
-
     last_incoming: Optional[datetime] = None
     source = "respond_api"
     try:
