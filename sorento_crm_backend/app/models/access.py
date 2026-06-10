@@ -1,5 +1,5 @@
 """Access control models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Table, Text, Index, Integer, text
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Table, Text, Index, Integer, text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -157,6 +157,53 @@ class RespondContact(Base):
         Index("ix_respond_contacts_phone_number", "phone_number"),
         Index("ix_respond_contacts_respond_io_id", "respond_io_id"),
         Index("ix_respond_contacts_workspace_id", "workspace_id"),
+    )
+
+
+class RespondContactCsRouting(Base):
+    """Per-salesman → CS PIC pin (pin-point assignment) overriding round-robin.
+
+    When a procurement form-SLA customer-service stage spawns at approval, the
+    assignee resolver (`form_sla_service._start_for_config`) looks up an active pin
+    for (respond_contact_id, use_case). A valid pin — where ``cs_pic`` is a member of
+    the stage's tier-1 CS team and is active — assigns that user directly; any miss
+    (no pin / stale pin / inactive user / non-member) falls back to the existing
+    round-robin. ``use_case`` is one of {'purchase_request', 'sponsorship_form'};
+    complaint never reads this table, so complaint CS assignment stays round-robin.
+    See docs/plans/PLAN-procurement-cs-handoff-and-pinpoint-routing.md.
+    """
+
+    __tablename__ = "respond_contact_cs_routing"
+
+    # String PK (migration 231 created this column as VARCHAR). Must NOT be the
+    # pg UUID type or SQLAlchemy emits `WHERE id = :id::UUID`, which fails against
+    # a varchar column ("operator does not exist: character varying = uuid").
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    respond_contact_id = Column(
+        Text,
+        ForeignKey("respond_contacts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    cs_pic_user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    use_case = Column(String(50), nullable=False)  # purchase_request | sponsorship_form
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_by = Column(Text, nullable=True)
+
+    contact = relationship("RespondContact")
+    cs_pic = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "respond_contact_id", "use_case", name="uq_cs_routing_contact_use_case"
+        ),
+        Index("ix_cs_routing_contact", "respond_contact_id"),
+        Index("ix_cs_routing_cs_pic", "cs_pic_user_id"),
     )
 
 

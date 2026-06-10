@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/lib/api';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock, MessageSquare, FileDown, Link2, ScrollText } from 'lucide-react';
+import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock, MessageSquare, FileDown, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -50,7 +50,7 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest } from '../services/purchaseRequestService';
+import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs } from '../services/purchaseRequestService';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
   AlertDialog,
@@ -97,9 +97,15 @@ export default function PurchaseRequestDetail({
   const canSendForApproval = useHasPermission(
     'procurement.purchase_requests.send_for_approval',
   );
+  const canProcess = useHasPermission('procurement.purchase_requests.process');
+  const canClose = useHasPermission('procurement.purchase_requests.close');
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
+  const [processDialogOpen, setProcessDialogOpen] = useState(false);
+  const [closeCsDialogOpen, setCloseCsDialogOpen] = useState(false);
+  const [finalizeNote, setFinalizeNote] = useState('');
+  const [finalizing, setFinalizing] = useState(false);
   const { data: request, isLoading } = usePurchaseRequest(
     isValidId ? requestId : null,
   );
@@ -110,7 +116,7 @@ export default function PurchaseRequestDetail({
     () => ({
       pageIndex: 0,
       pageSize: 50,
-      sorting: [{ id: 'request_date', desc: true }],
+      sorting: [{ id: 'created_at', desc: true }],
       searchQuery: '',
       requestType: requestTypeForNav,
       approvalStatus: undefined,
@@ -298,6 +304,17 @@ export default function PurchaseRequestDetail({
     isPendingApproval && !isApprovedStatus;
   const showRejectSubmitted =
     canSendForApproval && isSubmittedLifecycle && isDraftLike && !isRejected;
+  // Customer-service handoff: an approved request enters the CS stage. CS marks it
+  // processed or closed; both finalize the customer-service form-SLA stage.
+  const isProcessedByCs = lifecycleStatusNorm === 'processed_by_cs';
+  const isClosedByCs = lifecycleStatusNorm === 'closed';
+  const isCsFinalized = isProcessedByCs || isClosedByCs;
+  const showCsActions = isApprovedStatus && !isCsFinalized;
+  const csFinalizeLabel = isProcessedByCs
+    ? 'Processed by CS'
+    : isClosedByCs
+      ? 'Closed'
+      : null;
 
   return (
     <div className="space-y-6">
@@ -407,7 +424,32 @@ export default function PurchaseRequestDetail({
               {autoSendingApproval ? 'Sending…' : 'Send for approval'}
             </Button>
           )}
+          {showCsActions && canProcess && (
+            <Button
+              disabled={finalizing}
+              className="bg-emerald-600 text-white hover:bg-emerald-700"
+              onClick={() => {
+                setFinalizeNote('');
+                setProcessDialogOpen(true);
+              }}
+            >
+              <BadgeCheck className="size-4" />
+              Processed by CS
+            </Button>
+          )}
           <DetailActionsMenu ariaLabel="Request actions">
+            {showCsActions && canClose && (
+              <DropdownMenuItem
+                disabled={finalizing}
+                onClick={() => {
+                  setFinalizeNote('');
+                  setCloseCsDialogOpen(true);
+                }}
+              >
+                <XCircle className="size-4" />
+                Mark as closed
+              </DropdownMenuItem>
+            )}
             {showPrimarySendForApproval && (
               <DropdownMenuItem
                 disabled={approvalLinkCopying}
@@ -767,7 +809,7 @@ export default function PurchaseRequestDetail({
                       {request.approval_status === 'pending'
                         ? 'Pending approval'
                         : request.approval_status === 'approved'
-                          ? 'Approved'
+                          ? (csFinalizeLabel ?? 'Approved')
                           : request.approval_status === 'rejected'
                             ? 'Rejected'
                             : isSubmittedLifecycle
@@ -906,7 +948,7 @@ export default function PurchaseRequestDetail({
                       {request.approval_status === 'pending'
                         ? 'Pending approval'
                         : request.approval_status === 'approved'
-                          ? 'Approved'
+                          ? (csFinalizeLabel ?? 'Approved')
                           : request.approval_status === 'rejected'
                             ? 'Rejected'
                             : isSubmittedLifecycle
@@ -1146,6 +1188,99 @@ export default function PurchaseRequestDetail({
                 }}
               >
                 {rejecting ? 'Rejecting…' : 'Confirm reject'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={processDialogOpen} onOpenChange={setProcessDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Mark as processed by CS?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This closes the customer-service stage and sets the status to{' '}
+                <span className="font-medium">processed by CS</span>. A status update
+                is sent to the contact. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="space-y-1 py-2">
+              <Label htmlFor="process-note">Message to contact (optional)</Label>
+              <Textarea
+                id="process-note"
+                value={finalizeNote}
+                onChange={(e) => setFinalizeNote(e.target.value)}
+                placeholder="Add an optional note for the customer…"
+                rows={3}
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={finalizing}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={finalizing}
+                className="bg-emerald-600 text-white hover:bg-emerald-700"
+                onClick={async (e) => {
+                  e.preventDefault();
+                  setFinalizing(true);
+                  try {
+                    await processPurchaseRequestByCs(requestId, finalizeNote);
+                    queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
+                    queryClient.invalidateQueries({ queryKey: ['purchase-request-neighbours'] });
+                    toast.success('Marked as processed by CS.');
+                    setProcessDialogOpen(false);
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : 'Failed to mark processed by CS');
+                  } finally {
+                    setFinalizing(false);
+                  }
+                }}
+              >
+                {finalizing ? 'Saving…' : 'Processed by CS'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <AlertDialog open={closeCsDialogOpen} onOpenChange={setCloseCsDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Mark as closed?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Closes the customer-service stage and sets the status to{' '}
+                <span className="font-medium">closed</span> (could not be fulfilled).
+                A status update is sent to the contact. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="space-y-1 py-2">
+              <Label htmlFor="close-note">Message to contact (optional)</Label>
+              <Textarea
+                id="close-note"
+                value={finalizeNote}
+                onChange={(e) => setFinalizeNote(e.target.value)}
+                placeholder="Add an optional note for the customer…"
+                rows={3}
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={finalizing}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={finalizing}
+                onClick={async (e) => {
+                  e.preventDefault();
+                  setFinalizing(true);
+                  try {
+                    await closePurchaseRequestByCs(requestId, finalizeNote);
+                    queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
+                    queryClient.invalidateQueries({ queryKey: ['purchase-request-neighbours'] });
+                    toast.success('Marked as closed.');
+                    setCloseCsDialogOpen(false);
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : 'Failed to close request');
+                  } finally {
+                    setFinalizing(false);
+                  }
+                }}
+              >
+                {finalizing ? 'Saving…' : 'Confirm close'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

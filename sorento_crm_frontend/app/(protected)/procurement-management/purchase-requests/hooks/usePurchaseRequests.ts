@@ -16,7 +16,11 @@ import type { PurchaseRequestUpdateAndReplyData } from '../services/purchaseRequ
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
 
 export function usePurchaseRequests(
-  params: DataGridApiFetchParams & { requestType?: string; approvalStatus?: string },
+  params: DataGridApiFetchParams & {
+    requestType?: string;
+    approvalStatus?: string;
+    assignedTo?: string;
+  },
 ) {
   return useQuery({
     queryKey: [
@@ -27,6 +31,7 @@ export function usePurchaseRequests(
       params.searchQuery,
       params.requestType,
       params.approvalStatus,
+      params.assignedTo,
     ],
     queryFn: () => getPurchaseRequests(params),
     staleTime: Infinity,

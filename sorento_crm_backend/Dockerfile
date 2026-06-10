@@ -18,10 +18,22 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install runtime dependencies only
+# Install runtime dependencies only.
+# WeasyPrint (complaint PDF export RQ task) needs the GTK/Cairo/Pango native
+# stack at runtime — libglib2.0-0 provides libgobject-2.0-0, the rest provide
+# pango/cairo/gdk-pixbuf + a base font. Without these the PDF task fails with
+# "cannot load library 'libgobject-2.0-0'". The worker shares this image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     curl \
+    libglib2.0-0 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libgdk-pixbuf-2.0-0 \
+    libcairo2 \
+    libffi8 \
+    shared-mime-info \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security (before copying packages)

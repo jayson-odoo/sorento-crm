@@ -390,6 +390,56 @@ class PortalService:
             path += f"&type={kind}"
         return f"{base}{path}" if base else path
 
+    def submission_link(
+        self,
+        contact_id: Optional[str],
+        submission_type: str,
+        entity_id: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ) -> Optional[str]:
+        """Deep link to a contact's submission in the portal.
+
+        Path form ``/portal/c/{slug}/{type}/{entity_id}`` (FE route
+        ``app/(auth)/portal/c/[slug]/[type]/[id]``) so a customer status message
+        lands the contact directly on that complaint / request / inquiry, where
+        they can act/resubmit (portal auth handled by the route via OTP). When
+        ``entity_id`` is omitted it links to the type's portal index
+        ``/portal/c/{slug}/{type}``. Returns None when the contact/slug can't be
+        resolved — callers fall back to the read-only view link.
+        """
+        try:
+            cid = (str(contact_id) if contact_id else "").strip()
+            if not cid:
+                return None
+            contact = self._resolve_contact(cid)
+            slug = (self.get_or_create_slug(contact) or "").strip()
+            if not slug:
+                return None
+            # Resolve an absolute base the same way the view-link builders do, so
+            # the link is never relative even when frontend_base_url is unset.
+            if not (base_url or "").strip():
+                base_url = (getattr(settings, "frontend_base_url", None) or "").strip()
+            if not (base_url or "").strip():
+                from app.models.user import SystemSetting
+
+                sys_settings = self.db.query(SystemSetting).first()
+                if sys_settings and getattr(sys_settings, "website_url", None):
+                    base_url = (sys_settings.website_url or "").strip()
+            base = (base_url or "").rstrip("/")
+            kind = (submission_type or "").strip().lower()
+            path = f"/portal/c/{slug}/{kind}"
+            eid = (str(entity_id) if entity_id else "").strip()
+            if eid:
+                path += f"/{eid}"
+            return f"{base}{path}" if base else path
+        except Exception:
+            logger.warning(
+                "submission_link: could not build portal link for contact %s; "
+                "caller will fall back to view link.",
+                contact_id,
+            )
+            return None
+
     # ---------- OTP flow ----------
 
     def request_otp(self, contact_id: str, space_id: str) -> dict:

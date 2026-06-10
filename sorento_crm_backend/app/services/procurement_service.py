@@ -3225,6 +3225,14 @@ class StockInquiryService:
 
             raise handle_validation_error("Rejection reason is required.")
         view_url = self._build_stock_inquiry_view_url(str(inquiry.id))
+        # Prefer the interactive submission portal link (minted on the fly); fall
+        # back to the read-only view link.
+        from app.services.portal_service import PortalService
+        view_url = PortalService(self.db).submission_link(
+            getattr(inquiry, "contact_id", None),
+            "stock_inquiry",
+            str(inquiry.id),
+        ) or view_url
         self._send_stock_inquiry_contact_message(
             inquiry,
             message_text=(
@@ -3276,6 +3284,14 @@ class StockInquiryService:
 
             raise handle_validation_error("Rejection reason is required.")
         view_url = self._build_stock_inquiry_view_url(str(inquiry.id))
+        # Prefer the interactive submission portal link (minted on the fly); fall
+        # back to the read-only view link.
+        from app.services.portal_service import PortalService
+        view_url = PortalService(self.db).submission_link(
+            getattr(inquiry, "contact_id", None),
+            "stock_inquiry",
+            str(inquiry.id),
+        ) or view_url
         self._send_stock_inquiry_contact_message(
             inquiry,
             message_text=(
@@ -3626,6 +3642,14 @@ class PurchaseRequestService:
         reason = (getattr(header, "approval_comments", None) or "").strip() or "no reason provided"
         approver = self._resolve_approver_display_name(header)
         view_url = self._build_request_view_url(str(header.id))
+        # Prefer the interactive submission portal link (minted on the fly) so the
+        # contact can act/resubmit; fall back to the read-only view link.
+        from app.services.portal_service import PortalService
+        view_url = PortalService(self.db).submission_link(
+            getattr(header, "contact_id", None),
+            getattr(header, "request_type", None) or "purchase_request",
+            str(header.id),
+        ) or view_url
         rt = getattr(header, "request_type", None) or ""
         if rt == "sponsorship_form":
             message_text = (
@@ -3646,6 +3670,14 @@ class PurchaseRequestService:
         note = (getattr(header, "approval_comments", None) or "").strip()
         note_part = f" Note: {note}." if note else ""
         view_url = self._build_request_view_url(str(header.id))
+        # Prefer the interactive submission portal link (minted on the fly) so the
+        # contact can act/resubmit; fall back to the read-only view link.
+        from app.services.portal_service import PortalService
+        view_url = PortalService(self.db).submission_link(
+            getattr(header, "contact_id", None),
+            getattr(header, "request_type", None) or "purchase_request",
+            str(header.id),
+        ) or view_url
         rt = getattr(header, "request_type", None) or ""
         if rt == "sponsorship_form":
             message_text = (
@@ -3658,6 +3690,141 @@ class PurchaseRequestService:
                 f"Please view your submission here {view_url}"
             )
         self._send_purchase_request_contact_message(header, message_text=message_text)
+
+    # Customer-service finalize: only an approved request (post-approval, CS stage)
+    # can be finalized. 'processed_by_cs' (CS handled it) and 'closed' (can't
+    # fulfil) both close the customer-service form-SLA stage (same 'resolved' event).
+    _CS_FINALIZE_FROM_STATUSES: tuple[str, ...] = ("approved",)
+    _CS_FINALIZE_STATUSES: tuple[str, ...] = ("processed_by_cs", "closed")
+    _CS_FINALIZE_STATUS_LABELS: dict[str, str] = {
+        "processed_by_cs": "processed by our customer service team",
+        "closed": "closed",
+    }
+
+    def mark_processed_by_cs(
+        self,
+        request_id: str,
+        *,
+        note: Optional[str] = None,
+        respond_user_id: Optional[str] = None,
+        crm_sender_user_id: Optional[str] = None,
+    ):
+        """Mark an approved request as processed by customer service (closes the CS stage)."""
+        return self._finalize_request(
+            request_id,
+            "processed_by_cs",
+            note=note,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=crm_sender_user_id,
+        )
+
+    def close_request(
+        self,
+        request_id: str,
+        *,
+        note: Optional[str] = None,
+        respond_user_id: Optional[str] = None,
+        crm_sender_user_id: Optional[str] = None,
+    ):
+        """Close an approved request that can't be fulfilled (status='closed'; closes the CS stage)."""
+        return self._finalize_request(
+            request_id,
+            "closed",
+            note=note,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=crm_sender_user_id,
+        )
+
+    def _finalize_request(
+        self,
+        request_id: str,
+        new_status: str,
+        *,
+        note: Optional[str] = None,
+        respond_user_id: Optional[str] = None,
+        crm_sender_user_id: Optional[str] = None,
+    ):
+        """Finalize an approved purchase request / sponsorship form to ``new_status``.
+
+        Mirrors complaint CS handoff (``ComplaintService._finalize_complaint``):
+          (a) set lifecycle status            -> committed (primary)
+          (b) send a Respond.io status-update message to the contact (best-effort,
+              window-aware via ``send_text_or_template``)
+          (c) emit the 'resolved' form-SLA event (closes the customer-service stage)
+        (b) and (c) never fail the operation; the committed status is source of truth.
+        """
+        from app.services.error_handler import handle_validation_error
+
+        if new_status not in self._CS_FINALIZE_STATUSES:
+            raise handle_validation_error(f"Unsupported finalize status: {new_status!r}.")
+
+        header = self.get_request(request_id)
+        current_status = (getattr(header, "status", None) or "").strip().lower()
+        if current_status == new_status:
+            return header  # idempotent
+        if current_status not in self._CS_FINALIZE_FROM_STATUSES:
+            raise handle_validation_error(
+                f"Request must be approved before it can be marked {new_status} "
+                f"(current status: {current_status or 'unknown'})."
+            )
+
+        request_number = (getattr(header, "request_number", None) or str(header.id)).strip()
+        rt = getattr(header, "request_type", None) or "purchase_request"
+        type_word = "sponsorship form" if rt == "sponsorship_form" else "purchase request"
+        status_label = self._CS_FINALIZE_STATUS_LABELS.get(new_status, new_status)
+        view_url = self._build_request_view_url(str(header.id))
+        # Prefer the interactive submission portal link (minted on the fly) so the
+        # contact can act/resubmit; fall back to the read-only view link.
+        from app.services.portal_service import PortalService
+        view_url = PortalService(self.db).submission_link(
+            getattr(header, "contact_id", None),
+            getattr(header, "request_type", None) or "purchase_request",
+            str(header.id),
+        ) or view_url
+        note_clean = (note or "").strip()
+        note_part = f" Note: {note_clean}." if note_clean else ""
+        message_text = (
+            f"There has been an update regarding your {type_word} {request_number}: "
+            f"status changed to {status_label}.{note_part} "
+            f"Please view your submission here {view_url}"
+        )
+
+        # (a) Commit the status (primary, synchronous).
+        header.status = new_status
+        self.db.commit()
+        self.db.refresh(header)
+
+        # (b) Send the status-update message to the contact (best-effort, decoupled).
+        try:
+            self._send_purchase_request_contact_message(
+                header,
+                message_text=message_text,
+                crm_sender_user_id=crm_sender_user_id,
+                respond_user_id_fallback=respond_user_id,
+            )
+        except Exception:
+            logger.exception(
+                "Request %s finalize=%s: Respond.io message failed; status committed.",
+                request_id,
+                new_status,
+            )
+
+        # (c) Close the customer-service form-SLA stage (best-effort).
+        try:
+            from app.services.form_sla_service import emit_form_event
+
+            emit_form_event(
+                self.db,
+                rt,
+                str(header.id),
+                "resolved",
+                contact_id=getattr(header, "contact_id", None),
+                actor_user_id=crm_sender_user_id or respond_user_id,
+            )
+        except Exception as e:
+            logger.warning("Form SLA emit 'resolved' failed for request %s: %s", header.id, e)
+
+        return header
 
     def request_revision_by_token(self, token_value: str) -> dict[str, str]:
         """Trigger the external revise webhook for a rejected purchase request / sponsorship form public view."""
@@ -4659,6 +4826,7 @@ class PurchaseRequestService:
         sort_dir: str = "desc",
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
+        assigned_to: Optional[str] = None,
     ):
         """List purchase requests / sponsorship forms with pagination."""
         from sqlalchemy.orm import joinedload
@@ -4666,6 +4834,29 @@ class PurchaseRequestService:
         q = self.db.query(PurchaseRequestHeader)
         if contact_id is not None:
             q = q.filter(PurchaseRequestHeader.contact_id == str(contact_id).strip())
+        if assigned_to is not None and str(assigned_to).strip():
+            # Filter by the latest unresolved form-SLA assignee (project-sales
+            # before approval, customer-service after) — mirrors complaint.
+            from app.models.sla import ConversationSLATracking
+
+            base = self.db.query(ConversationSLATracking.source_entity_id).filter(
+                ConversationSLATracking.source_entity_type.in_(
+                    ("purchase_request", "sponsorship_form")
+                ),
+                ConversationSLATracking.is_resolved.is_(False),
+            )
+            val = str(assigned_to).strip()
+            if val.lower() == "__unassigned__":
+                assigned_subq = base.filter(
+                    ConversationSLATracking.assigned_to_id.isnot(None)
+                )
+                q = q.filter(~PurchaseRequestHeader.id.in_(assigned_subq))
+            else:
+                q = q.filter(
+                    PurchaseRequestHeader.id.in_(
+                        base.filter(ConversationSLATracking.assigned_to_id == val)
+                    )
+                )
         if space_id is not None:
             q = q.filter(PurchaseRequestHeader.space_id == str(space_id).strip())
         if query:
@@ -4724,11 +4915,54 @@ class PurchaseRequestService:
         total = q.count()
         offset = (page - 1) * limit
         items = q.offset(offset).limit(limit).all()
+        self._attach_sla_assignees(items)
         return {
             "data": items,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }
+
+    def _attach_sla_assignees(self, items) -> None:
+        """Set `assigned_to_id` / `assigned_to_name` on each header from the latest
+        unresolved form-SLA tracker (project-sales pre-approval, CS post-approval).
+        Mirrors complaint's `_latest_unresolved_sla_assignee_name`, batched per page.
+        """
+        ids = [str(getattr(i, "id", "")) for i in items if getattr(i, "id", None)]
+        if not ids:
+            return
+        from app.models.sla import ConversationSLATracking
+        from app.models.user import User
+
+        rows = (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.source_entity_type.in_(
+                    ("purchase_request", "sponsorship_form")
+                ),
+                ConversationSLATracking.source_entity_id.in_(ids),
+                ConversationSLATracking.is_resolved.is_(False),
+            )
+            .order_by(
+                ConversationSLATracking.source_entity_id,
+                ConversationSLATracking.initiated_at.desc(),
+            )
+            .all()
+        )
+        latest: dict = {}
+        for r in rows:
+            latest.setdefault(r.source_entity_id, r)  # first per id = latest (desc order)
+        uids = {r.assigned_to_id for r in latest.values() if r.assigned_to_id}
+        users = (
+            {u.id: u for u in self.db.query(User).filter(User.id.in_(uids)).all()}
+            if uids
+            else {}
+        )
+        for it in items:
+            tracker = latest.get(str(it.id))
+            aid = tracker.assigned_to_id if tracker else None
+            user = users.get(aid) if aid else None
+            setattr(it, "assigned_to_id", aid)
+            setattr(it, "assigned_to_name", (user.name or user.email) if user else None)
 
     def get_request(
         self,
@@ -5523,13 +5757,6 @@ class PurchaseRequestService:
                     header.id,
                     e,
                 )
-            try:
-                self._dispatch_approval_automation(header)
-            except Exception:
-                logger.exception(
-                    "Automation dispatch on approved purchase request %s failed",
-                    header.id,
-                )
         elif action == "rejected":
             requested_by_uid = getattr(header, "requested_approval_by_user_id", None)
             if requested_by_uid:
@@ -5559,4 +5786,15 @@ class PurchaseRequestService:
             )
         except Exception as e:
             logger.warning("Form SLA emit '%s' failed for %s: %s", action, header.id, e)
+        # Dispatch the approval automation AFTER the form-SLA event so the
+        # customer-service stage tracker (and its assigned PIC) already exists —
+        # the "Assigned CS PIC" recipient option resolves from that tracker.
+        if action == "approved":
+            try:
+                self._dispatch_approval_automation(header)
+            except Exception:
+                logger.exception(
+                    "Automation dispatch on approved purchase request %s failed",
+                    header.id,
+                )
         return header

@@ -14,20 +14,151 @@ from app.services.webhook_service import WebhookService
 logger = logging.getLogger(__name__)
 
 
+def _decrypt_workspace_key(workspace) -> Optional[str]:
+    """Decrypt a workspace's stored API key; None on missing/undecryptable."""
+    try:
+        from app.utils.field_encryption import decrypt_secret
+
+        cipher = getattr(workspace, "api_key_ciphertext", None)
+        if not cipher:
+            return None
+        return decrypt_secret(cipher)
+    except Exception:
+        logger.warning(
+            "RespondClient: could not decrypt API key for workspace %s",
+            getattr(workspace, "space_id", None),
+        )
+        return None
+
+
+def _resolve_workspace_credentials(
+    db=None,
+    *,
+    identifier: Optional[str] = None,
+    contact_id: Optional[str] = None,
+) -> Optional[tuple]:
+    """Resolve (api_key, base_url, space_id) from `respond_workspaces`.
+
+    Order: the contact's own workspace (when identifier/contact_id resolves to a
+    RespondContact with a workspace_id), else the default workspace. Returns None
+    when no workspace/key can be resolved (caller falls back to the env key).
+    Owns a short-lived Session when `db` is not supplied.
+    """
+    own_session = False
+    try:
+        if db is None:
+            from app.database import SessionLocal
+
+            db = SessionLocal()
+            own_session = True
+        from app.models.access import RespondContact
+        from app.services.respond_workspace_service import RespondWorkspaceService
+
+        ws_svc = RespondWorkspaceService(db)
+        workspace = None
+
+        contact = None
+        if contact_id:
+            contact = (
+                db.query(RespondContact)
+                .filter(RespondContact.id == str(contact_id))
+                .first()
+            )
+        elif identifier:
+            val = str(identifier)
+            val = val.split(":", 1)[1] if ":" in val else val
+            contact = (
+                db.query(RespondContact)
+                .filter(RespondContact.respond_io_id == val)
+                .first()
+            )
+            if contact is None:
+                contact = (
+                    db.query(RespondContact)
+                    .filter(RespondContact.phone_number == val)
+                    .first()
+                )
+        if contact is not None and getattr(contact, "workspace_id", None):
+            workspace = ws_svc.get(contact.workspace_id)
+        if workspace is None:
+            workspace = ws_svc.get_default()
+        if workspace is None:
+            return None
+        key = _decrypt_workspace_key(workspace)
+        if not key:
+            return None
+        return key, (getattr(workspace, "base_url", None) or None), getattr(workspace, "space_id", None)
+    except Exception:
+        logger.warning("RespondClient: workspace credential resolution failed.", exc_info=True)
+        return None
+    finally:
+        if own_session and db is not None:
+            db.close()
+
+
 class RespondClient:
-    """Client for Respond.io API."""
+    """Client for Respond.io API.
+
+    Credentials come from `respond_workspaces` (per-contact workspace when an
+    identifier/contact resolves, else the default workspace). The env
+    RESPOND_API_KEY is a deprecated last-resort fallback only — being phased out.
+    """
 
     def __init__(
         self,
         *,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
+        space_id: Optional[str] = None,
     ) -> None:
-        """Defaults to env-configured credentials; pass overrides to act on a
-        specific `respond_workspaces` row (template sync)."""
+        if api_key is None:
+            # No explicit key (the common case): resolve the default workspace.
+            # Contact-scoped callers should use RespondClient.for_identifier(...).
+            creds = _resolve_workspace_credentials()
+            if creds:
+                ws_key, ws_base, ws_space = creds
+                api_key = ws_key
+                base_url = base_url or ws_base
+                space_id = space_id or ws_space
+        if api_key is None:
+            api_key = settings.respond_api_key
+            if api_key:
+                logger.warning(
+                    "RespondClient: no workspace API key resolved; falling back to "
+                    "deprecated env RESPOND_API_KEY. Configure the workspace API key."
+                )
         self.base_url = (base_url or settings.respond_base_url or "https://api.respond.io").rstrip("/")
-        self.api_key = api_key or settings.respond_api_key
-        self.space_id = settings.respond_space_id
+        self.api_key = api_key
+        self.space_id = space_id or settings.respond_space_id
+
+    @classmethod
+    def for_workspace(cls, workspace) -> "RespondClient":
+        """Build a client bound to a specific workspace row."""
+        return cls(
+            api_key=_decrypt_workspace_key(workspace),
+            base_url=getattr(workspace, "base_url", None) or None,
+            space_id=getattr(workspace, "space_id", None),
+        )
+
+    @classmethod
+    def for_identifier(cls, db, identifier: Optional[str]) -> "RespondClient":
+        """Client keyed to the workspace that owns the contact for ``identifier``
+        (falls back to the default workspace)."""
+        creds = _resolve_workspace_credentials(db, identifier=identifier)
+        if creds:
+            key, base, space = creds
+            return cls(api_key=key, base_url=base, space_id=space)
+        return cls()
+
+    @classmethod
+    def for_contact_id(cls, db, contact_id: Optional[str]) -> "RespondClient":
+        """Client keyed to the workspace that owns ``contact_id`` (falls back to
+        the default workspace)."""
+        creds = _resolve_workspace_credentials(db, contact_id=contact_id)
+        if creds:
+            key, base, space = creds
+            return cls(api_key=key, base_url=base, space_id=space)
+        return cls()
 
     def _headers(self) -> dict:
         """Headers required by Respond.io; Accept and User-Agent help avoid CloudFront/WAF 403."""

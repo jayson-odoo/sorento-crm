@@ -524,6 +524,7 @@ class FormSLAConfigBase(BaseModel):
     next_config_id: Optional[str] = None
     advance_on_event: Optional[str] = None
     is_active: bool = True
+    notify_assignee: bool = True
 
     @field_validator("source_entity_type")
     @classmethod
@@ -560,6 +561,7 @@ class FormSLAConfigUpdate(BaseModel):
     next_config_id: Optional[str] = None
     advance_on_event: Optional[str] = None
     is_active: Optional[bool] = None
+    notify_assignee: Optional[bool] = None
 
 
 class FormSLAConfigResponse(FormSLAConfigBase):

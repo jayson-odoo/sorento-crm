@@ -796,6 +796,8 @@ class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
     request_number: Optional[str] = None
     view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
+    assigned_to_id: Optional[str] = None  # latest unresolved form-SLA assignee (users.id)
+    assigned_to_name: Optional[str] = None  # resolved display name
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -825,6 +827,8 @@ class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
     approver_display_name: Optional[str] = None  # Resolved from User when approver_user_id is set
+    assigned_to_id: Optional[str] = None  # latest unresolved form-SLA assignee (users.id)
+    assigned_to_name: Optional[str] = None  # resolved display name
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     lines: Optional[List[PurchaseRequestLineResponse]] = []
