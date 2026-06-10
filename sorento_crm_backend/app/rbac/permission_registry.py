@@ -130,6 +130,8 @@ PERMISSION_REGISTRY.extend(_crud("procurement", "purchase_requests", "Purchase R
 PERMISSION_REGISTRY.extend(_crud("procurement", "sponsorship_forms", "Sponsorship Forms"))
 PERMISSION_REGISTRY.extend([
     {"slug": "procurement.purchase_requests.send_for_approval", "name": "Send purchase request / sponsorship form for approval", "description": "Set request to pending approval and send approval link. Also grants Reject before sending for approval (mandatory reason)."},
+    {"slug": "procurement.purchase_requests.process", "name": "Process purchase request / sponsorship form (CS)", "description": "Customer-service action: mark an approved purchase request or sponsorship form as processed by CS (status='processed_by_cs'; closes the customer-service SLA stage)."},
+    {"slug": "procurement.purchase_requests.close", "name": "Close purchase request / sponsorship form (CS)", "description": "Customer-service action: close an approved purchase request or sponsorship form that can't be fulfilled (status='closed'; closes the customer-service SLA stage). Separate from Process so it can be granted independently."},
 ])
 
 # Inventory

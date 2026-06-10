@@ -11,6 +11,7 @@ class RecipientConfig(BaseModel):
     user_ids: list[str] = Field(default_factory=list)
     role_ids: list[str] = Field(default_factory=list)
     include_promotion_owner: bool = False
+    include_assigned_cs_pic: bool = False
     extra_emails: list[str] = Field(default_factory=list)
 
 

@@ -2,6 +2,9 @@ export interface RecipientConfig {
   user_ids: string[];
   role_ids: string[];
   include_promotion_owner: boolean;
+  /** When set, also email the assigned customer-service PIC of the triggering
+   * purchase request / sponsorship form (resolved from the active CS SLA stage). */
+  include_assigned_cs_pic?: boolean;
   extra_emails: string[];
 }
 

@@ -79,17 +79,17 @@ function DownloadRow({ row }: { row: MyDownload }) {
           {KIND_LABEL[row.kind] ?? row.kind}
           {row.created_at ? ` · ${formatDateTimeInMalaysia(new Date(row.created_at))}` : ''}
         </p>
-        <div className="mt-1 flex items-center gap-3">
+        <div className="mt-1 flex min-w-0 items-center gap-3">
           <StatusBadge status={row.status} />
           {row.status === 'failed' && row.error && (
-            <span className="truncate text-xs text-destructive" title={row.error}>
+            <span className="min-w-0 truncate text-xs text-destructive" title={row.error}>
               {row.error}
             </span>
           )}
         </div>
       </div>
       {row.status === 'ready' && (
-        <Button size="sm" variant="outline" disabled={busy} onClick={onDownload}>
+        <Button size="sm" variant="outline" disabled={busy} onClick={onDownload} className="shrink-0">
           <Download className="size-4 mr-1" />
           {busy ? '…' : 'Download'}
         </Button>

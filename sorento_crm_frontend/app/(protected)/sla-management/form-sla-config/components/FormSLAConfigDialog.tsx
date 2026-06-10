@@ -151,6 +151,7 @@ export default function FormSLAConfigDialog({
   const [nextConfigId, setNextConfigId] = useState<string>(NONE_VALUE);
   const [advanceOnEvent, setAdvanceOnEvent] = useState<string>(NONE_VALUE);
   const [isActive, setIsActive] = useState(true);
+  const [notifyAssignee, setNotifyAssignee] = useState(true);
 
   useEffect(() => {
     if (existing) {
@@ -165,6 +166,7 @@ export default function FormSLAConfigDialog({
       setNextConfigId(existing.next_config_id ?? NONE_VALUE);
       setAdvanceOnEvent(existing.advance_on_event ?? NONE_VALUE);
       setIsActive(existing.is_active);
+      setNotifyAssignee(existing.notify_assignee ?? true);
     } else if (open) {
       setSourceType('stock_inquiry');
       setStageCode('');
@@ -177,6 +179,7 @@ export default function FormSLAConfigDialog({
       setNextConfigId(NONE_VALUE);
       setAdvanceOnEvent(NONE_VALUE);
       setIsActive(true);
+      setNotifyAssignee(true);
     }
   }, [existing, open]);
 
@@ -235,6 +238,7 @@ export default function FormSLAConfigDialog({
       next_config_id: nextConfigId === NONE_VALUE ? null : nextConfigId,
       advance_on_event: advanceOnEvent === NONE_VALUE ? null : advanceOnEvent,
       is_active: isActive,
+      notify_assignee: notifyAssignee,
     });
   };
 
@@ -401,6 +405,21 @@ export default function FormSLAConfigDialog({
           <div className="flex items-center gap-2">
             <Switch checked={isActive} onCheckedChange={setIsActive} id="active" />
             <Label htmlFor="active">Active</Label>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={notifyAssignee}
+                onCheckedChange={setNotifyAssignee}
+                id="notify-assignee"
+              />
+              <Label htmlFor="notify-assignee">Notify assignee on assignment</Label>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              When off, this stage assigns the tracker silently — the assignee is
+              not notified when the stage spawns.
+            </span>
           </div>
         </div>
 

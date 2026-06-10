@@ -24,9 +24,14 @@ import type {
 } from '@/components/ui/data-grid';
 
 export async function getPurchaseRequests(
-  params: DataGridApiFetchParams & { requestType?: string; approvalStatus?: string },
+  params: DataGridApiFetchParams & {
+    requestType?: string;
+    approvalStatus?: string;
+    assignedTo?: string;
+  },
 ): Promise<DataGridApiResponse<PurchaseRequest>> {
-  const { pageIndex, pageSize, sorting, searchQuery, requestType, approvalStatus } = params;
+  const { pageIndex, pageSize, sorting, searchQuery, requestType, approvalStatus, assignedTo } =
+    params;
   const sortField = sorting?.[0]?.id || 'request_date';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -37,6 +42,7 @@ export async function getPurchaseRequests(
     ...(searchQuery ? { query: searchQuery } : {}),
     ...(requestType ? { request_type: requestType } : {}),
     ...(approvalStatus ? { approval_status: approvalStatus } : {}),
+    ...(assignedTo ? { assigned_to: assignedTo } : {}),
   });
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests?${queryParams.toString()}`,
@@ -246,6 +252,42 @@ export async function setPendingApproval(id: string): Promise<PurchaseRequest> {
     throw new Error(error.detail || error.message);
   }
   return response.json();
+}
+
+async function finalizeRequestByCs(
+  id: string,
+  action: 'process' | 'close',
+  note?: string,
+): Promise<PurchaseRequest> {
+  const response = await apiFetch(
+    `/api/v1/procurement/purchase-requests/${id}/${action}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note: note?.trim() || null }),
+    },
+  );
+  if (!response.ok) {
+    const err = await response
+      .json()
+      .catch(() => ({ message: 'Failed to update request' }));
+    throw new Error(err.detail || err.message || 'Failed to update request');
+  }
+  return response.json();
+}
+
+export function processPurchaseRequestByCs(
+  id: string,
+  note?: string,
+): Promise<PurchaseRequest> {
+  return finalizeRequestByCs(id, 'process', note);
+}
+
+export function closePurchaseRequestByCs(
+  id: string,
+  note?: string,
+): Promise<PurchaseRequest> {
+  return finalizeRequestByCs(id, 'close', note);
 }
 
 export interface ViewLinkResponse {

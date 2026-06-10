@@ -30,6 +30,7 @@ import { formatDate } from '@/lib/helpers';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import ContactAccessAgentsTable from './components/ContactAccessAgentsTable';
+import ContactCsRoutingTable from './components/ContactCsRoutingTable';
 import ContactEditDialog from './components/ContactEditDialog';
 import ContactDeleteDialog from '../components/ContactDeleteDialog';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';
@@ -302,6 +303,15 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
             <CardTitle>Access Agents</CardTitle>
           </CardHeader>
           <ContactAccessAgentsTable contactId={id} />
+        </Card>
+      </Container>
+
+      <Container>
+        <Card>
+          <CardHeader>
+            <CardTitle>Customer Service Assignment</CardTitle>
+          </CardHeader>
+          <ContactCsRoutingTable contactId={id} />
         </Card>
       </Container>
 

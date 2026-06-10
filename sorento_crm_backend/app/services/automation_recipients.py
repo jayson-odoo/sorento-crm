@@ -20,6 +20,8 @@ def resolve_recipients(
     db: Session,
     config: dict[str, Any],
     promotion_context: dict[str, Any] | None = None,
+    *,
+    source_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return list of {email, name, user_id?} dicts, deduped by lowercased email.
 
@@ -27,6 +29,8 @@ def resolve_recipients(
       - user_ids: list[str]
       - role_ids: list[str]
       - include_promotion_owner: bool
+      - include_assigned_cs_pic: bool  (needs source_id; resolves the active
+        customer-service form-SLA assignee for that entity)
       - extra_emails: list[str]
     """
     config = config or {}
@@ -68,6 +72,28 @@ def resolve_recipients(
         )
         for u in rows:
             add(getattr(u, "email", None), getattr(u, "name", None), str(getattr(u, "id")))
+
+    if config.get("include_assigned_cs_pic") and source_id:
+        from app.models.sla import ConversationSLATracking
+
+        tracker = (
+            db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.source_entity_id == str(source_id),
+                ConversationSLATracking.team_set_code == "customer_service",
+                ConversationSLATracking.is_resolved.is_(False),
+            )
+            .order_by(ConversationSLATracking.initiated_at.desc())
+            .first()
+        )
+        if tracker is not None and tracker.assigned_to_id:
+            pic = (
+                db.query(User)
+                .filter(User.id == tracker.assigned_to_id, User.is_trashed.is_(False))
+                .first()
+            )
+            if pic is not None:
+                add(getattr(pic, "email", None), getattr(pic, "name", None), str(getattr(pic, "id")))
 
     if config.get("include_promotion_owner") and promotion_context:
         owner_id = (promotion_context.get("promotion") or {}).get("created_by")
