@@ -243,6 +243,9 @@ def send_template_for_use_case(
         param_count=template.param_count,
         context_vars=context_vars,
     )
+    # Single-workspace today: RespondClient() resolves the default workspace key.
+    # Switch to RespondClient.for_identifier(db, identifier) when multi-workspace
+    # routing per contact is needed.
     response = RespondClient().send_template_message(
         identifier,
         channel_id=template.channel.respond_channel_id,

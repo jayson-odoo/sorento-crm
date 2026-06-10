@@ -166,6 +166,19 @@ export default function RecipientPicker({ value, onChange }: Props) {
         <Label htmlFor="rp-owner">Include promotion creator / owner</Label>
       </div>
 
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id="rp-cs-pic"
+          checked={Boolean(value.include_assigned_cs_pic)}
+          onCheckedChange={(c) =>
+            onChange({ ...value, include_assigned_cs_pic: Boolean(c) })
+          }
+        />
+        <Label htmlFor="rp-cs-pic">
+          Include assigned CS PIC (purchase request / sponsorship form)
+        </Label>
+      </div>
+
       <div className="space-y-1">
         <Label>External emails</Label>
         <div className="flex gap-2">

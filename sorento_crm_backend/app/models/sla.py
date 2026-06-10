@@ -1,5 +1,5 @@
 """SLA management models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, BigInteger, Numeric, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, BigInteger, Numeric, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -139,6 +139,9 @@ class FormSLAConfig(Base):
     # (backward-compatible with existing single-event chains).
     advance_on_event = Column(String(100), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    # When false, spawning this stage assigns the tracker but does NOT notify the
+    # assignee (some stages route silently). Default true = notify on assignment.
+    notify_assignee = Column(Boolean, default=True, nullable=False, server_default=text("true"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

@@ -528,6 +528,27 @@ class ComplaintService:
         rows = self.db.query(TeamMember.user_id).filter(TeamMember.team_id == team_id).all()
         return [str(r[0]) for r in rows if r and r[0]]
 
+    def _complaint_status_link_part(self, complaint, complaint_id: str) -> str:
+        """Leading-space link for customer status messages.
+
+        Prefers the interactive submission portal link (minted on the fly) so the
+        contact can act/resubmit; falls back to the read-only public view link.
+        Empty when public view links are disabled or nothing can be built.
+        """
+        if not self._complaint_public_view_links_enabled():
+            return ""
+        from app.services.portal_service import PortalService
+
+        portal = PortalService(self.db).submission_link(
+            getattr(complaint, "contact_id", None),
+            "complaint",
+            complaint_id,
+        )
+        if portal:
+            return f" {portal}"
+        view_url = (self._build_complaint_view_url(complaint_id) or "").strip()
+        return f" {view_url}" if view_url else ""
+
     def _build_complaint_view_url(self, complaint_id: str, base_url_override: Optional[str] = None) -> str:
         """Build shareable (no-auth) frontend link for a complaint using view token."""
         from app.models.user import SystemSetting
@@ -954,11 +975,7 @@ class ComplaintService:
         identifier = self._identifier_from_respond_inbox_url(getattr(complaint, "respond_inbox_url", None))
         do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()
         do_spec = f" for delivery order {do_number}" if do_number else ""
-        link_part = ""
-        if self._complaint_public_view_links_enabled():
-            view_url = (self._build_complaint_view_url(complaint_id) or "").strip()
-            if view_url:
-                link_part = f" {view_url}"
+        link_part = self._complaint_status_link_part(complaint, complaint_id)
         display_message = (
             f"There has been an update regarding your complaint{do_spec}{link_part}: {stored_body}"
         )
@@ -1148,11 +1165,7 @@ class ComplaintService:
 
         do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()
         do_spec = f" for delivery order {do_number}" if do_number else ""
-        link_part = ""
-        if self._complaint_public_view_links_enabled():
-            view_url = (self._build_complaint_view_url(complaint_id) or "").strip()
-            if view_url:
-                link_part = f" {view_url}"
+        link_part = self._complaint_status_link_part(complaint, complaint_id)
         reason_part = (
             f" Reason: {normalized_reason}." if decision == "rejected" and normalized_reason else ""
         )
@@ -1343,11 +1356,7 @@ class ComplaintService:
         # Build the customer-facing status-update message (before commit/refresh).
         do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()
         do_spec = f" for delivery order {do_number}" if do_number else ""
-        link_part = ""
-        if self._complaint_public_view_links_enabled():
-            view_url = (self._build_complaint_view_url(complaint_id) or "").strip()
-            if view_url:
-                link_part = f" {view_url}"
+        link_part = self._complaint_status_link_part(complaint, complaint_id)
         note_clean = (note or "").strip()
         note_part = f" Note: {note_clean}" if note_clean else ""
         status_label = self._FINALIZE_STATUS_LABELS.get(new_status, new_status)
@@ -1645,11 +1654,7 @@ class ComplaintService:
 
         do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()
         do_spec = f" for delivery order {do_number}" if do_number else ""
-        link_part = ""
-        if self._complaint_public_view_links_enabled():
-            view_url = (self._build_complaint_view_url(complaint_id) or "").strip()
-            if view_url:
-                link_part = f" {view_url}"
+        link_part = self._complaint_status_link_part(complaint, complaint_id)
         label_word = "Root cause" if kind == "root_cause" else "Resolution"
         display_message = (
             f"There has been an update regarding your complaint{do_spec}{link_part}: "

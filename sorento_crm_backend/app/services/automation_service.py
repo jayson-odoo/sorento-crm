@@ -312,6 +312,7 @@ class AutomationService:
             "user_ids": [str(x) for x in (data.get("user_ids") or [])],
             "role_ids": [str(x) for x in (data.get("role_ids") or [])],
             "include_promotion_owner": bool(data.get("include_promotion_owner", False)),
+            "include_assigned_cs_pic": bool(data.get("include_assigned_cs_pic", False)),
             "extra_emails": [str(x).strip() for x in (data.get("extra_emails") or []) if str(x).strip()],
         }
 
@@ -364,6 +365,7 @@ class AutomationService:
                     self.db,
                     dict(automation.recipient_config or {}),
                     promotion_context=match.context,
+                    source_id=match.source_id,
                 )
                 rendered_per_recipient: list[dict[str, Any]] = []
                 for recipient in recipients:

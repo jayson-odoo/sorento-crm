@@ -39,6 +39,8 @@ export interface PurchaseRequest {
   expected_po_date_text?: string | null;
   requested_by?: string | null;
   requested_at?: string | null;
+  assigned_to_id?: string | null;
+  assigned_to_name?: string | null;
   status?: string | null;
   source?: string | null;
   external_reference?: string | null;

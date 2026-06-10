@@ -315,6 +315,90 @@ async def sync_contact(
         )
 
 
+class CsRoutingPinRequest(BaseModel):
+    cs_pic_user_id: str
+
+
+@router.get("/cs-routing/candidates")
+async def list_cs_routing_candidates(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Tier-1 members of the procurement customer-service team (pin dropdown options)."""
+    try:
+        from app.services.cs_routing_service import CsRoutingService
+
+        return {"candidates": CsRoutingService(db).list_candidates()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{contact_id}/cs-routing")
+async def get_contact_cs_routing(
+    contact_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List a salesman's CS-PIC pins (one per procurement use_case)."""
+    try:
+        from app.services.cs_routing_service import CsRoutingService
+
+        return {"pins": CsRoutingService(db).list_for_contact(contact_id)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/{contact_id}/cs-routing/{use_case}")
+async def upsert_contact_cs_routing(
+    contact_id: str,
+    use_case: str,
+    payload: CsRoutingPinRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Pin this salesman to a CS PIC for ``use_case`` (purchase_request | sponsorship_form)."""
+    try:
+        from app.services.cs_routing_service import CsRoutingService
+
+        row = CsRoutingService(db).upsert(
+            contact_id,
+            use_case,
+            payload.cs_pic_user_id,
+            created_by=current_user.get("id"),
+        )
+        return {
+            "use_case": row.use_case,
+            "cs_pic_user_id": row.cs_pic_user_id,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/{contact_id}/cs-routing/{use_case}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_contact_cs_routing(
+    contact_id: str,
+    use_case: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Clear a pin → that use_case reverts to round-robin."""
+    try:
+        from app.services.cs_routing_service import CsRoutingService
+
+        CsRoutingService(db).delete(contact_id, use_case)
+        return None
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{contact_id}/access-agents", response_model=ListResponse[ContactAgentAccessResponse])
 async def get_contact_access_agents(
     contact_id: str,

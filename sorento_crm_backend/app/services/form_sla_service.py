@@ -411,7 +411,16 @@ class FormSLAOrchestrator:
                 )
                 + ". Configure tier 1 before activating this SLA config."
             )
-        assignee = agent_svc.get_next_assignee(str(agent.id), team_id)
+        # Pin-point override: a salesman (respond_contact) can be pinned to a
+        # specific CS PIC per procurement use_case. A valid pin assigns that user
+        # directly; any miss falls back to round-robin. The round-robin cursor is
+        # NOT advanced on an override. Complaint never reads the pin table.
+        # See docs/plans/PLAN-procurement-cs-handoff-and-pinpoint-routing.md.
+        assignee = self._resolve_pinned_assignee(
+            config.source_entity_type, contact_id, team_id
+        )
+        if not assignee:
+            assignee = agent_svc.get_next_assignee(str(agent.id), team_id)
         if not assignee:
             raise handle_validation_error(
                 f"No members in tier 1 team for agent '{config.agent_code}'."
@@ -458,8 +467,86 @@ class FormSLAOrchestrator:
         self.db.commit()
         self.db.refresh(tracker)
 
-        self._notify_assignee(tracker, kind="assigned")
+        # Per-stage toggle: some stages route silently (no assignee notification).
+        if getattr(config, "notify_assignee", True):
+            self._notify_assignee(tracker, kind="assigned")
         return tracker
+
+    # Procurement use_cases that consult the per-salesman CS pin table. Complaint
+    # (and any other form type) is deliberately excluded → always round-robin.
+    _PINNABLE_USE_CASES = frozenset({"purchase_request", "sponsorship_form"})
+
+    def _resolve_pinned_assignee(
+        self,
+        source_entity_type: Optional[str],
+        contact_id: Optional[str],
+        team_id: str,
+    ) -> Optional[dict]:
+        """Return the pinned CS PIC for (contact, use_case), or None to fall back.
+
+        Returns an assignee dict shaped exactly like ``get_next_assignee`` so the
+        caller is branch-agnostic. Returns None (→ round-robin) when: the use_case
+        is not pinnable, there is no contact, no active pin exists, or the pinned
+        user is missing / inactive / no longer a member of the stage's tier-1 team.
+        Never raises — every failure degrades to round-robin so approval can't 500.
+        """
+        if not contact_id or source_entity_type not in self._PINNABLE_USE_CASES:
+            return None
+        try:
+            from app.models.access import RespondContactCsRouting, TeamMember
+            from app.models.user import User, UserStatus
+
+            pin = (
+                self.db.query(RespondContactCsRouting)
+                .filter(
+                    RespondContactCsRouting.respond_contact_id == contact_id,
+                    RespondContactCsRouting.use_case == source_entity_type,
+                    RespondContactCsRouting.is_active.is_(True),
+                )
+                .first()
+            )
+            if not pin:
+                return None
+            user_id = pin.cs_pic_user_id
+            member = (
+                self.db.query(TeamMember)
+                .filter(
+                    TeamMember.team_id == team_id,
+                    TeamMember.user_id == user_id,
+                )
+                .first()
+            )
+            if not member:
+                logger.warning(
+                    "CS pin: contact %s use_case %s -> user %s not in tier-1 team %s; "
+                    "falling back to round-robin.",
+                    contact_id,
+                    source_entity_type,
+                    user_id,
+                    team_id,
+                )
+                return None
+            user = self.db.query(User).filter(User.id == user_id).first()
+            if not user or (getattr(user, "status", "") or "").upper() != UserStatus.ACTIVE.value:
+                logger.warning(
+                    "CS pin: user %s missing/inactive; falling back to round-robin.",
+                    user_id,
+                )
+                return None
+            return {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name or user.email,
+                "respond_user_id": user.respond_user_id,
+            }
+        except Exception as e:
+            logger.warning(
+                "CS pin lookup failed for contact %s use_case %s: %s; round-robin.",
+                contact_id,
+                source_entity_type,
+                e,
+            )
+            return None
 
     def _respond_for_active(
         self,

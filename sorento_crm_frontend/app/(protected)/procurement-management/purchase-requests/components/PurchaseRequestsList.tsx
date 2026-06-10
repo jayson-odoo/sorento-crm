@@ -39,7 +39,9 @@ import {
 } from '@/components/ui/select';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useQuery } from '@tanstack/react-query';
 import { usePurchaseRequests } from '../hooks/usePurchaseRequests';
+import { getUsersForApproverSelect } from '../services/purchaseRequestService';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import PurchaseRequestBulkDeleteDialog from './PurchaseRequestBulkDeleteDialog';
@@ -89,14 +91,21 @@ export default function PurchaseRequestsList({
     pageSize: 50,
   });
   const [sorting, setSorting] = useState<SortingState>([
-    { id: 'request_date', desc: true },
+    { id: 'created_at', desc: true },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
   const [requestTypeFilter, setRequestTypeFilter] = useState<string>(
     requestType ?? 'all',
   );
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [assignedToFilter, setAssignedToFilter] = useState<string>('__all__');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const { data: assigneeOptions = [] } = useQuery({
+    queryKey: ['pr-assignee-options'],
+    queryFn: getUsersForApproverSelect,
+    staleTime: 5 * 60_000,
+  });
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
 
   const effectiveRequestType =
@@ -111,6 +120,7 @@ export default function PurchaseRequestsList({
     searchQuery,
     requestType: effectiveRequestType,
     approvalStatus: effectiveStatusFilter,
+    assignedTo: assignedToFilter !== '__all__' ? assignedToFilter : undefined,
   });
 
   const statusFilterLabel =
@@ -118,7 +128,7 @@ export default function PurchaseRequestsList({
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, [statusFilter]);
+  }, [statusFilter, assignedToFilter]);
 
   const handleRowClick = (row: PurchaseRequest) => {
     router.push(`${basePath}/${row.id}`);
@@ -286,6 +296,20 @@ export default function PurchaseRequestsList({
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        accessorKey: 'assigned_to_name',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Assigned To" column={column} />
+        ),
+        size: 140,
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span className="truncate" title={row.original.assigned_to_name ?? undefined}>
+            {row.original.assigned_to_name ?? '-'}
+          </span>
+        ),
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         accessorKey: 'actions',
         header: '',
         cell: () => (
@@ -378,6 +402,20 @@ export default function PurchaseRequestsList({
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+            <Select value={assignedToFilter} onValueChange={setAssignedToFilter}>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Assigned to" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All assignees</SelectItem>
+                <SelectItem value="__unassigned__">Unassigned</SelectItem>
+                {assigneeOptions.map((u) => (
+                  <SelectItem key={u.id} value={u.id}>
+                    {u.name?.trim() || u.email}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="flex items-center gap-2">
             <DataGridColumnVisibility

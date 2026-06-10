@@ -3,6 +3,7 @@ import html
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body
 from sqlalchemy.orm import Session
 from typing import Optional
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
@@ -47,6 +48,7 @@ async def get_purchase_requests(
     query: Optional[str] = Query(None),
     request_type: Optional[str] = Query(None, description="purchase_request or sponsorship_form"),
     approval_status: Optional[str] = Query(None, description="draft, pending, approved, rejected"),
+    assigned_to: Optional[str] = Query(None, description="users.id of the latest unresolved SLA assignee, or __unassigned__"),
     sort: Optional[str] = Query("request_date"),
     dir: Optional[str] = Query("desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -63,6 +65,7 @@ async def get_purchase_requests(
             space_id=None,
             request_type=request_type,
             approval_status=approval_status,
+            assigned_to=assigned_to,
             sort_field=sort or "request_date",
             sort_dir=dir or "desc",
         )
@@ -305,6 +308,66 @@ async def reject_submitted_purchase_request(
                     "approver_display_name",
                     (user.name and user.name.strip()) or user.email or "",
                 )
+        return header
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+class CsFinalizeRequest(BaseModel):
+    note: Optional[str] = None
+
+
+@router.post("/{request_id}/process", response_model=PurchaseRequestHeaderResponse)
+async def process_request_by_cs(
+    request_id: str,
+    payload: CsFinalizeRequest,
+    current_user: dict = Depends(require_permission("procurement.purchase_requests.process")),
+    db: Session = Depends(get_db),
+):
+    """Mark an approved purchase request / sponsorship form as processed by customer service.
+
+    Sets status='processed_by_cs', closes the customer-service form-SLA stage, and
+    sends a status-update message (+ optional note) to the contact via Respond.io.
+    """
+    try:
+        respond_user_id = _respond_user_id_from_current_user(current_user)
+        service = PurchaseRequestService(db)
+        header = service.mark_processed_by_cs(
+            request_id,
+            note=payload.note,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=current_user.get("id"),
+        )
+        return header
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{request_id}/close", response_model=PurchaseRequestHeaderResponse)
+async def close_request_by_cs(
+    request_id: str,
+    payload: CsFinalizeRequest,
+    current_user: dict = Depends(require_permission("procurement.purchase_requests.close")),
+    db: Session = Depends(get_db),
+):
+    """Close an approved purchase request / sponsorship form that can't be fulfilled (status='closed').
+
+    Closes the customer-service form-SLA stage and sends a status-update message
+    (+ optional note) to the contact via Respond.io.
+    """
+    try:
+        respond_user_id = _respond_user_id_from_current_user(current_user)
+        service = PurchaseRequestService(db)
+        header = service.close_request(
+            request_id,
+            note=payload.note,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=current_user.get("id"),
+        )
         return header
     except HTTPException:
         raise

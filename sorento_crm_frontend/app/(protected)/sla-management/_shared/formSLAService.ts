@@ -38,6 +38,7 @@ export interface FormSLAConfig {
   next_config_id: string | null;
   advance_on_event: string | null;
   is_active: boolean;
+  notify_assignee?: boolean;
   policy_code?: string | null;
   policy_name?: string | null;
   next_stage_code?: string | null;
@@ -57,6 +58,7 @@ export interface FormSLAConfigInput {
   next_config_id?: string | null;
   advance_on_event?: string | null;
   is_active?: boolean;
+  notify_assignee?: boolean;
 }
 
 export async function listFormSLAConfigs(filters: {
@@ -146,6 +148,7 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'reject_submitted',
     'approved',
     'approval_rejected',
+    'resolved',
   ],
   sponsorship_form: [
     'submit',
@@ -153,6 +156,7 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'reject_submitted',
     'approved',
     'approval_rejected',
+    'resolved',
   ],
   complaint: [
     'submit',
