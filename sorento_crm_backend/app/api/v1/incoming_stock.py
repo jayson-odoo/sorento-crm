@@ -51,6 +51,8 @@ def get_incoming_for_product(
         None,
         description="Free-text search over product_code and product_name.",
     ),
+    eta_from: Optional[date] = Query(None, description="Include shipments with ETA on/after this date (YYYY-MM-DD)."),
+    eta_to: Optional[date] = Query(None, description="Include shipments with ETA on/before this date (YYYY-MM-DD)."),
     limit: int = Query(10, ge=1, le=50),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
@@ -58,7 +60,8 @@ def get_incoming_for_product(
     """Answer 'any incoming for product X?' questions.
 
     Returns, per matched product: total remaining incoming quantity, nearest ETA, per-warehouse
-    allocation summary, and the individual open shipments.
+    allocation summary, and the individual open shipments. Optional `eta_from` / `eta_to`
+    narrow to shipments arriving within a date window.
     """
     from app.services.entity_filter_helpers import (
         normalize_entities_query_param,
@@ -95,7 +98,13 @@ def get_incoming_for_product(
             resolved_product_filter.extend(buckets.product_codes)
     try:
         svc = IncomingStockService(db)
-        result = svc.incoming_for_product(product_ids=resolved_product_filter or None, query=query, limit=limit)
+        result = svc.incoming_for_product(
+            product_ids=resolved_product_filter or None,
+            query=query,
+            eta_from=eta_from,
+            eta_to=eta_to,
+            limit=limit,
+        )
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo
         return result

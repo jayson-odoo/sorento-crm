@@ -152,6 +152,8 @@ class IncomingStockService:
         product_id: Optional[str] = None,
         product_ids: Optional[list[str]] = None,
         query: Optional[str] = None,
+        eta_from: Optional[date] = None,
+        eta_to: Optional[date] = None,
         limit: int = 10,
     ) -> dict[str, Any]:
         """Return incoming-stock summary grouped by product.
@@ -159,7 +161,9 @@ class IncomingStockService:
         Accepts one or many `product_ids` (UUID or product_code / SKU). Legacy
         single `product_id` parameter is folded into the list. A free-text
         `query` may be supplied instead; results are filtered to still-incoming
-        lines only.
+        lines only. `eta_from` / `eta_to` (inclusive) narrow to shipments whose
+        `estimated_arrival_date` falls in the window — applied on top of the
+        product hint, never as a standalone filter (an ETA alone would full-scan).
         """
         limit = max(1, min(limit, 50))
 
@@ -209,6 +213,14 @@ class IncomingStockService:
                 "message": "Provide product_id (UUID or product_code) or a query term.",
             }
 
+        # ETA window — applied alongside the product hint, kept out of the
+        # product_filters guard above so an ETA alone can't trigger a full scan.
+        date_filters = []
+        if eta_from is not None:
+            date_filters.append(InboundShipment.estimated_arrival_date >= eta_from)
+        if eta_to is not None:
+            date_filters.append(InboundShipment.estimated_arrival_date <= eta_to)
+
         remaining = _remaining_expr().label("remaining_incoming")
         rows = (
             self.db.query(
@@ -224,7 +236,7 @@ class IncomingStockService:
             )
             .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
             .join(Product, Product.id == InboundShipmentLine.product_id)
-            .filter(_still_incoming_filter(), *product_filters)
+            .filter(_still_incoming_filter(), *product_filters, *date_filters)
             .order_by(
                 Product.product_code.asc(),
                 InboundShipment.estimated_arrival_date.asc().nulls_last(),
