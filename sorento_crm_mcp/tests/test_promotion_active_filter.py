@@ -2,7 +2,10 @@
 
 Director requirement: promotions list must surface expired promotions (backend
 fallback rows carry is_expired=true) so the agent answers "found but expired".
-Drill-down tools (get / products / attachments) keep the active-only block.
+The flat product/attachment *_list tools now ALSO pass through — the backend owns
+active-first + inactive fallback for them (active=True default for API-key callers),
+so this layer must not strip the intentional fallback rows. Single-record drill-down
+tools (get / products_nested / by_promotion) keep the active-only block.
 """
 import json
 
@@ -54,7 +57,14 @@ def test_promotions_get_still_blocks_inactive():
     assert json.loads(out)["code"] == "PROMOTION_INACTIVE"
 
 
-def test_promotion_products_list_still_drops_inactive_promotion_rows():
+def test_flat_list_tools_not_in_filtered_tool_names():
+    # Backend owns active-first + fallback for the flat list tools now.
+    assert "crm_marketing_promotion_products_list" not in PROMOTION_TOOL_NAMES
+    assert "crm_marketing_promotion_attachments_list" not in PROMOTION_TOOL_NAMES
+
+
+def test_promotion_products_list_passes_inactive_fallback_rows_through():
+    # active=false / fallback rows must survive this layer untouched.
     raw = _list_payload(
         {"id": "row-1", "promotion": INACTIVE_ROW},
         {"id": "row-2", "promotion": ACTIVE_ROW},
@@ -63,4 +73,24 @@ def test_promotion_products_list_still_drops_inactive_promotion_rows():
         "crm_marketing_promotion_products_list", raw
     )
     data = json.loads(out)
-    assert [r["id"] for r in data["data"]] == ["row-2"]
+    assert [r["id"] for r in data["data"]] == ["row-1", "row-2"]
+
+
+def test_promotion_attachments_list_passes_inactive_fallback_rows_through():
+    raw = _list_payload(
+        {"id": "row-1", "promotion": INACTIVE_ROW},
+        {"id": "row-2", "promotion": ACTIVE_ROW},
+    )
+    out = _filter_active_promotion_records(
+        "crm_marketing_promotion_attachments_list", raw
+    )
+    data = json.loads(out)
+    assert [r["id"] for r in data["data"]] == ["row-1", "row-2"]
+
+
+def test_promotion_attachments_get_still_blocks_inactive():
+    raw = json.dumps({"id": "pa-1", "promotion": INACTIVE_ROW})
+    out = _filter_active_promotion_records(
+        "crm_marketing_promotion_attachments_get", raw
+    )
+    assert json.loads(out)["code"] == "PROMOTION_INACTIVE"

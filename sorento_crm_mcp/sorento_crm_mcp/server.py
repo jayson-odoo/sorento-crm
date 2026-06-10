@@ -90,11 +90,15 @@ TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
 PROMOTION_TOOL_NAMES: set[str] = {
     "crm_marketing_promotions_get",
     "crm_marketing_promotion_products_nested",
-    "crm_marketing_promotion_products_list",
-    "crm_marketing_promotion_attachments_list",
     "crm_marketing_promotion_attachments_get",
     "crm_marketing_promotion_attachments_by_promotion",
 }
+# NOTE: the flat *_list tools (promotion_products_list / promotion_attachments_list)
+# are intentionally NOT filtered here. The backend now owns active-first + inactive
+# fallback for them (active=True default for API-key callers, mirroring the
+# promotions list): stripping inactive rows in this layer would discard the
+# intentional fallback rows. Drill-down tools (get / *_nested / by_promotion) keep
+# the active-only block below.
 
 STOCK_TOOL_PREFIX = "crm_inventory_stock_"
 INVENTORY_TOOL_PREFIX = "crm_inventory_"
@@ -1154,7 +1158,9 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
             return inactive_msg
     elif spec.name in {"crm_marketing_promotion_products_list", "crm_marketing_promotion_attachments_list"}:
         # List endpoints may be used as broad search (e.g., by SKU text). Do not hard-block
-        # on promotion activity precheck here; inactive rows are filtered from response payload.
+        # on promotion activity precheck here; the backend applies active-first + inactive
+        # fallback (active=True default for API-key callers), so the payload already carries
+        # the right rows + fallback_used flag.
         pass
 
     if spec.name == _GRN_LIST_TOOL:

@@ -234,6 +234,16 @@ async def list_all_promotion_products(
     brand_id: Optional[str] = Query(None, description="Product brand UUID or brand_code/name."),
     item_type: Optional[str] = Query(None, description="Product item_type exact match."),
     status: Optional[str] = Query(None, description="Product status: active|inactive|all."),
+    active: Optional[bool] = Query(
+        None,
+        description=(
+            "Parent-promotion active filter (NOT product status — that's `status`). "
+            "Omit: full catalog for interactive callers; API-key/MCP callers default "
+            "to active-first. true: active-promotion lines (is_active and today within "
+            "start/end), falling back to inactive-promotion lines when a narrowing "
+            "filter yields zero matches. false: inactive-promotion lines only."
+        ),
+    ),
     price_min: Optional[float] = Query(None, description="Minimum Product.list_price (MYR)."),
     price_max: Optional[float] = Query(None, description="Maximum Product.list_price (MYR)."),
     length_min: Optional[float] = Query(None, description="Minimum dimensions_length in mm."),
@@ -352,6 +362,12 @@ async def list_all_promotion_products(
                 "empty": True,
             }
 
+        # MCP/API-key callers default to active-first + inactive fallback (parent
+        # promotion). Interactive (JWT) callers keep the full catalog unless they
+        # pass `active` explicitly — preserves the FE DataGrid's "show all" listing.
+        if active is None and is_api_key_caller:
+            active = True
+
         result = service.list_promotion_products(
             promotion_id=resolved_pid,
             promotion_ids=resolved_pids,
@@ -367,6 +383,7 @@ async def list_all_promotion_products(
             brand_id=brand_id,
             item_type=item_type,
             status=status,
+            active=active,
             price_min=filter_state["price_min"],
             price_max=filter_state["price_max"],
             length_min=filter_state["length_min"],
