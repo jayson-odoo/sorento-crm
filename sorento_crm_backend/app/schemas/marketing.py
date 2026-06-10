@@ -285,6 +285,10 @@ class PromotionProductResponse(BaseModel):
     promotion: Optional[PromotionSimple] = None
     promotion_attachments: list["PromotionAttachmentResponse"] = []
     display_order: int = 0  # Default for compatibility
+    # True when the PARENT promotion is not currently live: is_active off OR
+    # today outside [start_date, end_date]. Mirrors the promotions list so
+    # callers (n8n) can answer "found but expired" for fallback / historical rows.
+    is_expired: bool = False
 
     @field_validator("id", "promotion_id", "promotion_group_id", "product_id", mode="before")
     @classmethod
@@ -305,7 +309,7 @@ class PromotionProductResponse(BaseModel):
             for key in [
                 'id', 'promotion_id', 'promotion_group_id', 'product_id', 'discount_amount', 'discount_percent',
                 'dealer_discount_percent', 'dealer_cost', 'list_to_dealer_margin_amount',
-                'created_at', 'updated_at', 'promotion', 'promotion_attachments',
+                'created_at', 'updated_at', 'promotion', 'promotion_attachments', 'is_expired',
             ]:
                 if hasattr(obj, key):
                     value = getattr(obj, key)
@@ -452,7 +456,11 @@ class PromotionAttachmentResponse(PromotionAttachmentBase):
     updated_at: Optional[datetime] = None
     promotion: Optional[PromotionSimple] = None
     attachment: Optional[AttachmentSimple] = None
-    
+    # True when the PARENT promotion is not currently live: is_active off OR
+    # today outside [start_date, end_date]. Mirrors the promotions / promotion-
+    # products lists so callers (n8n) can answer "found but expired".
+    is_expired: bool = False
+
     @field_validator('id', 'promotion_id', 'attachment_id', 'created_by', mode='before')
     @classmethod
     def convert_uuid_to_string(cls, v):

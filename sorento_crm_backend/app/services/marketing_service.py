@@ -54,6 +54,47 @@ def _promotion_stored_boundary_date(dt: datetime | date) -> date:
     raise TypeError(f"Expected date or datetime, got {type(dt)}")
 
 
+def _promotion_active_clause(today: date):
+    """SQLAlchemy clause: parent Promotion is currently active.
+
+    Active = Promotion.is_active True AND (no date window at all OR today falls
+    within [start_date, end_date]). Mirrors the definition in
+    PromotionService.list_promotions so products/attachments active-first
+    fallback stays consistent with the promotions list.
+    """
+    no_window = and_(
+        Promotion.start_date.is_(None),
+        Promotion.end_date.is_(None),
+    )
+    within_window = and_(
+        Promotion.start_date <= today,
+        Promotion.end_date >= today,
+    )
+    return and_(
+        Promotion.is_active.is_(True),
+        or_(no_window, within_window),
+    )
+
+
+def _promotion_is_expired(promotion, today: date) -> bool:
+    """Python mirror of `_promotion_active_clause`: True when NOT currently live.
+
+    Live = is_active flag on AND (no date window at all OR today inside it).
+    Anything else (flag off, or today outside [start_date, end_date]) is expired,
+    so callers (n8n) can answer "found but expired" for fallback / historical rows.
+    Same definition the promotions list uses for its row-level `is_expired`.
+    """
+    if promotion is None:
+        return True
+    no_window = promotion.start_date is None and promotion.end_date is None
+    within_window = (
+        promotion.start_date is not None
+        and promotion.end_date is not None
+        and promotion.start_date <= today <= promotion.end_date
+    )
+    return not (bool(promotion.is_active) and (no_window or within_window))
+
+
 def _resolve_promotion_id_for_filter(db: Session, raw: Optional[str]) -> Optional[str]:
     """Map API promotion id/path segments to ``Promotion.id`` (UUID string).
 
@@ -489,18 +530,8 @@ class PromotionService:
                 attachments_by_promotion.get(promotion.id, []),
                 contact_access_codes,
             )
-            # Python mirror of active_clause: live = flag on AND (no window at
-            # all OR today inside it). Anything else is presented as expired so
-            # n8n can say "found but expired" for fallback / historical rows.
-            no_window_py = promotion.start_date is None and promotion.end_date is None
-            within_window_py = (
-                promotion.start_date is not None
-                and promotion.end_date is not None
-                and promotion.start_date <= today <= promotion.end_date
-            )
-            promotion.is_expired = not (
-                bool(promotion.is_active) and (no_window_py or within_window_py)
-            )
+            # Python mirror of active_clause — see `_promotion_is_expired`.
+            promotion.is_expired = _promotion_is_expired(promotion, today)
 
         payload = {
             "data": promotions,
@@ -860,6 +891,7 @@ class PromotionProductService:
         brand_id: Optional[str] = None,
         item_type: Optional[str] = None,
         status: Optional[str] = None,
+        active: Optional[bool] = None,
         price_min: Optional[float] = None,
         price_max: Optional[float] = None,
         length_min: Optional[float] = None,
@@ -879,6 +911,15 @@ class PromotionProductService:
         somewhere across Product.product_code, product_name, description, item_type, or
         Promotion.description. Structured filters (category_id, brand_id, dimensions, price,
         item_type, status) are AND-combined with the text query.
+
+        `active` gates on the PARENT promotion's active state (not Product.is_active —
+        that's `status`). active=None: no gate (full catalog — FE DataGrid default).
+        active=True: active-promotion lines first; if a narrowing filter is present and
+        zero match, fall back to inactive-promotion lines (`fallback_used=true`).
+        active=False: only inactive-promotion lines, no fallback. The MCP/API-key route
+        defaults the missing param to True so chatbot callers get active-first + fallback.
+        Active = Promotion.is_active and today within start/end (or no window) — same
+        definition as the promotions list.
         """
         from sqlalchemy.orm import joinedload
         from sqlalchemy import or_, and_
@@ -983,7 +1024,9 @@ class PromotionProductService:
             or any_dimension_min is not None
             or any_dimension_max is not None
         )
-        needs_promotion_join = bool(query) or contact_access_codes is not None
+        # Always join Promotion: the active-first gate filters on parent
+        # promotion state, so the join is needed unconditionally now.
+        needs_promotion_join = True
 
         if needs_product_join:
             q = q.join(Product, PromotionProduct.product_id == Product.id)
@@ -1051,19 +1094,66 @@ class PromotionProductService:
                     Promotion.description.ilike(like),
                 ))
 
+        # Active gate on parent promotion state.
+        #   active=None  -> no gate (full catalog; FE DataGrid default)
+        #   active=True  -> active promotions first; fall back to inactive when a
+        #                   narrowing filter is present and zero active match
+        #                   (fallback_used=true) — mirrors the promotions list.
+        #   active=False -> inactive-promotion lines only (no fallback)
+        # The MCP/API-key route defaults the missing param to True so chatbot
+        # callers get active-first + fallback; interactive callers keep "all".
+        narrowing_filter_present = bool(
+            query
+            or promotion_id
+            or promotion_ids
+            or product_id
+            or product_ids_filter
+            or category_uuids is not None
+            or brand_uuids is not None
+            or item_type
+            or (status and status != "all")
+            or price_min is not None
+            or price_max is not None
+            or length_min is not None
+            or length_max is not None
+            or width_min is not None
+            or width_max is not None
+            or height_min is not None
+            or height_max is not None
+            or any_dimension_min is not None
+            or any_dimension_max is not None
+            or contact_access_codes is not None
+        )
+        today = datetime.utcnow().date()
+        active_clause = _promotion_active_clause(today)
+        fallback_used = False
+        if active is None:
+            q_final = q
+            total = q_final.count()
+        elif active is False:
+            q_final = q.filter(~active_clause)
+            total = q_final.count()
+        else:
+            q_final = q.filter(active_clause)
+            total = q_final.count()
+            if total == 0 and narrowing_filter_present:
+                q_fallback = q.filter(~active_clause)
+                fb_total = q_fallback.count()
+                if fb_total > 0:
+                    q_final, total, fallback_used = q_fallback, fb_total, True
+
         # Sorting
         sort_map = {
             "created_at": PromotionProduct.created_at,
         }
         sort_column = sort_map.get(sort_field, PromotionProduct.created_at)
         if sort_dir == "desc":
-            q = q.order_by(sort_column.desc())
+            q_final = q_final.order_by(sort_column.desc())
         else:
-            q = q.order_by(sort_column.asc())
-        
-        total = q.count()
+            q_final = q_final.order_by(sort_column.asc())
+
         offset = (page - 1) * limit
-        products = q.offset(offset).limit(limit).all()
+        products = q_final.offset(offset).limit(limit).all()
 
         # Inline parent-promotion attachments per line so callers (esp. MCP
         # agents) don't need a follow-up tool call to fetch the promotion
@@ -1072,11 +1162,16 @@ class PromotionProductService:
         attachments_map = _load_attachments_by_promotion_ids(self.db, parent_pids)
         for line in products:
             line.promotion_attachments = attachments_map.get(line.promotion_id, [])
+            # Row-level expiry of the PARENT promotion, mirroring the promotions
+            # list — lets MCP/n8n say "found but expired" for fallback/historical
+            # lines instead of presenting them as live.
+            line.is_expired = _promotion_is_expired(line.promotion, today)
 
         payload = {
             "data": products,
             "pagination": {"total": total, "page": page, "limit": limit},
-            "empty": total == 0
+            "empty": total == 0,
+            "fallback_used": fallback_used,
         }
         if _entity_buckets is not None:
             payload["resolved_entities"] = _entity_buckets.as_echo()
@@ -1442,6 +1537,7 @@ class PromotionAttachmentService:
         entities: Optional[list[str]] = None,
         promotion_ids: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
+        active: Optional[bool] = None,
     ):
         """List promotion attachments with pagination and filtering.
 
@@ -1449,6 +1545,14 @@ class PromotionAttachmentService:
         whose underlying file's ``access_levels`` overlaps the contact's codes (and whose
         parent promotion's ``access_levels`` also overlaps). ``contact_access_codes=[]``
         returns nothing (contact has no assigned access types).
+
+        ``active`` gates on the parent promotion's active state. active=None: no gate
+        (full catalog — FE DataGrid default). active=True: attachments of active promotions
+        first; if a narrowing filter is present and zero match, fall back to attachments of
+        inactive promotions (``fallback_used=true``). active=False: only inactive-promotion
+        attachments, no fallback. The MCP/API-key route defaults the missing param to True
+        so chatbot callers get active-first + fallback. Active = Promotion.is_active and
+        today within start/end (or no window) — same definition as the promotions list.
         """
         from sqlalchemy.orm import joinedload
         from sqlalchemy import or_
@@ -1521,6 +1625,39 @@ class PromotionAttachmentService:
                 )
             )
         
+        # Active gate on parent promotion state (mirrors the promotions list).
+        #   active=None  -> no gate (full catalog; FE DataGrid default)
+        #   active=True  -> active promotions first; fall back to inactive when a
+        #                   narrowing filter is present and zero active match
+        #   active=False -> inactive-promotion attachments only (no fallback)
+        # Gate via `.promotion.has(...)` so we don't add a second Promotion join
+        # (the fallback_query block above already joins it).
+        narrowing_filter_present = bool(
+            fallback_query
+            or promotion_id
+            or attachment_id
+            or promotion_ids
+            or attachment_ids
+            or contact_access_codes is not None
+        )
+        today = datetime.utcnow().date()
+        active_has = PromotionAttachment.promotion.has(_promotion_active_clause(today))
+        fallback_used = False
+        if active is None:
+            q_final = q
+            total = q_final.count()
+        elif active is False:
+            q_final = q.filter(~active_has)
+            total = q_final.count()
+        else:
+            q_final = q.filter(active_has)
+            total = q_final.count()
+            if total == 0 and narrowing_filter_present:
+                q_fallback = q.filter(~active_has)
+                fb_total = q_fallback.count()
+                if fb_total > 0:
+                    q_final, total, fallback_used = q_fallback, fb_total, True
+
         # Sorting
         sort_map = {
             "created_at": PromotionAttachment.created_at,
@@ -1528,18 +1665,23 @@ class PromotionAttachmentService:
         }
         sort_column = sort_map.get(sort_field, PromotionAttachment.created_at)
         if sort_dir == "desc":
-            q = q.order_by(sort_column.desc())
+            q_final = q_final.order_by(sort_column.desc())
         else:
-            q = q.order_by(sort_column.asc())
-        
-        total = q.count()
+            q_final = q_final.order_by(sort_column.asc())
+
         offset = (page - 1) * limit
-        promotion_attachments = q.offset(offset).limit(limit).all()
+        promotion_attachments = q_final.offset(offset).limit(limit).all()
+
+        for pa in promotion_attachments:
+            # Row-level expiry of the parent promotion — mirrors the promotions /
+            # promotion-products lists so MCP/n8n can say "found but expired".
+            pa.is_expired = _promotion_is_expired(pa.promotion, today)
 
         payload = {
             "data": promotion_attachments,
             "pagination": PaginationResponse(total=total, page=page, limit=limit),
             "empty": total == 0,
+            "fallback_used": fallback_used,
         }
         if _entity_buckets is not None:
             payload["resolved_entities"] = _entity_buckets.as_echo()

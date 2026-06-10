@@ -47,6 +47,16 @@ async def get_promotion_attachments(
         description="Free-text search across promotion header, product code/name, promotion group name, and attachment metadata.",
     ),
     attachment_id: Optional[str] = Query(None),
+    active: Optional[bool] = Query(
+        None,
+        description=(
+            "Parent-promotion active filter. Omit: full catalog for interactive "
+            "callers; API-key/MCP callers default to active-first. true: attachments "
+            "of active promotions (is_active and today within start/end), falling back "
+            "to inactive-promotion attachments when a narrowing filter yields zero "
+            "matches. false: inactive-promotion attachments only."
+        ),
+    ),
     access_levels: Optional[list[str]] = Query(
         None,
         description=(
@@ -90,6 +100,12 @@ async def get_promotion_attachments(
                 "empty": True,
             }
 
+        # MCP/API-key callers default to active-first + inactive fallback (parent
+        # promotion). Interactive (JWT) callers keep the full catalog unless they
+        # pass `active` explicitly — preserves the FE DataGrid's "show all" listing.
+        if active is None and is_api_key_caller:
+            active = True
+
         service = PromotionAttachmentService(db)
         from app.services.entity_filter_helpers import normalize_entities_query_param
         result = service.list_promotion_attachments(
@@ -104,6 +120,7 @@ async def get_promotion_attachments(
             query=query,
             contact_access_codes=contact_codes,
             entities=normalize_entities_query_param(entities),
+            active=active,
         )
         result["data"] = [_promotion_attachment_to_response(pa) for pa in result["data"]]
         return result

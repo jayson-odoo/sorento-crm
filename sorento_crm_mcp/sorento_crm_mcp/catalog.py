@@ -169,21 +169,29 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_marketing_promotion_products_list",
         (
             "Promotion product lines (paginated). Each row carries the parent promotion's "
-            "`promotion_attachments` inline.\n\n"
+            "`promotion_attachments` inline, plus `is_expired` — true when the parent promotion "
+            "is NOT currently live (is_active off OR today outside its start/end window). When "
+            "is_expired is true, tell the user the line was FOUND but its promotion is EXPIRED; "
+            "never present an is_expired row as a live promotion.\n\n"
             "REQUIRED — at least ONE narrowing filter or the tool returns an empty page:\n"
             "  • `promotion_ids` (canonical promotion UUIDs)\n"
             "  • `product_ids` (canonical product UUIDs)\n\n"
             "STRUCTURED FILTERS: PRICE price_min/max (MYR); DIMENSIONS (mm) length_min/max, width_min/max, "
             "height_min/max; axis-agnostic any_dimension_min/max; item_type; status=active|inactive|all. "
             "EXACT vs FUZZY: bare number is EXACT (min == max == value); hedge words apply ±5 mm. "
-            "ACCESS LEVELS: `access_levels` filters by parent promotion access overlap."
+            "ACCESS LEVELS: `access_levels` filters by parent promotion access overlap.\n\n"
+            "PARENT-PROMOTION ACTIVITY (`active`, NOT product status): default returns lines whose "
+            "promotion is currently active, falling back to inactive-promotion lines (fallback_used=true) "
+            "when a narrowing filter yields zero active matches — same active-first behavior as "
+            "crm_marketing_promotions_list. Pass active=false for inactive / expired / historical "
+            "promotion lines only."
         ),
         "/api/v1/marketing/promotion-products",
         (),
         (
             "page", "limit", "sort", "dir",
             "promotion_ids", "product_ids",
-            "item_type", "status",
+            "item_type", "status", "active",
             "price_min", "price_max",
             "length_min", "length_max",
             "width_min", "width_max",
@@ -198,17 +206,24 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_marketing_promotion_attachments_list",
         (
-            "List / filter promotion-attachment links (BROCHURE / FLYER documents).\n\n"
+            "List / filter promotion-attachment links (BROCHURE / FLYER documents). Each row carries "
+            "`is_expired` — true when the parent promotion is NOT currently live (is_active off OR today "
+            "outside its start/end window). When is_expired is true, tell the user the document was FOUND but "
+            "its promotion is EXPIRED; never present an is_expired row as a live promotion.\n\n"
             "REQUIRED — at least ONE narrowing filter or the tool returns an empty page:\n"
             "  • `promotion_ids` (canonical promotion UUIDs)\n"
             "  • `attachment_ids` (canonical attachment UUIDs)\n\n"
             "ACCESS LEVELS: `access_levels` filters by parent promotion access overlap. Pass a single name "
             "(e.g. \"Sorento Dealer\") or a JSON array. Phrases like `sorento dealer`, `mocha office`, "
-            "`end user` are `access_levels` ONLY — never `*_ids` values."
+            "`end user` are `access_levels` ONLY — never `*_ids` values.\n\n"
+            "PARENT-PROMOTION ACTIVITY (`active`): default returns attachments whose promotion is currently "
+            "active, falling back to inactive-promotion attachments (fallback_used=true) when a narrowing "
+            "filter yields zero active matches — same active-first behavior as crm_marketing_promotions_list. "
+            "Pass active=false for inactive / expired / historical promotion attachments only."
         ),
         "/api/v1/marketing/promotion-attachments",
         (),
-        ("page", "limit", "sort", "dir", "promotion_ids", "attachment_ids", "access_levels"),
+        ("page", "limit", "sort", "dir", "promotion_ids", "attachment_ids", "access_levels", "active"),
         domain="promotions",
         related_tools=("crm_marketing_promotions_list",),
         escalation_team="sales",
@@ -360,11 +375,14 @@ CATALOG: tuple[ToolSpec, ...] = (
             "warehouse_allocation_summary (per warehouse: warehouse_code, warehouse_name, allocated_quantity); "
             "per-shipment breakdown (shipment_number, container, ETA, batch_number, remaining qty, packing-list "
             "attachment, warehouse_allocations); nearest_estimated_arrival_date. Does NOT expose received "
-            "quantities, SPO numbers, or internal IDs. FILTER BY UUID: `product_ids` (canonical product UUIDs)."
+            "quantities, SPO numbers, or internal IDs. FILTER BY UUID: `product_ids` (canonical product UUIDs).\n\n"
+            "OPTIONAL ETA WINDOW: `eta_from` / `eta_to` (YYYY-MM-DD, inclusive) narrow to shipments arriving "
+            "within the window — e.g. 'is SKU X arriving before month end?'. Applied on top of the product "
+            "filter (a product hint is still required); never a standalone filter."
         ),
         "/api/v1/incoming-stock/by-product",
         (),
-        ("product_ids", "limit"),
+        ("product_ids", "eta_from", "eta_to", "limit"),
         domain="incoming_stock",
         escalation_team="warehouse",
     ),
