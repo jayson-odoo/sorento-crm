@@ -1530,6 +1530,11 @@ class ProductAttachmentService:
         q = self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
+        ).filter(
+            # Exclude trashed (soft-deleted) attachments — mirrors
+            # get_product_attachments_by_product. Without this, "Move to Trash"d
+            # files keep showing in product-attachment listings.
+            ProductAttachment.attachment.has(Attachment.is_deleted == False),
         )
 
         if entity_buckets is not None and entity_buckets.product_codes:

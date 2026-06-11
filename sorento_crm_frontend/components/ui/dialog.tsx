@@ -118,11 +118,19 @@ function DialogContent({
     // *opened* this dialog (dropdown menu / popover / select / context menu).
     // Those surfaces are unmounting during the same tick the dialog mounts;
     // their event would otherwise be misread as an outside click.
+    //
+    // Also ignore interactions that land inside ANOTHER dialog stacked above
+    // this one. Nested dialogs are portaled as React siblings (not DOM/React
+    // descendants), so non-modal Radix reads any click in the child dialog as
+    // "outside" the parent and would dismiss the parent — e.g. clicking Save in
+    // a child "Change attachment type" dialog closed the whole detail modal.
+    // Closing a stacked dialog must be explicit, never a side effect of the one
+    // beneath it.
     if (
       target &&
       target.closest &&
       target.closest(
-        '[data-radix-popper-content-wrapper], [data-radix-menu-content], [data-radix-popover-content], [data-radix-select-content], [data-radix-context-menu-content], [data-slot="dropdown-menu-content"], [data-slot="popover-content"], [data-slot="select-content"], [role="menu"], [role="menuitem"], [role="listbox"], [role="option"]',
+        '[data-radix-popper-content-wrapper], [data-radix-menu-content], [data-radix-popover-content], [data-radix-select-content], [data-radix-context-menu-content], [data-slot="dropdown-menu-content"], [data-slot="popover-content"], [data-slot="select-content"], [data-slot="dialog-content"], [data-slot="alert-dialog-content"], [role="menu"], [role="menuitem"], [role="listbox"], [role="option"], [role="dialog"], [role="alertdialog"]',
       )
     ) {
       event.preventDefault();
