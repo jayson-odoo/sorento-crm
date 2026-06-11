@@ -877,13 +877,11 @@ class ComplaintService:
                 str(update_data["technical_team_response"])
             )
 
-        if "technical_team_response" in update_data:
-            cur_status = (getattr(complaint, "status", None) or "").strip().lower()
-            # Only move to 'updated' while still in the response stage; never
-            # regress a decided/terminal complaint (approved/rejected/
-            # processed_by_cs/closed) by editing its response text.
-            if cur_status in self._RESPONSE_STAGE_STATUSES and cur_status != "responded":
-                update_data["status"] = "updated"
+        # NOTE: a plain save must NOT auto-transition the status. Editing fields
+        # (incl. technical_team_response) keeps whatever state the complaint is
+        # in; status only changes when the caller explicitly sends `status`, or
+        # via the dedicated reply action (update_complaint_and_reply →
+        # 'responded'). The old auto-'updated' flip was unwanted.
 
         for key, value in update_data.items():
             setattr(complaint, key, value)
