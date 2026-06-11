@@ -262,7 +262,42 @@ class RespondClient:
         with httpx.Client(timeout=15) as client:
             response = client.get(url, headers=self._headers(), params=params)
             response.raise_for_status()
-            return response.json() if response.content else {"items": [], "pagination": {}}
+            payload = response.json() if response.content else {"items": [], "pagination": {}}
+        return self._fill_template_message_text(payload)
+
+    @staticmethod
+    def _fill_template_message_text(payload: dict) -> dict:
+        """Backfill `message.text` for whatsapp_template items.
+
+        Respond.io returns template messages with the definition + positional
+        params but no flat `text`, so the chat panel rendered "(no text)".
+        Render the body in place (falling back to the template name) so every
+        consumer reading `message.text` shows the sent content.
+        """
+        if not isinstance(payload, dict):
+            return payload
+        items = payload.get("items")
+        if not isinstance(items, list):
+            items = payload.get("data") if isinstance(payload.get("data"), list) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            msg = item.get("message")
+            if not isinstance(msg, dict):
+                continue
+            if (msg.get("type") or "").lower() != "whatsapp_template":
+                continue
+            if (msg.get("text") or "").strip():
+                continue
+            from app.services.activities_service import _render_whatsapp_template_body
+
+            rendered = _render_whatsapp_template_body(msg)
+            if not rendered:
+                name = ((msg.get("template") or {}).get("name") or "").strip()
+                rendered = f"Template: {name}" if name else None
+            if rendered:
+                msg["text"] = rendered
+        return payload
 
     def get_message(self, identifier: str, message_id: int | str) -> dict:
         """
