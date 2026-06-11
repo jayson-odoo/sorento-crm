@@ -1347,6 +1347,9 @@ function ComplaintLinesTable({
                     onChange={(e) => updateRow(index, { quantity: e.target.value })}
                     placeholder="Qty"
                     disabled={disabled}
+                    // min-width on the input (not the <th>, which table
+                    // auto-layout ignores) keeps room for ≥4 digits on mobile.
+                    className="min-w-[72px]"
                   />
                 </td>
                 <td className="px-2 py-2">
