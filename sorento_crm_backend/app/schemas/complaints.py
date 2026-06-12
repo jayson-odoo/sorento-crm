@@ -216,6 +216,7 @@ class ComplaintResponse(ComplaintBase):
     form_type: Optional[str] = None
     view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
+    print_count: Optional[int] = None
     status: Optional[str] = None
     last_responded_by: Optional[str] = None
     last_responded_by_name: Optional[str] = None

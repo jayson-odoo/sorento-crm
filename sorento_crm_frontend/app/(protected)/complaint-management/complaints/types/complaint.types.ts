@@ -57,6 +57,7 @@ export interface Complaint {
   root_cause_notified_at?: string | null;
   resolution_notified_at?: string | null;
   required_on_site_support?: boolean | null;
+  print_count?: number | null;
   product_lines?: ComplaintProductLine[];
   attachments: ComplaintAttachment[];
 }

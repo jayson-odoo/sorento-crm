@@ -12,6 +12,8 @@ with a clear message instead.
 """
 import base64
 import logging
+import mimetypes
+import os
 from datetime import date, datetime
 from html import escape
 from typing import Optional
@@ -24,6 +26,26 @@ from app.services.storage_router import extract_key, get_backend, normalize_prov
 logger = logging.getLogger(__name__)
 
 _IMAGE_MIME_PREFIX = "image/"
+# Fallback when the stored mime_type is missing/generic (e.g. WhatsApp .jpeg
+# uploads land as application/octet-stream or NULL). Extension wins so any photo
+# type renders in the PHOTOS section instead of being dumped under OTHER.
+_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic", ".heif", ".tif", ".tiff"}
+
+
+def _image_mime(att) -> Optional[str]:
+    """Return an image/* mime for an attachment, or None if not an image.
+
+    Trusts a stored image/* mime first; otherwise infers from the filename
+    extension so photos with missing/generic mime_type still count as images.
+    """
+    mime = (getattr(att, "mime_type", None) or "").lower()
+    if mime.startswith(_IMAGE_MIME_PREFIX):
+        return mime
+    name = getattr(att, "original_filename", None) or getattr(att, "file_path", None) or ""
+    ext = os.path.splitext(str(name))[1].lower()
+    if ext in _IMAGE_EXTS:
+        return mimetypes.types_map.get(ext) or f"image/{ext.lstrip('.')}"
+    return None
 
 
 class PDFRenderingUnavailable(RuntimeError):
@@ -70,8 +92,8 @@ class ComplaintPDFService:
             att = getattr(link, "attachment", None)
             if att is None:
                 continue
-            mime = (getattr(att, "mime_type", None) or "").lower()
-            if not mime.startswith(_IMAGE_MIME_PREFIX):
+            mime = _image_mime(att)
+            if mime is None:
                 continue
             try:
                 provider = normalize_provider(getattr(att, "storage_provider", None))
@@ -110,8 +132,7 @@ class ComplaintPDFService:
             att = getattr(link, "attachment", None)
             if att is None:
                 continue
-            mime = (getattr(att, "mime_type", None) or "").lower()
-            if not mime.startswith(_IMAGE_MIME_PREFIX):
+            if _image_mime(att) is None:
                 names.append(getattr(att, "original_filename", None) or "attachment")
         return names
 

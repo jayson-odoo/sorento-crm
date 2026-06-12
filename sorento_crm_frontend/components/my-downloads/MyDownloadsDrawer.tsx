@@ -8,9 +8,8 @@
  * Download button that resolves a fresh signed URL on click and opens it.
  */
 
-import { useEffect, useState } from 'react';
-import { Download, FileText, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { useEffect } from 'react';
+import { Download } from 'lucide-react';
 
 import {
   Sheet,
@@ -20,83 +19,9 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Button } from '@/components/ui/button';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
-import { fetchDownloadUrl, type MyDownload } from '@/services/myDownloadsService';
+import { DownloadRow } from './DownloadRow';
 import { useMyDownloads } from './MyDownloadsContext';
-
-const KIND_LABEL: Record<string, string> = {
-  complaint_pdf: 'Complaint PDF',
-};
-
-function StatusBadge({ status }: { status: MyDownload['status'] }) {
-  if (status === 'ready') {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
-        <CheckCircle2 className="size-3.5" /> Ready
-      </span>
-    );
-  }
-  if (status === 'failed') {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-medium text-destructive">
-        <AlertCircle className="size-3.5" /> Failed
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
-      <Loader2 className="size-3.5 animate-spin" />
-      {status === 'pending' ? 'Queued' : 'Preparing'}
-    </span>
-  );
-}
-
-function DownloadRow({ row }: { row: MyDownload }) {
-  const [busy, setBusy] = useState(false);
-
-  const onDownload = async () => {
-    setBusy(true);
-    try {
-      const { url } = await fetchDownloadUrl(row.id);
-      window.open(url, '_blank', 'noopener,noreferrer');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Could not open download');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="flex items-start gap-3 border-b border-border px-4 py-3">
-      <FileText className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium" title={row.filename ?? undefined}>
-          {row.filename ?? KIND_LABEL[row.kind] ?? row.kind}
-        </p>
-        <p className="text-xs text-muted-foreground">
-          {KIND_LABEL[row.kind] ?? row.kind}
-          {row.created_at ? ` · ${formatDateTimeInMalaysia(new Date(row.created_at))}` : ''}
-        </p>
-        <div className="mt-1 flex min-w-0 items-center gap-3">
-          <StatusBadge status={row.status} />
-          {row.status === 'failed' && row.error && (
-            <span className="min-w-0 truncate text-xs text-destructive" title={row.error}>
-              {row.error}
-            </span>
-          )}
-        </div>
-      </div>
-      {row.status === 'ready' && (
-        <Button size="sm" variant="outline" disabled={busy} onClick={onDownload} className="shrink-0">
-          <Download className="size-4 mr-1" />
-          {busy ? '…' : 'Download'}
-        </Button>
-      )}
-    </div>
-  );
-}
 
 export function MyDownloadsDrawer() {
   const { isOpen, setOpen, downloads, isLoading, refetch } = useMyDownloads();

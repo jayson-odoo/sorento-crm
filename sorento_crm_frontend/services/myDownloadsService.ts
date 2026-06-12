@@ -37,6 +37,24 @@ export async function fetchMyDownloads(limit = 50): Promise<MyDownloadsResponse>
   return (await res.json()) as MyDownloadsResponse;
 }
 
+/** The current user's downloads tied to one source entity (e.g. a complaint). */
+export async function fetchDownloadsForEntity(
+  sourceEntityType: string,
+  sourceEntityId: string,
+  limit = 50,
+): Promise<MyDownloadsResponse> {
+  const params = new URLSearchParams({
+    source_entity_type: sourceEntityType,
+    source_entity_id: sourceEntityId,
+    limit: String(limit),
+  });
+  const res = await apiFetch(`/api/v1/downloads?${params.toString()}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch downloads (${res.status})`);
+  }
+  return (await res.json()) as MyDownloadsResponse;
+}
+
 export async function fetchDownloadUrl(
   id: string,
 ): Promise<{ url: string; filename?: string | null }> {

@@ -282,10 +282,12 @@ class ComplaintService:
         self,
         complaint: Complaint,
         links_override: Optional[list] = None,
+        print_count: Optional[int] = None,
     ) -> dict:
         """Serialize complaint with attachments from generic entity_attachment_links table."""
         data = {attr.key: getattr(complaint, attr.key) for attr in inspect(complaint).mapper.column_attrs}
         data["system_id"] = str(complaint.id)
+        data["print_count"] = int(print_count or 0)
         data["form_type"] = "complaint"
         data["view_url"] = self._build_complaint_view_url(str(complaint.id))
         links = links_override if links_override is not None else self.entity_attachment_service.list_links("complaint", str(complaint.id))
@@ -325,6 +327,7 @@ class ComplaintService:
         sort_dir: str = "asc",
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
+        viewer_user_id: Optional[str] = None,
     ):
         """List complaints. assigned_to filters by respond_user_id (assignee). status filters by complaint status.
 
@@ -397,12 +400,21 @@ class ComplaintService:
         total = q.count()
         offset = (page - 1) * limit
         complaints = q.offset(offset).limit(limit).all()
+        complaint_ids = [str(c.id) for c in complaints]
         links_map = self.entity_attachment_service.list_links_for_entities(
             "complaint",
-            [str(c.id) for c in complaints],
+            complaint_ids,
         )
+        from app.services.download_service import DownloadService
+        print_map = DownloadService(self.db).count_map_for_user(
+            viewer_user_id, "complaint", complaint_ids
+        ) if viewer_user_id else {}
         complaint_data = [
-            self._serialize_complaint(complaint, links_override=links_map.get(str(complaint.id), []))
+            self._serialize_complaint(
+                complaint,
+                links_override=links_map.get(str(complaint.id), []),
+                print_count=print_map.get(str(complaint.id), 0),
+            )
             for complaint in complaints
         ]
         

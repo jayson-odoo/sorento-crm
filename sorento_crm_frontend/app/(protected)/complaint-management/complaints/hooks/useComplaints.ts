@@ -175,8 +175,10 @@ export function useExportComplaintPdf() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => exportComplaintPdf(id),
-    onSuccess: () => {
+    onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
+      queryClient.invalidateQueries({ queryKey: ['entity-downloads', 'complaint', id] });
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
       toast.success('Preparing PDF… it will appear in My Downloads.');
     },
     onError: (error: Error) =>

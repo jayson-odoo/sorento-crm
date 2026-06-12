@@ -1,7 +1,8 @@
 """Service for user downloads (async-generated exports surfaced in My Downloads)."""
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional, Sequence
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.download import DownloadStatus, UserDownload
@@ -55,6 +56,51 @@ class DownloadService:
             .limit(limit)
             .all()
         )
+
+    def list_for_user_by_source(
+        self,
+        user_id: str,
+        source_entity_type: str,
+        source_entity_id: str,
+        limit: int = 50,
+    ) -> List[UserDownload]:
+        """The current user's downloads tied to one source entity (newest first)."""
+        return (
+            self.db.query(UserDownload)
+            .filter(
+                UserDownload.user_id == str(user_id),
+                UserDownload.source_entity_type == source_entity_type,
+                UserDownload.source_entity_id == str(source_entity_id),
+            )
+            .order_by(UserDownload.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def count_map_for_user(
+        self,
+        user_id: str,
+        source_entity_type: str,
+        source_entity_ids: Sequence[str],
+    ) -> Dict[str, int]:
+        """{source_entity_id: count} of the user's downloads for the given ids.
+
+        One grouped query for the whole page — avoids an N+1 count per row.
+        """
+        ids = [str(i) for i in source_entity_ids if i is not None]
+        if not user_id or not ids:
+            return {}
+        rows = (
+            self.db.query(UserDownload.source_entity_id, func.count(UserDownload.id))
+            .filter(
+                UserDownload.user_id == str(user_id),
+                UserDownload.source_entity_type == source_entity_type,
+                UserDownload.source_entity_id.in_(ids),
+            )
+            .group_by(UserDownload.source_entity_id)
+            .all()
+        )
+        return {str(k): int(v) for k, v in rows}
 
     def mark_processing(self, download_id: str) -> Optional[UserDownload]:
         row = self.get(download_id)

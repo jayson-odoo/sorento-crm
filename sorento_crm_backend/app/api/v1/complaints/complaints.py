@@ -221,6 +221,7 @@ async def get_complaints(
             sort_dir=dir or "asc",
             contact_id=None,
             space_id=None,
+            viewer_user_id=(current_user or {}).get("id"),
         )
         return result
     except HTTPException:

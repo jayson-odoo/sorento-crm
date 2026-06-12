@@ -55,6 +55,7 @@ import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSecti
 import ComplaintConversationPanel from './ComplaintConversationPanel';
 import AuditTrail from '@/components/audit/AuditTrail';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 
 interface ComplaintDetailProps {
@@ -265,6 +266,12 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             <FileDown className="size-4 mr-1" />
             {exportPdfMutation.isPending ? 'Preparing…' : 'Download PDF'}
           </Button>
+          <EntityDownloadsButton
+            entityType="complaint"
+            entityId={complaintId}
+            label={complaint.complaint_number ?? undefined}
+            className="h-8 border border-border"
+          />
           <DetailActionsMenu ariaLabel="Complaint actions">
             {complaint.status === 'approved' && canClose && (
               <DropdownMenuItem

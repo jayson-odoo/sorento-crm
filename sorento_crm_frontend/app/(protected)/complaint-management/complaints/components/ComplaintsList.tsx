@@ -37,6 +37,7 @@ import { useComplaints } from '../hooks/useComplaints';
 import { complaintStatusPillClass, complaintStatusLabel } from '@/lib/complaint-status';
 import type { Complaint } from '../types/complaint.types';
 import ComplaintBulkDeleteDialog from './ComplaintBulkDeleteDialog';
+import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 
 export default function ComplaintsList() {
@@ -258,6 +259,22 @@ export default function ComplaintsList() {
         },
         size: 100,
         meta: { skeleton: <Skeleton className="h-4 w-16" /> },
+      },
+      {
+        accessorKey: 'print_count',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Print Count" column={column} />
+        ),
+        cell: ({ row }) => (
+          <EntityDownloadsButton
+            entityType="complaint"
+            entityId={row.original.id}
+            label={row.original.complaint_number ?? undefined}
+            count={row.original.print_count ?? 0}
+          />
+        ),
+        size: 110,
+        meta: { skeleton: <Skeleton className="h-4 w-12" /> },
       },
       {
         accessorKey: 'actions',

@@ -24,11 +24,20 @@ router = APIRouter()
 @router.get("", response_model=DownloadListResponse)
 def list_my_downloads(
     limit: int = 50,
+    source_entity_type: str | None = None,
+    source_entity_id: str | None = None,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> DownloadListResponse:
     user_id = str(current_user["id"])
-    rows = DownloadService(db).list_for_user(user_id, limit=max(1, min(limit, 200)))
+    capped = max(1, min(limit, 200))
+    svc = DownloadService(db)
+    if source_entity_type and source_entity_id:
+        rows = svc.list_for_user_by_source(
+            user_id, source_entity_type, source_entity_id, limit=capped
+        )
+    else:
+        rows = svc.list_for_user(user_id, limit=capped)
     return DownloadListResponse(downloads=[DownloadResponse.model_validate(r) for r in rows])
 
 
