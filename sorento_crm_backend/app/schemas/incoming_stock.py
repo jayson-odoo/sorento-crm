@@ -54,9 +54,7 @@ class IncomingStockForProductResponse(BaseModel):
     product_code: str
     product_name: Optional[str] = None
     is_discontinued: bool = False
-    total_remaining_incoming_quantity: int
     nearest_estimated_arrival_date: Optional[date] = None
-    warehouse_allocation_summary: List[WarehouseAllocation] = []
     shipments: List[IncomingShipmentForProduct] = []
 
 

@@ -262,23 +262,16 @@ class IncomingStockService:
                 {
                     "product_code": r.product_code,
                     "product_name": r.product_name,
-                    "total_remaining_incoming_quantity": 0,
                     "nearest_estimated_arrival_date": None,
-                    "warehouse_allocation_summary": defaultdict(lambda: {"qty": 0, "name": None}),
                     "shipments": [],
                 },
             )
-            bucket["total_remaining_incoming_quantity"] += int(r.remaining_incoming or 0)
             if r.estimated_arrival_date is not None:
                 current = bucket["nearest_estimated_arrival_date"]
                 if current is None or r.estimated_arrival_date < current:
                     bucket["nearest_estimated_arrival_date"] = r.estimated_arrival_date
 
             ship_allocations = warehouse_map.get((str(r.shipment_id), pkey), [])
-            for alloc in ship_allocations:
-                agg = bucket["warehouse_allocation_summary"][alloc["warehouse_code"]]
-                agg["qty"] += int(alloc["allocated_quantity"] or 0)
-                agg["name"] = alloc["warehouse_name"]
 
             bucket["shipments"].append(
                 {
@@ -292,18 +285,7 @@ class IncomingStockService:
                 }
             )
 
-        data: list[dict[str, Any]] = []
-        for bucket in grouped.values():
-            summary = [
-                {
-                    "warehouse_code": code,
-                    "warehouse_name": agg["name"],
-                    "allocated_quantity": int(agg["qty"]),
-                }
-                for code, agg in sorted(bucket["warehouse_allocation_summary"].items())
-            ]
-            bucket["warehouse_allocation_summary"] = summary
-            data.append(bucket)
+        data: list[dict[str, Any]] = list(grouped.values())
 
         data.sort(key=lambda d: (d["product_code"] or "").lower())
         return {

@@ -875,6 +875,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "asks for an intersection. "
             "Date params accept flexible formats: YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, YYYY/MM/DD, "
             "ISO datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY' (e.g. 'February 2026'). "
+            "Each matched product line carries product_code / product_name, the ordered quantity, "
+            "and the warehouse it ships from (warehouse_code / warehouse_name). "
             "This is about OUTGOING orders sold to customers — it is NOT about incoming stock, "
             "inbound shipments, SPO, PO, GRN, or procurement. For 'any incoming for product X' / "
             "'when is product X arriving' use crm_incoming_stock_by_product. For a single order "
@@ -912,13 +914,14 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="ONE-SHOT answer for 'any incoming for product X / SKU X' \u2014 returns pending quantity, warehouse allocations, per-shipment breakdown, ETA, and packing-list attachment in a single call.",
         description=(
             "ONE-SHOT tool for ALL product-centric incoming-stock questions. A single call returns "
-            "everything the user needs: (1) total_remaining_incoming_quantity computed as "
-            "quantity_shipped - quantity_received across still-incoming lines (fully-received lines "
-            "are auto-filtered out); (2) warehouse_allocation_summary aggregated per warehouse from "
-            "SPO allocations \u2014 each entry has warehouse_code, warehouse_name, and allocated_quantity; "
-            "(3) per-shipment breakdown with shipment_number, shipping_container_number, ETA, "
-            "batch_number, remaining_incoming_quantity, packing-list attachment, and that "
-            "shipment's warehouse_allocations; (4) nearest estimated_arrival_date. Do NOT also "
+            "everything the user needs: (1) a per-shipment breakdown \u2014 each entry has "
+            "shipment_number, shipping_container_number, ETA, batch_number, remaining_incoming_quantity "
+            "(computed as quantity_shipped - quantity_received; fully-received lines are auto-filtered "
+            "out), packing-list attachment, and that shipment's warehouse_allocations (warehouse_code, "
+            "warehouse_name, allocated_quantity from SPO allocations); (2) nearest "
+            "estimated_arrival_date. Quantities and warehouse allocations are reported line-by-line "
+            "per shipment \u2014 NOT pre-aggregated into a product total or a combined warehouse summary; "
+            "sum across shipments yourself if the user asks for a grand total. Do NOT also "
             "call crm_incoming_stock_shipments, crm_incoming_stock_shipment_products, or "
             "crm_incoming_stock_shipment_attachment when answering a product-incoming question "
             "\u2014 this tool already includes all of their data. Never "
@@ -1120,7 +1123,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
             "List application forms with optional query, language, and status filters. "
             "Free-text query matches code, name, and purpose. "
-            "Returns forms that can be attached via their attachment_id."
+            "Returns ONLY the form name and its attachment_id (no code, purpose, type, language, "
+            "version, or active flag) — the name to refer to it, the attachment_id to deliver the file."
         ),
         typical_user_questions=(
             "What forms do you have?",

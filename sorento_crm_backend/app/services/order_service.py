@@ -607,6 +607,16 @@ class OrderService:
         filters = []
         product_match_filters: list = []
 
+        # Drive matched_products enrichment off the typed UUID filter too —
+        # otherwise rows come back with matched_products=[] when the caller
+        # narrows by `product_ids` (the MCP/typed path) instead of the legacy
+        # `product_id` token resolver below. The order-level filter is applied
+        # separately above via _product_uuid_filter on `q`.
+        if _product_uuid_filter:
+            product_match_filters.append(
+                OrderLine.product_id.in_(_product_uuid_filter)
+            )
+
         # Normalize `product_id` into a list of raw tokens. Accepts a single
         # UUID/SKU, a comma-separated string ("A,B"), or a Python list (n8n
         # repeated ?product_id=A&product_id=B). Each token is resolved through
@@ -830,19 +840,30 @@ class OrderService:
                     Product.id,
                     Product.product_code,
                     Product.product_name,
+                    OrderLine.quantity,
+                    Warehouse.warehouse_code,
+                    Warehouse.warehouse_name,
                 )
                 .join(Product, Product.id == OrderLine.product_id)
+                .outerjoin(Warehouse, Warehouse.id == OrderLine.warehouse_id)
                 .filter(OrderLine.order_id.in_(order_ids))
                 .filter(and_(*product_match_filters))
             )
-            seen: set[tuple[str, str]] = set()
-            for oid, pid, pcode, pname in mq.distinct().all():
-                key = (str(oid), str(pid))
+            seen: set[tuple[str, str, str]] = set()
+            for oid, pid, pcode, pname, qty, wcode, wname in mq.distinct().all():
+                key = (str(oid), str(pid), str(wcode))
                 if key in seen:
                     continue
                 seen.add(key)
                 matched_by_order.setdefault(str(oid), []).append(
-                    {"id": str(pid), "product_code": pcode, "product_name": pname}
+                    {
+                        "id": str(pid),
+                        "product_code": pcode,
+                        "product_name": pname,
+                        "quantity": float(qty) if qty is not None else None,
+                        "warehouse_code": wcode,
+                        "warehouse_name": wname,
+                    }
                 )
         for o in orders:
             setattr(o, "matched_products", matched_by_order.get(str(o.id), []))

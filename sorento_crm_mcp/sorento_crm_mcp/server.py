@@ -722,6 +722,13 @@ _PROMOTIONS_LIST_TOOL = "crm_marketing_promotions_list"
 _PROMOTIONS_LIST_DROP_KEYS = frozenset({"id", "created_by"})
 _PORTAL_LINK_TOOL = "crm_portal_link_get"
 
+# Forms-list rows: the agent only needs the form NAME (to name it back to the
+# user) plus `attachment_id` (to deliver the downloadable file). code, purpose,
+# form_type, language, version, is_active, access_levels are internal noise the
+# assistant should never surface. Whitelist projection — keep ONLY these keys.
+_FORMS_LIST_TOOL = "crm_forms_management_forms_list"
+_FORMS_LIST_KEEP_KEYS = ("name", "attachment_id")
+
 # Tools whose row payload carries an inline attachment(s) blob. Browse-mode
 # calls (no UUID narrowing — agent listing the whole catalog) strip those
 # inline blobs to keep the response small and to stop the agent from echoing
@@ -736,11 +743,9 @@ _BROWSE_ATTACHMENT_STRIP_RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...
         ("promotion_ids", "product_ids"),
         ("attachments",),
     ),
-    (
-        "crm_forms_management_forms_list",
-        ("form_ids",),
-        ("attachment", "attachments"),
-    ),
+    # Note: crm_forms_management_forms_list is handled by the stronger
+    # whitelist projection _slim_forms_list_rows (name + attachment_id only),
+    # which already drops the inline attachment blob in every mode.
 )
 
 
@@ -765,6 +770,22 @@ def _strip_inline_attachment_keys(data: Any, drop_keys: tuple[str, ...]) -> Any:
             cleaned.append(row)
             continue
         cleaned.append({k: v for k, v in row.items() if k not in drop_keys})
+    return {**data, "data": cleaned}
+
+
+def _slim_forms_list_rows(data: Any) -> Any:
+    """Project each forms-list row down to NAME + attachment_id only."""
+    if not isinstance(data, dict):
+        return data
+    rows = data.get("data")
+    if not isinstance(rows, list):
+        return data
+    cleaned = []
+    for row in rows:
+        if not isinstance(row, dict):
+            cleaned.append(row)
+            continue
+        cleaned.append({k: row[k] for k in _FORMS_LIST_KEEP_KEYS if k in row})
     return {**data, "data": cleaned}
 
 
@@ -1061,6 +1082,8 @@ def _sanitize_tool_response(
         data = _slim_promotion_products_response(data)
     if tool_name == _PROMOTIONS_LIST_TOOL:
         data = _strip_promotions_list_row_ids(data)
+    if tool_name == _FORMS_LIST_TOOL:
+        data = _slim_forms_list_rows(data)
     if tool_name == _PORTAL_LINK_TOOL and isinstance(data, dict):
         # The portal link is the deliverable; the raw expiry timestamp is
         # internal bookkeeping the assistant should not surface to the user.

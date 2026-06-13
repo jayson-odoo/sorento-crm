@@ -158,6 +158,9 @@ class OrderLineProductMatch(BaseModel):
     id: str
     product_code: Optional[str] = None
     product_name: Optional[str] = None
+    quantity: Optional[float] = None
+    warehouse_code: Optional[str] = None
+    warehouse_name: Optional[str] = None
 
     class Config:
         from_attributes = True
