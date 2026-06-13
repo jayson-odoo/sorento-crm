@@ -970,6 +970,39 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "arriving containers",
         ),
     ),
+    "crm_incoming_stock_list": ToolIntent(
+        category="general_enquiries.incoming_stock",
+        intent="UNIFIED incoming stock: shipment-rooted with nested product lines. Covers BOTH 'incoming for product X' AND 'what is arriving this month / from supplier Y'.",
+        description=(
+            "ONE tool for ALL incoming-stock questions. Shipment-rooted: one row per still-incoming "
+            "shipment (shipment_number, shipping_container_number, estimated_arrival_date, "
+            "packing-list attachment) with a nested `lines[]` array \u2014 each line carries "
+            "product_code, product_name, batch_number, remaining_incoming_quantity, and "
+            "warehouse_allocations (warehouse_code, warehouse_name, allocated_quantity). "
+            "For 'any incoming for product X / SKU X', pass `product_ids` (UUID or product_code) \u2014 "
+            "lines are then filtered to those products. For 'what is arriving this month / from "
+            "supplier Y / shipment Z', pass `eta_from`/`eta_to`, `supplier_ids`, or `shipment_ids`. "
+            "NO aggregate totals "
+            "are returned \u2014 sum the line remaining_incoming_quantity yourself for a product total "
+            "or per-warehouse summary. Never exposes received / rejected quantities, SPO numbers, or "
+            "internal IDs. At least one narrowing filter is required."
+        ),
+        typical_user_questions=(
+            "Any incoming for this product / SKU?",
+            "How much is still coming for this SKU and to which warehouse?",
+            "What is arriving this month?",
+            "Open shipments from supplier X.",
+            "Tell me about shipment FJ24041192 / container MSCU5475129.",
+            "Which products are still incoming and when do they arrive?",
+        ),
+        aliases=(
+            "incoming stock",
+            "incoming for a product",
+            "incoming shipments",
+            "what is arriving",
+            "pending incoming stock",
+        ),
+    ),
     "crm_incoming_stock_shipment_products": ToolIntent(
         category="general_enquiries.incoming_stock",
         intent="List still-incoming products on ONE shipment identified by shipment number / container \u2014 not for product-centric questions.",

@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import json
 import re
+from collections import defaultdict
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
@@ -17,6 +18,7 @@ from sorento_crm_mcp.catalog import CATALOG, ToolSpec
 from sorento_crm_mcp.escalation_hint import attach_suggested_escalation
 from sorento_crm_mcp.http_client import CRMClient
 from sorento_crm_mcp.module_loader import merged_catalog
+from sorento_crm_mcp.presenters import PRESENTER_TOOLS, present_response
 from sorento_crm_mcp.settings import Settings
 from sorento_crm_mcp.user_guides import register_user_guide_tools
 
@@ -42,6 +44,11 @@ TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
     # targeted result. "Incoming for product X" questions should be routed to
     # `crm_incoming_stock_by_product` instead.
     "crm_incoming_stock_shipments": ("shipment_ids", "supplier_ids", "eta_from", "eta_to"),
+    # Unified incoming list: any one narrower (product / shipment / supplier / ETA
+    # window) keeps it from full-scanning every open inbound line.
+    "crm_incoming_stock_list": (
+        "product_ids", "shipment_ids", "supplier_ids", "eta_from", "eta_to",
+    ),
     # Domain-scoped attachment lookup: only resolves known catalogue UUIDs.
     # No UUIDs → empty page (mirrors n8n's domain-hint filtering contract).
     "crm_resource_attachments_catalogue": ("attachment_ids",),
@@ -720,6 +727,23 @@ _PROMO_PRODUCT_TOOL_PREFIXES = (
 # Nested attachments keep their own UUID handling via _strip_attachment_internals.
 _PROMOTIONS_LIST_TOOL = "crm_marketing_promotions_list"
 _PROMOTIONS_LIST_DROP_KEYS = frozenset({"id", "created_by"})
+_PRODUCTS_LIST_TOOL = "crm_master_products_list"
+# Confidential product economics — never surface to chat / WhatsApp. list_price
+# (customer-facing) stays; cost + invoice price are internal.
+_PRODUCTS_LIST_DROP_KEYS = ("cost_price", "invoice_price")
+
+
+def _strip_products_list_confidential(data: Any) -> Any:
+    if not isinstance(data, dict):
+        return data
+    rows = data.get("data")
+    if not isinstance(rows, list):
+        return data
+    for row in rows:
+        if isinstance(row, dict):
+            for k in _PRODUCTS_LIST_DROP_KEYS:
+                row.pop(k, None)
+    return data
 _PORTAL_LINK_TOOL = "crm_portal_link_get"
 
 # Forms-list rows: the agent only needs the form NAME (to name it back to the
@@ -738,11 +762,10 @@ _FORMS_LIST_KEEP_KEYS = ("name", "attachment_id")
 #
 # (tool_name, narrowing_query_keys, row_keys_to_strip_when_browsing)
 _BROWSE_ATTACHMENT_STRIP_RULES: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
-    (
-        "crm_marketing_promotions_list",
-        ("promotion_ids", "product_ids"),
-        ("attachments",),
-    ),
+    # Note: crm_marketing_promotions_list no longer browse-strips its header
+    # `attachments` — the promotion's packing-list file is exactly what n8n needs
+    # to deliver, and the consolidated tool returns full granular data regardless
+    # of browse vs narrowed mode.
     # Note: crm_forms_management_forms_list is handled by the stronger
     # whitelist projection _slim_forms_list_rows (name + attachment_id only),
     # which already drops the inline attachment blob in every mode.
@@ -787,6 +810,28 @@ def _slim_forms_list_rows(data: Any) -> Any:
             continue
         cleaned.append({k: row[k] for k in _FORMS_LIST_KEEP_KEYS if k in row})
     return {**data, "data": cleaned}
+
+
+def _slim_promotions_list_nested_products(data: Any) -> Any:
+    """Slim the nested `products[]` on each promotion row (merge tool).
+
+    Applies the same per-product slim as the standalone promotion-products tool
+    (drop confidential pricing, promotion_price→selling_price) but ONLY to the
+    nested `products[]`. The promo HEADER attachments[] are left for
+    `_strip_attachment_internals` so the promotion's packing-list filename
+    survives for the WhatsApp template.
+    """
+    if not isinstance(data, dict):
+        return data
+    rows = data.get("data")
+    if not isinstance(rows, list):
+        return data
+    for row in rows:
+        if isinstance(row, dict) and isinstance(row.get("products"), list):
+            row["products"] = [
+                _slim_promotion_products_node(p) for p in row["products"]
+            ]
+    return data
 
 
 def _strip_promotions_list_row_ids(data: Any) -> Any:
@@ -848,6 +893,109 @@ def _slim_promotion_products_node(node: Any) -> Any:
             continue
         out[k] = _slim_promotion_products_node(v)
     return out
+
+
+async def _fetch_all_child_rows(
+    client: Any, path: str, base_query: dict[str, Any], tool_name: str, max_pages: int = 50
+) -> list[Any]:
+    """Page a child list endpoint (limit cap 100) until exhausted; return all rows.
+
+    Used by the merge-tool enrichers — a single page of parents can have more
+    child rows (promotion products / product attachments) than the backend's
+    per-page cap, so we must paginate or nesting would silently truncate.
+    """
+    rows: list[Any] = []
+    page = 1
+    while page <= max_pages:
+        q = {**base_query, "limit": "100", "page": str(page)}
+        raw = await client.get(path, path_params={}, query=q, tool_name=tool_name)
+        payload = _json_loads_safe(raw)
+        page_rows = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(page_rows, list) or not page_rows:
+            break
+        rows.extend(page_rows)
+        if len(page_rows) < 100:
+            break
+        page += 1
+    return rows
+
+
+async def _enrich_promotions_with_products(client: Any, raw: str, query: dict[str, Any] | None) -> str:
+    """Nest each promotion's product lines under a `products[]` key (merge tool).
+
+    Fans out ONE batched call to /promotion-products?promotion_ids=<page ids> and
+    groups the rows by promotion_id. Runs BEFORE sanitize so the raw promotion id
+    is still available (the sanitizer strips it afterwards). The nested product
+    rows are slimmed later by `_sanitize_tool_response` (confidential pricing
+    dropped, promotion_price→selling_price).
+    """
+    data = _json_loads_safe(raw)
+    if not isinstance(data, dict):
+        return raw
+    rows = data.get("data")
+    if not isinstance(rows, list) or not rows:
+        return raw
+    promo_ids = [str(r.get("id")) for r in rows if isinstance(r, dict) and r.get("id")]
+    if not promo_ids:
+        return raw
+    pp_query: dict[str, Any] = {"promotion_ids": ",".join(promo_ids)}
+    if query and query.get("access_levels"):
+        pp_query["access_levels"] = query["access_levels"]
+    pp_rows = await _fetch_all_child_rows(
+        client,
+        "/api/v1/marketing/promotion-products",
+        pp_query,
+        "crm_marketing_promotions_list",
+    )
+    by_promo: dict[str, list[Any]] = defaultdict(list)
+    for p in pp_rows or []:
+        if isinstance(p, dict) and p.get("promotion_id"):
+            by_promo[str(p["promotion_id"])].append(p)
+    for r in rows:
+        if isinstance(r, dict) and r.get("id"):
+            r["products"] = by_promo.get(str(r["id"]), [])
+    return json.dumps(data)
+
+
+async def _enrich_products_with_attachments(client: Any, raw: str, query: dict[str, Any] | None) -> str:
+    """Nest each product's attachments under an `attachments[]` key (merge tool).
+
+    Fans out ONE batched call to /product-attachments?product_ids=<page ids> and
+    groups the nested `attachment` blocks by product_id. Attachment internals are
+    stripped later by `_sanitize_tool_response`.
+    """
+    data = _json_loads_safe(raw)
+    if not isinstance(data, dict):
+        return raw
+    rows = data.get("data")
+    if not isinstance(rows, list) or not rows:
+        return raw
+    product_ids = [str(r.get("id")) for r in rows if isinstance(r, dict) and r.get("id")]
+    if not product_ids:
+        return raw
+    pa_rows = await _fetch_all_child_rows(
+        client,
+        "/api/v1/master-data/product-attachments",
+        {"product_ids": ",".join(product_ids)},
+        "crm_master_products_list",
+    )
+    by_product: dict[str, list[Any]] = defaultdict(list)
+    for a in pa_rows or []:
+        if isinstance(a, dict) and a.get("product_id") and a.get("attachment") is not None:
+            by_product[str(a["product_id"])].append(a["attachment"])
+    for r in rows:
+        if isinstance(r, dict) and r.get("id"):
+            r["attachments"] = by_product.get(str(r["id"]), [])
+    return json.dumps(data)
+
+
+async def _enrich_list_response(tool_name: str, client: Any, raw: str, query: dict[str, Any] | None) -> str:
+    """Dispatch the merge-tool nesting enrichment for the consolidated list tools."""
+    if tool_name == "crm_marketing_promotions_list":
+        return await _enrich_promotions_with_products(client, raw, query)
+    if tool_name == "crm_master_products_list":
+        return await _enrich_products_with_attachments(client, raw, query)
+    return raw
 
 
 def _slim_promotion_products_response(data: Any) -> Any:
@@ -1082,6 +1230,14 @@ def _sanitize_tool_response(
         data = _slim_promotion_products_response(data)
     if tool_name == _PROMOTIONS_LIST_TOOL:
         data = _strip_promotions_list_row_ids(data)
+        # Merge tool: slim the nested product lines + scrub attachment internals
+        # from both header and nested promotion attachments.
+        data = _slim_promotions_list_nested_products(data)
+        data = _strip_attachment_internals(data)
+    if tool_name == _PRODUCTS_LIST_TOOL:
+        # Merge tool: drop confidential economics + scrub nested attachment internals.
+        data = _strip_products_list_confidential(data)
+        data = _strip_attachment_internals(data)
     if tool_name == _FORMS_LIST_TOOL:
         data = _slim_forms_list_rows(data)
     if tool_name == _PORTAL_LINK_TOOL and isinstance(data, dict):
@@ -1201,6 +1357,10 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
         query=query,
         tool_name=spec.name,
     )
+    # Merge-tool nesting: fold child rows (promotion products / product
+    # attachments) under their parent BEFORE sanitize, while parent UUIDs the
+    # fan-out keys on are still present.
+    response = await _enrich_list_response(spec.name, client, response, query)
     response = _filter_active_promotion_records(spec.name, response)
     return _sanitize_tool_response(spec.name, response, query=query)
 
@@ -1234,6 +1394,16 @@ def _compile_tool(spec: ToolSpec):
         for alias_name in alias_names:
             if alias_name not in query_params_with_aliases:
                 query_params_with_aliases.append(alias_name)
+    # Opt-in `view=render` param: presenter tools expose it so callers can ask for
+    # the uniform render envelope. Popped before the backend call (see impl).
+    # Skip tools with body params — an optional query arg cannot precede a
+    # required body arg in the generated signature (e.g. portal_link_get).
+    if (
+        spec.name in PRESENTER_TOOLS
+        and not spec.body_params
+        and "view" not in query_params_with_aliases
+    ):
+        query_params_with_aliases.append("view")
     qp_for_sig = list(query_params_with_aliases)
     bp_for_sig = list(spec.body_params)
     # Promote any query param declared in TOOL_REQUIRED_QUERY_HINTS to a
@@ -1325,8 +1495,12 @@ def _compile_tool(spec: ToolSpec):
         f"    _missing = [k for k in _required if q.get(k) in (None, '')]\n"
         f"    if _missing:\n"
         f"        raise ValueError('Missing required query parameter(s): ' + ', '.join(_missing))\n"
+        f"    _view = q.pop('view', None)\n"
         f"    _resp = await _execute_tool_request_with_body(_spec, client, _pp, q, body)\n"
-        f"    return await _attach_suggested_escalation(_spec.name, _resp, api_url=_settings.crm_base_url, api_key=_settings.external_api_key)\n"
+        f"    _resp = await _attach_suggested_escalation(_spec.name, _resp, api_url=_settings.crm_base_url, api_key=_settings.external_api_key)\n"
+        f"    if _view == 'render':\n"
+        f"        _resp = _present_response(_spec.name, _resp)\n"
+        f"    return _resp\n"
     )
     ns: dict[str, Any] = {
         "Context": Context,
@@ -1336,6 +1510,7 @@ def _compile_tool(spec: ToolSpec):
         "_execute_tool_request": _execute_tool_request,
         "_execute_tool_request_with_body": _execute_tool_request_with_body,
         "_attach_suggested_escalation": attach_suggested_escalation,
+        "_present_response": present_response,
         "json": json,
         "_spec": spec,
     }

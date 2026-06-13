@@ -407,6 +407,32 @@ CATALOG: tuple[ToolSpec, ...] = (
         related_tools=("crm_incoming_stock_by_product",),
         escalation_team="warehouse",
     ),
+    ToolSpec(
+        "crm_incoming_stock_list",
+        (
+            "UNIFIED incoming-stock list — shipment-rooted with nested product lines. Covers BOTH "
+            "'any incoming for product X / SKU X?' (pass `product_ids`) AND 'what is arriving this "
+            "month / from supplier Y / shipment Z?' (pass `eta_from`/`eta_to`, `supplier_ids`, "
+            "`shipment_ids`). Returns one row per still-incoming shipment: "
+            "shipment_number, shipping_container_number, estimated_arrival_date, packing-list "
+            "attachment, and a `lines[]` array — each line carries product_code, product_name, "
+            "batch_number, remaining_incoming_quantity, and warehouse_allocations (warehouse_code, "
+            "warehouse_name, allocated_quantity). When `product_ids` is given, lines are filtered to "
+            "those products. NO aggregate totals are returned — sum the line quantities yourself for "
+            "a product total or per-warehouse summary. Never exposes received/rejected quantities, "
+            "SPO numbers, or internal IDs. REQUIRED: at least ONE narrowing filter (product_ids / "
+            "shipment_ids / supplier_ids / eta_from / eta_to) or the tool returns an empty page."
+        ),
+        "/api/v1/incoming-stock/list",
+        (),
+        (
+            "product_ids", "shipment_ids", "supplier_ids",
+            "eta_from", "eta_to", "page", "limit",
+        ),
+        domain="incoming_stock",
+        related_tools=("crm_incoming_stock_by_product", "crm_incoming_stock_shipments"),
+        escalation_team="warehouse",
+    ),
     # --- forms ---
     ToolSpec(
         "crm_forms_management_forms_list",

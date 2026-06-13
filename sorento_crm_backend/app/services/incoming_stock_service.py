@@ -384,6 +384,176 @@ class IncomingStockService:
         return {"data": data, "empty": False, "pagination": {"total": total, "page": page, "limit": limit}}
 
     # ------------------------------------------------------------------
+    # Unified: shipment-rooted with nested product lines (MCP consolidation)
+    # ------------------------------------------------------------------
+    def incoming_list(
+        self,
+        *,
+        product_ids: Optional[list[str]] = None,
+        shipment_ids: Optional[list[str]] = None,
+        supplier_ids: Optional[list[str]] = None,
+        eta_from: Optional[date] = None,
+        eta_to: Optional[date] = None,
+        query: Optional[str] = None,
+        page: int = 1,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Unified incoming-stock list — shipment-rooted with nested product lines.
+
+        One row per still-incoming shipment. Each carries the still-incoming
+        product lines (filtered to the requested products when `product_ids` is
+        given), every line with its per-warehouse allocations, plus the
+        shipment's packing-list attachment. NO aggregate totals — callers (n8n)
+        sum the line quantities themselves. Requires at least one narrowing
+        filter (product / shipment / supplier / eta / query) to avoid full scans.
+        """
+        page = max(1, page)
+        limit = max(1, min(limit, 50))
+
+        # Resolve product hints (UUID or product_code / SKU) to canonical ids.
+        resolved_pids: list[str] = []
+        for ident in product_ids or []:
+            if not ident:
+                continue
+            ids = resolve_identifier(
+                self.db, ident, Product, code_fields=("product_code",)
+            )
+            if ids:
+                resolved_pids.extend(ids)
+        resolved_pids = list(dict.fromkeys(resolved_pids))
+        if (product_ids or []) and not resolved_pids:
+            # Caller asked for products that don't resolve → nothing incoming.
+            return {
+                "data": [],
+                "empty": True,
+                "pagination": {"total": 0, "page": page, "limit": limit},
+            }
+
+        line_filters = [_still_incoming_filter()]
+        if resolved_pids:
+            line_filters.append(InboundShipmentLine.product_id.in_(resolved_pids))
+
+        shipment_filters = []
+        if shipment_ids:
+            shipment_filters.append(InboundShipment.id.in_(shipment_ids))
+        if supplier_ids:
+            shipment_filters.append(InboundShipment.supplier_id.in_(supplier_ids))
+        if eta_from is not None:
+            shipment_filters.append(InboundShipment.estimated_arrival_date >= eta_from)
+        if eta_to is not None:
+            shipment_filters.append(InboundShipment.estimated_arrival_date <= eta_to)
+        if query and query.strip():
+            term = f"%{query.strip()}%"
+            shipment_filters.append(
+                or_(
+                    InboundShipment.shipment_number.ilike(term),
+                    InboundShipment.shipping_container_number.ilike(term),
+                    InboundShipment.bill_of_lading_number.ilike(term),
+                    InboundShipment.invoice_number.ilike(term),
+                )
+            )
+
+        # Require at least one narrower so an empty call can't full-scan.
+        if not resolved_pids and not shipment_filters:
+            return {
+                "data": [],
+                "empty": True,
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "message": "Provide product_ids, shipment_ids, supplier_ids, an eta window, or query.",
+            }
+
+        # Step 1: distinct still-incoming shipments matching all filters, paged by ETA.
+        ship_q = (
+            self.db.query(
+                InboundShipment.id,
+                InboundShipment.shipment_number,
+                InboundShipment.shipping_container_number,
+                InboundShipment.estimated_arrival_date,
+            )
+            .join(
+                InboundShipmentLine,
+                InboundShipmentLine.shipment_id == InboundShipment.id,
+            )
+            .filter(*line_filters, *shipment_filters)
+            .distinct()
+        )
+        total = ship_q.count()
+        ship_rows = (
+            ship_q.order_by(
+                InboundShipment.estimated_arrival_date.asc().nulls_last(),
+                InboundShipment.shipment_number.asc(),
+            )
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
+        if not ship_rows:
+            return {
+                "data": [],
+                "empty": True,
+                "pagination": {"total": 0, "page": page, "limit": limit},
+            }
+        page_ship_ids = [str(s.id) for s in ship_rows]
+
+        # Step 2: still-incoming lines for the paged shipments (same product filter).
+        remaining = _remaining_expr().label("remaining_incoming")
+        line2_filters = [
+            _still_incoming_filter(),
+            InboundShipmentLine.shipment_id.in_(page_ship_ids),
+        ]
+        if resolved_pids:
+            line2_filters.append(InboundShipmentLine.product_id.in_(resolved_pids))
+        line_rows = (
+            self.db.query(
+                InboundShipmentLine.shipment_id,
+                InboundShipmentLine.product_id,
+                InboundShipmentLine.batch_number,
+                remaining,
+                Product.product_code,
+                Product.product_name,
+            )
+            .join(Product, Product.id == InboundShipmentLine.product_id)
+            .filter(*line2_filters)
+            .order_by(Product.product_code.asc())
+            .all()
+        )
+
+        pairs = [(str(r.shipment_id), str(r.product_id)) for r in line_rows]
+        warehouse_map = self._warehouse_allocations_for(pairs)
+        attachment_map = self._attachments_for_shipments(page_ship_ids)
+
+        lines_by_ship: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for r in line_rows:
+            skey = str(r.shipment_id)
+            lines_by_ship[skey].append(
+                {
+                    "product_code": r.product_code,
+                    "product_name": r.product_name,
+                    "batch_number": r.batch_number,
+                    "remaining_incoming_quantity": int(r.remaining_incoming or 0),
+                    "warehouse_allocations": warehouse_map.get(
+                        (skey, str(r.product_id)), []
+                    ),
+                }
+            )
+
+        data = [
+            {
+                "shipment_number": s.shipment_number,
+                "shipping_container_number": s.shipping_container_number,
+                "estimated_arrival_date": s.estimated_arrival_date,
+                "attachment": attachment_map.get(str(s.id)),
+                "lines": lines_by_ship.get(str(s.id), []),
+            }
+            for s in ship_rows
+        ]
+        return {
+            "data": data,
+            "empty": False,
+            "pagination": {"total": total, "page": page, "limit": limit},
+        }
+
+    # ------------------------------------------------------------------
     # Layer 1 + 2: products in a shipment (T3)
     # ------------------------------------------------------------------
     def shipment_incoming_products(self, shipment_id: str) -> dict[str, Any]:

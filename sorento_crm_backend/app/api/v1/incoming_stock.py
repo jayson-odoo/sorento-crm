@@ -182,6 +182,68 @@ def get_incoming_shipments(
         raise handle_internal_error(str(e))
 
 
+@router.get("/list")
+def get_incoming_list(
+    product_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical product UUIDs or product_codes/SKUs (csv/JSON/repeated). When set, lines are filtered to these products.",
+    ),
+    shipment_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical inbound-shipment UUIDs (csv/JSON/repeated).",
+    ),
+    supplier_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical supplier UUIDs to narrow shipments to those suppliers.",
+    ),
+    query: Optional[str] = Query(
+        None,
+        description="Free-text search over shipment_number, container, BOL, invoice.",
+    ),
+    eta_from: Optional[date] = Query(None, description="Include shipments with ETA on/after this date (YYYY-MM-DD)."),
+    eta_to: Optional[date] = Query(None, description="Include shipments with ETA on/before this date (YYYY-MM-DD)."),
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1, le=50),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Unified incoming-stock list — shipment-rooted with nested product lines.
+
+    One MCP tool covers both "any incoming for product X?" (pass `product_ids`)
+    and "what is arriving this month / from supplier Y?" (pass `eta_*` /
+    `supplier_ids` / `shipment_ids`). Each shipment row carries its still-incoming
+    product lines with per-warehouse allocations and the packing-list attachment.
+    No aggregate totals — callers sum the line quantities themselves. At least one
+    narrowing filter is required.
+    """
+    # product_ids may be UUIDs or product_codes, csv-joined or repeated; flatten
+    # to individual tokens (the service resolves both UUID and code per token).
+    flat_product_ids: list[str] = []
+    for raw in product_ids or []:
+        if raw is None:
+            continue
+        for piece in str(raw).split(","):
+            piece = piece.strip()
+            if piece:
+                flat_product_ids.append(piece)
+    try:
+        svc = IncomingStockService(db)
+        # product_ids may be UUIDs or product_codes; the service resolves both, so
+        # pass through raw rather than via parse_uuid_list (which rejects codes).
+        return svc.incoming_list(
+            product_ids=flat_product_ids or None,
+            shipment_ids=parse_uuid_list(shipment_ids, param_name="shipment_ids"),
+            supplier_ids=parse_uuid_list(supplier_ids, param_name="supplier_ids"),
+            query=query,
+            eta_from=eta_from,
+            eta_to=eta_to,
+            page=page,
+            limit=limit,
+        )
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/shipments/{shipment_id}/products")
 def get_incoming_shipment_products(
     shipment_id: str,
