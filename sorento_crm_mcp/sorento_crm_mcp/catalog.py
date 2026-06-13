@@ -502,15 +502,15 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "Mint a 7-day user submission portal link for the active contact. Use when the user wants to file "
             "a complaint, stock inquiry, purchase request or sponsorship form. Send the returned `portal_url`. "
-            "`payload_json` must be a JSON object with: contact_id (string, required), space_id (string, "
-            "required), submission_type (OPTIONAL but PREFERRED: complaint | stock_inquiry | purchase_request "
-            "| sponsorship_form — opens the portal directly on that tab), base_url (optional host override)."
+            "Required: `contact_id` (string) and `space_id` (string). Optional: `submission_type` "
+            "(PREFERRED: complaint | stock_inquiry | purchase_request | sponsorship_form — opens the portal "
+            "directly on that tab) and `base_url` (host override)."
         ),
         "/api/v1/external/portal-tokens/",
         (),
         (),
         method="POST",
-        body_params=("payload_json",),
+        body_params=("contact_id", "space_id", "submission_type", "base_url"),
     ),
     # --- commercial: customers (debtor aggregation) ---
     ToolSpec(

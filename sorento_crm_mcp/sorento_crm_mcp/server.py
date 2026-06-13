@@ -77,6 +77,14 @@ def _empty_narrowing_response(tool_name: str, query: dict[str, Any] | None, need
     )
 
 
+# Body params a tool accepts but does NOT require — generated as `str | None =
+# None` so callers can omit them (the rest stay required). Lets a POST tool take
+# discrete fields instead of one wrapped JSON blob.
+TOOL_OPTIONAL_BODY_PARAMS: dict[str, tuple[str, ...]] = {
+    "crm_portal_link_get": ("submission_type", "base_url"),
+}
+
+
 TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     # NOTE: promotions list intentionally has NO status/active default — the
     # backend owns the semantics (active-first, fallback to expired rows with
@@ -1405,7 +1413,14 @@ def _compile_tool(spec: ToolSpec):
     ):
         query_params_with_aliases.append("view")
     qp_for_sig = list(query_params_with_aliases)
-    bp_for_sig = list(spec.body_params)
+    # Body params: those listed in TOOL_OPTIONAL_BODY_PARAMS become `str | None =
+    # None` (caller may omit); the rest stay required `str`. Required-first so the
+    # generated signature stays valid (no required param after an optional one).
+    optional_body_set = set(TOOL_OPTIONAL_BODY_PARAMS.get(spec.name, ()))
+    _bp_all = list(spec.body_params)
+    bp_for_sig = [b for b in _bp_all if b not in optional_body_set] + [
+        b for b in _bp_all if b in optional_body_set
+    ]
     # Promote any query param declared in TOOL_REQUIRED_QUERY_HINTS to a
     # no-default `str` argument so the generated JSON schema marks it
     # `required:true`. Without this the LLM treats it as optional and skips it.
@@ -1427,7 +1442,10 @@ def _compile_tool(spec: ToolSpec):
         (f"{q}: {_scalar_union}" if q in required_query_set else f"{q}: {_scalar_union} | None = None")
         for q in qp_for_sig
     )
-    bp_sig = ", ".join(f"{b}: str" for b in bp_for_sig)
+    bp_sig = ", ".join(
+        (f"{b}: str | None = None" if b in optional_body_set else f"{b}: str")
+        for b in bp_for_sig
+    )
     parts = [p for p in (pp_sig, qp_sig, bp_sig) if p]
     sig = ", ".join(parts)
 
@@ -1477,9 +1495,12 @@ def _compile_tool(spec: ToolSpec):
         f"            if not isinstance(_bv, str):\n"
         f"                _decoded[_bk] = _bv\n"
         f"                continue\n"
-        f"            try:\n"
-        f"                _decoded[_bk] = json.loads(_bv)\n"
-        f"            except Exception:\n"
+        f"            if _bv.lstrip()[:1] in ('{{', '['):\n"
+        f"                try:\n"
+        f"                    _decoded[_bk] = json.loads(_bv)\n"
+        f"                except Exception:\n"
+        f"                    _decoded[_bk] = _bv\n"
+        f"            else:\n"
         f"                _decoded[_bk] = _bv\n"
         f"        if 'payload_json' in _decoded:\n"
         f"            _payload = _decoded.get('payload_json')\n"
