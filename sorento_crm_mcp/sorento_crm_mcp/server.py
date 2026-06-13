@@ -759,7 +759,12 @@ _PORTAL_LINK_TOOL = "crm_portal_link_get"
 # form_type, language, version, is_active, access_levels are internal noise the
 # assistant should never surface. Whitelist projection — keep ONLY these keys.
 _FORMS_LIST_TOOL = "crm_forms_management_forms_list"
-_FORMS_LIST_KEEP_KEYS = ("name", "attachment_id")
+# Browse (no form_ids → "what forms do you have"): name only.
+# Narrowed (form_ids → a specific form): name + the attachment object so the
+# caller can actually deliver the form file. Attachment internals are scrubbed
+# separately by _strip_attachment_internals.
+_FORMS_LIST_KEEP_BROWSE = ("name",)
+_FORMS_LIST_KEEP_NARROW = ("name", "attachment")
 
 # Tools whose row payload carries an inline attachment(s) blob. Browse-mode
 # calls (no UUID narrowing — agent listing the whole catalog) strip those
@@ -804,8 +809,9 @@ def _strip_inline_attachment_keys(data: Any, drop_keys: tuple[str, ...]) -> Any:
     return {**data, "data": cleaned}
 
 
-def _slim_forms_list_rows(data: Any) -> Any:
-    """Project each forms-list row down to NAME + attachment_id only."""
+def _slim_forms_list_rows(data: Any, narrowed: bool = False) -> Any:
+    """Project each forms-list row to NAME (browse) or NAME + attachment (narrowed)."""
+    keep = _FORMS_LIST_KEEP_NARROW if narrowed else _FORMS_LIST_KEEP_BROWSE
     if not isinstance(data, dict):
         return data
     rows = data.get("data")
@@ -816,7 +822,7 @@ def _slim_forms_list_rows(data: Any) -> Any:
         if not isinstance(row, dict):
             cleaned.append(row)
             continue
-        cleaned.append({k: row[k] for k in _FORMS_LIST_KEEP_KEYS if k in row})
+        cleaned.append({k: row[k] for k in keep if k in row})
     return {**data, "data": cleaned}
 
 
@@ -1247,7 +1253,10 @@ def _sanitize_tool_response(
         data = _strip_products_list_confidential(data)
         data = _strip_attachment_internals(data)
     if tool_name == _FORMS_LIST_TOOL:
-        data = _slim_forms_list_rows(data)
+        narrowed = bool((query or {}).get("form_ids"))
+        data = _slim_forms_list_rows(data, narrowed)
+        if narrowed:
+            data = _strip_attachment_internals(data)
     if tool_name == _PORTAL_LINK_TOOL and isinstance(data, dict):
         # The portal link is the deliverable; the raw expiry timestamp is
         # internal bookkeeping the assistant should not surface to the user.

@@ -114,6 +114,21 @@ def test_stock_uses_relabelled_location_fields():
 def test_forms_minimal_name_only():
     out = env("crm_forms_management_forms_list", {"data": [{"name": "Renovation Form", "attachment_id": "x"}]})
     assert out["items"][0]["fields"] == [{"label": "Form Name", "value": "Renovation Form"}]
+    assert out["attachments"] == []
+
+
+def test_forms_narrowed_carries_attachment():
+    out = env("crm_forms_management_forms_list", {
+        "data": [{
+            "name": "Renovation Form",
+            "attachment": {"original_filename": "RENO.pdf", "file_path": "http://x/RENO.pdf",
+                           "mime_type": "application/pdf", "attachment_type": {"type_name": "Marketing Forms"}},
+        }],
+    })
+    assert out["items"][0]["fields"][0]["value"] == "Renovation Form"
+    assert len(out["attachments"]) == 1
+    assert out["attachments"][0]["filename"] == "RENO.pdf"
+    assert out["intro"] == "I have attached the file(s) below."
 
 
 def test_portal_link_becomes_action_link():

@@ -399,6 +399,9 @@ def _stock(rows: list[dict], b: _Builder) -> None:
 def _forms(rows: list[dict], b: _Builder) -> None:
     for f in rows:
         b.item(f.get("name"), [("Form Name", f.get("name"))])
+        # Narrowed form lookups carry the attachment so the form file can be sent.
+        if f.get("attachment"):
+            b.attach(f["attachment"])
 
 
 def _portal_link(payload: dict, b: _Builder) -> None:
