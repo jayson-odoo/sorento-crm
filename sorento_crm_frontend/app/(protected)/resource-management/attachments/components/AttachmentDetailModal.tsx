@@ -765,7 +765,9 @@ function LinkPackingListForm({
   const packingLists = (data?.data ?? []).filter((p) => !linkedPackingListIds.includes(p.id));
   const selectedFromList = packingLists.find((p) => p.id === selectedId);
   const selectedLabel = selectedFromList
-    ? (selectedFromList.shipment_number || selectedFromList.id)
+    ? (selectedFromList.shipment_number ||
+        selectedFromList.shipping_container_number ||
+        selectedFromList.id)
     : pickedLabel;
 
   return (
@@ -797,7 +799,7 @@ function LinkPackingListForm({
                 <CommandEmpty>{isFetching ? 'Searching…' : 'No packing list found.'}</CommandEmpty>
                 <CommandGroup>
                   {packingLists.map((p) => {
-                    const label = p.shipment_number || p.id;
+                    const label = p.shipment_number || p.shipping_container_number || p.id;
                     return (
                       <CommandItem
                         key={p.id}

@@ -526,13 +526,29 @@ class InboundShipmentService:
         the caller knows the update path is unavailable.
         """
         # Match an existing shipment by business key (shipment_number) first, then
-        # fall back to the linked attachment_id so a re-upload/replace of the same
-        # packing-list document updates in place instead of creating a duplicate.
+        # by the secondary identifier (shipping_container_number) among shipments that
+        # are not yet fully received, then fall back to the linked attachment_id so a
+        # re-upload/replace of the same packing-list document updates in place instead
+        # of creating a duplicate. Container matching is scoped to not-fully-received
+        # shipments because a container only carries one open (not fully received)
+        # inbound shipment at a time — once received it can be reused for a new one.
         existing = None
         if shipment_data.shipment_number:
             existing = self.db.query(InboundShipment).filter(
                 InboundShipment.shipment_number == shipment_data.shipment_number
             ).first()
+        if existing is None and shipment_data.shipping_container_number:
+            existing = (
+                self.db.query(InboundShipment)
+                .filter(
+                    InboundShipment.shipping_container_number
+                    == shipment_data.shipping_container_number,
+                    func.lower(func.coalesce(InboundShipment.shipment_status, "")).notin_(
+                        ("fully_received", "completed")
+                    ),
+                )
+                .first()
+            )
         if existing is None and shipment_data.attachment_id:
             existing = self.db.query(InboundShipment).filter(
                 InboundShipment.attachment_id == shipment_data.attachment_id

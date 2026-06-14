@@ -704,6 +704,7 @@ class AttachmentService:
             self.db.query(
                 InboundShipment.id,
                 InboundShipment.shipment_number,
+                InboundShipment.shipping_container_number,
                 InboundShipment.notes,
                 EntityAttachmentLink.id.label("link_id"),
             )
@@ -721,7 +722,13 @@ class AttachmentService:
             seen_pl_ids.add(str(row.id))
             linked_packing_lists.append({
                 "id": str(row.id),
-                "name": (row.shipment_number or str(row.id)).strip(),
+                # Container number is the shipment's secondary identifier; fall back to
+                # it (never the raw UUID) when the shipment_number is not yet known.
+                "name": (
+                    row.shipment_number
+                    or row.shipping_container_number
+                    or str(row.id)
+                ).strip(),
                 "description": (row.notes or "").strip() or None,
                 "link_id": str(row.link_id),
             })
@@ -731,6 +738,7 @@ class AttachmentService:
             self.db.query(
                 InboundShipment.id,
                 InboundShipment.shipment_number,
+                InboundShipment.shipping_container_number,
                 InboundShipment.notes,
             )
             .filter(InboundShipment.attachment_id == attachment_id)
@@ -742,7 +750,13 @@ class AttachmentService:
             seen_pl_ids.add(pl_id)
             linked_packing_lists.append({
                 "id": pl_id,
-                "name": (row.shipment_number or pl_id).strip(),
+                # Container number is the shipment's secondary identifier; fall back to
+                # it (never the raw UUID) when the shipment_number is not yet known.
+                "name": (
+                    row.shipment_number
+                    or row.shipping_container_number
+                    or pl_id
+                ).strip(),
                 "description": (row.notes or "").strip() or None,
                 "link_id": None,
             })
