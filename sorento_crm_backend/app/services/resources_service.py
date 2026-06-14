@@ -436,6 +436,7 @@ class AttachmentService:
         link_status: Optional[str] = None,
         entities: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
+        direct_access_only: Optional[bool] = None,
     ):
         """List attachments. Filter by directory_id when provided. Search by filename when query is provided. is_deleted=True returns trash.
 
@@ -518,6 +519,13 @@ class AttachmentService:
                 q = q.filter(Attachment.id == "00000000-0000-0000-0000-000000000000")
             else:
                 q = q.filter(Attachment.attachment_type_id == str(type_row.id))
+        if direct_access_only:
+            # Restrict to attachment types flagged is_direct_access. A subquery
+            # avoids depending on whether AttachmentType is already joined.
+            direct_type_ids = self.db.query(AttachmentType.id).filter(
+                AttachmentType.is_direct_access.is_(True)
+            )
+            q = q.filter(Attachment.attachment_type_id.in_(direct_type_ids))
         if uploaded_by:
             q = q.filter(Attachment.uploaded_by == uploaded_by)
         if uploaded_at_from is not None:

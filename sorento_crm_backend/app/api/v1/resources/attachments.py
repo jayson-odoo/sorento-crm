@@ -184,6 +184,7 @@ async def get_attachments(
     access_levels: Optional[List[str]] = Query(None, description="Filter to attachments whose access_levels match these codes (see access_levels_match)."),
     access_levels_match: Optional[str] = Query("any", description="How to combine access_levels: 'any' (overlap, default), 'all' (contains every code), 'exact' (set equality)."),
     link_status: Optional[str] = Query(None, description="Filter by linkage: 'linked' (referenced by any product/promotion/form/packing-list/field link) or 'unlinked' (orphans)."),
+    direct_access_only: bool = Query(False, description="When true, restrict to attachment types flagged is_direct_access (dealer-downloadable documents)."),
     resolve_signed_urls: bool = Query(False, description="When false, return stored file_path without CloudFront signing."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -212,6 +213,7 @@ async def get_attachments(
             link_status=link_status,
             entities=normalize_entities_query_param(entities),
             attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
+            direct_access_only=direct_access_only,
         )
         # Enrich each attachment with uploaded_by_user for display
         enriched = []

@@ -41,6 +41,10 @@ class AttachmentType(Base):
     # section so the file can be tied to a target table + field keys (e.g. product
     # photos). Replaces the hardcoded product-photo name check.
     supports_field_linkage = Column(Boolean, default=False, nullable=False, server_default="false")
+    # When true, attachments of this type are "direct access" documents a dealer
+    # may download without further gating. crm_resource_attachments_list is pinned
+    # to these via `direct_access_only`.
+    is_direct_access = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     attachments = relationship("Attachment", back_populates="attachment_type")
