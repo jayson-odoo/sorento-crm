@@ -16,6 +16,7 @@ except ImportError:
 from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 import logging
@@ -43,6 +44,12 @@ app = FastAPI(
 
 # Add logging middleware
 app.add_middleware(LoggingMiddleware)
+
+# Compress JSON responses. List endpoints (products, attachments) return 50-70KB
+# of JSON per page; uncompressed transfer was ~1s of "content download" on prod.
+# gzip cuts these payloads ~8-10x. minimum_size skips tiny bodies where the
+# CPU cost outweighs the win.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # Configure CORS
 app.add_middleware(

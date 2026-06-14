@@ -154,6 +154,37 @@ def _enrich_uploaded_by_user(db, attachment) -> Optional[dict]:
     return None
 
 
+def _build_uploaded_by_user_map(db, attachments) -> dict:
+    """Batch-resolve uploaded_by UUIDs → UploadedByUser dict for a list of rows.
+
+    One ``IN`` query instead of one SELECT per row (avoids N+1 on list responses).
+    Returns ``{user_id: UploadedByUser dict}``.
+    """
+    from app.schemas.resources import UploadedByUser
+    from app.models.user import User
+
+    ids = {
+        str(uid)
+        for att in attachments
+        if (uid := getattr(att, "uploaded_by", None))
+    }
+    if not ids:
+        return {}
+    out: dict = {}
+    try:
+        users = db.query(User).filter(User.id.in_(ids)).all()
+        for user in users:
+            display_name = (user.name or "").strip() or (user.email or None)
+            out[str(user.id)] = UploadedByUser(
+                id=str(user.id),
+                name=display_name,
+                email=user.email or None,
+            ).model_dump()
+    except Exception as e:
+        logger.warning("Could not batch-resolve uploaded_by users: %s", e)
+    return out
+
+
 @router.get("/", response_model=ListResponse[AttachmentResponse])
 async def get_attachments(
     page: int = Query(1, ge=1),
@@ -213,11 +244,14 @@ async def get_attachments(
             entities=normalize_entities_query_param(entities),
             attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
         )
-        # Enrich each attachment with uploaded_by_user for display
+        # Enrich each attachment with uploaded_by_user for display.
+        # Batch-resolve users in ONE query to avoid N+1 (was a per-row SELECT).
+        user_map = _build_uploaded_by_user_map(db, result["data"])
         enriched = []
         for att in result["data"]:
             data = AttachmentResponse.model_validate(att).model_dump()
-            user_info = _enrich_uploaded_by_user(db, att)
+            uid = getattr(att, "uploaded_by", None)
+            user_info = user_map.get(str(uid)) if uid else None
             if user_info:
                 data["uploaded_by_user"] = user_info
 
