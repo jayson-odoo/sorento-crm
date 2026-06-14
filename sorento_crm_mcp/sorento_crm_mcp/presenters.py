@@ -356,15 +356,14 @@ def _product_attachments(rows: list[dict], b: _Builder) -> None:
 
 
 def _resource_attachments(rows: list[dict], b: _Builder) -> None:
+    # No "Type" line — the attachment type (e.g. "Direct Access") is internal
+    # plumbing, not meaningful to the end user. Just the file name + the file.
     for att in rows:
-        b.item(
-            att.get("original_filename") or att.get("stored_filename"),
-            [
-                ("File Name", att.get("original_filename") or att.get("stored_filename")),
-                ("Type", _att_type(att)),
-            ],
-        )
-        b.attach(att)
+        name = att.get("original_filename") or att.get("stored_filename")
+        b.item(name, [("File Name", name)])
+        # Strip the type so the delivered attachment carries no "Direct Access" label.
+        no_type = {k: v for k, v in att.items() if k != "attachment_type"} if isinstance(att, dict) else att
+        b.attach(no_type)
 
 
 def _stock(rows: list[dict], b: _Builder) -> None:

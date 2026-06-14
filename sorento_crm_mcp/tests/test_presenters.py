@@ -130,6 +130,18 @@ def test_forms_narrowed_carries_attachment():
     assert out["intro"] == "I have attached the file(s) below."
 
 
+def test_resource_attachments_no_type_label():
+    out = env("crm_resource_attachments_list", {
+        "data": [{
+            "original_filename": "Dealer Price List.pdf", "file_path": "http://x/Dealer Price List.pdf",
+            "mime_type": "application/pdf", "attachment_type": {"type_name": "Direct Access"},
+        }],
+    })
+    labels = [f["label"] for f in out["items"][0]["fields"]]
+    assert labels == ["File Name"]          # no "Type" line
+    assert out["attachments"][0]["attachmentType"] is None  # type stripped from the file too
+
+
 def test_portal_link_becomes_action_link():
     out = env("crm_portal_link_get", {"portal_link": "https://portal/x", "label": "Complaint Portal"})
     assert out["action_links"] == [{"label": "Complaint Portal", "url": "https://portal/x", "type": "portal_link"}]
