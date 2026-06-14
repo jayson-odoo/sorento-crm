@@ -52,6 +52,11 @@ TOOL_REQUIRED_NARROWING_FILTERS: dict[str, tuple[str, ...]] = {
     # Domain-scoped attachment lookup: only resolves known catalogue UUIDs.
     # No UUIDs → empty page (mirrors n8n's domain-hint filtering contract).
     "crm_resource_attachments_catalogue": ("attachment_ids",),
+    # Global document library: never browse the whole library — require at least
+    # one narrower (attachment / directory / type / uploader UUID) or empty page.
+    "crm_resource_attachments_list": (
+        "attachment_ids", "directory_id", "attachment_type_id", "uploaded_by",
+    ),
 }
 
 

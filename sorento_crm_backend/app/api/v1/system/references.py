@@ -7,7 +7,7 @@ external caller) can disambiguate codes mid-turn. The resolver itself lives in
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 from sqlalchemy import String as _String
 from sqlalchemy import cast as _cast
 from sqlalchemy import func, or_
@@ -873,6 +873,8 @@ def _apply_promotion_access_levels_filter(
 class ResolveReferenceRequest(BaseModel):
     """POST body for /references/resolve."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     query: str = Field(default="", description="Free-text query or a single code to resolve.")
     tokens: list[str] | None = Field(
         default=None,
@@ -941,7 +943,9 @@ class ResolveReferenceRequest(BaseModel):
     )
     domain_hint: str | None = Field(
         default=None,
+        validation_alias=AliasChoices("domain_hint", "domain"),
         description=(
+            "Accepts `domain_hint` or its alias `domain`. "
             "Scope the resolution to attachments of a specific AttachmentType "
             "(matched case-insensitively against `code` then `type_name`, with "
             "catalog ↔ catalogue spelling variants). When set, the resolver "
@@ -1296,9 +1300,10 @@ def resolve_reference(
             "Scope resolution to attachments of one AttachmentType (e.g. "
             "'catalogue'). Short-circuits the normal probes and returns "
             "`entity_type='attachment'` rows whose UUIDs feed domain-specific "
-            "tools like `crm_resource_attachments_catalogue`."
+            "tools like `crm_resource_attachments_catalogue`. Alias: `domain`."
         ),
     ),
+    domain: str | None = Query(None, description="Alias for `domain_hint`."),
     limit: int | None = Query(
         None,
         ge=1,
@@ -1326,7 +1331,7 @@ def resolve_reference(
         allowed_entity_types=allowed_entity_types,
         access_levels=access_levels,
         fallback_to_all_types=fallback_to_all_types,
-        domain_hint=domain_hint,
+        domain_hint=domain_hint or domain,
         limit=limit,
     )
 
