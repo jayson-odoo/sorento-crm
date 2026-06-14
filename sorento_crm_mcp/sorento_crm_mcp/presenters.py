@@ -110,6 +110,19 @@ def _dims(o: dict) -> str | None:
     return None
 
 
+def _distinct_name(code: Any, name: Any) -> str | None:
+    """Product name only when it differs from the code.
+
+    Sorento usually sets product_name == product_code, so showing both is
+    redundant. Surface the name only when it carries extra info (code != name).
+    """
+    if not _filled(name):
+        return None
+    if _filled(code) and str(name).strip() == str(code).strip():
+        return None
+    return name
+
+
 def _att_type(a: dict) -> str | None:
     t = a.get("attachment_type")
     if not t:
@@ -223,7 +236,7 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
                 l.get("product_code"),
                 [
                     ("Product Code", l.get("product_code")),
-                    ("Product Name", l.get("product_name")),
+                    ("Product Name", _distinct_name(l.get("product_code"), l.get("product_name"))),
                     ("Shipment", s.get("shipment_number")),
                     ("Container", s.get("shipping_container_number")),
                     ("Estimated Arrival Date", s.get("estimated_arrival_date")),
@@ -243,7 +256,7 @@ def _incoming_by_product(rows: list[dict], b: _Builder) -> None:
                 p.get("product_code"),
                 [
                     ("Product Code", p.get("product_code")),
-                    ("Product Name", p.get("product_name")),
+                    ("Product Name", _distinct_name(p.get("product_code"), p.get("product_name"))),
                     ("Shipment Container", s.get("shipping_container_number")),
                     ("Estimated Arrival Date", s.get("estimated_arrival_date")),
                     ("Batch", s.get("batch_number")),
@@ -305,7 +318,7 @@ def _promotion_products(rows: list[dict], b: _Builder) -> None:
             prod.get("product_code"),
             [
                 ("Product Code", prod.get("product_code")),
-                ("Product Name", prod.get("product_name")),
+                ("Product Name", _distinct_name(prod.get("product_code"), prod.get("product_name"))),
                 ("Promotion", promo.get("description")),
                 ("Selling Price", _money(pp.get("selling_price"))),
                 ("List Price", _money(prod.get("list_price"))),
@@ -325,10 +338,12 @@ def _products(rows: list[dict], b: _Builder) -> None:
             p.get("product_code"),
             [
                 ("Product Code", p.get("product_code")),
-                ("Product Name", p.get("product_name")),
+                ("Product Name", _distinct_name(p.get("product_code"), p.get("product_name"))),
                 ("Description", desc if _filled(desc) and desc != p.get("product_name") else None),
-                ("List Price", _money(p.get("list_price"))),
-                ("Dimensions", _dims(p)),
+                # Always surface price + dimensions for the products list; when the
+                # row has no value, render "Not defined" instead of dropping the line.
+                ("List Price", _money(p.get("list_price")) or "Not defined"),
+                ("Dimensions", _dims(p) or "Not defined"),
             ],
             discontinued=p.get("is_discontinued") is True,
         )
@@ -344,7 +359,7 @@ def _product_attachments(rows: list[dict], b: _Builder) -> None:
             prod.get("product_code"),
             [
                 ("Product Code", prod.get("product_code")),
-                ("Product Name", prod.get("product_name")),
+                ("Product Name", _distinct_name(prod.get("product_code"), prod.get("product_name"))),
                 ("Description", prod.get("description")),
                 ("Dimensions", _dims(prod)),
                 ("Attachment Type", _att_type(att)),
@@ -380,7 +395,7 @@ def _stock(rows: list[dict], b: _Builder) -> None:
             s.get("product_code"),
             [
                 ("Product Code", s.get("product_code")),
-                ("Product Name", s.get("product_name")),
+                ("Product Name", _distinct_name(s.get("product_code"), s.get("product_name"))),
                 ("Warehouse", wh_name),
                 ("System Location", sysloc),
                 ("Quantity On Hand", s.get("quantity_on_hand") if s.get("quantity_on_hand") is not None else s.get("quantity")),

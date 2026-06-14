@@ -97,6 +97,32 @@ def test_products_item_plus_nested_attachments():
     assert out["attachments"][0]["attachmentType"] == "Product Photos"
 
 
+def test_product_name_hidden_when_equal_to_code_shown_when_distinct():
+    # name == code → name line dropped (redundant in Sorento)
+    out = env("crm_master_products_list", {
+        "data": [{"product_code": "SRTWT107", "product_name": "SRTWT107"}],
+    })
+    labels = {x["label"] for x in out["items"][0]["fields"]}
+    assert "Product Code" in labels
+    assert "Product Name" not in labels
+
+    # name != code → name retained
+    out2 = env("crm_master_products_list", {
+        "data": [{"product_code": "SRTFC2044", "product_name": "Cistern"}],
+    })
+    f2 = {x["label"]: x["value"] for x in out2["items"][0]["fields"]}
+    assert f2["Product Name"] == "Cistern"
+
+
+def test_products_price_and_dimensions_default_to_not_defined():
+    out = env("crm_master_products_list", {
+        "data": [{"product_code": "SRTNODIM", "product_name": "No Dims Product"}],
+    })
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["List Price"] == "Not defined"
+    assert f["Dimensions"] == "Not defined"
+
+
 def test_stock_uses_relabelled_location_fields():
     out = env("crm_inventory_stock_balance_list", {
         "data": [{"product_code": "SRTWT107", "product_name": "SRTWT107",
