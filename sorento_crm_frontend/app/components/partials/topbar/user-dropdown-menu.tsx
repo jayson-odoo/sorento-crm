@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { signOut, useSession } from 'next-auth/react';
 import { useTheme } from 'next-themes';
+import { clearCachedAuthToken } from '@/lib/api';
 import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 import { useLanguage } from '@/providers/i18n-provider';
 import { Badge } from '@/components/ui/badge';
@@ -241,7 +242,10 @@ export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
             variant="outline"
             size="sm"
             className="w-full"
-            onClick={() => signOut()}
+            onClick={() => {
+              clearCachedAuthToken();
+              signOut();
+            }}
           >
             Logout
           </Button>

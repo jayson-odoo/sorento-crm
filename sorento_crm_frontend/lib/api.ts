@@ -31,6 +31,69 @@ function _attachImpersonationHeader(url: unknown, init: RequestInit | undefined)
   return next;
 }
 
+// ---------------------------------------------------------------------------
+// Cached client-side auth token.
+//
+// Every apiFetch needs a Bearer JWT from /api/auth/token. That route is pure
+// CPU (decode the NextAuth JWE, re-sign as HS256) but minting one PER API call
+// meant a page firing N queries triggered N parallel token fetches, swamping
+// the single Next.js server process (observed 12-17s each under load). The
+// token is valid 24h, so cache it and dedupe concurrent fetches: N callers
+// share ONE in-flight request and reuse the result until it nears expiry.
+// ---------------------------------------------------------------------------
+let _cachedToken: string | null = null;
+let _cachedTokenExp = 0; // epoch seconds; 0 = unknown
+let _tokenInFlight: Promise<string | null> | null = null;
+const _TOKEN_REFRESH_MARGIN_S = 60; // refetch this many seconds before exp
+
+function _decodeJwtExp(token: string): number {
+  try {
+    const payload = token.split('.')[1];
+    if (!payload) return 0;
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+    const exp = JSON.parse(json)?.exp;
+    return typeof exp === 'number' ? exp : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function getCachedAuthToken(basePath: string): Promise<string | null> {
+  const now = Math.floor(Date.now() / 1000);
+  if (_cachedToken && _cachedTokenExp - _TOKEN_REFRESH_MARGIN_S > now) {
+    return _cachedToken;
+  }
+  // Coalesce concurrent callers onto a single fetch.
+  if (_tokenInFlight) return _tokenInFlight;
+
+  _tokenInFlight = (async () => {
+    try {
+      const res = await fetch(`${basePath}/api/auth/token`, { credentials: 'include' });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null);
+      const token: string | null = data?.token ?? null;
+      if (token) {
+        _cachedToken = token;
+        _cachedTokenExp = _decodeJwtExp(token);
+      }
+      return token;
+    } catch {
+      return null;
+    } finally {
+      _tokenInFlight = null;
+    }
+  })();
+
+  return _tokenInFlight;
+}
+
+/** Clear the cached auth token. Call on logout / session switch. */
+export function clearCachedAuthToken(): void {
+  _cachedToken = null;
+  _cachedTokenExp = 0;
+  _tokenInFlight = null;
+}
+
 /**
  * apiFetch - universal fetch for dev/prod that prefixes API calls with the correct base URL
  * Routes business logic APIs to FastAPI backend, keeps auth routes in Next.js
@@ -203,15 +266,10 @@ export async function apiFetch(
         // NextAuth stores JWT encrypted in cookies, so we need to get the raw token
         if (typeof window !== 'undefined') {
           try {
-            // For client-side: fetch the raw JWT token from Next.js API
-            const tokenResponse = await fetch(`${basePath}/api/auth/token`, {
-              credentials: 'include',
-            });
-            
-            if (tokenResponse.ok) {
-              const data = await tokenResponse.json();
-              const token = data?.token;
-              
+            // For client-side: get a cached (deduped) JWT from the Next.js API.
+            const token = await getCachedAuthToken(basePath);
+
+            {
               if (token) {
                 console.debug('JWT token extracted successfully');
                 // Don't set Content-Type for FormData - browser needs to set it with boundary
@@ -298,8 +356,8 @@ export async function apiFetch(
                   };
                 }
               } else {
-                console.warn('Token endpoint returned no token', data);
-                // Fallback: send cookies if token extraction fails
+                // No token available — fall back to cookie-based auth.
+                console.warn('No auth token available; falling back to cookies');
                 const isFormData = init?.body instanceof FormData;
                 const headers: Record<string, string> = {
                   ...(init?.headers as Record<string, string>),
@@ -313,22 +371,6 @@ export async function apiFetch(
                   headers,
                 };
               }
-            } else {
-              const errorData = await tokenResponse.json().catch(() => ({}));
-              console.warn('Token endpoint failed', tokenResponse.status, errorData);
-              // Fallback: send cookies if token endpoint fails
-              const isFormData = init?.body instanceof FormData;
-              const headers: Record<string, string> = {
-                ...(init?.headers as Record<string, string>),
-              };
-              if (!isFormData && !headers['Content-Type']) {
-                headers['Content-Type'] = 'application/json';
-              }
-              init = {
-                ...init,
-                credentials: 'include' as RequestCredentials,
-                headers,
-              };
             }
           } catch (e) {
             console.error('Failed to get token for API call', e);
