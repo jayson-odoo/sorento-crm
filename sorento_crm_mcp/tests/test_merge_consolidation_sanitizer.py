@@ -167,10 +167,24 @@ def test_enrich_products_groups_attachments_under_parent():
         ]
     }
     client = _StubClient(children)
+    # Nesting only happens when attachment_type_ids is supplied.
     out = json.loads(
-        asyncio.run(_enrich_products_with_attachments(client, json.dumps(parents), {}))
+        asyncio.run(_enrich_products_with_attachments(client, json.dumps(parents), {"attachment_type_ids": "type-1"}))
     )
     by_id = {r["id"]: r for r in out["data"]}
     assert [a["original_filename"] for a in by_id["prod-1"]["attachments"]] == ["a.jpg", "b.jpg"]
     # None attachment skipped → empty list.
     assert by_id["prod-2"]["attachments"] == []
+    # The type filter is forwarded to the child fetch.
+    assert client.calls[0][1].get("attachment_type_ids") == "type-1"
+
+
+def test_enrich_products_no_attachments_without_type_ids():
+    parents = {"data": [{"id": "prod-1"}]}
+    client = _StubClient({"data": [{"product_id": "prod-1", "attachment": {"original_filename": "a.jpg"}}]})
+    out = json.loads(
+        asyncio.run(_enrich_products_with_attachments(client, json.dumps(parents), {}))
+    )
+    # No attachment_type_ids → no child fetch, no attachments key added.
+    assert "attachments" not in out["data"][0]
+    assert client.calls == []

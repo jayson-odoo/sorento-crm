@@ -974,10 +974,15 @@ async def _enrich_promotions_with_products(client: Any, raw: str, query: dict[st
 async def _enrich_products_with_attachments(client: Any, raw: str, query: dict[str, Any] | None) -> str:
     """Nest each product's attachments under an `attachments[]` key (merge tool).
 
-    Fans out ONE batched call to /product-attachments?product_ids=<page ids> and
-    groups the nested `attachment` blocks by product_id. Attachment internals are
-    stripped later by `_sanitize_tool_response`.
+    ONLY runs when the caller passed `attachment_type_ids` — then it fans out to
+    /product-attachments?product_ids=<page ids>&attachment_type_ids=<types> and
+    nests just those file types. Without `attachment_type_ids` the response is a
+    plain product listing with no attachments (e.g. a price/spec list). Attachment
+    internals are stripped later by `_sanitize_tool_response`.
     """
+    att_type_ids = (query or {}).get("attachment_type_ids")
+    if att_type_ids in (None, "", []):
+        return raw
     data = _json_loads_safe(raw)
     if not isinstance(data, dict):
         return raw
@@ -990,7 +995,7 @@ async def _enrich_products_with_attachments(client: Any, raw: str, query: dict[s
     pa_rows = await _fetch_all_child_rows(
         client,
         "/api/v1/master-data/product-attachments",
-        {"product_ids": ",".join(product_ids)},
+        {"product_ids": ",".join(product_ids), "attachment_type_ids": att_type_ids},
         "crm_master_products_list",
     )
     by_product: dict[str, list[Any]] = defaultdict(list)

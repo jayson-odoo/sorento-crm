@@ -51,7 +51,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "cost_price, invoice_price, is_active, dimensions_length (alias length), dimensions_width "
             "(alias width), dimensions_height (alias height), largest_dimension, smallest_dimension; "
             "combine with dir=asc|desc. Each row returns `currency` (default MYR) — render prices with that "
-            "code, never $. Rows may include `field_attachments` (map of product field → linked docs)."
+            "code, never $. Rows may include `field_attachments` (map of product field → linked docs). "
+            "ATTACHMENTS: pass `attachment_type_ids` (canonical AttachmentType UUIDs, csv / JSON / repeated) "
+            "to nest each product's files of those types under `attachments[]` (e.g. Product Photos, "
+            "Technical Specifications). Omit it for a plain price/spec listing with NO attachments."
         ),
         "/api/v1/master-data/products",
         (),
@@ -60,6 +63,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "price_min", "price_max", "item_type",
             "length_min", "length_max", "width_min", "width_max",
             "height_min", "height_max", "any_dimension_min", "any_dimension_max",
+            "attachment_type_ids",
             "sort", "dir",
         ),
         domain="products",
