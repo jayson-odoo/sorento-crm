@@ -11,7 +11,7 @@ import secrets
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, inspect, func
-from typing import List, Optional
+from typing import List, Optional, Iterable
 from app.config import settings
 from app.models.complaints import Complaint
 from app.models.order import Order, OrderLine
@@ -21,6 +21,11 @@ from app.models.sla import ConversationSLATracking
 from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
 from app.services.error_handler import handle_not_found
 from app.services.entity_attachment_service import EntityAttachmentService
+
+
+# Sentinel: distinguishes "caller passed a precomputed value (maybe None)" from
+# "caller passed nothing, fall back to a per-row lookup" in _serialize_complaint.
+_UNSET = object()
 
 
 class ComplaintService:
@@ -283,13 +288,27 @@ class ComplaintService:
         complaint: Complaint,
         links_override: Optional[list] = None,
         print_count: Optional[int] = None,
+        *,
+        view_url_override: Optional[str] = None,
+        assigned_to_name_override=_UNSET,
+        last_responded_by_name_override=_UNSET,
     ) -> dict:
-        """Serialize complaint with attachments from generic entity_attachment_links table."""
+        """Serialize complaint with attachments from generic entity_attachment_links table.
+
+        The *_override kwargs let the list path inject values it batched up front,
+        so a 50-row page does not fire per-row view-token / user / SLA queries.
+        When omitted, each falls back to its original per-row lookup (single-row
+        detail path stays unchanged).
+        """
         data = {attr.key: getattr(complaint, attr.key) for attr in inspect(complaint).mapper.column_attrs}
         data["system_id"] = str(complaint.id)
         data["print_count"] = int(print_count or 0)
         data["form_type"] = "complaint"
-        data["view_url"] = self._build_complaint_view_url(str(complaint.id))
+        data["view_url"] = (
+            view_url_override
+            if view_url_override is not None
+            else self._build_complaint_view_url(str(complaint.id))
+        )
         links = links_override if links_override is not None else self.entity_attachment_service.list_links("complaint", str(complaint.id))
         data["attachments"] = [
             self.entity_attachment_service.serialize_link(
@@ -299,17 +318,22 @@ class ComplaintService:
             )
             for link in links
         ]
-        if data.get("last_responded_by"):
+        if last_responded_by_name_override is not _UNSET:
+            data["last_responded_by_name"] = last_responded_by_name_override
+        elif data.get("last_responded_by"):
             data["last_responded_by_name"] = self._resolve_user_display_name(data["last_responded_by"])
         else:
             data["last_responded_by_name"] = None
-        sla_assignee_name = self._latest_unresolved_sla_assignee_name(str(complaint.id))
-        if sla_assignee_name:
-            data["assigned_to_name"] = sla_assignee_name
-        elif data.get("assigned_to"):
-            data["assigned_to_name"] = self._resolve_user_display_name(data["assigned_to"])
+        if assigned_to_name_override is not _UNSET:
+            data["assigned_to_name"] = assigned_to_name_override
         else:
-            data["assigned_to_name"] = None
+            sla_assignee_name = self._latest_unresolved_sla_assignee_name(str(complaint.id))
+            if sla_assignee_name:
+                data["assigned_to_name"] = sla_assignee_name
+            elif data.get("assigned_to"):
+                data["assigned_to_name"] = self._resolve_user_display_name(data["assigned_to"])
+            else:
+                data["assigned_to_name"] = None
         rc = getattr(complaint, "root_cause", None)
         data["root_cause_name"] = getattr(rc, "name", None) if rc is not None else None
         res = getattr(complaint, "resolution", None)
@@ -409,11 +433,49 @@ class ComplaintService:
         print_map = DownloadService(self.db).count_map_for_user(
             viewer_user_id, "complaint", complaint_ids
         ) if viewer_user_id else {}
+
+        # Batch the per-row enrichment that previously fired O(rows) queries:
+        # view tokens, SLA assignee trackers, and user display names.
+        view_url_map = self._batch_complaint_view_urls(complaint_ids)
+        sla_tracker_map = self._batch_latest_unresolved_sla_trackers(complaint_ids)
+        wanted_user_ids: set[str] = set()
+        for c in complaints:
+            if getattr(c, "last_responded_by", None):
+                wanted_user_ids.add(str(c.last_responded_by))
+            if getattr(c, "assigned_to", None):
+                wanted_user_ids.add(str(c.assigned_to))
+        for t in sla_tracker_map.values():
+            if getattr(t, "assigned_to_id", None):
+                wanted_user_ids.add(str(t.assigned_to_id))
+            if getattr(t, "assigned_to", None):
+                wanted_user_ids.add(str(t.assigned_to))
+        user_name_map = self._batch_user_display_names(wanted_user_ids)
+
+        def _assigned_name(complaint) -> Optional[str]:
+            tracker = sla_tracker_map.get(str(complaint.id))
+            if tracker is not None:
+                if getattr(tracker, "assigned_to_id", None):
+                    name = user_name_map.get(str(tracker.assigned_to_id))
+                    if name:
+                        return name
+                if getattr(tracker, "assigned_to", None):
+                    return user_name_map.get(str(tracker.assigned_to)) or tracker.assigned_to
+            if getattr(complaint, "assigned_to", None):
+                return user_name_map.get(str(complaint.assigned_to))
+            return None
+
         complaint_data = [
             self._serialize_complaint(
                 complaint,
                 links_override=links_map.get(str(complaint.id), []),
                 print_count=print_map.get(str(complaint.id), 0),
+                view_url_override=view_url_map.get(str(complaint.id)),
+                assigned_to_name_override=_assigned_name(complaint),
+                last_responded_by_name_override=(
+                    user_name_map.get(str(complaint.last_responded_by))
+                    if getattr(complaint, "last_responded_by", None)
+                    else None
+                ),
             )
             for complaint in complaints
         ]
@@ -561,11 +623,14 @@ class ComplaintService:
         view_url = (self._build_complaint_view_url(complaint_id) or "").strip()
         return f" {view_url}" if view_url else ""
 
-    def _build_complaint_view_url(self, complaint_id: str, base_url_override: Optional[str] = None) -> str:
-        """Build shareable (no-auth) frontend link for a complaint using view token."""
+    def _complaint_view_base_url(self, base_url_override: Optional[str] = None) -> str:
+        """Resolve the frontend base URL for view links (override → settings → SystemSetting).
+
+        Factored out of _build_complaint_view_url so the list path can resolve it
+        ONCE for the whole page instead of once per row.
+        """
         from app.models.user import SystemSetting
 
-        view_token = self.get_or_create_view_token(complaint_id)
         base_url = (base_url_override or "").strip().rstrip("/")
         if not base_url:
             base_url = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
@@ -573,7 +638,105 @@ class ComplaintService:
             sys_settings = self.db.query(SystemSetting).first()
             if sys_settings and getattr(sys_settings, "website_url", None):
                 base_url = (sys_settings.website_url or "").strip().rstrip("/")
-        return f"{base_url}/view/complaint?token={view_token}" if base_url else f"/view/complaint?token={view_token}"
+        return base_url
+
+    @staticmethod
+    def _format_complaint_view_url(base_url: str, token: str) -> str:
+        return f"{base_url}/view/complaint?token={token}" if base_url else f"/view/complaint?token={token}"
+
+    def _build_complaint_view_url(self, complaint_id: str, base_url_override: Optional[str] = None) -> str:
+        """Build shareable (no-auth) frontend link for a complaint using view token."""
+        view_token = self.get_or_create_view_token(complaint_id)
+        base_url = self._complaint_view_base_url(base_url_override)
+        return self._format_complaint_view_url(base_url, view_token)
+
+    def _batch_complaint_view_urls(self, complaint_ids: List[str]) -> dict:
+        """Resolve view URLs for many complaints with O(1) queries instead of O(rows).
+
+        One SELECT for existing tokens, one isolated session to mint any missing
+        ones in bulk, and the base URL resolved once. Mirrors the per-row
+        get_or_create_view_token semantics (isolated session so token writes never
+        piggyback the caller's pending writes).
+        """
+        ids = [str(i) for i in complaint_ids if i]
+        if not ids:
+            return {}
+        existing = (
+            self.db.query(ViewToken)
+            .filter(ViewToken.entity_type == "complaint", ViewToken.entity_id.in_(ids))
+            .all()
+        )
+        token_map: dict = {str(r.entity_id): r.token for r in existing}
+        missing = [cid for cid in ids if cid not in token_map]
+        if missing:
+            from app.database import SessionLocal
+            isolated = SessionLocal()
+            try:
+                for cid in missing:
+                    ex = (
+                        isolated.query(ViewToken)
+                        .filter(ViewToken.entity_type == "complaint", ViewToken.entity_id == cid)
+                        .first()
+                    )
+                    if ex:
+                        token_map[cid] = ex.token
+                        continue
+                    tok = secrets.token_urlsafe(32)
+                    isolated.add(ViewToken(entity_type="complaint", entity_id=cid, token=tok))
+                    token_map[cid] = tok
+                isolated.commit()
+            except Exception:
+                isolated.rollback()
+                # Leave un-minted ids out of the map; the serializer falls back
+                # to a per-row build for those rather than failing the page.
+            finally:
+                isolated.close()
+        base_url = self._complaint_view_base_url()
+        return {cid: self._format_complaint_view_url(base_url, tok) for cid, tok in token_map.items()}
+
+    def _batch_user_display_names(self, user_ids: Iterable[str]) -> dict:
+        """Map {user id or respond_user_id -> display name} for many ids in one query."""
+        ids = {str(u).strip() for u in user_ids if u and str(u).strip()}
+        if not ids:
+            return {}
+        from app.models.user import User
+        users = (
+            self.db.query(User)
+            .filter(or_(User.id.in_(ids), User.respond_user_id.in_(ids)))
+            .all()
+        )
+        out: dict = {}
+        for u in users:
+            name = u.name or u.email or None
+            if not name:
+                continue
+            if getattr(u, "id", None):
+                out[str(u.id)] = name
+            if getattr(u, "respond_user_id", None):
+                out[str(u.respond_user_id)] = name
+        return out
+
+    def _batch_latest_unresolved_sla_trackers(self, complaint_ids: List[str]) -> dict:
+        """Map {complaint_id -> latest unresolved ConversationSLATracking} in one query."""
+        ids = [str(i) for i in complaint_ids if i]
+        if not ids:
+            return {}
+        rows = (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.source_entity_type == "complaint",
+                ConversationSLATracking.source_entity_id.in_(ids),
+                ConversationSLATracking.is_resolved.is_(False),
+            )
+            .order_by(ConversationSLATracking.initiated_at.desc())
+            .all()
+        )
+        out: dict = {}
+        for t in rows:
+            cid = str(t.source_entity_id)
+            if cid not in out:  # first seen = latest (desc order)
+                out[cid] = t
+        return out
 
     def notify_team_complaint_external_created(
         self,
