@@ -162,6 +162,7 @@ export function SidebarMenu() {
         >
           <Link
             href={item.path || '#'}
+            prefetch={false}
             className="flex items-center justify-between grow gap-2 min-w-0"
           >
             {item.icon && <item.icon data-slot="accordion-menu-icon" className="shrink-0" />}
@@ -259,7 +260,7 @@ export function SidebarMenu() {
           className="text-[13px] group"
         >
           <div className="flex items-center gap-1 min-w-0 w-full">
-            <Link href={item.path || '#'} className="flex-1 min-w-0 truncate">
+            <Link href={item.path || '#'} prefetch={false} className="flex-1 min-w-0 truncate">
               {item.title}
             </Link>
             {item.path && (

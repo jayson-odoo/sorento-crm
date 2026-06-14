@@ -3,9 +3,6 @@
 import { useEffect, useState } from 'react';
 
 export function CompanyMap() {
-// #region agent log
-typeof window !== 'undefined' && fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'company-map.tsx:7',message:'CompanyMap function entry',data:{windowDefined:typeof window!=='undefined'},timestamp:Date.now(),sessionId:'debug-session',runId:'run2',hypothesisId:'H2'})}).catch(()=>{});
-// #endregion
   const [MapComponent, setMapComponent] = useState<React.ComponentType<any> | null>(null);
   const [mounted, setMounted] = useState(false);
 

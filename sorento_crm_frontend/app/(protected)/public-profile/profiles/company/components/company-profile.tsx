@@ -28,9 +28,6 @@ interface IProfileProduct {
 type IProfileProducts = Array<IProfileProduct>;
 
 const CompanyProfile = () => {
-// #region agent log
-typeof window !== 'undefined' && fetch('http://127.0.0.1:7242/ingest/82ff2983-30f8-41d1-a335-d37b94435673',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'company-profile.tsx:31',message:'CompanyProfile render start',data:{windowDefined:typeof window!=='undefined',hasCompanyMap:!!CompanyMap},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'H2'})}).catch(()=>{});
-// #endregion
   const rows: IProfileRows = [
     {
       icon: Dribbble,
