@@ -280,24 +280,19 @@ def _promo_filename(promo: dict) -> Any:
 
 
 def _promotions(rows: list[dict], b: _Builder) -> None:
+    # Header-only: one item per promotion + its PDF. SKU detail lives in the PDF,
+    # so products are intentionally not enumerated.
     for promo in rows:
         name = _promo_filename(promo)
-        expired = promo.get("is_expired") is True
-        for pp in promo.get("products") or []:
-            prod = pp.get("product") or {}
-            b.item(
-                prod.get("product_code"),
-                [
-                    ("Product Code", prod.get("product_code")),
-                    ("Product Name", prod.get("product_name")),
-                    ("Promotion", name),
-                    ("Selling Price", _money(pp.get("selling_price"))),
-                    ("List Price", _money(prod.get("list_price"))),
-                    ("Dimensions", _dims(prod)),
-                ],
-                discontinued=prod.get("is_discontinued") is True,
-                expired=expired or pp.get("is_expired") is True,
-            )
+        b.item(
+            name,
+            [
+                ("Promotion", name),
+                ("Start Date", promo.get("start_date")),
+                ("End Date", promo.get("end_date")),
+            ],
+            expired=promo.get("is_expired") is True,
+        )
         for a in promo.get("attachments") or []:
             b.attach(a.get("attachment") or a)
 

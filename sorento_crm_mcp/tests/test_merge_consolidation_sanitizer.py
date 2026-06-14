@@ -1,8 +1,7 @@
 """Sanitizer + enrichment coverage for the consolidated (merged) MCP list tools.
 
-- crm_marketing_promotions_list: nested products[] slimmed (confidential pricing
-  dropped, promotion_price→selling_price), header attachment internals stripped
-  but original_filename kept, row id dropped.
+- crm_marketing_promotions_list: header-only (row id dropped, header attachment
+  internals scrubbed, filename kept) — products are NOT nested.
 - crm_master_products_list: confidential cost_price/invoice_price dropped, nested
   attachments[] internal-stripped.
 - enrich grouping: child rows nested under the correct parent id.
@@ -12,7 +11,6 @@ import json
 
 from sorento_crm_mcp.server import (
     _enrich_products_with_attachments,
-    _enrich_promotions_with_products,
     _sanitize_tool_response,
 )
 
@@ -20,7 +18,7 @@ from sorento_crm_mcp.server import (
 # --------------------------------------------------------------------------
 # Sanitize half (synchronous)
 # --------------------------------------------------------------------------
-def test_promotions_list_nested_products_slimmed_and_header_attachment_kept():
+def test_promotions_list_header_only_keeps_pdf_drops_ids():
     raw = {
         "data": [
             {
@@ -38,47 +36,21 @@ def test_promotions_list_nested_products_slimmed_and_header_attachment_kept():
                         }
                     }
                 ],
-                "products": [
-                    {
-                        "id": "pp-1",
-                        "promotion_id": "promo-1",
-                        "promotion_price": 359.99,
-                        "dealer_cost": 200.0,
-                        "dealer_discount_percent": 30,
-                        "list_to_dealer_margin_amount": 50,
-                        "product": {
-                            "product_code": "KS-001",
-                            "product_name": "Sink",
-                            "list_price": 599.99,
-                            "cost_price": 180.0,
-                            "dimensions_length": 900,
-                        },
-                    }
-                ],
             }
         ],
         "pagination": {"total": 1, "page": 1, "limit": 50},
     }
     out = json.loads(_sanitize_tool_response("crm_marketing_promotions_list", json.dumps(raw)))
     row = out["data"][0]
-    # Row-level UUIDs gone.
+    # Row-level UUIDs gone; no products nested.
     assert "id" not in row
     assert "created_by" not in row
+    assert "products" not in row
     # Header attachment internals stripped, but the deliverable filename stays.
     att = row["attachments"][0]["attachment"]
     assert att["original_filename"] == "Kitchen Sink Promo.pdf"
     assert "full_directory_path" not in att
     assert "storage_provider" not in att
-    # Nested product line: confidential pricing gone, selling_price rename applied.
-    line = row["products"][0]
-    blob = json.dumps(line)
-    for confidential in ("dealer_cost", "dealer_discount_percent", "list_to_dealer_margin_amount", "cost_price"):
-        assert confidential not in blob
-    assert line["selling_price"] == 359.99
-    assert "promotion_price" not in line
-    # Customer-facing product fields survive.
-    assert line["product"]["list_price"] == 599.99
-    assert line["product"]["dimensions_length"] == 900
 
 
 def test_products_list_drops_confidential_and_strips_attachment_internals():
@@ -134,27 +106,6 @@ class _StubClient:
         if (query or {}).get("page") in (None, "1"):
             return json.dumps(self._child_payload)
         return json.dumps({"data": []})
-
-
-def test_enrich_promotions_groups_products_under_parent():
-    parents = {"data": [{"id": "promo-1"}, {"id": "promo-2"}]}
-    children = {
-        "data": [
-            {"promotion_id": "promo-1", "product": {"product_code": "A"}},
-            {"promotion_id": "promo-2", "product": {"product_code": "B"}},
-            {"promotion_id": "promo-1", "product": {"product_code": "C"}},
-        ]
-    }
-    client = _StubClient(children)
-    out = json.loads(
-        asyncio.run(_enrich_promotions_with_products(client, json.dumps(parents), {}))
-    )
-    by_id = {r["id"]: r for r in out["data"]}
-    assert [p["product"]["product_code"] for p in by_id["promo-1"]["products"]] == ["A", "C"]
-    assert [p["product"]["product_code"] for p in by_id["promo-2"]["products"]] == ["B"]
-    # One batched child call carrying both parent ids.
-    assert client.calls[0][0].endswith("/promotion-products")
-    assert "promo-1" in client.calls[0][1]["promotion_ids"]
 
 
 def test_enrich_products_groups_attachments_under_parent():

@@ -89,9 +89,12 @@ TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     # NOTE: promotions list intentionally has NO status/active default — the
     # backend owns the semantics (active-first, fallback to expired rows with
     # per-row `is_expired` so the agent can answer "found but expired").
-    # Orders list (DO discovery) should surface the latest order first by default.
-    # UI grid passes its own sort/dir, so this only affects MCP/agent calls that omit them.
-    "crm_order_management_orders_list": {"sort": "order_date", "dir": "desc"},
+    # Orders (DO discovery) surface the latest DELIVERED order first by default
+    # (when no explicit sort is given). UI grid passes its own sort/dir, so this
+    # only affects MCP/agent calls that omit them. Pairs with the route behaviour:
+    # no date filter → top-20 by latest delivery; date filter → the full window.
+    "crm_order_management_orders_list": {"sort": "actual_delivery_date", "dir": "desc"},
+    "crm_order_management_orders_by_product_list": {"sort": "actual_delivery_date", "dir": "desc"},
     # Domain-scoped tool: hard-pins backend filter to AttachmentType=catalogue so
     # the n8n catalogue-hinted agent cannot accidentally return non-catalogue rows.
     "crm_resource_attachments_catalogue": {"attachment_type_code": "catalogue"},
@@ -826,28 +829,6 @@ def _slim_forms_list_rows(data: Any, narrowed: bool = False) -> Any:
     return {**data, "data": cleaned}
 
 
-def _slim_promotions_list_nested_products(data: Any) -> Any:
-    """Slim the nested `products[]` on each promotion row (merge tool).
-
-    Applies the same per-product slim as the standalone promotion-products tool
-    (drop confidential pricing, promotion_price→selling_price) but ONLY to the
-    nested `products[]`. The promo HEADER attachments[] are left for
-    `_strip_attachment_internals` so the promotion's packing-list filename
-    survives for the WhatsApp template.
-    """
-    if not isinstance(data, dict):
-        return data
-    rows = data.get("data")
-    if not isinstance(rows, list):
-        return data
-    for row in rows:
-        if isinstance(row, dict) and isinstance(row.get("products"), list):
-            row["products"] = [
-                _slim_promotion_products_node(p) for p in row["products"]
-            ]
-    return data
-
-
 def _strip_promotions_list_row_ids(data: Any) -> Any:
     if not isinstance(data, dict):
         return data
@@ -934,43 +915,6 @@ async def _fetch_all_child_rows(
     return rows
 
 
-async def _enrich_promotions_with_products(client: Any, raw: str, query: dict[str, Any] | None) -> str:
-    """Nest each promotion's product lines under a `products[]` key (merge tool).
-
-    Fans out ONE batched call to /promotion-products?promotion_ids=<page ids> and
-    groups the rows by promotion_id. Runs BEFORE sanitize so the raw promotion id
-    is still available (the sanitizer strips it afterwards). The nested product
-    rows are slimmed later by `_sanitize_tool_response` (confidential pricing
-    dropped, promotion_price→selling_price).
-    """
-    data = _json_loads_safe(raw)
-    if not isinstance(data, dict):
-        return raw
-    rows = data.get("data")
-    if not isinstance(rows, list) or not rows:
-        return raw
-    promo_ids = [str(r.get("id")) for r in rows if isinstance(r, dict) and r.get("id")]
-    if not promo_ids:
-        return raw
-    pp_query: dict[str, Any] = {"promotion_ids": ",".join(promo_ids)}
-    if query and query.get("access_levels"):
-        pp_query["access_levels"] = query["access_levels"]
-    pp_rows = await _fetch_all_child_rows(
-        client,
-        "/api/v1/marketing/promotion-products",
-        pp_query,
-        "crm_marketing_promotions_list",
-    )
-    by_promo: dict[str, list[Any]] = defaultdict(list)
-    for p in pp_rows or []:
-        if isinstance(p, dict) and p.get("promotion_id"):
-            by_promo[str(p["promotion_id"])].append(p)
-    for r in rows:
-        if isinstance(r, dict) and r.get("id"):
-            r["products"] = by_promo.get(str(r["id"]), [])
-    return json.dumps(data)
-
-
 async def _enrich_products_with_attachments(client: Any, raw: str, query: dict[str, Any] | None) -> str:
     """Nest each product's attachments under an `attachments[]` key (merge tool).
 
@@ -1009,9 +953,11 @@ async def _enrich_products_with_attachments(client: Any, raw: str, query: dict[s
 
 
 async def _enrich_list_response(tool_name: str, client: Any, raw: str, query: dict[str, Any] | None) -> str:
-    """Dispatch the merge-tool nesting enrichment for the consolidated list tools."""
-    if tool_name == "crm_marketing_promotions_list":
-        return await _enrich_promotions_with_products(client, raw, query)
+    """Dispatch the merge-tool nesting enrichment for the consolidated list tools.
+
+    Note: promotions_list returns the promo HEADER + its PDF only — products are
+    intentionally NOT nested (the user reads SKU detail from the PDF).
+    """
     if tool_name == "crm_master_products_list":
         return await _enrich_products_with_attachments(client, raw, query)
     return raw
@@ -1248,10 +1194,9 @@ def _sanitize_tool_response(
     if any(tool_name.startswith(p) for p in _PROMO_PRODUCT_TOOL_PREFIXES):
         data = _slim_promotion_products_response(data)
     if tool_name == _PROMOTIONS_LIST_TOOL:
+        # Header-only: drop row UUIDs, scrub attachment internals on the promo's
+        # own files. Products are NOT nested (the PDF carries SKU detail).
         data = _strip_promotions_list_row_ids(data)
-        # Merge tool: slim the nested product lines + scrub attachment internals
-        # from both header and nested promotion attachments.
-        data = _slim_promotions_list_nested_products(data)
         data = _strip_attachment_internals(data)
     if tool_name == _PRODUCTS_LIST_TOOL:
         # Merge tool: drop confidential economics + scrub nested attachment internals.

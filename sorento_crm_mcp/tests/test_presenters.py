@@ -58,24 +58,23 @@ def test_incoming_list_one_item_per_line_with_attachment():
     assert out["intro"] == "I have attached the file(s) below."
 
 
-def test_promotions_one_item_per_product_keeps_header_file_and_expired_flag():
+def test_promotions_header_only_with_pdf():
     out = env("crm_marketing_promotions_list", {
         "data": [{
             "description": "Promo.pdf", "is_expired": True,
+            "start_date": "2026-05-01", "end_date": "2026-05-31",
             "attachments": [{"attachment": {"original_filename": "Promo.pdf", "file_path": "http://x/Promo.pdf"}}],
-            "products": [{
-                "selling_price": 359.99,
-                "product": {"product_code": "KS-001", "product_name": "Sink", "list_price": 599.99,
-                            "dimensions_length": 900, "dimensions_width": 470, "dimensions_height": 230},
-            }],
+            # products may be present in raw data but the presenter ignores them
+            "products": [{"selling_price": 359.99, "product": {"product_code": "KS-001"}}],
         }],
     })
     assert len(out["items"]) == 1
     f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
     assert f["Promotion"] == "Promo.pdf"
-    assert f["Selling Price"] == "MYR 359.99"
-    assert f["List Price"] == "MYR 599.99"
-    assert f["Dimensions"] == "900 x 470 x 230 mm"
+    assert f["Start Date"] == "2026-05-01"
+    # No product fields surfaced.
+    assert "Selling Price" not in f
+    assert "Product Code" not in f
     assert out["items"][0]["flags"]["expired"] is True
     # promo header pdf carried into attachments
     assert any(a["filename"] == "Promo.pdf" for a in out["attachments"])

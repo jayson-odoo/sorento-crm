@@ -34,6 +34,33 @@ def _request_has_valid_external_api_key(request: Optional[Request]) -> bool:
     return key.strip() == str(valid).strip()
 
 
+# Highest limit an external/agent call may receive (matches the route's le=1000).
+# When a date filter scopes the result, we lift the tight 20-cap to this so the
+# caller gets the full set for that window instead of a truncated top-20.
+_EXTERNAL_ORDERS_DATE_SCOPED_LIMIT = 1000
+
+
+def _has_orders_date_filter(*raw_values: Optional[str]) -> bool:
+    """True when any order/delivery date-range filter string was supplied."""
+    return any(v is not None and str(v).strip() != "" for v in raw_values)
+
+
+def _external_orders_limit(
+    request: Optional[Request], limit: int, *, cap: int, date_scoped: bool
+) -> int:
+    """Resolve the effective limit for external/agent order calls.
+
+    date filter present  → lift to the date-scoped max (return all in the window).
+    no date filter        → keep the tight top-N cap.
+    Non-external callers  → unchanged.
+    """
+    if not _request_has_valid_external_api_key(request):
+        return limit
+    if date_scoped:
+        return _EXTERNAL_ORDERS_DATE_SCOPED_LIMIT
+    return min(limit, cap)
+
+
 # --------------------------------------------------------------------------- #
 # Flexible date parsing for query parameters
 # --------------------------------------------------------------------------- #
@@ -355,8 +382,12 @@ async def get_orders(
     tool responses small enough to reason over.
     """
     try:
-        if _request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_LIST_LIMIT_CAP:
-            limit = _EXTERNAL_ORDERS_LIST_LIMIT_CAP
+        _date_scoped = _has_orders_date_filter(
+            order_date_from, order_date_to, actual_delivery_date_from, actual_delivery_date_to
+        )
+        limit = _external_orders_limit(
+            request, limit, cap=_EXTERNAL_ORDERS_LIST_LIMIT_CAP, date_scoped=_date_scoped
+        )
         service = OrderService(db)
         result = service.list_orders(
             page=page,
@@ -557,8 +588,12 @@ async def get_orders_by_product(
     tool responses small enough to reason over.
     """
     try:
-        if _request_has_valid_external_api_key(request) and limit > _EXTERNAL_ORDERS_AGG_LIMIT_CAP:
-            limit = _EXTERNAL_ORDERS_AGG_LIMIT_CAP
+        _date_scoped = _has_orders_date_filter(
+            order_date_from, order_date_to, actual_delivery_date_from, actual_delivery_date_to
+        )
+        limit = _external_orders_limit(
+            request, limit, cap=_EXTERNAL_ORDERS_AGG_LIMIT_CAP, date_scoped=_date_scoped
+        )
         norm_entities = _normalize_entities(entities)
         parsed_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
         # Endpoint is product-centric: require a product narrower to prevent
