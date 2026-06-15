@@ -382,34 +382,56 @@ def _resource_attachments(rows: list[dict], b: _Builder) -> None:
 
 
 def _stock(rows: list[dict], b: _Builder) -> None:
+    def _as_dict(v):
+        return v if isinstance(v, dict) else {}
+
+    def _as_str(v):
+        return v if isinstance(v, str) and v.strip() else None
+
     for s in rows:
-        # Stock balance rows nest the product under `product` and the warehouse under
-        # `warehouse`; fall back to flat keys for any caller that pre-flattens.
-        prod = s.get("product") if isinstance(s.get("product"), dict) else {}
-        wh = s.get("warehouse") if isinstance(s.get("warehouse"), dict) else {}
+        # Row shape varies by backend vocab:
+        #   • legacy: s["warehouse"] = {warehouse_code, warehouse_name, location}
+        #   • Sage:   s["system_location"] = {system_location: <code>, warehouse: <wh name>}
+        # Plus flat-key fallbacks. Resolve the location CODE (e.g. "BRW-BB") and the
+        # actual WAREHOUSE name (e.g. "BUKIT RAJA") from whichever shape is present.
+        prod = _as_dict(s.get("product"))
+        wh = _as_dict(s.get("warehouse"))
+        sl = _as_dict(s.get("system_location"))
         product_code = prod.get("product_code") or s.get("product_code")
         product_name = prod.get("product_name") or s.get("product_name")
-        # Pull scalar location/warehouse from the warehouse object — never the dict itself.
-        sysloc = wh.get("system_location") or wh.get("warehouse_code")
-        if not _filled(sysloc) and isinstance(s.get("system_location"), str):
-            sysloc = s.get("system_location")
+        # System Location = the location code.
+        sysloc = (
+            sl.get("system_location")
+            or wh.get("system_location")
+            or wh.get("warehouse_code")
+            or _as_str(s.get("system_location"))
+            or s.get("warehouse_code")
+        )
+        # Warehouse = the actual warehouse name.
         wh_name = (
-            wh.get("system_location_description")
-            or wh.get("warehouse_name")
+            sl.get("warehouse")
+            or sl.get("system_location_description")
             or wh.get("warehouse")
-            or s.get("system_location_description")
+            or wh.get("system_location_description")
+            or wh.get("warehouse_name")
+            or wh.get("location")
+            or _as_str(s.get("warehouse"))
             or s.get("warehouse_name")
         )
         is_discontinued = (prod.get("is_discontinued") is True) or (s.get("is_discontinued") is True)
+        qoh = s.get("quantity_on_hand") if s.get("quantity_on_hand") is not None else s.get("quantity")
+        # Warehouse / System Location always render (even when absent) so every
+        # stock row has the same shape — a row with no warehouse joined must not
+        # silently drop the fields. "—" placeholder keeps the field present.
         b.item(
             product_code,
             [
                 ("Product Code", product_code),
                 ("Product Name", _distinct_name(product_code, product_name)),
-                ("Warehouse", wh_name),
-                ("System Location", sysloc),
-                ("Quantity On Hand", s.get("quantity_on_hand") if s.get("quantity_on_hand") is not None else s.get("quantity")),
-                ("Last Updated", s.get("updated_at")),
+                ("Warehouse", wh_name if _filled(wh_name) else "—"),
+                ("System Location", sysloc if _filled(sysloc) else "—"),
+                ("Quantity On Hand", qoh if qoh is not None else "—"),
+                ("Last Updated", s.get("updated_at") or "—"),
             ],
             discontinued=is_discontinued,
         )
