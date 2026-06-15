@@ -829,7 +829,9 @@ class PortalService:
 
         # Notifications — failures must not block the user-facing submit.
         try:
-            self._post_submit_notify(kind, row)
+            self._post_submit_notify(
+                kind, row, is_resubmission=previous_status == "rejected"
+            )
         except Exception as e:  # noqa: BLE001
             logger.warning("Post-submit notify failed for %s %s: %s", kind, row.id, e)
 
@@ -1229,13 +1231,15 @@ class PortalService:
 
     # ---------- Notifications ----------
 
-    def _post_submit_notify(self, kind: str, row: Any) -> None:
+    def _post_submit_notify(self, kind: str, row: Any, is_resubmission: bool = False) -> None:
         if kind == "complaint":
             from app.services.complaints_service import ComplaintService
 
             service = ComplaintService(self.db)
             try:
-                service.notify_team_complaint_external_created(complaint_id=str(row.id))
+                service.notify_team_complaint_external_created(
+                    complaint_id=str(row.id), is_resubmission=is_resubmission
+                )
             except Exception as e:  # noqa: BLE001
                 logger.warning("Complaint submit notify failed: %s", e)
             try:

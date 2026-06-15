@@ -743,10 +743,17 @@ class ComplaintService:
         complaint_id: str,
         base_url_override: Optional[str] = None,
         sync_email: bool = False,
+        is_resubmission: bool = False,
     ) -> None:
-        """Notify tier 1 team under complaint agent (fallback project_sales) when complaint is created externally (in-app + one email to all). Email is enqueued by default so API returns quickly."""
+        """Notify tier 1 team under complaint agent (fallback project_sales) when complaint is created externally (in-app + one email to all). Email is enqueued by default so API returns quickly.
+
+        ``is_resubmission`` marks a rejected complaint being resubmitted: the team is
+        notified again under a distinct ``event_type`` keyed by the rejection cycle, so the
+        idempotency constraint allows one notification per resubmission instead of swallowing it.
+        """
         from datetime import datetime
         from app.models.user import User
+        from app.models.complaints import Complaint
         from app.models.notification import Notification, NotificationDelivery
         from app.services.notification_service import NotificationService
 
@@ -764,15 +771,22 @@ class ComplaintService:
             logger.warning(
                 "Complaint handler team members have no email addresses; skipping email delivery row."
             )
-        title = "New Complaint created"
-        intro_plain = (
-            "Dear Complaint Team,\n\n"
-            "A new complaint has been created and requires your review."
-        )
-        intro_html = (
-            "Dear Complaint Team,<br /><br />"
-            "A new complaint has been created and requires your review."
-        )
+        # Event type keys notification idempotency. A resubmit is a distinct logical event:
+        # key it by the rejection cycle (rejected_at) so each resubmission notifies exactly once.
+        # The status machine (rejected -> submitted) guards against double-fire within a cycle.
+        if is_resubmission:
+            row = self.db.query(Complaint).filter(Complaint.id == complaint_id).first()
+            rejected_at = getattr(row, "rejected_at", None)
+            cycle_key = rejected_at.isoformat() if rejected_at else "resubmit"
+            event_type = f"external_resubmitted:{cycle_key}"
+            title = "Complaint resubmitted"
+            sentence = "A previously rejected complaint has been resubmitted and requires your review."
+        else:
+            event_type = "external_created"
+            title = "New Complaint created"
+            sentence = "A new complaint has been created and requires your review."
+        intro_plain = f"Dear Complaint Team,\n\n{sentence}"
+        intro_html = f"Dear Complaint Team,<br /><br />{sentence}"
         view_url = self._build_complaint_view_url(complaint_id, base_url_override=base_url_override)
         body_plain = (
             f"{intro_plain}\n\n"
@@ -786,7 +800,17 @@ class ComplaintService:
         )
         notif_svc = NotificationService(self.db)
         first_uid = user_ids[0]
-        if emails:
+        existing_notif = (
+            self.db.query(Notification)
+            .filter(
+                Notification.user_id == first_uid,
+                Notification.source_entity_type == "complaint",
+                Notification.source_entity_id == complaint_id,
+                Notification.event_type == event_type,
+            )
+            .first()
+        )
+        if emails and existing_notif is None:
             notification = Notification(
                 user_id=first_uid,
                 type="complaint_notification",
@@ -795,7 +819,7 @@ class ComplaintService:
                 data={"recipient_emails": emails, "single_email_to_all": True, "body_html": body_html},
                 source_entity_type="complaint",
                 source_entity_id=complaint_id,
-                event_type="external_created",
+                event_type=event_type,
             )
             self.db.add(notification)
             self.db.flush()
@@ -835,7 +859,7 @@ class ComplaintService:
                     body=body_plain,
                     source_entity_type="complaint",
                     source_entity_id=complaint_id,
-                    event_type="external_created",
+                    event_type=event_type,
                 )
             except Exception as e:
                 logger.warning("Failed to create in-app notification for user %s: %s", uid, e)
