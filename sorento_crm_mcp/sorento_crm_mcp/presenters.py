@@ -383,25 +383,35 @@ def _resource_attachments(rows: list[dict], b: _Builder) -> None:
 
 def _stock(rows: list[dict], b: _Builder) -> None:
     for s in rows:
+        # Stock balance rows nest the product under `product` and the warehouse under
+        # `warehouse`; fall back to flat keys for any caller that pre-flattens.
+        prod = s.get("product") if isinstance(s.get("product"), dict) else {}
         wh = s.get("warehouse") if isinstance(s.get("warehouse"), dict) else {}
-        sysloc = s.get("system_location") or wh.get("system_location") or wh.get("warehouse_code") or s.get("warehouse_code")
+        product_code = prod.get("product_code") or s.get("product_code")
+        product_name = prod.get("product_name") or s.get("product_name")
+        # Pull scalar location/warehouse from the warehouse object — never the dict itself.
+        sysloc = wh.get("system_location") or wh.get("warehouse_code")
+        if not _filled(sysloc) and isinstance(s.get("system_location"), str):
+            sysloc = s.get("system_location")
         wh_name = (
-            s.get("system_location_description")
-            or wh.get("system_location_description")
+            wh.get("system_location_description")
             or wh.get("warehouse_name")
+            or wh.get("warehouse")
+            or s.get("system_location_description")
             or s.get("warehouse_name")
         )
+        is_discontinued = (prod.get("is_discontinued") is True) or (s.get("is_discontinued") is True)
         b.item(
-            s.get("product_code"),
+            product_code,
             [
-                ("Product Code", s.get("product_code")),
-                ("Product Name", _distinct_name(s.get("product_code"), s.get("product_name"))),
+                ("Product Code", product_code),
+                ("Product Name", _distinct_name(product_code, product_name)),
                 ("Warehouse", wh_name),
                 ("System Location", sysloc),
                 ("Quantity On Hand", s.get("quantity_on_hand") if s.get("quantity_on_hand") is not None else s.get("quantity")),
                 ("Last Updated", s.get("updated_at")),
             ],
-            discontinued=s.get("is_discontinued") is True,
+            discontinued=is_discontinued,
         )
 
 
