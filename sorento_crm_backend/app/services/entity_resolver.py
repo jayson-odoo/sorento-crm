@@ -2628,9 +2628,54 @@ def _and_probe_promotion(db: Session, tokens: list[str]) -> list[ResolvedEntity]
     ]
 
 
-def _and_probe_attachment(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
-    blob = _concat_ws(Attachment.original_filename, Attachment.description, AttachmentType.type_name)
-    counts = _and_token_match_counts(blob, tokens)
+def _token_coverage_expr(blob, tokens: list[str]):
+    """SQL expr counting how many distinct query tokens `blob` contains.
+
+    A token is "present" iff ALL of its words appear in the blob (multi-word
+    tokens like "water closet" need both words). Returns None when no token
+    yields a usable indicator. Unlike `_and_token_match_counts` (per-token
+    global-max), this scores COVERAGE per row — so a descriptive token that
+    happens to match unrelated rows elsewhere in the corpus cannot exclude an
+    otherwise-best match.
+    """
+    indicators = []
+    for tok in tokens or []:
+        if not tok:
+            continue
+        words = [w for w in tok.split() if w]
+        if not words:
+            continue
+        word_preds = []
+        for word in words:
+            variants = _word_variants(word)
+            if not variants:
+                continue
+            word_preds.append(or_(*[blob.ilike(f"%{v}%") for v in variants]))
+        if not word_preds:
+            continue
+        indicators.append(case((and_(*word_preds), 1), else_=0))
+    if not indicators:
+        return None
+    return reduce(add, indicators)
+
+
+def _and_probe_attachment(
+    db: Session, tokens: list[str], *, coverage_mode: bool = False
+) -> list[ResolvedEntity]:
+    """Attachment AND probe.
+
+    Default (``coverage_mode=False``): the standard cross-token behaviour shared
+    by every entity type — concat blob of filename + description + type, kept to
+    rows hitting each token's per-token global max.
+
+    ``coverage_mode=True`` (enabled ONLY when the caller's domain is
+    ``resource_attachment`` — see ``resolve_references_intersection``): a targeted
+    filename-coverage AND. Returns the rows whose ``original_filename`` covers the
+    MOST query tokens, ignoring a descriptive token that no filename contains
+    instead of letting it poison the AND to empty. "Sorento water closet warranty"
+    -> "Warranty Policy_Sorento.pdf" / "warranty_poster SORENTO.pdf" (cover
+    Sorento+warranty = 2); Cabana/Mocha warranty files (1 token) are dropped.
+    """
     base = (
         db.query(
             Attachment.id,
@@ -2643,9 +2688,27 @@ def _and_probe_attachment(db: Session, tokens: list[str]) -> list[ResolvedEntity
         .outerjoin(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
         .filter(Attachment.is_deleted.is_(False))
     )
-    tier = _and_max_tier_filter(base, counts)
-    if tier is None:
-        return []
+
+    if coverage_mode:
+        n_tokens = len([t for t in (tokens or []) if t and t.strip()])
+        coverage = _token_coverage_expr(Attachment.original_filename, tokens)
+        if coverage is None:
+            return []
+        max_cov = base.with_entities(func.max(coverage)).scalar()
+        # Require a genuine conjunction: with 2+ tokens the best row must cover at
+        # least 2. If nothing covers 2+ (max_cov==1), AND fails -> return [] so the
+        # caller's per-token OR fallback handles it, rather than dumping every
+        # single-token match (which would make AND behave like OR).
+        if not max_cov or max_cov < min(2, n_tokens):
+            return []
+        tier = coverage == max_cov
+    else:
+        blob = _concat_ws(Attachment.original_filename, Attachment.description, AttachmentType.type_name)
+        counts = _and_token_match_counts(blob, tokens)
+        tier = _and_max_tier_filter(base, counts)
+        if tier is None:
+            return []
+
     rows = base.filter(tier).limit(AND_MODE_LIMIT).all()
     return [
         ResolvedEntity(
@@ -2921,6 +2984,12 @@ def resolve_references_intersection(
     else:
         allowed = None
 
+    # Filename-coverage AND for attachments is opt-in by domain: only the
+    # resource_attachment domain gets the "ignore unmatched token, rank by
+    # coverage" behaviour. Every other domain keeps the standard per-token
+    # global-max AND so cross-domain attachment lookups are unaffected.
+    attachment_coverage = (domain_hint or "").strip().lower() in {"resource_attachment", "attachment"}
+
     hits: list[ResolvedEntity] = []
     for probe, produces in _AND_PROBES:
         if allowed is not None and produces.isdisjoint(allowed):
@@ -2932,7 +3001,10 @@ def resolve_references_intersection(
         else:
             probe_tokens = clean_tokens
         try:
-            rows = probe(db, probe_tokens)
+            if probe is _and_probe_attachment:
+                rows = probe(db, probe_tokens, coverage_mode=attachment_coverage)
+            else:
+                rows = probe(db, probe_tokens)
         except Exception:
             logger.exception("AND probe %s failed", probe.__name__)
             continue
