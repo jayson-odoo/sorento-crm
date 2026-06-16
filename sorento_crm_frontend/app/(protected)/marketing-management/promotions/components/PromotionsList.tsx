@@ -70,12 +70,13 @@ export default function PromotionsList() {
   const [bulkAccessLevelsDialogOpen, setBulkAccessLevelsDialogOpen] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterAccessLevel, setFilterAccessLevel] = useState<string>('all');
+  const [filterAttachmentState, setFilterAttachmentState] = useState<'all' | 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed'>('all');
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [viewerAttachmentId, setViewerAttachmentId] = useState<string | null>(null);
 
-  const hasActiveFilters = filterStatus !== 'all' || filterAccessLevel !== 'all';
+  const hasActiveFilters = filterStatus !== 'all' || filterAccessLevel !== 'all' || filterAttachmentState !== 'all';
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: [
@@ -86,6 +87,7 @@ export default function PromotionsList() {
       searchQuery,
       filterStatus,
       filterAccessLevel,
+      filterAttachmentState,
       advancedFilter,
     ],
     queryFn: async () => {
@@ -111,6 +113,7 @@ export default function PromotionsList() {
         searchQuery,
         status: filterStatus,
         user_type: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
+        attachment_state: filterAttachmentState === 'all' ? undefined : filterAttachmentState,
       });
     },
     staleTime: Infinity,
@@ -121,7 +124,7 @@ export default function PromotionsList() {
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [advancedFilter, filterStatus, filterAccessLevel]);
+  }, [advancedFilter, filterStatus, filterAccessLevel, filterAttachmentState]);
 
   const pagePromotions = data?.data ?? [];
   const togglePromotionSelection = (promotionId: string) => {
@@ -394,6 +397,25 @@ export default function PromotionsList() {
                       </SelectContent>
                     </Select>
                   </div>
+                  <div className="space-y-2">
+                    <Label>Attachment state</Label>
+                    <Select
+                      value={filterAttachmentState}
+                      onValueChange={(v) =>
+                        setFilterAttachmentState(v as 'all' | 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed')
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="All" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All</SelectItem>
+                        <SelectItem value="unlinked">No attachments</SelectItem>
+                        <SelectItem value="linked_to_trashed">Linked to trashed</SelectItem>
+                        <SelectItem value="unlinked_or_trashed">No attachments or trashed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                   {hasActiveFilters && (
                     <Button
                       variant="ghost"
@@ -402,6 +424,7 @@ export default function PromotionsList() {
                       onClick={() => {
                         setFilterStatus('all');
                         setFilterAccessLevel('all');
+                        setFilterAttachmentState('all');
                       }}
                     >
                       Clear quick filters

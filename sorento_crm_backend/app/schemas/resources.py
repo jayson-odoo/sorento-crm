@@ -285,6 +285,8 @@ class AttachmentResponse(AttachmentBase):
     is_deleted: bool = False
     deleted_at: Optional[datetime] = None
     deleted_by: Optional[str] = None
+    storage_status: Optional[str] = None  # accessible | missing | unchecked (read-only audit flag)
+    storage_checked_at: Optional[datetime] = None
     attachment_type: Optional[AttachmentTypeSimple] = None
     entity_display_name: Optional[str] = None
     linked_products: list[LinkedEntityRef] = []

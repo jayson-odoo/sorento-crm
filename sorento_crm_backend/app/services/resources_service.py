@@ -434,6 +434,7 @@ class AttachmentService:
         access_levels: Optional[List[str]] = None,
         access_levels_match: Optional[str] = "any",
         link_status: Optional[str] = None,
+        storage_status: Optional[str] = None,
         entities: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
         direct_access_only: Optional[bool] = None,
@@ -475,6 +476,9 @@ class AttachmentService:
             q = q.filter(Attachment.is_deleted == is_deleted)
         else:
             q = q.filter(Attachment.is_deleted == False)
+
+        if storage_status and str(storage_status).strip():
+            q = q.filter(Attachment.storage_status == str(storage_status).strip())
 
         if entity_type:
             q = q.filter(Attachment.entity_type == entity_type)

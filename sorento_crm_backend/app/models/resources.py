@@ -76,6 +76,12 @@ class Attachment(Base):
     sort_order = Column(Integer, nullable=True)
     # 's3' (legacy AWS S3 + CloudFront) or 'r2' (Cloudflare R2 + CDN). Drives URL signing dispatch.
     storage_provider = Column(String(16), nullable=False, server_default="s3")
+    # Storage accessibility audit (attachment_storage_audit scheduled task).
+    # 'accessible' = key found in its provider bucket, 'missing' = key absent
+    # (broken link / lost bytes), 'unchecked' = not yet audited. Used by the
+    # Files page "Storage status" filter to surface broken rows for trashing.
+    storage_status = Column(String(20), nullable=False, server_default="unchecked")
+    storage_checked_at = Column(DateTime(timezone=False), nullable=True)
     # Field-linkage template: at upload time the user picks a target table
     # (product / promotion / packing_list / form) and the field keys this
     # document is expected to answer. When the attachment is later linked to a
@@ -99,6 +105,7 @@ class Attachment(Base):
         Index("ix_attachments_directory_id", "directory_id"),
         Index("ix_attachments_access_levels", "access_levels", postgresql_using="gin"),
         Index("ix_attachments_storage_provider", "storage_provider"),
+        Index("ix_attachments_storage_status", "storage_status"),
         Index("ix_attachments_upload_batch_id", "upload_batch_id"),
     )
 

@@ -73,6 +73,7 @@ def _seed_attachment(
     type_id: str | None = None,
     uploaded_by: str | None = None,
     uploaded_at: datetime | None = None,
+    storage_status: str = "unchecked",
 ) -> str:
     att = Attachment(
         id=str(uuid.uuid4()),
@@ -83,6 +84,7 @@ def _seed_attachment(
         uploaded_by=uploaded_by,
         uploaded_at=uploaded_at or datetime(2026, 5, 1, 0, 0, 0),
         access_levels=["dealer"],
+        storage_status=storage_status,
     )
     db.add(att)
     db.flush()
@@ -132,3 +134,24 @@ def test_filter_by_uploaded_at_range(db):
     assert inside in ids
     assert before not in ids
     assert after not in ids
+
+
+def test_filter_by_storage_status_missing(db):
+    missing_id = _seed_attachment(db, filename="gone.jpg", storage_status="missing")
+    _seed_attachment(db, filename="ok.jpg", storage_status="accessible")
+    _seed_attachment(db, filename="new.jpg", storage_status="unchecked")
+    db.commit()
+
+    result = AttachmentService(db).list_attachments(storage_status="missing")
+    ids = [a.id for a in result["data"]]
+    assert ids == [missing_id]
+
+
+def test_storage_status_unset_returns_all_states(db):
+    a = _seed_attachment(db, filename="gone.jpg", storage_status="missing")
+    b = _seed_attachment(db, filename="ok.jpg", storage_status="accessible")
+    db.commit()
+
+    result = AttachmentService(db).list_attachments()
+    ids = {x.id for x in result["data"]}
+    assert {a, b} <= ids
