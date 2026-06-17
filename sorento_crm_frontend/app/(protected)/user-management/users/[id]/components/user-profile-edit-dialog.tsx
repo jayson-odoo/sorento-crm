@@ -98,9 +98,14 @@ const UserProfileEditDialog = ({
       contact_number: user?.contactNumber || '',
       tier: user?.tier ?? undefined,
       superior_id: user?.superiorId || '',
+      respond_contact_id: user?.respondContactId ?? null,
+      notify_whatsapp: Boolean(user?.notifyWhatsapp),
+      notify_whatsapp_summary: Boolean(user?.notifyWhatsappSummary),
     },
     mode: 'onSubmit',
   });
+  const [contactOpen, setContactOpen] = useState(false);
+  const [contactSearch, setContactSearch] = useState('');
 
   const lastResetRef = useRef<{ userId: string } | null>(null);
   useEffect(() => {
@@ -121,6 +126,9 @@ const UserProfileEditDialog = ({
       contact_number: user.contactNumber || '',
       tier: user.tier ?? undefined,
       superior_id: user.superiorId || '',
+      respond_contact_id: user.respondContactId ?? null,
+      notify_whatsapp: Boolean(user.notifyWhatsapp),
+      notify_whatsapp_summary: Boolean(user.notifyWhatsappSummary),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; omit to avoid reset loop
   }, [open, user?.id, user?.name, user?.email, user?.status, user?.roles, user?.respondUserId, user?.tier, user?.superiorId, userRoles.length]);
@@ -150,6 +158,39 @@ const UserProfileEditDialog = ({
     staleTime: 1000 * 60 * 5,
   });
 
+  const selectedContactId = form.watch('respond_contact_id');
+
+  // Searchable list of WhatsApp contacts for the picker (name + phone, never UUID).
+  const { data: contactSearchResults } = useQuery({
+    queryKey: ['respond-contacts-picker', contactSearch],
+    queryFn: async () => {
+      const params = new URLSearchParams({ limit: '20' });
+      if (contactSearch.trim()) params.set('query', contactSearch.trim());
+      const response = await apiFetch(`/api/user-management/contacts?${params.toString()}`);
+      if (!response.ok) return [] as Array<{ id: string; name?: string | null; phone_number?: string | null }>;
+      const json = await response.json();
+      return (json?.data ?? []) as Array<{ id: string; name?: string | null; phone_number?: string | null }>;
+    },
+    enabled: open && contactOpen,
+    staleTime: 1000 * 30,
+  });
+
+  // Resolve the currently-linked contact so the trigger shows a human label, not the id.
+  const { data: linkedContact } = useQuery({
+    queryKey: ['respond-contact', selectedContactId],
+    queryFn: async () => {
+      if (!selectedContactId) return null;
+      const response = await apiFetch(`/api/user-management/contacts/${selectedContactId}`);
+      if (!response.ok) return null;
+      return (await response.json()) as { id: string; name?: string | null; phone_number?: string | null };
+    },
+    enabled: open && !!selectedContactId,
+    staleTime: 1000 * 60,
+  });
+
+  const contactLabel = (c?: { name?: string | null; phone_number?: string | null } | null) =>
+    c ? [c.name, c.phone_number].filter(Boolean).join(' · ') || 'Linked contact' : 'No linked contact';
+
   const mutation = useMutation({
     mutationFn: async (values: UserProfileSchemaType) => {
       const roleIds = values.roleIds?.length ? values.roleIds : [];
@@ -174,6 +215,9 @@ const UserProfileEditDialog = ({
       profileData.superior_id = (values.superior_id && values.superior_id !== '__none__' && values.superior_id.trim() !== '')
         ? values.superior_id
         : null;
+      profileData.respond_contact_id = values.respond_contact_id || null;
+      profileData.notify_whatsapp = Boolean(values.notify_whatsapp);
+      profileData.notify_whatsapp_summary = Boolean(values.notify_whatsapp_summary);
 
       const response = await apiFetch(`/api/user-management/users/${user.id}`, {
         method: 'PUT',
@@ -549,6 +593,102 @@ const UserProfileEditDialog = ({
                   </FormItem>
                 );
               }}
+            />
+            {/* WhatsApp contact link (TCK-31) — name + phone, never UUID */}
+            <FormField
+              control={form.control}
+              name="respond_contact_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>WhatsApp Contact</FormLabel>
+                  <FormControl>
+                    <Popover open={contactOpen} onOpenChange={setContactOpen}>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          role="combobox"
+                          mode="input"
+                          placeholder={!field.value}
+                          aria-expanded={contactOpen}
+                          className={cn('w-full justify-between font-normal')}
+                        >
+                          <span className={cn('truncate', !field.value && 'text-muted-foreground')}>
+                            {field.value ? contactLabel(linkedContact) : 'Link a WhatsApp contact (optional)'}
+                          </span>
+                          <ButtonArrow />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-(--radix-popper-anchor-width) max-h-[min(320px,80vh)] flex flex-col p-0" align="start">
+                        <Command shouldFilter={false} className="max-h-full min-h-0 flex flex-col">
+                          <CommandInput
+                            placeholder="Search by name or phone..."
+                            value={contactSearch}
+                            onValueChange={setContactSearch}
+                          />
+                          <CommandList className="max-h-[240px] min-h-0 overflow-y-auto overflow-x-hidden">
+                            <CommandEmpty>No contact found.</CommandEmpty>
+                            <CommandGroup>
+                              <CommandItem
+                                value="__none__"
+                                onSelect={() => {
+                                  field.onChange(null);
+                                  setContactOpen(false);
+                                }}
+                              >
+                                No linked contact
+                              </CommandItem>
+                              {(contactSearchResults ?? []).map((c) => (
+                                <CommandItem
+                                  key={c.id}
+                                  value={c.id}
+                                  onSelect={() => {
+                                    field.onChange(c.id);
+                                    setContactOpen(false);
+                                  }}
+                                >
+                                  {contactLabel(c)}
+                                </CommandItem>
+                              ))}
+                            </CommandGroup>
+                          </CommandList>
+                        </Command>
+                      </PopoverContent>
+                    </Popover>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="notify_whatsapp"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-md border p-3">
+                  <div className="space-y-0.5">
+                    <FormLabel>WhatsApp escalation & assignment alerts</FormLabel>
+                    <p className="text-xs text-muted-foreground">Needs a linked WhatsApp contact.</p>
+                  </div>
+                  <FormControl>
+                    <Checkbox checked={Boolean(field.value)} onCheckedChange={(v) => field.onChange(Boolean(v))} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="notify_whatsapp_summary"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-md border p-3">
+                  <div className="space-y-0.5">
+                    <FormLabel>WhatsApp daily SLA summary</FormLabel>
+                    <p className="text-xs text-muted-foreground">Needs a linked WhatsApp contact.</p>
+                  </div>
+                  <FormControl>
+                    <Checkbox checked={Boolean(field.value)} onCheckedChange={(v) => field.onChange(Boolean(v))} />
+                  </FormControl>
+                </FormItem>
+              )}
             />
             </div>
             <DialogFooter className="shrink-0">
