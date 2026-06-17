@@ -718,6 +718,9 @@ class FormSLAOrchestrator:
             body = f"{type_label.capitalize()} {number} status updated.\n\nOpen: {full_link}"
 
         try:
+            # Escalation + new assignment are WhatsApp-eligible (TCK-29); the
+            # service gates on the recipient's notify_whatsapp + linked contact.
+            whatsapp_eligible = kind in ("escalated", "assigned")
             NotificationService(self.db).create_with_channel_preferences(
                 user_id=str(tracker.assigned_to_id),
                 type="form_sla",
@@ -735,6 +738,7 @@ class FormSLAOrchestrator:
                 send_in_app=True,
                 send_email=True,
                 send_web_push=False,
+                send_whatsapp=whatsapp_eligible,
             )
         except Exception as e:
             logger.warning(

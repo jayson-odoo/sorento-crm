@@ -101,8 +101,51 @@ def send_notification_deliveries(notification_id: str) -> None:
                     str(getattr(notification, "user_id")),
                     delivery,
                 )
+            elif channel == "whatsapp":
+                _send_whatsapp_for_notification(db, notification, user, delivery)
     finally:
         db.close()
+
+
+def _send_whatsapp_for_notification(db, notification: Notification, user, delivery: NotificationDelivery) -> None:
+    """Send the notification to the user's WhatsApp contact (TCK-29).
+
+    Window-aware: open -> text, closed -> the use-case's approved template
+    (sla_escalation / sla_assignment). Best-effort: marks the delivery sent/failed
+    and never raises — the originating escalation/assignment already committed.
+    """
+    from app.services.respond_link_service import resolve_user_respond_contact
+    from app.services.respond_messaging_service import send_text_or_template
+
+    now = datetime.utcnow()
+    try:
+        contact = resolve_user_respond_contact(db, user)
+        if not contact or not contact.respond_io_id:
+            delivery.status = "failed"
+            delivery.error_message = "No resolvable WhatsApp contact"
+            db.commit()
+            return
+        event_type = str(getattr(notification, "event_type", "") or "")
+        use_case = "sla_escalation" if event_type == "escalated" else "sla_assignment"
+        text = f"{notification.title}\n\n{notification.body or ''}".strip()
+        send_text_or_template(
+            db,
+            identifier=str(contact.respond_io_id),
+            text=text,
+            use_case=use_case,
+            respond_contact_id=str(contact.id),
+        )
+        delivery.status = "sent"
+        delivery.sent_at = now
+        db.commit()
+    except Exception as e:  # best-effort: degrade, never raise
+        logger.warning("WhatsApp delivery failed for notification %s: %s", notification.id, e)
+        try:
+            delivery.status = "failed"
+            delivery.error_message = str(e)[:500]
+            db.commit()
+        except Exception:
+            db.rollback()
 
 
 def _enqueue_email_for_delivery(db, notification: Notification, user, delivery: NotificationDelivery, event_key: str) -> None:
