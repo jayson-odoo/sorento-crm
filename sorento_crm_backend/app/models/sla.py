@@ -174,7 +174,11 @@ class ConversationSLAEventLog(Base):
     reminder_count = Column(Integer, default=0, nullable=False)
     last_reminder_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
-    
+    # How an escalation fired: 'auto' (overdue scan) or 'manual' (user-triggered, TCK-28).
+    trigger = Column(String(16), nullable=False, server_default="auto")
+    # The human who triggered a manual escalation (NULL for auto). NOT the assignee.
+    triggered_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
     tracking = relationship("ConversationSLATracking", back_populates="event_logs")
     assigned_user = relationship("User", foreign_keys=[assigned_to_id])
     

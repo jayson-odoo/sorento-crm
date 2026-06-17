@@ -390,6 +390,8 @@ class ConversationSLAEventLogCreate(BaseModel):
     due_at: Optional[datetime] = None
     response_time: Optional[Decimal] = None
     resolution_time: Optional[Decimal] = None
+    trigger: Optional[str] = None  # 'auto' | 'manual' (escalation events)
+    triggered_by_id: Optional[str] = None  # human who manually escalated
 
 
 class ConversationSLATrackingResponse(ConversationSLATrackingBase):
