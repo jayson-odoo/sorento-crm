@@ -350,6 +350,17 @@ class UserService:
         msg = "Respond User ID is already used by: " + "; ".join(parts)
         raise handle_conflict(msg)
 
+    def _check_contact_number_unique(self, contact_number: str, exclude_user_id: Optional[str]) -> None:
+        """Reject a phone already claimed by another user. Expects normalised E.164 digits."""
+        q = self.db.query(User).filter(User.contact_number == contact_number)
+        if exclude_user_id:
+            q = q.filter(User.id != exclude_user_id)
+        existing = q.first()
+        if existing:
+            raise handle_conflict(
+                f"Phone number {contact_number} is already used by another user."
+            )
+
     def _user_create_data(self, user_data: UserCreate) -> dict:
         """Build User model dict from UserCreate, excluding role_ids."""
         d = user_data.model_dump(exclude={"role_ids"})
@@ -365,6 +376,8 @@ class UserService:
         if rid:
             self._check_respond_user_id_unique(rid, exclude_user_id=None)
             data["respond_user_id"] = rid
+        if data.get("contact_number"):
+            self._check_contact_number_unique(data["contact_number"], exclude_user_id=None)
         user = User(**data)
         self.db.add(user)
         self.db.flush()
@@ -446,9 +459,14 @@ class UserService:
             rid = _normalize_respond_user_id(update_data["respond_user_id"])
             if rid:
                 self._check_respond_user_id_unique(rid, exclude_user_id=user_id)
-        
+
+        # Enforce phone uniqueness (one phone == one user). Value is already
+        # E.164-normalised by the schema validator.
+        if update_data.get("contact_number"):
+            self._check_contact_number_unique(update_data["contact_number"], exclude_user_id=user_id)
+
         # Convert empty strings to None for optional fields to avoid foreign key violations
-        optional_fields = ['superior_id', 'respond_user_id', 'country', 'timezone', 'avatar', 'tier', 'contact_number']
+        optional_fields = ['superior_id', 'respond_user_id', 'country', 'timezone', 'avatar', 'tier', 'contact_number', 'respond_contact_id']
         
         # Log what we received
         logger.info(f"Received update_data keys: {list(update_data.keys())}")

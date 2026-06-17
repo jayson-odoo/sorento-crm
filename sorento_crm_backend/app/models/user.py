@@ -40,8 +40,14 @@ class User(Base):
     respond_synced = Column(String, default="pending", nullable=False)
     superior_id = Column(String, ForeignKey("users.id"), nullable=True)
     tier = Column(Integer, nullable=True)  # Conversation SLA policy tier (1, 2, ...)
-    daily_sla_summary_subscribed = Column(Boolean, default=True, nullable=False)
-    
+    daily_sla_summary_subscribed = Column(Boolean, default=True, nullable=False)  # email summary opt-in
+    # Link to the WhatsApp contact this user is reachable on (resolves respond_io_id).
+    # Set explicitly by an admin, or auto-cached by a unique phone match (see respond_link_service).
+    respond_contact_id = Column(String, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)
+    # Per-channel notification toggles (default off until a contact is linked).
+    notify_whatsapp = Column(Boolean, default=False, nullable=False, server_default="false")  # escalation + assignment pings
+    notify_whatsapp_summary = Column(Boolean, default=False, nullable=False, server_default="false")  # daily summary template
+
     role_assignments = relationship("UserRoleAssignment", back_populates="user", cascade="all, delete-orphan")
     system_logs = relationship("SystemLog", back_populates="user")
     superior = relationship("User", remote_side=[id], backref="subordinates")
@@ -56,6 +62,9 @@ class User(Base):
         Index("users_invited_by_user_id_idx", "invited_by_user_id"),
         Index("users_status_idx", "status"),
         Index("users_respond_synced_idx", "respond_synced"),
+        Index("ix_users_respond_contact_id", "respond_contact_id"),
+        # One phone == one user. Postgres allows multiple NULLs, so unlinked users are fine.
+        UniqueConstraint("contact_number", name="uq_users_contact_number"),
     )
 
 

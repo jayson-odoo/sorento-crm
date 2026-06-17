@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional
+from pydantic import BaseModel
 
 from app.config import settings as app_settings
 from app.database import get_db
@@ -86,6 +87,52 @@ async def unsubscribe_daily_sla_summary_via_token(
     if not ok:
         raise HTTPException(status_code=404, detail="User not found")
     return {"message": "Unsubscribed from daily SLA summary emails.", "subscribed": False}
+
+
+class _ChannelPrefsUpdate(BaseModel):
+    notify_whatsapp: Optional[bool] = None
+    notify_whatsapp_summary: Optional[bool] = None
+    daily_sla_summary_subscribed: Optional[bool] = None
+
+
+def _channel_prefs(user) -> dict:
+    return {
+        "daily_sla_summary_subscribed": bool(getattr(user, "daily_sla_summary_subscribed", True)),
+        "notify_whatsapp": bool(getattr(user, "notify_whatsapp", False)),
+        "notify_whatsapp_summary": bool(getattr(user, "notify_whatsapp_summary", False)),
+    }
+
+
+@router.get("/preferences/channels")
+async def get_channel_preferences(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Current user's per-channel notification toggles (self-service)."""
+    user = db.query(User).filter(User.id == current_user["id"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return _channel_prefs(user)
+
+
+@router.patch("/preferences/channels")
+async def set_channel_preferences(
+    payload: _ChannelPrefsUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update the current user's own channel toggles. Self-service only — a user
+    can only change their own preferences (keyed off the authenticated id)."""
+    user = db.query(User).filter(User.id == current_user["id"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    data = payload.model_dump(exclude_unset=True)
+    for field in ("notify_whatsapp", "notify_whatsapp_summary", "daily_sla_summary_subscribed"):
+        if field in data and data[field] is not None:
+            setattr(user, field, bool(data[field]))
+    db.commit()
+    db.refresh(user)
+    return _channel_prefs(user)
 
 
 @router.get("/", response_model=ListResponse[NotificationResponse])

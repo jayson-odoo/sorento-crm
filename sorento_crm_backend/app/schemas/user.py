@@ -155,7 +155,18 @@ class UserBase(BaseModel):
     respond_synced: Optional[str] = "pending"
     superior_id: Optional[str] = None
     tier: Optional[int] = None  # Conversation SLA policy tier (1, 2, ...)
-    daily_sla_summary_subscribed: Optional[bool] = True
+    daily_sla_summary_subscribed: Optional[bool] = True  # email summary opt-in
+    respond_contact_id: Optional[str] = None  # linked WhatsApp contact
+    notify_whatsapp: Optional[bool] = False  # escalation + assignment pings
+    notify_whatsapp_summary: Optional[bool] = False  # daily summary template
+
+    @field_validator("contact_number", mode="before")
+    @classmethod
+    def _normalize_contact_number_base(cls, v: Any) -> Optional[str]:
+        from app.services.phone_utils import normalize_msisdn
+        if v is None:
+            return None
+        return normalize_msisdn(v)
 
 
 class UserCreate(UserBase):
@@ -174,6 +185,10 @@ class UserUpdate(BaseModel):
     respond_synced: Optional[str] = None
     superior_id: Optional[str] = None
     tier: Optional[int] = None
+    respond_contact_id: Optional[str] = None
+    notify_whatsapp: Optional[bool] = None
+    notify_whatsapp_summary: Optional[bool] = None
+    daily_sla_summary_subscribed: Optional[bool] = None
 
     @field_validator("email", mode="before")
     @classmethod
@@ -182,6 +197,14 @@ class UserUpdate(BaseModel):
             return None
         s = str(v).strip()
         return s.lower() if s else None
+
+    @field_validator("contact_number", mode="before")
+    @classmethod
+    def normalize_optional_contact_number(cls, v: Any) -> Optional[str]:
+        from app.services.phone_utils import normalize_msisdn
+        if v is None:
+            return None
+        return normalize_msisdn(v)
 
 
 class UserResponse(UserBase):
