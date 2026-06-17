@@ -1,5 +1,5 @@
 """Notification API routes: list, unread count, mark read, archive, resolve."""
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
