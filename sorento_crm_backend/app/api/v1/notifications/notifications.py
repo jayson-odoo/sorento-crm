@@ -135,6 +135,64 @@ async def set_channel_preferences(
     return _channel_prefs(user)
 
 
+class _PushKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class _PushSubscriptionIn(BaseModel):
+    endpoint: str
+    keys: _PushKeys
+
+
+@router.post("/push/subscriptions", status_code=status.HTTP_201_CREATED)
+async def subscribe_web_push(
+    payload: _PushSubscriptionIn,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Register (or refresh) a browser web-push subscription for the current user."""
+    from app.models.notification import PushSubscription
+
+    existing = (
+        db.query(PushSubscription)
+        .filter(
+            PushSubscription.user_id == current_user["id"],
+            PushSubscription.endpoint == payload.endpoint,
+        )
+        .first()
+    )
+    if existing:
+        existing.p256dh = payload.keys.p256dh
+        existing.auth = payload.keys.auth
+    else:
+        db.add(PushSubscription(
+            user_id=current_user["id"],
+            endpoint=payload.endpoint,
+            p256dh=payload.keys.p256dh,
+            auth=payload.keys.auth,
+        ))
+    db.commit()
+    return {"subscribed": True}
+
+
+@router.delete("/push/subscriptions")
+async def unsubscribe_web_push(
+    endpoint: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove a browser web-push subscription for the current user."""
+    from app.models.notification import PushSubscription
+
+    db.query(PushSubscription).filter(
+        PushSubscription.user_id == current_user["id"],
+        PushSubscription.endpoint == endpoint,
+    ).delete()
+    db.commit()
+    return {"subscribed": False}
+
+
 @router.get("/", response_model=ListResponse[NotificationResponse])
 async def list_notifications(
     tab: Optional[str] = Query(None, description="all | inbox | archived"),

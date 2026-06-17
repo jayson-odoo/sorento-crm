@@ -382,7 +382,13 @@ def _send_web_push_for_notification(
             sent_any = True
         except WebPushException as e:
             last_error = str(e)
-            logger.warning("Web push failed for subscription %s: %s", sub.id, e)
+            # Prune dead endpoints (404 Not Found / 410 Gone) so the table stays bounded.
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            if status_code in (404, 410):
+                logger.info("Pruning expired push subscription %s (HTTP %s)", sub.id, status_code)
+                db.delete(sub)
+            else:
+                logger.warning("Web push failed for subscription %s: %s", sub.id, e)
     setattr(delivery, "status", "sent" if sent_any else "failed")
     setattr(delivery, "sent_at", datetime.utcnow() if sent_any else None)
     setattr(delivery, "error_message", None if sent_any else (last_error or "No subscription succeeded"))
