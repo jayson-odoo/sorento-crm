@@ -135,6 +135,10 @@ def _validate_field_linkage_template(target_entity_type, target_field_keys):
 
 
 class AttachmentCreate(AttachmentBase):
+    # Optional caller-supplied PK so the upload path can embed the same uuid in the object key
+    # before the row is flushed. None → DB default generates one.
+    id: Optional[str] = None
+
     @model_validator(mode="after")
     def _check_field_linkage_template(self):
         et, keys = _validate_field_linkage_template(
@@ -153,10 +157,12 @@ class AttachmentUpdate(BaseModel):
     description: Optional[str] = None
     access_levels: Optional[list[str]] = None
     sort_order: Optional[int] = None
-    # Display name shown in the UI and used as Content-Disposition filename on download.
-    # Updating this does NOT touch S3 — the underlying object key (stored_filename / file_path)
-    # is immutable so existing CDN URLs keep resolving.
-    original_filename: Optional[str] = None
+    # The user-facing, RENAMEABLE name. This is what rename edits, what the UI shows, what the
+    # download Content-Disposition and the n8n webhook use. Editing it is DB-only — the object
+    # key is uuid-segregated and derived from the IMMUTABLE original_filename, so the object
+    # never moves. original_filename is intentionally NOT updatable here.
+    # See PLAN-attachment-key-uuid-segregation.md.
+    stored_filename: Optional[str] = None
     target_entity_type: Optional[str] = None
     target_field_keys: Optional[list[str]] = None
 
@@ -173,9 +179,9 @@ class AttachmentUpdate(BaseModel):
         self.target_field_keys = keys or None
         return self
 
-    @field_validator("original_filename", mode="before")
+    @field_validator("stored_filename", mode="before")
     @classmethod
-    def sanitize_original_filename(cls, v):
+    def sanitize_stored_filename(cls, v):
         """Trim, reject path separators / control chars, cap at 255 chars. None means 'no change'."""
         if v is None:
             return None
@@ -183,11 +189,11 @@ class AttachmentUpdate(BaseModel):
             v = str(v)
         s = v.strip()
         if not s:
-            raise ValueError("original_filename cannot be empty.")
+            raise ValueError("stored_filename cannot be empty.")
         if any(ch in s for ch in ("/", "\\", "\x00")) or any(ord(ch) < 32 for ch in s):
-            raise ValueError("original_filename cannot contain path separators or control characters.")
+            raise ValueError("stored_filename cannot contain path separators or control characters.")
         if len(s) > 255:
-            raise ValueError("original_filename must not exceed 255 characters.")
+            raise ValueError("stored_filename must not exceed 255 characters.")
         return s
 
 

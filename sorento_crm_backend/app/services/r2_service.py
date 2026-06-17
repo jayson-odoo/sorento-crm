@@ -190,6 +190,24 @@ class R2Service:
         except BotoCoreError as e:
             raise Exception(f"Failed to connect to R2: {e}") from e
 
+    def copy_file(self, old_key: str, new_key: str) -> None:
+        """Server-side copy within the same R2 bucket (no byte download)."""
+        src = (old_key or "").lstrip("/")
+        dst = (new_key or "").lstrip("/")
+        if not src or not dst:
+            raise ValueError("copy_file requires both old_key and new_key")
+        try:
+            self.client.copy_object(
+                Bucket=self.bucket_name,
+                CopySource={"Bucket": self.bucket_name, "Key": src},
+                Key=dst,
+            )
+        except ClientError as e:
+            error_message = e.response.get("Error", {}).get("Message", str(e))
+            raise Exception(f"Failed to copy file in R2: {error_message}") from e
+        except BotoCoreError as e:
+            raise Exception(f"Failed to connect to R2: {e}") from e
+
     def file_exists(self, key: str) -> bool:
         normalized = (key or "").lstrip("/")
         try:

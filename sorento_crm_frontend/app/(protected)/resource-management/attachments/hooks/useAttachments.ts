@@ -82,7 +82,7 @@ export function useAttachmentTypesList() {
 export function useUpdateAttachment() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ attachmentId, data }: { attachmentId: string; data: { directory_id?: string | null; description?: string | null; access_levels?: string[] | null; original_filename?: string } }) =>
+    mutationFn: ({ attachmentId, data }: { attachmentId: string; data: { directory_id?: string | null; description?: string | null; access_levels?: string[] | null; stored_filename?: string } }) =>
       updateAttachment(attachmentId, data),
     onSuccess: (_, { attachmentId }) => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });

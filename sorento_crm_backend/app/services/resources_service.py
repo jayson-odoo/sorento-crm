@@ -12,6 +12,7 @@ from app.schemas.resources import (
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
 from app.services.embedding_events import publish_embedding_event
+from app.services.storage_router import extract_key
 
 
 class AttachmentDirectoryService:
@@ -1071,6 +1072,9 @@ class AttachmentService:
         import uuid as uuid_module
         
         attachment_dict = attachment_data.model_dump()
+        # Drop a None id so the model's default uuid generator runs; honor an explicit one.
+        if not attachment_dict.get("id"):
+            attachment_dict.pop("id", None)
         # Ensure uploaded_by is a string (convert UUID if needed)
         if isinstance(uploaded_by, uuid_module.UUID):
             attachment_dict["uploaded_by"] = str(uploaded_by)
@@ -1132,10 +1136,14 @@ class AttachmentService:
             new_directory_id = update_data["directory_id"]
             dir_service = AttachmentDirectoryService(self.db)
             update_data["full_directory_path"] = dir_service.get_full_directory_path(new_directory_id)
-        
+
+        # Rename is DB-only and edits stored_filename (the user-facing label). original_filename
+        # is immutable (it is the object-key basename — uuid-segregated key, independent of the
+        # name, like portal submissions). The generic setattr loop applies stored_filename
+        # directly; no storage work. See docs/plans/PLAN-attachment-key-uuid-segregation.md.
         for key, value in update_data.items():
             setattr(attachment, key, value)
-        
+
         self.db.commit()
         self.db.refresh(attachment)
         publish_embedding_event(

@@ -313,6 +313,28 @@ class S3Service:
             logger.error(f"S3 connection error: {str(e)}")
             raise Exception(f"Failed to connect to S3: {str(e)}")
     
+    def copy_file(self, old_key: str, new_key: str) -> None:
+        """Server-side copy within the same S3 bucket (no byte download)."""
+        src = (old_key or "").lstrip("/")
+        dst = (new_key or "").lstrip("/")
+        if not src or not dst:
+            raise ValueError("copy_file requires both old_key and new_key")
+        try:
+            self.s3_client.copy_object(
+                Bucket=self.bucket_name,
+                CopySource={"Bucket": self.bucket_name, "Key": src},
+                Key=dst,
+            )
+            logger.info(f"Successfully copied S3 object {src} -> {dst}")
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_message = e.response.get('Error', {}).get('Message', str(e))
+            logger.error(f"S3 copy error ({error_code}): {error_message}")
+            raise Exception(f"Failed to copy file in S3: {error_message}")
+        except BotoCoreError as e:
+            logger.error(f"S3 connection error: {str(e)}")
+            raise Exception(f"Failed to connect to S3: {str(e)}")
+
     def file_exists(self, file_path: str) -> bool:
         """
         Check if file exists in S3.

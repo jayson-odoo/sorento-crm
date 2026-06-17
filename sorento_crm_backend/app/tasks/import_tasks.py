@@ -392,8 +392,11 @@ def process_attachment_bulk_import(
     from app.services.storage_router import (
         cdn_base_url,
         default_provider,
+        extract_key,
         get_backend,
+        sanitize_storage_filename,
     )
+    import uuid as _uuid
 
     zip_storage_provider = storage_provider or default_provider()
     zip_storage_backend = get_backend(zip_storage_provider)
@@ -597,12 +600,22 @@ def process_attachment_bulk_import(
                             else:
                                 existing_to_replace = sys_collision
 
-                    safe_filename = "".join(
-                        c for c in original_filename if c.isalnum() or c in (" ", "-", "_", ".")
-                    ).strip()
-                    stored_filename = safe_filename or "file"
+                    # Mirror the single-upload contract (PLAN-attachment-key-uuid-segregation):
+                    #   stored_filename   = raw display name (editable, what the folder dup-check matches)
+                    #   original_filename = sanitized, immutable → the object-key basename
+                    #   key = {entity_type}/{attachment_id}/{basename} — the uuid dir makes every
+                    #   key unique, so two same-named files across folders can NEVER clobber.
+                    bulk_attachment_id = str(_uuid.uuid4())
+                    key_basename = sanitize_storage_filename(original_filename) or "file"
+                    stored_filename = original_filename
                     entity_type = (attachment_type.type_name or "general").lower().replace(" ", "_")
-                    s3_file_path = f"{entity_type}/{stored_filename}"
+                    if existing_to_replace is not None:
+                        # Replace overwrites the existing object's own key (no orphan).
+                        s3_file_path = extract_key(existing_to_replace.file_path) or (
+                            f"{entity_type}/{existing_to_replace.id}/{key_basename}"
+                        )
+                    else:
+                        s3_file_path = f"{entity_type}/{bulk_attachment_id}/{key_basename}"
                     guessed_type, _ = mimetypes.guess_type(original_filename)
                     s3_key, _ = storage_backend.upload_file(
                         file_content=file_content,
@@ -654,8 +667,9 @@ def process_attachment_bulk_import(
                         continue
 
                     attachment_data = AttachmentCreate(
+                        id=bulk_attachment_id,
                         attachment_type_id=attachment_type_id,
-                        original_filename=original_filename,
+                        original_filename=key_basename,
                         stored_filename=stored_filename,
                         file_path=cdn_base_url(storage_provider, s3_key),
                         file_size_bytes=len(file_content),

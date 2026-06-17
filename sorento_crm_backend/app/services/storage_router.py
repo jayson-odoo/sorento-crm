@@ -41,6 +41,20 @@ class StorageBackend(Protocol):
 
     def file_exists(self, key: str) -> bool: ...
 
+    def copy_file(self, old_key: str, new_key: str) -> None: ...
+
+
+def sanitize_storage_filename(name: Optional[str]) -> str:
+    """Single source of truth for turning a display name into a storage-safe basename.
+
+    Mirrors the upload path exactly so rename and upload can never drift. Keeps
+    alphanumerics, space, dash, underscore, dot; collapses everything else away.
+    """
+    base = "".join(
+        c for c in (name or "") if c.isalnum() or c in (" ", "-", "_", ".")
+    ).strip()
+    return base or "file"
+
 
 def normalize_provider(value: Optional[str]) -> str:
     """Coerce stored provider values to one of the canonical names; default to S3."""
@@ -163,6 +177,52 @@ def resolve_signed_url(
             e,
         )
         return raw
+
+
+def copy_object_verified(provider: str, old_key: str, new_key: str) -> None:
+    """Server-side copy old_key -> new_key, then verify new exists. No byte download.
+
+    Raises AppException(409) if an object already lives at new_key (never clobber),
+    AppException(500) if the copy can't be verified. Does NOT delete the old object —
+    caller deletes after its DB commit so the DB never points at a missing object.
+    """
+    from app.services.error_handler import AppException
+
+    old = (old_key or "").lstrip("/")
+    new = (new_key or "").lstrip("/")
+    if not old or not new:
+        raise AppException(
+            status_code=500,
+            message="Storage rename requires both source and target keys.",
+            code="STORAGE_RENAME_BAD_KEY",
+        )
+    if old == new:
+        return
+    backend = get_backend(provider)
+    if backend.file_exists(new):
+        raise AppException(
+            status_code=409,
+            message="A file already exists at the target name.",
+            code="ATTACHMENT_FILENAME_COLLISION",
+        )
+    backend.copy_file(old, new)
+    if not backend.file_exists(new):
+        raise AppException(
+            status_code=500,
+            message="Storage copy could not be verified.",
+            code="STORAGE_COPY_UNVERIFIED",
+        )
+
+
+def delete_object_best_effort(provider: str, key: str) -> None:
+    """Delete an object, swallowing failure (leaves an orphan, never breaks the request)."""
+    k = (key or "").lstrip("/")
+    if not k:
+        return
+    try:
+        get_backend(provider).delete_file(k)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("delete_object_best_effort: delete of %s failed (orphan left): %s", k, e)
 
 
 def _looks_signed(url: str) -> bool:

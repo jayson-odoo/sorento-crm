@@ -35,6 +35,24 @@ export async function getAttachments(params: DataGridApiFetchParams & { entity_t
   return response.json();
 }
 
+export interface AttachmentCollisionCheck {
+  collides: boolean;
+  existing_attachment_id?: string;
+  existing_file_name?: string;
+}
+
+/** Pre-upload check: is there a live attachment with this name in this folder? */
+export async function checkAttachmentCollision(
+  filename: string,
+  directoryId?: string | null,
+): Promise<AttachmentCollisionCheck> {
+  const params = new URLSearchParams({ filename });
+  if (directoryId) params.set('directory_id', directoryId);
+  const response = await apiFetch(`/api/v1/resource-management/attachments/collision-check?${params.toString()}`);
+  if (!response.ok) return { collides: false }; // fail-open: never block upload on a check error
+  return response.json();
+}
+
 export type AttachmentConflictResolution = 'replace' | 'copy';
 
 export interface AttachmentFilenameCollision {
@@ -274,8 +292,9 @@ export async function updateAttachment(
     directory_id?: string | null;
     description?: string | null;
     access_levels?: string[] | null;
-    /** Display filename. S3 key is immutable; only the UI label + Content-Disposition change. */
-    original_filename?: string;
+    /** User-facing display name (rename). The object key is uuid-segregated + immutable;
+     *  only the UI label + Content-Disposition + n8n webhook filename change. */
+    stored_filename?: string;
   }
 ): Promise<Attachment> {
   const response = await apiFetch(`/api/v1/resource-management/attachments/${attachmentId}`, {

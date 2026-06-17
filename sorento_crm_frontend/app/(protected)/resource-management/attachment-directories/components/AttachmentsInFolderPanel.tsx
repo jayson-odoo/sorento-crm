@@ -207,7 +207,8 @@ export default function AttachmentsInFolderPanel({
 
   const openRename = useCallback((attachment: Attachment) => {
     setRenameTarget(attachment);
-    setRenameValue(attachment.original_filename || '');
+    // stored_filename is the user-facing, editable name (original_filename is immutable).
+    setRenameValue(attachment.stored_filename || attachment.original_filename || '');
     setRenameDialogOpen(true);
   }, []);
 
@@ -218,12 +219,12 @@ export default function AttachmentsInFolderPanel({
       toast.error('Filename cannot be empty.');
       return;
     }
-    if (next === renameTarget.original_filename) {
+    if (next === (renameTarget.stored_filename || renameTarget.original_filename)) {
       setRenameDialogOpen(false);
       return;
     }
     try {
-      await updateMutation.mutateAsync({ attachmentId: renameTarget.id, data: { original_filename: next } });
+      await updateMutation.mutateAsync({ attachmentId: renameTarget.id, data: { stored_filename: next } });
       toast.success('Renamed.');
       setRenameDialogOpen(false);
       setRenameTarget(null);
@@ -262,7 +263,7 @@ export default function AttachmentsInFolderPanel({
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = attachment.original_filename || 'download';
+      a.download = attachment.stored_filename || attachment.original_filename || 'download';
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -346,8 +347,8 @@ export default function AttachmentsInFolderPanel({
       {
         id: 'name',
         header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
-        accessorFn: (row) => row.original_filename,
-        cell: ({ row }) => <span>{row.original.original_filename}</span>,
+        accessorFn: (row) => row.stored_filename || row.original_filename,
+        cell: ({ row }) => <span>{row.original.stored_filename || row.original.original_filename}</span>,
         size: 250,
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
@@ -954,7 +955,7 @@ export default function AttachmentsInFolderPanel({
       <AttachmentUploadDialog
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}
-        defaultDirectoryId={directoryId}
+        defaultDirectoryId={effectiveDirectoryId ?? null}
         onSuccess={() => {}}
       />
       <AttachmentBulkImportDialog

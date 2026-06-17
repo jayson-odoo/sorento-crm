@@ -22,6 +22,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription, AlertIcon } from '@/components/ui/alert';
 import { useUploadAttachment, useAttachmentTypesList } from '../hooks/useAttachments';
 import { useUploadConflict } from '@/hooks/use-upload-conflict';
+import { checkAttachmentCollision, type AttachmentConflictResolution } from '../services/attachmentService';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 import { toast } from 'sonner';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
@@ -75,11 +76,10 @@ export default function AttachmentUploadDialog({
   // file; the drawer's optimistic session reconciles each entry into a real
   // attachment_id on resolve, or a post_failed state on reject.
   const uploadMutation = useUploadAttachment();
-  // ConflictDialog stays in JSX so existing inline-replace flows (Resubmit
-  // header button etc.) keep working. runUpload itself isn't used by the
-  // submit handler in Phase 2; see comment in handleUpload.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { runUpload, ConflictDialog } = useUploadConflict();
+  // confirmConflict prompts Replace / Create copy while the modal is still
+  // open (a pre-flight, before the background upload session starts — the
+  // session itself can't surface a 409 interactively).
+  const { ConflictDialog, confirmConflict } = useUploadConflict();
   const uploadManager = useUploadManager();
 
   const selectedType = attachmentTypes.find((type: AttachmentType) => type.id === selectedTypeId);
@@ -309,16 +309,37 @@ export default function AttachmentUploadDialog({
           : null,
     };
 
+    // Pre-flight conflict resolution — done HERE, while the modal is still open,
+    // because the background upload session can't surface a 409 interactively.
+    // For each file colliding on (folder, name) we prompt Replace / Create copy /
+    // Cancel; the chosen resolution is threaded into the session per file.
+    const conflictChoice = new Map<string, AttachmentConflictResolution>();
+    const filesToUpload: File[] = [];
+    for (const file of selectedFiles) {
+      let resolution: AttachmentConflictResolution | undefined;
+      // Check both folder uploads AND no-folder ("All attachments") uploads —
+      // an undefined directory id checks the NULL-directory scope server-side.
+      const check = await checkAttachmentCollision(file.name, snapshot.directoryId);
+      if (check.collides) {
+        const choice = await confirmConflict({
+          existing_attachment_id: check.existing_attachment_id ?? '',
+          existing_file_name: check.existing_file_name ?? file.name,
+        });
+        if (choice == null) continue; // cancelled → skip this file
+        resolution = choice;
+      }
+      if (resolution) conflictChoice.set(file.name, resolution);
+      filesToUpload.push(file);
+    }
+    if (filesToUpload.length === 0) {
+      return; // every file cancelled — keep the modal open
+    }
+
     uploadManager.startSession({
-      files: [...selectedFiles],
-      sessionType: selectedFiles.length === 1 ? 'single' : 'multi',
+      files: [...filesToUpload],
+      sessionType: filesToUpload.length === 1 ? 'single' : 'multi',
       uploadBatchId,
       uploader: async (file) => {
-        // Phase 2 baseline: bypass the interactive ConflictDialog because the
-        // modal closes immediately. Default to silent rename on conflict
-        // (`copy`); 409s on other paths surface as drawer "Upload failed"
-        // with a Retry button. Re-introducing interactive conflict resolution
-        // belongs in a follow-up (toast → reopen-modal flow).
         const attachment = await uploadMutation.mutateAsync({
           file,
           attachmentTypeId: snapshot.attachmentTypeId,
@@ -328,7 +349,7 @@ export default function AttachmentUploadDialog({
           directoryId: snapshot.directoryId,
           targetEntityType: snapshot.targetEntityType,
           targetFieldKeys: snapshot.targetFieldKeys,
-          onConflict: 'copy',
+          onConflict: conflictChoice.get(file.name),
           uploadBatchId,
         });
         if (!attachment) {

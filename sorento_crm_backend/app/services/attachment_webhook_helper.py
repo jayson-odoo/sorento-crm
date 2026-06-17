@@ -77,7 +77,9 @@ def create_and_send_webhook(
         "s3_url": signed_attachment_url,
         "file_path": attachment.file_path,
         "attachment_id": attachment.id,
-        "attachment_filename": attachment.original_filename,
+        # User-facing name (stored_filename) so the downstream n8n record's filename column
+        # tallies with what the user sees. At upload stored==original.
+        "attachment_filename": attachment.stored_filename or attachment.original_filename,
         "attachment_mime_type": attachment.mime_type,
         "file_size": getattr(attachment, "file_size_bytes", None),
         "attachment_type": attachment_type.type_name if attachment_type else None,

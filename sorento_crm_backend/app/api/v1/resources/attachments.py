@@ -8,12 +8,14 @@ import hashlib
 import logging
 import os
 import json
+import uuid
 import zipfile
 import io
 import mimetypes
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
+from app.services.storage_router import sanitize_storage_filename
 from app.services.uuid_list_param import parse_uuid_list
 from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.integration_service import IntegrationLogService
@@ -105,27 +107,37 @@ def _create_and_send_webhook(
     )
 
 
-def _find_filename_collision(db: Session, directory_id: Optional[str], original_filename: str):
-    """Return the live Attachment row colliding on (directory_id, lower(original_filename)) or None."""
+def _find_filename_collision(db: Session, directory_id: Optional[str], display_name: str):
+    """Return the live Attachment row colliding on (directory_id, lower(stored_filename)) or None.
+
+    Scoped to the user-facing name (stored_filename) — that's what "a file with this name
+    already exists in this folder" means to a user. Storage-key uniqueness is guaranteed
+    separately by the uuid-segregated key, so this is a pure UX check.
+    """
     from sqlalchemy import func as _sa_func
     from app.models.resources import Attachment
 
-    if not directory_id:
-        return None
+    # "No folder" (directory_id NULL) is its own scope — two same-named files
+    # uploaded from the All-attachments view should still collide.
+    scope = (
+        Attachment.directory_id.is_(None)
+        if not directory_id
+        else Attachment.directory_id == directory_id
+    )
     return (
         db.query(Attachment)
         .filter(
-            Attachment.directory_id == directory_id,
-            _sa_func.lower(Attachment.original_filename) == (original_filename or "").lower(),
+            scope,
+            _sa_func.lower(Attachment.stored_filename) == (display_name or "").lower(),
             Attachment.is_deleted.is_(False),
         )
         .first()
     )
 
 
-def _next_copy_name(db: Session, directory_id: Optional[str], original_filename: str) -> str:
-    """Loop _suffix_copy_name until the candidate name is free in the directory."""
-    candidate = _suffix_copy_name(original_filename)
+def _next_copy_name(db: Session, directory_id: Optional[str], display_name: str) -> str:
+    """Loop _suffix_copy_name until the candidate display name is free in the directory."""
+    candidate = _suffix_copy_name(display_name)
     while _find_filename_collision(db, directory_id, candidate) is not None:
         candidate = _suffix_copy_name(candidate)
     return candidate
@@ -269,6 +281,29 @@ async def get_attachments(
         return result
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.get("/collision-check")
+async def collision_check(
+    filename: str = Query(..., description="Candidate display name (stored_filename) to test."),
+    directory_id: Optional[str] = Query(None, description="Folder to check within; no folder → never collides."),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Pre-upload check: does a live attachment with this name already exist in this folder?
+
+    Lets the upload UI prompt Replace / Create copy BEFORE handing the file to the
+    background upload session (which otherwise can't surface a 409 interactively).
+    Same scope as the upload-time guard (`directory_id`, lower(`stored_filename`)).
+    """
+    existing = _find_filename_collision(db, directory_id, filename)
+    if existing is None:
+        return {"collides": False}
+    return {
+        "collides": True,
+        "existing_attachment_id": str(existing.id),
+        "existing_file_name": existing.stored_filename or existing.original_filename,
+    }
 
 
 # Match attachment type by display name "Stock List" (UI) or legacy "Stock_List"
@@ -549,16 +584,18 @@ async def create_attachment(
         # Calculate SHA-256 hash for duplicate detection
         file_hash = hashlib.sha256(file_content).hexdigest()
 
-        # Use original filename (sanitized) for S3 so objects appear with the name users expect
-        original_filename = upload_filename or "unknown"
-        safe_filename = "".join(c for c in original_filename if c.isalnum() or c in (' ', '-', '_', '.')).strip() or "file"
-        stored_filename = safe_filename
+        # Pre-generate the row id so the object key can embed it (uuid-segregated key —
+        # collision-proof, independent of the editable name; see
+        # PLAN-attachment-key-uuid-segregation.md).
+        attachment_id = str(uuid.uuid4())
+        # display_name = the user-facing, renameable label → stored_filename.
+        display_name = upload_filename or "unknown"
 
         # ------------------------------------------------------------------
         # Google-Drive dup-filename behaviour (TCK-2026-000020).
         # Only relevant when a directory_id is supplied — that scopes the
         # collision check to "this folder". Resolved BEFORE the S3 upload so
-        # 409 paths don't waste storage.
+        # 409 paths don't waste storage. Scoped to the user-facing display name.
         # ------------------------------------------------------------------
         on_conflict_clean = (on_conflict or "").strip().lower() or None
         if on_conflict_clean not in (None, "copy", "replace"):
@@ -566,7 +603,7 @@ async def create_attachment(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="on_conflict must be one of 'copy', 'replace', or omitted.",
             )
-        collision = _find_filename_collision(db, directory_id, original_filename)
+        collision = _find_filename_collision(db, directory_id, display_name)
         existing_to_replace = None
         if collision is not None:
             if on_conflict_clean is None:
@@ -575,19 +612,21 @@ async def create_attachment(
                     detail={
                         "code": "ATTACHMENT_FILENAME_COLLISION",
                         "existing_attachment_id": str(collision.id),
-                        "existing_file_name": collision.original_filename,
+                        "existing_file_name": collision.stored_filename,
                         "existing_target_entity_type": collision.target_entity_type,
                         "existing_target_field_keys": collision.target_field_keys,
                     },
                 )
             if on_conflict_clean == "copy":
-                original_filename = _next_copy_name(db, directory_id, original_filename)
-                safe_filename = "".join(
-                    c for c in original_filename if c.isalnum() or c in (" ", "-", "_", ".")
-                ).strip() or "file"
-                stored_filename = safe_filename
+                display_name = _next_copy_name(db, directory_id, display_name)
             else:  # "replace"
                 existing_to_replace = collision
+
+        # Split the resolved display name into the two canonical columns:
+        #   stored_filename   = user-facing label (editable later via rename)
+        #   original_filename = immutable, sanitized → the object-key basename
+        stored_filename = display_name
+        original_filename = sanitize_storage_filename(display_name)
 
         # Get attachment type: optional in DB (nullable); required by API for new uploads.
         # When entity_type is "promotion" and no type_id given, use the promotion attachment type (code='promotion').
@@ -628,11 +667,23 @@ async def create_attachment(
         else:
             final_entity_type = "general"
 
-        # Construct S3 key. For promotions with entity_id, scope by promotion to avoid overwriting same name across promotions
-        if (entity_type or "").strip().lower() == "promotion" and entity_id:
-            s3_file_path = f"promotion/{entity_id}/{stored_filename}"
+        # Construct storage key. Basename = immutable original_filename.
+        #  - promotion: already scoped by entity_id (unchanged).
+        #  - generic: uuid-segregated by attachment_id so same-name uploads across folders
+        #    can NEVER share a key (the old flat {type}/{name} scheme could silently clobber).
+        if existing_to_replace is not None:
+            # Replace-in-place: overwrite the EXISTING object at its own key so we
+            # don't orphan bytes or desync the uuid-segregated key from the row id.
+            # Fall back to a computed key only when the prior path is blank/legacy.
+            from app.services.storage_router import extract_key as _extract_key
+            s3_file_path = _extract_key(existing_to_replace.file_path) or (
+                f"{final_entity_type}/{existing_to_replace.id}/"
+                f"{sanitize_storage_filename(existing_to_replace.original_filename) or original_filename}"
+            )
+        elif (entity_type or "").strip().lower() == "promotion" and entity_id:
+            s3_file_path = f"promotion/{entity_id}/{original_filename}"
         else:
-            s3_file_path = f"{final_entity_type}/{stored_filename}"
+            s3_file_path = f"{final_entity_type}/{attachment_id}/{original_filename}"
 
         # Upload to whichever provider STORAGE_DEFAULT_PROVIDER points at (s3 or r2).
         from app.services.storage_router import (
@@ -748,6 +799,7 @@ async def create_attachment(
 
         # Create attachment record. file_path stored as CDN base URL for consistency with other attachments.
         attachment_data = AttachmentCreate(
+            id=attachment_id,  # same uuid embedded in the object key
             attachment_type_id=type_id,
             original_filename=original_filename,
             stored_filename=stored_filename,
@@ -1113,7 +1165,7 @@ async def download_attachment(
             content=file_content,
             media_type=str(getattr(attachment, "mime_type", None) or "application/octet-stream"),
             headers={
-                "Content-Disposition": f'attachment; filename="{attachment.original_filename}"',
+                "Content-Disposition": f'attachment; filename="{attachment.stored_filename or attachment.original_filename}"',
                 "Content-Length": str(attachment.file_size_bytes or len(file_content))
             }
         )

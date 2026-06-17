@@ -95,5 +95,5 @@ export function useUploadConflict() {
     </AlertDialog>
   );
 
-  return { runUpload, ConflictDialog };
+  return { runUpload, ConflictDialog, confirmConflict: ask };
 }

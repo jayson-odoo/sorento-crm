@@ -1,6 +1,49 @@
 # PLAN — Attachment rename: storage-provider sync, `stored_filename` as source of truth
 
-**Status:** Draft — awaiting review. No code written, no storage executed. (Decisions from grill 2026-06-15.)
+**Status:** ⛔ SUPERSEDED (2026-06-15) by [`PLAN-attachment-key-uuid-segregation.md`](PLAN-attachment-key-uuid-segregation.md).
+
+This plan synced the R2 object on rename because the object key was *derived from the
+filename* (`{entity_type}/{stored_filename}`). That treated the symptom. The root cause is
+**name-in-key** — which also creates a cross-folder collision risk (two files, same
+attachment-type + same name, different folders → identical key → silent clobber). Portal
+submissions already avoid this entirely (`portal/{contact}/{uuid}{ext}` — key independent of
+name). The superseding plan makes resource/promotion keys uuid-segregated too; once the key
+no longer contains the name, **rename becomes DB-only and needs no R2 API at all**.
+
+What was kept from this work: the `copy_file` storage primitive + `copy_object_verified` /
+`delete_object_best_effort` helpers (the relocation migration reuses them) and
+`sanitize_storage_filename`. What was reverted: the R2-sync branch in `update_attachment`
+(now DB-only) and the schema comment.
+
+---
+
+_Original plan retained below for history._
+
+**Original Status:** Implemented + verified against staging R2 (2026-06-15). Backfill script written, NOT executed.
+
+## Local staging isolation (how this was tested without touching prod)
+
+Local + prod share one Cloudflare R2 account. A **separate staging bucket** `sorento-crm-staging`
+(same account/keys, free) isolates all rename copy/delete ops from prod data. Local
+`sorento_crm_backend/.env` is switched to it:
+
+```
+# Prod (restore before deploy): R2_BUCKET_NAME=sorento-crm  R2_CDN_DOMAIN=cdn-sorento.com
+R2_BUCKET_NAME=sorento-crm-staging
+R2_CDN_DOMAIN=pub-31d7796b071d463c933d3df27da7dfc3.r2.dev   # free r2.dev public dev URL
+```
+
+`extract_key` is host-agnostic so the r2.dev domain works for reads; copy/verify/delete hit the
+origin endpoint (account_id + bucket), exercising the **real Cloudflare API** against staging.
+
+**⚠️ Restore the two prod lines before any deploy** — shipping with the staging bucket would point
+prod at the wrong store.
+
+Verified against staging:
+- raw `R2Service` smoke: upload → `copy_file` → verify → download → delete (real API). ✅
+- full `update_attachment` against real local DB + real staging bucket: object moved old→new,
+  `stored_filename`/`file_path` rewritten to r2.dev URL, old object deleted, collision SQL clean. ✅
+- pytest `tests/test_attachment_rename.py` (11 cases, storage mocked) green. ✅
 
 ## Context / problem
 

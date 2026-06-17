@@ -108,7 +108,7 @@ export default function AttachmentBrowser() {
 
   const openRename = useCallback((attachment: Attachment) => {
     setRenameTarget(attachment);
-    setRenameValue(attachment.original_filename || '');
+    setRenameValue(attachment.stored_filename || attachment.original_filename || '');
     setRenameDialogOpen(true);
   }, []);
 
@@ -119,12 +119,12 @@ export default function AttachmentBrowser() {
       toast.error('Filename cannot be empty.');
       return;
     }
-    if (next === renameTarget.original_filename) {
+    if (next === (renameTarget.stored_filename || renameTarget.original_filename)) {
       setRenameDialogOpen(false);
       return;
     }
     try {
-      await updateMutation.mutateAsync({ attachmentId: renameTarget.id, data: { original_filename: next } });
+      await updateMutation.mutateAsync({ attachmentId: renameTarget.id, data: { stored_filename: next } });
       toast.success('Renamed.');
       setRenameDialogOpen(false);
       setRenameTarget(null);
@@ -165,7 +165,7 @@ export default function AttachmentBrowser() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = attachment.original_filename || 'download';
+      a.download = attachment.stored_filename || attachment.original_filename || 'download';
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -252,7 +252,9 @@ export default function AttachmentBrowser() {
         enableResizing: false,
       },
       {
-        accessorKey: 'original_filename',
+        id: 'filename',
+        accessorFn: (row) => row.stored_filename || row.original_filename,
+        cell: ({ row }) => <span>{row.original.stored_filename || row.original.original_filename}</span>,
         header: ({ column }) => <DataGridColumnHeader title="Filename" column={column} />,
         size: 250,
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
