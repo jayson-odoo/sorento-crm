@@ -193,6 +193,7 @@ class NotificationService:
         send_email: bool = True,
         send_web_push: bool = False,
         send_whatsapp: bool = False,
+        whatsapp_pref_attr: str = "notify_whatsapp",
     ) -> Optional[Notification]:
         """
         Create notification and only create deliveries for selected channels.
@@ -211,7 +212,7 @@ class NotificationService:
             _user = self.db.query(_User).filter(_User.id == user_id).first()
             send_whatsapp = bool(
                 _user
-                and getattr(_user, "notify_whatsapp", False)
+                and getattr(_user, whatsapp_pref_attr, False)
                 and resolve_user_respond_io_id(self.db, _user)
             )
         if not send_in_app and not send_email and not send_web_push and not send_whatsapp:

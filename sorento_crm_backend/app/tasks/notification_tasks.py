@@ -125,14 +125,23 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
             delivery.error_message = "No resolvable WhatsApp contact"
             db.commit()
             return
+        data = notification.data if isinstance(notification.data, dict) else {}
+        # Callers (e.g. the daily summary) can override the use-case / text /
+        # template params via the notification data; default derives from event_type.
         event_type = str(getattr(notification, "event_type", "") or "")
-        use_case = "sla_escalation" if event_type == "escalated" else "sla_assignment"
-        text = f"{notification.title}\n\n{notification.body or ''}".strip()
+        use_case = data.get("whatsapp_use_case") or (
+            "sla_escalation" if event_type == "escalated" else "sla_assignment"
+        )
+        text = data.get("whatsapp_text") or (
+            f"{notification.title}\n\n{notification.body or ''}".strip()
+        )
+        context_vars = data.get("whatsapp_context_vars") if isinstance(data.get("whatsapp_context_vars"), dict) else None
         send_text_or_template(
             db,
             identifier=str(contact.respond_io_id),
             text=text,
             use_case=use_case,
+            context_vars=context_vars,
             respond_contact_id=str(contact.id),
         )
         delivery.status = "sent"

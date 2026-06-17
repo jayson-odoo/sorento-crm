@@ -204,21 +204,31 @@ def run_user_sla_daily_summary(db: Session, task: ScheduledTask) -> dict[str, An
 
     win7 = (datetime.utcnow() - timedelta(days=7)).replace(tzinfo=None)
     win30 = (datetime.utcnow() - timedelta(days=30)).replace(tzinfo=None)
+    win24 = (datetime.utcnow() - timedelta(hours=24)).replace(tzinfo=None)
+
+    from sqlalchemy import or_
+    from app.services.respond_link_service import resolve_user_respond_io_id
 
     users_q = (
         db.query(User)
         .filter(
             User.is_trashed.is_(False),
             User.status == UserStatus.ACTIVE.value,
-            User.daily_sla_summary_subscribed.is_(True),
+            # Email/in-app summary subscribers OR WhatsApp-summary subscribers.
+            or_(
+                User.daily_sla_summary_subscribed.is_(True),
+                User.notify_whatsapp_summary.is_(True),
+            ),
         )
     )
     users = users_q.all()
 
     title = f"Your daily SLA summary ({summary_date_label})"
+    summary_link = f"{_frontend_base()}/sla-management/conversation-sla-tracking"
 
     sent_in_app = 0
     queued_email = 0
+    queued_whatsapp = 0
     skipped_no_address = 0
 
     for user in users:
@@ -244,13 +254,41 @@ def run_user_sla_daily_summary(db: Session, task: ScheduledTask) -> dict[str, An
             else f"{uid}:{idempotency_day}"
         )
 
-        do_in_app = send_in_app
+        # Email/in-app go to summary subscribers; WhatsApp goes to its own subscribers.
+        subscribed_email_inapp = bool(getattr(user, "daily_sla_summary_subscribed", False))
+        do_in_app = send_in_app and subscribed_email_inapp
         has_email = bool(user.email and user.email.strip())
-        do_email = send_email and has_email
-        if send_email and not has_email:
+        do_email = send_email and has_email and subscribed_email_inapp
+        if send_email and subscribed_email_inapp and not has_email:
             skipped_no_address += 1
 
-        if not do_in_app and not do_email:
+        # WhatsApp: bounded template (counts + deep link), gated on the dedicated
+        # toggle + a resolvable contact (TCK-30). Almost always out-of-window =>
+        # template; a full free-form digest can't be a template.
+        wa_ok = bool(getattr(user, "notify_whatsapp_summary", False)) and bool(
+            resolve_user_respond_io_id(db, user)
+        )
+        escalated_24 = _count_user_events(db, uid, "escalation", win24)
+        resolved_24 = _count_user_events(db, uid, "resolution", win24)
+        outstanding_n = len(outstanding)
+
+        data: dict[str, Any] = {"body_html": html_body}
+        if wa_ok:
+            wa_text = (
+                f"Daily SLA summary {summary_date_label}: {outstanding_n} outstanding, "
+                f"{escalated_24} escalated, {resolved_24} resolved (24h). View: {summary_link}"
+            )
+            data["whatsapp_use_case"] = "sla_daily_summary"
+            data["whatsapp_text"] = wa_text
+            data["whatsapp_context_vars"] = {
+                "outstanding": str(outstanding_n),
+                "escalated_last_24h": str(escalated_24),
+                "resolved_last_24h": str(resolved_24),
+                "portal_url": summary_link,
+                "message": wa_text,
+            }
+
+        if not do_in_app and not do_email and not wa_ok:
             continue
 
         NotificationService(db).create_with_channel_preferences(
@@ -258,18 +296,22 @@ def run_user_sla_daily_summary(db: Session, task: ScheduledTask) -> dict[str, An
             type=SUMMARY_TYPE,
             title=title,
             body=text_body,
-            data={"body_html": html_body},
+            data=data,
             source_entity_type=SOURCE_ENTITY_TYPE,
             source_entity_id=source_id,
             event_type=SUMMARY_TYPE,
             send_in_app=do_in_app,
             send_email=do_email,
             send_web_push=False,
+            send_whatsapp=wa_ok,
+            whatsapp_pref_attr="notify_whatsapp_summary",
         )
         if do_in_app:
             sent_in_app += 1
         if do_email:
             queued_email += 1
+        if wa_ok:
+            queued_whatsapp += 1
 
     return {
         "active_users_scanned": len(users),
@@ -277,6 +319,7 @@ def run_user_sla_daily_summary(db: Session, task: ScheduledTask) -> dict[str, An
         "manual_requested_by_user_id": str(manual_requested_by) if manual_requested_by else None,
         "sent_in_app": sent_in_app,
         "queued_email": queued_email,
+        "queued_whatsapp": queued_whatsapp,
         "skipped_no_email": skipped_no_address,
         "summary_date": summary_date_label,
     }
