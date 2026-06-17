@@ -435,6 +435,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'SLA Event Logs',
         path: '/sla-management/escalation-logs',
       },
+      {
+        title: 'KPI Dashboard',
+        path: '/sla-management/kpi-dashboard',
+      },
     ],
   },
   {
@@ -1241,6 +1245,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'SLA Event Logs',
         path: '/sla-management/escalation-logs',
+      },
+      {
+        title: 'KPI Dashboard',
+        path: '/sla-management/kpi-dashboard',
       },
     ],
   },
