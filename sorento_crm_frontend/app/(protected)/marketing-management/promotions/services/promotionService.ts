@@ -11,9 +11,9 @@ import type {
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
 export async function getPromotions(
-  params: DataGridApiFetchParams & { status?: string; date_from?: string; date_to?: string; user_type?: string },
+  params: DataGridApiFetchParams & { status?: string; date_from?: string; date_to?: string; user_type?: string; attachment_state?: 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed' },
 ): Promise<DataGridApiResponse<Promotion>> {
-  const { pageIndex, pageSize, sorting, searchQuery, status, date_from, date_to, user_type } = params;
+  const { pageIndex, pageSize, sorting, searchQuery, status, date_from, date_to, user_type, attachment_state } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -25,6 +25,7 @@ export async function getPromotions(
     ...(date_from ? { date_from } : {}),
     ...(date_to ? { date_to } : {}),
     ...(user_type ? { user_type } : {}),
+    ...(attachment_state ? { attachment_state } : {}),
   });
   const response = await apiFetch(`/api/v1/marketing/promotions?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch promotions');

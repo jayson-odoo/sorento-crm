@@ -295,6 +295,7 @@ class PromotionService:
         entities: Optional[list[str]] = None,
         promotion_ids: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
+        attachment_state: Optional[str] = None,
     ):
         """List promotions with active-first fallback semantics.
 
@@ -358,6 +359,11 @@ class PromotionService:
         # matches). Skip the gate unless the caller explicitly narrowed it.
         if date_mode_norm in ("started", "ended") and active is None and not status:
             show_all = True
+        # attachment_state is a cleanup filter (unlinked / linked-to-trashed):
+        # the delete-candidate set spans both active and inactive promotions, so
+        # skip the active gate unless the caller narrowed it explicitly.
+        if attachment_state and active is None and not status:
+            show_all = True
         narrowing_filter_present = bool(
             query_norm
             or user_type
@@ -367,6 +373,7 @@ class PromotionService:
             or promotion_ids
             or product_ids
             or entity_promotion_ids
+            or attachment_state
         )
 
         today = datetime.utcnow().date()
@@ -466,6 +473,24 @@ class PromotionService:
                 q = q.filter(product_ids_clause)
             if advanced_filter_clause is not None:
                 q = q.filter(advanced_filter_clause)
+            if attachment_state:
+                from sqlalchemy import exists as _sa_exists, and_ as _sa_and, or_ as _sa_or2
+                has_any_link = _sa_exists().where(
+                    PromotionAttachment.promotion_id == Promotion.id
+                )
+                linked_to_trashed = _sa_exists().where(
+                    _sa_and(
+                        PromotionAttachment.promotion_id == Promotion.id,
+                        PromotionAttachment.attachment_id == Attachment.id,
+                        Attachment.is_deleted.is_(True),
+                    )
+                )
+                if attachment_state == "unlinked":
+                    q = q.filter(~has_any_link)
+                elif attachment_state == "linked_to_trashed":
+                    q = q.filter(linked_to_trashed)
+                elif attachment_state == "unlinked_or_trashed":
+                    q = q.filter(_sa_or2(~has_any_link, linked_to_trashed))
             return q
 
         sort_key = (sort_field or "created_at").strip() or "created_at"

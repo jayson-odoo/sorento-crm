@@ -10,6 +10,7 @@ from app.services.scheduled_task_service import (
     register_handler,
 )
 from app.services.respond_sync_handler import run_respond_contacts_sync
+from app.services.attachment_storage_audit_service import run_attachment_storage_audit
 from app.services.user_sla_daily_summary_service import run_user_sla_daily_summary
 from app.services.marketing_service import PromotionService
 from app.services.automation_service import AutomationService
@@ -244,6 +245,7 @@ def register_task_handlers():
     register_handler("automation_runner", _handler_automation_runner)
     register_handler("form_sla_overdue_scan", _handler_form_sla_overdue_scan)
     register_handler("email_outbox_drainer", _handler_email_outbox_drainer)
+    register_handler("attachment_storage_audit", run_attachment_storage_audit)
 
 
 def start_scheduler():

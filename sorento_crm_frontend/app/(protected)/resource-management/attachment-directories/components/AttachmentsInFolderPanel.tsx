@@ -104,6 +104,7 @@ export default function AttachmentsInFolderPanel({
   const [accessLevelsMatch, setAccessLevelsMatch] = useState<'any' | 'all' | 'exact'>('any');
   const [attachmentTypeId, setAttachmentTypeId] = useState<string>('__all__');
   const [linkStatus, setLinkStatus] = useState<'__all__' | 'linked' | 'unlinked'>('__all__');
+  const [storageStatus, setStorageStatus] = useState<'__all__' | 'accessible' | 'missing' | 'unchecked'>('__all__');
   const [uploadedBy, setUploadedBy] = useState<string>('__all__');
   const [uploadedRange, setUploadedRange] = useState<DateRange | undefined>();
   const uploadedAtFrom = uploadedRange?.from ? format(uploadedRange.from, 'yyyy-MM-dd') : '';
@@ -123,6 +124,7 @@ export default function AttachmentsInFolderPanel({
   const extraFilterCount =
     (attachmentTypeId !== '__all__' ? 1 : 0) +
     (linkStatus !== '__all__' ? 1 : 0) +
+    (storageStatus !== '__all__' ? 1 : 0) +
     (uploadedBy !== '__all__' ? 1 : 0) +
     (uploadedAtFrom || uploadedAtTo ? 1 : 0);
   const totalFilterCount = accessLevelFilters.length + extraFilterCount;
@@ -189,6 +191,7 @@ export default function AttachmentsInFolderPanel({
     access_levels_match: accessLevelFilters.length > 0 ? accessLevelsMatch : undefined,
     attachment_type_id: attachmentTypeId !== '__all__' ? attachmentTypeId : undefined,
     link_status: linkStatus !== '__all__' ? linkStatus : undefined,
+    storage_status: storageStatus !== '__all__' ? storageStatus : undefined,
     uploaded_by: uploadedBy !== '__all__' ? uploadedBy : undefined,
     uploaded_at_from: uploadedAtFrom || undefined,
     uploaded_at_to: uploadedAtTo || undefined,
@@ -618,6 +621,7 @@ export default function AttachmentsInFolderPanel({
                             setAccessLevelsMatch('any');
                             setAttachmentTypeId('__all__');
                             setLinkStatus('__all__');
+                            setStorageStatus('__all__');
                             setUploadedBy('__all__');
                             setUploadedRange(undefined);
                             setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -665,6 +669,26 @@ export default function AttachmentsInFolderPanel({
                           <SelectItem value="__all__">All files</SelectItem>
                           <SelectItem value="linked">Linked</SelectItem>
                           <SelectItem value="unlinked">Not linked</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium">Storage status</p>
+                      <Select
+                        value={storageStatus}
+                        onValueChange={(v) => {
+                          setStorageStatus(v as '__all__' | 'accessible' | 'missing' | 'unchecked');
+                          setPagination((p) => ({ ...p, pageIndex: 0 }));
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="All files" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">All files</SelectItem>
+                          <SelectItem value="accessible">Accessible</SelectItem>
+                          <SelectItem value="missing">Missing (broken)</SelectItem>
+                          <SelectItem value="unchecked">Unchecked</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

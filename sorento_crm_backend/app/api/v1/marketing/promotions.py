@@ -98,6 +98,15 @@ async def get_promotions(
             "passed explicitly."
         ),
     ),
+    attachment_state: Optional[str] = Query(
+        None,
+        pattern="^(unlinked|linked_to_trashed|unlinked_or_trashed)$",
+        description=(
+            "Cleanup filter. `unlinked`: promotion has no attachment linkages. "
+            "`linked_to_trashed`: linked to at least one soft-deleted (trashed) "
+            "attachment. `unlinked_or_trashed`: either — the delete-candidate set."
+        ),
+    ),
     sort: Optional[str] = Query(None, description="Sort field e.g. created_at, name, products_count"),
     dir: Optional[str] = Query("desc", description="asc or desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -131,6 +140,7 @@ async def get_promotions(
             or parsed_product_ids
             or (query and query.strip())
             or norm_entities
+            or attachment_state
         )
         # API-key / MCP callers without a narrowing filter are answering open
         # questions like "what is sorento's latest promo" — return a bounded
@@ -159,6 +169,7 @@ async def get_promotions(
             entities=norm_entities,
             promotion_ids=parsed_promotion_ids,
             product_ids=parsed_product_ids,
+            attachment_state=attachment_state,
         )
         return result
     except HTTPException:
