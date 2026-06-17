@@ -217,17 +217,22 @@ class NotificationService:
             )
         # Web push mirrors in-app for users with an active subscription (TCK-33).
         # The browser subscription IS the opt-in — no separate pref column.
+        # Best-effort: a lookup failure (e.g. table absent in a partial test DB)
+        # must never block the notification.
         if send_in_app and not send_web_push:
-            from app.models.notification import PushSubscription
+            try:
+                from app.models.notification import PushSubscription
 
-            has_sub = (
-                self.db.query(PushSubscription.id)
-                .filter(PushSubscription.user_id == user_id)
-                .first()
-                is not None
-            )
-            if has_sub:
-                send_web_push = True
+                has_sub = (
+                    self.db.query(PushSubscription.id)
+                    .filter(PushSubscription.user_id == user_id)
+                    .first()
+                    is not None
+                )
+                if has_sub:
+                    send_web_push = True
+            except Exception:
+                self.db.rollback()
         if not send_in_app and not send_email and not send_web_push and not send_whatsapp:
             raise ValueError("At least one delivery channel must be enabled")
         if source_entity_type and source_entity_id and event_type:
