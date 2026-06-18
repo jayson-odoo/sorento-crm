@@ -137,6 +137,19 @@ export default function ComplaintsList() {
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        accessorKey: 'complaint_number',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Complaint Number" column={column} />
+        ),
+        size: 170,
+        cell: ({ row }) => (
+          <span className="truncate" title={row.original.complaint_number || undefined}>
+            {row.original.complaint_number || '-'}
+          </span>
+        ),
+        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         accessorKey: 'complaint_date',
         header: ({ column }) => (
           <DataGridColumnHeader title="Complaint Date" column={column} />
