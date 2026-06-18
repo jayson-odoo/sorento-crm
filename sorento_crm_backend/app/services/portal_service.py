@@ -37,6 +37,7 @@ from app.models.procurement import (
 )
 from app.models.resources import AttachmentType
 from app.services.error_handler import (
+    AppException,
     handle_not_found,
     handle_validation_error,
 )
@@ -713,6 +714,31 @@ class PortalService:
 
     # ---------- Detail ----------
 
+    def _raise_submission_missing(
+        self, entity_name: str, model: Any, submission_id: str, *, request_type: Optional[str] = None
+    ) -> None:
+        """Raise the right error when a contact-scoped submission lookup misses.
+
+        If the row exists for ANOTHER contact (same id, ignoring the token's
+        contact) → 403 ``OWNER_MISMATCH`` so the portal can offer "log in as the
+        owner" (the deep-link slug identifies that owner) instead of a misleading
+        "deleted" 404. Truly absent → 404. Mirrors the no-session path, which the
+        owner already sees via the confirm-identity card.
+        """
+        exists_q = self.db.query(model.id).filter(model.id == submission_id)
+        if request_type is not None:
+            exists_q = exists_q.filter(model.request_type == request_type)
+        if exists_q.first() is not None:
+            raise AppException(
+                status_code=403,
+                message=(
+                    f"This {entity_name.lower()} belongs to another contact. "
+                    f"Log in with that number to open it."
+                ),
+                code="OWNER_MISMATCH",
+            )
+        raise handle_not_found(entity_name, submission_id)
+
     def get_submission(self, token: PortalToken, kind: str, submission_id: str) -> dict:
         kind = kind.strip().lower()
         if kind == "complaint":
@@ -726,7 +752,7 @@ class PortalService:
                 .first()
             )
             if row is None:
-                raise handle_not_found("Complaint", submission_id)
+                self._raise_submission_missing("Complaint", Complaint, submission_id)
             return self._serialize_complaint_detail(row)
         if kind == "stock_inquiry":
             row = (
@@ -739,7 +765,7 @@ class PortalService:
                 .first()
             )
             if row is None:
-                raise handle_not_found("Stock Inquiry", submission_id)
+                self._raise_submission_missing("Stock Inquiry", StockInquiry, submission_id)
             return self._serialize_stock_inquiry_detail(row)
         if kind in ("purchase_request", "sponsorship_form"):
             row = (
@@ -754,7 +780,9 @@ class PortalService:
                 .first()
             )
             if row is None:
-                raise handle_not_found("Purchase Request", submission_id)
+                self._raise_submission_missing(
+                    "Purchase Request", PurchaseRequestHeader, submission_id, request_type=kind
+                )
             return self._serialize_request_detail(row)
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
 

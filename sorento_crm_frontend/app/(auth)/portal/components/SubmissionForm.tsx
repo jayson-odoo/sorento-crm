@@ -28,6 +28,7 @@ import {
   PortalContact,
   PortalSubmissionDetail,
   PortalSubmissionKind,
+  PortalOwnerMismatchError,
   PortalUnauthorizedError,
   ProductLookupItem,
   SUBMISSION_LABELS,
@@ -337,6 +338,12 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         setAttachments((data.attachments as PortalAttachment[]) ?? []);
       } catch (e) {
         if (e instanceof PortalUnauthorizedError) {
+          router.replace(portalVerifyPath({ slug, reason: 'expired', type: kind, id: submissionId }));
+          return;
+        }
+        // Logged in as a different contact than the form's owner — send them to
+        // the owner's confirm-identity card (deep-link slug), keep their token.
+        if (e instanceof PortalOwnerMismatchError) {
           router.replace(portalVerifyPath({ slug, reason: 'expired', type: kind, id: submissionId }));
           return;
         }

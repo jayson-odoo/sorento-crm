@@ -180,6 +180,52 @@ def test_request_otp_enqueues_async_respond_send(db, cleanup):
         cleanup["otps"].append(otp.id)
 
 
+def test_get_submission_cross_contact_raises_owner_mismatch_403(db, cleanup):
+    """Opening another contact's submission with a valid session returns 403
+    OWNER_MISMATCH (so the portal offers owner login) — not a misleading 404.
+    A genuinely absent id still 404s."""
+    import uuid as _uuid
+
+    from app.models.complaints import Complaint
+    from app.services.error_handler import AppException
+    from app.services.portal_service import PortalService
+
+    ws = _workspace(db, cleanup)
+    owner = _contact(db, cleanup, workspace_id=ws.id)
+    intruder = _contact(db, cleanup, workspace_id=ws.id)
+
+    complaint = Complaint(
+        id=str(_uuid.uuid4()),
+        contact_id=owner.id,
+        space_id=ws.space_id,
+        status="submitted",
+    )
+    db.add(complaint)
+    db.commit()
+
+    svc = PortalService(db)
+    token = svc.mint_token(intruder.id, ws.space_id)
+    token.verified_at = _utcnow()
+    db.commit()
+    cleanup["tokens"].append(token.id)
+
+    try:
+        with pytest.raises(AppException) as ei:
+            svc.get_submission(token, "complaint", complaint.id)
+        assert ei.value.status_code == 403
+        assert ei.value.detail.get("code") == "OWNER_MISMATCH"
+
+        # Absent id → 404.
+        with pytest.raises(AppException) as ei2:
+            svc.get_submission(token, "complaint", str(_uuid.uuid4()))
+        assert ei2.value.status_code == 404
+    finally:
+        db.query(Complaint).filter(Complaint.id == complaint.id).delete(
+            synchronize_session=False
+        )
+        db.commit()
+
+
 def test_slug_info_includes_contact_name(db, cleanup):
     """slug_info / identity_hint surface the contact name so the verify card can
     say 'this form belongs to {name}'."""

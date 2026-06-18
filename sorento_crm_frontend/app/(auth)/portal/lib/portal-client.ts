@@ -103,6 +103,19 @@ export class PortalUnauthorizedError extends Error {
   }
 }
 
+/**
+ * The submission exists but belongs to a different contact than the current
+ * session (403 OWNER_MISMATCH). The current token stays valid — the caller
+ * should route to the owner's confirm-identity card (the deep-link slug), not
+ * clear the session.
+ */
+export class PortalOwnerMismatchError extends Error {
+  constructor(message = 'This submission belongs to another contact.') {
+    super(message);
+    this.name = 'PortalOwnerMismatchError';
+  }
+}
+
 export function readPortalToken(): string | null {
   if (typeof window === 'undefined') return null;
   // Impersonation (sessionStorage) wins over device trust (localStorage).
@@ -298,6 +311,16 @@ export async function fetchSubmission(
   id: string
 ): Promise<PortalSubmissionDetail> {
   const res = await portalFetch(`/api/v1/public/portal/submissions/${kind}/${encodeURIComponent(id)}`);
+  // 403 OWNER_MISMATCH: session is valid but the form belongs to another
+  // contact — surface as a typed error so the caller offers owner login.
+  if (res.status === 403) {
+    // The global handler flattens AppException to {message, detail, code}.
+    const body = await res.clone().json().catch(() => ({}));
+    const code = body?.code ?? body?.detail?.code;
+    if (code === 'OWNER_MISMATCH') {
+      throw new PortalOwnerMismatchError(body?.message ?? body?.detail?.message);
+    }
+  }
   return unwrap<PortalSubmissionDetail>(res, 'Failed to load submission.');
 }
 
