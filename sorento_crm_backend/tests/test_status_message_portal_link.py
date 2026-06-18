@@ -44,7 +44,9 @@ def test_complaint_link_part_falls_back_to_view_when_no_portal():
          patch("app.services.portal_service.PortalService.submission_link", return_value=None), \
          patch.object(svc, "_build_complaint_view_url", return_value="https://x/view/complaint?token=abc"):
         part = svc._complaint_status_link_part(complaint, "cmp1")
-    assert part == " https://x/view/complaint?token=abc"
+    # Link on its own trailing line so no sentence punctuation follows the URL
+    # (WhatsApp would absorb a trailing ":" into the link → invalid-UUID 500).
+    assert part == "\n\nhttps://x/view/complaint?token=abc"
 
 
 def test_complaint_link_part_prefers_portal_link():
@@ -57,7 +59,7 @@ def test_complaint_link_part_prefers_portal_link():
          patch("app.services.portal_service.PortalService.submission_link", return_value=portal), \
          patch.object(svc, "_build_complaint_view_url", return_value="https://x/view") as view_spy:
         part = svc._complaint_status_link_part(complaint, "cmp1")
-    assert part == f" {portal}"
+    assert part == f"\n\n{portal}"
     view_spy.assert_not_called()  # portal preferred; view builder never invoked
 
 

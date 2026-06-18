@@ -36,6 +36,7 @@ describe('PortalVerifyCard — slug mode', () => {
     mockSlugInfo.mockResolvedValue({
       contact_id: 'c1',
       space_id: 's1',
+      name: 'Ahmad Tester',
       masked_phone: '+60••••1234',
       whatsapp_number: '60123456789',
     });
@@ -58,6 +59,7 @@ describe('PortalVerifyCard — slug mode', () => {
     mockSlugInfo.mockResolvedValue({
       contact_id: 'c1',
       space_id: 's1',
+      name: 'Ahmad Tester',
       masked_phone: '+60••••1234',
       whatsapp_number: null,
     });
@@ -83,6 +85,7 @@ describe('PortalVerifyCard — slug mode', () => {
     mockSlugInfo.mockResolvedValue({
       contact_id: 'c1',
       space_id: 's1',
+      name: 'Ahmad Tester',
       masked_phone: '+60••••1234',
       whatsapp_number: '60123456789',
     });
@@ -96,6 +99,29 @@ describe('PortalVerifyCard — slug mode', () => {
     expect(screen.getByRole('button', { name: 'Send code' })).toBeTruthy();
   });
 
+  it('deep link (?type) shows confirm-identity with name, fires OTP only after confirm', async () => {
+    window.history.pushState({}, '', '/portal/c/SLUG123456/verify?reason=expired&type=complaint');
+    mockSlugInfo.mockResolvedValue({
+      contact_id: 'c1',
+      space_id: 's1',
+      name: 'Ahmad Tester',
+      masked_phone: '+60••••1234',
+      whatsapp_number: '60123456789',
+    });
+    mockRequestOtp.mockResolvedValue({ sent_to: '+60••••1234', expires_at: 'x' });
+
+    render(<PortalVerifyCard slug="SLUG123456" />);
+
+    // Confirm-identity card: name + the kind label, no auto-fire yet.
+    await waitFor(() => expect(screen.getByText(/Ahmad Tester/)).toBeTruthy());
+    expect(screen.getByText(/belongs to/)).toBeTruthy();
+    expect(screen.getByText(/complaint/)).toBeTruthy();
+    expect(mockRequestOtp).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('confirm-identity-send'));
+    await waitFor(() => expect(mockRequestOtp).toHaveBeenCalledTimes(1));
+  });
+
   it('"Not your number?" clears stored identity and shows link-request CTA', async () => {
     window.history.pushState({}, '', '/portal/c/SLUG123456/verify?reason=logout');
     window.localStorage.setItem('sorento.portalSlug', 'SLUG123456');
@@ -103,6 +129,7 @@ describe('PortalVerifyCard — slug mode', () => {
     mockSlugInfo.mockResolvedValue({
       contact_id: 'c1',
       space_id: 's1',
+      name: 'Ahmad Tester',
       masked_phone: '+60••••1234',
       whatsapp_number: '60123456789',
     });

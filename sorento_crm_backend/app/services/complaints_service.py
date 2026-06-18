@@ -603,11 +603,16 @@ class ComplaintService:
         return [str(r[0]) for r in rows if r and r[0]]
 
     def _complaint_status_link_part(self, complaint, complaint_id: str) -> str:
-        """Leading-space link for customer status messages.
+        """Trailing link block for customer status messages.
 
         Prefers the interactive submission portal link (minted on the fly) so the
         contact can act/resubmit; falls back to the read-only public view link.
         Empty when public view links are disabled or nothing can be built.
+
+        Returned on its own line (``\\n\\n{url}``) and ALWAYS appended LAST in the
+        message so no sentence punctuation follows the URL — WhatsApp's link
+        auto-detection would otherwise absorb a trailing ``:`` into the link,
+        producing ``…/{uuid}:`` and a 500 (invalid UUID) when the contact taps it.
         """
         if not self._complaint_public_view_links_enabled():
             return ""
@@ -619,9 +624,9 @@ class ComplaintService:
             complaint_id,
         )
         if portal:
-            return f" {portal}"
+            return f"\n\n{portal}"
         view_url = (self._build_complaint_view_url(complaint_id) or "").strip()
-        return f" {view_url}" if view_url else ""
+        return f"\n\n{view_url}" if view_url else ""
 
     def _complaint_view_base_url(self, base_url_override: Optional[str] = None) -> str:
         """Resolve the frontend base URL for view links (override → settings → SystemSetting).
@@ -1174,7 +1179,7 @@ class ComplaintService:
         do_spec = f" for delivery order {do_number}" if do_number else ""
         link_part = self._complaint_status_link_part(complaint, complaint_id)
         display_message = (
-            f"There has been an update regarding your complaint{do_spec}{link_part}: {stored_body}"
+            f"There has been an update regarding your complaint{do_spec}: {stored_body}{link_part}"
         )
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -1367,8 +1372,8 @@ class ComplaintService:
             f" Reason: {normalized_reason}." if decision == "rejected" and normalized_reason else ""
         )
         display_message = (
-            f"There has been an update regarding your complaint{do_spec}{link_part}: "
-            f"status changed to {decision}.{reason_part}"
+            f"There has been an update regarding your complaint{do_spec}: "
+            f"status changed to {decision}.{reason_part}{link_part}"
         )
 
         identifier = self._identifier_from_respond_inbox_url(
@@ -1558,8 +1563,8 @@ class ComplaintService:
         note_part = f" Note: {note_clean}" if note_clean else ""
         status_label = self._FINALIZE_STATUS_LABELS.get(new_status, new_status)
         display_message = (
-            f"There has been an update regarding your complaint{do_spec}{link_part}: "
-            f"status changed to {status_label}.{note_part}"
+            f"There has been an update regarding your complaint{do_spec}: "
+            f"status changed to {status_label}.{note_part}{link_part}"
         )
         identifier = self._identifier_from_respond_inbox_url(
             getattr(complaint, "respond_inbox_url", None)
@@ -1854,8 +1859,8 @@ class ComplaintService:
         link_part = self._complaint_status_link_part(complaint, complaint_id)
         label_word = "Root cause" if kind == "root_cause" else "Resolution"
         display_message = (
-            f"There has been an update regarding your complaint{do_spec}{link_part}: "
-            f"{label_word} is identified as {target.name}."
+            f"There has been an update regarding your complaint{do_spec}: "
+            f"{label_word} is identified as {target.name}.{link_part}"
         )
 
         self._send_respond_message_for_complaint(

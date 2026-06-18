@@ -213,9 +213,14 @@ function fieldSpansFullWidth(f: FieldDef): boolean {
 interface Props {
   kind: PortalSubmissionKind;
   submissionId?: string;
+  /** Active contact slug from the deep-link URL. Threaded into the verify
+   *  redirect so a second device (with no stored slug) still lands on the
+   *  slug-mode verify card — which resolves "this {kind} belongs to {name}"
+   *  and the OTP flow — instead of the legacy "message us" dead end. */
+  slug?: string;
 }
 
-export function SubmissionForm({ kind, submissionId }: Props) {
+export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState(Boolean(submissionId));
   const [saving, setSaving] = useState(false);
@@ -332,7 +337,7 @@ export function SubmissionForm({ kind, submissionId }: Props) {
         setAttachments((data.attachments as PortalAttachment[]) ?? []);
       } catch (e) {
         if (e instanceof PortalUnauthorizedError) {
-          router.replace(portalVerifyPath({ reason: 'expired' }));
+          router.replace(portalVerifyPath({ slug, reason: 'expired', type: kind, id: submissionId }));
           return;
         }
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load.');

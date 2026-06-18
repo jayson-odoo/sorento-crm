@@ -399,6 +399,7 @@ export interface PortalTokenInfo {
   expired: boolean;
   revoked: boolean;
   portal_slug?: string | null;
+  name?: string | null;
   masked_phone?: string | null;
   whatsapp_number?: string | null;
 }
@@ -410,6 +411,7 @@ export interface PortalTokenInfo {
 export interface PortalSlugInfo {
   contact_id: string;
   space_id: string;
+  name: string | null;
   masked_phone: string | null;
   whatsapp_number: string | null;
 }

@@ -58,7 +58,8 @@ export type UseCase =
   | 'complaint'
   | 'stock_inquiry'
   | 'purchase_request'
-  | 'sponsorship_form';
+  | 'sponsorship_form'
+  | 'portal_otp';
 
 export type ParamVariable =
   | 'contact_name'
@@ -66,7 +67,8 @@ export type ParamVariable =
   | 'status'
   | 'reason'
   | 'portal_url'
-  | 'message';
+  | 'message'
+  | 'otp_code';
 
 export interface WhatsAppTemplate {
   id: string;
@@ -129,6 +131,12 @@ export const USE_CASES: { key: UseCase; label: string; description: string }[] =
     label: 'Sponsorship Form',
     description: 'Approval updates sent to the sponsorship applicant.',
   },
+  {
+    key: 'portal_otp',
+    label: 'Portal OTP',
+    description:
+      'Login verification code sent when a contact opens the portal on a new device and the 24h window is closed. Map the code param to "OTP code".',
+  },
 ];
 
 export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: string }[] = [
@@ -138,6 +146,7 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'reason', label: 'Reason', description: 'Decision reason when present' },
   { key: 'portal_url', label: 'Portal URL', description: 'Customer portal link for the record' },
   { key: 'message', label: 'Full update message', description: 'The composed update text, flattened to one line' },
+  { key: 'otp_code', label: 'OTP code', description: 'The 6-digit portal login verification code' },
 ];
 
 

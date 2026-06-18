@@ -28,10 +28,17 @@ def _send_and_log(
     crm_sender_user_id: Optional[str],
     space_id: Optional[str],
     sla_entity_type: str,
+    extra_context_vars: Optional[dict] = None,
+    emit_outbound_webhook: bool = True,
 ) -> dict:
     """Shared worker body: window-aware send, outbound webhook, integration log.
 
     Re-raises on failure so RQ records the job as FAILED.
+
+    ``extra_context_vars`` merges into the resolved template context (e.g. the
+    portal OTP code, which has no business-entity row to derive). Set
+    ``emit_outbound_webhook=False`` for system messages (OTP) that should be
+    logged in the Respond outbox but NOT mirrored into the CRM chat thread.
     """
     from app.database import SessionLocal
     from app.schemas.integration import IntegrationLogCreate
@@ -56,6 +63,8 @@ def _send_and_log(
                 business_id=business_id,
                 identifier=identifier,
             )
+            if extra_context_vars:
+                context_vars.update(extra_context_vars)
             result = send_text_or_template(
                 db,
                 identifier=identifier,
@@ -66,20 +75,21 @@ def _send_and_log(
             request_payload = result["request_payload"]
             response = result["response"]
 
-            enqueue_crm_chat_outbound_webhook(
-                db,
-                business_table=business_table,
-                business_id=business_id,
-                contact_respond_io_id=identifier,
-                message_text=message_text,
-                respond_api_response=response if isinstance(response, dict) else None,
-                space_id=space_id,
-                crm_sender_user_id=crm_sender_user_id,
-                respond_user_id_fallback=respond_user_id,
-                assignee_respond_user_id=resolve_sla_assignee_respond_user_id(
-                    db, sla_entity_type, business_id
-                ),
-            )
+            if emit_outbound_webhook:
+                enqueue_crm_chat_outbound_webhook(
+                    db,
+                    business_table=business_table,
+                    business_id=business_id,
+                    contact_respond_io_id=identifier,
+                    message_text=message_text,
+                    respond_api_response=response if isinstance(response, dict) else None,
+                    space_id=space_id,
+                    crm_sender_user_id=crm_sender_user_id,
+                    respond_user_id_fallback=respond_user_id,
+                    assignee_respond_user_id=resolve_sla_assignee_respond_user_id(
+                        db, sla_entity_type, business_id
+                    ),
+                )
             log_service.create_integration_log(
                 IntegrationLogCreate(
                     integration_channel="respond_io",
@@ -139,6 +149,36 @@ def _send_and_log(
             raise
     finally:
         db.close()
+
+
+def send_portal_otp_respond_message(
+    otp_id: str,
+    identifier: str,
+    message_text: str,
+    otp_code: str,
+    space_id: Optional[str],
+) -> dict:
+    """Worker-side: window-aware Respond.io send for a portal login OTP.
+
+    Logged in the Respond outbox (``integration_logs``, business_table
+    ``portal_otp_codes``) like every other send — including a ``status='failed'``
+    row when the send can't go out (e.g. local dev with no Respond.io
+    connectivity), whose ``request_payload`` carries the code so it can be read
+    back for testing. Not mirrored into the CRM chat thread (system message).
+    """
+    return _send_and_log(
+        use_case="portal_otp",
+        business_table="portal_otp_codes",
+        business_id=otp_id,
+        identifier=identifier,
+        message_text=message_text,
+        respond_user_id="",
+        crm_sender_user_id=None,
+        space_id=space_id,
+        sla_entity_type="",
+        extra_context_vars={"otp_code": otp_code},
+        emit_outbound_webhook=False,
+    )
 
 
 def send_complaint_respond_message(

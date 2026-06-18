@@ -56,6 +56,9 @@ export function portalVerifyPath(
     reason?: 'expired' | 'logout';
     token?: string | null;
     type?: string | null;
+    /** Submission id from the deep link — forwarded so verify can land the user
+     *  back on that exact form after the OTP, not just the type index. */
+    id?: string | null;
   } = {},
 ): string {
   const base = portalBase(opts.slug);
@@ -66,6 +69,7 @@ export function portalVerifyPath(
   // from the slug itself, no token needed.
   if (base === '/portal' && opts.token) qs.set('token', opts.token);
   if (opts.type && opts.type.trim()) qs.set('type', opts.type.trim());
+  if (opts.id && opts.id.trim()) qs.set('id', opts.id.trim());
   const q = qs.toString();
   return `${base}/verify${q ? `?${q}` : ''}`;
 }

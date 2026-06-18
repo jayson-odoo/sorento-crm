@@ -165,12 +165,25 @@ class PortalService:
         return digits or None
 
     def identity_hint(self, contact: RespondContact) -> dict:
-        """Public identity-hint pair shared by slug-info and token-info: masked
-        phone for owner recognition + business WhatsApp for the wa.me hatch."""
+        """Public identity-hint shared by slug-info and token-info: contact name
+        + masked phone for owner recognition + business WhatsApp for the wa.me
+        hatch. The name lets the verify card say "this form belongs to {name}"
+        so a second device / other salesperson knows whose login to use."""
         return {
+            "name": self._contact_display_name(contact),
             "masked_phone": self._mask_phone(contact.phone_number),
             "whatsapp_number": self.whatsapp_number_for_contact(contact),
         }
+
+    @staticmethod
+    def _contact_display_name(contact: RespondContact) -> Optional[str]:
+        name = (
+            (contact.name or "").strip()
+            or " ".join(
+                p for p in [(contact.first_name or "").strip(), (contact.last_name or "").strip()] if p
+            ).strip()
+        )
+        return name or None
 
     def slug_info(self, slug: str) -> dict:
         """Public identity hint behind GET /slug-info/{slug}.
@@ -486,22 +499,38 @@ class PortalService:
         self.db.commit()
         self.db.refresh(otp)
 
-        # Dispatch via Respond.io. Prefer respond_io_id; fall back to internal id.
+        # Dispatch asynchronously via the RQ ``respond_io`` queue — the SAME path
+        # as complaint / stock-inquiry status replies. The worker does the
+        # window-aware send (free-form text inside the 24h window, else the
+        # approved ``portal_otp`` template) AND writes an ``integration_logs``
+        # outbox row, including a ``status='failed'`` row carrying the message
+        # text when the send can't go out. That lets the code be read back from
+        # the Respond outbox in local dev (no Respond.io connectivity) for
+        # testing. Decoupling also means a Respond outage no longer 500s the
+        # request — the contact just retries.
         identifier = (contact.respond_io_id or "").strip() or contact.id
+        otp_text = (
+            f"Your Sorento portal verification code is {code}. It expires in 10 "
+            f"minutes. Please do not share with anyone."
+        )
         try:
-            from app.services.integration_service import RespondClient
+            from app.services.queue_service import enqueue_job
+            from app.tasks.respond_io_tasks import send_portal_otp_respond_message
 
-            client = RespondClient()
-            client.send_message(
+            enqueue_job(
+                send_portal_otp_respond_message,
+                otp.id,
                 identifier,
-                f"Your Sorento portal verification code is {code}. It expires in 10 minutes. Please do not share with anyone.",
+                otp_text,
+                code,
+                space_id,
+                queue_name="respond_io",
+                job_timeout=180,
             )
         except Exception as e:  # noqa: BLE001
-            logger.warning("Failed to dispatch portal OTP for contact %s: %s", contact.id, e)
-            # Remove the undelivered code so hard send failures (Respond outage,
-            # API errors) don't consume the daily cap — only dispatched codes
-            # count. Note: closed-CSW sends are accepted async by Respond and
-            # never reach this branch; those legitimately count.
+            # Enqueue itself failed (e.g. Redis unreachable) — refund the code so
+            # it doesn't burn the daily cap, then surface a retryable error.
+            logger.warning("Failed to enqueue portal OTP for contact %s: %s", contact.id, e)
             try:
                 self.db.delete(otp)
                 self.db.commit()

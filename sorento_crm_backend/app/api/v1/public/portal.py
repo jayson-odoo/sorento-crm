@@ -117,6 +117,7 @@ class PortalTokenInfoResponse(BaseModel):
     expired: bool
     revoked: bool
     portal_slug: Optional[str] = None
+    name: Optional[str] = None
     masked_phone: Optional[str] = None
     whatsapp_number: Optional[str] = None
 
@@ -151,6 +152,7 @@ def portal_token_info(token: str, db: Session = Depends(get_db)):
         expired=row.expires_at <= _utcnow(),
         revoked=row.revoked_at is not None,
         portal_slug=contact.portal_slug if contact else None,
+        name=hint.get("name"),
         masked_phone=hint.get("masked_phone"),
         whatsapp_number=hint.get("whatsapp_number"),
     )
@@ -159,6 +161,7 @@ def portal_token_info(token: str, db: Session = Depends(get_db)):
 class PortalSlugInfoResponse(BaseModel):
     contact_id: str
     space_id: str
+    name: Optional[str] = None
     masked_phone: Optional[str]
     whatsapp_number: Optional[str]
 

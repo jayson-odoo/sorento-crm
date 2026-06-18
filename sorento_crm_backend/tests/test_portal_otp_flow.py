@@ -151,6 +151,48 @@ def test_verify_otp_then_me_succeeds(client, db, cleanup):
     assert me_body["space_id"] == ws.space_id
 
 
+def test_request_otp_enqueues_async_respond_send(db, cleanup):
+    """request_otp must enqueue the send on the respond_io queue (async, logged
+    in the outbox) — NOT send synchronously — so a Respond outage doesn't 500
+    and the code lands in integration_logs for local testing. The worker task
+    handles the window-aware text/template branch."""
+    from unittest.mock import patch
+
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+
+    svc = PortalService(db)
+    with patch("app.services.queue_service.enqueue_job") as mock_enqueue:
+        result = svc.request_otp(contact.id, ws.space_id)
+
+    assert mock_enqueue.call_count == 1
+    args, kwargs = mock_enqueue.call_args
+    # First positional arg is the worker function.
+    assert args[0].__name__ == "send_portal_otp_respond_message"
+    assert kwargs["queue_name"] == "respond_io"
+    # args: (func, otp_id, identifier, otp_text, code, space_id)
+    otp_code = args[4]
+    assert otp_code.isdigit() and len(otp_code) == 6
+    assert otp_code in args[3]  # code embedded in the message text
+    assert result["sent_to"]  # masked phone hint returned
+
+    for otp in db.query(PortalOtpCode).filter(PortalOtpCode.contact_id == contact.id).all():
+        cleanup["otps"].append(otp.id)
+
+
+def test_slug_info_includes_contact_name(db, cleanup):
+    """slug_info / identity_hint surface the contact name so the verify card can
+    say 'this form belongs to {name}'."""
+    ws = _workspace(db, cleanup)
+    contact = _contact(db, cleanup, workspace_id=ws.id)
+    svc = PortalService(db)
+    slug = svc.get_or_create_slug(contact)
+
+    info = svc.slug_info(slug)
+    assert info["name"] == "Tester"
+    assert info["contact_id"] == contact.id
+
+
 def test_verify_otp_token_is_resolvable_by_service(db, cleanup):
     """Direct service-level proof: verify_otp returns a row that resolve_token
     accepts when looked up by its ``token`` value. Guards against any

@@ -32,8 +32,10 @@ import {
   verifyOtp,
   writePortalToken,
 } from '../lib/portal-client';
+import { isSubmissionKind } from '../lib/portal-client';
 import {
   clearPortalSlug,
+  portalDetailPath,
   portalHomePath,
   waMeUrl,
   writePortalSlug,
@@ -41,6 +43,15 @@ import {
 
 const SENT_KEY_PREFIX = 'sorento.portal.otpSent.';
 const RESEND_COOLDOWN_S = 60;
+
+// Human labels for the submission kind passed via ?type= on deep-link verify
+// redirects, used in the "This {label} belongs to …" confirm copy.
+const TYPE_LABELS: Record<string, string> = {
+  complaint: 'complaint',
+  stock_inquiry: 'stock inquiry',
+  purchase_request: 'purchase request',
+  sponsorship_form: 'sponsorship form',
+};
 
 // One prefill for both WhatsApp CTAs (escape hatch + link request) so the
 // agent/n8n side only has to recognize a single message.
@@ -53,6 +64,7 @@ interface Props {
 
 type CardState =
   | 'loading' // resolving slug-info / token-info
+  | 'confirm-identity' // deep link on a new device — confirm "log in with this number?"
   | 'otp' // normal verify flow
   | 'unknown-slug' // slug-info 404 — ask for a fresh portal link
   | 'request-link' // "Not your number?" — ask for own portal link
@@ -63,10 +75,17 @@ export function PortalVerifyCard({ slug }: Props) {
   const searchParams = useSearchParams();
   const reason = searchParams?.get('reason');
   const isLogout = reason === 'logout';
+  // Submission kind from the deep-link verify redirect — its presence means the
+  // user followed a link to a specific form on a device with no session, so we
+  // gate on an explicit "log in with this number?" confirmation before sending
+  // a code (instead of silently auto-firing).
+  const entityType = searchParams?.get('type') || null;
+  const entityLabel = entityType ? TYPE_LABELS[entityType] ?? 'form' : null;
 
   const [state, setState] = useState<CardState>('loading');
   const [contactId, setContactId] = useState<string | null>(null);
   const [spaceId, setSpaceId] = useState<string | null>(null);
+  const [contactName, setContactName] = useState<string | null>(null);
   const [maskedPhone, setMaskedPhone] = useState<string | null>(null);
   const [whatsappNumber, setWhatsappNumber] = useState<string | null>(null);
   const [code, setCode] = useState('');
@@ -147,8 +166,14 @@ export function PortalVerifyCard({ slug }: Props) {
           }
           setContactId(info.contact_id);
           setSpaceId(info.space_id);
+          setContactName(info.name ?? null);
           setMaskedPhone(info.masked_phone);
           setWhatsappNumber(info.whatsapp_number);
+          // Deep link → confirm identity before sending. Otherwise auto-fire.
+          if (entityType) {
+            setState('confirm-identity');
+            return;
+          }
           setState('otp');
           await autoFire(info.contact_id, info.space_id, slug);
           return;
@@ -164,8 +189,13 @@ export function PortalVerifyCard({ slug }: Props) {
         if (cancelled) return;
         setContactId(info.contact_id);
         setSpaceId(info.space_id);
+        setContactName(info.name ?? null);
         setMaskedPhone(info.masked_phone ?? null);
         setWhatsappNumber(info.whatsapp_number ?? null);
+        if (entityType) {
+          setState('confirm-identity');
+          return;
+        }
         setState('otp');
         await autoFire(info.contact_id, info.space_id, token);
       } catch (e) {
@@ -190,6 +220,16 @@ export function PortalVerifyCard({ slug }: Props) {
     void sendCode(contactId, spaceId);
   }, [contactId, spaceId, sendCode]);
 
+  // Confirm-identity → send the first code, then drop into the OTP entry card.
+  const handleConfirmIdentity = useCallback(async () => {
+    if (!contactId || !spaceId) return;
+    setState('otp');
+    const sent = await sendCode(contactId, spaceId);
+    if (sent && slug && typeof window !== 'undefined') {
+      window.sessionStorage.setItem(SENT_KEY_PREFIX + slug, '1');
+    }
+  }, [contactId, spaceId, sendCode, slug]);
+
   const handleVerify = useCallback(async () => {
     setError(null);
     if (!contactId || !spaceId) {
@@ -213,9 +253,14 @@ export function PortalVerifyCard({ slug }: Props) {
       }
       toast.success('Verified.');
       const desiredType = searchParams?.get('type');
-      // Slug tree: land back under the stable URL. Legacy: /portal resolves
-      // the slug and redirects, keeping the address bar bookmarkable.
-      const target = portalHomePath({ slug: slug ?? null, type: desiredType });
+      const desiredId = searchParams?.get('id');
+      // Deep link → land back on that exact form. Otherwise the type index /
+      // portal home. Slug tree keeps the stable URL; legacy /portal resolves the
+      // slug and redirects, keeping the address bar bookmarkable.
+      const target =
+        desiredId && desiredType && isSubmissionKind(desiredType)
+          ? portalDetailPath(desiredType, desiredId, slug ?? null)
+          : portalHomePath({ slug: slug ?? null, type: desiredType });
       // Hard-navigate so the fresh storage values are guaranteed visible.
       if (typeof window !== 'undefined') {
         window.location.assign(target);
@@ -267,6 +312,59 @@ export function PortalVerifyCard({ slug }: Props) {
         >
           Try again
         </Button>
+      </VerifyShell>
+    );
+  }
+
+  if (state === 'confirm-identity') {
+    const who = contactName || maskedPhone || 'this contact';
+    return (
+      <VerifyShell title="Confirm your identity">
+        <Alert>
+          <AlertIcon>
+            <AlertCircle />
+          </AlertIcon>
+          <AlertTitle>
+            This {entityLabel} belongs to{' '}
+            <span className="font-semibold whitespace-nowrap">{who}</span>
+            {contactName && maskedPhone ? (
+              <span className="font-normal"> ({maskedPhone})</span>
+            ) : null}
+            .
+          </AlertTitle>
+        </Alert>
+        <p className="text-sm text-muted-foreground">
+          To open it, log in with this number. We&apos;ll send a one-time code to
+          the WhatsApp{maskedPhone ? ` ${maskedPhone}` : ''} on file.
+        </p>
+        <Button
+          type="button"
+          className="h-11 w-full"
+          onClick={handleConfirmIdentity}
+          disabled={pending || !contactId || !spaceId}
+          data-testid="confirm-identity-send"
+        >
+          Log in with this number
+        </Button>
+
+        {/* wa.me fallback — kept secondary per product decision. */}
+        {whatsappNumber && (
+          <div className="rounded-lg border bg-muted/40 px-3 py-3 space-y-2">
+            <p className="text-xs text-muted-foreground">
+              Not your number, or need a different link? Message us on WhatsApp.
+            </p>
+            <Button asChild variant="outline" size="sm" className="h-9 w-full">
+              <a
+                href={waMeUrl(whatsappNumber, WA_TEXT)}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <MessageCircle className="h-4 w-4 mr-2" />
+                Message us on WhatsApp
+              </a>
+            </Button>
+          </div>
+        )}
       </VerifyShell>
     );
   }

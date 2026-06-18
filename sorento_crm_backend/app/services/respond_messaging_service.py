@@ -69,7 +69,12 @@ def sanitize_param(value: Optional[str], *, max_len: int = PARAM_MAX_LEN) -> str
 
 def extract_first_url(text: Optional[str]) -> Optional[str]:
     m = _URL_RE.search(text or "")
-    return m.group(0) if m else None
+    if not m:
+        return None
+    # `\S+` greedily includes trailing sentence punctuation (e.g. a URL written
+    # `…/{uuid}: status`); strip it so the extracted link is the bare URL. Hit by
+    # portal deep links whose path ends in a UUID followed by a colon.
+    return m.group(0).rstrip(").,:;!?'\"")
 
 
 def _ms_to_utc(ts: Any) -> Optional[datetime]:

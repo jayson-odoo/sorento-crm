@@ -40,6 +40,8 @@ PARAM_VARIABLES = (
     "reason",
     "portal_url",
     "message",
+    # Portal OTP code — used by the ``portal_otp`` use case template.
+    "otp_code",
 )
 
 _PARAM_RE = re.compile(r"\{\{(\d+)\}\}")

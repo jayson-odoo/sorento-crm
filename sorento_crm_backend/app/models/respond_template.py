@@ -39,6 +39,10 @@ TEMPLATE_DEFAULT_USE_CASES = (
     "stock_inquiry",
     "purchase_request",
     "sponsorship_form",
+    # Portal OTP — sent when a contact verifies on a new device and the 24h
+    # window is closed. Map the approved auth/utility template's code param to
+    # the ``otp_code`` variable.
+    "portal_otp",
 )
 
 
