@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type {
   PurchaseRequest,
   PurchaseRequestFormData,
@@ -208,6 +209,30 @@ export async function sendApprovalLink(
       .json()
       .catch(() => ({ message: 'Failed to create approval link' }));
     throw new Error(error.detail || error.message);
+  }
+  return response.json();
+}
+
+/**
+ * In-system approve/reject of a pending-approval PR / sponsorship form (the form's
+ * Approve / Reject buttons). Behaves identically to the public approval link.
+ * Reject requires a reason (`comments`).
+ */
+export async function submitApprovalDecision(
+  id: string,
+  action: 'approved' | 'rejected',
+  comments?: string,
+): Promise<PurchaseRequest> {
+  const response = await apiFetch(
+    `/api/v1/procurement/purchase-requests/${id}/approval-decision`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, comments: comments || undefined }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, `Failed to ${action === 'approved' ? 'approve' : 'reject'} request`));
   }
   return response.json();
 }

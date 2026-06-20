@@ -42,6 +42,12 @@ PARAM_VARIABLES = (
     "message",
     # Portal OTP code — used by the ``portal_otp`` use case template.
     "otp_code",
+    # SLA daily summary counts — keys match the context_vars emitted by
+    # user_sla_daily_summary_service (``outstanding`` / ``escalated_last_24h`` /
+    # ``resolved_last_24h``); the deep link maps to ``portal_url``.
+    "outstanding",
+    "escalated_last_24h",
+    "resolved_last_24h",
 )
 
 _PARAM_RE = re.compile(r"\{\{(\d+)\}\}")

@@ -27,7 +27,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { useStockInquiries } from '../hooks/useStockInquiries';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
+import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { StockInquiry } from '../types/stockInquiry.types';
 import { STOCK_INQUIRY_STATUS_LABELS } from '../types/stockInquiry.types';
@@ -222,14 +222,9 @@ export default function StockInquiriesList() {
           const status = row.original.status;
           if (!status) return '-';
           return (
-            <Badge
-              variant={getStatusBadgeVariant(status)}
-              appearance="light"
-              shape="circle"
-              size="sm"
-            >
+            <span className={`${STATUS_PILL_BASE} ${statusPillClass(status)}`}>
               {STOCK_INQUIRY_STATUS_LABELS[status] ?? status}
-            </Badge>
+            </span>
           );
         },
         meta: { skeleton: <Skeleton className="h-4 w-16" /> },

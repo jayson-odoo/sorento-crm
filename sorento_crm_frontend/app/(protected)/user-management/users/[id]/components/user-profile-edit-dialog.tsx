@@ -101,6 +101,10 @@ const UserProfileEditDialog = ({
       respond_contact_id: user?.respondContactId ?? null,
       notify_whatsapp: Boolean(user?.notifyWhatsapp),
       notify_whatsapp_summary: Boolean(user?.notifyWhatsappSummary),
+      notify_email_on_assignment: user?.notifyEmailOnAssignment ?? true,
+      notify_email_on_escalation: user?.notifyEmailOnEscalation ?? true,
+      notify_whatsapp_on_assignment: Boolean(user?.notifyWhatsappOnAssignment),
+      notify_whatsapp_on_escalation: Boolean(user?.notifyWhatsappOnEscalation),
     },
     mode: 'onSubmit',
   });
@@ -129,6 +133,10 @@ const UserProfileEditDialog = ({
       respond_contact_id: user.respondContactId ?? null,
       notify_whatsapp: Boolean(user.notifyWhatsapp),
       notify_whatsapp_summary: Boolean(user.notifyWhatsappSummary),
+      notify_email_on_assignment: user.notifyEmailOnAssignment ?? true,
+      notify_email_on_escalation: user.notifyEmailOnEscalation ?? true,
+      notify_whatsapp_on_assignment: Boolean(user.notifyWhatsappOnAssignment),
+      notify_whatsapp_on_escalation: Boolean(user.notifyWhatsappOnEscalation),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; omit to avoid reset loop
   }, [open, user?.id, user?.name, user?.email, user?.status, user?.roles, user?.respondUserId, user?.tier, user?.superiorId, userRoles.length]);
@@ -218,6 +226,10 @@ const UserProfileEditDialog = ({
       profileData.respond_contact_id = values.respond_contact_id || null;
       profileData.notify_whatsapp = Boolean(values.notify_whatsapp);
       profileData.notify_whatsapp_summary = Boolean(values.notify_whatsapp_summary);
+      profileData.notify_email_on_assignment = Boolean(values.notify_email_on_assignment);
+      profileData.notify_email_on_escalation = Boolean(values.notify_email_on_escalation);
+      profileData.notify_whatsapp_on_assignment = Boolean(values.notify_whatsapp_on_assignment);
+      profileData.notify_whatsapp_on_escalation = Boolean(values.notify_whatsapp_on_escalation);
 
       const response = await apiFetch(`/api/user-management/users/${user.id}`, {
         method: 'PUT',
@@ -660,21 +672,29 @@ const UserProfileEditDialog = ({
                 </FormItem>
               )}
             />
-            <FormField
-              control={form.control}
-              name="notify_whatsapp"
-              render={({ field }) => (
-                <FormItem className="flex flex-row items-center justify-between rounded-md border p-3">
-                  <div className="space-y-0.5">
-                    <FormLabel>WhatsApp escalation & assignment alerts</FormLabel>
-                    <p className="text-xs text-muted-foreground">Needs a linked WhatsApp contact.</p>
-                  </div>
-                  <FormControl>
-                    <Checkbox checked={Boolean(field.value)} onCheckedChange={(v) => field.onChange(Boolean(v))} />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
+            {([
+              { name: 'notify_email_on_assignment', label: 'Email on assignment', hint: 'Emailed when an SLA stage is assigned to you.' },
+              { name: 'notify_email_on_escalation', label: 'Email on escalation', hint: 'Emailed when an SLA escalates to you.' },
+              { name: 'notify_whatsapp_on_assignment', label: 'WhatsApp on assignment', hint: 'Needs a linked WhatsApp contact.' },
+              { name: 'notify_whatsapp_on_escalation', label: 'WhatsApp on escalation', hint: 'Needs a linked WhatsApp contact.' },
+            ] as const).map((t) => (
+              <FormField
+                key={t.name}
+                control={form.control}
+                name={t.name}
+                render={({ field }) => (
+                  <FormItem className="flex flex-row items-center justify-between rounded-md border p-3">
+                    <div className="space-y-0.5">
+                      <FormLabel>{t.label}</FormLabel>
+                      <p className="text-xs text-muted-foreground">{t.hint}</p>
+                    </div>
+                    <FormControl>
+                      <Checkbox checked={Boolean(field.value)} onCheckedChange={(v) => field.onChange(Boolean(v))} />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+            ))}
             <FormField
               control={form.control}
               name="notify_whatsapp_summary"

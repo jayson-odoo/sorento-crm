@@ -59,7 +59,8 @@ export type UseCase =
   | 'stock_inquiry'
   | 'purchase_request'
   | 'sponsorship_form'
-  | 'portal_otp';
+  | 'portal_otp'
+  | 'sla_daily_summary';
 
 export type ParamVariable =
   | 'contact_name'
@@ -68,7 +69,10 @@ export type ParamVariable =
   | 'reason'
   | 'portal_url'
   | 'message'
-  | 'otp_code';
+  | 'otp_code'
+  | 'outstanding'
+  | 'escalated_last_24h'
+  | 'resolved_last_24h';
 
 export interface WhatsAppTemplate {
   id: string;
@@ -137,6 +141,12 @@ export const USE_CASES: { key: UseCase; label: string; description: string }[] =
     description:
       'Login verification code sent when a contact opens the portal on a new device and the 24h window is closed. Map the code param to "OTP code".',
   },
+  {
+    key: 'sla_daily_summary',
+    label: 'SLA Daily Summary',
+    description:
+      'Daily SLA digest sent to staff on WhatsApp when their 24h window is closed. Bounded template — map params to the outstanding / escalated (24h) / resolved (24h) counts and the dashboard deep link (Portal URL).',
+  },
 ];
 
 export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: string }[] = [
@@ -147,6 +157,9 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'portal_url', label: 'Portal URL', description: 'Customer portal link for the record' },
   { key: 'message', label: 'Full update message', description: 'The composed update text, flattened to one line' },
   { key: 'otp_code', label: 'OTP code', description: 'The 6-digit portal login verification code' },
+  { key: 'outstanding', label: 'Outstanding count', description: 'Outstanding conversations assigned to the staff member' },
+  { key: 'escalated_last_24h', label: 'Escalated (24h)', description: 'Conversations escalated to the staff member in the last 24h' },
+  { key: 'resolved_last_24h', label: 'Resolved (24h)', description: 'Conversations the staff member resolved in the last 24h' },
 ];
 
 

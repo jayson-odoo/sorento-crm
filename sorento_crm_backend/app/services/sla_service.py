@@ -273,6 +273,31 @@ class SLAPolicyTierService:
         return {"message": "SLA policy tier deleted successfully"}
 
 
+# Human labels for form-SLA workflow events, so the pending-task list mirrors the
+# SLA config's state machine ("Send for approval", "Approve") instead of a generic
+# "respond / resolve". Unknown events fall back to a title-cased code.
+_FORM_SLA_ACTION_LABELS: dict = {
+    "submit": "Submit",
+    "send_for_approval": "Send for approval",
+    "approved": "Approve",
+    "approval_rejected": "Approve or reject",
+    "rejected": "Approve or reject",
+    "reject_submitted": "Review submission",
+    "resolved": "Mark CS resolved",
+    "technical_team_response": "Respond to complaint",
+    "project_sales_approve": "Review and approve",
+    "project_sales_reject": "Review and approve",
+    "purchasing_respond": "Respond to salesperson",
+    "purchasing_decide": "Make purchasing decision",
+}
+
+
+def _humanize_sla_event(event: str) -> str:
+    """Map a form-SLA event code to a human action label."""
+    key = (event or "").strip()
+    return _FORM_SLA_ACTION_LABELS.get(key) or key.replace("_", " ").capitalize()
+
+
 def _now_utc() -> datetime:
     """Current time as timezone-aware UTC for DB storage and duration math."""
     return datetime.now(timezone.utc)
@@ -725,19 +750,100 @@ class ConversationSLATrackingService:
             .all()
         )
         reference_by_row = self._resolve_my_pending_references(rows)
+        action_by_row = self._form_next_actions(rows)
+
+        # Conversation rows (no source entity) need the contact's respond_io_id so
+        # the widget can build a Respond inbox deep link. Batched once.
+        respond_io_by_contact: dict[str, Optional[str]] = {}
+        contact_ids = {
+            str(r.respond_contact_id)
+            for r in rows
+            if getattr(r, "respond_contact_id", None)
+        }
+        if contact_ids:
+            try:
+                for cid, rio in (
+                    self.db.query(RespondContact.id, RespondContact.respond_io_id)
+                    .filter(RespondContact.id.in_(contact_ids))
+                    .all()
+                ):
+                    respond_io_by_contact[str(cid)] = str(rio) if rio else None
+            except Exception:  # noqa: BLE001
+                self.db.rollback()
+
         return [
             {
                 "id": str(r.id),
                 "source_entity_type": r.source_entity_type,
                 "source_entity_id": r.source_entity_id,
                 "reference": reference_by_row.get(str(r.id)),
+                "respond_io_id": (
+                    respond_io_by_contact.get(str(r.respond_contact_id))
+                    if getattr(r, "respond_contact_id", None)
+                    else None
+                ),
                 "due_at": r.due_at.isoformat() if r.due_at else None,
                 "is_responded": bool(r.is_responded),
                 "current_tier": r.current_tier,
                 "policy_name": r.policy.name if r.policy else None,
+                # SLA-config-driven next action for form rows (e.g. "Send for
+                # approval", "Approve", "Mark resolved"); None for conversation rows.
+                "next_action": action_by_row.get(str(r.id)),
             }
             for r in rows
         ]
+
+    def _form_next_actions(
+        self, rows: list[ConversationSLATracking]
+    ) -> dict[str, Optional[str]]:
+        """For each FORM SLA row, the concrete next action the assignee must take,
+        derived from the stage's SLA config (not a generic "respond/resolve").
+
+        The active stage is identified by (source_entity_type, team_set_code) — the
+        tracker copies team_set_code from the config that spawned it, and that pair
+        is unique per stage. The action humanizes the stage's respond_event (while
+        unresponded) or its primary resolve_event (the advance_on_event, else the
+        first), so the to-do mirrors the workflow: PR `main` -> "Send for approval",
+        PR `project_sales_manager` -> "Approve", `customer_service` -> "Mark resolved".
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.models.sla import FormSLAConfig
+
+        form_rows = [
+            r for r in rows
+            if (getattr(r, "source_entity_type", None) in FORM_SLA_TYPES)
+        ]
+        if not form_rows:
+            return {}
+
+        ent_types = {str(r.source_entity_type) for r in form_rows}
+        cfg_by_key: dict[tuple, FormSLAConfig] = {}
+        try:
+            for cfg in (
+                self.db.query(FormSLAConfig)
+                .filter(FormSLAConfig.source_entity_type.in_(ent_types))
+                .all()
+            ):
+                cfg_by_key[(cfg.source_entity_type, cfg.team_set_code)] = cfg
+        except Exception:  # noqa: BLE001
+            self.db.rollback()
+            return {}
+
+        out: dict[str, Optional[str]] = {}
+        for r in form_rows:
+            cfg = cfg_by_key.get((str(r.source_entity_type), getattr(r, "team_set_code", None)))
+            if cfg is None:
+                continue
+            if not bool(r.is_responded) and cfg.respond_event:
+                event = cfg.respond_event
+            else:
+                primary = cfg.advance_on_event or (
+                    (cfg.resolve_event or "").split(",")[0].strip()
+                )
+                event = primary or cfg.resolve_event
+            if event:
+                out[str(r.id)] = _humanize_sla_event(event)
+        return out
 
     def _resolve_my_pending_references(
         self, rows: list[ConversationSLATracking]
@@ -2115,7 +2221,62 @@ class ConversationSLATrackingService:
 
         self.db.commit()
         self.db.refresh(tracking)
+
+        # Best-effort: a resolved CONVERSATION SLA closes the matching Respond.io
+        # conversation (Resolve = Respond close, per product decision). Form trackers
+        # are excluded — their Respond conversation lifecycle is owned elsewhere.
+        # Post-commit side effect: must never raise (the resolve already succeeded);
+        # the retry path is idempotent and would not re-attempt the close otherwise.
+        if resolved_in_this_request and (
+            getattr(tracking, "source_entity_type", None) not in _FORM_TYPES
+        ):
+            self._close_respond_conversation_best_effort(tracking)
+
         return tracking
+
+    def _close_respond_conversation_best_effort(
+        self, tracking: ConversationSLATracking
+    ) -> None:
+        """Close the contact's Respond.io conversation when a conversation SLA is
+        resolved. Resolves the contact's ``respond_io_id`` (never the internal
+        ``respond_contact_id``, per the inbox-URL rule) and calls Respond. Any
+        failure is logged and swallowed."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+        try:
+            from app.services.integration_service import RespondClient
+
+            respond_io_id = None
+            contact = getattr(tracking, "contact", None)
+            if contact is not None:
+                respond_io_id = getattr(contact, "respond_io_id", None)
+            if not respond_io_id and getattr(tracking, "respond_contact_id", None):
+                row = (
+                    self.db.query(RespondContact.respond_io_id)
+                    .filter(RespondContact.id == str(tracking.respond_contact_id))
+                    .first()
+                )
+                respond_io_id = row[0] if row else None
+            if not respond_io_id:
+                logger.warning(
+                    "Resolve: no respond_io_id for tracking %s; skipping Respond close.",
+                    getattr(tracking, "id", None),
+                )
+                return
+            RespondClient.for_contact_id(
+                self.db, str(tracking.respond_contact_id)
+            ).close_conversation(
+                str(respond_io_id),
+                category="Resolved",
+                summary="Resolved from Sorento CRM SLA tracking.",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Resolve: Respond.io close failed for tracking %s: %s",
+                getattr(tracking, "id", None),
+                exc,
+            )
 
     def admin_test_override_tracking(self, tracking_id: str, updates: dict):
         """

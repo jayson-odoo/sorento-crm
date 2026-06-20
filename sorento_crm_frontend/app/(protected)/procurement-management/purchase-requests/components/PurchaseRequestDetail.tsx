@@ -50,7 +50,11 @@ import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu';
-import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs } from '../services/purchaseRequestService';
+import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs, submitApprovalDecision } from '../services/purchaseRequestService';
+import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
+import { SlaEscalationBanner } from '@/app/(protected)/sla-management/_shared/SlaEscalationBanner';
+import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
+import { ArrowUpCircle, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
   AlertDialog,
@@ -102,6 +106,15 @@ export default function PurchaseRequestDetail({
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
+  // In-system approver decision (Approve / Reject) — same behaviour as the email link.
+  const [approving, setApproving] = useState(false);
+  const [decisionRejectOpen, setDecisionRejectOpen] = useState(false);
+  const [decisionRejectReason, setDecisionRejectReason] = useState('');
+  const [decisionRejecting, setDecisionRejecting] = useState(false);
+  // Escalate the active form-SLA stage straight from the form.
+  const [escalateOpen, setEscalateOpen] = useState(false);
+  const [escalateReason, setEscalateReason] = useState('');
+  const [escalating, setEscalating] = useState(false);
   const [processDialogOpen, setProcessDialogOpen] = useState(false);
   const [closeCsDialogOpen, setCloseCsDialogOpen] = useState(false);
   const [finalizeNote, setFinalizeNote] = useState('');
@@ -125,6 +138,16 @@ export default function PurchaseRequestDetail({
   );
   const { data: requestListData } = usePurchaseRequests(navParams);
   const requestListItems = requestListData?.data ?? [];
+  // Active form-SLA stage tracker for this form — enables the in-form Escalate button.
+  const { data: slaTrackers } = useQuery({
+    // Key on the request's updated_at so the active tracker (and the escalation
+    // banner) refetches the moment a resolve/approve/process bumps the entity —
+    // the stage changes, the banner must clear without a manual refresh.
+    queryKey: ['form-sla-trackers', requestTypeForNav, requestId, request?.updated_at],
+    queryFn: () => getFormSLATrackers(requestTypeForNav, requestId),
+    enabled: !!isValidId,
+  });
+  const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
   const [approverUserId, setApproverUserId] = useState<string>('');
@@ -145,7 +168,6 @@ export default function PurchaseRequestDetail({
     text: string;
   } | null>(null);
   const [openingReplySheet, setOpeningReplySheet] = useState(false);
-  const [autoSendingApproval, setAutoSendingApproval] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
 
   const { data: systemSettingsPayload } = useQuery({
@@ -318,9 +340,9 @@ export default function PurchaseRequestDetail({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1 min-w-0">
+          <h1 className="text-2xl font-bold break-words">
             {typeLabel}
             {request.request_number
               ? ` - ${request.request_number}`
@@ -337,7 +359,7 @@ export default function PurchaseRequestDetail({
             · {typeLabel}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           {showPrimaryChangeToPending && (
             <Button
               disabled={settingPending}
@@ -375,54 +397,48 @@ export default function PurchaseRequestDetail({
               Reject
             </Button>
           )}
-          {showPrimarySendForApproval && (
-            <Button
-              disabled={autoSendingApproval}
-              data-guide-target="procurement.approvals.send-for-approval-button"
-              onClick={async () => {
-                setApprovalLink(null);
-                setApprovalError(null);
-                if (configuredDefaultApproverUserId) {
-                  setAutoSendingApproval(true);
+          {/* "Send for approval" email button retired: moving to pending approval
+              fires the SLA assignment, which notifies the approver, who then uses
+              the in-system Approve/Reject below. The emailed link survives as an
+              optional external fallback under the gear ("Copy approval link"). */}
+          {/* In-system approver decision — same effect as the emailed approval link,
+              so the approver can decide without leaving the system. */}
+          {isPendingApproval && canSendForApproval && (
+            <>
+              <Button
+                className="bg-emerald-600 text-white hover:bg-emerald-700"
+                disabled={approving}
+                onClick={async () => {
+                  setApproving(true);
                   try {
-                    const baseUrl =
-                      typeof window !== 'undefined' ? window.location.origin : undefined;
-                    const res = await sendApprovalLink(requestId, {
-                      approver_email: configuredDefaultApproverEmail ?? undefined,
-                      approver_user_id: configuredDefaultApproverUserId,
-                      expires_hours: 24,
-                      send_email: true,
-                      base_url: baseUrl,
-                    });
-                    void queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-                    if (res.email_sent) {
-                      toast.success(
-                        `Approval link sent to ${configuredDefaultApproverEmail ?? 'approver'}`,
-                      );
-                    } else if (res.email_error) {
-                      toast.warning(
-                        `Link created but email could not be sent: ${res.email_error}`,
-                      );
-                    } else {
-                      toast.success('Approval link created.');
-                    }
+                    await submitApprovalDecision(requestId, 'approved');
+                    queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
+                    queryClient.invalidateQueries({ queryKey: ['purchase-request-neighbours'] });
+                    queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', requestTypeForNav, requestId] });
+                    toast.success('Request approved');
                   } catch (e) {
-                    toast.error(
-                      e instanceof Error ? e.message : 'Failed to send approval link',
-                    );
+                    toast.error(e instanceof Error ? e.message : 'Failed to approve');
                   } finally {
-                    setAutoSendingApproval(false);
+                    setApproving(false);
                   }
-                  return;
-                }
-                setApproverUserId(request.approver_user_id ?? '');
-                setApproverEmail(request.approver_email ?? '');
-                setApprovalDialogOpen(true);
-              }}
-            >
-              <Send className="size-4" />
-              {autoSendingApproval ? 'Sending…' : 'Send for approval'}
-            </Button>
+                }}
+              >
+                <ThumbsUp className="size-4" />
+                {approving ? 'Approving…' : 'Approve'}
+              </Button>
+              <Button
+                variant="outline"
+                className="border-destructive text-destructive hover:bg-destructive/10"
+                disabled={decisionRejecting}
+                onClick={() => {
+                  setDecisionRejectReason('');
+                  setDecisionRejectOpen(true);
+                }}
+              >
+                <ThumbsDown className="size-4" />
+                Reject
+              </Button>
+            </>
           )}
           {showCsActions && canProcess && (
             <Button
@@ -438,6 +454,18 @@ export default function PurchaseRequestDetail({
             </Button>
           )}
           <DetailActionsMenu ariaLabel="Request actions">
+            {activeTracker && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setEscalateReason('');
+                  setEscalateOpen(true);
+                }}
+              >
+                <ArrowUpCircle className="size-4" />
+                Escalate SLA
+              </DropdownMenuItem>
+            )}
             {showCsActions && canClose && (
               <DropdownMenuItem
                 disabled={finalizing}
@@ -789,6 +817,12 @@ export default function PurchaseRequestDetail({
         onSuccess={() => router.push(basePath)}
       />
 
+      <SlaEscalationBanner
+        reason={activeTracker?.escalation_reason}
+        tier={activeTracker?.current_tier}
+        assignee={activeTracker?.assigned_user_name}
+      />
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {isPurchaseRequest ? (
           <div className="lg:col-span-2 max-w-5xl mx-auto w-full">
@@ -797,27 +831,25 @@ export default function PurchaseRequestDetail({
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                   <div className="flex flex-wrap gap-2">
                     <Badge variant="secondary">{typeLabel}</Badge>
-                    <Badge
-                      variant={
-                        request.approval_status === 'approved'
-                          ? 'primary'
-                          : request.approval_status === 'rejected'
-                            ? 'destructive'
-                            : 'secondary'
-                      }
-                    >
-                      {request.approval_status === 'pending'
-                        ? 'Pending approval'
-                        : request.approval_status === 'approved'
-                          ? (csFinalizeLabel ?? 'Approved')
-                          : request.approval_status === 'rejected'
-                            ? 'Rejected'
-                            : isSubmittedLifecycle
-                              ? 'Submitted'
-                              : isDraftLifecycle
-                                ? 'Draft'
-                                : (request.approval_status || request.status || 'Draft')}
-                    </Badge>
+                    {(() => {
+                      const statusText =
+                        request.approval_status === 'pending'
+                          ? 'Pending approval'
+                          : request.approval_status === 'approved'
+                            ? (csFinalizeLabel ?? 'Approved')
+                            : request.approval_status === 'rejected'
+                              ? 'Rejected'
+                              : isSubmittedLifecycle
+                                ? 'Submitted'
+                                : isDraftLifecycle
+                                  ? 'Draft'
+                                  : (request.approval_status || request.status || 'Draft');
+                      return (
+                        <span className={`${STATUS_PILL_BASE} ${statusPillClass(statusText)}`}>
+                          {statusText}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
                 <h2 className="text-center text-xl font-semibold tracking-tight border-b border-border pb-4 mb-6">
@@ -936,27 +968,25 @@ export default function PurchaseRequestDetail({
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                   <div className="flex flex-wrap gap-2">
                     <Badge variant="secondary">{typeLabel}</Badge>
-                    <Badge
-                      variant={
-                        request.approval_status === 'approved'
-                          ? 'primary'
-                          : request.approval_status === 'rejected'
-                            ? 'destructive'
-                            : 'secondary'
-                      }
-                    >
-                      {request.approval_status === 'pending'
-                        ? 'Pending approval'
-                        : request.approval_status === 'approved'
-                          ? (csFinalizeLabel ?? 'Approved')
-                          : request.approval_status === 'rejected'
-                            ? 'Rejected'
-                            : isSubmittedLifecycle
-                              ? 'Submitted'
-                              : isDraftLifecycle
-                                ? 'Draft'
-                                : (request.approval_status || request.status || 'Draft')}
-                    </Badge>
+                    {(() => {
+                      const statusText =
+                        request.approval_status === 'pending'
+                          ? 'Pending approval'
+                          : request.approval_status === 'approved'
+                            ? (csFinalizeLabel ?? 'Approved')
+                            : request.approval_status === 'rejected'
+                              ? 'Rejected'
+                              : isSubmittedLifecycle
+                                ? 'Submitted'
+                                : isDraftLifecycle
+                                  ? 'Draft'
+                                  : (request.approval_status || request.status || 'Draft');
+                      return (
+                        <span className={`${STATUS_PILL_BASE} ${statusPillClass(statusText)}`}>
+                          {statusText}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
                 <h2 className="text-center text-xl font-semibold tracking-tight border-b border-border pb-4 mb-6">
@@ -1188,6 +1218,105 @@ export default function PurchaseRequestDetail({
                 }}
               >
                 {rejecting ? 'Rejecting…' : 'Confirm reject'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* In-system approver rejection (pending approval) — same as the email link. */}
+        <AlertDialog open={decisionRejectOpen} onOpenChange={setDecisionRejectOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Reject this request</AlertDialogTitle>
+              <AlertDialogDescription>
+                Provide a reason. This records the rejection and notifies the
+                requester and contact — the same as rejecting via the approval link.
+                This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="space-y-2 py-2">
+              <Label htmlFor="decision-reject-reason">Reason</Label>
+              <Textarea
+                id="decision-reject-reason"
+                value={decisionRejectReason}
+                onChange={(e) => setDecisionRejectReason(e.target.value)}
+                placeholder="Why is this request being rejected?"
+                rows={4}
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={decisionRejecting}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={decisionRejecting || !decisionRejectReason.trim()}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={async (e) => {
+                  e.preventDefault();
+                  if (!decisionRejectReason.trim()) {
+                    toast.error('Reason is required');
+                    return;
+                  }
+                  setDecisionRejecting(true);
+                  try {
+                    await submitApprovalDecision(requestId, 'rejected', decisionRejectReason.trim());
+                    queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
+                    queryClient.invalidateQueries({ queryKey: ['purchase-request-neighbours'] });
+                    queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', requestTypeForNav, requestId] });
+                    toast.success('Request rejected; requester and contact notified.');
+                    setDecisionRejectOpen(false);
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : 'Failed to reject');
+                  } finally {
+                    setDecisionRejecting(false);
+                  }
+                }}
+              >
+                {decisionRejecting ? 'Rejecting…' : 'Confirm reject'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Escalate the active form-SLA stage to the next tier. */}
+        <AlertDialog open={escalateOpen} onOpenChange={setEscalateOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Escalate SLA</AlertDialogTitle>
+              <AlertDialogDescription>
+                Force-escalate the current SLA stage to the next tier and reassign per
+                the escalation policy. Optionally add a reason.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="space-y-2 py-2">
+              <Label htmlFor="escalate-reason">Reason*</Label>
+              <Textarea
+                id="escalate-reason"
+                value={escalateReason}
+                onChange={(e) => setEscalateReason(e.target.value)}
+                placeholder="Why escalate now?"
+                rows={3}
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={escalating}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={escalating || !activeTracker}
+                onClick={async (e) => {
+                  e.preventDefault();
+                  if (!activeTracker) return;
+                  setEscalating(true);
+                  try {
+                    const res = await escalateFormTracking(activeTracker.id, escalateReason.trim());
+                    queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', requestTypeForNav, requestId] });
+                    toast.success(`Escalated to tier ${res.current_tier}`);
+                    setEscalateOpen(false);
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : 'Failed to escalate');
+                  } finally {
+                    setEscalating(false);
+                  }
+                }}
+              >
+                {escalating ? 'Escalating…' : 'Escalate'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

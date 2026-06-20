@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type { RespondConversationResponse } from '@/app/(protected)/procurement-management/stock-inquiries/services/stockInquiryService';
 import type { ConversationSLATracking, ConversationSLATrackingDetail, ConversationSLAEventLog, SLATrackingDashboardMetrics } from '../types/conversationSLATracking.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
@@ -74,6 +75,10 @@ export interface MyPendingSLAItem {
   source_entity_id: string | null;
   /** Human-readable reference: complaint/inquiry/request/ticket number, or contact name. */
   reference: string | null;
+  /** Respond.io contact id for conversation rows; used to build the inbox deep link. */
+  respond_io_id: string | null;
+  /** SLA-config-driven next action for form rows (e.g. "Send for approval"); null for conversation rows. */
+  next_action: string | null;
   due_at: string | null;
   is_responded: boolean;
   current_tier: number;
@@ -87,6 +92,21 @@ export async function getMyPendingSLA(limit = 50): Promise<MyPendingSLAItem[]> {
   if (!response.ok) throw new Error('Failed to fetch my pending SLAs');
   const body = await response.json();
   return Array.isArray(body?.data) ? (body.data as MyPendingSLAItem[]) : [];
+}
+
+/**
+ * Resolve a conversation SLA tracking row (assignee action). Flips is_resolved;
+ * the backend also best-effort closes the matching Respond.io conversation.
+ */
+export async function resolveConversationSLATracking(id: string): Promise<void> {
+  const response = await apiFetch(`/api/v1/sla-management/conversation-sla-tracking/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ is_resolved: true }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to resolve conversation SLA'));
+  }
 }
 
 export async function deleteConversationSLATracking(id: string): Promise<void> {

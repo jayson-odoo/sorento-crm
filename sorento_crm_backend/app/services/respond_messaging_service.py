@@ -50,6 +50,18 @@ class TemplateSendSkipped(Exception):
         )
 
 
+def _attach_send_context(exc: Exception, request_payload: dict, window: dict, sent_as: str) -> None:
+    """Stamp the attempted payload / window / branch onto a send exception so the
+    caller's outbox log reflects what was actually attempted (text vs template),
+    instead of a hardcoded default. Best-effort — never raises."""
+    try:
+        exc.request_payload = request_payload  # type: ignore[attr-defined]
+        exc.window_state = window  # type: ignore[attr-defined]
+        exc.sent_as = sent_as  # type: ignore[attr-defined]
+    except Exception:
+        pass
+
+
 def sanitize_param(value: Optional[str], *, max_len: int = PARAM_MAX_LEN) -> str:
     """Flatten a value into a WhatsApp-safe template parameter.
 
@@ -248,22 +260,42 @@ def send_template_for_use_case(
         param_count=template.param_count,
         context_vars=context_vars,
     )
+    # Full resolved template payload — identical shape whether the send below
+    # succeeds OR fails, so the Respond outbox renders the template name + filled
+    # params (not "—") in every case. body_text lets the UI render the message
+    # with variables substituted.
+    request_payload = {
+        "message": {
+            "type": "whatsapp_template",
+            "template_name": template.name,
+            "template_id": str(template.id),
+            "use_case": use_case,
+            "language_code": template.language_code,
+            "body_text": template.body_text,
+            "parameters": params,
+        }
+    }
     # Single-workspace today: RespondClient() resolves the default workspace key.
     # Switch to RespondClient.for_identifier(db, identifier) when multi-workspace
     # routing per contact is needed.
-    response = RespondClient().send_template_message(
-        identifier,
-        channel_id=template.channel.respond_channel_id,
-        template_name=template.name,
-        language_code=template.language_code,
-        body_text=template.body_text,
-        parameters=params,
-    )
+    try:
+        response = RespondClient().send_template_message(
+            identifier,
+            channel_id=template.channel.respond_channel_id,
+            template_name=template.name,
+            language_code=template.language_code,
+            body_text=template.body_text,
+            parameters=params,
+        )
+    except Exception as e:
+        _attach_send_context(e, request_payload, {"open": False}, "template")
+        raise
     return {
         "response": response,
         "template_name": template.name,
         "template_id": str(template.id),
         "params": params,
+        "request_payload": request_payload,
     }
 
 
@@ -288,12 +320,19 @@ def send_text_or_template(
     window = get_window_state(db, identifier, respond_contact_id=respond_contact_id)
 
     if window["open"]:
-        response = RespondClient().send_message(identifier, text)
+        text_payload = {"message": {"type": "text", "text": text}}
+        try:
+            response = RespondClient().send_message(identifier, text)
+        except Exception as e:
+            # Attach the actual attempted payload + window so callers log the
+            # truth in the Respond outbox (was a hardcoded text default before).
+            _attach_send_context(e, text_payload, window, "text")
+            raise
         return {
             "sent_as": "text",
             "response": response,
             "window_state": window,
-            "request_payload": {"message": {"type": "text", "text": text}},
+            "request_payload": text_payload,
         }
 
     vars_resolved = dict(context_vars or {})
@@ -303,12 +342,33 @@ def send_text_or_template(
         if url:
             vars_resolved["portal_url"] = url
 
-    result = send_template_for_use_case(
-        db,
-        identifier=identifier,
-        use_case=use_case,
-        context_vars=vars_resolved,
-    )
+    try:
+        result = send_template_for_use_case(
+            db,
+            identifier=identifier,
+            use_case=use_case,
+            context_vars=vars_resolved,
+        )
+    except Exception as e:
+        # Window closed -> a TEMPLATE was attempted. send_template_for_use_case
+        # already stamps the FULL resolved payload (name + filled params) when the
+        # template resolved and only the HTTP send failed. Only fall back to a
+        # minimal payload when nothing was attached (e.g. TemplateSendSkipped:
+        # no template configured), so the outbox still shows it as a template row.
+        if not hasattr(e, "request_payload"):
+            _attach_send_context(
+                e,
+                {
+                    "message": {
+                        "type": "whatsapp_template",
+                        "use_case": use_case,
+                        "parameters_context": vars_resolved,
+                    }
+                },
+                window,
+                "template",
+            )
+        raise
     return {
         "sent_as": "template",
         "response": result["response"],

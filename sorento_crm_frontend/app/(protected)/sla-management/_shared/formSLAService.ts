@@ -69,6 +69,7 @@ export interface FormSLAConfig {
   advance_on_event: string | null;
   is_active: boolean;
   notify_assignee?: boolean;
+  notify_on_escalation?: boolean;
   policy_code?: string | null;
   policy_name?: string | null;
   next_stage_code?: string | null;
@@ -89,6 +90,7 @@ export interface FormSLAConfigInput {
   advance_on_event?: string | null;
   is_active?: boolean;
   notify_assignee?: boolean;
+  notify_on_escalation?: boolean;
 }
 
 export async function listFormSLAConfigs(filters: {

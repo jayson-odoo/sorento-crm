@@ -19,6 +19,10 @@ export const UserProfileSchema = z.object({
   respond_contact_id: z.string().optional().nullable(),
   notify_whatsapp: z.boolean().optional(),
   notify_whatsapp_summary: z.boolean().optional(),
+  notify_email_on_assignment: z.boolean().optional(),
+  notify_email_on_escalation: z.boolean().optional(),
+  notify_whatsapp_on_assignment: z.boolean().optional(),
+  notify_whatsapp_on_escalation: z.boolean().optional(),
 });
 
 export type UserProfileSchemaType = z.infer<typeof UserProfileSchema>;

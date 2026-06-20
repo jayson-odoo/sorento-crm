@@ -115,6 +115,10 @@ def _send_and_log(
                 business_table,
                 business_id,
             )
+            # Log what was ACTUALLY attempted (text vs template) — the window-aware
+            # send stamps the real payload on the exception. Closed window => the
+            # outbox row shows a template attempt, not the default text payload.
+            request_payload = getattr(e, "request_payload", request_payload)
             # Capture Respond.io's actual HTTP response (status + body) on 4xx/5xx
             # so the failure is diagnosable (e.g. WHY a 403 — WAF block vs window
             # vs channel error) instead of just "403 Forbidden for url ...".

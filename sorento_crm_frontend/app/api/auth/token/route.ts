@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 import jwt from 'jsonwebtoken';
+import { sessionTokenCookieName } from '@/lib/auth-cookie';
 
 /**
  * API route to get a signed JWT token for FastAPI.
@@ -18,10 +19,13 @@ export async function GET(request: NextRequest) {
     }
 
     // Get the decoded token payload from NextAuth (not raw encrypted token)
-    const tokenPayload = await getToken({ 
-      req: request, 
+    const tokenPayload = await getToken({
+      req: request,
       secret,
-      raw: false  // Get decoded payload, not encrypted token
+      raw: false,  // Get decoded payload, not encrypted token
+      // Must match the suffixed cookie name auth-options sets, or getToken reads
+      // the default name, finds nothing, and 401s while the session is valid.
+      cookieName: sessionTokenCookieName(),
     });
 
     if (!tokenPayload) {

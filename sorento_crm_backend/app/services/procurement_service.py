@@ -2027,6 +2027,24 @@ class StockInquiryService:
                 base_url = (sys_settings.website_url or "").strip().rstrip("/")
         return f"{base_url}/view/stock-inquiry?token={view_token}" if base_url else f"/view/stock-inquiry?token={view_token}"
 
+    def _build_stock_inquiry_internal_url(self, inquiry_id: str, base_url_override: Optional[str] = None) -> str:
+        """Build the IN-SYSTEM (login-required) detail link for a stock inquiry —
+        used for STAFF team notifications (e.g. "New Stock Inquiry created"), so the
+        recipient lands on the authenticated detail page. If not signed in, the
+        protected layout sends them to /signin?callbackUrl=… and back here after
+        login. Contact-facing messages keep the public /view token link instead."""
+        from app.models.user import SystemSetting
+
+        base_url = (base_url_override or "").strip().rstrip("/")
+        if not base_url:
+            base_url = (settings.frontend_base_url or "").strip().rstrip("/")
+        if not base_url:
+            sys_settings = self.db.query(SystemSetting).first()
+            if sys_settings and getattr(sys_settings, "website_url", None):
+                base_url = (sys_settings.website_url or "").strip().rstrip("/")
+        path = f"/procurement-management/stock-inquiries/{inquiry_id}"
+        return f"{base_url}{path}" if base_url else path
+
     def _notify_team_stock_inquiry(
         self,
         *,
@@ -2071,7 +2089,9 @@ class StockInquiryService:
         if not emails:
             logger.warning("Team members for %s have no email addresses; skipping email.", agent_code)
 
-        view_url = self._build_stock_inquiry_view_url(inquiry_id, base_url_override=base_url_override)
+        # Staff team notification → in-system detail link (login-required), not the
+        # public /view token page. Recipients are internal team members.
+        view_url = self._build_stock_inquiry_internal_url(inquiry_id, base_url_override=base_url_override)
         # Requirement: include the link as a pure hyperlink (anchor text is the URL; no extra wording).
         body_plain = (
             f"{intro_plain}\n\n"
@@ -4546,7 +4566,6 @@ class PurchaseRequestService:
                 if updated
                 else "A new request has been created and requires your review."
             )
-        view_token = self.get_or_create_view_token(header_id)
         base_url = (base_url_override or "").strip().rstrip("/")
         if not base_url:
             base_url = (settings.frontend_base_url or "").strip().rstrip("/")
@@ -4559,7 +4578,14 @@ class PurchaseRequestService:
                 "No app domain for notification email link. Set Website URL in User Management > Settings (General), "
                 "or FRONTEND_BASE_URL in backend .env, or pass base_url in the external create payload."
             )
-        view_url = f"{base_url}/view/request?token={view_token}" if base_url else f"/view/request?token={view_token}"
+        # Staff team notification → in-system detail link (login-required), not the
+        # public /view token page. The recipient is the internal Project Sales team.
+        detail_path = (
+            f"/procurement-management/sponsorship-forms/{header_id}"
+            if rt == "sponsorship_form"
+            else f"/procurement-management/purchase-requests/{header_id}"
+        )
+        view_url = f"{base_url}{detail_path}" if base_url else detail_path
         detail_plain = f"Reference: {request_number}\nProject: {project_title}"
         intro_plain = (
             f"Dear Project Sales Team,\n\n{kind_sentence}\n\n{detail_plain}"
@@ -5710,6 +5736,29 @@ class PurchaseRequestService:
             "approval_comments": getattr(header, "approval_comments", None),
         }
 
+    def decide_approval(
+        self,
+        request_id: str,
+        action: str,
+        approved_by: Optional[str] = None,
+        approval_comments: Optional[str] = None,
+    ):
+        """Authenticated in-system approve/reject (no token) — the form's Approve/
+        Reject buttons. Same effect as the public link's ``submit_approval``: it
+        runs the shared ``_apply_approval_decision``. Guards that the request is
+        still awaiting a decision (approval_status == 'pending')."""
+        header = self.get_request(request_id)
+        appr = (getattr(header, "approval_status", None) or "").strip().lower()
+        if appr in ("approved", "rejected"):
+            raise handle_conflict(f"This request has already been {appr}.")
+        if appr != "pending":
+            raise handle_conflict(
+                "This request is not pending approval. Send it for approval first."
+            )
+        return self._apply_approval_decision(
+            header, action, approved_by=approved_by, approval_comments=approval_comments
+        )
+
     def submit_approval(
         self,
         token_value: str,
@@ -5733,19 +5782,42 @@ class PurchaseRequestService:
             now = datetime.now()
         if approval_token.expires <= now:
             raise handle_conflict("This approval link has expired.")
+        header = self.get_request(approval_token.entity_id)
+        approval_token.used_at = datetime.utcnow()
+        return self._apply_approval_decision(
+            header,
+            action,
+            approved_by=approved_by,
+            approval_signature_ref=approval_signature_ref,
+            approval_comments=approval_comments,
+        )
+
+    def _apply_approval_decision(
+        self,
+        header,
+        action: str,
+        *,
+        approved_by: Optional[str] = None,
+        approval_signature_ref: Optional[str] = None,
+        approval_comments: Optional[str] = None,
+    ):
+        """Apply an approve/reject decision and run ALL side effects (status,
+        notifications, form-SLA event, approval automation). Shared by the public
+        token flow (``submit_approval``) and the authenticated in-system Approve/
+        Reject buttons so both behave identically. Does NOT touch approval tokens.
+        """
+        from app.services.error_handler import handle_validation_error
+
         if action not in ("approved", "rejected"):
             raise handle_conflict("action must be 'approved' or 'rejected'.")
 
         if action == "rejected":
-            from app.services.error_handler import handle_validation_error
-
             rejection_notes = (approval_comments or "").strip()
             if not rejection_notes:
                 raise handle_validation_error("Rejection reason is required.")
             approval_comments = rejection_notes
 
-        header = self.get_request(approval_token.entity_id)
-        approval_token.used_at = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         header.approval_status = action
         # Advance the lifecycle status off "submitted" so every view reflects the
         # decision, not just approval_status.

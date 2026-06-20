@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 import jwt from 'jsonwebtoken';
+import { sessionTokenCookieName } from '@/lib/auth-cookie';
 
 /**
  * Base URL for server-side calls from Next.js to FastAPI (not browser-facing).
@@ -39,10 +40,12 @@ export async function getFastAPITokenForRequest(
   if (!secret) return null;
 
   try {
-    const tokenPayload = await getToken({ 
-      req: request, 
+    const tokenPayload = await getToken({
+      req: request,
       secret,
-      raw: false
+      raw: false,
+      // Must match the suffixed cookie name auth-options sets (see auth-cookie.ts).
+      cookieName: sessionTokenCookieName(),
     });
 
     if (!tokenPayload) return null;

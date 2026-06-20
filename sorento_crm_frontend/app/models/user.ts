@@ -49,6 +49,15 @@ export interface User {
   /** Daily SLA summary WhatsApp template. */
   notifyWhatsappSummary?: boolean | null;
   notify_whatsapp_summary?: boolean | null;
+  /** Per-event SLA notify toggles. */
+  notifyEmailOnAssignment?: boolean | null;
+  notify_email_on_assignment?: boolean | null;
+  notifyEmailOnEscalation?: boolean | null;
+  notify_email_on_escalation?: boolean | null;
+  notifyWhatsappOnAssignment?: boolean | null;
+  notify_whatsapp_on_assignment?: boolean | null;
+  notifyWhatsappOnEscalation?: boolean | null;
+  notify_whatsapp_on_escalation?: boolean | null;
   roles?: UserRoleSimple[];
   role?: UserRole;
   sessions?: Session[];

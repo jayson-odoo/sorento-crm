@@ -102,10 +102,26 @@ export default function RespondOutboxList() {
         header: ({ column }) => <DataGridColumnHeader title="Message / Template" column={column} />,
         cell: ({ row }) => {
           const r = row.original;
-          const preview = r.sent_as === 'template' ? r.template_name ?? r.message_text : r.message_text;
+          // Template rows: show the rendered message (variables filled), with the
+          // template name as a secondary label. Text rows: the message text.
+          if (r.sent_as === 'template') {
+            const filled = r.message_text;
+            return (
+              <div className="max-w-[360px]">
+                {r.template_name && (
+                  <span className="block truncate text-xs text-muted-foreground" title={r.template_name}>
+                    {r.template_name}
+                  </span>
+                )}
+                <span className="block truncate text-sm" title={filled ?? undefined}>
+                  {filled ?? (r.template_name ? '' : '—')}
+                </span>
+              </div>
+            );
+          }
           return (
-            <span className="block max-w-[360px] truncate text-sm" title={preview ?? undefined}>
-              {preview ?? '—'}
+            <span className="block max-w-[360px] truncate text-sm" title={r.message_text ?? undefined}>
+              {r.message_text ?? '—'}
             </span>
           );
         },

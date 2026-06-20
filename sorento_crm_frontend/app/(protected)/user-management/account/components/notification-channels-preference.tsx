@@ -8,9 +8,19 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 
 type ChannelPrefs = {
-  notify_whatsapp: boolean;
   notify_whatsapp_summary: boolean;
+  notify_email_on_assignment: boolean;
+  notify_email_on_escalation: boolean;
+  notify_whatsapp_on_assignment: boolean;
+  notify_whatsapp_on_escalation: boolean;
 };
+
+const SLA_TOGGLES: { key: keyof ChannelPrefs; label: string }[] = [
+  { key: 'notify_email_on_assignment', label: 'Email on assignment' },
+  { key: 'notify_email_on_escalation', label: 'Email on escalation' },
+  { key: 'notify_whatsapp_on_assignment', label: 'WhatsApp on assignment' },
+  { key: 'notify_whatsapp_on_escalation', label: 'WhatsApp on escalation' },
+];
 
 /**
  * Self-service WhatsApp channel toggles (TCK-31). Reads/writes the per-user
@@ -19,8 +29,11 @@ type ChannelPrefs = {
  */
 export default function NotificationChannelsPreference() {
   const [prefs, setPrefs] = useState<ChannelPrefs>({
-    notify_whatsapp: false,
     notify_whatsapp_summary: false,
+    notify_email_on_assignment: true,
+    notify_email_on_escalation: true,
+    notify_whatsapp_on_assignment: false,
+    notify_whatsapp_on_escalation: false,
   });
   const [loading, setLoading] = useState(true);
 
@@ -31,8 +44,11 @@ export default function NotificationChannelsPreference() {
         if (!res.ok) throw new Error('Failed to load preferences');
         const data = (await res.json()) as Partial<ChannelPrefs>;
         setPrefs({
-          notify_whatsapp: Boolean(data.notify_whatsapp),
           notify_whatsapp_summary: Boolean(data.notify_whatsapp_summary),
+          notify_email_on_assignment: data.notify_email_on_assignment ?? true,
+          notify_email_on_escalation: data.notify_email_on_escalation ?? true,
+          notify_whatsapp_on_assignment: Boolean(data.notify_whatsapp_on_assignment),
+          notify_whatsapp_on_escalation: Boolean(data.notify_whatsapp_on_escalation),
         });
       } catch {
         // keep defaults; don't block the page
@@ -63,20 +79,22 @@ export default function NotificationChannelsPreference() {
   return (
     <Card>
       <CardHeader className="py-4">
-        <CardTitle>WhatsApp Notifications</CardTitle>
+        <CardTitle>SLA Notifications</CardTitle>
       </CardHeader>
       <CardContent className="py-4 space-y-4">
+        {SLA_TOGGLES.map((t) => (
+          <div key={t.key} className="flex items-center justify-between">
+            <Label htmlFor={t.key}>{t.label}</Label>
+            <Switch
+              id={t.key}
+              checked={prefs[t.key]}
+              disabled={loading}
+              onCheckedChange={(v) => onToggle(t.key, v)}
+            />
+          </div>
+        ))}
         <div className="flex items-center justify-between">
-          <Label htmlFor="notify-whatsapp">Escalation & assignment alerts</Label>
-          <Switch
-            id="notify-whatsapp"
-            checked={prefs.notify_whatsapp}
-            disabled={loading}
-            onCheckedChange={(v) => onToggle('notify_whatsapp', v)}
-          />
-        </div>
-        <div className="flex items-center justify-between">
-          <Label htmlFor="notify-whatsapp-summary">Daily SLA summary</Label>
+          <Label htmlFor="notify-whatsapp-summary">WhatsApp daily SLA summary</Label>
           <Switch
             id="notify-whatsapp-summary"
             checked={prefs.notify_whatsapp_summary}

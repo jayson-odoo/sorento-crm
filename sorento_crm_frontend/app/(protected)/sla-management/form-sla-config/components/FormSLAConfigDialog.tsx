@@ -152,6 +152,7 @@ export default function FormSLAConfigDialog({
   const [advanceOnEvent, setAdvanceOnEvent] = useState<string>(NONE_VALUE);
   const [isActive, setIsActive] = useState(true);
   const [notifyAssignee, setNotifyAssignee] = useState(true);
+  const [notifyOnEscalation, setNotifyOnEscalation] = useState(true);
 
   useEffect(() => {
     if (existing) {
@@ -167,6 +168,7 @@ export default function FormSLAConfigDialog({
       setAdvanceOnEvent(existing.advance_on_event ?? NONE_VALUE);
       setIsActive(existing.is_active);
       setNotifyAssignee(existing.notify_assignee ?? true);
+      setNotifyOnEscalation(existing.notify_on_escalation ?? true);
     } else if (open) {
       setSourceType('stock_inquiry');
       setStageCode('');
@@ -180,6 +182,7 @@ export default function FormSLAConfigDialog({
       setAdvanceOnEvent(NONE_VALUE);
       setIsActive(true);
       setNotifyAssignee(true);
+      setNotifyOnEscalation(true);
     }
   }, [existing, open]);
 
@@ -239,6 +242,7 @@ export default function FormSLAConfigDialog({
       advance_on_event: advanceOnEvent === NONE_VALUE ? null : advanceOnEvent,
       is_active: isActive,
       notify_assignee: notifyAssignee,
+      notify_on_escalation: notifyOnEscalation,
     });
   };
 
@@ -419,6 +423,21 @@ export default function FormSLAConfigDialog({
             <span className="text-xs text-muted-foreground">
               When off, this stage assigns the tracker silently — the assignee is
               not notified when the stage spawns.
+            </span>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={notifyOnEscalation}
+                onCheckedChange={setNotifyOnEscalation}
+                id="notify-on-escalation"
+              />
+              <Label htmlFor="notify-on-escalation">Notify on escalation</Label>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              When off, escalating a tracker on this stage reassigns silently — the
+              new assignee is not notified.
             </span>
           </div>
         </div>

@@ -89,18 +89,34 @@ async def unsubscribe_daily_sla_summary_via_token(
     return {"message": "Unsubscribed from daily SLA summary emails.", "subscribed": False}
 
 
+_SLA_NOTIFY_FIELDS = (
+    "notify_email_on_assignment",
+    "notify_email_on_escalation",
+    "notify_whatsapp_on_assignment",
+    "notify_whatsapp_on_escalation",
+)
+
+
 class _ChannelPrefsUpdate(BaseModel):
     notify_whatsapp: Optional[bool] = None
     notify_whatsapp_summary: Optional[bool] = None
     daily_sla_summary_subscribed: Optional[bool] = None
+    notify_email_on_assignment: Optional[bool] = None
+    notify_email_on_escalation: Optional[bool] = None
+    notify_whatsapp_on_assignment: Optional[bool] = None
+    notify_whatsapp_on_escalation: Optional[bool] = None
 
 
 def _channel_prefs(user) -> dict:
-    return {
+    out = {
         "daily_sla_summary_subscribed": bool(getattr(user, "daily_sla_summary_subscribed", True)),
         "notify_whatsapp": bool(getattr(user, "notify_whatsapp", False)),
         "notify_whatsapp_summary": bool(getattr(user, "notify_whatsapp_summary", False)),
     }
+    # Email defaults true, whatsapp false — match the column server_defaults.
+    for f in _SLA_NOTIFY_FIELDS:
+        out[f] = bool(getattr(user, f, f.startswith("notify_email")))
+    return out
 
 
 @router.get("/preferences/channels")
@@ -127,7 +143,12 @@ async def set_channel_preferences(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     data = payload.model_dump(exclude_unset=True)
-    for field in ("notify_whatsapp", "notify_whatsapp_summary", "daily_sla_summary_subscribed"):
+    for field in (
+        "notify_whatsapp",
+        "notify_whatsapp_summary",
+        "daily_sla_summary_subscribed",
+        *_SLA_NOTIFY_FIELDS,
+    ):
         if field in data and data[field] is not None:
             setattr(user, field, bool(data[field]))
     db.commit()

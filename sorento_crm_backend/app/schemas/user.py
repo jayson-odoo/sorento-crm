@@ -157,8 +157,12 @@ class UserBase(BaseModel):
     tier: Optional[int] = None  # Conversation SLA policy tier (1, 2, ...)
     daily_sla_summary_subscribed: Optional[bool] = True  # email summary opt-in
     respond_contact_id: Optional[str] = None  # linked WhatsApp contact
-    notify_whatsapp: Optional[bool] = False  # escalation + assignment pings
+    notify_whatsapp: Optional[bool] = False  # legacy; superseded by per-event toggles
     notify_whatsapp_summary: Optional[bool] = False  # daily summary template
+    notify_email_on_assignment: Optional[bool] = True
+    notify_email_on_escalation: Optional[bool] = True
+    notify_whatsapp_on_assignment: Optional[bool] = False
+    notify_whatsapp_on_escalation: Optional[bool] = False
 
     @field_validator("contact_number", mode="before")
     @classmethod
@@ -189,6 +193,10 @@ class UserUpdate(BaseModel):
     notify_whatsapp: Optional[bool] = None
     notify_whatsapp_summary: Optional[bool] = None
     daily_sla_summary_subscribed: Optional[bool] = None
+    notify_email_on_assignment: Optional[bool] = None
+    notify_email_on_escalation: Optional[bool] = None
+    notify_whatsapp_on_assignment: Optional[bool] = None
+    notify_whatsapp_on_escalation: Optional[bool] = None
 
     @field_validator("email", mode="before")
     @classmethod

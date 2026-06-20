@@ -171,8 +171,10 @@ export function Header() {
                   }
                 />
               )}
-              <UploadActivityIcon />
-              <MyDownloadsIcon />
+              {/* Secondary icons (uploads / downloads / apps) declutter the mobile
+                  header — they're still reachable from the sidebar / menus. */}
+              {!mobileMode && <UploadActivityIcon />}
+              {!mobileMode && <MyDownloadsIcon />}
               <NotificationsSheet
                 trigger={
                   <Button
@@ -185,18 +187,20 @@ export function Header() {
                   </Button>
                 }
               />
-              <AppsDropdownMenu
-                trigger={
-                  <Button
-                    variant="ghost"
-                    mode="icon"
-                    shape="circle"
-                    className="size-9 hover:bg-primary/10 hover:[&_svg]:text-primary"
-                  >
-                    <LayoutGrid className="size-4.5!" />
-                  </Button>
-                }
-              />
+              {!mobileMode && (
+                <AppsDropdownMenu
+                  trigger={
+                    <Button
+                      variant="ghost"
+                      mode="icon"
+                      shape="circle"
+                      className="size-9 hover:bg-primary/10 hover:[&_svg]:text-primary"
+                    >
+                      <LayoutGrid className="size-4.5!" />
+                    </Button>
+                  }
+                />
+              )}
               <UserDropdownMenu
                 trigger={
                   <SessionUserAvatar className="size-9 rounded-full border-2 border-green-500 shrink-0 cursor-pointer" />

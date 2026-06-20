@@ -315,6 +315,53 @@ async def reject_submitted_purchase_request(
         raise handle_internal_error(str(e))
 
 
+class ApprovalDecisionRequest(BaseModel):
+    action: str  # "approved" | "rejected"
+    comments: Optional[str] = None
+
+
+@router.post("/{request_id}/approval-decision", response_model=PurchaseRequestHeaderResponse)
+async def decide_purchase_request_approval(
+    request_id: str,
+    body: ApprovalDecisionRequest,
+    current_user: dict = Depends(require_permission("procurement.purchase_requests.send_for_approval")),
+    db: Session = Depends(get_db),
+):
+    """Approve or reject a PR / sponsorship form IN-SYSTEM (the form's Approve/Reject
+    buttons), as an alternative to the emailed approval link. Behaves identically to
+    the public approval submit: same status transition, notifications, form-SLA event,
+    and approval automation. Requires the request to be pending approval."""
+    try:
+        from app.models.user import User
+
+        service = PurchaseRequestService(db)
+        approver_name = None
+        uid = current_user.get("id")
+        if uid:
+            u = db.query(User).filter(User.id == uid).first()
+            if u:
+                approver_name = (u.name and u.name.strip()) or u.email or None
+        header = service.decide_approval(
+            request_id,
+            action=body.action,
+            approved_by=approver_name,
+            approval_comments=body.comments,
+        )
+        if getattr(header, "approver_user_id", None):
+            user = db.query(User).filter(User.id == header.approver_user_id).first()
+            if user:
+                setattr(
+                    header,
+                    "approver_display_name",
+                    (user.name and user.name.strip()) or user.email or "",
+                )
+        return header
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 class CsFinalizeRequest(BaseModel):
     note: Optional[str] = None
 

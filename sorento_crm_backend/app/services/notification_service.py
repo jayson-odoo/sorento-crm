@@ -194,6 +194,7 @@ class NotificationService:
         send_web_push: bool = False,
         send_whatsapp: bool = False,
         whatsapp_pref_attr: str = "notify_whatsapp",
+        email_pref_attr: Optional[str] = None,
     ) -> Optional[Notification]:
         """
         Create notification and only create deliveries for selected channels.
@@ -215,6 +216,14 @@ class NotificationService:
                 and getattr(_user, whatsapp_pref_attr, False)
                 and resolve_user_respond_io_id(self.db, _user)
             )
+        # Gate email on a per-event user opt-in when the caller supplies the pref
+        # attr (SLA assign/escalate). Default (None) keeps email unconditional for
+        # every other caller.
+        if send_email and email_pref_attr:
+            from app.models.user import User as _UserE
+
+            _ue = self.db.query(_UserE).filter(_UserE.id == user_id).first()
+            send_email = bool(_ue and getattr(_ue, email_pref_attr, True))
         # Web push mirrors in-app for users with an active subscription (TCK-33).
         # The browser subscription IS the opt-in — no separate pref column.
         # Best-effort: a lookup failure (e.g. table absent in a partial test DB)

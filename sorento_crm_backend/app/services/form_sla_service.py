@@ -319,31 +319,37 @@ class FormSLAOrchestrator:
 
         now = now or _utc_naive_now()
         target_tier = int(tracker.current_tier or 1) + 1
-        next_tier = (
-            self.db.query(SLAPolicyTier)
-            .filter(
-                SLAPolicyTier.policy_id == tracker.policy_id,
-                SLAPolicyTier.tier_level == target_tier,
-            )
-            .first()
-        )
-        if not next_tier:
-            raise FormEscalationBlocked("top_tier", "Already at the highest tier; cannot escalate further.")
 
         agent_id = str(tracker.agent_id) if tracker.agent_id is not None else None
         if not agent_id:
             raise FormEscalationBlocked("no_agent", "Tracker has no agent; cannot resolve an escalation team.")
         agent_svc = AccessAgentService(self.db)
-        team_id = agent_svc.get_team_id_by_tier(agent_id, target_tier, team_set_code=tracker.team_set_code)
-        if not team_id:
-            raise FormEscalationBlocked("no_team", f"No tier-{target_tier} team configured for this policy.")
+        # Tier fallback: escalate to target_tier, but if that tier has no team,
+        # skip up to the next configured tier (target+1, +2…). Shared with the
+        # initial-assignment fallback in _start_for_config.
+        resolved = agent_svc.resolve_team_with_tier_fallback(
+            agent_id, target_tier, team_set_code=tracker.team_set_code
+        )
+        if not resolved:
+            raise FormEscalationBlocked("top_tier", "No higher-tier team configured; cannot escalate further.")
+        team_id, actual_tier = resolved
+        next_tier = (
+            self.db.query(SLAPolicyTier)
+            .filter(
+                SLAPolicyTier.policy_id == tracker.policy_id,
+                SLAPolicyTier.tier_level == actual_tier,
+            )
+            .first()
+        )
+        if not next_tier:
+            raise FormEscalationBlocked("top_tier", f"SLA policy has no tier {actual_tier}; cannot escalate.")
         assignee = agent_svc.get_next_assignee(agent_id, team_id)
         if not assignee:
-            raise FormEscalationBlocked("no_assignee", f"No available assignee for tier {target_tier}.")
+            raise FormEscalationBlocked("no_assignee", f"No available assignee for tier {actual_tier}.")
 
         response_hrs = float(getattr(next_tier, "response_hours", 24) or 24)
         resolution_hrs = float(getattr(next_tier, "resolution_hours", 24) or 24)
-        tracker.current_tier = target_tier
+        tracker.current_tier = actual_tier
         tracker.current_tier_started_at = now
         tracker.escalated_at = now
         tracker.escalation_reason = reason
@@ -366,8 +372,31 @@ class FormSLAOrchestrator:
             trigger=trigger,
             triggered_by_id=triggered_by_id,
         )
-        self._notify_assignee(tracker, kind="escalated", reason=reason)
+        # Escalation respects the stage's notify_on_escalation flag (silent stages
+        # stay silent). Default to notifying when no matching config is found.
+        if self._stage_notifies_on_escalation(tracker):
+            self._notify_assignee(tracker, kind="escalated", reason=reason)
         return assignee
+
+    def _stage_notifies_on_escalation(self, tracker: ConversationSLATracking) -> bool:
+        """Whether this tracker's stage config opts into escalation notifications.
+        Stage matched by (source_entity_type, team_set_code) — same key used for
+        the next-action derivation. Defaults True when no config matches."""
+        try:
+            cfg = (
+                self.db.query(FormSLAConfig)
+                .filter(
+                    FormSLAConfig.source_entity_type == tracker.source_entity_type,
+                    FormSLAConfig.team_set_code == tracker.team_set_code,
+                )
+                .first()
+            )
+        except Exception:  # noqa: BLE001 — missing table in a partial schema, etc.
+            self.db.rollback()
+            return True
+        if cfg is None:
+            return True
+        return bool(getattr(cfg, "notify_on_escalation", True))
 
     def escalate_form_tracking(
         self,
@@ -426,6 +455,31 @@ class FormSLAOrchestrator:
             .first()
         )
 
+    @staticmethod
+    def _is_approval_stage(config: FormSLAConfig) -> bool:
+        """The PR/SF stage whose resolution IS the approval decision (resolves on
+        'approved'). Only this stage honours the form's default-approver routing."""
+        return (
+            str(getattr(config, "source_entity_type", "") or "")
+            in ("purchase_request", "sponsorship_form")
+            and "approved" in (str(getattr(config, "resolve_event", "") or ""))
+        )
+
+    def _form_default_approver_user_id(self, source_entity_type: Optional[str]) -> Optional[str]:
+        """The configured default approver user id for PR / SF, from SystemSetting."""
+        from app.models.user import SystemSetting
+
+        row = self.db.query(SystemSetting).first()
+        if not row:
+            return None
+        if source_entity_type == "purchase_request":
+            uid = getattr(row, "purchase_request_default_approver_user_id", None)
+        elif source_entity_type == "sponsorship_form":
+            uid = getattr(row, "sponsorship_form_default_approver_user_id", None)
+        else:
+            uid = None
+        return str(uid) if uid else None
+
     def _start_for_config(
         self,
         config: FormSLAConfig,
@@ -435,6 +489,7 @@ class FormSLAOrchestrator:
     ) -> Optional[ConversationSLATracking]:
         """Idempotent: skip if active tracker for this stage already exists."""
         from app.services.user_service import AccessAgentService
+        from app.models.user import User
 
         existing = self._active_tracker(config, source_entity_id)
         if existing:
@@ -450,55 +505,86 @@ class FormSLAOrchestrator:
                 f"No access agent with code '{config.agent_code}' for form SLA config {config.id}."
             )
         agent_svc = AccessAgentService(self.db)
-        team_id = agent_svc.get_team_id_by_tier(
-            str(agent.id),
-            1,
-            team_set_code=config.team_set_code,
+
+        # Default-approver override: for the PR/SF APPROVAL stage (resolves on
+        # 'approved'), if the form's configured default approver is a member of the
+        # approval team set, route the stage straight to them at THEIR tier (e.g. a
+        # director pinned at tier 3) instead of tier-1 round-robin. Falls back to
+        # the normal tier-1 routing when no default approver / not a team member.
+        start_tier = 1
+        override_assignee: Optional[dict] = None
+        if self._is_approval_stage(config):
+            approver_uid = self._form_default_approver_user_id(config.source_entity_type)
+            if approver_uid:
+                approver_tier = agent_svc.get_user_tier_in_team_set(
+                    str(agent.id), approver_uid, team_set_code=config.team_set_code
+                )
+                if approver_tier:
+                    approver = (
+                        self.db.query(User).filter(User.id == str(approver_uid)).first()
+                    )
+                    if approver is not None:
+                        start_tier = approver_tier
+                        override_assignee = {
+                            "id": approver.id,
+                            "email": approver.email,
+                            "name": approver.name or approver.email,
+                            "respond_user_id": approver.respond_user_id,
+                        }
+
+        # Tier fallback: assign at start_tier, but if that tier has no team, skip
+        # up to the next configured tier (start+1, +2…). Shared with escalation.
+        resolved = agent_svc.resolve_team_with_tier_fallback(
+            str(agent.id), start_tier, team_set_code=config.team_set_code
         )
-        if not team_id:
+        if not resolved:
             raise handle_validation_error(
-                f"Agent '{config.agent_code}' has no tier 1 team"
+                f"Agent '{config.agent_code}' has no team at tier {start_tier} or above"
                 + (
                     f" in set '{config.team_set_code}'"
                     if config.team_set_code
                     else ""
                 )
-                + ". Configure tier 1 before activating this SLA config."
+                + ". Configure a tier team before activating this SLA config."
             )
+        team_id, start_tier = resolved
         # Pin-point override: a salesman (respond_contact) can be pinned to a
         # specific CS PIC per procurement use_case. A valid pin assigns that user
         # directly; any miss falls back to round-robin. The round-robin cursor is
         # NOT advanced on an override. Complaint never reads the pin table.
         # See docs/plans/PLAN-procurement-cs-handoff-and-pinpoint-routing.md.
-        assignee = self._resolve_pinned_assignee(
-            config.source_entity_type, contact_id, team_id
-        )
-        if not assignee:
-            assignee = agent_svc.get_next_assignee(str(agent.id), team_id)
+        if override_assignee is not None:
+            assignee = override_assignee  # default-approver wins over round-robin
+        else:
+            assignee = self._resolve_pinned_assignee(
+                config.source_entity_type, contact_id, team_id
+            )
+            if not assignee:
+                assignee = agent_svc.get_next_assignee(str(agent.id), team_id)
         if not assignee:
             raise handle_validation_error(
-                f"No members in tier 1 team for agent '{config.agent_code}'."
+                f"No members in tier {start_tier} team for agent '{config.agent_code}'."
             )
 
-        tier1 = (
+        tier_row = (
             self.db.query(SLAPolicyTier)
             .filter(
                 SLAPolicyTier.policy_id == config.policy_id,
-                SLAPolicyTier.tier_level == 1,
+                SLAPolicyTier.tier_level == start_tier,
             )
             .first()
         )
-        if not tier1:
+        if not tier_row:
             raise handle_validation_error(
-                f"SLA policy {config.policy_id} has no tier 1; cannot start tracker."
+                f"SLA policy {config.policy_id} has no tier {start_tier}; cannot start tracker."
             )
 
         now = _utc_naive_now()
-        response_hrs = float(getattr(tier1, "response_hours", 24) or 24)
-        resolution_hrs = float(getattr(tier1, "resolution_hours", 24) or 24)
+        response_hrs = float(getattr(tier_row, "response_hours", 24) or 24)
+        resolution_hrs = float(getattr(tier_row, "resolution_hours", 24) or 24)
         tracker = ConversationSLATracking(
             policy_id=config.policy_id,
-            current_tier=1,
+            current_tier=start_tier,
             assigned_to=(
                 str(assignee.get("respond_user_id"))
                 if assignee.get("respond_user_id")
@@ -718,8 +804,15 @@ class FormSLAOrchestrator:
             body = f"{type_label.capitalize()} {number} status updated.\n\nOpen: {full_link}"
 
         try:
-            # Escalation + new assignment are WhatsApp-eligible (TCK-29); the
-            # service gates on the recipient's notify_whatsapp + linked contact.
+            # Per-event user opt-ins gate email + whatsapp independently. In-app is
+            # always sent (the stage already decided to notify). The service skips a
+            # channel silently when the user's per-event toggle is off.
+            if kind == "escalated":
+                email_pref = "notify_email_on_escalation"
+                whatsapp_pref = "notify_whatsapp_on_escalation"
+            else:  # "assigned"
+                email_pref = "notify_email_on_assignment"
+                whatsapp_pref = "notify_whatsapp_on_assignment"
             whatsapp_eligible = kind in ("escalated", "assigned")
             NotificationService(self.db).create_with_channel_preferences(
                 user_id=str(tracker.assigned_to_id),
@@ -739,6 +832,8 @@ class FormSLAOrchestrator:
                 send_email=True,
                 send_web_push=False,
                 send_whatsapp=whatsapp_eligible,
+                whatsapp_pref_attr=whatsapp_pref,
+                email_pref_attr=email_pref,
             )
         except Exception as e:
             logger.warning(

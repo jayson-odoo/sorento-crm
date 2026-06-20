@@ -274,14 +274,22 @@ def run_user_sla_daily_summary(db: Session, task: ScheduledTask) -> dict[str, An
 
         data: dict[str, Any] = {"body_html": html_body}
         if wa_ok:
+            staff_name = (user.name or user.email or "there").strip()
+            # Keep the WhatsApp message minimal: greet by name, the date, the
+            # outstanding count, and a link to the dashboard. Staff open the
+            # system to see the detail — no escalated/resolved breakdown here.
             wa_text = (
-                f"Daily SLA summary {summary_date_label}: {outstanding_n} outstanding, "
-                f"{escalated_24} escalated, {resolved_24} resolved (24h). View: {summary_link}"
+                f"Hi {staff_name}, your daily SLA summary for {summary_date_label}: "
+                f"{outstanding_n} outstanding. View your tasks: {summary_link}"
             )
             data["whatsapp_use_case"] = "sla_daily_summary"
             data["whatsapp_text"] = wa_text
             data["whatsapp_context_vars"] = {
+                "contact_name": staff_name,
+                "summary_date": summary_date_label,
                 "outstanding": str(outstanding_n),
+                # Kept for templates already mapping these; new template should use
+                # contact_name + summary_date + outstanding + portal_url.
                 "escalated_last_24h": str(escalated_24),
                 "resolved_last_24h": str(resolved_24),
                 "portal_url": summary_link,

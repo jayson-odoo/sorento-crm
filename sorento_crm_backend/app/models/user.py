@@ -45,8 +45,16 @@ class User(Base):
     # Set explicitly by an admin, or auto-cached by a unique phone match (see respond_link_service).
     respond_contact_id = Column(String, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)
     # Per-channel notification toggles (default off until a contact is linked).
-    notify_whatsapp = Column(Boolean, default=False, nullable=False, server_default="false")  # escalation + assignment pings
+    notify_whatsapp = Column(Boolean, default=False, nullable=False, server_default="false")  # legacy; superseded by the per-event toggles below
     notify_whatsapp_summary = Column(Boolean, default=False, nullable=False, server_default="false")  # daily summary template
+    # Per-event × per-channel SLA-notification toggles. A channel fires only when the
+    # stage allows the event (form_sla_configs.notify_assignee / notify_on_escalation)
+    # AND the user opted into that channel for that event. Email defaults on (preserves
+    # prior always-email behaviour); WhatsApp backfilled from notify_whatsapp.
+    notify_email_on_assignment = Column(Boolean, default=True, nullable=False, server_default="true")
+    notify_email_on_escalation = Column(Boolean, default=True, nullable=False, server_default="true")
+    notify_whatsapp_on_assignment = Column(Boolean, default=False, nullable=False, server_default="false")
+    notify_whatsapp_on_escalation = Column(Boolean, default=False, nullable=False, server_default="false")
 
     role_assignments = relationship("UserRoleAssignment", back_populates="user", cascade="all, delete-orphan")
     system_logs = relationship("SystemLog", back_populates="user")

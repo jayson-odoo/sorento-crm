@@ -116,39 +116,109 @@ def _send_whatsapp_for_notification(db, notification: Notification, user, delive
     """
     from app.services.respond_link_service import resolve_user_respond_contact
     from app.services.respond_messaging_service import send_text_or_template
+    from app.services.integration_service import IntegrationLogService
+    from app.schemas.integration import IntegrationLogCreate
 
     now = datetime.utcnow()
+    contact = resolve_user_respond_contact(db, user)
+    if not contact or not contact.respond_io_id:
+        delivery.status = "failed"
+        delivery.error_message = "No resolvable WhatsApp contact"
+        db.commit()
+        return
+
+    data = notification.data if isinstance(notification.data, dict) else {}
+    # Callers (e.g. the daily summary) can override the use-case / text /
+    # template params via the notification data; default derives from event_type.
+    event_type = str(getattr(notification, "event_type", "") or "")
+    use_case = data.get("whatsapp_use_case") or (
+        "sla_escalation" if event_type == "escalated" else "sla_assignment"
+    )
+    text = data.get("whatsapp_text") or (
+        f"{notification.title}\n\n{notification.body or ''}".strip()
+    )
+    context_vars = data.get("whatsapp_context_vars") if isinstance(data.get("whatsapp_context_vars"), dict) else None
+
+    identifier = str(contact.respond_io_id)
+    # Every send writes a respond_io outbox log — success OR failure — same as the
+    # complaint / OTP / SLA-escalation paths via `_send_and_log`. Local testing runs
+    # with intentionally-wrong creds, so a 401'd send must still be visible in the
+    # Respond outbox, not just flip the delivery row to failed.
+    log_service = IntegrationLogService(db)
+    business_table = str(getattr(notification, "source_entity_type", None) or "respond_notification")
+    # integration_log.business_id is a UUID column. The notification's
+    # source_entity_id can be a composite string (e.g. the daily summary's
+    # "<user_id>:<date>:<mode>:<ts>"), so always use the notification UUID here.
+    business_id = str(getattr(notification, "id", ""))
+    endpoint = f"https://api.respond.io/v2/contact/id:{identifier}/message"
+    request_payload: dict = {"message": {"type": "text", "text": text}}
     try:
-        contact = resolve_user_respond_contact(db, user)
-        if not contact or not contact.respond_io_id:
-            delivery.status = "failed"
-            delivery.error_message = "No resolvable WhatsApp contact"
-            db.commit()
-            return
-        data = notification.data if isinstance(notification.data, dict) else {}
-        # Callers (e.g. the daily summary) can override the use-case / text /
-        # template params via the notification data; default derives from event_type.
-        event_type = str(getattr(notification, "event_type", "") or "")
-        use_case = data.get("whatsapp_use_case") or (
-            "sla_escalation" if event_type == "escalated" else "sla_assignment"
-        )
-        text = data.get("whatsapp_text") or (
-            f"{notification.title}\n\n{notification.body or ''}".strip()
-        )
-        context_vars = data.get("whatsapp_context_vars") if isinstance(data.get("whatsapp_context_vars"), dict) else None
-        send_text_or_template(
+        result = send_text_or_template(
             db,
-            identifier=str(contact.respond_io_id),
+            identifier=identifier,
             text=text,
             use_case=use_case,
             context_vars=context_vars,
             respond_contact_id=str(contact.id),
+        )
+        request_payload = result.get("request_payload", request_payload)
+        response = result.get("response")
+        log_service.create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="respond_io",
+                business_table=business_table,
+                business_id=business_id,
+                external_reference=identifier,
+                direction="outbound",
+                endpoint=endpoint,
+                http_method="POST",
+                status="success",
+                response_payload=str(response)[:50000] if response else None,
+            ),
+            request_payload_dict=request_payload,
         )
         delivery.status = "sent"
         delivery.sent_at = now
         db.commit()
     except Exception as e:  # best-effort: degrade, never raise
         logger.warning("WhatsApp delivery failed for notification %s: %s", notification.id, e)
+        # Log the payload that was ACTUALLY attempted (text vs template) — the
+        # window-aware send stamps it on the exception. Closed window => template,
+        # so a failed closed-window send is logged as a template attempt, not text.
+        request_payload = getattr(e, "request_payload", request_payload)
+        # Capture Respond.io's actual HTTP status + body when present (e.g. 401),
+        # mirroring `_send_and_log`, so the outbox row is diagnosable.
+        resp = getattr(e, "response", None)
+        resp_code = None
+        resp_body = None
+        if resp is not None:
+            try:
+                resp_code = resp.status_code
+            except Exception:
+                resp_code = None
+            try:
+                resp_body = (resp.text or "")[:50000]
+            except Exception:
+                resp_body = None
+        try:
+            log_service.create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="respond_io",
+                    business_table=business_table,
+                    business_id=business_id,
+                    external_reference=identifier,
+                    direction="outbound",
+                    endpoint=endpoint,
+                    http_method="POST",
+                    status="failed",
+                    status_code=resp_code,
+                    response_payload=resp_body,
+                    error_message=str(e),
+                ),
+                request_payload_dict=request_payload,
+            )
+        except Exception:
+            logger.warning("Failed to write respond_io outbox log for notification %s", notification.id)
         try:
             delivery.status = "failed"
             delivery.error_message = str(e)[:500]

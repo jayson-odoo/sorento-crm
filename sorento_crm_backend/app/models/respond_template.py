@@ -43,6 +43,11 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # window is closed. Map the approved auth/utility template's code param to
     # the ``otp_code`` variable.
     "portal_otp",
+    # SLA daily summary — bounded template (counts + deep link) sent to a staff
+    # member when their 24h window is closed at summary time. Map params to the
+    # ``outstanding`` / ``escalated_last_24h`` / ``resolved_last_24h`` counts and
+    # ``portal_url`` deep link.
+    "sla_daily_summary",
 )
 
 

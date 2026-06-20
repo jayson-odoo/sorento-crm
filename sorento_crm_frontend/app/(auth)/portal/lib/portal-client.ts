@@ -490,6 +490,8 @@ export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   rejected: 'Rejected',
   responded: 'Responded',
   submitted: 'Submitted',
+  processed_by_cs: 'Processed by CS',
+  closed: 'Closed',
   completed: 'Completed',
   updated: 'Updated',
 };

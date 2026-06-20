@@ -1,8 +1,11 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown } from 'lucide-react';
+import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle } from 'lucide-react';
+import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
+import { SlaEscalationBanner } from '@/app/(protected)/sla-management/_shared/SlaEscalationBanner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { complaintStatusPillClass, complaintStatusLabel } from '@/lib/complaint-status';
@@ -95,6 +98,18 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const [notifyResolutionOpen, setNotifyResolutionOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  // Escalate the active form-SLA stage from the gear menu.
+  const queryClient = useQueryClient();
+  const [escalateOpen, setEscalateOpen] = useState(false);
+  const [escalateReason, setEscalateReason] = useState('');
+  const [escalating, setEscalating] = useState(false);
+  const { data: slaTrackers } = useQuery({
+    // Key on status so the escalation banner clears on resolve without a refresh.
+    queryKey: ['form-sla-trackers', 'complaint', complaintId, complaint?.status],
+    queryFn: () => getFormSLATrackers('complaint', complaintId),
+    enabled: !!isValidId,
+  });
+  const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
   const [editTechnicalResponseOpen, setEditTechnicalResponseOpen] = useState(false);
@@ -172,9 +187,9 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1 min-w-0">
+          <h1 className="text-2xl font-bold break-words">
             {complaint.complaint_number || 'None'}
           </h1>
           <p className="text-sm text-muted-foreground">
@@ -203,7 +218,9 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         </div>
         <div className="flex gap-2 flex-wrap items-center justify-end">
           <Button
-            variant="outline"
+            // Submitted = the technical team's response is the next action, so make
+            // it the primary CTA; otherwise it's a secondary edit.
+            variant={complaint.status === 'submitted' ? 'primary' : 'outline'}
             size="sm"
             data-guide-target="complaint-management.complaints.tech-team.edit-response"
             onClick={() => {
@@ -273,6 +290,18 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             className="h-8 border border-border"
           />
           <DetailActionsMenu ariaLabel="Complaint actions">
+            {activeTracker && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setEscalateReason('');
+                  setEscalateOpen(true);
+                }}
+              >
+                <ArrowUpCircle className="size-4" />
+                Escalate SLA
+              </DropdownMenuItem>
+            )}
             {complaint.status === 'approved' && canClose && (
               <DropdownMenuItem
                 disabled={closeComplaintMutation.isPending}
@@ -565,6 +594,53 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         </AlertDialogContent>
       </AlertDialog>
 
+      <Dialog open={escalateOpen} onOpenChange={setEscalateOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Escalate SLA</DialogTitle>
+            <DialogDescription>
+              Force-escalate the current SLA stage to the next tier and reassign per the
+              escalation policy. Optionally add a reason.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="cmp-escalate-reason">Reason*</Label>
+            <Textarea
+              id="cmp-escalate-reason"
+              value={escalateReason}
+              onChange={(e) => setEscalateReason(e.target.value)}
+              placeholder="Why escalate now?"
+              rows={3}
+              className="resize-none"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEscalateOpen(false)} disabled={escalating}>
+              Cancel
+            </Button>
+            <Button
+              disabled={escalating || !activeTracker}
+              onClick={async () => {
+                if (!activeTracker) return;
+                setEscalating(true);
+                try {
+                  const res = await escalateFormTracking(activeTracker.id, escalateReason.trim());
+                  queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'complaint', complaintId] });
+                  toast.success(`Escalated to tier ${res.current_tier}`);
+                  setEscalateOpen(false);
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : 'Failed to escalate');
+                } finally {
+                  setEscalating(false);
+                }
+              }}
+            >
+              {escalating ? 'Escalating…' : 'Escalate'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -691,6 +767,12 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SlaEscalationBanner
+        reason={activeTracker?.escalation_reason}
+        tier={activeTracker?.current_tier}
+        assignee={activeTracker?.assigned_user_name}
+      />
 
       {/* Complaint Information */}
       <Card>

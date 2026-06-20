@@ -5,6 +5,7 @@ import { JWT } from 'next-auth/jwt';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import GoogleProvider from 'next-auth/providers/google';
 import prisma from '@/lib/prisma';
+import { sessionTokenCookieName } from '@/lib/auth-cookie';
 
 const authOptions: NextAuthOptions = {
   adapter: PrismaAdapter(prisma),
@@ -270,7 +271,9 @@ const authOptions: NextAuthOptions = {
     const prefix = secure ? '__Secure-' : '';
     return {
       sessionToken: {
-        name: `${prefix}next-auth.session-token${suffix}`,
+        // Shared with the getToken() callers (token route, api-proxy) so they read
+        // the same cookie — see lib/auth-cookie.ts.
+        name: sessionTokenCookieName(),
         options: { httpOnly: true, sameSite: 'lax', path: '/', secure },
       },
       callbackUrl: {

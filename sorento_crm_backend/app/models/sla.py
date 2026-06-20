@@ -142,6 +142,9 @@ class FormSLAConfig(Base):
     # When false, spawning this stage assigns the tracker but does NOT notify the
     # assignee (some stages route silently). Default true = notify on assignment.
     notify_assignee = Column(Boolean, default=True, nullable=False, server_default=text("true"))
+    # When false, escalating a tracker on this stage does NOT notify the new assignee
+    # (silent escalation). Default true = notify on escalation.
+    notify_on_escalation = Column(Boolean, default=True, nullable=False, server_default=text("true"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

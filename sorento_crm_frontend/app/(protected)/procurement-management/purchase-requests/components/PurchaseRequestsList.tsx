@@ -45,7 +45,7 @@ import { getUsersForApproverSelect } from '../services/purchaseRequestService';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import PurchaseRequestBulkDeleteDialog from './PurchaseRequestBulkDeleteDialog';
-import { getStatusBadgeVariant } from '@/lib/status-badge';
+import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { purchaseRequestNumberFieldLabel } from '../lib/purchase-request-field-labels';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
@@ -64,12 +64,20 @@ const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
 
 /** Display status: draft → pending_approval → approved (or rejected). Resend sets back to pending_approval. */
 function getDisplayStatus(row: PurchaseRequest): string {
+  // Terminal CS lifecycle states win over the approval decision so the list
+  // tallies with the detail page and the portal (an approved-then-processed
+  // request reads "Processed by CS", not "Approved").
+  const s = (row.status ?? '').trim().toLowerCase();
+  if (s === 'processed_by_cs') return 'Processed by CS';
+  if (s === 'closed') return 'Closed';
   const a = row.approval_status;
-  if (!a || a === '') return 'Draft';
   if (a === 'pending') return 'Pending approval';
   if (a === 'approved') return 'Approved';
   if (a === 'rejected') return 'Rejected';
-  return a;
+  // No approval decision yet — reflect the lifecycle status so a portal-submitted
+  // request shows "Submitted" (tallies with the portal), not "Draft".
+  if (s === 'submitted') return 'Submitted';
+  return 'Draft';
 }
 
 const DEFAULT_BASE_PATH = '/procurement-management/purchase-requests';
@@ -252,9 +260,9 @@ export default function PurchaseRequestsList({
         cell: ({ row }) => {
           const status = getDisplayStatus(row.original);
           return (
-            <Badge variant={getStatusBadgeVariant(status)} className="capitalize">
+            <span className={`${STATUS_PILL_BASE} ${statusPillClass(status)}`}>
               {status}
-            </Badge>
+            </span>
           );
         },
         meta: { skeleton: <Skeleton className="h-4 w-24" /> },

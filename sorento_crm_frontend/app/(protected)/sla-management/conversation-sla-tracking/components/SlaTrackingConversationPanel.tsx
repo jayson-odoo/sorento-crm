@@ -1,11 +1,10 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useRef, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Send, ExternalLink, RefreshCw } from 'lucide-react';
+import { ExternalLink, RefreshCw } from 'lucide-react';
 import type { RespondMessageItem } from '@/app/(protected)/procurement-management/stock-inquiries/services/stockInquiryService';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getRespondMessageDisplayTimeMs, getRespondMessageSortTimeMs } from '@/lib/respondIoMessage';
@@ -14,7 +13,7 @@ import {
   getOutgoingBubbleClass,
   getOutgoingSenderLabel,
 } from '@/lib/respondIoOutgoingMessage';
-import { useSlaTrackingConversation, useSlaTrackingConversationReply } from '../hooks/useConversationSLATracking';
+import { useSlaTrackingConversation } from '../hooks/useConversationSLATracking';
 
 interface SlaTrackingConversationPanelProps {
   trackingId: string;
@@ -27,12 +26,10 @@ export default function SlaTrackingConversationPanel({
   respondInboxUrl,
   showAsPopup = false,
 }: SlaTrackingConversationPanelProps) {
-  const [replyText, setReplyText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { data, isLoading, refetch, isRefetching } = useSlaTrackingConversation(trackingId, {
     limit: 50,
   });
-  const replyMutation = useSlaTrackingConversationReply(trackingId);
 
   const items: RespondMessageItem[] = data?.items ?? [];
   const sortedItems = useMemo(() => {
@@ -47,21 +44,6 @@ export default function SlaTrackingConversationPanel({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [sortedItems.length]);
-
-  const handleSend = async () => {
-    const text = replyText.trim();
-    if (!text || replyMutation.isPending) return;
-    try {
-      await replyMutation.mutateAsync(text);
-      setReplyText('');
-      await refetch();
-      window.setTimeout(() => {
-        void refetch();
-      }, 1600);
-    } catch {
-      // toast from mutation
-    }
-  };
 
   const headerTitle = showAsPopup ? 'Chat Records' : 'Conversation (Respond.io)';
   const showHeaderActions = showAsPopup;
@@ -151,29 +133,25 @@ export default function SlaTrackingConversationPanel({
           </div>
         )}
 
-        <div className="flex gap-2">
-          <Textarea
-            placeholder="Type your response..."
-            value={replyText}
-            onChange={(e) => setReplyText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                handleSend();
-              }
-            }}
-            rows={3}
-            className="resize-none flex-1 min-w-0"
-          />
-          <Button
-            size="icon"
-            className="shrink-0"
-            disabled={!replyText.trim() || replyMutation.isPending}
-            onClick={handleSend}
-            aria-label="Send"
-          >
-            <Send className="size-4" />
-          </Button>
+        <div className="rounded-md border border-dashed bg-muted/30 p-3">
+          <p className="text-sm text-muted-foreground">
+            Replies — including files and images — are sent from Respond. Open the conversation
+            there to respond to the customer.
+          </p>
+          {respondInboxUrl ? (
+            <Button
+              className="mt-2"
+              size="sm"
+              onClick={() => window.open(respondInboxUrl, '_blank', 'noopener,noreferrer')}
+            >
+              <ExternalLink className="size-4" />
+              Open in Respond
+            </Button>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">
+              No Respond conversation link available for this contact.
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>

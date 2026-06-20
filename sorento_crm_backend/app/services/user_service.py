@@ -1811,6 +1811,49 @@ class AccessAgentService:
         agent = self.db.query(AccessAgent.id).filter(AccessAgent.code == code).first()
         return str(agent[0]) if agent else None
 
+    def resolve_team_with_tier_fallback(
+        self, agent_id: str, start_tier: int, team_set_code: Optional[str] = None
+    ) -> Optional[tuple]:
+        """Find the first existing team at or ABOVE ``start_tier`` for this agent's
+        team set, returning ``(team_id, actual_tier)`` or None.
+
+        Reusable for BOTH initial SLA assignment (start_tier=1) and escalation
+        (start_tier=current_tier+1): a missing intermediate tier is skipped instead
+        of blocking — e.g. assign at tier 1 but only tier 2 exists -> use tier 2;
+        escalate to tier 2 but only tier 3 exists -> use tier 3. Caps at tier 3.
+        """
+        try:
+            s = int(start_tier)
+        except (TypeError, ValueError):
+            return None
+        if s < 1:
+            s = 1
+        for tier in range(s, 4):
+            team_id = self.get_team_id_by_tier(agent_id, tier, team_set_code=team_set_code)
+            if team_id:
+                return team_id, tier
+        return None
+
+    def get_user_tier_in_team_set(
+        self, agent_id: str, user_id: str, team_set_code: Optional[str] = None
+    ) -> Optional[int]:
+        """Return the tier (1-3) at which ``user_id`` is a member of this agent's
+        team set, or None if not a member of any tier. Used to route a form's
+        configured default approver to their own tier in the approval team set
+        (e.g. a director sitting at tier 3) instead of the tier-1 default."""
+        for tier in (1, 2, 3):
+            team_id = self.get_team_id_by_tier(agent_id, tier, team_set_code=team_set_code)
+            if not team_id:
+                continue
+            member = (
+                self.db.query(TeamMember)
+                .filter(TeamMember.team_id == team_id, TeamMember.user_id == str(user_id))
+                .first()
+            )
+            if member:
+                return tier
+        return None
+
 
 class TeamService:
     """Service for team and team member operations."""

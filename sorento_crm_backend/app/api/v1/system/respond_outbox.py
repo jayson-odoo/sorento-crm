@@ -8,6 +8,7 @@ sent it, when) and resolves the contact name/phone from respond_contacts.
 """
 import json
 import logging
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -27,6 +28,21 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _render_template_body(body_text: Optional[str], parameters) -> Optional[str]:
+    """Substitute WhatsApp {{1}},{{2}}… placeholders in body_text with the
+    resolved parameters so the outbox shows the actual filled message, not just
+    the template name. parameters is the ordered list of resolved param strings."""
+    if not body_text:
+        return None
+    params = parameters if isinstance(parameters, list) else []
+
+    def _sub(m):
+        idx = int(m.group(1)) - 1
+        return str(params[idx]) if 0 <= idx < len(params) else m.group(0)
+
+    return re.sub(r"\{\{(\d+)\}\}", _sub, body_text)
+
+
 def _parse_payload(raw: Optional[str]) -> tuple[str, Optional[str], Optional[str]]:
     """Return (sent_as, message_text, template_name) from a request_payload string."""
     if not raw:
@@ -38,7 +54,15 @@ def _parse_payload(raw: Optional[str]) -> tuple[str, Optional[str], Optional[str
     msg = (data or {}).get("message") or {}
     mtype = (msg.get("type") or "text").lower()
     if mtype in ("whatsapp_template", "template"):
-        return "template", msg.get("text") or None, msg.get("template_name") or msg.get("template_id")
+        # message_text = the template body with variables filled in (falls back to
+        # any literal text, then the raw param list) so the column is never "—".
+        rendered = _render_template_body(msg.get("body_text"), msg.get("parameters"))
+        if not rendered:
+            rendered = msg.get("text")
+        if not rendered and isinstance(msg.get("parameters"), list) and msg["parameters"]:
+            rendered = " | ".join(str(p) for p in msg["parameters"])
+        template_name = msg.get("template_name") or msg.get("template_id")
+        return "template", rendered or None, template_name
     return "text", msg.get("text") or None, None
 
 

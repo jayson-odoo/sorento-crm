@@ -240,6 +240,38 @@ class RespondClient:
             response.raise_for_status()
             return response.json() if response.content else {}
 
+    def close_conversation(
+        self,
+        identifier: str,
+        *,
+        category: Optional[str] = None,
+        summary: Optional[str] = None,
+    ) -> dict:
+        """Close (resolve) the open conversation for a contact in Respond.io.
+
+        Mirrors ``send_message`` (id: prefix, Bearer auth). ``category``/``summary``
+        form the closing note; a workspace may require category before closing, in
+        which case omitting it yields a 4xx (callers treat close as best-effort).
+        Endpoint: POST /v2/contact/{identifier}/conversation/close.
+        """
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        api_id = self._contact_api_identifier(identifier)
+        url = f"{self.base_url}/v2/contact/{api_id}/conversation/close"
+        payload: dict = {}
+        if category:
+            payload["category"] = category
+        if summary:
+            payload["summary"] = summary
+        with httpx.Client(timeout=15) as client:
+            response = client.post(url, headers=self._headers(), json=payload)
+            try:
+                response.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                e.response = response
+                raise
+            return response.json() if response.content else {}
+
     def list_messages(
         self,
         identifier: str,

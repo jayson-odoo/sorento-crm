@@ -2,9 +2,12 @@
 
 import { useState, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle } from 'lucide-react';
+import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
+import { SlaEscalationBanner } from '@/app/(protected)/sla-management/_shared/SlaEscalationBanner';
+import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
@@ -90,6 +93,18 @@ export default function StockInquiryDetail({
   const [rejectAction, setRejectAction] = useState<'project_sales' | 'purchasing' | null>(null);
   const [reopenDialogOpen, setReopenDialogOpen] = useState(false);
   const [reopenReason, setReopenReason] = useState('');
+  // Escalate the active form-SLA stage straight from the form (gear menu).
+  const queryClient = useQueryClient();
+  const [escalateOpen, setEscalateOpen] = useState(false);
+  const [escalateReason, setEscalateReason] = useState('');
+  const [escalating, setEscalating] = useState(false);
+  const { data: slaTrackers } = useQuery({
+    // Key on updated_at so the escalation banner clears on resolve without a refresh.
+    queryKey: ['form-sla-trackers', 'stock_inquiry', inquiryId, inquiry?.updated_at],
+    queryFn: () => getFormSLATrackers('stock_inquiry', inquiryId),
+    enabled: !!isValidId,
+  });
+  const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
@@ -208,9 +223,9 @@ export default function StockInquiryDetail({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <h1 className="text-2xl font-bold">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1 min-w-0">
+          <h1 className="text-2xl font-bold break-words">
             Stock Inquiry -{' '}
             {inquiry.inquiry_number || inquiry.product_code || 'Details'}
           </h1>
@@ -222,9 +237,9 @@ export default function StockInquiryDetail({
             {inquiry.status && (
               <>
                 {' · '}
-                <Badge variant={inquiry.status === 'rejected' ? 'destructive' : inquiry.status === 'responded' ? 'success' : 'secondary'}>
+                <span className={`${STATUS_PILL_BASE} ${statusPillClass(inquiry.status)}`}>
                   {STOCK_INQUIRY_STATUS_LABELS[inquiry.status] ?? inquiry.status}
-                </Badge>
+                </span>
               </>
             )}
           </p>
@@ -236,7 +251,7 @@ export default function StockInquiryDetail({
             </p>
           )}
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap sm:justify-end">
           {/* Workflow actions: visible next to header */}
           {inquiry.status === 'new' && canSubmitForProjectSales && (
             <Button
@@ -283,7 +298,9 @@ export default function StockInquiryDetail({
           {(inquiry.status === 'pending_purchasing' ||
             inquiry.status === 'responded') && (
             <Button
-              variant="outline"
+              // Pending purchasing = the purchasing response is the next action →
+              // primary CTA; once responded it's a secondary edit.
+              variant={inquiry.status === 'pending_purchasing' ? 'primary' : 'outline'}
               size="sm"
               onClick={() => {
                 setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
@@ -339,6 +356,18 @@ export default function StockInquiryDetail({
               <Edit className="size-4" />
               Edit
             </DropdownMenuItem>
+            {activeTracker && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setEscalateReason('');
+                  setEscalateOpen(true);
+                }}
+              >
+                <ArrowUpCircle className="size-4" />
+                Escalate SLA
+              </DropdownMenuItem>
+            )}
             {inquiry.respond_inbox_url && (
               <DropdownMenuItem onClick={() => setConversationSheetOpen(true)}>
                 <MessageSquare className="size-4" />
@@ -497,7 +526,7 @@ export default function StockInquiryDetail({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
-            <Label htmlFor="reopen-reason">Reason (optional)</Label>
+            <Label htmlFor="reopen-reason">Reason*</Label>
             <Textarea
               id="reopen-reason"
               value={reopenReason}
@@ -518,6 +547,53 @@ export default function StockInquiryDetail({
               }}
             >
               Reopen
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={escalateOpen} onOpenChange={setEscalateOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Escalate SLA</DialogTitle>
+            <DialogDescription>
+              Force-escalate the current SLA stage to the next tier and reassign per
+              the escalation policy. Optionally add a reason.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="si-escalate-reason">Reason*</Label>
+            <Textarea
+              id="si-escalate-reason"
+              value={escalateReason}
+              onChange={(e) => setEscalateReason(e.target.value)}
+              placeholder="Why escalate now?"
+              rows={3}
+              className="resize-none"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEscalateOpen(false)} disabled={escalating}>
+              Cancel
+            </Button>
+            <Button
+              disabled={escalating || !activeTracker}
+              onClick={async () => {
+                if (!activeTracker) return;
+                setEscalating(true);
+                try {
+                  const res = await escalateFormTracking(activeTracker.id, escalateReason.trim());
+                  queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'stock_inquiry', inquiryId] });
+                  toast.success(`Escalated to tier ${res.current_tier}`);
+                  setEscalateOpen(false);
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : 'Failed to escalate');
+                } finally {
+                  setEscalating(false);
+                }
+              }}
+            >
+              {escalating ? 'Escalating…' : 'Escalate'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -606,6 +682,12 @@ export default function StockInquiryDetail({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SlaEscalationBanner
+        reason={activeTracker?.escalation_reason}
+        tier={activeTracker?.current_tier}
+        assignee={activeTracker?.assigned_user_name}
+      />
 
       <ProductInquiryFormLayout>
         <InquiryFormTableRow label="Date">
