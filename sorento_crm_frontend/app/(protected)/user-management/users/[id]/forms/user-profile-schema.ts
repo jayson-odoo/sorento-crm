@@ -16,6 +16,9 @@ export const UserProfileSchema = z.object({
     ),
   agent_ids: z.array(z.string()).optional(),
   superior_id: z.string().optional().nullable(),
+  respond_contact_id: z.string().optional().nullable(),
+  notify_whatsapp: z.boolean().optional(),
+  notify_whatsapp_summary: z.boolean().optional(),
 });
 
 export type UserProfileSchemaType = z.infer<typeof UserProfileSchema>;

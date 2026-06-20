@@ -1,7 +1,8 @@
 """Notification API routes: list, unread count, mark read, archive, resolve."""
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
+from pydantic import BaseModel
 
 from app.config import settings as app_settings
 from app.database import get_db
@@ -86,6 +87,110 @@ async def unsubscribe_daily_sla_summary_via_token(
     if not ok:
         raise HTTPException(status_code=404, detail="User not found")
     return {"message": "Unsubscribed from daily SLA summary emails.", "subscribed": False}
+
+
+class _ChannelPrefsUpdate(BaseModel):
+    notify_whatsapp: Optional[bool] = None
+    notify_whatsapp_summary: Optional[bool] = None
+    daily_sla_summary_subscribed: Optional[bool] = None
+
+
+def _channel_prefs(user) -> dict:
+    return {
+        "daily_sla_summary_subscribed": bool(getattr(user, "daily_sla_summary_subscribed", True)),
+        "notify_whatsapp": bool(getattr(user, "notify_whatsapp", False)),
+        "notify_whatsapp_summary": bool(getattr(user, "notify_whatsapp_summary", False)),
+    }
+
+
+@router.get("/preferences/channels")
+async def get_channel_preferences(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Current user's per-channel notification toggles (self-service)."""
+    user = db.query(User).filter(User.id == current_user["id"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return _channel_prefs(user)
+
+
+@router.patch("/preferences/channels")
+async def set_channel_preferences(
+    payload: _ChannelPrefsUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update the current user's own channel toggles. Self-service only — a user
+    can only change their own preferences (keyed off the authenticated id)."""
+    user = db.query(User).filter(User.id == current_user["id"]).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    data = payload.model_dump(exclude_unset=True)
+    for field in ("notify_whatsapp", "notify_whatsapp_summary", "daily_sla_summary_subscribed"):
+        if field in data and data[field] is not None:
+            setattr(user, field, bool(data[field]))
+    db.commit()
+    db.refresh(user)
+    return _channel_prefs(user)
+
+
+class _PushKeys(BaseModel):
+    p256dh: str
+    auth: str
+
+
+class _PushSubscriptionIn(BaseModel):
+    endpoint: str
+    keys: _PushKeys
+
+
+@router.post("/push/subscriptions", status_code=status.HTTP_201_CREATED)
+async def subscribe_web_push(
+    payload: _PushSubscriptionIn,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Register (or refresh) a browser web-push subscription for the current user."""
+    from app.models.notification import PushSubscription
+
+    existing = (
+        db.query(PushSubscription)
+        .filter(
+            PushSubscription.user_id == current_user["id"],
+            PushSubscription.endpoint == payload.endpoint,
+        )
+        .first()
+    )
+    if existing:
+        existing.p256dh = payload.keys.p256dh
+        existing.auth = payload.keys.auth
+    else:
+        db.add(PushSubscription(
+            user_id=current_user["id"],
+            endpoint=payload.endpoint,
+            p256dh=payload.keys.p256dh,
+            auth=payload.keys.auth,
+        ))
+    db.commit()
+    return {"subscribed": True}
+
+
+@router.delete("/push/subscriptions")
+async def unsubscribe_web_push(
+    endpoint: str = Query(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove a browser web-push subscription for the current user."""
+    from app.models.notification import PushSubscription
+
+    db.query(PushSubscription).filter(
+        PushSubscription.user_id == current_user["id"],
+        PushSubscription.endpoint == endpoint,
+    ).delete()
+    db.commit()
+    return {"subscribed": False}
 
 
 @router.get("/", response_model=ListResponse[NotificationResponse])

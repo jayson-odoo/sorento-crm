@@ -4,6 +4,7 @@ import Script from 'next/script';
 import { cn } from '@/lib/utils';
 import { Metadata } from 'next';
 import { DynamicClientProviders } from '@/components/DynamicClientProviders';
+import ServiceWorkerRegister from '@/components/pwa/ServiceWorkerRegister';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -15,6 +16,8 @@ export const metadata: Metadata = {
     template: '%s | Sorento',
     default: 'Sorento', // a default is required when creating a template
   },
+  manifest: '/manifest.webmanifest',
+  appleWebApp: { capable: true, title: 'Sorento', statusBarStyle: 'default' },
   /** Browser tab icon (served from /public). Override by replacing the file or changing this path. */
   icons: {
     icon: [{ url: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcT0W8EVfDgMH4jzzsPWOuT94DxFjJ47M2WkZg&s', type: 'image/svg+xml' }],
@@ -44,6 +47,7 @@ export default async function RootLayout({
               "try{if(window.location&&window.location.hash){sessionStorage.setItem('__GUIDE_TARGET_HASH__',window.location.hash);}}catch(e){}",
           }}
         />
+        <ServiceWorkerRegister />
         <DynamicClientProviders>
           <Suspense>{children}</Suspense>
         </DynamicClientProviders>

@@ -101,8 +101,60 @@ def send_notification_deliveries(notification_id: str) -> None:
                     str(getattr(notification, "user_id")),
                     delivery,
                 )
+            elif channel == "whatsapp":
+                _send_whatsapp_for_notification(db, notification, user, delivery)
     finally:
         db.close()
+
+
+def _send_whatsapp_for_notification(db, notification: Notification, user, delivery: NotificationDelivery) -> None:
+    """Send the notification to the user's WhatsApp contact (TCK-29).
+
+    Window-aware: open -> text, closed -> the use-case's approved template
+    (sla_escalation / sla_assignment). Best-effort: marks the delivery sent/failed
+    and never raises — the originating escalation/assignment already committed.
+    """
+    from app.services.respond_link_service import resolve_user_respond_contact
+    from app.services.respond_messaging_service import send_text_or_template
+
+    now = datetime.utcnow()
+    try:
+        contact = resolve_user_respond_contact(db, user)
+        if not contact or not contact.respond_io_id:
+            delivery.status = "failed"
+            delivery.error_message = "No resolvable WhatsApp contact"
+            db.commit()
+            return
+        data = notification.data if isinstance(notification.data, dict) else {}
+        # Callers (e.g. the daily summary) can override the use-case / text /
+        # template params via the notification data; default derives from event_type.
+        event_type = str(getattr(notification, "event_type", "") or "")
+        use_case = data.get("whatsapp_use_case") or (
+            "sla_escalation" if event_type == "escalated" else "sla_assignment"
+        )
+        text = data.get("whatsapp_text") or (
+            f"{notification.title}\n\n{notification.body or ''}".strip()
+        )
+        context_vars = data.get("whatsapp_context_vars") if isinstance(data.get("whatsapp_context_vars"), dict) else None
+        send_text_or_template(
+            db,
+            identifier=str(contact.respond_io_id),
+            text=text,
+            use_case=use_case,
+            context_vars=context_vars,
+            respond_contact_id=str(contact.id),
+        )
+        delivery.status = "sent"
+        delivery.sent_at = now
+        db.commit()
+    except Exception as e:  # best-effort: degrade, never raise
+        logger.warning("WhatsApp delivery failed for notification %s: %s", notification.id, e)
+        try:
+            delivery.status = "failed"
+            delivery.error_message = str(e)[:500]
+            db.commit()
+        except Exception:
+            db.rollback()
 
 
 def _enqueue_email_for_delivery(db, notification: Notification, user, delivery: NotificationDelivery, event_key: str) -> None:
@@ -330,7 +382,13 @@ def _send_web_push_for_notification(
             sent_any = True
         except WebPushException as e:
             last_error = str(e)
-            logger.warning("Web push failed for subscription %s: %s", sub.id, e)
+            # Prune dead endpoints (404 Not Found / 410 Gone) so the table stays bounded.
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            if status_code in (404, 410):
+                logger.info("Pruning expired push subscription %s (HTTP %s)", sub.id, status_code)
+                db.delete(sub)
+            else:
+                logger.warning("Web push failed for subscription %s: %s", sub.id, e)
     setattr(delivery, "status", "sent" if sent_any else "failed")
     setattr(delivery, "sent_at", datetime.utcnow() if sent_any else None)
     setattr(delivery, "error_message", None if sent_any else (last_error or "No subscription succeeded"))

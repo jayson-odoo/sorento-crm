@@ -19,6 +19,32 @@ Source ticket bodies live in the in-CRM ticketing system at `/ticket-management/
 | TCK-2026-000025 | GRN MCP: limit default, ilike product, rename + trim (MCP-only) | high | draft | [TCK-2026-000025.md](./TCK-2026-000025.md) |
 | TCK-2026-000026 | Embedding: customer + transporter coverage | high | draft | [TCK-2026-000026.md](./TCK-2026-000026.md) |
 | TCK-2026-000027 | Orders MCP: search by `actual_delivery_date`, not `order_date` | medium | draft | [TCK-2026-000027.md](./TCK-2026-000027.md) |
+| TCK-2026-000028 | Form SLA: fix auto-scan tier progression + manual escalate | high | draft | [TCK-2026-000028.md](./TCK-2026-000028.md) |
+| TCK-2026-000029 | SLA notifications via WhatsApp (escalation + assignment) | high | draft | [TCK-2026-000029.md](./TCK-2026-000029.md) |
+| TCK-2026-000030 | Conversation SLA daily summary via WhatsApp (bounded template) | high | draft | [TCK-2026-000030.md](./TCK-2026-000030.md) |
+| TCK-2026-000031 | User ↔ RespondContact link + admin phone + per-channel prefs | high | draft | [TCK-2026-000031.md](./TCK-2026-000031.md) |
+| TCK-2026-000032 | Management KPI dashboard (SLA metrics from event logs) | high | draft | [TCK-2026-000032.md](./TCK-2026-000032.md) |
+| TCK-2026-000033 | PWA enablement + web-push notifications | high | draft | [TCK-2026-000033.md](./TCK-2026-000033.md) |
+| TCK-2026-000034 | Deferred director directives (backlog) | backlog | parked | [TCK-2026-000034.md](./TCK-2026-000034.md) |
+
+## Acceptance criteria (loop-validated)
+
+Testable UAC for TCK-28..33 live in [`UAC/`](./UAC/README.md) — functional / business / data / RBAC / UX / scalability criteria, each with a `Validate:` step (pytest / curl / Playwright MCP / psql). The `/loop` executing these plans must validate development against them: a criterion is `[x]` only when its validation passes; ticket Done = all criteria green + three-phase tests committed.
+
+## SLA / notifications epic (directors' session 2026-06-17)
+
+```
+31 (user↔respond_contact link + phone + per-channel prefs)  ← land FIRST, foundation
+  ├── 29 (WhatsApp on escalation + assignment)   needs 31 for recipient phones; OK is WhatsApp-side only (no CRM ack)
+  └── 30 (conversation SLA summary via WhatsApp)  needs 31 for notify_whatsapp_summary toggle; bounded template + deep link
+
+28 (form SLA manual escalate)   standalone; 29 wires WhatsApp onto its escalation event
+32 (management KPI dashboard)   standalone (reads existing event logs); richer breakdowns use 31
+33 (PWA + web push)             standalone; lights up the existing unused web_push delivery channel
+34 (backlog)                    parked: feature voting, KPI-driven tasks, on-field Meta onboarding, HR module
+```
+
+Recommended order: **31 → (28, 32, 33 in parallel) → 29 → 30**.
 
 ## Dependency map
 

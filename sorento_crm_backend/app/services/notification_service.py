@@ -192,12 +192,48 @@ class NotificationService:
         send_in_app: bool = True,
         send_email: bool = True,
         send_web_push: bool = False,
+        send_whatsapp: bool = False,
+        whatsapp_pref_attr: str = "notify_whatsapp",
     ) -> Optional[Notification]:
         """
         Create notification and only create deliveries for selected channels.
-        Enqueues async processing when email or web_push deliveries are pending.
+        Enqueues async processing when email/web_push/whatsapp deliveries are pending.
+
+        send_whatsapp is "this event is WhatsApp-eligible" (escalation / assignment,
+        TCK-29). A whatsapp delivery is created ONLY when the recipient also has
+        notify_whatsapp on AND a resolvable RespondContact — otherwise it is skipped
+        silently so other channels still fire.
         """
-        if not send_in_app and not send_email and not send_web_push:
+        # Gate WhatsApp on the recipient's opt-in + reachability.
+        if send_whatsapp:
+            from app.models.user import User as _User
+            from app.services.respond_link_service import resolve_user_respond_io_id
+
+            _user = self.db.query(_User).filter(_User.id == user_id).first()
+            send_whatsapp = bool(
+                _user
+                and getattr(_user, whatsapp_pref_attr, False)
+                and resolve_user_respond_io_id(self.db, _user)
+            )
+        # Web push mirrors in-app for users with an active subscription (TCK-33).
+        # The browser subscription IS the opt-in — no separate pref column.
+        # Best-effort: a lookup failure (e.g. table absent in a partial test DB)
+        # must never block the notification.
+        if send_in_app and not send_web_push:
+            try:
+                from app.models.notification import PushSubscription
+
+                has_sub = (
+                    self.db.query(PushSubscription.id)
+                    .filter(PushSubscription.user_id == user_id)
+                    .first()
+                    is not None
+                )
+                if has_sub:
+                    send_web_push = True
+            except Exception:
+                self.db.rollback()
+        if not send_in_app and not send_email and not send_web_push and not send_whatsapp:
             raise ValueError("At least one delivery channel must be enabled")
         if source_entity_type and source_entity_id and event_type:
             existing = (
@@ -250,9 +286,17 @@ class NotificationService:
                     status="pending",
                 )
             )
+        if send_whatsapp:
+            self.db.add(
+                NotificationDelivery(
+                    notification_id=notification.id,
+                    channel="whatsapp",
+                    status="pending",
+                )
+            )
         self.db.commit()
         self.db.refresh(notification)
-        if send_email or send_web_push:
+        if send_email or send_web_push or send_whatsapp:
             try:
                 from app.services.queue_service import enqueue_job
                 from app.tasks import notification_tasks

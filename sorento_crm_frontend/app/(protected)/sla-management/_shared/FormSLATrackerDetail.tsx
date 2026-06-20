@@ -1,10 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   AlertCircle,
+  ArrowUpCircle,
   CalendarClock,
   CheckCircle,
   ChevronDown,
@@ -68,6 +69,7 @@ import {
 } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useConversationSLATracking';
 import EventLogTable from '@/app/(protected)/sla-management/conversation-sla-tracking/components/EventLogTable';
 import { getUsersSelect } from '@/services/userSelectService';
+import { escalateFormTracking } from './formSLAService';
 import { toast } from 'sonner';
 
 const SLA_TEST_OVERRIDE_PERMISSION =
@@ -107,6 +109,25 @@ export default function FormSLATrackerDetail({
   const [responseOpen, setResponseOpen] = useState(false);
   const [resolutionOpen, setResolutionOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+
+  const [escalateOpen, setEscalateOpen] = useState(false);
+  const [escalateReason, setEscalateReason] = useState('');
+  const escalateMut = useMutation({
+    mutationFn: () => escalateFormTracking(trackingId, escalateReason.trim()),
+    onSuccess: (res) => {
+      toast.success(`Escalated to tier ${res.current_tier}`);
+      setEscalateOpen(false);
+      setEscalateReason('');
+      void queryClient.invalidateQueries({
+        queryKey: ['conversation-sla-tracking-detail', trackingId],
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ['conversation-sla-event-logs', trackingId],
+      });
+      void queryClient.invalidateQueries({ queryKey: ['form-sla-trackers'] });
+    },
+    onError: (e: Error) => toast.error(e.message || 'Failed to escalate'),
+  });
 
   const [assigneeDialogOpen, setAssigneeDialogOpen] = useState(false);
   const [tierStartedDialogOpen, setTierStartedDialogOpen] = useState(false);
@@ -275,6 +296,12 @@ export default function FormSLATrackerDetail({
             />
             Refresh
           </Button>
+          {!tracking.is_resolved ? (
+            <Button onClick={() => setEscalateOpen(true)}>
+              <ArrowUpCircle className="mr-2 size-4" />
+              Escalate
+            </Button>
+          ) : null}
           {canTestOverride ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -634,6 +661,44 @@ export default function FormSLATrackerDetail({
           />
         </TabsContent>
       </Tabs>
+
+      <Dialog open={escalateOpen} onOpenChange={setEscalateOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Escalate to tier {(tracking.current_tier ?? 1) + 1}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-1">
+            <Label htmlFor="escalate-reason">Reason</Label>
+            <Input
+              id="escalate-reason"
+              placeholder="Why escalate now?"
+              value={escalateReason}
+              onChange={(e) => setEscalateReason(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Moves this stage to the next tier and reassigns per policy. The new
+              assignee is notified.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setEscalateOpen(false)}
+              disabled={escalateMut.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => escalateMut.mutate()}
+              disabled={escalateMut.isPending || !escalateReason.trim()}
+            >
+              {escalateMut.isPending ? 'Escalating…' : 'Escalate'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={assigneeDialogOpen} onOpenChange={setAssigneeDialogOpen}>
         <DialogContent className="sm:max-w-md">

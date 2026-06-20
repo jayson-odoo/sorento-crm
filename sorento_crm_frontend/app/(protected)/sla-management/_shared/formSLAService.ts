@@ -25,6 +25,36 @@ export async function getFormSLATrackers(
   return r.json();
 }
 
+export interface FormSLAEscalateResult {
+  tracking_id: string;
+  current_tier: number;
+  assigned_to_id: string | null;
+  assigned_to_name: string | null;
+  due_at: string | null;
+  escalation_reason: string | null;
+}
+
+/**
+ * Manually force-escalate a form-SLA tracker to the next tier (TCK-28).
+ * Backend gates on the `sla.form.escalate` permission; 422 on top-tier /
+ * resolved / no-assignee, 404 if missing.
+ */
+export async function escalateFormTracking(
+  trackingId: string,
+  reason: string,
+): Promise<FormSLAEscalateResult> {
+  const r = await apiFetch(
+    `/api/v1/sla-management/form-sla-tracking/${trackingId}/escalate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    },
+  );
+  if (!r.ok) throw new Error(await _readError(r));
+  return r.json();
+}
+
 export interface FormSLAConfig {
   id: string;
   source_entity_type: FormSLASourceType;

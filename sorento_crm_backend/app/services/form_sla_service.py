@@ -130,6 +130,18 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
     return f"/{source_entity_type.replace('_', '-')}/{source_entity_id}"
 
 
+class FormEscalationBlocked(Exception):
+    """Escalation cannot proceed: no next tier, or no resolvable assignee.
+
+    The auto-scan treats this as a skip; the manual endpoint maps it to 422.
+    """
+
+    def __init__(self, reason_code: str, message: str):
+        self.reason_code = reason_code
+        self.message = message
+        super().__init__(message)
+
+
 class FormSLAOrchestrator:
     """Single funnel for form-service transitions to drive SLA trackers."""
 
@@ -252,91 +264,26 @@ class FormSLAOrchestrator:
             try:
                 due = tracker.due_at
                 due_resolution = tracker.due_at_resolution
+                # Escalation is gated purely on the current tier's clock (now > due_at,
+                # where due_at = current_tier_started_at + working(response_hours)).
+                # Each escalation resets that clock, so this is self-idempotent across
+                # ticks and progresses every tier (TCK-28 — removed the buggy
+                # escalated_at guard that froze rows at tier 2).
                 overdue = (due is not None and due < now) or (
                     due_resolution is not None and due_resolution < now
                 )
                 if not overdue:
                     continue
-                # idempotency: skip if already escalated since current tier started
-                if (
-                    tracker.escalated_at is not None
-                    and tracker.current_tier_started_at is not None
-                    and tracker.escalated_at >= tracker.current_tier_started_at
-                ):
-                    skipped_count += 1
-                    continue
-
-                target_tier = int(tracker.current_tier or 1) + 1
-                next_tier = (
-                    self.db.query(SLAPolicyTier)
-                    .filter(
-                        SLAPolicyTier.policy_id == tracker.policy_id,
-                        SLAPolicyTier.tier_level == target_tier,
-                    )
-                    .first()
-                )
-                if not next_tier:
-                    skipped_count += 1
-                    continue
-
-                # resolve next-tier assignee via access agents (round-robin)
-                agent_id = (
-                    str(tracker.agent_id) if tracker.agent_id is not None else None
-                )
-                if not agent_id:
-                    logger.warning(
-                        "Tracker %s has no agent_id; cannot escalate", tracker.id
-                    )
-                    skipped_count += 1
-                    continue
-                agent_svc = AccessAgentService(self.db)
-                team_id = agent_svc.get_team_id_by_tier(
-                    agent_id,
-                    target_tier,
-                    team_set_code=tracker.team_set_code,
-                )
-                if not team_id:
-                    skipped_count += 1
-                    continue
-                assignee = agent_svc.get_next_assignee(agent_id, team_id)
-                if not assignee:
-                    skipped_count += 1
-                    continue
-
-                response_hrs = float(getattr(next_tier, "response_hours", 24) or 24)
-                resolution_hrs = float(
-                    getattr(next_tier, "resolution_hours", 24) or 24
-                )
-                tracker.current_tier = target_tier
-                tracker.current_tier_started_at = now
-                tracker.escalated_at = now
-                tracker.escalation_reason = "Response/resolution overdue"
-                tracker.due_at = _working_due_naive(self.db, now, response_hrs)
-                tracker.due_at_resolution = _working_due_naive(self.db, now, resolution_hrs)
-                tracker.assigned_to_id = assignee["id"]
-                tracker.assigned_to = (
-                    str(assignee.get("respond_user_id"))
-                    if assignee.get("respond_user_id")
-                    else None
-                )
-                self.db.flush()
-
-                # event log + notification
-                self._write_event_log(
-                    tracker_id=str(tracker.id),
-                    event_type="escalation",
-                    from_tier=target_tier - 1,
-                    to_tier=target_tier,
-                    reason="Response/resolution overdue",
-                    assigned_to_id=assignee["id"],
-                    due_at=tracker.due_at,
-                )
-                self._notify_assignee(
+                self._escalate_tracker(
                     tracker,
-                    kind="escalated",
-                    reason="Response or resolution overdue",
+                    trigger="auto",
+                    reason="Response/resolution overdue",
+                    now=now,
                 )
                 escalated_count += 1
+            except FormEscalationBlocked:
+                # No next tier / no resolvable assignee — auto-scan skips silently.
+                skipped_count += 1
             except Exception as e:
                 logger.exception(
                     "Form SLA escalation failed for tracker %s: %s", tracker.id, e
@@ -354,6 +301,113 @@ class FormSLAOrchestrator:
             "escalated": escalated_count,
             "skipped": skipped_count,
         }
+
+    def _escalate_tracker(
+        self,
+        tracker: ConversationSLATracking,
+        *,
+        trigger: str,
+        reason: str,
+        triggered_by_id: Optional[str] = None,
+        now: Optional[datetime] = None,
+    ) -> dict:
+        """Advance a form-SLA tracker to the next tier. Shared by the overdue scan
+        (trigger='auto') and the manual endpoint (trigger='manual'). Raises
+        FormEscalationBlocked when there is no next tier or no resolvable assignee.
+        """
+        from app.services.user_service import AccessAgentService
+
+        now = now or _utc_naive_now()
+        target_tier = int(tracker.current_tier or 1) + 1
+        next_tier = (
+            self.db.query(SLAPolicyTier)
+            .filter(
+                SLAPolicyTier.policy_id == tracker.policy_id,
+                SLAPolicyTier.tier_level == target_tier,
+            )
+            .first()
+        )
+        if not next_tier:
+            raise FormEscalationBlocked("top_tier", "Already at the highest tier; cannot escalate further.")
+
+        agent_id = str(tracker.agent_id) if tracker.agent_id is not None else None
+        if not agent_id:
+            raise FormEscalationBlocked("no_agent", "Tracker has no agent; cannot resolve an escalation team.")
+        agent_svc = AccessAgentService(self.db)
+        team_id = agent_svc.get_team_id_by_tier(agent_id, target_tier, team_set_code=tracker.team_set_code)
+        if not team_id:
+            raise FormEscalationBlocked("no_team", f"No tier-{target_tier} team configured for this policy.")
+        assignee = agent_svc.get_next_assignee(agent_id, team_id)
+        if not assignee:
+            raise FormEscalationBlocked("no_assignee", f"No available assignee for tier {target_tier}.")
+
+        response_hrs = float(getattr(next_tier, "response_hours", 24) or 24)
+        resolution_hrs = float(getattr(next_tier, "resolution_hours", 24) or 24)
+        tracker.current_tier = target_tier
+        tracker.current_tier_started_at = now
+        tracker.escalated_at = now
+        tracker.escalation_reason = reason
+        tracker.due_at = _working_due_naive(self.db, now, response_hrs)
+        tracker.due_at_resolution = _working_due_naive(self.db, now, resolution_hrs)
+        tracker.assigned_to_id = assignee["id"]
+        tracker.assigned_to = (
+            str(assignee.get("respond_user_id")) if assignee.get("respond_user_id") else None
+        )
+        self.db.flush()
+
+        self._write_event_log(
+            tracker_id=str(tracker.id),
+            event_type="escalation",
+            from_tier=target_tier - 1,
+            to_tier=target_tier,
+            reason=reason,
+            assigned_to_id=assignee["id"],
+            due_at=tracker.due_at,
+            trigger=trigger,
+            triggered_by_id=triggered_by_id,
+        )
+        self._notify_assignee(tracker, kind="escalated", reason=reason)
+        return assignee
+
+    def escalate_form_tracking(
+        self,
+        tracking_id: str,
+        *,
+        reason: str,
+        actor_user_id: Optional[str] = None,
+    ) -> ConversationSLATracking:
+        """Manually force-escalate a form-SLA tracker to the next tier, pre-breach.
+
+        Raises LookupError if the row is missing; FormEscalationBlocked for
+        not-a-form / resolved / top-tier / no-assignee (router maps to 422).
+        """
+        tracker = (
+            self.db.query(ConversationSLATracking)
+            .filter(ConversationSLATracking.id == str(tracking_id))
+            .first()
+        )
+        if tracker is None:
+            raise LookupError("SLA tracking not found.")
+        if str(tracker.source_entity_type or "") not in FORM_SLA_TYPES:
+            raise FormEscalationBlocked("not_form", "This tracking row is not a form SLA stage.")
+        if bool(tracker.is_resolved):
+            raise FormEscalationBlocked("resolved", "SLA is already resolved; cannot escalate.")
+
+        reason_text = f"manual: {reason}" if reason else "manual escalation"
+        self._escalate_tracker(
+            tracker,
+            trigger="manual",
+            reason=reason_text,
+            triggered_by_id=actor_user_id,
+        )
+        try:
+            self.db.commit()
+            self.db.refresh(tracker)
+        except Exception as e:
+            self.db.rollback()
+            logger.exception("Commit failed after manual form SLA escalation: %s", e)
+            raise
+        return tracker
 
     # ---------------- internals ----------------
 
@@ -664,6 +718,9 @@ class FormSLAOrchestrator:
             body = f"{type_label.capitalize()} {number} status updated.\n\nOpen: {full_link}"
 
         try:
+            # Escalation + new assignment are WhatsApp-eligible (TCK-29); the
+            # service gates on the recipient's notify_whatsapp + linked contact.
+            whatsapp_eligible = kind in ("escalated", "assigned")
             NotificationService(self.db).create_with_channel_preferences(
                 user_id=str(tracker.assigned_to_id),
                 type="form_sla",
@@ -681,6 +738,7 @@ class FormSLAOrchestrator:
                 send_in_app=True,
                 send_email=True,
                 send_web_push=False,
+                send_whatsapp=whatsapp_eligible,
             )
         except Exception as e:
             logger.warning(
@@ -699,6 +757,8 @@ class FormSLAOrchestrator:
         reason: Optional[str] = None,
         assigned_to_id: Optional[str] = None,
         due_at: Optional[datetime] = None,
+        trigger: Optional[str] = None,
+        triggered_by_id: Optional[str] = None,
     ) -> None:
         from app.schemas.sla import ConversationSLAEventLogCreate
         from app.services.sla_service import ConversationSLATrackingService
@@ -714,6 +774,8 @@ class FormSLAOrchestrator:
                     reason=reason,
                     assigned_to_id=assigned_to_id,
                     due_at=due_at,
+                    trigger=trigger,
+                    triggered_by_id=triggered_by_id,
                 )
             )
         except Exception as e:

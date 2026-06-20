@@ -40,6 +40,15 @@ export interface User {
   tier?: number | null;
   dailySlaSummarySubscribed?: boolean | null;
   daily_sla_summary_subscribed?: boolean | null;
+  /** Linked WhatsApp contact (resolves respond_io_id for outbound WhatsApp). */
+  respondContactId?: string | null;
+  respond_contact_id?: string | null;
+  /** Escalation + assignment WhatsApp pings. */
+  notifyWhatsapp?: boolean | null;
+  notify_whatsapp?: boolean | null;
+  /** Daily SLA summary WhatsApp template. */
+  notifyWhatsappSummary?: boolean | null;
+  notify_whatsapp_summary?: boolean | null;
   roles?: UserRoleSimple[];
   role?: UserRole;
   sessions?: Session[];
