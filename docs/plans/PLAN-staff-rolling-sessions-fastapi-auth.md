@@ -1,7 +1,7 @@
 # PLAN — Staff rolling sessions + FastAPI-owned auth (remove Prisma)
 
-**Status:** Design locked (grill complete). Not started.
-**Branch (proposed):** `feature/staff-rolling-sessions-fastapi-auth`
+**Status:** Implemented on `feature/staff-rolling-sessions-fastapi-auth` (worktree). Backend + FE + tests written, green locally (pytest sessions 14/14, vitest devices 6/6, tsc 0 errors). PENDING on return: `alembic upgrade head` (migration 237), `npm install --force` + FE rebuild, browser E2E + a Playwright spec. Hard cutover — all staff re-login once on deploy.
+**Branch:** `feature/staff-rolling-sessions-fastapi-auth`
 **Owner:** jayson
 
 ## Problem
