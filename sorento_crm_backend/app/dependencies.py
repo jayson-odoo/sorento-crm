@@ -8,6 +8,12 @@ from typing import Optional, List
 from app.database import get_db
 from app.config import settings
 from app.services.user_service import UserPermissionService
+from app.services.user_session_service import (
+    resolve_session,
+    SessionAuthError,
+    REASON_INVALID,
+    REASON_REVOKED,
+)
 
 # OAuth2 scheme for JWT token extraction
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
@@ -67,6 +73,42 @@ def _load_user_dict_from_db(db: Session, user_id: str) -> Optional[dict]:
         "status": row.status,
         "role_name": role_slug[0] if role_slug else None,
     }
+
+
+def _resolve_session_to_user(token: str, request: Request, db: Session) -> dict:
+    """Resolve an opaque staff session token to a user dict, sliding the session.
+
+    Replaces the old stateless ``_decode_jwt_user``: the DB row is the source of
+    truth, so revocation/expiry are instant and role/status changes apply on the
+    next request. Raises HTTPException(401, {code, message}) with a specific reason
+    code so the FE api-client can sign the user out on session_revoked/expired/invalid
+    (but not on RBAC 403s or incidental errors).
+    """
+    ip = request.client.host if request.client else None
+    try:
+        session_row = resolve_session(db, token, ip_address=ip)
+    except SessionAuthError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": e.reason, "message": e.detail},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = _load_user_dict_from_db(db, str(session_row.user_id))
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": REASON_INVALID, "message": "User not found"},
+        )
+    if str(user.get("status") or "") != "ACTIVE":
+        # Blocked/disabled mid-session → boot immediately (no need to wait for revoke).
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": REASON_REVOKED, "message": "Account is not active"},
+        )
+    # Expose the current session for "this device" / revoke-others / logout.
+    request.state.session_id = str(session_row.id)
+    request.state.session_token = token
+    return user
 
 
 def _maybe_apply_impersonation(
@@ -175,7 +217,7 @@ async def get_current_user(
         )
     
     try:
-        real_user = _decode_jwt_user(token)
+        real_user = _resolve_session_to_user(token, request, db)
         from app.audit_context import set_audit_context
         ip = request.client.host if request.client else None
         # Audit context always uses the *real* user id, even when impersonating.
@@ -222,7 +264,7 @@ async def get_current_user_optional(
     if not token:
         return None
     try:
-        real_user = _decode_jwt_user(token)
+        real_user = _resolve_session_to_user(token, request, db)
     except Exception:
         return None
     try:
@@ -244,8 +286,9 @@ def get_api_key(
 async def get_real_user(
     request: Request,
     token: Optional[str] = Depends(oauth2_scheme),
+    db: Session = Depends(get_db),
 ) -> dict:
-    """Like get_current_user but always returns the JWT-decoded user, ignoring any
+    """Like get_current_user but always returns the session-resolved user, ignoring any
     X-Impersonate-User-Id header. Use for impersonation start/stop endpoints so
     an impersonated session cannot end its own impersonation.
     """
@@ -257,20 +300,12 @@ async def get_real_user(
             detail="Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    try:
-        real_user = _decode_jwt_user(token)
-        from app.audit_context import set_audit_context
-        ip = request.client.host if request.client else None
-        set_audit_context(real_user["id"], ip)
-        request.state.real_user = real_user
-        return real_user
-    except HTTPException:
-        raise
-    except JWTError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {str(e)}",
-        )
+    real_user = _resolve_session_to_user(token, request, db)
+    from app.audit_context import set_audit_context
+    ip = request.client.host if request.client else None
+    set_audit_context(real_user["id"], ip)
+    request.state.real_user = real_user
+    return real_user
 
 
 def require_permission(permission_slug: str):
@@ -594,7 +629,7 @@ def get_current_user_or_api_key(
         )
     
     try:
-        real_user = _decode_jwt_user(token)
+        real_user = _resolve_session_to_user(token, request, db)
         from app.audit_context import set_audit_context
         ip = request.client.host if request.client else None
         set_audit_context(real_user["id"], ip)
