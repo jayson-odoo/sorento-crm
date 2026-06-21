@@ -50,6 +50,14 @@ PARAM_VARIABLES = (
     "resolved_last_24h",
 )
 
+# Use cases whose template MUST map a slot to a specific variable, or the message
+# loses its whole point. portal_otp without ``otp_code`` mapped renders a login
+# message with no code — locking users out — yet would otherwise pass the
+# "every slot mapped to *something*" check. Enforced in set_default.
+REQUIRED_PARAM_VARIABLE: Dict[str, str] = {
+    "portal_otp": "otp_code",
+}
+
 _PARAM_RE = re.compile(r"\{\{(\d+)\}\}")
 
 
@@ -348,6 +356,15 @@ def set_default(
     # Drop mapping entries beyond the template's params (stale keys from a
     # previously-selected template).
     mapping = {k: v for k, v in mapping.items() if k in needed}
+
+    # Some use cases must carry a specific variable (e.g. OTP must contain the
+    # code). Checked after the trim so a slot beyond the body's params doesn't
+    # count. Covers both the in-window render and the closed-window template.
+    required_var = REQUIRED_PARAM_VARIABLE.get(use_case)
+    if required_var and required_var not in mapping.values():
+        raise handle_validation_error(
+            f"The '{use_case}' template must map a parameter to '{required_var}'."
+        )
 
     row = (
         db.query(RespondTemplateDefault)

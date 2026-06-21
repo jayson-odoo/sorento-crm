@@ -214,6 +214,32 @@ def test_set_default_rejects_unknown_variable(db, workspace):
         )
 
 
+def test_set_default_portal_otp_requires_otp_code(db, workspace):
+    # OTP template that covers every slot but never maps the code → rejected,
+    # else a misconfigured OTP would ship a login message with no code.
+    from app.services import respond_template_service as svc
+    from app.services.error_handler import AppException
+
+    _, tpl = _seed_channel_with_template(db)
+    with pytest.raises(AppException):
+        svc.set_default(
+            db, "portal_otp", template_id=str(tpl.id),
+            param_mapping={"1": "contact_name", "2": "message"},
+        )
+
+
+def test_set_default_portal_otp_accepts_when_code_mapped(db, workspace):
+    from app.services import respond_template_service as svc
+
+    _, tpl = _seed_channel_with_template(db)
+    out = svc.set_default(
+        db, "portal_otp", template_id=str(tpl.id),
+        param_mapping={"1": "otp_code", "2": "message"},
+    )
+    assert out["is_valid"] is True
+    assert "otp_code" in out["param_mapping"].values()
+
+
 def test_set_default_happy_path_and_is_valid(db, workspace):
     from app.services import respond_template_service as svc
 
