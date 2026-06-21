@@ -122,6 +122,10 @@ def run_product_discontinued_check(db: Session, task: Any = None) -> dict:
         # create_with_channel_preferences committing internally, so the except
         # rollback only discards the failing iteration's own partial flush.)
         try:
+            # contact_name is the RECIPIENT (this batch goes to staff, not a contact),
+            # so it varies per subscriber — merge it onto the shared context here.
+            recipient_name = (user.name or user.email or "there").strip() or "there"
+            user_context_vars = {**context_vars, "contact_name": recipient_name}
             notifier.create_with_channel_preferences(
                 user_id=user.id,
                 type=NOTIFY_TYPE,
@@ -133,7 +137,7 @@ def run_product_discontinued_check(db: Session, task: Any = None) -> dict:
                     "discontinued_link": link,
                     "whatsapp_use_case": NOTIFY_TYPE,
                     "whatsapp_text": wa_text,
-                    "whatsapp_context_vars": context_vars,
+                    "whatsapp_context_vars": user_context_vars,
                 },
                 source_entity_type=SOURCE_ENTITY_TYPE,
                 source_entity_id=batch_id,
