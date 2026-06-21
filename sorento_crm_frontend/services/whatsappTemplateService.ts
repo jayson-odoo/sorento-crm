@@ -81,7 +81,8 @@ export type ParamVariable =
   | 'today_date'
   | 'system_url'
   | 'respond_due_at'
-  | 'resolve_due_at';
+  | 'resolve_due_at'
+  | 'form_url';
 
 export interface WhatsAppTemplate {
   id: string;
@@ -193,6 +194,7 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'system_url', label: 'System URL', description: 'CRM base URL (e.g. https://fe-sorento.foundryx.my)' },
   { key: 'respond_due_at', label: 'Respond by', description: 'SLA response deadline (KL wall time)' },
   { key: 'resolve_due_at', label: 'Resolve by', description: 'SLA resolution deadline (KL wall time)' },
+  { key: 'form_url', label: 'Form link', description: 'Opens the form record (or the Respond inbox for ticket/conversation) — same as clicking the task' },
 ];
 
 

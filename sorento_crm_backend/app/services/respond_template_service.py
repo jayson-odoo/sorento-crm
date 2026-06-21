@@ -60,6 +60,9 @@ PARAM_VARIABLES = (
     # SLA assignment / escalation deadlines (KL wall time) — "Respond by" / "Resolve by".
     "respond_due_at",
     "resolve_due_at",
+    # SLA assignment / escalation destination link: the form record for routed types,
+    # or the Respond inbox for ticket / conversation — same target as clicking the task.
+    "form_url",
 )
 
 # Use cases whose template MUST map a slot to a specific variable, or the message

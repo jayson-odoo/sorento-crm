@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -19,9 +19,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useConversationSLATrackingDetail, useConversationSLATracking, useDeleteConversationSLATracking, useSyncAssigneeFromRespond, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
+import { escalateConversationSLATracking } from '../services/conversationSLATrackingService';
 import { formatDate, formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
-import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound, Info, Settings, ExternalLink, CalendarClock, UserCog, MessageSquare } from 'lucide-react';
+import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound, Info, Settings, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   Popover,
@@ -111,12 +112,31 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
   const deleteMutation = useDeleteConversationSLATracking();
   const syncAssigneeMutation = useSyncAssigneeFromRespond();
   const testOverrideMutation = useConversationSLATestOverrides(trackingId);
+  const escalateMutation = useMutation({
+    mutationFn: (reason: string) => escalateConversationSLATracking(trackingId, reason),
+    onSuccess: () => {
+      toast.success('Escalated to the next tier.');
+      setEscalateDialogOpen(false);
+      setEscalateReason('');
+      queryClient.invalidateQueries({
+        queryKey: ['conversation-sla-tracking-detail', trackingId],
+        refetchType: 'active',
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['conversation-sla-event-logs', trackingId],
+        refetchType: 'active',
+      });
+    },
+    onError: (e: Error) => toast.error(e.message || 'Failed to escalate'),
+  });
 
   const [assigneeDialogOpen, setAssigneeDialogOpen] = useState(false);
   const [tierStartedDialogOpen, setTierStartedDialogOpen] = useState(false);
   const [initiatedDialogOpen, setInitiatedDialogOpen] = useState(false);
   const [markRespondedDialogOpen, setMarkRespondedDialogOpen] = useState(false);
   const [markResolvedDialogOpen, setMarkResolvedDialogOpen] = useState(false);
+  const [escalateDialogOpen, setEscalateDialogOpen] = useState(false);
+  const [escalateReason, setEscalateReason] = useState('');
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const [assigneeComboOpen, setAssigneeComboOpen] = useState(false);
   const [selectedAssigneeId, setSelectedAssigneeId] = useState('');
@@ -370,6 +390,17 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
                   variant="menu-item"
                 />
               )}
+              {!tracking.is_resolved && (tracking.current_tier ?? 1) < 3 && (
+                <DropdownMenuItem
+                  onSelect={() => {
+                    setEscalateReason('');
+                    setEscalateDialogOpen(true);
+                  }}
+                >
+                  <TrendingUp className="size-4 mr-2" />
+                  Escalate
+                </DropdownMenuItem>
+              )}
               {canSlaTestOverride && (
                 <>
                   <DropdownMenuSeparator />
@@ -592,6 +623,60 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={escalateDialogOpen}
+        onOpenChange={(o) => {
+          if (!o) {
+            setEscalateDialogOpen(false);
+            setEscalateReason('');
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Escalate to tier {(tracking.current_tier ?? 1) + 1}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-1">
+            <Label htmlFor="convo-escalate-reason">Reason</Label>
+            <Input
+              id="convo-escalate-reason"
+              placeholder="Why escalate now?"
+              value={escalateReason}
+              onChange={(e) => setEscalateReason(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && escalateReason.trim() && !escalateMutation.isPending) {
+                  e.preventDefault();
+                  escalateMutation.mutate(escalateReason.trim());
+                }
+              }}
+              autoFocus
+            />
+            <p className="text-xs text-muted-foreground">
+              Moves this conversation to the next tier and reassigns per policy. The new assignee is
+              notified.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEscalateDialogOpen(false);
+                setEscalateReason('');
+              }}
+              disabled={escalateMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => escalateMutation.mutate(escalateReason.trim())}
+              disabled={escalateMutation.isPending || !escalateReason.trim()}
+            >
+              {escalateMutation.isPending ? 'Escalating…' : 'Escalate'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog open={markResolvedDialogOpen} onOpenChange={setMarkResolvedDialogOpen}>
         <AlertDialogContent>

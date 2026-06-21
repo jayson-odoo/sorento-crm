@@ -30,9 +30,10 @@ def _call(reason, tracking, *, assignee=None, escalated=None):
         "name": "Tier 2",
     }
     svc.escalate_tracking.return_value = escalated or tracking
+    notify = MagicMock()
     with patch.object(mod, "ConversationSLATrackingService", return_value=svc), patch.object(
         mod, "build_conversation_sla_tracking_response", return_value={"ok": True}
-    ):
+    ), patch.object(mod, "_notify_conversation_sla_escalation", notify):
         result = asyncio.run(
             escalate_conversation_sla_tracking(
                 tracking_id="t1",
@@ -41,7 +42,7 @@ def _call(reason, tracking, *, assignee=None, escalated=None):
                 db=MagicMock(),
             )
         )
-    return result, svc
+    return result, svc, notify
 
 
 def _tracking(**over):
@@ -91,8 +92,10 @@ def test_missing_contact_rejected():
 
 
 def test_happy_path_escalates_to_next_tier_with_manual_reason():
-    result, svc = _call("Customer angry", _tracking(current_tier=1))
+    result, svc, notify = _call("Customer angry", _tracking(current_tier=1))
     assert result == {"ok": True}
+    # New assignee is notified (same as form-SLA escalation).
+    notify.assert_called_once()
     # Assignee resolved for the TARGET tier (current + 1).
     svc.get_escalation_assignee_for_tier.assert_called_once()
     assert svc.get_escalation_assignee_for_tier.call_args.args[1] == 2

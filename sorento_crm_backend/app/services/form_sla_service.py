@@ -797,6 +797,24 @@ class FormSLAOrchestrator:
         _contact_name = (
             (_assignee.name or _assignee.email or "there") if _assignee else "there"
         )
+        # Destination link mirroring the pending-tasks row click: routed form types open
+        # their in-system record; others (e.g. ticket) open the Respond conversation.
+        # _FE_RECORD_ROUTES must match MyPendingSLAWidget.ENTITY_ROUTES.
+        _FE_RECORD_ROUTES = {"stock_inquiry", "complaint", "purchase_request", "sponsorship_form"}
+        if s_type in _FE_RECORD_ROUTES:
+            form_url = full_link
+        else:
+            from app.services.respond_identifier import format_respond_inbox_url
+
+            _rio = getattr(getattr(tracker, "contact", None), "respond_io_id", None)
+            form_url = (
+                format_respond_inbox_url(
+                    getattr(_settings, "respond_app_base_url", None),
+                    getattr(_settings, "respond_space_id", None),
+                    str(_rio) if _rio else None,
+                )
+                or full_link
+            )
 
         if kind == "assigned":
             title = f"New SLA assignment: {number}"
@@ -850,6 +868,7 @@ class FormSLAOrchestrator:
                         "resolve_due_at": resolve_due_str or "",
                         "today_date": _today_date,
                         "system_url": _base_url,
+                        "form_url": form_url,
                         "portal_url": full_link,
                         "message": body,
                     },

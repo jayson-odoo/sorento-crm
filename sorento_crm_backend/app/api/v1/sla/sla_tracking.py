@@ -282,6 +282,86 @@ class _ConversationEscalateRequest(BaseModel):
     reason: str
 
 
+def _notify_conversation_sla_escalation(db, tracking, assignee: dict, reason: str) -> None:
+    """Notify the new assignee of a manual conversation-SLA escalation.
+
+    Mirrors form-SLA escalation (`form_sla_service._notify_assignee`): in-app always,
+    email/WhatsApp gated by the per-event escalation toggles. The "form_url" deep link
+    is the Respond inbox (or the SLA detail when no contact). Best-effort — never raises.
+    """
+    import logging
+    from datetime import datetime, timezone, timedelta
+
+    log = logging.getLogger(__name__)
+    try:
+        from app.config import settings
+        from app.services.notification_service import NotificationService
+        from app.services.respond_identifier import format_respond_inbox_url
+        from app.services.form_sla_service import _fmt_due
+
+        user_id = str(assignee.get("id") or "")
+        if not user_id:
+            return
+        staff_name = (assignee.get("name") or "there").strip() or "there"
+        base_url = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+        rio = getattr(getattr(tracking, "contact", None), "respond_io_id", None)
+        inbox = format_respond_inbox_url(
+            getattr(settings, "respond_app_base_url", None),
+            getattr(settings, "respond_space_id", None),
+            str(rio) if rio else None,
+        )
+        detail = (
+            f"{base_url}/sla-management/conversation-sla-tracking/{tracking.id}"
+            if base_url
+            else ""
+        )
+        link = inbox or detail
+        respond_due = _fmt_due(getattr(tracking, "due_at", None))
+        resolve_due = _fmt_due(getattr(tracking, "due_at_resolution", None))
+        today_date = datetime.now(timezone(timedelta(hours=8))).strftime("%d/%m/%Y")
+        new_tier = int(getattr(tracking, "current_tier", 0) or 0)
+
+        title = "Conversation SLA escalated to you"
+        body = f"A conversation SLA (tier {new_tier}) has been escalated to you. Reason: {reason}."
+        if respond_due:
+            body += f" Respond by {respond_due}."
+        if link:
+            body += f"\n\nOpen: {link}"
+
+        NotificationService(db).create_with_channel_preferences(
+            user_id=user_id,
+            type="conversation_sla",
+            title=title,
+            body=body,
+            data={
+                "tracking_id": str(tracking.id),
+                "whatsapp_use_case": "sla_escalation",
+                "whatsapp_text": body,
+                "whatsapp_context_vars": {
+                    "contact_name": staff_name,
+                    "reason": reason,
+                    "respond_due_at": respond_due or "",
+                    "resolve_due_at": resolve_due or "",
+                    "today_date": today_date,
+                    "system_url": base_url,
+                    "form_url": link,
+                    "portal_url": link,
+                    "message": body,
+                },
+            },
+            source_entity_type="conversation_sla_tracking",
+            source_entity_id=str(tracking.id),
+            event_type="escalated",
+            send_in_app=True,
+            send_email=True,
+            send_whatsapp=True,
+            email_pref_attr="notify_email_on_escalation",
+            whatsapp_pref_attr="notify_whatsapp_on_escalation",
+        )
+    except Exception as e:  # noqa: BLE001 — best-effort, escalation already committed
+        log.warning("conversation SLA escalate notify failed for %s: %s", getattr(tracking, "id", "?"), e)
+
+
 @router.post("/{tracking_id}/escalate")
 async def escalate_conversation_sla_tracking(
     tracking_id: str,
@@ -348,6 +428,11 @@ async def escalate_conversation_sla_tracking(
             else None
         ),
     )
+    # Notify the new assignee — same channels + per-event toggles as form-SLA
+    # escalation, so ALL escalations behave the same. Best-effort: the escalation
+    # already committed. NOT placed in escalate_tracking, since n8n's integration
+    # escalate posts its own notification (avoids double-notify).
+    _notify_conversation_sla_escalation(db, tracking, assignee, reason)
     return build_conversation_sla_tracking_response(db, tracking)
 
 
