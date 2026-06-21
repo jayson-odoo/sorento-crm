@@ -19,7 +19,7 @@ from app.schemas.auth import (
     VerifyResetTokenRequest, VerifyResetTokenResponse,
     SessionInfo, MessageResponse,
 )
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_actor_user_id
 from app.services import user_session_service
 from app.services.error_handler import handle_internal_error
 
@@ -425,9 +425,13 @@ def logout(request: Request, current_user: dict = Depends(get_current_user), db:
 
 @router.get("/sessions", response_model=list[SessionInfo])
 def list_sessions(request: Request, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> list[SessionInfo]:
-    """Active sessions for the signed-in user — the "your devices" list."""
+    """Active sessions for the signed-in user — the "your devices" list.
+
+    Keyed on the REAL user (not the impersonated target), so an admin browsing as
+    someone else still sees and manages their own devices.
+    """
     current_id = getattr(request.state, "session_id", None)
-    rows = user_session_service.list_active_sessions(db, str(current_user["id"]))
+    rows = user_session_service.list_active_sessions(db, get_actor_user_id(request, current_user))
     return [
         SessionInfo(
             id=str(r.id),
@@ -442,13 +446,13 @@ def list_sessions(request: Request, current_user: dict = Depends(get_current_use
 
 
 @router.delete("/sessions/{session_id}", response_model=MessageResponse)
-def revoke_one_session(session_id: str, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> MessageResponse:
-    """Revoke a single session — only if it belongs to the signed-in user."""
+def revoke_one_session(session_id: str, request: Request, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> MessageResponse:
+    """Revoke a single session — only if it belongs to the signed-in (real) user."""
     from app.models.user_session import UserSession
 
     row = (
         db.query(UserSession)
-        .filter(UserSession.id == session_id, UserSession.user_id == str(current_user["id"]))
+        .filter(UserSession.id == session_id, UserSession.user_id == get_actor_user_id(request, current_user))
         .first()
     )
     if row is None:
@@ -462,6 +466,6 @@ def revoke_other_sessions(request: Request, current_user: dict = Depends(get_cur
     """Log out every other device, keeping the current session alive."""
     current_id = getattr(request.state, "session_id", None)
     count = user_session_service.revoke_all_for_user(
-        db, str(current_user["id"]), except_session_id=str(current_id) if current_id else None
+        db, get_actor_user_id(request, current_user), except_session_id=str(current_id) if current_id else None
     )
     return MessageResponse(message="Signed out other devices.", count=count)
