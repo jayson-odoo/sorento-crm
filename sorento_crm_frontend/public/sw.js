@@ -21,8 +21,8 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'Sorento';
   const options = {
     body: data.body || '',
-    icon: '/favicon.ico',
-    badge: '/favicon.ico',
+    icon: '/sorento-app-logo.png',
+    badge: '/sorento-app-logo.png',
     data: data.data || {},
   };
   event.waitUntil(self.registration.showNotification(title, options));

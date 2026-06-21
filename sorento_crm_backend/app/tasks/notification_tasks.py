@@ -447,7 +447,7 @@ def _send_web_push_for_notification(
                 subscription_info=subscription_info,
                 data=payload,
                 vapid_private_key=vapid_private_key,
-                vapid_claims={"sub": "mailto:noreply@localhost"},
+                vapid_claims={"sub": os.environ.get("VAPID_SUBJECT", "mailto:noreply@localhost")},
             )
             sent_any = True
         except WebPushException as e:
