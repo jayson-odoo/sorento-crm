@@ -13,6 +13,9 @@ sorento_crm_backend/.next/*
 .env.test.local
 .env.production.local
 
+# Playwright MCP scratch (console logs, page snapshots)
+.playwright-mcp/
+
 # OS files
 .DS_Store
 
