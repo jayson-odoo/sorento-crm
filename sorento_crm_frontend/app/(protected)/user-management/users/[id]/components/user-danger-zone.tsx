@@ -3,8 +3,20 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { User } from '@/app/models/user';
+import { useForceLogoutUserMutation } from '@/hooks/useSessions';
 import UserDeleteDialog from './user-delete-dialog';
 import UserRestoreDialog from './user-restore-dialog';
 import UserPermanentDeleteDialog from './user-permanent-delete-dialog';
@@ -19,6 +31,7 @@ const UserDangerZone = ({
   const [isDeleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [isRestoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [isPermanentDeleteDialogOpen, setPermanentDeleteDialogOpen] = useState(false);
+  const forceLogout = useForceLogoutUserMutation();
 
   // Render skeleton when loading
   const Loading = () => (
@@ -38,6 +51,37 @@ const UserDangerZone = ({
   const DeleteContent = () => (
     <div className="space-y-3">
       <h2 className="font-semibold text-destructive">Danger Zone</h2>
+      <Card>
+        <CardContent>
+          <h3 className="font-semibold mb-3">Sign out everywhere</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Revoke every active session for this user. They will be signed out of all devices
+            immediately and must log in again.
+          </p>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" disabled={forceLogout.isPending}>
+                {forceLogout.isPending ? 'Signing out…' : 'Sign out everywhere'}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Sign this user out of all devices?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  {user.name || user.email} will be signed out everywhere immediately. This cannot
+                  be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => forceLogout.mutate(user.id)}>
+                  Sign out everywhere
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </CardContent>
+      </Card>
       <Card>
         <CardContent>
           <h3 className="font-semibold mb-3">Trash user account</h3>
