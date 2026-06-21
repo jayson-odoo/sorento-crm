@@ -438,6 +438,7 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'KPI Dashboard',
         path: '/sla-management/kpi-dashboard',
+        permission: 'sla.kpi.view',
       },
     ],
   },
@@ -1249,6 +1250,7 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'KPI Dashboard',
         path: '/sla-management/kpi-dashboard',
+        permission: 'sla.kpi.view',
       },
     ],
   },

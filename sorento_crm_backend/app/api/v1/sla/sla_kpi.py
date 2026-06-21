@@ -68,6 +68,8 @@ async def kpi_tasks(
     date_to: Optional[str] = Query(None),
     entity_type: Optional[str] = Query(None),
     assignee_id: Optional[str] = Query(None),
+    view: str = Query("all", pattern="^(all|responded|resolved|pending|responded_open)$"),
+    state: str = Query("all", pattern="^(all|within|overdue)$"),
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=200),
     _user: dict = Depends(require_permission("sla.kpi.view")),
@@ -75,5 +77,6 @@ async def kpi_tasks(
 ):
     return kpi.kpi_tasks(
         db, scope=scope, date_from=date_from, date_to=date_to,
-        entity_type=entity_type, assignee_id=assignee_id, page=page, limit=limit,
+        entity_type=entity_type, assignee_id=assignee_id, view=view, state=state,
+        page=page, limit=limit,
     )

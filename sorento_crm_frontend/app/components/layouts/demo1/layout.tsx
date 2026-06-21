@@ -57,10 +57,13 @@ export function Demo1Layout({ children }: { children: ReactNode }) {
       <ImpersonationBanner />
       {!isMobile && <Sidebar />}
 
-      <div className="wrapper flex grow flex-col">
+      {/* min-w-0 lets the content column shrink below its content's intrinsic
+          width, so wide children (DataGrids, recharts) scroll/resize within their
+          own bounds instead of pushing the whole page wider than the viewport. */}
+      <div className="wrapper flex grow flex-col min-w-0">
         <Header />
 
-        <main className="grow pt-5" role="content">
+        <main className="grow pt-5 min-w-0" role="content">
           {children}
         </main>
 

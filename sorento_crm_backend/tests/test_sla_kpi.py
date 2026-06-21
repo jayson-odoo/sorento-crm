@@ -106,6 +106,57 @@ def test_scope_partition(db, seed):
     assert kpi.kpi_summary(db, scope="all")["opened"] == 3
 
 
+def test_stage_partition_is_mece(db, seed):
+    s = kpi.kpi_summary(db, scope="form")
+    # T1 resolved, T2 responded-not-resolved, no pending in form scope
+    assert s["stage_resolved"] == 1
+    assert s["stage_responded_open"] == 1
+    assert s["stage_pending"] == 0
+    # MECE: the three buckets are mutually exclusive and sum to the total (opened)
+    assert s["stage_pending"] + s["stage_responded_open"] + s["stage_resolved"] == s["opened"]
+    assert s["pct_stage_resolved"] == 50.0
+    assert s["pct_stage_responded_open"] == 50.0
+
+    # 'all' scope adds T3 (responded, not resolved -> responded_open bucket)
+    a = kpi.kpi_summary(db, scope="all")
+    assert a["stage_pending"] + a["stage_responded_open"] + a["stage_resolved"] == a["opened"] == 3
+    assert a["stage_responded_open"] == 2  # T2 + T3
+    assert a["stage_resolved"] == 1        # T1
+
+
+def test_timeliness_drilldown_subset_scoped(db, seed):
+    s = kpi.kpi_summary(db, scope="form")
+    # Responded subset (T1 on time, T2 late) -> within 1, overdue 1
+    assert s["responded"] == 2
+    assert s["responded_within"] == 1
+    assert s["responded_overdue"] == 1
+    assert s["responded_within"] + s["responded_overdue"] == s["responded"]  # MECE within subset
+    assert s["pct_responded_within"] == 50.0
+    # Resolved subset (only T1, on time) -> within 1, overdue 0
+    assert s["resolved"] == 1
+    assert s["resolved_within"] == 1
+    assert s["resolved_overdue"] == 0
+    assert s["pct_resolved_within"] == 100.0
+
+
+def test_open_work_at_risk_drilldown(db, seed):
+    s = kpi.kpi_summary(db, scope="form")
+    # Form open work: only T2 (responded, unresolved, resolution due in the past -> overdue)
+    assert s["stage_responded_open"] == 1
+    assert s["responded_open_overdue"] == 1
+    assert s["responded_open_within"] == 0
+    assert s["responded_open_within"] + s["responded_open_overdue"] == s["stage_responded_open"]
+    assert s["stage_pending"] == 0
+    assert s["pending_within"] == 0 and s["pending_overdue"] == 0
+
+    # 'all' adds T3 (responded, unresolved, NO resolution due -> on-track/within)
+    a = kpi.kpi_summary(db, scope="all")
+    assert a["stage_responded_open"] == 2  # T2 + T3
+    assert a["responded_open_overdue"] == 1  # T2
+    assert a["responded_open_within"] == 1   # T3 (null resolution due => within)
+    assert a["responded_open_within"] + a["responded_open_overdue"] == a["stage_responded_open"]
+
+
 def test_tasks_rows_and_trigger_split(db, seed):
     res = kpi.kpi_tasks(db, scope="form")
     assert res["total"] == 2
@@ -117,6 +168,23 @@ def test_tasks_rows_and_trigger_split(db, seed):
     assert by_id[seed["t2"]]["escalations_auto"] == 1
     # names resolved, no raw UUID leak in name field
     assert by_id[seed["t1"]]["assignee_name"] == "Alice"
+
+
+def test_tasks_view_state_filter_reconciles_with_cards(db, seed):
+    s = kpi.kpi_summary(db, scope="form")
+    # view=resolved -> the resolved subset; state filters within/overdue match card counts
+    assert kpi.kpi_tasks(db, scope="form", view="resolved")["total"] == s["resolved"]
+    assert kpi.kpi_tasks(db, scope="form", view="resolved", state="within")["total"] == s["resolved_within"]
+    assert kpi.kpi_tasks(db, scope="form", view="resolved", state="overdue")["total"] == s["resolved_overdue"]
+    # view=responded within/overdue
+    assert kpi.kpi_tasks(db, scope="form", view="responded")["total"] == s["responded"]
+    assert kpi.kpi_tasks(db, scope="form", view="responded", state="overdue")["total"] == s["responded_overdue"]
+    # open work: responded_open overdue list == card count
+    assert kpi.kpi_tasks(db, scope="form", view="responded_open", state="overdue")["total"] == s["responded_open_overdue"]
+    # all scope: pending list (none in seed) + responded_open within/overdue reconcile
+    a = kpi.kpi_summary(db, scope="all")
+    assert kpi.kpi_tasks(db, scope="all", view="responded_open", state="within")["total"] == a["responded_open_within"]
+    assert kpi.kpi_tasks(db, scope="all", view="pending")["total"] == a["stage_pending"]
 
 
 def test_leaderboard(db, seed):

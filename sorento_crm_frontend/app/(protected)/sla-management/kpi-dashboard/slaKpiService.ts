@@ -1,12 +1,34 @@
 import { apiFetch } from '@/lib/api';
+import { buildDataGridParams } from '@/lib/api-client';
+import type { PaginationState, SortingState } from '@tanstack/react-table';
 
 export type KpiScope = 'all' | 'conversation' | 'form';
+export type KpiView = 'all' | 'responded' | 'resolved' | 'pending' | 'responded_open';
+export type KpiState = 'all' | 'within' | 'overdue';
 
 export interface KpiSummary {
   scope: string;
   opened: number;
   responded: number;
   resolved: number;
+  stage_pending: number;
+  stage_responded_open: number;
+  stage_resolved: number;
+  pct_stage_pending: number | null;
+  pct_stage_responded_open: number | null;
+  pct_stage_resolved: number | null;
+  responded_within: number;
+  responded_overdue: number;
+  resolved_within: number;
+  resolved_overdue: number;
+  pct_responded_within: number | null;
+  pct_resolved_within: number | null;
+  pending_within: number;
+  pending_overdue: number;
+  responded_open_within: number;
+  responded_open_overdue: number;
+  pct_pending_within: number | null;
+  pct_responded_open_within: number | null;
   escalated: number;
   escalated_auto: number;
   escalated_manual: number;
@@ -37,6 +59,9 @@ export interface KpiTaskRow {
   source_entity_type: string | null;
   source_entity_id: string | null;
   current_tier: number;
+  current_tier_started_at: string | null;
+  response_due: string | null;
+  resolution_due: string | null;
   assignee_id: string | null;
   assignee_name: string;
   response_time_hours: number | null;
@@ -46,6 +71,12 @@ export interface KpiTaskRow {
   resolution_met: boolean;
   escalations_auto: number;
   escalations_manual: number;
+}
+
+export interface KpiTrendPoint {
+  bucket: string;
+  opened: number;
+  resolved: number;
 }
 
 const BASE = '/api/v1/sla-management/kpi';
@@ -68,12 +99,29 @@ export async function getKpiLeaderboard(scope: KpiScope): Promise<KpiLeaderRow[]
   return (await r.json()).data ?? [];
 }
 
+export async function getKpiTrend(scope: KpiScope): Promise<KpiTrendPoint[]> {
+  const r = await apiFetch(`${BASE}/trend?${qs(scope)}`);
+  if (!r.ok) throw new Error('Failed to load trend');
+  return (await r.json()).data ?? [];
+}
+
 export async function getKpiTasks(
   scope: KpiScope,
-  page = 1,
-  limit = 25,
+  pagination: PaginationState,
+  sorting: SortingState = [],
+  view: KpiView = 'all',
+  state: KpiState = 'all',
 ): Promise<{ data: KpiTaskRow[]; total: number }> {
-  const r = await apiFetch(`${BASE}/tasks?${qs(scope, { page, limit })}`);
+  const params = buildDataGridParams(
+    {
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery: '',
+    },
+    { scope, view, state },
+  );
+  const r = await apiFetch(`${BASE}/tasks?${params.toString()}`);
   if (!r.ok) throw new Error('Failed to load tasks');
   return r.json();
 }
