@@ -287,6 +287,8 @@ def run_user_sla_daily_summary(db: Session, task: ScheduledTask) -> dict[str, An
             data["whatsapp_context_vars"] = {
                 "contact_name": staff_name,
                 "summary_date": summary_date_label,
+                "today_date": summary_date_label,
+                "system_url": _frontend_base(),
                 "outstanding": str(outstanding_n),
                 # Kept for templates already mapping these; new template should use
                 # contact_name + summary_date + outstanding + portal_url.

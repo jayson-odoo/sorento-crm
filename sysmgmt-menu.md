@@ -1,0 +1,448 @@
+- generic [ref=e1]:
+  - alert [ref=e2]
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - link "Sorento" [ref=e5] [cursor=pointer]:
+        - /url: /
+        - img "Sorento" [ref=e7]
+      - button [ref=e8] [cursor=pointer]:
+        - img [ref=e9]
+    - menu [ref=e14]:
+      - heading "Dashboards" [level=3] [ref=e16]:
+        - button "Dashboards" [ref=e17] [cursor=pointer]:
+          - img
+          - generic [ref=e18]: Dashboards
+          - img
+      - text: User Apps
+      - heading "Quick Access" [level=3] [ref=e138]:
+        - button "Quick Access" [ref=e139] [cursor=pointer]:
+          - img
+          - generic [ref=e140]: Quick Access
+          - img
+      - heading "User Management" [level=3] [ref=e20]:
+        - button "User Management" [ref=e21] [cursor=pointer]:
+          - img
+          - generic [ref=e22]: User Management
+          - img
+      - heading "Delivery Order Management" [level=3] [ref=e187]:
+        - button "Delivery Order Management" [ref=e188] [cursor=pointer]:
+          - img
+          - generic [ref=e26]: Delivery Order Management
+          - img
+      - heading "Complaint Management" [level=3] [ref=e189]:
+        - button "Complaint Management" [ref=e190] [cursor=pointer]:
+          - img
+          - generic [ref=e30]: Complaint Management
+          - img
+      - heading "SLA Management" [level=3] [ref=e191]:
+        - button "SLA Management" [ref=e192] [cursor=pointer]:
+          - img
+          - generic [ref=e34]: SLA Management
+          - img
+      - heading "Product Management" [level=3] [ref=e193]:
+        - button "Product Management" [ref=e194] [cursor=pointer]:
+          - img
+          - generic [ref=e38]: Product Management
+          - img
+      - heading "Procurement" [level=3] [ref=e195]:
+        - button "Procurement" [ref=e196] [cursor=pointer]:
+          - img
+          - generic [ref=e42]: Procurement
+          - img
+      - heading "Inventory Management" [level=3] [ref=e197]:
+        - button "Inventory Management" [ref=e198] [cursor=pointer]:
+          - img
+          - generic [ref=e46]: Inventory Management
+          - img
+      - heading "Marketing Management" [level=3] [ref=e199]:
+        - button "Marketing Management" [ref=e200] [cursor=pointer]:
+          - img
+          - generic [ref=e50]: Marketing Management
+          - img
+      - heading "Forms Management" [level=3] [ref=e201]:
+        - button "Forms Management" [ref=e202] [cursor=pointer]:
+          - img
+          - generic [ref=e54]: Forms Management
+          - img
+      - heading "Workflow Forms" [level=3] [ref=e203]:
+        - button "Workflow Forms" [ref=e204] [cursor=pointer]:
+          - img
+          - generic [ref=e58]: Workflow Forms
+          - img
+      - heading "Resource Management" [level=3] [ref=e205]:
+        - button "Resource Management" [ref=e206] [cursor=pointer]:
+          - img
+          - generic [ref=e62]: Resource Management
+          - img
+      - generic [ref=e63]:
+        - heading "System Management" [level=3] [ref=e207]:
+          - button "System Management" [expanded] [active] [ref=e208] [cursor=pointer]:
+            - img
+            - generic [ref=e66]: System Management
+            - img
+        - region "System Management" [ref=e446]:
+          - menu [ref=e447]:
+            - group [ref=e448]:
+              - heading "App Store Add to Quick Access" [level=3] [ref=e450]:
+                - button "App Store Add to Quick Access" [ref=e451] [cursor=pointer]:
+                  - generic [ref=e452]:
+                    - link "App Store" [ref=e453]:
+                      - /url: /system-management/app-store
+                    - button "Add to Quick Access" [ref=e454]:
+                      - img
+              - heading "Module bundles Add to Quick Access" [level=3] [ref=e456]:
+                - button "Module bundles Add to Quick Access" [ref=e457] [cursor=pointer]:
+                  - generic [ref=e458]:
+                    - link "Module bundles" [ref=e459]:
+                      - /url: /system-management/app-store/bundles
+                    - button "Add to Quick Access" [ref=e460]:
+                      - img
+              - heading "Import Jobs Add to Quick Access" [level=3] [ref=e462]:
+                - button "Import Jobs Add to Quick Access" [ref=e463] [cursor=pointer]:
+                  - generic [ref=e464]:
+                    - link "Import Jobs" [ref=e465]:
+                      - /url: /system-management/import-jobs
+                    - button "Add to Quick Access" [ref=e466]:
+                      - img
+              - heading "Import Logs Add to Quick Access" [level=3] [ref=e468]:
+                - button "Import Logs Add to Quick Access" [ref=e469] [cursor=pointer]:
+                  - generic [ref=e470]:
+                    - link "Import Logs" [ref=e471]:
+                      - /url: /system-management/import-logs
+                    - button "Add to Quick Access" [ref=e472]:
+                      - img
+              - heading "Integration Logs Add to Quick Access" [level=3] [ref=e474]:
+                - button "Integration Logs Add to Quick Access" [ref=e475] [cursor=pointer]:
+                  - generic [ref=e476]:
+                    - link "Integration Logs" [ref=e477]:
+                      - /url: /integration-management/integration-logs
+                    - button "Add to Quick Access" [ref=e478]:
+                      - img
+              - heading "Scheduled Tasks Add to Quick Access" [level=3] [ref=e480]:
+                - button "Scheduled Tasks Add to Quick Access" [ref=e481] [cursor=pointer]:
+                  - generic [ref=e482]:
+                    - link "Scheduled Tasks" [ref=e483]:
+                      - /url: /system-management/scheduled-tasks
+                    - button "Add to Quick Access" [ref=e484]:
+                      - img
+              - heading "Outgoing Mails Add to Quick Access" [level=3] [ref=e486]:
+                - button "Outgoing Mails Add to Quick Access" [ref=e487] [cursor=pointer]:
+                  - generic [ref=e488]:
+                    - link "Outgoing Mails" [ref=e489]:
+                      - /url: /system-management/outgoing-mails
+                    - button "Add to Quick Access" [ref=e490]:
+                      - img
+              - heading "Email Outbox Add to Quick Access" [level=3] [ref=e492]:
+                - button "Email Outbox Add to Quick Access" [ref=e493] [cursor=pointer]:
+                  - generic [ref=e494]:
+                    - link "Email Outbox" [ref=e495]:
+                      - /url: /system-management/email-outbox
+                    - button "Add to Quick Access" [ref=e496]:
+                      - img
+              - heading "Email Event Configs Add to Quick Access" [level=3] [ref=e498]:
+                - button "Email Event Configs Add to Quick Access" [ref=e499] [cursor=pointer]:
+                  - generic [ref=e500]:
+                    - link "Email Event Configs" [ref=e501]:
+                      - /url: /system-management/email-event-configs
+                    - button "Add to Quick Access" [ref=e502]:
+                      - img
+              - heading "Email Templates Add to Quick Access" [level=3] [ref=e504]:
+                - button "Email Templates Add to Quick Access" [ref=e505] [cursor=pointer]:
+                  - generic [ref=e506]:
+                    - link "Email Templates" [ref=e507]:
+                      - /url: /system-management/email-templates
+                    - button "Add to Quick Access" [ref=e508]:
+                      - img
+              - heading "Automation Add to Quick Access" [level=3] [ref=e510]:
+                - button "Automation Add to Quick Access" [ref=e511] [cursor=pointer]:
+                  - generic [ref=e512]:
+                    - link "Automation" [ref=e513]:
+                      - /url: /system-management/automation
+                    - button "Add to Quick Access" [ref=e514]:
+                      - img
+              - heading "Work Calendar Add to Quick Access" [level=3] [ref=e516]:
+                - button "Work Calendar Add to Quick Access" [ref=e517] [cursor=pointer]:
+                  - generic [ref=e518]:
+                    - link "Work Calendar" [ref=e519]:
+                      - /url: /system-management/work-calendar
+                    - button "Add to Quick Access" [ref=e520]:
+                      - img
+              - heading "Running Numbers Add to Quick Access" [level=3] [ref=e522]:
+                - button "Running Numbers Add to Quick Access" [ref=e523] [cursor=pointer]:
+                  - generic [ref=e524]:
+                    - link "Running Numbers" [ref=e525]:
+                      - /url: /system-management/numbering-rules
+                    - button "Add to Quick Access" [ref=e526]:
+                      - img
+              - heading "Lookup Sets Add to Quick Access" [level=3] [ref=e528]:
+                - button "Lookup Sets Add to Quick Access" [ref=e529] [cursor=pointer]:
+                  - generic [ref=e530]:
+                    - link "Lookup Sets" [ref=e531]:
+                      - /url: /master-data-management/lookup-sets
+                    - button "Add to Quick Access" [ref=e532]:
+                      - img
+              - heading "Respond.io Workspaces Add to Quick Access" [level=3] [ref=e534]:
+                - button "Respond.io Workspaces Add to Quick Access" [ref=e535] [cursor=pointer]:
+                  - generic [ref=e536]:
+                    - link "Respond.io Workspaces" [ref=e537]:
+                      - /url: /system-management/respond-workspaces
+                    - button "Add to Quick Access" [ref=e538]:
+                      - img
+              - heading "AI Assistant" [level=3] [ref=e540]:
+                - button "AI Assistant" [ref=e541] [cursor=pointer]:
+                  - text: AI Assistant
+                  - img
+  - generic [ref=e75]:
+    - banner [ref=e76]:
+      - generic [ref=e77]:
+        - navigation "Main" [ref=e78]:
+          - list [ref=e80]:
+            - listitem [ref=e81]:
+              - link "Home" [ref=e82] [cursor=pointer]:
+                - /url: /
+            - listitem [ref=e83]:
+              - button "Profiles" [ref=e84] [cursor=pointer]:
+                - text: Profiles
+                - img [ref=e85]
+            - listitem [ref=e87]:
+              - button "My Account" [ref=e88] [cursor=pointer]:
+                - text: My Account
+                - img [ref=e89]
+            - listitem [ref=e91]:
+              - button "Network" [ref=e92] [cursor=pointer]:
+                - text: Network
+                - img [ref=e93]
+            - listitem [ref=e95]:
+              - button "Apps" [ref=e96] [cursor=pointer]:
+                - text: Apps
+                - img [ref=e97]
+        - generic [ref=e99]:
+          - button "Search menu... ⌘⇧K" [ref=e101] [cursor=pointer]:
+            - generic [ref=e102]:
+              - img [ref=e103]
+              - generic [ref=e106]: Search menu...
+            - generic "Cmd+Shift+K or Ctrl+Shift+K" [ref=e107]: ⌘⇧K
+          - button "Upload activity" [ref=e109] [cursor=pointer]:
+            - img [ref=e110]
+          - generic [ref=e113]:
+            - button [ref=e114] [cursor=pointer]:
+              - img [ref=e115]
+            - generic "54 unread notifications" [ref=e209]: "54"
+          - button [ref=e118] [cursor=pointer]:
+            - img [ref=e119]
+          - img "User avatar" [ref=e124] [cursor=pointer]
+    - main [ref=e125]:
+      - generic [ref=e210]:
+        - generic [ref=e212]:
+          - generic [ref=e213]:
+            - img [ref=e214]
+            - heading "My pending tasks" [level=2] [ref=e217]
+            - generic [ref=e218]: "23"
+          - list [ref=e219]:
+            - listitem [ref=e220]:
+              - 'link "Enquiries Tier 3 Responded Overdue: 07/04/2026, 00:57:04" [ref=e221] [cursor=pointer]':
+                - /url: /sla-management/conversation-sla-tracking/a86e257e-9d69-49ad-a5c9-65cf6040d15f
+                - generic [ref=e222]:
+                  - generic [ref=e223]:
+                    - paragraph [ref=e224]: Enquiries
+                    - paragraph [ref=e225]: Tier 3
+                  - generic [ref=e226]:
+                    - generic [ref=e227]: Responded
+                    - generic "07/04/2026, 00:57:04" [ref=e228]: "Overdue: 07/04/2026, 00:57:04"
+            - listitem [ref=e229]:
+              - 'link "ticket Tier 1 Responded Overdue: 13/05/2026, 01:41:12" [ref=e230] [cursor=pointer]':
+                - /url: /sla-management/conversation-sla-tracking/9dffe426-9d65-42f8-b509-8128cb1d698f
+                - generic [ref=e231]:
+                  - generic [ref=e232]:
+                    - paragraph [ref=e233]: ticket
+                    - paragraph [ref=e234]: Tier 1
+                  - generic [ref=e235]:
+                    - generic [ref=e236]: Responded
+                    - generic "13/05/2026, 01:41:12" [ref=e237]: "Overdue: 13/05/2026, 01:41:12"
+            - listitem [ref=e238]:
+              - 'link "ticket Tier 1 Responded Overdue: 13/05/2026, 01:42:28" [ref=e239] [cursor=pointer]':
+                - /url: /sla-management/conversation-sla-tracking/b66e00ba-43a5-4336-9c99-356dd0cd4822
+                - generic [ref=e240]:
+                  - generic [ref=e241]:
+                    - paragraph [ref=e242]: ticket
+                    - paragraph [ref=e243]: Tier 1
+                  - generic [ref=e244]:
+                    - generic [ref=e245]: Responded
+                    - generic "13/05/2026, 01:42:28" [ref=e246]: "Overdue: 13/05/2026, 01:42:28"
+            - listitem [ref=e247]:
+              - 'link "ticket Tier 1 Responded Overdue: 13/05/2026, 01:42:29" [ref=e248] [cursor=pointer]':
+                - /url: /sla-management/conversation-sla-tracking/9a6c3e6b-1b09-4036-a012-c93985693de9
+                - generic [ref=e249]:
+                  - generic [ref=e250]:
+                    - paragraph [ref=e251]: ticket
+                    - paragraph [ref=e252]: Tier 1
+                  - generic [ref=e253]:
+                    - generic [ref=e254]: Responded
+                    - generic "13/05/2026, 01:42:29" [ref=e255]: "Overdue: 13/05/2026, 01:42:29"
+            - listitem [ref=e256]:
+              - 'link "ticket Tier 1 Responded Overdue: 13/05/2026, 01:42:44" [ref=e257] [cursor=pointer]':
+                - /url: /sla-management/conversation-sla-tracking/165ad770-17e2-43d8-b5ae-b80d0c8fe21e
+                - generic [ref=e258]:
+                  - generic [ref=e259]:
+                    - paragraph [ref=e260]: ticket
+                    - paragraph [ref=e261]: Tier 1
+                  - generic [ref=e262]:
+                    - generic [ref=e263]: Responded
+                    - generic "13/05/2026, 01:42:44" [ref=e264]: "Overdue: 13/05/2026, 01:42:44"
+          - generic [ref=e265]:
+            - generic [ref=e266]: 1–5 of 23
+            - generic [ref=e267]:
+              - button "Previous page" [disabled]:
+                - img
+              - button "Next page" [ref=e268] [cursor=pointer]:
+                - img [ref=e269]
+        - generic [ref=e271]:
+          - generic [ref=e272]:
+            - heading "SLA Tracking Dashboard" [level=2] [ref=e273]
+            - button "Refresh Metrics" [ref=e274] [cursor=pointer]:
+              - img [ref=e275]
+              - text: Refresh Metrics
+          - generic [ref=e280]:
+            - generic [ref=e281]:
+              - heading "Total Conversations" [level=3] [ref=e283]
+              - generic [ref=e285]: "20"
+            - generic [ref=e286]:
+              - heading "Pending" [level=3] [ref=e288]
+              - generic [ref=e289]:
+                - generic [ref=e290]: "8"
+                - generic [ref=e291]: 40.0%
+            - generic [ref=e292]:
+              - heading "Responded" [level=3] [ref=e294]
+              - generic [ref=e295]:
+                - generic [ref=e296]: "12"
+                - generic [ref=e297]: 60.0%
+            - generic [ref=e298]:
+              - heading "Resolved" [level=3] [ref=e300]
+              - generic [ref=e301]:
+                - generic [ref=e302]: "10"
+                - generic [ref=e303]: 50.0%
+            - generic [ref=e304]:
+              - heading "Overdue at Response" [level=3] [ref=e306]
+              - generic [ref=e308]: "8"
+            - generic [ref=e309]:
+              - heading "Overdue at Resolution" [level=3] [ref=e311]
+              - generic [ref=e313]: "10"
+            - generic [ref=e314]:
+              - heading "Average Response Time" [level=3] [ref=e316]
+              - generic [ref=e318]: 0.0h
+            - generic [ref=e319]:
+              - heading "Average Resolution Time" [level=3] [ref=e321]
+              - generic [ref=e323]: 0.0h
+          - generic [ref=e324]:
+            - generic [ref=e325]:
+              - heading "Response Time Trends (30 Days)" [level=3] [ref=e327]
+              - generic [ref=e330]:
+                - img [ref=e331]:
+                  - generic [ref=e334]:
+                    - generic "2.0h" [ref=e335]
+                    - generic "1.5h" [ref=e336]
+                    - generic "1.0h" [ref=e337]
+                    - generic "0.5h" [ref=e338]
+                    - generic "0.0h" [ref=e339]
+                  - generic [ref=e348]:
+                    - generic "06/05/2026" [ref=e349]
+                    - generic "08/05/2026" [ref=e350]
+                    - generic "10/05/2026" [ref=e351]
+                    - generic "12/05/2026" [ref=e352]
+                    - generic "14/05/2026" [ref=e353]
+                    - generic "16/05/2026" [ref=e354]
+                    - generic "18/05/2026" [ref=e355]
+                    - generic "20/05/2026" [ref=e356]
+                    - generic "22/05/2026" [ref=e357]
+                    - generic "24/05/2026" [ref=e358]
+                    - generic "26/05/2026" [ref=e359]
+                    - generic "28/05/2026" [ref=e360]
+                    - generic "30/05/2026" [ref=e361]
+                    - generic "01/06/2026" [ref=e362]
+                    - generic "03/06/2026" [ref=e363]
+                - generic [ref=e364]:
+                  - generic [ref=e365] [cursor=pointer]:
+                    - generic [ref=e366]:
+                      - img
+                    - generic [ref=e367]: Average Response Time (hours)
+                  - generic [ref=e368] [cursor=pointer]:
+                    - generic [ref=e369]:
+                      - img
+                    - generic [ref=e370]: Average Resolution Time (hours)
+                - generic: ● ●
+            - generic [ref=e371]:
+              - heading "Conversation Status Breakdown" [level=3] [ref=e373]
+              - generic [ref=e376]:
+                - img [ref=e377]:
+                  - generic [ref=e382]:
+                    - generic:
+                      - generic: 34.8%
+                    - generic:
+                      - generic: 21.7%
+                    - generic:
+                      - generic: 43.5%
+                - generic [ref=e389]:
+                  - generic [ref=e390] [cursor=pointer]:
+                    - generic [ref=e391]:
+                      - img
+                    - generic [ref=e392]: Pending
+                  - generic [ref=e393] [cursor=pointer]:
+                    - generic [ref=e394]:
+                      - img
+                    - generic [ref=e395]: Responded (Not Resolved)
+                  - generic [ref=e396] [cursor=pointer]:
+                    - generic [ref=e397]:
+                      - img
+                    - generic [ref=e398]: Resolved
+                - generic: ● ● ●
+            - generic [ref=e399]:
+              - heading "Pending Conversations Breakdown" [level=3] [ref=e401]
+              - generic [ref=e404]:
+                - img [ref=e405]:
+                  - generic [ref=e410]:
+                    - generic:
+                      - generic: 100.0%
+                - generic [ref=e413]:
+                  - generic [ref=e414] [cursor=pointer]:
+                    - generic [ref=e415]:
+                      - img
+                    - generic [ref=e416]: Pending Not Yet Overdue
+                  - generic [ref=e417] [cursor=pointer]:
+                    - generic [ref=e418]:
+                      - img
+                    - generic [ref=e419]: Overdue at Response
+                - generic: ● ●
+            - generic [ref=e420]:
+              - heading "Responded Conversation Breakdown" [level=3] [ref=e422]
+              - generic [ref=e425]:
+                - img [ref=e426]:
+                  - generic [ref=e431]:
+                    - generic:
+                      - generic: 100.0%
+                - generic [ref=e434]:
+                  - generic [ref=e435] [cursor=pointer]:
+                    - generic [ref=e436]:
+                      - img
+                    - generic [ref=e437]: Responded Not Yet Overdue
+                  - generic [ref=e438] [cursor=pointer]:
+                    - generic [ref=e439]:
+                      - img
+                    - generic [ref=e440]: Overdue at Resolution
+                - generic: ● ●
+    - contentinfo [ref=e126]:
+      - generic [ref=e128]:
+        - generic [ref=e130]: 2026 @ Foundryx
+        - navigation [ref=e131]:
+          - link "Docs" [ref=e132] [cursor=pointer]:
+            - /url: https://doc.foundryx.my/collection/sorento-crm-BOoUtlxxTH
+          - link "Purchase" [ref=e133] [cursor=pointer]:
+            - /url: https://1.envato.market/Vm7VRE
+          - link "FAQ" [ref=e134] [cursor=pointer]:
+            - /url: https://keenthemes.com/metronic
+          - link "Support" [ref=e135] [cursor=pointer]:
+            - /url: /ticket-management/tickets
+          - link "License" [ref=e136] [cursor=pointer]:
+            - /url: ""
+  - button "Open AI assistant" [ref=e442] [cursor=pointer]:
+    - img [ref=e443]
+  - region "Notifications alt+T"

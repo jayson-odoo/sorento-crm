@@ -25,6 +25,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.services.sla_service import MALAYSIA_TZ
 from app.models.product import Product
 from app.models.user import User
 from app.services.notification_service import NotificationService
@@ -86,9 +87,14 @@ def run_product_discontinued_check(db: Session, task: Any = None) -> dict:
         f"marked as discontinued. View the list: {link}"
     )
     wa_text = f"{count} product{_plural(count)} discontinued. View the list: {link}"
+    # Date the batch is reported, in Malaysia local time (DD/MM/YYYY) — matches the
+    # daily-summary label so templates can read "Discontinued summary at {{date}}".
+    today_date = datetime.now(MALAYSIA_TZ).strftime("%d/%m/%Y")
     context_vars = {
         "discontinued_count": str(count),
         "discontinued_link": link,
+        "today_date": today_date,
+        "system_url": _frontend_base(),
         # Aliased onto portal_url so templates can reuse the existing link slot.
         "portal_url": link,
         "message": wa_text,
