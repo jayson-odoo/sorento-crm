@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   AlertCircle,
@@ -10,11 +10,13 @@ import {
   ChevronRight,
   Clock,
   ExternalLink,
-  FileText,
+  TrendingUp,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,11 +27,20 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 const PAGE_SIZE = 5;
+const MAX_TIER = 3;
 import {
   getMyPendingSLA,
   resolveConversationSLATracking,
+  escalateConversationSLATracking,
   type MyPendingSLAItem,
 } from '../services/conversationSLATrackingService';
 
@@ -44,16 +55,30 @@ const ENTITY_ROUTES: Record<string, { base: string; label: string }> = {
   sponsorship_form: { base: '/procurement-management/purchase-requests', label: 'Sponsorship form' },
 };
 
-/** A row is a form-SLA task when it has a known source entity; otherwise it is a
- * conversation-SLA task handled in the Respond inbox. */
+/** Form-vs-conversation is decided by the backend (is_form_sla, from FORM_SLA_TYPES)
+ * — never re-derived here, or types the FE route map doesn't know (e.g. 'ticket')
+ * silently fall through to the conversation branch. */
 function isFormTask(item: MyPendingSLAItem): boolean {
-  return !!(item.source_entity_type && item.source_entity_id && ENTITY_ROUTES[item.source_entity_type]);
+  return item.is_form_sla;
 }
 
-function entityHref(item: MyPendingSLAItem): string {
+/** In-system record link when we have a known route for the form type; null when we
+ * don't (e.g. ticket — the row falls back to its Respond conversation / SLA detail). */
+function entityHref(item: MyPendingSLAItem): string | null {
   const route = ENTITY_ROUTES[item.source_entity_type ?? ''];
   if (route && item.source_entity_id) return `${route.base}/${item.source_entity_id}`;
-  return `/sla-management/conversation-sla-tracking/${item.id}`;
+  return null;
+}
+
+function humanizeType(item: MyPendingSLAItem): string {
+  const route = ENTITY_ROUTES[item.source_entity_type ?? ''];
+  if (route) return route.label;
+  if (item.is_form_sla && item.source_entity_type) {
+    return item.source_entity_type
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  return 'Enquiry';
 }
 
 function inboxUrl(item: MyPendingSLAItem): string | null {
@@ -68,11 +93,15 @@ function dueLabel(due: string | null): { text: string; overdue: boolean } {
 }
 
 export default function MyPendingSLAWidget() {
+  const router = useRouter();
   const [items, setItems] = useState<MyPendingSLAItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [resolveTarget, setResolveTarget] = useState<MyPendingSLAItem | null>(null);
   const [resolving, setResolving] = useState(false);
+  const [escalateTarget, setEscalateTarget] = useState<MyPendingSLAItem | null>(null);
+  const [escalateReason, setEscalateReason] = useState('');
+  const [escalating, setEscalating] = useState(false);
 
   const load = useCallback(() => {
     return getMyPendingSLA()
@@ -90,6 +119,28 @@ export default function MyPendingSLAWidget() {
     };
   }, []);
 
+  // Clicking a row performs its natural action: form rows open the in-system
+  // record, conversation rows open the Respond inbox (or the SLA detail when the
+  // contact has no resolvable Respond id).
+  const doRowAction = useCallback(
+    (item: MyPendingSLAItem) => {
+      // Form rows with a known record route open the record; otherwise (incl. ticket,
+      // and all conversation rows) open the Respond inbox, else the SLA detail.
+      const record = entityHref(item);
+      if (record) {
+        router.push(record);
+        return;
+      }
+      const url = inboxUrl(item);
+      if (url) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      router.push(`/sla-management/conversation-sla-tracking/${item.id}`);
+    },
+    [router],
+  );
+
   const handleResolve = async () => {
     if (!resolveTarget) return;
     setResolving(true);
@@ -102,6 +153,24 @@ export default function MyPendingSLAWidget() {
       toast.error(e instanceof Error ? e.message : 'Failed to resolve');
     } finally {
       setResolving(false);
+    }
+  };
+
+  const handleEscalate = async () => {
+    if (!escalateTarget) return;
+    const reason = escalateReason.trim();
+    if (!reason) return;
+    setEscalating(true);
+    try {
+      await escalateConversationSLATracking(escalateTarget.id, reason);
+      toast.success('Escalated to the next tier.');
+      setEscalateTarget(null);
+      setEscalateReason('');
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to escalate');
+    } finally {
+      setEscalating(false);
     }
   };
 
@@ -139,77 +208,85 @@ export default function MyPendingSLAWidget() {
             {pageItems.map((item) => {
               const form = isFormTask(item);
               const due = dueLabel(item.due_at);
-              const typeLabel =
-                (item.source_entity_type && ENTITY_ROUTES[item.source_entity_type]?.label) ||
-                (form ? item.source_entity_type : 'Enquiry') ||
-                'Enquiry';
+              const typeLabel = humanizeType(item);
               // Next action follows the SLA config for form rows ("Send for
               // approval", "Approve", "Mark resolved"); conversation rows reply in
               // Respond. No generic "responded/awaiting" wording, no extra line.
-              const actionLabel = form
-                ? item.next_action ?? 'Action required'
-                : 'Reply';
-              const url = inboxUrl(item);
+              const actionLabel = form ? item.next_action ?? 'Action required' : 'Reply';
+              const atMaxTier = item.current_tier >= MAX_TIER;
 
               return (
-                <li key={item.id} className="py-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">
-                        {typeLabel}
-                        {item.reference ? (
-                          <span className="text-muted-foreground"> · {item.reference}</span>
-                        ) : null}
-                      </p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        Tier {item.current_tier} · {actionLabel}
-                      </p>
-                    </div>
-                    <span
-                      className={`shrink-0 text-xs ${due.overdue ? 'font-medium text-destructive' : 'text-muted-foreground'}`}
-                      title={due.text}
-                    >
-                      {due.overdue ? 'Overdue' : 'Due'}: {due.text}
-                    </span>
-                  </div>
-
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    {form ? (
-                      <Button asChild size="sm" variant="outline" className="h-7">
-                        <Link href={entityHref(item)}>
-                          <FileText className="size-3.5" />
-                          Open record
-                        </Link>
-                      </Button>
-                    ) : (
-                      <>
-                        {url ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-7"
-                            onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
-                          >
-                            <ExternalLink className="size-3.5" />
-                            Open in Respond
-                          </Button>
+                <li key={item.id} className="py-1">
+                  <div
+                    tabIndex={0}
+                    onClick={() => doRowAction(item)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        doRowAction(item);
+                      }
+                    }}
+                    className="-mx-2 cursor-pointer rounded-md px-2 py-2 transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">
+                          {typeLabel}
+                          {item.reference ? (
+                            <span className="text-muted-foreground"> · {item.reference}</span>
+                          ) : null}
+                        </p>
+                        <p className="truncate text-xs text-muted-foreground">
+                          Tier {item.current_tier} · {actionLabel}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <span
+                          className={`text-xs ${due.overdue ? 'font-medium text-destructive' : 'text-muted-foreground'}`}
+                          title={due.text}
+                        >
+                          {due.overdue ? 'Overdue' : 'Due'}: {due.text}
+                        </span>
+                        {!entityHref(item) && item.respond_io_id ? (
+                          <ExternalLink className="size-3.5 text-muted-foreground" />
                         ) : (
-                          <Button asChild size="sm" variant="outline" className="h-7">
-                            <Link href={`/sla-management/conversation-sla-tracking/${item.id}`}>
-                              Open details
-                            </Link>
-                          </Button>
+                          <ChevronRight className="size-4 text-muted-foreground" />
                         )}
+                      </div>
+                    </div>
+
+                    {/* Conversation rows carry inline actions; clicks here must not
+                        trigger the row's open action. Form rows have none. */}
+                    {!form && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7"
+                          disabled={atMaxTier}
+                          title={atMaxTier ? 'Already at the maximum tier' : 'Escalate to the next tier'}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEscalateReason('');
+                            setEscalateTarget(item);
+                          }}
+                        >
+                          <TrendingUp className="size-3.5" />
+                          Escalate
+                        </Button>
                         <Button
                           size="sm"
                           variant="ghost"
                           className="h-7"
-                          onClick={() => setResolveTarget(item)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setResolveTarget(item);
+                          }}
                         >
                           <CheckCircle2 className="size-3.5" />
                           Resolve
                         </Button>
-                      </>
+                      </div>
                     )}
                   </div>
                 </li>
@@ -267,6 +344,57 @@ export default function MyPendingSLAWidget() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={!!escalateTarget}
+        onOpenChange={(o) => {
+          if (!o) {
+            setEscalateTarget(null);
+            setEscalateReason('');
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Escalate to tier {(escalateTarget?.current_tier ?? 1) + 1}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-1">
+            <Label htmlFor="pending-escalate-reason">Reason</Label>
+            <Input
+              id="pending-escalate-reason"
+              placeholder="Why escalate now?"
+              value={escalateReason}
+              onChange={(e) => setEscalateReason(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && escalateReason.trim() && !escalating) {
+                  e.preventDefault();
+                  void handleEscalate();
+                }
+              }}
+              autoFocus
+            />
+            <p className="text-xs text-muted-foreground">
+              Moves this conversation to the next tier and reassigns per policy. The new assignee is
+              notified.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEscalateTarget(null);
+                setEscalateReason('');
+              }}
+              disabled={escalating}
+            >
+              Cancel
+            </Button>
+            <Button onClick={() => void handleEscalate()} disabled={escalating || !escalateReason.trim()}>
+              {escalating ? 'Escalating…' : 'Escalate'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

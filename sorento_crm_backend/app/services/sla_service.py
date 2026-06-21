@@ -737,6 +737,7 @@ class ConversationSLATrackingService:
         the assignee must action.
         """
         from sqlalchemy.orm import joinedload
+        from app.services.form_sla_service import FORM_SLA_TYPES
 
         rows = (
             self.db.query(ConversationSLATracking)
@@ -776,6 +777,10 @@ class ConversationSLATrackingService:
                 "id": str(r.id),
                 "source_entity_type": r.source_entity_type,
                 "source_entity_id": r.source_entity_id,
+                # Authoritative form-vs-conversation flag (single source of truth so
+                # the widget never re-derives it and drifts — e.g. 'ticket' is a form
+                # type the FE route map doesn't know). Conversation rows = false.
+                "is_form_sla": r.source_entity_type in FORM_SLA_TYPES,
                 "reference": reference_by_row.get(str(r.id)),
                 "respond_io_id": (
                     respond_io_by_contact.get(str(r.respond_contact_id))

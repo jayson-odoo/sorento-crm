@@ -53,6 +53,13 @@ PARAM_VARIABLES = (
     # can also be mapped via ``portal_url`` for templates that reuse the link slot.
     "discontinued_count",
     "discontinued_link",
+    # Generic helpers usable by any template: today's date (DD/MM/YYYY, Malaysia) and
+    # the CRM base URL. Each use case's service must supply these in context_vars.
+    "today_date",
+    "system_url",
+    # SLA assignment / escalation deadlines (KL wall time) — "Respond by" / "Resolve by".
+    "respond_due_at",
+    "resolve_due_at",
 )
 
 # Use cases whose template MUST map a slot to a specific variable, or the message

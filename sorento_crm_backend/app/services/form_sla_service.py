@@ -783,6 +783,20 @@ class FormSLAOrchestrator:
         # Human-readable document number, never the raw UUID.
         number = _resolve_entity_number(self.db, s_type, s_id) or type_label.capitalize()
         due_str = _fmt_due(tracker.due_at)
+        resolve_due_str = _fmt_due(getattr(tracker, "due_at_resolution", None))
+        # WhatsApp template params (out-of-window). Resolve the assignee name + the
+        # generic date/url helpers so templates can read "Resolve by {{...}}" etc.
+        from app.config import settings as _settings
+        from app.models.user import User as _User
+
+        _base_url = (getattr(_settings, "frontend_base_url", None) or "").strip().rstrip("/")
+        _today_date = datetime.now(timezone(timedelta(hours=8))).strftime("%d/%m/%Y")
+        _assignee = (
+            self.db.query(_User).filter(_User.id == str(tracker.assigned_to_id)).first()
+        )
+        _contact_name = (
+            (_assignee.name or _assignee.email or "there") if _assignee else "there"
+        )
 
         if kind == "assigned":
             title = f"New SLA assignment: {number}"
@@ -824,6 +838,21 @@ class FormSLAOrchestrator:
                     "source_entity_type": tracker.source_entity_type,
                     "source_entity_id": tracker.source_entity_id,
                     "link": link,
+                    "whatsapp_use_case": (
+                        "sla_escalation" if kind == "escalated" else "sla_assignment"
+                    ),
+                    "whatsapp_text": body,
+                    "whatsapp_context_vars": {
+                        "contact_name": _contact_name,
+                        "entity_number": number,
+                        "reason": reason or "",
+                        "respond_due_at": due_str or "",
+                        "resolve_due_at": resolve_due_str or "",
+                        "today_date": _today_date,
+                        "system_url": _base_url,
+                        "portal_url": full_link,
+                        "message": body,
+                    },
                 },
                 source_entity_type="form_sla_tracking",
                 source_entity_id=str(tracker.id),

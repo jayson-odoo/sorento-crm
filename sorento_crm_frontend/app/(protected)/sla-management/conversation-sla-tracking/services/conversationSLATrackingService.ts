@@ -73,6 +73,9 @@ export interface MyPendingSLAItem {
   id: string;
   source_entity_type: string | null;
   source_entity_id: string | null;
+  /** Authoritative form-vs-conversation flag from the backend (FORM_SLA_TYPES).
+   *  Conversation rows = false. The widget must use this, not re-derive from routes. */
+  is_form_sla: boolean;
   /** Human-readable reference: complaint/inquiry/request/ticket number, or contact name. */
   reference: string | null;
   /** Respond.io contact id for conversation rows; used to build the inbox deep link. */
@@ -106,6 +109,21 @@ export async function resolveConversationSLATracking(id: string): Promise<void> 
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to resolve conversation SLA'));
+  }
+}
+
+/**
+ * Manually escalate a conversation SLA tracking row to the next tier with a reason.
+ * Stored as "manual: <reason>"; reassigns + notifies per policy. Capped at tier 3.
+ */
+export async function escalateConversationSLATracking(id: string, reason: string): Promise<void> {
+  const response = await apiFetch(`/api/v1/sla-management/conversation-sla-tracking/${id}/escalate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to escalate conversation SLA'));
   }
 }
 

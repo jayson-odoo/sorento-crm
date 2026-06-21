@@ -77,7 +77,11 @@ export type ParamVariable =
   | 'escalated_last_24h'
   | 'resolved_last_24h'
   | 'discontinued_count'
-  | 'discontinued_link';
+  | 'discontinued_link'
+  | 'today_date'
+  | 'system_url'
+  | 'respond_due_at'
+  | 'resolve_due_at';
 
 export interface WhatsAppTemplate {
   id: string;
@@ -185,6 +189,10 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'resolved_last_24h', label: 'Resolved (24h)', description: 'Conversations the staff member resolved in the last 24h' },
   { key: 'discontinued_count', label: 'Discontinued count', description: 'Number of products newly discontinued in this batch' },
   { key: 'discontinued_link', label: 'Discontinued link', description: 'Deep link to the product list filtered to that batch' },
+  { key: 'today_date', label: "Today's date", description: 'Date the message is sent (DD/MM/YYYY, Malaysia time)' },
+  { key: 'system_url', label: 'System URL', description: 'CRM base URL (e.g. https://fe-sorento.foundryx.my)' },
+  { key: 'respond_due_at', label: 'Respond by', description: 'SLA response deadline (KL wall time)' },
+  { key: 'resolve_due_at', label: 'Resolve by', description: 'SLA resolution deadline (KL wall time)' },
 ];
 
 
