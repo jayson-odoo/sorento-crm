@@ -19,7 +19,6 @@ No absolute cap on the rolling window (matches the portal). Sessions die only by
 expiry or explicit revoke (logout, password change, admin force-logout, block).
 """
 from sqlalchemy import Boolean, Column, String, DateTime, ForeignKey, Index, Text
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from app.database import Base
 import uuid
@@ -28,7 +27,11 @@ import uuid
 class UserSession(Base):
     __tablename__ = "user_sessions"
 
-    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # String (not pg UUID) to match the migration column (sa.String) and the
+    # sibling String keys (token / user_id). A pg UUID model type emits a
+    # `... = %(pk)s::UUID` cast that errors against the VARCHAR column:
+    # "operator does not exist: character varying = uuid". Values are uuid4 strings.
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     token = Column(String(255), unique=True, nullable=False, index=True)
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     expires_at = Column(DateTime(timezone=False), nullable=False)
