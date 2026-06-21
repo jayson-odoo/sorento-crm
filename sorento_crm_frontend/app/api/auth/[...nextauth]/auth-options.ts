@@ -48,10 +48,10 @@ const authOptions: NextAuthOptions = {
         }
 
         // NextAuth serializes credentials as strings — coerce the checkbox.
-        const rememberMe =
-          credentials.rememberMe === true ||
-          credentials.rememberMe === 'true' ||
-          credentials.rememberMe === 'on';
+        // (Boolean true → "true", string "true"/"on" all count as checked.)
+        const rememberMe = ['true', 'on', '1'].includes(
+          String(credentials.rememberMe).toLowerCase(),
+        );
 
         let res: Response;
         try {
