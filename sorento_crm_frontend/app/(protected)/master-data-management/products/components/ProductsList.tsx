@@ -137,7 +137,10 @@ const ProductsList = () => {
     if (isReloadRef.current) {
       isReloadRef.current = false;
       if (searchParams.toString()) {
-        router.replace(pathname);
+        // Preserve a "products discontinued" deep link through the reload-clean —
+        // it is an explicit navigation intent, not persisted list state.
+        const batch = searchParams.get('discontinued_batch_id');
+        router.replace(batch ? `${pathname}?discontinued_batch_id=${batch}` : pathname);
       }
       return;
     }
@@ -192,6 +195,10 @@ const ProductsList = () => {
   const { data: categories } = useProductCategorySelectQuery();
   const { data: brands } = useBrandSelectQuery();
 
+  // Deep link from a "products discontinued" notification — restrict the list to
+  // exactly the products reported in that batch.
+  const discontinuedBatchId = searchParams.get('discontinued_batch_id') || undefined;
+
   // Fetch products from the server API
   const fetchProducts = async ({
     pageIndex,
@@ -223,6 +230,7 @@ const ProductsList = () => {
       ...(selectedStatus && selectedStatus !== 'all'
         ? { status: selectedStatus as 'active' | 'inactive' }
         : { status: 'all' }),
+      ...(discontinuedBatchId ? { discontinued_batch_id: discontinuedBatchId } : {}),
     };
 
     return getProducts(params);
@@ -239,6 +247,7 @@ const ProductsList = () => {
       selectedBrand,
       selectedStatus,
       advancedFilter,
+      discontinuedBatchId,
     ],
     queryFn: async () => {
       if (advancedFilter) {
@@ -651,6 +660,18 @@ const ProductsList = () => {
 
     return (
       <CardHeader className="flex flex-row flex-wrap items-center gap-2 py-5">
+        {discontinuedBatchId && (
+          <div className="basis-full flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+            <span>Showing only the products from a recent “products discontinued” notification.</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => router.replace(pathname)}
+            >
+              Clear filter
+            </Button>
+          </div>
+        )}
         <div className="relative flex-1 min-w-[140px] max-w-[280px]">
           <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
           <Input

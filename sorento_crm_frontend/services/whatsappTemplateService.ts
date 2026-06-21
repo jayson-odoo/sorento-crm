@@ -62,7 +62,8 @@ export type UseCase =
   | 'portal_otp'
   | 'sla_daily_summary'
   | 'sla_assignment'
-  | 'sla_escalation';
+  | 'sla_escalation'
+  | 'product_discontinued';
 
 export type ParamVariable =
   | 'contact_name'
@@ -74,7 +75,9 @@ export type ParamVariable =
   | 'otp_code'
   | 'outstanding'
   | 'escalated_last_24h'
-  | 'resolved_last_24h';
+  | 'resolved_last_24h'
+  | 'discontinued_count'
+  | 'discontinued_link';
 
 export interface WhatsAppTemplate {
   id: string;
@@ -161,6 +164,12 @@ export const USE_CASES: { key: UseCase; label: string; description: string }[] =
     description:
       'Sent to a staff member when an SLA task escalates to them. Map params to "Contact name" and "Full update message" at minimum; add "Entity number" / "Status" when the template carries them.',
   },
+  {
+    key: 'product_discontinued',
+    label: 'Product Discontinued',
+    description:
+      'Batch alert sent to subscribed staff when products are newly discontinued. Map params to "Discontinued count" and "Discontinued link" (the deep link to the filtered product list).',
+  },
 ];
 
 export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: string }[] = [
@@ -174,6 +183,8 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'outstanding', label: 'Outstanding count', description: 'Outstanding conversations assigned to the staff member' },
   { key: 'escalated_last_24h', label: 'Escalated (24h)', description: 'Conversations escalated to the staff member in the last 24h' },
   { key: 'resolved_last_24h', label: 'Resolved (24h)', description: 'Conversations the staff member resolved in the last 24h' },
+  { key: 'discontinued_count', label: 'Discontinued count', description: 'Number of products newly discontinued in this batch' },
+  { key: 'discontinued_link', label: 'Discontinued link', description: 'Deep link to the product list filtered to that batch' },
 ];
 
 

@@ -79,6 +79,10 @@ def get_products(
     category_id: Optional[str] = Query(None),
     brand_id: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
+    discontinued_batch_id: Optional[str] = Query(
+        None,
+        description="Filter to products reported in one 'products discontinued' notification batch.",
+    ),
     price_min: Optional[float] = Query(None),
     price_max: Optional[float] = Query(None),
     item_type: Optional[str] = Query(None),
@@ -124,6 +128,7 @@ def get_products(
             category_id=category_id,
             brand_id=brand_id,
             status=status,
+            discontinued_batch_id=discontinued_batch_id,
             price_min=price_min,
             price_max=price_max,
             item_type=item_type,

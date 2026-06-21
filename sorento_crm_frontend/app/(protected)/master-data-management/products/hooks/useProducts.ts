@@ -44,6 +44,7 @@ export function useProducts(params: GetProductsParams) {
       params.price_min,
       params.price_max,
       params.item_type,
+      params.discontinued_batch_id,
     ],
     queryFn: () => getProducts(params),
     staleTime: Infinity,

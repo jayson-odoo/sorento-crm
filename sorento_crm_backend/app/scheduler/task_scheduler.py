@@ -183,6 +183,15 @@ def _handler_respond_templates_sync(db, task):
     return run_respond_templates_sync(db, task)
 
 
+def _handler_product_discontinued_check(db, task):
+    """Report newly-discontinued products (batched) to subscribed staff."""
+    from app.services.product_discontinued_notify_service import (
+        run_product_discontinued_check,
+    )
+
+    return run_product_discontinued_check(db, task)
+
+
 def _drain_email_outbox_tick():
     """APScheduler tick wrapper. Owns its own DB session (drain_email_outbox handles errors)."""
     try:
@@ -246,6 +255,7 @@ def register_task_handlers():
     register_handler("form_sla_overdue_scan", _handler_form_sla_overdue_scan)
     register_handler("email_outbox_drainer", _handler_email_outbox_drainer)
     register_handler("attachment_storage_audit", run_attachment_storage_audit)
+    register_handler("product_discontinued_check", _handler_product_discontinued_check)
 
 
 def start_scheduler():

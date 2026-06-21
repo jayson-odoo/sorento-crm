@@ -163,6 +163,8 @@ class UserBase(BaseModel):
     notify_email_on_escalation: Optional[bool] = True
     notify_whatsapp_on_assignment: Optional[bool] = False
     notify_whatsapp_on_escalation: Optional[bool] = False
+    notify_email_on_product_discontinued: Optional[bool] = False
+    notify_whatsapp_on_product_discontinued: Optional[bool] = False
 
     @field_validator("contact_number", mode="before")
     @classmethod
@@ -197,6 +199,8 @@ class UserUpdate(BaseModel):
     notify_email_on_escalation: Optional[bool] = None
     notify_whatsapp_on_assignment: Optional[bool] = None
     notify_whatsapp_on_escalation: Optional[bool] = None
+    notify_email_on_product_discontinued: Optional[bool] = None
+    notify_whatsapp_on_product_discontinued: Optional[bool] = None
 
     @field_validator("email", mode="before")
     @classmethod

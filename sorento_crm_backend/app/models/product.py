@@ -119,6 +119,14 @@ class Product(Base):
     reorder_quantity = Column(Integer, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     is_discontinued = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Discontinued-notification watermark. NULL = not yet reported by the batch cron
+    # (cron-eligible while is_discontinued is True). Stamped with the run time when a
+    # batch goes out; cleared back to NULL whenever is_discontinued flips True->False
+    # so a later re-discontinuation is reported again.
+    discontinued_notified_at = Column(DateTime(timezone=False), nullable=True)
+    # Stable id of the batch this product was reported in. Deep-linked from the
+    # notification to the product list filtered to exactly that batch.
+    discontinued_notify_batch_id = Column(UUID(as_uuid=False), nullable=True)
     created_by = Column(String, nullable=True)
     updated_by = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -159,6 +167,8 @@ class Product(Base):
         Index("ix_products_base_uom_id", "base_uom_id"),
         Index("ix_products_is_active", "is_active"),
         Index("ix_products_product_code", "product_code"),
+        Index("ix_products_discontinued_pending", "is_discontinued", "discontinued_notified_at"),
+        Index("ix_products_discontinued_notify_batch_id", "discontinued_notify_batch_id"),
     )
 
 

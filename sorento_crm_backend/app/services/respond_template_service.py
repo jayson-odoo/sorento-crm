@@ -48,6 +48,11 @@ PARAM_VARIABLES = (
     "outstanding",
     "escalated_last_24h",
     "resolved_last_24h",
+    # Product-discontinued batch notification: count of newly-discontinued products
+    # and a deep link to the product list filtered to that batch. ``discontinued_link``
+    # can also be mapped via ``portal_url`` for templates that reuse the link slot.
+    "discontinued_count",
+    "discontinued_link",
 )
 
 # Use cases whose template MUST map a slot to a specific variable, or the message

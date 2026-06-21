@@ -22,6 +22,8 @@ export interface GetProductsParams extends DataGridApiFetchParams {
   price_min?: number;
   price_max?: number;
   item_type?: string;
+  /** Deep link from a "products discontinued" notification — show only that batch. */
+  discontinued_batch_id?: string;
 }
 
 /**
@@ -41,6 +43,7 @@ export async function getProducts(
     price_min,
     price_max,
     item_type,
+    discontinued_batch_id,
   } = params;
 
   const sortField = sorting?.[0]?.id || '';
@@ -57,6 +60,7 @@ export async function getProducts(
     ...(price_min ? { price_min: String(price_min) } : {}),
     ...(price_max ? { price_max: String(price_max) } : {}),
     ...(item_type ? { item_type } : {}),
+    ...(discontinued_batch_id ? { discontinued_batch_id } : {}),
   });
 
   const response = await apiFetch(

@@ -150,6 +150,7 @@ class ProductService:
         advanced_filter_clause: Optional[Any] = None,
         entities: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
+        discontinued_batch_id: Optional[str] = None,
     ):
         """List products with filtering and pagination.
 
@@ -228,7 +229,12 @@ class ProductService:
         
         if item_type:
             filters.append(Product.item_type == item_type)
-        
+
+        # Deep link from a "products discontinued" notification: show exactly the
+        # products reported in that batch (see product_discontinued_notify_service).
+        if discontinued_batch_id:
+            filters.append(Product.discontinued_notify_batch_id == discontinued_batch_id)
+
         if price_min or price_max:
             price_filters = []
             if price_min:
@@ -498,7 +504,14 @@ class ProductService:
                     update_data["dimensions_width"] = parsed_w
                 if parsed_h is not None and "dimensions_height" not in update_data:
                     update_data["dimensions_height"] = parsed_h
-                update_data["is_discontinued"] = is_discontinued_from_description(update_data.get("description"))
+                new_discontinued = is_discontinued_from_description(update_data.get("description"))
+                update_data["is_discontinued"] = new_discontinued
+                # is_discontinued True->False: reset the notify watermark so a later
+                # re-discontinuation is reported again by the batch cron. product.* is
+                # still the OLD value here (setattr loop runs below).
+                if product.is_discontinued and not new_discontinued:
+                    update_data["discontinued_notified_at"] = None
+                    update_data["discontinued_notify_batch_id"] = None
             for key, value in update_data.items():
                 setattr(product, key, value)
             
@@ -848,6 +861,11 @@ class ProductService:
 
                 existing = existing_by_code.get(product_code)
                 if existing:
+                    # is_discontinued True->False: reset the notify watermark so a later
+                    # re-discontinuation is reported again (capture OLD before assigning).
+                    if existing.is_discontinued and not discontinued:
+                        existing.discontinued_notified_at = None
+                        existing.discontinued_notify_batch_id = None
                     existing.product_name = product_name
                     existing.description = description or None
                     existing.category_id = category_id

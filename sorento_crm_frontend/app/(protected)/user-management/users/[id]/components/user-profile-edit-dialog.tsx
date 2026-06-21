@@ -105,6 +105,8 @@ const UserProfileEditDialog = ({
       notify_email_on_escalation: user?.notifyEmailOnEscalation ?? true,
       notify_whatsapp_on_assignment: Boolean(user?.notifyWhatsappOnAssignment),
       notify_whatsapp_on_escalation: Boolean(user?.notifyWhatsappOnEscalation),
+      notify_email_on_product_discontinued: Boolean(user?.notifyEmailOnProductDiscontinued),
+      notify_whatsapp_on_product_discontinued: Boolean(user?.notifyWhatsappOnProductDiscontinued),
     },
     mode: 'onSubmit',
   });
@@ -137,6 +139,8 @@ const UserProfileEditDialog = ({
       notify_email_on_escalation: user.notifyEmailOnEscalation ?? true,
       notify_whatsapp_on_assignment: Boolean(user.notifyWhatsappOnAssignment),
       notify_whatsapp_on_escalation: Boolean(user.notifyWhatsappOnEscalation),
+      notify_email_on_product_discontinued: Boolean(user.notifyEmailOnProductDiscontinued),
+      notify_whatsapp_on_product_discontinued: Boolean(user.notifyWhatsappOnProductDiscontinued),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; omit to avoid reset loop
   }, [open, user?.id, user?.name, user?.email, user?.status, user?.roles, user?.respondUserId, user?.tier, user?.superiorId, userRoles.length]);
@@ -230,6 +234,8 @@ const UserProfileEditDialog = ({
       profileData.notify_email_on_escalation = Boolean(values.notify_email_on_escalation);
       profileData.notify_whatsapp_on_assignment = Boolean(values.notify_whatsapp_on_assignment);
       profileData.notify_whatsapp_on_escalation = Boolean(values.notify_whatsapp_on_escalation);
+      profileData.notify_email_on_product_discontinued = Boolean(values.notify_email_on_product_discontinued);
+      profileData.notify_whatsapp_on_product_discontinued = Boolean(values.notify_whatsapp_on_product_discontinued);
 
       const response = await apiFetch(`/api/user-management/users/${user.id}`, {
         method: 'PUT',
@@ -677,6 +683,8 @@ const UserProfileEditDialog = ({
               { name: 'notify_email_on_escalation', label: 'Email on escalation', hint: 'Emailed when an SLA escalates to you.' },
               { name: 'notify_whatsapp_on_assignment', label: 'WhatsApp on assignment', hint: 'Needs a linked WhatsApp contact.' },
               { name: 'notify_whatsapp_on_escalation', label: 'WhatsApp on escalation', hint: 'Needs a linked WhatsApp contact.' },
+              { name: 'notify_email_on_product_discontinued', label: 'Email on products discontinued', hint: 'Emailed when products are newly discontinued (batched).' },
+              { name: 'notify_whatsapp_on_product_discontinued', label: 'WhatsApp on products discontinued', hint: 'Needs a linked WhatsApp contact.' },
             ] as const).map((t) => (
               <FormField
                 key={t.name}

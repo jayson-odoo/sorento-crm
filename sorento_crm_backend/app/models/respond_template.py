@@ -56,6 +56,10 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # ``entity_number`` / ``status`` when the template carries them.
     "sla_assignment",
     "sla_escalation",
+    # Product discontinued — batch notification to subscribed staff. Sent when their
+    # 24h window is closed (the usual case). Map params to ``discontinued_count`` +
+    # ``discontinued_link`` (deep link to the product list filtered to that batch).
+    "product_discontinued",
 )
 
 

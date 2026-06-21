@@ -55,6 +55,11 @@ class User(Base):
     notify_email_on_escalation = Column(Boolean, default=True, nullable=False, server_default="true")
     notify_whatsapp_on_assignment = Column(Boolean, default=False, nullable=False, server_default="false")
     notify_whatsapp_on_escalation = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Product-discontinued batch notification opt-in (admin-configured per user). A user
+    # with EITHER toggle on is a recipient (in-app always fires for recipients; email /
+    # whatsapp each gated by its toggle). Both off => not a recipient, gets nothing.
+    notify_email_on_product_discontinued = Column(Boolean, default=False, nullable=False, server_default="false")
+    notify_whatsapp_on_product_discontinued = Column(Boolean, default=False, nullable=False, server_default="false")
 
     role_assignments = relationship("UserRoleAssignment", back_populates="user", cascade="all, delete-orphan")
     system_logs = relationship("SystemLog", back_populates="user")

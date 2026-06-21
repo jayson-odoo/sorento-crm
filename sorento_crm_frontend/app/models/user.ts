@@ -58,6 +58,11 @@ export interface User {
   notify_whatsapp_on_assignment?: boolean | null;
   notifyWhatsappOnEscalation?: boolean | null;
   notify_whatsapp_on_escalation?: boolean | null;
+  /** Product-discontinued batch notification opt-in (admin-configured). */
+  notifyEmailOnProductDiscontinued?: boolean | null;
+  notify_email_on_product_discontinued?: boolean | null;
+  notifyWhatsappOnProductDiscontinued?: boolean | null;
+  notify_whatsapp_on_product_discontinued?: boolean | null;
   roles?: UserRoleSimple[];
   role?: UserRole;
   sessions?: Session[];
