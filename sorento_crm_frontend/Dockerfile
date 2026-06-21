@@ -12,12 +12,6 @@ COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --prefer-offline --no-audit --legacy-peer-deps
 
-# Copy Prisma schema for client generation (changes infrequently)
-COPY prisma ./prisma
-
-# Generate Prisma client (cached unless schema changes)
-RUN npx prisma generate
-
 # Copy all source code (optimize by copying everything except node_modules)
 # Using a single COPY is actually faster than multiple COPYs due to layer optimization
 # The .dockerignore ensures only necessary files are copied
@@ -27,6 +21,13 @@ COPY . .
 # Empty string means use relative paths (nginx will proxy)
 ARG NEXT_PUBLIC_API_URL=
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
+# PWA web-push public key (TCK-33). NEXT_PUBLIC_* is inlined into the client
+# bundle at build time, so it MUST be present here, not just at runtime. Empty
+# default = no push subscription offered (installability still works). Supply via
+# the deploy workflow's build-args from a GitHub secret — no server SSH needed.
+ARG NEXT_PUBLIC_VAPID_PUBLIC_KEY=
+ENV NEXT_PUBLIC_VAPID_PUBLIC_KEY=$NEXT_PUBLIC_VAPID_PUBLIC_KEY
 
 # Set Node.js options for faster builds
 # Increase memory and enable parallel garbage collection
@@ -58,11 +59,6 @@ WORKDIR /app
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
-
-# Copy Prisma schema and migrations for database setup
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
 # The standalone output structure has server.js in the root of .next/standalone
 # We need to ensure the static files are in the right place
@@ -105,16 +101,7 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD curl -f http://localhost/health || exit 1
 
-# Install Prisma CLI in production stage for migrations
-RUN npm install -g prisma@6.10.1
-
-# Create startup script that runs migrations then starts supervisor
-RUN echo '#!/bin/sh' > /start.sh && \
-    echo 'echo "Running Prisma migrations..."' >> /start.sh && \
-    echo 'prisma migrate deploy || echo "Migration failed or already applied"' >> /start.sh && \
-    echo 'echo "Starting services..."' >> /start.sh && \
-    echo 'exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf' >> /start.sh && \
-    chmod +x /start.sh
-
-# Start supervisor to run both nginx and Next.js (after migrations)
-CMD ["/start.sh"]
+# Start supervisor to run both nginx and Next.js.
+# Prisma removed: NextAuth/session state is owned by FastAPI now, so there is no
+# frontend DB to migrate at boot. The backend image runs Alembic migrations.
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

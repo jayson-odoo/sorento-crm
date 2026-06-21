@@ -157,6 +157,11 @@ jobs:
           context: ./sorento_crm_frontend
           platforms: linux/amd64
           push: true
+          # NEXT_PUBLIC_* must be baked at build time. Set the
+          # NEXT_PUBLIC_VAPID_PUBLIC_KEY repo secret to enable PWA web push in
+          # prod (empty = installable but no push subscription).
+          build-args: |
+            NEXT_PUBLIC_VAPID_PUBLIC_KEY=${{ secrets.NEXT_PUBLIC_VAPID_PUBLIC_KEY }}
           tags: |
             ${{ env.IMAGE_REPO }}:frontend-${{ env.RELEASE_TAG }}
             ${{ env.IMAGE_REPO }}:frontend-${{ github.sha }}
