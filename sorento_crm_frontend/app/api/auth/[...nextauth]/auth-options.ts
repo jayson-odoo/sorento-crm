@@ -1,14 +1,37 @@
-import { PrismaAdapter } from '@next-auth/prisma-adapter';
-import bcrypt from 'bcrypt';
 import { NextAuthOptions, Session, User } from 'next-auth';
 import { JWT } from 'next-auth/jwt';
 import CredentialsProvider from 'next-auth/providers/credentials';
-import GoogleProvider from 'next-auth/providers/google';
-import prisma from '@/lib/prisma';
+
 import { sessionTokenCookieName } from '@/lib/auth-cookie';
 
+/**
+ * NextAuth is a thin shell over FastAPI-owned auth.
+ *
+ * There is NO database adapter and NO Prisma here. `authorize()` posts to the
+ * FastAPI `/api/v1/auth/login`, which verifies the password, mints a rolling
+ * `user_sessions` row, and returns an opaque session token. We stash that token
+ * (`apiToken`) inside the NextAuth httpOnly cookie; every server-side proxy to
+ * FastAPI forwards it as `Authorization: Bearer <apiToken>`. FastAPI is the sole
+ * source of truth for session validity — revocation and the sliding 30-day
+ * window live there (see PLAN-staff-rolling-sessions-fastapi-auth.md).
+ *
+ * The cookie maxAge (30d) only has to outlive the FastAPI session; FastAPI
+ * decides the real expiry, so an unchecked-remember-me 8h session is enforced
+ * backend-side even though the cookie itself persists.
+ */
+
+function backendBaseUrl(): string {
+  const url =
+    process.env.FASTAPI_INTERNAL_URL?.replace(/\/$/, '') ||
+    process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '');
+  if (url) return url;
+  if (process.env.NODE_ENV === 'production') return 'http://backend:8000';
+  throw new Error('Backend URL not configured. Set NEXT_PUBLIC_API_URL.');
+}
+
+const THIRTY_DAYS_SECONDS = 30 * 24 * 60 * 60;
+
 const authOptions: NextAuthOptions = {
-  adapter: PrismaAdapter(prisma),
   providers: [
     CredentialsProvider({
       name: 'Credentials',
@@ -20,178 +43,60 @@ const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         if (!credentials || !credentials.email || !credentials.password) {
           throw new Error(
-            JSON.stringify({
-              code: 400,
-              message: 'Please enter both email and password.',
-            }),
+            JSON.stringify({ code: 400, message: 'Please enter both email and password.' }),
           );
         }
 
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email },
-        });
-
-        if (!user) {
-          throw new Error(
-            JSON.stringify({
-              code: 404,
-              message: 'User not found. Please register first.',
-            }),
-          );
-        }
-
-        const isPasswordValid = await bcrypt.compare(
-          credentials.password,
-          user.password || '',
+        // NextAuth serializes credentials as strings — coerce the checkbox.
+        // (Boolean true → "true", string "true"/"on" all count as checked.)
+        const rememberMe = ['true', 'on', '1'].includes(
+          String(credentials.rememberMe).toLowerCase(),
         );
 
-        if (!isPasswordValid) {
-          throw new Error(
-            JSON.stringify({
-              code: 401,
-              message: 'Invalid credentials. Incorrect password.',
+        let res: Response;
+        try {
+          res = await fetch(`${backendBaseUrl()}/api/v1/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: credentials.email,
+              password: credentials.password,
+              remember_me: rememberMe,
             }),
+          });
+        } catch {
+          throw new Error(
+            JSON.stringify({ code: 503, message: 'Unable to reach the server. Please try again.' }),
           );
         }
 
-        if (user.status !== 'ACTIVE') {
-          throw new Error(
-            JSON.stringify({
-              code: 403,
-              message: 'Account not activated. Please verify your email.',
-            }),
-          );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const message =
+            (typeof data?.detail === 'string' && data.detail) ||
+            data?.detail?.message ||
+            'Invalid credentials.';
+          throw new Error(JSON.stringify({ code: res.status, message }));
         }
-
-        // Update `lastSignInAt` field
-        await prisma.user.update({
-          where: { id: user.id },
-          data: { lastSignInAt: new Date() },
-        });
-
-        const assignments = await (
-          prisma as unknown as {
-            userRoleAssignment: {
-              findMany: (args: {
-                where: { userId: string };
-                select: { roleId: true };
-              }) => Promise<{ roleId: string }[]>;
-            };
-          }
-        ).userRoleAssignment.findMany({
-          where: { userId: user.id },
-          select: { roleId: true },
-        });
-        const roleIds = assignments.map((a) => a.roleId);
 
         return {
-          id: user.id,
-          status: user.status,
-          email: user.email,
-          name: user.name || 'Anonymous',
-          roleId: roleIds[0] ?? null,
-          roleIds,
-          avatar: user.avatar,
-        };
-      },
-    }),
-    GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
-      allowDangerousEmailAccountLinking: true,
-      async profile(profile) {
-        const existingUser = await prisma.user.findUnique({
-          where: { email: profile.email },
-        });
-
-        if (existingUser) {
-          // Update `lastSignInAt` field for existing users
-          await prisma.user.update({
-            where: { id: existingUser.id },
-            data: {
-              name: profile.name,
-              avatar: profile.picture || null,
-              lastSignInAt: new Date(),
-            },
-          });
-
-          const assignments = await (
-            prisma as unknown as {
-              userRoleAssignment: {
-                findMany: (args: {
-                  where: { userId: string };
-                  select: { roleId: true };
-                }) => Promise<{ roleId: string }[]>;
-              };
-            }
-          ).userRoleAssignment.findMany({
-            where: { userId: existingUser.id },
-            select: { roleId: true },
-          });
-          const roleIds = assignments.map((a) => a.roleId);
-          const firstRoleId = roleIds[0] ?? null;
-
-          return {
-            id: existingUser.id,
-            email: existingUser.email,
-            name: existingUser.name || 'Anonymous',
-            status: existingUser.status,
-            roleId: firstRoleId,
-            roleIds,
-            roleName: null,
-            avatar: existingUser.avatar,
-          };
-        }
-
-        const defaultRole = await prisma.userRole.findFirst({
-          where: { isDefault: true },
-        });
-
-        if (!defaultRole) {
-          throw new Error(
-            'Default role not found. Unable to create a new user.',
-          );
-        }
-
-        // Create a new user and account (no roleId on User; use roleAssignments)
-        const newUser = await prisma.user.create({
-          data: {
-            email: profile.email,
-            name: profile.name,
-            password: '', // No password for OAuth users
-            avatar: profile.picture || null,
-            emailVerifiedAt: new Date(),
-            status: 'ACTIVE',
-          } as Parameters<typeof prisma.user.create>[0]['data'],
-        });
-
-        const prismaWithAssignment = prisma as unknown as {
-          userRoleAssignment: {
-            create: (args: {
-              data: { userId: string; roleId: string };
-            }) => Promise<unknown>;
-          };
-        };
-        await prismaWithAssignment.userRoleAssignment.create({
-          data: { userId: newUser.id, roleId: defaultRole.id },
-        });
-
-        return {
-          id: newUser.id,
-          email: newUser.email,
-          name: newUser.name || 'Anonymous',
-          status: newUser.status,
-          avatar: newUser.avatar,
-          roleId: defaultRole.id,
-          roleIds: [defaultRole.id],
-          roleName: defaultRole.name,
-        };
+          id: data.id,
+          email: data.email,
+          name: data.name || 'Anonymous',
+          avatar: data.avatar ?? null,
+          status: data.status,
+          roleId: data.role_id || (data.role_ids?.[0] ?? null),
+          roleIds: data.role_ids ?? (data.role_id ? [data.role_id] : []),
+          roleName: data.role_name ?? null,
+          // Opaque FastAPI session token — carried in the NextAuth cookie.
+          apiToken: data.token,
+        } as User;
       },
     }),
   ],
   session: {
     strategy: 'jwt',
-    maxAge: 24 * 60 * 60,
+    maxAge: THIRTY_DAYS_SECONDS,
   },
   callbacks: {
     async jwt({
@@ -206,7 +111,7 @@ const authOptions: NextAuthOptions = {
       trigger?: 'signIn' | 'signUp' | 'update';
     }) {
       if (trigger === 'update' && session?.user) {
-        // Merge profile fields from update(); do not replace the whole token (loses exp/iat/sub).
+        // Merge profile fields from update(); keep apiToken/exp/sub intact.
         const u = session.user as Record<string, unknown>;
         if (typeof u.avatar === 'string' || u.avatar === null) {
           token.avatar = u.avatar as string | null | undefined;
@@ -219,23 +124,16 @@ const authOptions: NextAuthOptions = {
           token.roleIds = ids;
           token.roleId = ids[0] ?? null;
         }
-      } else {
-        if (user) {
-          const role = user.roleId
-            ? await prisma.userRole.findUnique({
-                where: { id: user.roleId },
-              })
-            : null;
-
-          token.id = (user.id || token.sub) as string;
-          token.email = user.email;
-          token.name = user.name;
-          token.avatar = user.avatar;
-          token.status = user.status;
-          token.roleId = user.roleId;
-          token.roleIds = user.roleIds ?? (user.roleId ? [user.roleId] : []);
-          token.roleName = role?.name;
-        }
+      } else if (user) {
+        token.id = (user.id || token.sub) as string;
+        token.email = user.email;
+        token.name = user.name;
+        token.avatar = user.avatar;
+        token.status = user.status;
+        token.roleId = user.roleId;
+        token.roleIds = user.roleIds ?? (user.roleId ? [user.roleId] : []);
+        token.roleName = user.roleName ?? null;
+        token.apiToken = (user as { apiToken?: string }).apiToken;
       }
 
       return token;
@@ -259,9 +157,8 @@ const authOptions: NextAuthOptions = {
   },
   // Per-instance cookie names so two local instances on different ports
   // (localhost:3000 vs localhost:3001) don't overwrite each other's session.
-  // Browsers scope cookies by host only — port is ignored — so without a
-  // suffix both instances share `next-auth.session-token` and clobber logins.
-  // Set NEXTAUTH_COOKIE_SUFFIX=instance-b in the second instance's .env.local.
+  // Browsers scope cookies by host only — port is ignored. Single source of
+  // truth: sessionTokenCookieName() in lib/auth-cookie.ts.
   cookies: (() => {
     const suffix = process.env.NEXTAUTH_COOKIE_SUFFIX
       ? `.${process.env.NEXTAUTH_COOKIE_SUFFIX}`
@@ -271,8 +168,6 @@ const authOptions: NextAuthOptions = {
     const prefix = secure ? '__Secure-' : '';
     return {
       sessionToken: {
-        // Shared with the getToken() callers (token route, api-proxy) so they read
-        // the same cookie — see lib/auth-cookie.ts.
         name: sessionTokenCookieName(),
         options: { httpOnly: true, sameSite: 'lax', path: '/', secure },
       },
@@ -288,8 +183,6 @@ const authOptions: NextAuthOptions = {
   })(),
   logger: {
     error(code, metadata) {
-      // Downgrade CLIENT_FETCH_ERROR to warning – usually means session refetch failed
-      // (e.g. server restart, network blip, or NEXTAUTH_URL/origin mismatch). Avoids noisy console.
       if (code === 'CLIENT_FETCH_ERROR') {
         const msg =
           typeof metadata === 'object' &&

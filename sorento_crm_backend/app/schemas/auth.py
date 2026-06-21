@@ -5,9 +5,14 @@ from typing import Optional
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    # "Remember me": True → 30-day rolling session; False → 8h, no slide.
+    remember_me: bool = False
 
 
 class LoginResponse(BaseModel):
+    # Opaque staff session token — the FE stores it in the NextAuth cookie and
+    # sends it as `Authorization: Bearer <token>` to every /api/v1/* call.
+    token: str
     id: str
     email: EmailStr
     name: str | None = None
@@ -15,6 +20,7 @@ class LoginResponse(BaseModel):
     status: str
     role_id: str
     role_name: str | None = None
+    role_ids: list[str] = []
 
 
 class SignupRequest(BaseModel):
@@ -62,4 +68,19 @@ class VerifyResetTokenRequest(BaseModel):
 class VerifyResetTokenResponse(BaseModel):
     valid: bool = True
     email: str | None = None  # optional masked email for display
+
+
+class SessionInfo(BaseModel):
+    """One active staff session for the "your devices" UI. No raw token/UUID shown."""
+    id: str
+    device_label: str
+    ip_address: str | None = None
+    last_seen_at: str | None = None
+    created_at: str | None = None
+    current: bool = False
+
+
+class MessageResponse(BaseModel):
+    message: str
+    count: int | None = None
 

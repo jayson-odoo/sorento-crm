@@ -4,7 +4,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
-import jwt from 'jsonwebtoken';
+
 import { sessionTokenCookieName } from '@/lib/auth-cookie';
 
 /**
@@ -31,7 +31,8 @@ export function getBackendBaseUrl(): string {
 }
 
 /**
- * Get JWT token for FastAPI from NextAuth session
+ * Get the opaque FastAPI session token stored in the NextAuth cookie.
+ * FastAPI owns + validates it; we just forward it as a Bearer token.
  */
 export async function getFastAPITokenForRequest(
   request: NextRequest,
@@ -44,31 +45,9 @@ export async function getFastAPITokenForRequest(
       req: request,
       secret,
       raw: false,
-      // Must match the suffixed cookie name auth-options sets (see auth-cookie.ts).
       cookieName: sessionTokenCookieName(),
     });
-
-    if (!tokenPayload) return null;
-
-    // Re-sign as standard JWT for FastAPI
-    return jwt.sign(
-      {
-        sub: tokenPayload.id || tokenPayload.sub,
-        id: tokenPayload.id,
-        email: tokenPayload.email,
-        name: tokenPayload.name,
-        avatar: tokenPayload.avatar,
-        status: tokenPayload.status,
-        roleId: tokenPayload.roleId,
-        roleIds: tokenPayload.roleIds ?? (tokenPayload.roleId ? [tokenPayload.roleId] : []),
-        roleName: tokenPayload.roleName,
-      },
-      secret,
-      {
-        algorithm: 'HS256',
-        expiresIn: '24h',
-      }
-    );
+    return tokenPayload?.apiToken ?? null;
   } catch {
     return null;
   }

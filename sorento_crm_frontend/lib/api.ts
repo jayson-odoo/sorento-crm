@@ -74,7 +74,12 @@ async function getCachedAuthToken(basePath: string): Promise<string | null> {
       const token: string | null = data?.token ?? null;
       if (token) {
         _cachedToken = token;
-        _cachedTokenExp = _decodeJwtExp(token);
+        // Opaque FastAPI session tokens carry no JWT exp; cache for a short soft
+        // window so a page firing N queries doesn't hit /api/auth/token N times.
+        // FastAPI slides the real expiry server-side, so a stale-but-valid cache
+        // is fine; a revoked token surfaces as a 401 and triggers sign-out.
+        const decoded = _decodeJwtExp(token);
+        _cachedTokenExp = decoded > 0 ? decoded : Math.floor(Date.now() / 1000) + 300;
       }
       return token;
     } catch {
@@ -92,6 +97,55 @@ export function clearCachedAuthToken(): void {
   _cachedToken = null;
   _cachedTokenExp = 0;
   _tokenInFlight = null;
+}
+
+/**
+ * Revoke the current FastAPI session (this device) before NextAuth signOut.
+ * Best-effort: a failure must not block logout. Call BEFORE clearCachedAuthToken
+ * so the request still carries the session token.
+ */
+export async function revokeCurrentSession(): Promise<void> {
+  try {
+    await apiFetch('/api/v1/auth/logout', { method: 'POST' });
+  } catch {
+    /* logout should never be blocked by a failed revoke */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Session-invalidation interceptor.
+//
+// NextAuth is just a cookie-holder now; FastAPI owns session validity. When a
+// session is revoked (logout-all, password change, admin force-logout) or hits
+// its 8h unchecked expiry, the NextAuth cookie is still "valid" but FastAPI
+// returns 401 with a specific reason code. Without this, the user sees a
+// logged-in shell where every call fails. We gate strictly on the reason code
+// so an RBAC 403 or an incidental 401 from one endpoint never logs everyone out.
+// ---------------------------------------------------------------------------
+const _SESSION_DEAD_CODES = new Set(['session_revoked', 'session_expired', 'session_invalid']);
+let _signingOut = false;
+
+async function _maybeForceSignOut(clonedResponse: Response): Promise<void> {
+  if (_signingOut) return;
+  try {
+    const data = await clonedResponse.json().catch(() => null);
+    const code: string | undefined = data?.detail?.code ?? data?.code;
+    if (!code || !_SESSION_DEAD_CODES.has(code)) return;
+    _signingOut = true;
+    clearCachedAuthToken();
+    const loc = window.location;
+    const callbackUrl = `${loc.pathname}${loc.search}${loc.hash}`;
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH || '';
+    try {
+      const { signOut } = await import('next-auth/react');
+      await signOut({ redirect: false });
+    } catch {
+      /* fall through to hard redirect */
+    }
+    window.location.href = `${basePath}/signin?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+  } catch {
+    /* never let the interceptor throw into the caller */
+  }
 }
 
 /**
@@ -411,7 +465,18 @@ export async function apiFetch(
   }
 
   init = _attachImpersonationHeader(url, init);
-  return fetch(url as RequestInfo, init);
+  const response = await fetch(url as RequestInfo, init);
+  // Browser-side: a 401 with a session-dead reason code means our session was
+  // revoked/expired server-side → sign out and bounce to /signin.
+  if (
+    response.status === 401 &&
+    typeof window !== 'undefined' &&
+    typeof url === 'string' &&
+    url.includes('/api/v1/')
+  ) {
+    void _maybeForceSignOut(response.clone());
+  }
+  return response;
 }
 
 export function getClientIP(request: NextRequest): string {

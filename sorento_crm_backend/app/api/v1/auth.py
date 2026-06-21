@@ -17,7 +17,10 @@ from app.schemas.auth import (
     ChangePasswordRequest, ChangePasswordResponse,
     VerifyEmailRequest, VerifyEmailResponse,
     VerifyResetTokenRequest, VerifyResetTokenResponse,
+    SessionInfo, MessageResponse,
 )
+from app.dependencies import get_current_user, get_actor_user_id
+from app.services import user_session_service
 from app.services.error_handler import handle_internal_error
 
 logger = logging.getLogger(__name__)
@@ -32,7 +35,21 @@ def _verification_token_expired(token_row: VerificationToken, now_naive: datetim
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
+def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)) -> LoginResponse:
+    from app.services import login_throttle
+    from app.services.user_session_service import mint_session
+
+    ip = request.client.host if request.client else None
+
+    # Brute-force throttle (per email+ip). Fails open if Redis is down.
+    gate = login_throttle.check(payload.email, ip)
+    if not gate.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed attempts. Please try again later.",
+            headers={"Retry-After": str(gate.retry_after_seconds or login_throttle.LOCK_WINDOW_SECONDS)},
+        )
+
     user: User | None = (
         db.query(User)
         .filter(User.email == payload.email)
@@ -40,6 +57,8 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
     )
 
     if not user:
+        # Count a miss too — don't let attackers probe emails for free.
+        login_throttle.record_failure(payload.email, ip)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found. Please register first.",
@@ -47,6 +66,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
 
     pw_raw = getattr(user, "password", None)
     if pw_raw is None or str(pw_raw).strip() == "":
+        login_throttle.record_failure(payload.email, ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials.",
@@ -61,6 +81,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
         ok = False
 
     if not ok:
+        login_throttle.record_failure(payload.email, ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials.",
@@ -72,6 +93,9 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
             detail="Account not activated. Please verify your email.",
         )
 
+    # Successful auth — clear the throttle counter.
+    login_throttle.clear(payload.email, ip)
+
     # Store naive UTC (DB columns are timezone=False)
     setattr(user, "last_sign_in_at", datetime.now(timezone.utc).replace(tzinfo=None))
     db.add(user)
@@ -80,19 +104,30 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
     from app.models.user import UserRoleAssignment
 
     uid = str(getattr(user, "id", "") or "")
-    first_assignment = (
-        db.query(UserRoleAssignment).filter(UserRoleAssignment.user_id == uid).first()
+    assignments = (
+        db.query(UserRoleAssignment)
+        .filter(UserRoleAssignment.user_id == uid)
+        .order_by(UserRoleAssignment.assigned_at.asc())
+        .all()
     )
-    role_id: str | None = None
-    if first_assignment is not None:
-        rrid = getattr(first_assignment, "role_id", None)
-        role_id = str(rrid) if rrid is not None else None
+    role_ids = [str(a.role_id) for a in assignments if getattr(a, "role_id", None) is not None]
+    role_id: str | None = role_ids[0] if role_ids else None
     role: UserRole | None = (
         db.query(UserRole).filter(UserRole.id == role_id).first() if role_id else None
     )
     role_name = str(getattr(role, "name", "") or "") if role is not None else None
 
+    # Mint the opaque rolling session (30d if remember_me, else 8h).
+    session_row = mint_session(
+        db,
+        uid,
+        remember=bool(payload.remember_me),
+        user_agent=request.headers.get("user-agent"),
+        ip_address=ip,
+    )
+
     return LoginResponse(
+        token=str(session_row.token),
         id=uid,
         email=str(getattr(user, "email", "") or ""),
         name=str(getattr(user, "name", "") or "") or None,
@@ -100,6 +135,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse
         status=str(getattr(user, "status", "") or ""),
         role_id=role_id if role_id is not None else "",
         role_name=role_name,
+        role_ids=role_ids,
     )
 
 
@@ -304,7 +340,7 @@ async def change_password(
         
         # Hash new password
         hashed_password = bcrypt.hashpw(payload.new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-        
+
         # Update password and activate account so they can log in (invitation or password reset)
         setattr(user, "password", hashed_password)
         setattr(user, "status", "ACTIVE")
@@ -312,11 +348,16 @@ async def change_password(
         # Store naive UTC (DB columns are timezone=False)
         setattr(user, "email_verified_at", datetime.now(timezone.utc).replace(tzinfo=None))
         db.add(user)
-        
+
         # Delete used token
         db.delete(verification_token)
         db.commit()
-        
+
+        # A password change boots every existing device (stolen-session kill switch).
+        from app.services.user_session_service import revoke_all_for_user
+
+        revoke_all_for_user(db, str(getattr(user, "id", "") or ""))
+
         return ChangePasswordResponse(message="Password set successfully. You can now sign in.")
     except HTTPException:
         raise
@@ -357,13 +398,74 @@ async def verify_email(
         # Store naive UTC (DB columns are timezone=False)
         setattr(user, "email_verified_at", datetime.now(timezone.utc).replace(tzinfo=None))
         db.add(user)
-        
+
         # Delete used token
         db.delete(verification_token)
         db.commit()
-        
+
         return VerifyEmailResponse(message="Email verified successfully!")
     except HTTPException:
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+def _iso(dt) -> str | None:
+    return dt.isoformat() if dt is not None else None
+
+
+@router.post("/logout", response_model=MessageResponse)
+def logout(request: Request, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> MessageResponse:
+    """Revoke the current session (the device calling this). Idempotent."""
+    session_id = getattr(request.state, "session_id", None)
+    if session_id:
+        user_session_service.revoke_session(db, session_id=session_id)
+    return MessageResponse(message="Logged out.")
+
+
+@router.get("/sessions", response_model=list[SessionInfo])
+def list_sessions(request: Request, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> list[SessionInfo]:
+    """Active sessions for the signed-in user — the "your devices" list.
+
+    Keyed on the REAL user (not the impersonated target), so an admin browsing as
+    someone else still sees and manages their own devices.
+    """
+    current_id = getattr(request.state, "session_id", None)
+    rows = user_session_service.list_active_sessions(db, get_actor_user_id(request, current_user))
+    return [
+        SessionInfo(
+            id=str(r.id),
+            device_label=user_session_service.device_label_from_ua(r.user_agent),
+            ip_address=r.ip_address,
+            last_seen_at=_iso(r.last_seen_at),
+            created_at=_iso(r.created_at),
+            current=(str(r.id) == str(current_id)),
+        )
+        for r in rows
+    ]
+
+
+@router.delete("/sessions/{session_id}", response_model=MessageResponse)
+def revoke_one_session(session_id: str, request: Request, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> MessageResponse:
+    """Revoke a single session — only if it belongs to the signed-in (real) user."""
+    from app.models.user_session import UserSession
+
+    row = (
+        db.query(UserSession)
+        .filter(UserSession.id == session_id, UserSession.user_id == get_actor_user_id(request, current_user))
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found.")
+    user_session_service.revoke_session(db, session_id=session_id)
+    return MessageResponse(message="Device signed out.")
+
+
+@router.post("/sessions/revoke-others", response_model=MessageResponse)
+def revoke_other_sessions(request: Request, current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)) -> MessageResponse:
+    """Log out every other device, keeping the current session alive."""
+    current_id = getattr(request.state, "session_id", None)
+    count = user_session_service.revoke_all_for_user(
+        db, get_actor_user_id(request, current_user), except_session_id=str(current_id) if current_id else None
+    )
+    return MessageResponse(message="Signed out other devices.", count=count)

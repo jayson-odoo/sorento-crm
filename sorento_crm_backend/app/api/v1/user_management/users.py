@@ -211,16 +211,22 @@ async def bulk_users_action(
     try:
         service = UserService(db)
         perm_service = UserPermissionService(db)
+        from app.services import user_session_service
+
         if body.action == "delete":
             if not perm_service.check_user_has_permission(current_user["id"], "user_management.users.delete"):
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied for bulk delete")
             count = service.bulk_delete_users(body.user_ids)
+            for uid in body.user_ids:  # boot deleted users off every device
+                user_session_service.revoke_all_for_user(db, uid)
             return {"message": f"{count} user(s) deleted", "count": count}
         if body.action == "activate":
             count = service.bulk_update_user_status(body.user_ids, "ACTIVE")
             return {"message": f"{count} user(s) activated", "count": count}
         if body.action == "deactivate":
             count = service.bulk_update_user_status(body.user_ids, "INACTIVE")
+            for uid in body.user_ids:  # deactivation must end live sessions
+                user_session_service.revoke_all_for_user(db, uid)
             return {"message": f"{count} user(s) deactivated", "count": count}
         if body.action == "permanent_delete":
             if not perm_service.check_user_has_permission(current_user["id"], "user_management.users.delete"):
@@ -251,6 +257,19 @@ async def bulk_users_action(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.post("/{user_id}/force-logout", status_code=status.HTTP_200_OK)
+async def force_logout_user(
+    user_id: str,
+    current_user: dict = Depends(require_permission("user_management.users.edit")),
+    db: Session = Depends(get_db),
+):
+    """Admin: revoke every active session for a user, booting them off all devices."""
+    from app.services import user_session_service
+
+    count = user_session_service.revoke_all_for_user(db, user_id)
+    return {"message": f"Signed out {count} device(s).", "count": count}
 
 
 @router.patch("/{user_id}/daily-sla-summary-subscription", status_code=status.HTTP_200_OK)

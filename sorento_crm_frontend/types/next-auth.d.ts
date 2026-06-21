@@ -22,7 +22,10 @@ declare module 'next-auth' {
     avatar?: string | null;
     roleId?: string | null;
     roleIds?: string[];
+    roleName?: string | null;
     status: string;
+    // Opaque FastAPI session token returned by /api/v1/auth/login.
+    apiToken?: string;
   }
 }
 
@@ -36,5 +39,7 @@ declare module 'next-auth/jwt' {
     roleIds?: string[];
     roleName?: string | null;
     status: string;
+    // Opaque FastAPI session token forwarded as Bearer to /api/v1/*.
+    apiToken?: string;
   }
 }
