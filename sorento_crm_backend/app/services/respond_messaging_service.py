@@ -62,18 +62,26 @@ def _attach_send_context(exc: Exception, request_payload: dict, window: dict, se
         pass
 
 
-def sanitize_param(value: Optional[str], *, max_len: int = PARAM_MAX_LEN) -> str:
-    """Flatten a value into a WhatsApp-safe template parameter.
+def sanitize_param(
+    value: Optional[str], *, max_len: int = PARAM_MAX_LEN, flatten: bool = True
+) -> str:
+    """Coerce a value into a template parameter, length-bounded.
 
-    WhatsApp rejects params containing newlines/tabs/4+ consecutive spaces.
-    Newlines become ``" | "`` so multiline status blocks stay readable.
+    ``flatten=True`` (WhatsApp template params): newlines/tabs/4+ spaces are
+    rejected by WhatsApp, so newlines become ``" | "`` and runs collapse.
+    ``flatten=False`` (in-window free text): newlines are legal and nicer, so
+    keep them — only normalise tabs and bound length. See PLAN-whatsapp-inwindow-
+    template-uniformity.md (richer-multiline decision).
     """
     text = str(value or "").strip()
     if not text:
         return "-"
-    text = re.sub(r"\s*\n+\s*", " | ", text)
-    text = text.replace("\t", " ")
-    text = _WS_RUN_RE.sub(" ", text)
+    if flatten:
+        text = re.sub(r"\s*\n+\s*", " | ", text)
+        text = text.replace("\t", " ")
+        text = _WS_RUN_RE.sub(" ", text)
+    else:
+        text = text.replace("\t", " ")
     if len(text) > max_len:
         text = text[: max_len - 1].rstrip() + "…"
     return text
@@ -217,12 +225,16 @@ def resolve_template_params(
     param_mapping: Dict[str, str],
     param_count: int,
     context_vars: Dict[str, Any],
+    flatten: bool = True,
 ) -> List[str]:
-    """Positional params ["1".."n"] resolved via mapping + sanitized."""
+    """Positional params ["1".."n"] resolved via mapping + sanitized.
+
+    ``flatten=False`` keeps newlines in values (in-window free-text render).
+    """
     params: List[str] = []
     for i in range(1, param_count + 1):
         var = param_mapping.get(str(i)) or ""
-        params.append(sanitize_param(context_vars.get(var)))
+        params.append(sanitize_param(context_vars.get(var), flatten=flatten))
     return params
 
 
@@ -299,6 +311,48 @@ def send_template_for_use_case(
     }
 
 
+def render_in_window_text(
+    db: Session,
+    *,
+    use_case: str,
+    context_vars: Dict[str, Any],
+    fallback_text: str,
+) -> str:
+    """Render the use-case default template body for an in-window (free-text)
+    send, so the message reads the same as the out-of-window template.
+
+    Returns ``fallback_text`` unchanged when the use case has no valid configured
+    default — uniformity rolls out per use-case, never breaks an unconfigured one.
+    Newlines in values are preserved (``flatten=False``). Best-effort: any
+    resolution error degrades to the raw text.
+    """
+    try:
+        from app.services.respond_template_service import (
+            get_default_row,
+            serialize_default,
+        )
+        from app.services.respond_chat_template_service import render_filled_body
+
+        row = get_default_row(db, use_case)
+        serialized = serialize_default(use_case, row)
+        if not serialized["is_valid"] or row is None or row.template is None:
+            return fallback_text
+        template = row.template
+        params = resolve_template_params(
+            param_mapping=dict(row.param_mapping or {}),
+            param_count=template.param_count,
+            context_vars=context_vars,
+            flatten=False,
+        )
+        return render_filled_body(template.body_text, params)
+    except Exception:
+        logger.exception(
+            "render_in_window_text: falling back to raw text for use case '%s'",
+            use_case,
+        )
+        return fallback_text
+
+
 def send_text_or_template(
     db: Session,
     *,
@@ -314,15 +368,32 @@ def send_text_or_template(
     — callers attach ``request_payload`` to their integration log so template
     sends are distinguishable. Raises on Respond errors and on
     TemplateSendSkipped (so RQ/json callers record a failed log).
+
+    Variable resolution (``message`` / ``portal_url`` defaulting) happens ONCE,
+    before the window branch, so in-window text and out-of-window template render
+    from identical context — the uniformity guarantee.
     """
     from app.services.integration_service import RespondClient
 
     window = get_window_state(db, identifier, respond_contact_id=respond_contact_id)
 
+    vars_resolved = dict(context_vars or {})
+    vars_resolved.setdefault("message", text)
+    if not vars_resolved.get("portal_url"):
+        url = extract_first_url(text)
+        if url:
+            vars_resolved["portal_url"] = url
+
     if window["open"]:
-        text_payload = {"message": {"type": "text", "text": text}}
+        # Render the same template body the closed-window branch would send, so
+        # the message is uniform across the 24h boundary. Falls back to raw text
+        # when the use case has no configured default.
+        out_text = render_in_window_text(
+            db, use_case=use_case, context_vars=vars_resolved, fallback_text=text
+        )
+        text_payload = {"message": {"type": "text", "text": out_text}}
         try:
-            response = RespondClient().send_message(identifier, text)
+            response = RespondClient().send_message(identifier, out_text)
         except Exception as e:
             # Attach the actual attempted payload + window so callers log the
             # truth in the Respond outbox (was a hardcoded text default before).
@@ -334,13 +405,6 @@ def send_text_or_template(
             "window_state": window,
             "request_payload": text_payload,
         }
-
-    vars_resolved = dict(context_vars or {})
-    vars_resolved.setdefault("message", text)
-    if not vars_resolved.get("portal_url"):
-        url = extract_first_url(text)
-        if url:
-            vars_resolved["portal_url"] = url
 
     try:
         result = send_template_for_use_case(

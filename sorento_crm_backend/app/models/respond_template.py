@@ -48,6 +48,14 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # ``outstanding`` / ``escalated_last_24h`` / ``resolved_last_24h`` counts and
     # ``portal_url`` deep link.
     "sla_daily_summary",
+    # SLA staff notifications — assignment + escalation. These already route
+    # through send_text_or_template (notification_tasks._send_whatsapp_for_notification);
+    # exposing them here lets an admin configure an approved template so the
+    # message is uniform whether the staff member's 24h window is open or closed.
+    # Map params to ``contact_name`` (the staff name) + ``message`` at minimum;
+    # ``entity_number`` / ``status`` when the template carries them.
+    "sla_assignment",
+    "sla_escalation",
 )
 
 

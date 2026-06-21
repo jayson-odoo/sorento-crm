@@ -60,7 +60,9 @@ export type UseCase =
   | 'purchase_request'
   | 'sponsorship_form'
   | 'portal_otp'
-  | 'sla_daily_summary';
+  | 'sla_daily_summary'
+  | 'sla_assignment'
+  | 'sla_escalation';
 
 export type ParamVariable =
   | 'contact_name'
@@ -146,6 +148,18 @@ export const USE_CASES: { key: UseCase; label: string; description: string }[] =
     label: 'SLA Daily Summary',
     description:
       'Daily SLA digest sent to staff on WhatsApp when their 24h window is closed. Bounded template — map params to the outstanding / escalated (24h) / resolved (24h) counts and the dashboard deep link (Portal URL).',
+  },
+  {
+    key: 'sla_assignment',
+    label: 'SLA Assignment',
+    description:
+      'Sent to a staff member when an SLA task is assigned to them. Map params to "Contact name" (the staff name) and "Full update message" at minimum; add "Entity number" / "Status" when the template carries them.',
+  },
+  {
+    key: 'sla_escalation',
+    label: 'SLA Escalation',
+    description:
+      'Sent to a staff member when an SLA task escalates to them. Map params to "Contact name" and "Full update message" at minimum; add "Entity number" / "Status" when the template carries them.',
   },
 ];
 
