@@ -230,6 +230,7 @@ def run_user_sla_daily_summary(db: Session, task: ScheduledTask) -> dict[str, An
     queued_email = 0
     queued_whatsapp = 0
     skipped_no_address = 0
+    skipped_no_outstanding = 0
 
     for user in users:
         uid = str(user.id)
@@ -271,6 +272,13 @@ def run_user_sla_daily_summary(db: Session, task: ScheduledTask) -> dict[str, An
         escalated_24 = _count_user_events(db, uid, "escalation", win24)
         resolved_24 = _count_user_events(db, uid, "resolution", win24)
         outstanding_n = len(outstanding)
+
+        # Nothing outstanding => nothing actionable. Skip ALL channels (email +
+        # WhatsApp + in-app) so we don't send a "0 conversations" digest that just
+        # annoys the recipient.
+        if outstanding_n == 0:
+            skipped_no_outstanding += 1
+            continue
 
         data: dict[str, Any] = {"body_html": html_body}
         if wa_ok:
@@ -331,5 +339,6 @@ def run_user_sla_daily_summary(db: Session, task: ScheduledTask) -> dict[str, An
         "queued_email": queued_email,
         "queued_whatsapp": queued_whatsapp,
         "skipped_no_email": skipped_no_address,
+        "skipped_no_outstanding": skipped_no_outstanding,
         "summary_date": summary_date_label,
     }

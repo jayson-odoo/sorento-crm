@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import types
 import uuid
+from datetime import datetime
 
 import pytest
 from sqlalchemy import create_engine
@@ -74,6 +75,23 @@ def _user(db, *, email_sub, wa_sub, with_contact):
     return uid
 
 
+def _add_outstanding(db, uid):
+    """Give the user one unresolved conversation SLA tracker so the summary sends
+    (the digest is skipped entirely when outstanding == 0)."""
+    db.add(ConversationSLATracking(
+        id=str(uuid.uuid4()),
+        policy_id=str(uuid.uuid4()),
+        respond_contact_id=None,
+        assigned_to_id=uid,
+        current_tier=1,
+        due_at=datetime.utcnow(),
+        initiated_at=datetime.utcnow(),
+        is_resolved=False,
+        source_entity_type=None,
+    ))
+    db.commit()
+
+
 def _channels(db, uid):
     notif = db.query(Notification).filter(Notification.user_id == uid).first()
     if not notif:
@@ -88,15 +106,25 @@ def _run(db):
 
 def test_email_subscriber_no_whatsapp(db):
     uid = _user(db, email_sub=True, wa_sub=False, with_contact=True)
+    _add_outstanding(db, uid)
     _run(db)
     chans = _channels(db, uid)
     assert "in_app" in chans and "email" in chans and "whatsapp" not in chans
+
+
+def test_zero_outstanding_skipped(db):
+    """No outstanding conversations => no summary on any channel (don't annoy)."""
+    uid = _user(db, email_sub=True, wa_sub=True, with_contact=True)
+    res = _run(db)
+    assert _channels(db, uid) == set()
+    assert res["skipped_no_outstanding"] >= 1
 
 
 def test_whatsapp_subscriber_gets_only_whatsapp(db):
     """AC-30-F4: notify_whatsapp_summary independent — WhatsApp-only user gets
     whatsapp delivery and NOT email/in-app (not subscribed to those)."""
     uid = _user(db, email_sub=False, wa_sub=True, with_contact=True)
+    _add_outstanding(db, uid)
     res = _run(db)
     chans = _channels(db, uid)
     assert chans == {"whatsapp"}
@@ -105,6 +133,7 @@ def test_whatsapp_subscriber_gets_only_whatsapp(db):
 
 def test_whatsapp_subscriber_without_contact_skipped(db):
     uid = _user(db, email_sub=False, wa_sub=True, with_contact=False)
+    _add_outstanding(db, uid)
     _run(db)
     # no resolvable contact + not email-subscribed -> nothing sent
     assert _channels(db, uid) == set()
@@ -112,6 +141,7 @@ def test_whatsapp_subscriber_without_contact_skipped(db):
 
 def test_both_subscriptions_all_channels(db):
     uid = _user(db, email_sub=True, wa_sub=True, with_contact=True)
+    _add_outstanding(db, uid)
     _run(db)
     chans = _channels(db, uid)
     assert {"in_app", "email", "whatsapp"} <= chans
@@ -119,6 +149,7 @@ def test_both_subscriptions_all_channels(db):
 
 def test_idempotent_no_duplicate_whatsapp_on_rerun(db):
     uid = _user(db, email_sub=False, wa_sub=True, with_contact=True)
+    _add_outstanding(db, uid)
     _run(db)
     _run(db)  # same day rerun -> idempotent notification, no second delivery
     notifs = db.query(Notification).filter(Notification.user_id == uid).all()

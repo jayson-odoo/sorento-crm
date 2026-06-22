@@ -1,13 +1,17 @@
 """Service for scheduled task execution and run logging."""
 import logging
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional, Any, Dict
 
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
+
+# Module-level UTC handle: update_task() shadows the imported `timezone` with its
+# `timezone: str` parameter, so reference UTC through this instead.
+_UTC = timezone.utc
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +156,10 @@ def update_task(
     if timezone is not None:
         setattr(task, "timezone", timezone)
     if start_at is not None:
+        # Store as naive UTC — the due-check compares against datetime.utcnow().
+        # FE sends an absolute instant (ISO with Z); normalize any aware value.
+        if start_at.tzinfo is not None:
+            start_at = start_at.astimezone(_UTC).replace(tzinfo=None)
         setattr(task, "start_at", start_at)
     if metadata is not None:
         task_metadata = getattr(task, "metadata_", None)

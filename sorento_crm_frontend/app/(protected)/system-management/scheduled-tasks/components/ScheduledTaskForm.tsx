@@ -15,9 +15,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { DatePicker } from '@/components/ui/date-picker';
 import type { ScheduledTask } from '../types/scheduledTask.types';
-import { parseDateSafe } from '@/lib/helpers';
+import { parseDateTimeAsUTC } from '@/lib/helpers';
+
+/** Format a Date as a `datetime-local` value in the browser's local timezone.
+ *  start_at is serialized to UTC on submit (Date.toISOString), so the absolute
+ *  instant is stored; this only controls the wall-clock the user sees + edits. */
+function toLocalInputValue(d: Date | undefined | null): string {
+  if (!d) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
 const schema = z.object({
   name: z.string().min(1).optional(),
@@ -55,7 +63,7 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
       interval_value: task.interval_value,
       interval_unit: task.interval_unit as 'seconds' | 'minutes' | 'hours' | 'days',
       timezone: task.timezone || 'UTC',
-      start_at: task.start_at ? parseDateSafe(task.start_at) ?? undefined : undefined,
+      start_at: task.start_at ? parseDateTimeAsUTC(task.start_at) ?? undefined : undefined,
       send_in_app:
         task.key === 'user_sla_daily_summary'
           ? (task.metadata?.send_in_app as boolean | undefined) !== false
@@ -80,7 +88,7 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
     setValue('timezone', task.timezone || 'UTC');
     setValue(
       'start_at',
-      task.start_at ? parseDateSafe(task.start_at) ?? undefined : undefined,
+      task.start_at ? parseDateTimeAsUTC(task.start_at) ?? undefined : undefined,
     );
     if (task.key === 'user_sla_daily_summary') {
       setValue(
@@ -180,12 +188,20 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
       </div>
 
       <div className="space-y-2">
-        <Label>Start date (optional)</Label>
-        <DatePicker
-          value={startAt ?? undefined}
-          onChange={(d) => setValue('start_at', d ?? null, { shouldDirty: true })}
-          placeholder="Optional start date"
+        <Label>Start date &amp; time (optional)</Label>
+        <Input
+          type="datetime-local"
+          value={toLocalInputValue(startAt ?? undefined)}
+          onChange={(e) =>
+            setValue('start_at', e.target.value ? new Date(e.target.value) : null, {
+              shouldDirty: true,
+            })
+          }
         />
+        <p className="text-xs text-muted-foreground">
+          In your local timezone. Anchors the first run; the task then repeats every interval.
+          For a fixed daily time (e.g. 8:00 am), set the interval to 1 day.
+        </p>
       </div>
 
       <Button type="submit" disabled={!isDirty || isSubmitting}>
