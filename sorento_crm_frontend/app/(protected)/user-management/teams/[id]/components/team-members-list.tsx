@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/popover';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import {
   Table,
   TableBody,
@@ -38,7 +39,11 @@ import {
 } from '@/components/ui/table';
 import type { TeamMember } from '../../types/team.types';
 import type { UserSelectItem } from '../../services/teamService';
-import { useTeamMembers, useRemoveTeamMember } from '../../hooks/use-team-members';
+import {
+  useTeamMembers,
+  useRemoveTeamMember,
+  useUpdateTeamMemberRoundRobin,
+} from '../../hooks/use-team-members';
 import { addTeamMember } from '../../services/teamService';
 
 function displayUser(user: UserSelectItem | undefined, userId: string): string {
@@ -62,6 +67,7 @@ export default function TeamMembersList({
 
   const { data: members = [], isLoading } = useTeamMembers(teamId);
   const removeMutation = useRemoveTeamMember(teamId);
+  const roundRobinMutation = useUpdateTeamMemberRoundRobin(teamId);
 
   const userMap = useMemo(() => {
     const m = new Map<string, UserSelectItem>();
@@ -124,6 +130,7 @@ export default function TeamMembersList({
               <TableRow>
                 <TableHead>Order</TableHead>
                 <TableHead>User</TableHead>
+                <TableHead className="w-[200px]">Auto-assign (round robin)</TableHead>
                 <TableHead className="w-[80px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -133,35 +140,53 @@ export default function TeamMembersList({
                   <TableRow key={i}>
                     <TableCell><Skeleton className="h-6 w-10" /></TableCell>
                     <TableCell><Skeleton className="h-6 w-40" /></TableCell>
+                    <TableCell><Skeleton className="h-6 w-10" /></TableCell>
                     <TableCell><Skeleton className="h-8 w-8" /></TableCell>
                   </TableRow>
                 ))
               ) : members.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={3} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
                     No members. Add users to this team for round-robin assignment.
                   </TableCell>
                 </TableRow>
               ) : (
-                members.map((member: TeamMember, index: number) => (
-                  <TableRow key={member.id}>
-                    <TableCell className="text-muted-foreground">
-                      {member.sort_order ?? index + 1}
-                    </TableCell>
-                    <TableCell>{displayUser(userMap.get(member.user_id), member.user_id)}</TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => removeMutation.mutate(member.user_id)}
-                        disabled={removeMutation.isPending}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
+                members.map((member: TeamMember, index: number) => {
+                  const includeInRR = member.include_in_round_robin ?? true;
+                  return (
+                    <TableRow key={member.id}>
+                      <TableCell className="text-muted-foreground">
+                        {member.sort_order ?? index + 1}
+                      </TableCell>
+                      <TableCell>{displayUser(userMap.get(member.user_id), member.user_id)}</TableCell>
+                      <TableCell>
+                        <Switch
+                          size="sm"
+                          checked={includeInRR}
+                          disabled={roundRobinMutation.isPending}
+                          onCheckedChange={(checked) =>
+                            roundRobinMutation.mutate({
+                              userId: member.user_id,
+                              includeInRoundRobin: checked,
+                            })
+                          }
+                          aria-label="Include in round robin"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-destructive hover:text-destructive"
+                          onClick={() => removeMutation.mutate(member.user_id)}
+                          disabled={removeMutation.isPending}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>

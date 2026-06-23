@@ -699,7 +699,8 @@ class PurchaseRequestHeaderBase(BaseModel):
     delivery_address: Optional[str] = None  # sponsorship form
     total_project_value: Optional[Decimal] = None  # sponsorship form
     total_project_value_text: Optional[str] = None  # sponsorship form (e.g. 800K)
-    sponsor_subject: Optional[str] = None  # sponsorship: showroom/mockup/others
+    sponsor_subject: Optional[str] = None  # sponsorship: showroom/mockup/others (lookup-bound)
+    sponsor_subject_other: Optional[str] = None  # sponsorship: free-text detail when sponsor_subject='others'
     expected_delivery_date: Optional[date] = None
     expected_po_date: Optional[date] = None
     expected_po_date_text: Optional[str] = None
@@ -751,6 +752,7 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     total_project_value: Optional[Decimal] = None
     total_project_value_text: Optional[str] = None
     sponsor_subject: Optional[str] = None
+    sponsor_subject_other: Optional[str] = None
     expected_delivery_date: Optional[date] = None
     expected_po_date: Optional[date] = None
     expected_po_date_text: Optional[str] = None
@@ -898,6 +900,7 @@ class PublicApprovalSummaryResponse(BaseModel):
     total_project_value: Optional[Decimal] = None  # sponsorship form (numeric)
     total_project_value_text: Optional[str] = None  # sponsorship form (descriptive)
     sponsor_subject: Optional[str] = None  # sponsorship form
+    sponsor_subject_other: Optional[str] = None  # sponsorship form: free-text when 'others'
     requested_by: Optional[str] = None
     request_date: Optional[date] = None
     created_at: Optional[datetime] = None

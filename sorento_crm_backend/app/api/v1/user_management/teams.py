@@ -110,13 +110,44 @@ async def add_team_member(
     current_user: dict = Depends(get_current_user),
     db=Depends(get_db),
 ):
-    """Add a user to a team. Body: { "user_id": "<id>", "sort_order": optional int }."""
+    """Add a user to a team. Body: { "user_id": "<id>", "sort_order": optional int,
+    "include_in_round_robin": optional bool (default true) }."""
     try:
         user_id = body.get("user_id")
         if not user_id:
             raise HTTPException(status_code=400, detail="user_id is required")
         service = TeamService(db)
-        return service.add_team_member(team_id, user_id, body.get("sort_order"))
+        include_rr = body.get("include_in_round_robin")
+        return service.add_team_member(
+            team_id,
+            user_id,
+            body.get("sort_order"),
+            include_in_round_robin=True if include_rr is None else bool(include_rr),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.patch("/{team_id}/members/{user_id}", response_model=TeamMemberResponse)
+async def update_team_member(
+    team_id: str,
+    user_id: str,
+    body: dict,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Update a team member. Body: { "include_in_round_robin": optional bool,
+    "sort_order": optional int }."""
+    try:
+        service = TeamService(db)
+        return service.update_team_member(
+            team_id,
+            user_id,
+            include_in_round_robin=body.get("include_in_round_robin"),
+            sort_order=body.get("sort_order"),
+        )
     except HTTPException:
         raise
     except Exception as e:

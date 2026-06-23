@@ -9,7 +9,7 @@ import {
 } from '@/partials/common/highlighted-posts';
 import { BellDot, BellRing, MessageSquareText } from 'lucide-react';
 import { toAbsoluteUrl } from '@/lib/helpers';
-import { Channels, DoNotDistrub, OtherNotifications } from './components';
+import { Channels, CoverageSection, DoNotDistrub, OtherNotifications } from './components';
 
 export function AccountNotificationsContent() {
   const posts: HighlightedPostsItems = [
@@ -41,6 +41,7 @@ export function AccountNotificationsContent() {
       <div className="col-span-2">
         <div className="flex flex-col gap-5 lg:gap-7.5">
           <Channels />
+          <CoverageSection />
           <OtherNotifications />
           <Faq />
           <Engage

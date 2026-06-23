@@ -1,5 +1,5 @@
 """Notification models for in-app, email, and push delivery."""
-from sqlalchemy import Column, String, DateTime, Text, ForeignKey, UniqueConstraint, Index
+from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey, UniqueConstraint, Index, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from app.database import Base
@@ -54,6 +54,43 @@ class NotificationDelivery(Base):
 
     __table_args__ = (
         Index("ix_notification_deliveries_notification_id_channel", "notification_id", "channel"),
+    )
+
+
+class NotificationSubscription(Base):
+    """Coverage subscription: ``subscriber_id`` also receives ``target_user_id``'s
+    FUTURE SLA assignment/escalation notifications (labelled "covering for <name>").
+
+    Forward-looking delegation, distinct from takeover (which grabs an existing task).
+    One subscriber → many targets; one target → many subscribers. At most one ACTIVE
+    row per (subscriber, target) pair.
+    """
+
+    __tablename__ = "notification_subscriptions"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    subscriber_id = Column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    target_user_id = Column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    is_active = Column(Boolean, default=True, nullable=False, server_default=text("true"))
+    expires_at = Column(DateTime(timezone=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_notification_subscriptions_subscriber_id", "subscriber_id"),
+        Index("ix_notification_subscriptions_target_user_id", "target_user_id"),
+        # One active subscription per (subscriber, target). Plain unique index on the
+        # pair (sqlite-compatible); the service toggles is_active rather than deleting,
+        # and re-subscribes by reactivating the existing row.
+        Index(
+            "uq_notification_subscriptions_subscriber_target",
+            "subscriber_id",
+            "target_user_id",
+            unique=True,
+        ),
     )
 
 

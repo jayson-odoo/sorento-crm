@@ -7,6 +7,7 @@ import type {
   TeamCreatePayload,
   TeamUpdatePayload,
   TeamAddMemberPayload,
+  TeamMemberUpdatePayload,
 } from '../types/team.types';
 
 export type { UserSelectItem } from '@/services/userSelectService';
@@ -75,4 +76,18 @@ export async function removeTeamMember(teamId: string, userId: string): Promise<
     method: 'DELETE',
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to remove member'));
+}
+
+export async function updateTeamMember(
+  teamId: string,
+  userId: string,
+  data: TeamMemberUpdatePayload,
+): Promise<TeamMember> {
+  const response = await apiFetch(`${BASE}/${teamId}/members/${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to update member'));
+  return response.json();
 }

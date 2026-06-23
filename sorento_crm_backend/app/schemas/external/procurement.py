@@ -159,6 +159,7 @@ class PurchaseRequestExternalCreate(BaseModel):
     delivery_address: Optional[str] = None
     total_project_value: Optional[Union[Decimal, str]] = None
     sponsor_subject: Optional[str] = None
+    sponsor_subject_other: Optional[str] = None
     expected_delivery_date: Optional[str | DateType] = None
     expected_po_date: Optional[str | DateType] = None
     date_of_delivery: Optional[str | DateType] = None
@@ -227,6 +228,7 @@ class PurchaseRequestExternalResponse(BaseModel):
     total_project_value: Optional[Decimal] = None
     total_project_value_text: Optional[str] = None
     sponsor_subject: Optional[str] = None
+    sponsor_subject_other: Optional[str] = None
     expected_delivery_date: Optional[DateType] = None
     expected_po_date: Optional[str | DateType] = None
     products: List[PurchaseRequestExternalLine] = []

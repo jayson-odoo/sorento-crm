@@ -191,3 +191,60 @@ class ConversationSLAEventLog(Base):
         Index("ix_conversation_sla_event_log_event_type", "event_type"),
         Index("ix_conversation_sla_event_log_assigned_to_id", "assigned_to_id"),
     )
+
+
+# Takeover request lifecycle statuses (see PLAN-takeover-cooldown).
+TAKEOVER_PENDING = "pending"
+TAKEOVER_COMMITTED = "committed"
+TAKEOVER_CANCELLED = "cancelled"
+TAKEOVER_REJECTED = "rejected"
+TAKEOVER_VOIDED = "voided"
+TAKEOVER_TERMINAL = (TAKEOVER_COMMITTED, TAKEOVER_CANCELLED, TAKEOVER_REJECTED, TAKEOVER_VOIDED)
+
+
+class SlaTakeoverRequest(Base):
+    """A pending-intent takeover with a cooldown veto window.
+
+    Initiator clicks Takeover -> a `pending` row is created with `commit_at = now +
+    cooldown`. Nothing about the SLA assignment changes until commit. During the
+    window the original assignee can Reject, the initiator can Cancel, and any owner
+    terminal action (resolve/reassign/escalate) voids it. The scheduler sweep commits
+    unchallenged rows past `commit_at`. Terminal rows are retained for audit; a partial
+    unique index allows at most ONE pending row per tracking. See PLAN-takeover-cooldown.
+    """
+
+    __tablename__ = "sla_takeover_requests"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    tracking_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("conversation_sla_tracking.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    initiator_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # Snapshot of the assignee being contested at create time (NULL = task was unassigned).
+    contested_assignee_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Queue team context the row was shown under — drives tier re-derivation at commit.
+    team_id = Column(UUID(as_uuid=False), nullable=False)
+    status = Column(String(16), nullable=False, server_default=TAKEOVER_PENDING)
+    commit_at = Column(DateTime(timezone=False), nullable=False)  # naive UTC
+    resolution_reason = Column(String(32), nullable=True)  # cancel|reject|resolved|escalated|reassigned|committed|ineligible
+    resolved_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    resolved_at = Column(DateTime(timezone=False), nullable=True)
+
+    tracking = relationship("ConversationSLATracking")
+    initiator = relationship("User", foreign_keys=[initiator_id])
+    contested_assignee = relationship("User", foreign_keys=[contested_assignee_id])
+
+    __table_args__ = (
+        Index("ix_sla_takeover_requests_tracking_id", "tracking_id"),
+        Index("ix_sla_takeover_requests_status_commit_at", "status", "commit_at"),
+        # At most one pending takeover per tracking.
+        Index(
+            "uq_sla_takeover_requests_one_pending",
+            "tracking_id",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )

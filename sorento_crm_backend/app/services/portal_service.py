@@ -1125,6 +1125,22 @@ class PortalService:
                     except (TypeError, ValueError):
                         pass  # legacy free-text values pass through
                 setattr(row, field, value)
+        # Sponsorship: resolve sponsor_subject through the lookup so an unmatched
+        # free-text value lands on 'others' (+ parked detail) instead of tripping
+        # the strict lookup write-validator on flush.
+        if kind == "sponsorship_form" and "sponsor_subject" in payload:
+            from app.services.procurement_service import PurchaseRequestService
+
+            norm_subject, norm_other = PurchaseRequestService(
+                self.db
+            )._normalize_sponsor_subject(
+                "sponsorship_form", getattr(row, "sponsor_subject", None)
+            )
+            row.sponsor_subject = norm_subject
+            explicit_other = (getattr(row, "sponsor_subject_other", None) or "").strip() or None
+            row.sponsor_subject_other = (
+                explicit_other if norm_subject == "others" and explicit_other else norm_other
+            )
 
     def _replace_request_lines_if_needed(self, kind: str, row: Any, payload: dict) -> None:
         if kind == "complaint":
@@ -1240,6 +1256,7 @@ class PortalService:
             "total_project_value",
             "total_project_value_text",
             "sponsor_subject",
+            "sponsor_subject_other",
             "expected_delivery_date",
             "expected_po_date",
             "requested_by",
@@ -1495,6 +1512,7 @@ class PortalService:
                 "total_project_value": str(row.total_project_value) if row.total_project_value is not None else None,
                 "total_project_value_text": row.total_project_value_text,
                 "sponsor_subject": row.sponsor_subject,
+                "sponsor_subject_other": getattr(row, "sponsor_subject_other", None),
                 "expected_delivery_date": row.expected_delivery_date.isoformat() if row.expected_delivery_date else None,
                 "expected_po_date": row.expected_po_date.isoformat() if row.expected_po_date else None,
                 "requested_by": row.requested_by,

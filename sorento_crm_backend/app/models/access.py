@@ -271,12 +271,24 @@ class Team(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(String(255), nullable=False)
     description = Column(Text(), nullable=True)
+    # Self-FK for the team hierarchy: a member of a parent team can see + act on the
+    # work of all descendant teams (any depth). NULL = top-level. SET NULL on delete
+    # so removing a parent re-roots its children rather than cascading them away.
+    parent_team_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("teams.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     members = relationship("TeamMember", back_populates="team", cascade="all, delete-orphan")
     agent_teams = relationship("AgentTeam", back_populates="team", cascade="all, delete-orphan")
+    parent = relationship("Team", remote_side=[id], foreign_keys=[parent_team_id])
 
-    __table_args__ = (Index("ix_teams_name", "name"),)
+    __table_args__ = (
+        Index("ix_teams_name", "name"),
+        Index("ix_teams_parent_team_id", "parent_team_id"),
+    )
 
 
 class TeamMember(Base):
@@ -287,6 +299,13 @@ class TeamMember(Base):
     team_id = Column(UUID(as_uuid=False), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(String(100), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     sort_order = Column(Integer, nullable=True)
+    # Per-team round-robin eligibility. Default true = receives auto-assignments.
+    # Per-team (NOT per-user): a multi-team member can be RR-eligible in one team and
+    # excluded in another. Governs AUTO distribution only — manual takeover/reassign
+    # can still target an excluded member, and they still appear in Team Tasks.
+    include_in_round_robin = Column(
+        Boolean, default=True, nullable=False, server_default=text("true")
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     team = relationship("Team", back_populates="members")

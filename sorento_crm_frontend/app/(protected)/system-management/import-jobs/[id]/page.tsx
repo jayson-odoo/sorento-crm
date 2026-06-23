@@ -396,6 +396,21 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                 <CardTitle>Result Details</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                {(typeof job.result.allocations_created === 'number' ||
+                  typeof job.result.allocations_updated === 'number') && (
+                  <div className="flex flex-wrap gap-2 text-sm">
+                    {typeof job.result.allocations_created === 'number' && (
+                      <span className="rounded bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 px-2 py-1">
+                        Allocations created: {job.result.allocations_created}
+                      </span>
+                    )}
+                    {typeof job.result.allocations_updated === 'number' && (
+                      <span className="rounded bg-sky-50 dark:bg-sky-950/30 text-sky-700 dark:text-sky-400 px-2 py-1">
+                        Allocations updated: {job.result.allocations_updated}
+                      </span>
+                    )}
+                  </div>
+                )}
                 {Array.isArray(job.result.successful_rows_detail) && job.result.successful_rows_detail.length > 0 && (
                   <div>
                     <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400 mb-2">

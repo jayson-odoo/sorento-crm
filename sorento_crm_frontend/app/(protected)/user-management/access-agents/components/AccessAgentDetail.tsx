@@ -379,6 +379,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                               </div>
                               <div className="space-y-1.5">
                                 {members.map((member: AgentTeamMemberInfo, idx: number) => {
+                                  const excluded = member.include_in_round_robin === false;
                                   const isLastAssigned = member.id === lastAssignedId;
                                   const isNextInLine = member.id === nextInLineId;
                                   const displayName = member.name || member.email || member.id;
@@ -389,7 +390,8 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                                       className={`
                                         flex items-center justify-between p-2 rounded-md text-sm
                                         ${isNextInLine ? 'bg-primary/10 border border-primary/20' : ''}
-                                        ${isLastAssigned ? 'bg-muted/50' : ''}
+                                        ${isLastAssigned && !isNextInLine ? 'bg-muted/50' : ''}
+                                        ${excluded ? 'opacity-60' : ''}
                                       `}
                                     >
                                       <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -404,7 +406,12 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                                         )}
                                         <TeamMemberRespondIoButton member={member} />
                                       </div>
-                                      <div className="flex items-center gap-2">
+                                      <div className="flex items-center gap-2 shrink-0">
+                                        {excluded && (
+                                          <Badge variant="outline" className="text-xs text-muted-foreground">
+                                            Excluded from round robin
+                                          </Badge>
+                                        )}
                                         {isLastAssigned && (
                                           <Badge variant="secondary" className="text-xs">
                                             Last assigned

@@ -9,6 +9,7 @@ export interface RespondOutboxRow {
   sent_as: 'text' | 'template';
   message_text?: string | null;
   template_name?: string | null;
+  button_url?: string | null;
   status: string; // success | failed | pending | processing
   status_code?: number | null;
   error_message?: string | null;

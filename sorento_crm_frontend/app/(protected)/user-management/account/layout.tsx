@@ -126,14 +126,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       <Container>
         <Toolbar>
           <ToolbarHeading>
-            <ToolbarTitle>Account</ToolbarTitle>
-          </ToolbarHeading>
-          <ToolbarActions />
-        </Toolbar>
-        <div className="flex flex-col gap-5 lg:flex-row">
-          <div className="space-y-7 lg:w-[200px] shrink-0 pt-6">
-            <div className="flex items-center gap-2.5">
-              <Avatar key={user.avatar ?? 'no-avatar'} className="size-12">
+            <div className="flex items-center gap-3">
+              <Avatar key={user.avatar ?? 'no-avatar'} className="size-12 shrink-0">
                 {user.avatar ? (
                   <AvatarImage src={user.avatar} alt={user.name || ''} />
                 ) : null}
@@ -141,37 +135,40 @@ export default function Layout({ children }: { children: React.ReactNode }) {
                   {getInitials(user.name || user.email)}
                 </AvatarFallback>
               </Avatar>
-              <div className="space-y-px">
-                <div className="font-semibold text-sm">{user.name}</div>
-                <div className="text-muted-foreground text-2sm">
-                  {user.roles?.length ? user.roles.map((r: { name: string }) => r.name).join(', ') : (user.role?.name ?? '—')}
+              <div className="min-w-0 space-y-px">
+                <ToolbarTitle className="truncate">{user.name}</ToolbarTitle>
+                <div className="truncate text-2sm text-muted-foreground">
+                  {user.email}
+                  {(() => {
+                    const roles = user.roles?.length
+                      ? user.roles.map((r: { name: string }) => r.name).join(', ')
+                      : (user.role?.name ?? '');
+                    return roles ? ` · ${roles}` : '';
+                  })()}
                 </div>
               </div>
             </div>
-            <Tabs defaultValue={activeTab} value={activeTab}>
-              <TabsList
-                variant="button"
-                className="flex flex-col items-stretch gap-3.5 border-0"
-              >
-                {Object.entries(navRoutes).map(
-                  ([key, { title, icon: Icon, path }]) => (
-                    <TabsTrigger
-                      key={key}
-                      value={key}
-                      disabled={isLoading}
-                      onClick={() => handleTabClick(key, path)}
-                      className="justify-start"
-                    >
-                      <Icon />
-                      <span>{title}</span>
-                    </TabsTrigger>
-                  ),
-                )}
-              </TabsList>
-            </Tabs>
-          </div>
-          <div className="grow">{children}</div>
-        </div>
+          </ToolbarHeading>
+          <ToolbarActions />
+        </Toolbar>
+        <Tabs defaultValue={activeTab} value={activeTab} className="mb-5">
+          <TabsList variant="line">
+            {Object.entries(navRoutes).map(
+              ([key, { title, icon: Icon, path }]) => (
+                <TabsTrigger
+                  key={key}
+                  value={key}
+                  disabled={isLoading}
+                  onClick={() => handleTabClick(key, path)}
+                >
+                  <Icon />
+                  <span>{title}</span>
+                </TabsTrigger>
+              ),
+            )}
+          </TabsList>
+        </Tabs>
+        <div>{children}</div>
       </Container>
     </AccountProvider>
   );

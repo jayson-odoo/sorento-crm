@@ -798,6 +798,656 @@ class ConversationSLATrackingService:
             for r in rows
         ]
 
+    # ---- Team Tasks: visibility, listing, takeover, reassign ----------------
+
+    def _visible_team_ids(self, user_id: str) -> set:
+        """Teams the user is a member of ∪ all their descendants (recursive)."""
+        from app.models.access import TeamMember
+        from app.services.user_service import descendant_team_ids
+
+        my_team_ids = {
+            str(tid)
+            for (tid,) in self.db.query(TeamMember.team_id)
+            .filter(TeamMember.user_id == str(user_id))
+            .all()
+        }
+        if not my_team_ids:
+            return set()
+        return descendant_team_ids(self.db, my_team_ids)
+
+    def _members_of_teams(self, team_ids) -> set:
+        """Distinct user ids who are members of any of ``team_ids``."""
+        from app.models.access import TeamMember
+
+        ids = [str(t) for t in (team_ids or []) if t]
+        if not ids:
+            return set()
+        return {
+            str(uid)
+            for (uid,) in self.db.query(TeamMember.user_id)
+            .filter(TeamMember.team_id.in_(ids))
+            .all()
+        }
+
+    def _team_label_by_member(self, team_ids, member_ids) -> dict[str, tuple]:
+        """For each member id, a representative (team_id, team_name) within the
+        visible set — context for the Team Tasks row (a user can be in several
+        visible teams; the first by name is used for display)."""
+        from app.models.access import Team, TeamMember
+
+        tids = [str(t) for t in (team_ids or []) if t]
+        mids = [str(m) for m in (member_ids or []) if m]
+        if not tids or not mids:
+            return {}
+        rows = (
+            self.db.query(TeamMember.user_id, Team.id, Team.name)
+            .join(Team, Team.id == TeamMember.team_id)
+            .filter(TeamMember.team_id.in_(tids), TeamMember.user_id.in_(mids))
+            .order_by(Team.name.asc())
+            .all()
+        )
+        out: dict[str, tuple] = {}
+        for uid, team_id, team_name in rows:
+            if str(uid) not in out:
+                out[str(uid)] = (str(team_id), team_name)
+        return out
+
+    def can_user_act_on_tracking(
+        self, user_id: str, tracking: ConversationSLATracking
+    ) -> bool:
+        """Permission == visibility: the user may takeover/reassign exactly the
+        tasks visible in their Team Tasks (or their own tasks). True when the
+        current assignee is a member of any of the user's visible teams, OR the
+        task is the user's own (reassign from My Pending)."""
+        assignee = getattr(tracking, "assigned_to_id", None)
+        if assignee is not None and str(assignee) == str(user_id):
+            return True
+        if assignee is None:
+            return False
+        members = self._members_of_teams(self._visible_team_ids(user_id))
+        return str(assignee) in members
+
+    def list_visible_users(self, user_id: str) -> list[dict]:
+        """Scope-B picker source: users I can see (members of my visible teams),
+        excluding myself. Human-readable name, no UUIDs in the label."""
+        from app.models.user import User
+
+        member_ids = self._members_of_teams(self._visible_team_ids(user_id))
+        member_ids.discard(str(user_id))
+        if not member_ids:
+            return []
+        rows = self.db.query(User).filter(User.id.in_(list(member_ids))).all()
+        out = [
+            {
+                "id": str(u.id),
+                "name": (u.name or u.email or "").strip() or None,
+                "email": u.email,
+            }
+            for u in rows
+        ]
+        out.sort(key=lambda x: (x["name"] or x["email"] or "").lower())
+        return out
+
+    def list_team_pending(
+        self,
+        user_id: str,
+        assignee: Optional[str] = None,
+        team: Optional[str] = None,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+    ) -> dict:
+        """Unresolved SLA tasks of teammates in the user's visible teams (peers +
+        recursive child/grandchild teams), excluding the user's own (those live in
+        My Pending). Includes BOTH conversation and form rows (whole workload).
+
+        ``query`` is a free-text filter over the entity number / contact name
+        (reference), assignee name, team label and type. References are resolved
+        post-query, so when a query is given we resolve a capped candidate set then
+        filter + paginate in Python; otherwise we paginate in the DB.
+
+        Returns {"data": [...], "total": int, "page": int, "limit": int}.
+        """
+        from sqlalchemy.orm import joinedload
+        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.models.user import User
+
+        visible_team_ids = self._visible_team_ids(user_id)
+        member_ids = self._members_of_teams(visible_team_ids)
+        member_ids.discard(str(user_id))  # exclude self
+        if not member_ids:
+            return {"data": [], "total": 0, "page": page, "limit": limit}
+
+        # Optional team filter: restrict to members of that single team (must be in
+        # the visible set, else it yields nothing).
+        if team:
+            team_member_ids = self._members_of_teams([str(team)])
+            member_ids = {m for m in member_ids if m in team_member_ids}
+        # Optional assignee filter.
+        if assignee:
+            member_ids = {m for m in member_ids if m == str(assignee)}
+        if not member_ids:
+            return {"data": [], "total": 0, "page": page, "limit": limit}
+
+        base = (
+            self.db.query(ConversationSLATracking)
+            .options(
+                joinedload(ConversationSLATracking.policy),
+                joinedload(ConversationSLATracking.assigned_user),
+            )
+            .filter(
+                ConversationSLATracking.is_resolved.is_(False),
+                ConversationSLATracking.assigned_to_id.in_(list(member_ids)),
+                ConversationSLATracking.assigned_to_id != str(user_id),
+            )
+        )
+        q = (query or "").strip().lower()
+        if q:
+            # Resolve a capped candidate set, then filter on the resolved fields.
+            rows = base.order_by(ConversationSLATracking.due_at.asc()).limit(1000).all()
+        else:
+            total = base.count()
+            rows = (
+                base.order_by(ConversationSLATracking.due_at.asc())
+                .offset(max(0, (page - 1) * limit))
+                .limit(limit)
+                .all()
+            )
+
+        reference_by_row = self._resolve_my_pending_references(rows)
+        action_by_row = self._form_next_actions(rows)
+
+        # Resolve assignee names (no UUIDs) + a representative team label per row.
+        row_assignee_ids = {
+            str(r.assigned_to_id) for r in rows if getattr(r, "assigned_to_id", None)
+        }
+        name_by_id: dict[str, Optional[str]] = {}
+        if row_assignee_ids:
+            for u in self.db.query(User).filter(User.id.in_(row_assignee_ids)).all():
+                name_by_id[str(u.id)] = (u.name or u.email or "").strip() or None
+        team_by_member = self._team_label_by_member(visible_team_ids, row_assignee_ids)
+
+        data = []
+        for r in rows:
+            aid = str(r.assigned_to_id) if getattr(r, "assigned_to_id", None) else None
+            team_ctx = team_by_member.get(aid) if aid else None
+            data.append(
+                {
+                    "id": str(r.id),
+                    "assignee_id": aid,
+                    "assignee_name": name_by_id.get(aid) if aid else None,
+                    "team_id": team_ctx[0] if team_ctx else None,
+                    "team_label": team_ctx[1] if team_ctx else None,
+                    "source_entity_type": r.source_entity_type,
+                    "source_entity_id": r.source_entity_id,
+                    "is_form_sla": r.source_entity_type in FORM_SLA_TYPES,
+                    "reference": reference_by_row.get(str(r.id)),
+                    "due_at": r.due_at.isoformat() if r.due_at else None,
+                    "is_responded": bool(r.is_responded),
+                    "current_tier": r.current_tier,
+                    "policy_name": r.policy.name if r.policy else None,
+                    "next_action": action_by_row.get(str(r.id)),
+                }
+            )
+
+        if q:
+            def _hay(d: dict) -> str:
+                return " ".join(
+                    str(d.get(k) or "")
+                    for k in ("reference", "assignee_name", "team_label",
+                              "source_entity_type", "policy_name")
+                ).lower()
+
+            data = [d for d in data if q in _hay(d)]
+            total = len(data)
+            start = max(0, (page - 1) * limit)
+            data = data[start : start + limit]
+
+        return {"data": data, "total": total, "page": page, "limit": limit}
+
+    def _push_respond_assignee(
+        self, tracking: ConversationSLATracking, new_respond_user_id: Optional[str]
+    ) -> None:
+        """Best-effort Respond.io conversation-assignee push (conversation rows only).
+
+        Writes an integration_log on success AND failure (business_id = tracking.id).
+        Form-SLA rows have no Respond conversation -> skipped. A missing assignee
+        respond_user_id -> skipped + warning. Never raises (post-commit side effect).
+        """
+        import logging
+        import json as _json
+        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.integration_service import RespondClient, IntegrationLogService
+        from app.schemas.integration import IntegrationLogCreate
+
+        log = logging.getLogger(__name__)
+        s_type = getattr(tracking, "source_entity_type", None)
+        if s_type in FORM_SLA_TYPES:
+            return  # form SLA -> no Respond conversation
+        contact_id = getattr(tracking, "respond_contact_id", None)
+        if not contact_id:
+            log.warning(
+                "Respond assignee push skipped for %s: no linked contact.",
+                getattr(tracking, "id", "?"),
+            )
+            return
+        if not new_respond_user_id or not str(new_respond_user_id).strip():
+            log.warning(
+                "Respond assignee push skipped for %s: assignee has no respond_user_id.",
+                getattr(tracking, "id", "?"),
+            )
+            return
+        # Resolve the contact's Respond identifier (respond_io_id), per the
+        # contact_id != respond_io_id rule.
+        contact = (
+            self.db.query(RespondContact)
+            .filter(RespondContact.id == str(contact_id))
+            .first()
+        )
+        identifier = getattr(contact, "respond_io_id", None) if contact else None
+        if not identifier:
+            log.warning(
+                "Respond assignee push skipped for %s: contact has no respond_io_id.",
+                getattr(tracking, "id", "?"),
+            )
+            return
+        identifier = str(identifier)
+        assignee_id = str(new_respond_user_id).strip()
+        endpoint = f"/v2/contact/id:{identifier}/conversation/assignee"
+        payload = {"assigneeId": assignee_id}
+        try:
+            client = RespondClient.for_identifier(self.db, identifier)
+            client.set_conversation_assignee(identifier, assignee_id)
+            try:
+                IntegrationLogService(self.db).create_integration_log(
+                    IntegrationLogCreate(
+                        integration_channel="respond_io",
+                        business_table="conversation_sla_tracking",
+                        business_id=str(tracking.id),
+                        direction="outbound",
+                        endpoint=endpoint,
+                        http_method="POST",
+                        request_payload=_json.dumps(payload),
+                        status="success",
+                        status_code=200,
+                    )
+                )
+            except Exception as le:  # noqa: BLE001
+                self.db.rollback()
+                log.warning("integration_log (success) write failed: %s", le)
+        except Exception as e:  # noqa: BLE001 — best-effort; log the failure
+            log.warning(
+                "Respond assignee push failed for %s: %s",
+                getattr(tracking, "id", "?"),
+                e,
+            )
+            try:
+                IntegrationLogService(self.db).create_integration_log(
+                    IntegrationLogCreate(
+                        integration_channel="respond_io",
+                        business_table="conversation_sla_tracking",
+                        business_id=str(tracking.id),
+                        direction="outbound",
+                        endpoint=endpoint,
+                        http_method="POST",
+                        request_payload=_json.dumps(payload),
+                        status="failed",
+                        error_message=str(e),
+                    )
+                )
+            except Exception as le:  # noqa: BLE001
+                self.db.rollback()
+                log.warning("integration_log (failure) write failed: %s", le)
+
+    def _notify_reassignment(
+        self,
+        tracking: ConversationSLATracking,
+        *,
+        actor_id: str,
+        new_assignee_id: str,
+        old_assignee_id: Optional[str],
+    ) -> None:
+        """Notify on takeover/reassign: new assignee always; old assignee only when
+        the actor differs (no self-notify). In-app always; email/WhatsApp gated by
+        the recipient's own assignment toggles. Best-effort. Fans out to coverage
+        subscribers of the new assignee."""
+        import logging
+
+        log = logging.getLogger(__name__)
+        try:
+            from app.config import settings
+            from app.models.user import User
+            from app.services.notification_service import NotificationService
+            from app.services.coverage_subscription_service import (
+                fan_out_coverage_copies,
+            )
+            from app.services.form_sla_service import build_sla_whatsapp_data
+
+            base_url = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+            detail = (
+                f"{base_url}/sla-management/conversation-sla-tracking/{tracking.id}"
+                if base_url
+                else ""
+            )
+            ref = (self._resolve_my_pending_references([tracking]) or {}).get(
+                str(tracking.id)
+            ) or "an SLA task"
+
+            # New assignee — always. Same window-aware WhatsApp data as form SLA assign.
+            new_title = "An SLA task was assigned to you"
+            new_body = f"{ref} has been assigned to you."
+            if detail:
+                new_body += f"\n\nOpen: {detail}"
+            new_data = {
+                "tracking_id": str(tracking.id),
+                **build_sla_whatsapp_data(self.db, tracking, str(new_assignee_id), new_body),
+            }
+            NotificationService(self.db).create_with_channel_preferences(
+                user_id=str(new_assignee_id),
+                type="conversation_sla",
+                title=new_title,
+                body=new_body,
+                data=new_data,
+                source_entity_type="conversation_sla_tracking",
+                source_entity_id=str(tracking.id),
+                event_type="reassigned",
+                send_in_app=True,
+                send_email=True,
+                send_whatsapp=True,
+                email_pref_attr="notify_email_on_assignment",
+                whatsapp_pref_attr="notify_whatsapp_on_assignment",
+            )
+            fan_out_coverage_copies(
+                self.db,
+                target_user_id=str(new_assignee_id),
+                actor_user_id=str(actor_id),
+                notification_type="conversation_sla",
+                title=new_title,
+                body=new_body,
+                data=new_data,
+                source_entity_type="conversation_sla_tracking",
+                source_entity_id=str(tracking.id),
+                event_type="reassigned",
+                email_pref_attr="notify_email_on_assignment",
+                whatsapp_pref_attr="notify_whatsapp_on_assignment",
+            )
+
+            # Old assignee — only when actor != old assignee (someone moved your task).
+            if (
+                old_assignee_id
+                and str(old_assignee_id) != str(actor_id)
+                and str(old_assignee_id) != str(new_assignee_id)
+            ):
+                old_title = "Your SLA task was moved"
+                old_body = f"{ref} was reassigned to someone else."
+                if detail:
+                    old_body += f"\n\nOpen: {detail}"
+                old_data = {
+                    "tracking_id": str(tracking.id),
+                    **build_sla_whatsapp_data(
+                        self.db, tracking, str(old_assignee_id), old_body,
+                        use_case="sla_task_moved",
+                    ),
+                }
+                NotificationService(self.db).create_with_channel_preferences(
+                    user_id=str(old_assignee_id),
+                    type="conversation_sla",
+                    title=old_title,
+                    body=old_body,
+                    data=old_data,
+                    source_entity_type="conversation_sla_tracking",
+                    source_entity_id=str(tracking.id),
+                    event_type="reassigned_away",
+                    send_in_app=True,
+                    send_email=True,
+                    send_whatsapp=True,
+                    email_pref_attr="notify_email_on_assignment",
+                    whatsapp_pref_attr="notify_whatsapp_on_assignment",
+                )
+        except Exception as e:  # noqa: BLE001 — best-effort; mutation already committed
+            log.warning(
+                "reassignment notify failed for %s: %s", getattr(tracking, "id", "?"), e
+            )
+
+    def takeover(self, tracking_id: str, user_id: str, team_id: str) -> ConversationSLATracking:
+        """Grab a visible task for myself (Team Tasks only). Clock-preserving:
+        re-derive (agent_id, team_set_code, current_tier) so the task sits at MY OWN
+        tier in the task's agent chain (a tier-3 approver takes it at tier 3, not the
+        queue team's tier-1), set assignee to me, advance that team's RR cursor to me,
+        write a 'reassignment' (takeover) event log, push Respond + notify. Does NOT
+        touch due_at / due_at_resolution / current_tier_started_at.
+
+        Resolution order for (agent_id, team, tier):
+          1. The taker's own membership in the task's agent chain — pick the most
+             senior tier they hold (so escalation continues above them). This is what
+             a user means by "take it onto my desk".
+          2. Fall back to the passed queue ``team_id``'s AgentTeam link when the taker
+             is not part of that agent's chain (pure cover-for-another-team case).
+        """
+        from app.models.access import AgentTeam, AgentTeamRoundRobinCursor, TeamMember
+        from app.models.user import User
+
+        tracking = self.get_tracking(tracking_id, load_event_logs=False)
+        if bool(getattr(tracking, "is_resolved", False)):
+            raise handle_validation_error("Cannot take over a resolved SLA task.")
+        if not self.can_user_act_on_tracking(user_id, tracking):
+            # An UNOWNED task is grabbable from a visible queue team (AC-INIT-3); an
+            # assigned task requires assignee-visibility.
+            if getattr(tracking, "assigned_to_id", None) is not None or str(
+                team_id
+            ) not in self._visible_team_ids(user_id):
+                raise handle_not_found("SLA Tracking", tracking_id)
+
+        me = self.db.query(User).filter(User.id == str(user_id)).first()
+        if not me:
+            raise handle_not_found("User", user_id)
+        old_assignee_id = getattr(tracking, "assigned_to_id", None)
+
+        # The queue team the row was shown under (assignee's team) — the fallback.
+        passed_link = (
+            self.db.query(AgentTeam)
+            .filter(AgentTeam.team_id == str(team_id))
+            .order_by(AgentTeam.tier.asc().nullslast())
+            .first()
+        )
+        # Keep the task's existing agent chain when set; otherwise infer it from the
+        # passed queue team.
+        agent_id = getattr(tracking, "agent_id", None) or (
+            str(passed_link.agent_id) if passed_link else None
+        )
+
+        # Prefer the taker's OWN standing in that agent chain (most senior tier held).
+        link = self._agent_link_for_user(agent_id, str(user_id))
+        # Fall back to the passed queue team's link (cover for another team's chain).
+        if not link:
+            link = passed_link
+        if not link:
+            raise handle_validation_error(
+                "The selected team has no agent/escalation configuration."
+            )
+
+        target_team_id = str(link.team_id)
+        setattr(tracking, "assigned_to_id", str(user_id))
+        setattr(tracking, "assigned_to", getattr(me, "respond_user_id", None))
+        setattr(tracking, "agent_id", str(link.agent_id))
+        setattr(tracking, "team_set_code", link.code)
+        if link.tier is not None:
+            setattr(tracking, "current_tier", int(link.tier))
+
+        # Advance the resolved team's RR cursor to me (upsert).
+        cursor = (
+            self.db.query(AgentTeamRoundRobinCursor)
+            .filter(
+                AgentTeamRoundRobinCursor.agent_id == str(link.agent_id),
+                AgentTeamRoundRobinCursor.team_id == target_team_id,
+            )
+            .with_for_update()
+            .first()
+        )
+        if cursor:
+            setattr(cursor, "last_assigned_user_id", str(user_id))
+        else:
+            self.db.add(
+                AgentTeamRoundRobinCursor(
+                    agent_id=str(link.agent_id),
+                    team_id=target_team_id,
+                    last_assigned_user_id=str(user_id),
+                )
+            )
+        self.db.commit()
+        self.db.refresh(tracking)
+
+        # Event log (best-effort post-commit side effect).
+        self._write_reassignment_log(
+            tracking, assigned_to_id=str(user_id), triggered_by_id=str(user_id), reason="takeover"
+        )
+        # Respond push + notify (both best-effort).
+        self._push_respond_assignee(tracking, getattr(me, "respond_user_id", None))
+        self._notify_reassignment(
+            tracking,
+            actor_id=str(user_id),
+            new_assignee_id=str(user_id),
+            old_assignee_id=str(old_assignee_id) if old_assignee_id else None,
+        )
+        return tracking
+
+    def _agent_link_for_user(self, agent_id, user_id):
+        """The AgentTeam link representing ``user_id``'s standing in agent
+        ``agent_id``'s chain — the most senior tier they hold (so escalation
+        continues above them). None when the user isn't part of that chain.
+        Shared by takeover (taker) and reassign (target) for tier re-derivation."""
+        from app.models.access import AgentTeam, TeamMember
+
+        if not agent_id:
+            return None
+        my_team_ids = [
+            str(t)
+            for (t,) in self.db.query(TeamMember.team_id)
+            .filter(TeamMember.user_id == str(user_id))
+            .all()
+        ]
+        if not my_team_ids:
+            return None
+        return (
+            self.db.query(AgentTeam)
+            .filter(
+                AgentTeam.agent_id == str(agent_id),
+                AgentTeam.team_id.in_(my_team_ids),
+            )
+            .order_by(AgentTeam.tier.desc().nullslast())
+            .first()
+        )
+
+    def reassign(self, tracking_id: str, user_id: str, target_user_id: str) -> ConversationSLATracking:
+        """Hand a task to a chosen person (My Pending or Team Tasks). Re-derives the
+        tier/team_set_code to the TARGET's own standing in the task's agent chain
+        (handing a tier-3 task to a tier-2 member moves it to tier 2), keeping the
+        same agent and ALL clocks. When the target isn't in that agent's chain, the
+        existing team/tier are kept. Target must be in the actor's visible scope
+        (scope-B). Writes a 'reassignment' event log, pushes Respond + notifies.
+        """
+        from app.models.user import User
+
+        tracking = self.get_tracking(tracking_id, load_event_logs=False)
+        if bool(getattr(tracking, "is_resolved", False)):
+            raise handle_validation_error("Cannot reassign a resolved SLA task.")
+        if not self.can_user_act_on_tracking(user_id, tracking):
+            raise handle_not_found("SLA Tracking", tracking_id)
+
+        # scope-B: target must be a member of the actor's visible teams.
+        visible_members = self._members_of_teams(self._visible_team_ids(user_id))
+        if str(target_user_id) not in visible_members:
+            raise handle_validation_error(
+                "You can only reassign to users in your teams or their child teams."
+            )
+        target = self.db.query(User).filter(User.id == str(target_user_id)).first()
+        if not target:
+            raise handle_not_found("User", target_user_id)
+        old_assignee_id = getattr(tracking, "assigned_to_id", None)
+
+        # Takeover-cooldown interaction: a third party cannot reassign a task that has a
+        # pending takeover (soft lock, AC-VOID-4); the owner reassigning their own task
+        # away IS allowed and voids the pending takeover (implicit veto, AC-VOID-2).
+        from app.services.sla_takeover_service import SlaTakeoverService
+
+        _tk = SlaTakeoverService(self.db)
+        _pending = _tk.get_pending_for_tracking(tracking_id)
+        if _pending is not None:
+            _is_owner = old_assignee_id is not None and str(old_assignee_id) == str(user_id)
+            if not _is_owner and not _tk._is_admin(user_id):
+                raise handle_validation_error(
+                    "A takeover is pending for this task; it can't be reassigned right now."
+                )
+
+        setattr(tracking, "assigned_to_id", str(target_user_id))
+        setattr(tracking, "assigned_to", getattr(target, "respond_user_id", None))
+        # Re-derive tier/team_set_code to the target's standing in this agent chain;
+        # keep the agent and all clocks. No membership in the chain -> leave as-is.
+        link = self._agent_link_for_user(getattr(tracking, "agent_id", None), str(target_user_id))
+        if link is not None:
+            setattr(tracking, "team_set_code", link.code)
+            if link.tier is not None:
+                setattr(tracking, "current_tier", int(link.tier))
+        self.db.commit()
+        self.db.refresh(tracking)
+
+        self._write_reassignment_log(
+            tracking,
+            assigned_to_id=str(target_user_id),
+            triggered_by_id=str(user_id),
+            reason="reassign",
+        )
+        self._push_respond_assignee(tracking, getattr(target, "respond_user_id", None))
+        self._notify_reassignment(
+            tracking,
+            actor_id=str(user_id),
+            new_assignee_id=str(target_user_id),
+            old_assignee_id=str(old_assignee_id) if old_assignee_id else None,
+        )
+        # Owner reassigned their own task away -> void the pending takeover (best-effort).
+        if _pending is not None:
+            _tk.void_for_tracking(tracking_id, "reassigned")
+        return tracking
+
+    def _write_reassignment_log(
+        self,
+        tracking: ConversationSLATracking,
+        *,
+        assigned_to_id: str,
+        triggered_by_id: str,
+        reason: str,
+    ) -> None:
+        """Best-effort 'reassignment' event log for takeover/reassign (post-commit)."""
+        import logging
+
+        log = logging.getLogger(__name__)
+        try:
+            tier = int(getattr(tracking, "current_tier", 0) or 0)
+            self.create_event_log(
+                ConversationSLAEventLogCreate(
+                    sla_tracking_id=str(getattr(tracking, "id")),
+                    event_type="reassignment",
+                    from_tier=tier if tier >= 1 else None,
+                    to_tier=tier if tier >= 1 else None,
+                    event_at=_now_utc(),
+                    reason=reason,
+                    assigned_to_id=str(assigned_to_id),
+                    trigger="manual",
+                    triggered_by_id=str(triggered_by_id),
+                    due_at=(
+                        _to_aware_utc(getattr(tracking, "due_at"))
+                        if isinstance(getattr(tracking, "due_at", None), datetime)
+                        else None
+                    ),
+                )
+            )
+        except Exception as e:  # noqa: BLE001 — mutation already committed
+            log.warning(
+                "reassignment event log failed for %s: %s",
+                getattr(tracking, "id", "?"),
+                e,
+            )
+
     def _form_next_actions(
         self, rows: list[ConversationSLATracking]
     ) -> dict[str, Optional[str]]:
@@ -1259,6 +1909,10 @@ class ConversationSLATrackingService:
             )
         )
         self.db.refresh(tracking)
+        # Escalation changes the owner/tier — void any pending takeover (AC-VOID-3).
+        from app.services.sla_takeover_service import SlaTakeoverService
+
+        SlaTakeoverService(self.db).void_for_tracking(str(tracking.id), "escalated")
         return tracking
 
     def list_due_escalations(self) -> list[dict]:
@@ -2226,6 +2880,13 @@ class ConversationSLATrackingService:
 
         self.db.commit()
         self.db.refresh(tracking)
+
+        # Resolving is the strongest "I'm on it" signal: void any pending takeover on
+        # this tracking (implicit veto, AC-VOID-1). Best-effort — never raises.
+        if resolved_in_this_request:
+            from app.services.sla_takeover_service import SlaTakeoverService
+
+            SlaTakeoverService(self.db).void_for_tracking(str(tracking.id), "resolved")
 
         # Best-effort: a resolved CONVERSATION SLA closes the matching Respond.io
         # conversation (Resolve = Respond close, per product decision). Form trackers

@@ -157,6 +157,22 @@ def _handler_promotion_active_window(db, task):
     return PromotionService(db).sync_promotion_active_by_calendar_window()
 
 
+def _handler_coverage_subscription_expiry(db, task):
+    """Deactivate coverage subscriptions whose expires_at has passed."""
+    from app.services.coverage_subscription_service import CoverageSubscriptionService
+
+    count = CoverageSubscriptionService(db).deactivate_expired_subscriptions()
+    return {"deactivated": count}
+
+
+def _handler_takeover_request_commit(db, task):
+    """Commit pending SLA takeover requests whose cooldown has elapsed unchallenged
+    (re-validating first); void those whose premise changed. See PLAN-takeover-cooldown."""
+    from app.services.sla_takeover_service import SlaTakeoverService
+
+    return SlaTakeoverService(db).commit_due()
+
+
 def _handler_automation_runner(db, task):
     """Heartbeat for automations: dispatch every enabled automation whose next_run_at is due."""
     return AutomationService(db).evaluate_due()
@@ -256,6 +272,8 @@ def register_task_handlers():
     register_handler("email_outbox_drainer", _handler_email_outbox_drainer)
     register_handler("attachment_storage_audit", run_attachment_storage_audit)
     register_handler("product_discontinued_check", _handler_product_discontinued_check)
+    register_handler("coverage_subscription_expiry", _handler_coverage_subscription_expiry)
+    register_handler("takeover_request_commit", _handler_takeover_request_commit)
 
 
 def start_scheduler():

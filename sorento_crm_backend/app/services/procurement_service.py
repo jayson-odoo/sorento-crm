@@ -41,6 +41,14 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+class AllocationReceivedGuardError(Exception):
+    """Raised by upsert_allocation when the new allocated quantity would drop below
+    the quantity already received for an existing allocation. The import loop catches
+    this to classify the row as a real (skipped) error rather than a generic conflict."""
+    pass
+
+
 _SHIPMENT_STATUS_ALIASES = {
     "received": "fully_received",
 }
@@ -1133,7 +1141,55 @@ class SPOAllocationService:
         self.db.refresh(allocation)
         InboundShipmentService(self.db).refresh_shipment_line_statuses(allocation.inbound_shipment_id)
         return allocation
-    
+
+    def upsert_allocation(
+        self, allocation_data: SPOAllocationCreate, created_by: str
+    ) -> tuple[str, SPOAllocation]:
+        """Create or update an SPO allocation keyed by (spo_number, product_id, warehouse_id).
+
+        Returns a (action, allocation) tuple where action is one of:
+        - "created"   — no existing row, a new allocation was inserted.
+        - "updated"   — existing row's allocated_quantity changed (and is still >= received).
+        - "unchanged" — existing row already had the same allocated_quantity; no write.
+
+        Raises AllocationReceivedGuardError when the new allocated quantity is below the
+        existing quantity_received (received-below-allocated is a data problem to surface).
+
+        Only allocated_quantity (and updated_at) are ever written on update — receipt_status,
+        quantity_received, quantity_rejected, created_by, storage_zone_id, allocation_notes
+        are left untouched (the import file doesn't carry them reliably).
+        """
+        existing = None
+        if allocation_data.spo_number and allocation_data.product_id and allocation_data.warehouse_id:
+            existing = self.db.query(SPOAllocation).filter(
+                SPOAllocation.spo_number == allocation_data.spo_number,
+                SPOAllocation.product_id == allocation_data.product_id,
+                SPOAllocation.warehouse_id == allocation_data.warehouse_id,
+            ).first()
+
+        if existing is None:
+            allocation = self.create_allocation(allocation_data, created_by)
+            return ("created", allocation)
+
+        new_qty = allocation_data.allocated_quantity
+        if new_qty == existing.allocated_quantity:
+            return ("unchanged", existing)
+
+        received = existing.quantity_received or 0
+        if new_qty < received:
+            raise AllocationReceivedGuardError(
+                f"Allocation {existing.spo_number} / product {existing.product_id} / "
+                f"warehouse {existing.warehouse_id}: new qty {new_qty} < already received "
+                f"{received}, skipped"
+            )
+
+        existing.allocated_quantity = new_qty
+        existing.updated_at = datetime.utcnow()
+        self.db.commit()
+        self.db.refresh(existing)
+        InboundShipmentService(self.db).refresh_shipment_line_statuses(existing.inbound_shipment_id)
+        return ("updated", existing)
+
     def update_allocation(self, allocation_id: str, allocation_data: SPOAllocationUpdate):
         """Update an SPO allocation."""
         allocation = self.get_allocation(allocation_id)
@@ -2027,6 +2083,23 @@ class StockInquiryService:
                 base_url = (sys_settings.website_url or "").strip().rstrip("/")
         return f"{base_url}/view/stock-inquiry?token={view_token}" if base_url else f"/view/stock-inquiry?token={view_token}"
 
+    def _stock_inquiry_portal_or_view_url(self, inquiry, inquiry_id: str) -> str:
+        """Bare interactive portal link for the stock inquiry (contact can act /
+        resubmit), falling back to the read-only public view URL. Mirrors
+        ``ComplaintService._complaint_portal_or_view_url``. Used for the
+        ``portal_url`` structured-template variable.
+        """
+        from app.services.portal_service import PortalService
+
+        portal = PortalService(self.db).submission_link(
+            getattr(inquiry, "contact_id", None),
+            "stock_inquiry",
+            inquiry_id,
+        )
+        if portal:
+            return portal.strip()
+        return (self._build_stock_inquiry_view_url(inquiry_id) or "").strip()
+
     def _build_stock_inquiry_internal_url(self, inquiry_id: str, base_url_override: Optional[str] = None) -> str:
         """Build the IN-SYSTEM (login-required) detail link for a stock inquiry —
         used for STAFF team notifications (e.g. "New Stock Inquiry created"), so the
@@ -2823,6 +2896,7 @@ class StockInquiryService:
         crm_sender_user_id: Optional[str],
         space_id: Optional[str],
         verify_delivery: bool = True,
+        extra_context_vars: Optional[dict] = None,
     ) -> None:
         """Push a Respond.io send into the RQ ``respond_io`` queue.
 
@@ -2830,6 +2904,10 @@ class StockInquiryService:
         4xx/5xx (or failed delivery) does not roll back the surrounding business
         write. Failed jobs land in RQ's FailedJobRegistry and a ``status='failed'``
         integration_logs row.
+
+        ``extra_context_vars`` carries the structured-template vars (bare ``update``
+        core + ``portal_url``) that can't be reconstructed from the inquiry row.
+        Appended LAST in the positional args (enqueue_job serializes positionally).
         """
         from app.services.queue_service import enqueue_job
         from app.tasks.respond_io_tasks import send_stock_inquiry_respond_message
@@ -2843,6 +2921,7 @@ class StockInquiryService:
             crm_sender_user_id,
             space_id,
             verify_delivery,
+            extra_context_vars,
             queue_name="respond_io",
             job_timeout=180,
         )
@@ -2859,6 +2938,7 @@ class StockInquiryService:
         message_text: str,
         crm_sender_user_id: Optional[str] = None,
         respond_user_id_fallback: Optional[str] = None,
+        extra_context_vars: Optional[dict] = None,
     ) -> None:
         """Enqueue a Respond.io text message for the inquiry's contact."""
         from app.services.error_handler import handle_validation_error
@@ -2880,6 +2960,7 @@ class StockInquiryService:
             crm_sender_user_id=crm_sender_user_id,
             space_id=getattr(inquiry, "space_id", None),
             verify_delivery=False,
+            extra_context_vars=extra_context_vars,
         )
 
     def _enqueue_public_revise_webhook_for_stock_inquiry(self, inquiry: StockInquiry) -> None:
@@ -3042,6 +3123,21 @@ class StockInquiryService:
         self.db.refresh(inquiry)
         return inquiry
 
+    @staticmethod
+    def _bare_stock_inquiry_reply(raw: Optional[str]) -> str:
+        """Strip the FE-composed "There is a response to your stock inquiry
+        {link}: " preamble from a purchasing reply, keeping ONLY the
+        technician's wording for the lean ``update`` template var. The FE sends
+        ``f"There is a response to your stock inquiry{linkPart}: {body}"`` as
+        purchasing_response; the link has no ": " (colon-space), so the last
+        ": " is the body separator. Mirrors complaint reply normalization.
+        """
+        s = (raw or "").strip()
+        if not s.startswith("There is a response to your stock inquiry"):
+            return s
+        idx = s.rfind(": ")
+        return s[idx + 2 :].strip() if idx != -1 else s
+
     def update_inquiry_and_reply(
         self,
         inquiry_id: str,
@@ -3153,6 +3249,13 @@ class StockInquiryService:
         self.db.commit()
         self.db.refresh(inquiry)
 
+        # Structured-template vars: bare purchasing_response text as `update`
+        # core + links. Mirrors complaint's bare `stored_body`.
+        reply_extra_vars = {
+            "update": self._bare_stock_inquiry_reply(message_to_send),
+            "portal_url": self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id)),
+            "view_url": (self._build_stock_inquiry_view_url(str(inquiry.id)) or "").strip(),
+        }
         self._enqueue_stock_inquiry_respond_message(
             inquiry_id=inquiry_id,
             identifier=identifier,
@@ -3161,6 +3264,7 @@ class StockInquiryService:
             crm_sender_user_id=crm_sender_user_id,
             space_id=getattr(inquiry, "space_id", None),
             verify_delivery=True,
+            extra_context_vars=reply_extra_vars,
         )
 
         if transition_to_responded_workflow:
@@ -3201,7 +3305,13 @@ class StockInquiryService:
             logger.warning("Form SLA emit 'submit' failed for stock_inquiry %s: %s", inquiry_id, e)
         return inquiry
 
-    def project_sales_approve_inquiry(self, inquiry_id: str, actor_user_id: Optional[str] = None) -> StockInquiry:
+    def project_sales_approve_inquiry(
+        self,
+        inquiry_id: str,
+        actor_user_id: Optional[str] = None,
+        crm_sender_user_id: Optional[str] = None,
+        respond_user_id_fallback: Optional[str] = None,
+    ) -> StockInquiry:
         """Move inquiry from pending_project_sales to pending_purchasing."""
         inquiry = self.get_inquiry(inquiry_id)
         if inquiry.status != "pending_project_sales":
@@ -3214,6 +3324,33 @@ class StockInquiryService:
         inquiry.rejected_from = None
         self.db.commit()
         self.db.refresh(inquiry)
+        # Notify the CONTACT that the inquiry advanced to purchasing review
+        # (template when the 24h window is closed). Best-effort post-commit — a
+        # send hiccup must not roll back the approved transition.
+        try:
+            inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+            portal_url = self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id))
+            approve_extra_vars = {
+                "update": "Approved by project sales manager",
+                "portal_url": portal_url,
+                "view_url": (self._build_stock_inquiry_view_url(str(inquiry.id)) or "").strip(),
+            }
+            self._send_stock_inquiry_contact_message(
+                inquiry,
+                message_text=(
+                    f"Your stock inquiry {inquiry_number} has been approved by the project "
+                    f"sales manager. Please view your submission here {portal_url}"
+                ),
+                crm_sender_user_id=crm_sender_user_id or actor_user_id,
+                respond_user_id_fallback=respond_user_id_fallback or actor_user_id,
+                extra_context_vars=approve_extra_vars,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to notify contact on project_sales_approve for stock_inquiry %s: %s",
+                inquiry_id,
+                e,
+            )
         try:
             self._notify_team_stock_inquiry(
                 inquiry_id=str(inquiry.id),
@@ -3269,6 +3406,13 @@ class StockInquiryService:
             "stock_inquiry",
             str(inquiry.id),
         ) or view_url
+        # Structured-template vars: LEAN `update` core (status only) + links —
+        # "Rejected, reason: X" (no preamble, no inline URL). Mirrors complaint.
+        ps_reject_extra_vars = {
+            "update": f"Rejected, reason: {reason_text}" if reason_text else "Rejected",
+            "portal_url": self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id)),
+            "view_url": (self._build_stock_inquiry_view_url(str(inquiry.id)) or "").strip(),
+        }
         self._send_stock_inquiry_contact_message(
             inquiry,
             message_text=(
@@ -3277,6 +3421,7 @@ class StockInquiryService:
             ),
             crm_sender_user_id=crm_sender_user_id or user_id,
             respond_user_id_fallback=respond_user_id_fallback or user_id,
+            extra_context_vars=ps_reject_extra_vars,
         )
         inquiry.status = "rejected"
         inquiry.rejected_from = "pending_project_sales"
@@ -3328,6 +3473,13 @@ class StockInquiryService:
             "stock_inquiry",
             str(inquiry.id),
         ) or view_url
+        # Structured-template vars: LEAN `update` core (status only) + links —
+        # "Rejected, reason: X" (no preamble, no inline URL). Mirrors complaint.
+        pur_reject_extra_vars = {
+            "update": f"Rejected, reason: {reason_text}" if reason_text else "Rejected",
+            "portal_url": self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id)),
+            "view_url": (self._build_stock_inquiry_view_url(str(inquiry.id)) or "").strip(),
+        }
         self._send_stock_inquiry_contact_message(
             inquiry,
             message_text=(
@@ -3336,6 +3488,7 @@ class StockInquiryService:
             ),
             crm_sender_user_id=crm_sender_user_id or user_id,
             respond_user_id_fallback=respond_user_id_fallback or user_id,
+            extra_context_vars=pur_reject_extra_vars,
         )
         inquiry.status = "rejected"
         inquiry.rejected_from = "pending_purchasing"
@@ -3542,6 +3695,25 @@ class PurchaseRequestService:
                 base_url = (sys_settings.website_url or "").strip().rstrip("/")
         return f"{base_url}/view/request?token={view_token}" if base_url else f"/view/request?token={view_token}"
 
+    def _purchase_request_portal_or_view_url(self, header, request_id: str) -> str:
+        """Bare interactive portal link for the request (contact can act /
+        resubmit), falling back to the read-only public view URL. Mirrors
+        ``ComplaintService._complaint_portal_or_view_url``. Used for the
+        ``portal_url`` structured-template variable. ``submission_link`` resolves
+        the entity type from the row's ``request_type`` (purchase_request /
+        sponsorship_form).
+        """
+        from app.services.portal_service import PortalService
+
+        portal = PortalService(self.db).submission_link(
+            getattr(header, "contact_id", None),
+            getattr(header, "request_type", None) or "purchase_request",
+            request_id,
+        )
+        if portal:
+            return portal.strip()
+        return (self._build_request_view_url(request_id) or "").strip()
+
     def _send_purchase_request_contact_message(
         self,
         header: PurchaseRequestHeader,
@@ -3549,6 +3721,7 @@ class PurchaseRequestService:
         message_text: str,
         crm_sender_user_id: Optional[str] = None,
         respond_user_id_fallback: Optional[str] = None,
+        extra_context_vars: Optional[dict] = None,
     ) -> None:
         """Send a text message to the request's Respond.io contact and mirror to the outbound webhook."""
         from app.schemas.integration import IntegrationLogCreate
@@ -3591,6 +3764,10 @@ class PurchaseRequestService:
                 business_id=str(header.id),
                 identifier=identifier,
             )
+            # Structured-template vars (bare ``update`` core + portal_url) that can't
+            # be reconstructed from the row alone — merge over the auto-resolved vars.
+            if extra_context_vars:
+                context_vars.update(extra_context_vars)
             result = send_text_or_template(
                 self.db,
                 identifier=identifier,
@@ -3633,6 +3810,23 @@ class PurchaseRequestService:
             logger.exception(
                 "Respond.io send failed for purchase_request %s", getattr(header, "id", None)
             )
+            # Log what was ACTUALLY attempted (text vs template): send_text_or_template
+            # stamps the real payload + Respond HTTP response on the exception. A
+            # closed-window send fails as a TEMPLATE, so without this the outbox
+            # mislabels it as the default text payload (and drops the 4xx code).
+            request_payload = getattr(e, "request_payload", request_payload)
+            resp = getattr(e, "response", None)
+            resp_code = None
+            resp_body = None
+            if resp is not None:
+                try:
+                    resp_code = resp.status_code
+                except Exception:
+                    resp_code = None
+                try:
+                    resp_body = (resp.text or "")[:50000]
+                except Exception:
+                    resp_body = None
             log_service.create_integration_log(
                 IntegrationLogCreate(
                     integration_channel="respond_io",
@@ -3643,6 +3837,8 @@ class PurchaseRequestService:
                     endpoint=f"https://api.respond.io/v2/contact/id:{identifier or ''}/message",
                     http_method="POST",
                     status="failed",
+                    status_code=resp_code,
+                    response_payload=resp_body,
                     error_message=str(e),
                     created_by=str(crm_sender_user_id).strip() if crm_sender_user_id else None,
                 ),
@@ -3650,11 +3846,24 @@ class PurchaseRequestService:
             )
             raise
 
-    def _resolve_approver_display_name(self, header: PurchaseRequestHeader) -> str:
-        """Resolve ``approved_by`` (CRM user id) to a human-readable display name.
+    _UUID_RE = re.compile(
+        r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+        re.IGNORECASE,
+    )
 
-        Falls back to ``approver_email`` (public approval link) and finally to
-        ``"unknown"`` so the outbound message never leaks a UUID.
+    def _resolve_approver_display_name(self, header: PurchaseRequestHeader) -> str:
+        """Resolve ``approved_by`` to a human-readable display name.
+
+        ``approved_by`` may hold either a CRM user id (public approval link flow)
+        OR the approver's display name (in-system approve route stores the name
+        directly). Resolution order — chosen so the outbound message matches the
+        "Approved by" shown on the detail page (which renders ``approved_by`` raw):
+        1. ``approved_by`` matches a ``User.id`` → that user's name/email.
+        2. ``approved_by`` is a non-empty, non-UUID-shaped string → return it
+           verbatim (the stored display name, e.g. "CK Lee"). This is the
+           in-system case where no user row matches the name string.
+        3. ``approver_email`` (public link, no name) is set → the email.
+        4. Nothing usable → ``"unknown"`` (never leaks a raw UUID).
         """
         from app.models.user import User
 
@@ -3667,6 +3876,11 @@ class PurchaseRequestService:
             )
             if user:
                 return (user.name or user.email or approver_id).strip() or approver_id
+        # In-system (and named public-link) approvals store the display name
+        # straight into approved_by. Prefer it over the email so the message
+        # reads the same as the detail page; never echo a bare UUID.
+        if approver_id and not self._UUID_RE.match(approver_id):
+            return approver_id
         email = (getattr(header, "approver_email", None) or "").strip()
         if email:
             return email
@@ -3697,7 +3911,17 @@ class PurchaseRequestService:
                 f"Your purchase request {request_number} has been rejected due to {reason} by {approver}. "
                 f"Please view your submission here {view_url}"
             )
-        self._send_purchase_request_contact_message(header, message_text=message_text)
+        # Structured-template vars: LEAN `update` core (status only) + links —
+        # "Rejected, reason: X" (no preamble, no inline URL). Mirrors complaint.
+        reason_core = (getattr(header, "approval_comments", None) or "").strip()
+        reject_extra_vars = {
+            "update": f"Rejected, reason: {reason_core}" if reason_core else "Rejected",
+            "portal_url": self._purchase_request_portal_or_view_url(header, str(header.id)),
+            "view_url": (self._build_request_view_url(str(header.id)) or "").strip(),
+        }
+        self._send_purchase_request_contact_message(
+            header, message_text=message_text, extra_context_vars=reject_extra_vars
+        )
 
     def _notify_contact_on_approval_approved(self, header: PurchaseRequestHeader) -> None:
         """Notify the linked Respond.io contact when a public approval flow approves the request."""
@@ -3725,7 +3949,15 @@ class PurchaseRequestService:
                 f"Your purchase request {request_number} has been approved by {approver}.{note_part} "
                 f"Please view your submission here {view_url}"
             )
-        self._send_purchase_request_contact_message(header, message_text=message_text)
+        # Structured-template vars: LEAN `update` core (status only) + links.
+        approve_extra_vars = {
+            "update": "Approved",
+            "portal_url": self._purchase_request_portal_or_view_url(header, str(header.id)),
+            "view_url": (self._build_request_view_url(str(header.id)) or "").strip(),
+        }
+        self._send_purchase_request_contact_message(
+            header, message_text=message_text, extra_context_vars=approve_extra_vars
+        )
 
     # Customer-service finalize: only an approved request (post-approval, CS stage)
     # can be finalized. 'processed_by_cs' (CS handled it) and 'closed' (can't
@@ -3830,6 +4062,15 @@ class PurchaseRequestService:
         self.db.commit()
         self.db.refresh(header)
 
+        # Structured-template vars: LEAN `update` core (status only) + links —
+        # "Processed by CS" / "Closed" (no preamble, no inline URL).
+        finalize_update_core = "Processed by CS" if new_status == "processed_by_cs" else "Closed"
+        finalize_extra_vars = {
+            "update": finalize_update_core,
+            "portal_url": self._purchase_request_portal_or_view_url(header, str(header.id)),
+            "view_url": (self._build_request_view_url(str(header.id)) or "").strip(),
+        }
+
         # (b) Send the status-update message to the contact (best-effort, decoupled).
         try:
             self._send_purchase_request_contact_message(
@@ -3837,6 +4078,7 @@ class PurchaseRequestService:
                 message_text=message_text,
                 crm_sender_user_id=crm_sender_user_id,
                 respond_user_id_fallback=respond_user_id,
+                extra_context_vars=finalize_extra_vars,
             )
         except Exception:
             logger.exception(
@@ -4224,6 +4466,66 @@ class PurchaseRequestService:
             )
         return self.create_external_request(payload), "created"
 
+    # Lookup set bound to purchase_requests.sponsor_subject (see migration 243).
+    _SPONSOR_SUBJECT_SET_KEY = "procurement_sponsor_subject"
+
+    def _normalize_sponsor_subject(
+        self, request_type: Optional[str], raw_subject: Optional[str]
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Resolve an incoming ``sponsor_subject`` against the lookup set.
+
+        Returns ``(sponsor_subject, sponsor_subject_other)``:
+        - Non-sponsorship requests pass the raw value through untouched (PR never
+          binds sponsor_subject), other stays None.
+        - Empty/blank → ``(None, None)``.
+        - Resolves through the lookup resolver; a match yields the canonical
+          option value with no other text.
+        - Unmatched free text (e.g. n8n submissions) → ``("others", <raw text>)``
+          so the strict lookup write-validator never 422s the intake.
+        """
+        if (request_type or "").strip() != "sponsorship_form":
+            return raw_subject, None
+        raw = (raw_subject or "").strip()
+        if not raw:
+            return None, None
+        from app.services.lookup_resolver import LookupResolverService
+        from app.services.error_handler import AppException
+
+        try:
+            resolved = LookupResolverService(self.db).resolve(
+                self._SPONSOR_SUBJECT_SET_KEY, raw
+            )
+            value = (resolved.value or "").strip()
+            if value == "others":
+                return "others", raw
+            return value or "others", None
+        except AppException:
+            # Unresolved (or set missing) → park raw text under 'others'.
+            return "others", raw
+
+    def _apply_sponsor_subject_to_payload(
+        self, payload: dict, header: PurchaseRequestHeader
+    ) -> None:
+        """In-place normalize ``sponsor_subject`` on an exclude_unset update payload.
+
+        Only acts when ``sponsor_subject`` was actually supplied. Resolves it for
+        sponsorship rows and derives ``sponsor_subject_other`` (preserving an
+        explicitly supplied other detail). ``request_type`` falls back to the
+        existing header when not part of the update.
+        """
+        if "sponsor_subject" not in payload:
+            return
+        request_type = payload.get("request_type") or getattr(header, "request_type", None)
+        norm_subject, norm_other = self._normalize_sponsor_subject(
+            request_type, payload.get("sponsor_subject")
+        )
+        payload["sponsor_subject"] = norm_subject
+        if "sponsor_subject_other" in payload:
+            explicit_other = (payload.get("sponsor_subject_other") or "").strip() or None
+            payload["sponsor_subject_other"] = explicit_other or norm_other
+        else:
+            payload["sponsor_subject_other"] = norm_other
+
     def create_external_request(self, payload):
         """Create purchase request header + lines from external payload."""
         expected_po_date_text = None
@@ -4267,6 +4569,15 @@ class PurchaseRequestService:
         if "approval_status" in payload.model_fields_set:
             initial_approval = getattr(payload, "approval_status", None)
 
+        sponsor_subject, sponsor_subject_other = self._normalize_sponsor_subject(
+            getattr(payload, "request_type", None),
+            getattr(payload, "sponsor_subject", None),
+        )
+        # An explicitly supplied 'others' detail wins over the parked raw text.
+        explicit_other = getattr(payload, "sponsor_subject_other", None)
+        if explicit_other is not None and (explicit_other or "").strip():
+            sponsor_subject_other = explicit_other.strip()
+
         header = PurchaseRequestHeader(
             request_type=payload.request_type,
             request_number=request_number,
@@ -4277,7 +4588,8 @@ class PurchaseRequestService:
             delivery_address=getattr(payload, "delivery_address", None),
             total_project_value=total_project_value,
             total_project_value_text=total_project_value_text,
-            sponsor_subject=getattr(payload, "sponsor_subject", None),
+            sponsor_subject=sponsor_subject,
+            sponsor_subject_other=sponsor_subject_other,
             expected_delivery_date=expected_delivery_date,
             expected_po_date=self._parse_date(payload.expected_po_date),
             expected_po_date_text=expected_po_date_text,
@@ -4401,7 +4713,15 @@ class PurchaseRequestService:
         row.delivery_address = getattr(payload, "delivery_address", None)
         row.total_project_value = total_project_value
         row.total_project_value_text = total_project_value_text
-        row.sponsor_subject = getattr(payload, "sponsor_subject", None)
+        ext_sponsor_subject, ext_sponsor_subject_other = self._normalize_sponsor_subject(
+            getattr(payload, "request_type", None),
+            getattr(payload, "sponsor_subject", None),
+        )
+        ext_explicit_other = getattr(payload, "sponsor_subject_other", None)
+        if ext_explicit_other is not None and (ext_explicit_other or "").strip():
+            ext_sponsor_subject_other = ext_explicit_other.strip()
+        row.sponsor_subject = ext_sponsor_subject
+        row.sponsor_subject_other = ext_sponsor_subject_other
         row.expected_delivery_date = expected_delivery_date
         row.expected_po_date = self._parse_date(payload.expected_po_date)
         row.expected_po_date_text = expected_po_date_text
@@ -5060,6 +5380,13 @@ class PurchaseRequestService:
         dump = data.model_dump(exclude={"products"})
         dump["status"] = "draft"
         dump["source"] = "manual"
+        norm_subject, norm_other = self._normalize_sponsor_subject(
+            dump.get("request_type"), dump.get("sponsor_subject")
+        )
+        dump["sponsor_subject"] = norm_subject
+        # Keep an explicitly supplied 'others' detail; else use the parked raw text.
+        explicit_other = (dump.get("sponsor_subject_other") or "").strip() or None
+        dump["sponsor_subject_other"] = explicit_other or norm_other
         if not dump.get("request_number"):
             from app.services.numbering_service import NumberingService
             ref_date = dump.get("request_date") or date.today()
@@ -5109,6 +5436,7 @@ class PurchaseRequestService:
             payload["respond_inbox_url"] = respond_inbox_url
         elif contact_id is None and space_id is None:
             payload["respond_inbox_url"] = None
+        self._apply_sponsor_subject_to_payload(payload, header)
         for key, value in payload.items():
             if hasattr(header, key):
                 setattr(header, key, value)
@@ -5163,6 +5491,7 @@ class PurchaseRequestService:
         elif contact_id is None and space_id is None:
             payload["respond_inbox_url"] = None
 
+        self._apply_sponsor_subject_to_payload(payload, header)
         for key, value in payload.items():
             if hasattr(header, key):
                 setattr(header, key, value)
@@ -5221,6 +5550,13 @@ class PurchaseRequestService:
                 business_id=request_id,
                 identifier=identifier,
             )
+            # Structured-template vars: bare reply text as `update` core + links.
+            # Mirrors complaint's bare `stored_body` (no preamble, no inline URL).
+            context_vars.update({
+                "update": display_message,
+                "portal_url": self._purchase_request_portal_or_view_url(header, str(header.id)),
+                "view_url": (self._build_request_view_url(str(header.id)) or "").strip(),
+            })
             result = send_text_or_template(
                 self.db,
                 identifier=identifier,
@@ -5565,6 +5901,7 @@ class PurchaseRequestService:
             "total_project_value": getattr(header, "total_project_value", None),
             "total_project_value_text": getattr(header, "total_project_value_text", None),
             "sponsor_subject": getattr(header, "sponsor_subject", None),
+            "sponsor_subject_other": getattr(header, "sponsor_subject_other", None),
             "requested_by": header.requested_by,
             "request_date": getattr(header, "request_date", None),
             "created_at": getattr(header, "created_at", None),
@@ -5718,6 +6055,7 @@ class PurchaseRequestService:
             "total_project_value": getattr(header, "total_project_value", None),
             "total_project_value_text": getattr(header, "total_project_value_text", None),
             "sponsor_subject": getattr(header, "sponsor_subject", None),
+            "sponsor_subject_other": getattr(header, "sponsor_subject_other", None),
             "requested_by": header.requested_by,
             "request_date": getattr(header, "request_date", None),
             "requested_at": getattr(header, "requested_at", None),

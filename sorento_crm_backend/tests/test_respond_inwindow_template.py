@@ -97,8 +97,9 @@ def test_render_preserves_newlines_in_window(monkeypatch):
 
 
 def test_out_of_window_param_flattens_newlines():
-    # Same value, template branch (flatten=True default) → newline becomes " | ".
-    assert rms.sanitize_param("line one\nline two") == "line one | line two"
+    # Same value, template branch (flatten=True default) → newline becomes a space
+    # (was " | " before the URL-button change; PLAN-whatsapp-url-button-templates).
+    assert rms.sanitize_param("line one\nline two") == "line one line two"
     assert rms.sanitize_param("line one\nline two", flatten=False) == "line one\nline two"
 
 

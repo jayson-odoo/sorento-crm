@@ -218,6 +218,11 @@ class SystemSetting(Base):
     smtp_password = Column(String(255), nullable=True)
     smtp_from = Column(String(255), nullable=True)  # sender address or "Name <email>"
 
+    # Takeover cooldown: seconds between a takeover confirm and the actual reassignment,
+    # during which the original assignee can reject and the initiator can cancel.
+    # 0 = disabled (takeover commits instantly, pre-feature behavior). See PLAN-takeover-cooldown.
+    takeover_cooldown_seconds = Column(Integer, nullable=False, server_default="60", default=60)
+
     # New products / import: default product_supplier (standard lead time + supplier)
     default_product_supplier_id = Column(
         PG_UUID(as_uuid=False),

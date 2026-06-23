@@ -406,20 +406,43 @@ class RespondClient:
             return data.get("items", []) if isinstance(data, dict) else []
 
     def list_message_templates(self, channel_id: int | str) -> list[dict]:
-        """List WhatsApp message templates of a channel.
+        """List ALL WhatsApp message templates of a channel.
 
         GET /v2/space/channel/{channelId}/template. Items carry name,
         languageCode, category, status, statusDetail, templateId, namespace
         and a components array (body text contains {{1}}..{{n}}).
+
+        The endpoint is cursor-paginated (default page size ~10). We MUST walk
+        every page: the template sync hard-deletes any local row whose id is
+        absent from this list, so returning only page 1 would delete every
+        template past the first page on each sync.
         """
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
         url = f"{self.base_url}/v2/space/channel/{channel_id}/template"
+        items: list[dict] = []
+        cursor: Optional[str] = None
+        seen_cursors: set[str] = set()
         with httpx.Client(timeout=15) as client:
-            response = client.get(url, headers=self._headers())
-            response.raise_for_status()
-            data = response.json() if response.content else {}
-            return data.get("items", []) if isinstance(data, dict) else []
+            for _ in range(100):  # hard page cap — guards against a cursor loop
+                params: dict = {"limit": 100}
+                if cursor:
+                    params["cursorId"] = cursor
+                response = client.get(url, headers=self._headers(), params=params)
+                response.raise_for_status()
+                data = response.json() if response.content else {}
+                if not isinstance(data, dict):
+                    break
+                page = data.get("items") or []
+                if isinstance(page, list):
+                    items.extend(page)
+                pagination = data.get("pagination") or {}
+                nxt = pagination.get("next")
+                cursor = nxt if isinstance(nxt, str) else pagination.get("cursorId")
+                if not cursor or cursor in seen_cursors:
+                    break
+                seen_cursors.add(cursor)
+        return items
 
     def send_template_message(
         self,
@@ -430,12 +453,19 @@ class RespondClient:
         language_code: str,
         body_text: str,
         parameters: list[str],
+        button: Optional[dict] = None,
     ) -> dict:
         """Send an approved WhatsApp template message to a contact.
 
         POST /v2/contact/{identifier}/message with type=whatsapp_template.
         Respond.io requires the FULL template body text alongside the
         positional parameters (verified against the live API 2026-06-08).
+
+        ``button`` (optional) fills a template's dynamic URL button. Shape:
+        ``{"text": str, "url": str (with {{1}}), "suffix": str}``. Appended as a
+        respond.io ``buttons`` component (shape verified via Copy API Payload
+        2026-06-22): ``{"type":"buttons","buttons":[{"type":"url","text":...,
+        "url":"https://x/{{1}}","parameters":[{"type":"text","text":<suffix>}]}]}``.
         """
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
@@ -444,6 +474,23 @@ class RespondClient:
         body_component: dict = {"type": "body", "text": body_text}
         if parameters:
             body_component["parameters"] = [{"type": "text", "text": p} for p in parameters]
+        components: list[dict] = [body_component]
+        if button:
+            components.append(
+                {
+                    "type": "buttons",
+                    "buttons": [
+                        {
+                            "type": "url",
+                            "text": button.get("text") or "View",
+                            "url": button.get("url") or "",
+                            "parameters": [
+                                {"type": "text", "text": button.get("suffix") or ""}
+                            ],
+                        }
+                    ],
+                }
+            )
         payload = {
             "channelId": channel_id,
             "message": {
@@ -451,7 +498,7 @@ class RespondClient:
                 "template": {
                     "name": template_name,
                     "languageCode": language_code,
-                    "components": [body_component],
+                    "components": components,
                 },
             },
         }

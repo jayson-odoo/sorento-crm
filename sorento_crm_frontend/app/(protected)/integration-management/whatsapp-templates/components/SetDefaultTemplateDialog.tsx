@@ -21,6 +21,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
+  BUTTON_LINK_VARIABLES,
+  BUTTON_URL_KEY,
   listApprovedTemplates,
   PARAM_VARIABLES,
   setTemplateDefault,
@@ -74,15 +76,26 @@ export default function SetDefaultTemplateDialog({
       return;
     }
     const seed: Record<string, ParamVariable | ''> = {};
+    const sameTemplate = current?.template_id === selected.id;
     for (const key of Array.from({ length: selected.param_count }, (_, i) => String(i + 1))) {
-      seed[key] =
-        current?.template_id === selected.id ? (current.param_mapping[key] ?? '') : '';
+      seed[key] = sameTemplate ? (current.param_mapping[key] ?? '') : '';
+    }
+    // COPY_CODE auth buttons carry no link variable — the OTP code auto-fills.
+    if (selected.has_url_button && !selected.button_is_copy_code) {
+      // Default the button link to portal_url for a fresh mapping.
+      seed[BUTTON_URL_KEY] = sameTemplate
+        ? (current.param_mapping[BUTTON_URL_KEY] ?? current.button_url_var ?? 'portal_url')
+        : 'portal_url';
     }
     setMapping(seed);
   }, [selected, current]);
 
   const allMapped = paramKeys.length > 0 ? paramKeys.every((k) => mapping[k]) : true;
-  const canSave = Boolean(templateId) && allMapped && !isSaving;
+  const buttonMapped =
+    !selected?.has_url_button ||
+    selected.button_is_copy_code ||
+    Boolean(mapping[BUTTON_URL_KEY]);
+  const canSave = Boolean(templateId) && allMapped && buttonMapped && !isSaving;
 
   const useCaseLabel = USE_CASES.find((u) => u.key === useCase)?.label ?? useCase;
 
@@ -176,7 +189,57 @@ export default function SetDefaultTemplateDialog({
             </div>
           )}
 
-          {selected && paramKeys.length === 0 && (
+          {selected?.has_url_button && selected.button_is_copy_code && (
+            <div className="space-y-2">
+              <Label>Button link</Label>
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-xs text-muted-foreground w-20 shrink-0 truncate" title={selected.button_text ?? 'Copy code'}>
+                  {selected.button_text ?? 'Copy code'} →
+                </span>
+                <span className="text-sm text-muted-foreground">Copies the OTP code</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                This is a WhatsApp Authentication copy-code button — it copies the verification
+                code automatically. No variable to map.
+              </p>
+            </div>
+          )}
+
+          {selected?.has_url_button && !selected.button_is_copy_code && (
+            <div className="space-y-2">
+              <Label>Button link</Label>
+              <div className="flex items-center gap-3">
+                <span className="font-mono text-xs text-muted-foreground w-20 shrink-0 truncate" title={selected.button_text ?? 'URL button'}>
+                  {selected.button_text ?? 'URL'} →
+                </span>
+                <Select
+                  value={mapping[BUTTON_URL_KEY] ?? ''}
+                  onValueChange={(v) =>
+                    setMapping((prev) => ({ ...prev, [BUTTON_URL_KEY]: v as ParamVariable }))
+                  }
+                >
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder="Select link variable" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PARAM_VARIABLES.filter((v) => BUTTON_LINK_VARIABLES.includes(v.key)).map((v) => (
+                      <SelectItem key={v.key} value={v.key} title={v.description}>
+                        {v.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The button opens{' '}
+                <span className="font-mono">{selected.button_url_base ?? ''}</span>
+                <span className="font-mono">{'{link}'}</span> — the chosen variable supplies the
+                rest of the URL.
+              </p>
+            </div>
+          )}
+
+          {selected && paramKeys.length === 0 && !selected.has_url_button && (
             <p className="text-xs text-muted-foreground">
               This template has no parameters — nothing to map.
             </p>

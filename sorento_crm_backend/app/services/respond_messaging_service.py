@@ -27,6 +27,41 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
+
+def _button_url_suffix(base: str, full_url: str) -> str:
+    """Suffix appended after a dynamic URL button's static ``base``.
+
+    Meta dynamic URL buttons are host+prefix-locked to ``base`` (e.g.
+    ``https://fe-sorento.foundryx.my/``); the button parameter supplies only the
+    rest of the path. The resolved CRM link (portal_url / form_url / …) can carry
+    a DIFFERENT host than the button base — locally ``FRONTEND_BASE_URL`` is
+    ``http://localhost:3000`` while the approved template's button is the prod
+    domain. A literal prefix strip then fails and the WHOLE link (scheme+host
+    included) is appended, producing
+    ``https://fe-sorento.foundryx.my/http://localhost:3000/portal/...``.
+
+    So strip by URL STRUCTURE: when the link has its own scheme+host, drop them
+    and keep path+query+fragment (minus the leading slash the base ends with).
+    Same-host links keep the literal-strip fast path so a base path segment
+    beyond the host is preserved.
+    """
+    if not full_url:
+        return ""
+    if base and full_url.startswith(base):
+        return full_url[len(base):]
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(full_url)
+    if not parts.scheme and not parts.netloc:
+        # Already a bare path/suffix (no host to drop).
+        return full_url.lstrip("/")
+    tail = parts.path
+    if parts.query:
+        tail += f"?{parts.query}"
+    if parts.fragment:
+        tail += f"#{parts.fragment}"
+    return tail.lstrip("/")
+
 WINDOW_HOURS = 23
 PARAM_MAX_LEN = 900
 
@@ -68,7 +103,10 @@ def sanitize_param(
     """Coerce a value into a template parameter, length-bounded.
 
     ``flatten=True`` (WhatsApp template params): newlines/tabs/4+ spaces are
-    rejected by WhatsApp, so newlines become ``" | "`` and runs collapse.
+    rejected by WhatsApp, so newlines collapse to a single space and runs collapse.
+    (Was ``" | "`` — dropped 2026-06-22 once the portal link moved to a dynamic URL
+    button, so a flattened body reads as prose, not a piped run-on. See
+    PLAN-whatsapp-url-button-templates.md.)
     ``flatten=False`` (in-window free text): newlines are legal and nicer, so
     keep them — only normalise tabs and bound length. See PLAN-whatsapp-inwindow-
     template-uniformity.md (richer-multiline decision).
@@ -77,7 +115,7 @@ def sanitize_param(
     if not text:
         return "-"
     if flatten:
-        text = re.sub(r"\s*\n+\s*", " | ", text)
+        text = re.sub(r"\s*\n+\s*", " ", text)
         text = text.replace("\t", " ")
         text = _WS_RUN_RE.sub(" ", text)
     else:
@@ -159,20 +197,53 @@ def _last_incoming_from_respond(identifier: str) -> Optional[datetime]:
 
 
 def _last_incoming_from_chat_history(
-    db: Session, respond_contact_id: Optional[str]
+    db: Session,
+    identifier: Optional[str],
+    respond_contact_id: Optional[str] = None,
 ) -> Optional[datetime]:
-    if not respond_contact_id:
-        return None
-    from sqlalchemy import func as sa_func
+    """Latest incoming-message timestamp from local chat_histories (UTC naive).
 
+    chat_histories.contact_id stores the Respond.io id (e.g. "437264483"), NOT
+    the internal respond_contacts.id (UUID). The send path passes the Respond
+    ``identifier`` (the respond_io_id, optionally ``id:`` / ``phone:`` prefixed)
+    but usually NOT respond_contact_id — so derive the respond_io_id straight
+    from the identifier and match on it (+ phone when the contact resolves).
+    Comparing the internal UUID directly never matched, so the fallback always
+    returned None and the window falsely read CLOSED (template) on every
+    API-error send.
+    """
+    from sqlalchemy import func as sa_func, or_
+
+    from app.models.access import RespondContact
     from app.models.chat_history import ChatHistory
 
+    respond_io_id = identifier.split(":", 1)[-1].strip() if identifier else ""
+
+    contact = None
+    if respond_contact_id:
+        contact = (
+            db.query(RespondContact)
+            .filter(RespondContact.id == str(respond_contact_id))
+            .first()
+        )
+    if contact is None and respond_io_id:
+        contact = (
+            db.query(RespondContact)
+            .filter(RespondContact.respond_io_id == respond_io_id)
+            .first()
+        )
+
+    rid = (contact.respond_io_id if contact else None) or respond_io_id
+    conds = []
+    if rid:
+        conds.append(ChatHistory.contact_id == str(rid))
+    if contact is not None and contact.phone_number:
+        conds.append(ChatHistory.phone_number == contact.phone_number)
+    if not conds:
+        return None
     return (
         db.query(sa_func.max(ChatHistory.sent_at))
-        .filter(
-            ChatHistory.contact_id == str(respond_contact_id),
-            ChatHistory.type == "incoming",
-        )
+        .filter(ChatHistory.type == "incoming", or_(*conds))
         .scalar()
     )
 
@@ -203,7 +274,9 @@ def get_window_state(
         )
         source = "chat_history"
         try:
-            last_incoming = _last_incoming_from_chat_history(db, respond_contact_id)
+            last_incoming = _last_incoming_from_chat_history(
+                db, identifier, respond_contact_id
+            )
         except Exception:
             logger.exception("Window check: chat_history fallback failed")
             last_incoming = None
@@ -249,8 +322,12 @@ def send_template_for_use_case(
     no valid default is configured."""
     from app.services.integration_service import RespondClient
     from app.services.respond_template_service import (
+        BUTTON_URL_KEY,
+        button_url_base,
         get_default_row,
+        is_copy_code_button,
         serialize_default,
+        url_button_of,
     )
 
     row = get_default_row(db, use_case)
@@ -267,8 +344,52 @@ def send_template_for_use_case(
         raise TemplateSendSkipped(use_case, reason)
 
     template = row.template
+    mapping = dict(row.param_mapping or {})
+
+    # Dynamic URL button: resolve the link var to the suffix appended after the
+    # button's static base (Meta dynamic URL buttons carry only a suffix). When a
+    # button carries the link, strip that URL from the body so it is not duplicated
+    # as dead (unclickable) text inside a body param.
+    button_payload: Optional[dict] = None
+    url_button = url_button_of(getattr(template, "components", None))
+    if url_button and is_copy_code_button(url_button):
+        # COPY_CODE auth button: Meta copies the button PARAMETER (the OTP code),
+        # not a CRM link. Reuse the code already mapped to the body so the copy
+        # button works without the admin mapping any link variable.
+        button_payload = {
+            "text": url_button.get("text") or "Copy code",
+            "url": str(url_button.get("url") or ""),
+            "suffix": str(context_vars.get("otp_code") or "").strip(),
+        }
+    elif url_button:
+        link_var = mapping.get(BUTTON_URL_KEY)
+        full_url = str(context_vars.get(link_var) or "").strip() if link_var else ""
+        base = button_url_base(url_button) or ""
+        suffix = _button_url_suffix(base, full_url)
+        button_payload = {
+            "text": url_button.get("text") or "View",
+            "url": str(url_button.get("url") or ""),
+            "suffix": suffix,
+        }
+        logger.info(
+            "template button URL resolved: use_case=%s link_var=%s base=%s "
+            "full_url=%s suffix=%s final=%s",
+            use_case,
+            link_var,
+            base,
+            full_url,
+            suffix,
+            f"{base}{suffix}",
+        )
+        if full_url:
+            stripped_vars = dict(context_vars)
+            for k, v in list(stripped_vars.items()):
+                if isinstance(v, str) and full_url in v:
+                    stripped_vars[k] = v.replace(full_url, "").rstrip()
+            context_vars = stripped_vars
+
     params = resolve_template_params(
-        param_mapping=dict(row.param_mapping or {}),
+        param_mapping=mapping,
         param_count=template.param_count,
         context_vars=context_vars,
     )
@@ -285,6 +406,7 @@ def send_template_for_use_case(
             "language_code": template.language_code,
             "body_text": template.body_text,
             "parameters": params,
+            "button": button_payload,
         }
     }
     # Single-workspace today: RespondClient() resolves the default workspace key.
@@ -298,6 +420,7 @@ def send_template_for_use_case(
             language_code=template.language_code,
             body_text=template.body_text,
             parameters=params,
+            button=button_payload,
         )
     except Exception as e:
         _attach_send_context(e, request_payload, {"open": False}, "template")
@@ -307,6 +430,7 @@ def send_template_for_use_case(
         "template_name": template.name,
         "template_id": str(template.id),
         "params": params,
+        "button": button_payload,
         "request_payload": request_payload,
     }
 
@@ -332,19 +456,37 @@ def render_in_window_text(
             serialize_default,
         )
         from app.services.respond_chat_template_service import render_filled_body
+        from app.services.respond_template_service import url_button_of
 
         row = get_default_row(db, use_case)
         serialized = serialize_default(use_case, row)
         if not serialized["is_valid"] or row is None or row.template is None:
             return fallback_text
         template = row.template
+        has_button = url_button_of(getattr(template, "components", None)) is not None
+        # Decouple in-window from button templates (decision 2026-06-22): a button
+        # template has a deliberately short body that can't carry the rich update,
+        # and the button doesn't render in free text. So in-window send the caller's
+        # full text as-is (real newlines + clickable URL inline).
+        #
+        # EXCEPTION (complaint, decision 2026-06-23): the structured complaint
+        # template's body IS the rich update (Project / Customer / Enquiry / DO /
+        # Update lines), so render it in-window too for cross-window uniformity.
+        # Free text has no button, so append the link inline from portal_url.
+        if has_button and use_case != "complaint":
+            return fallback_text
         params = resolve_template_params(
             param_mapping=dict(row.param_mapping or {}),
             param_count=template.param_count,
             context_vars=context_vars,
             flatten=False,
         )
-        return render_filled_body(template.body_text, params)
+        rendered = render_filled_body(template.body_text, params)
+        if has_button and use_case == "complaint":
+            link = str(context_vars.get("portal_url") or "").strip()
+            if link and link not in rendered:
+                rendered = f"{rendered}\n\n{link}"
+        return rendered
     except Exception:
         logger.exception(
             "render_in_window_text: falling back to raw text for use case '%s'",
@@ -383,6 +525,42 @@ def send_text_or_template(
         url = extract_first_url(text)
         if url:
             vars_resolved["portal_url"] = url
+
+    # Conversation SLA has no entity number — when a template maps a slot to
+    # `entity_number`, fill it with the SLA's contact name / phone instead of "-".
+    # (Form SLA rows already carry a real entity_number, so this never overrides them.)
+    if use_case in ("sla_assignment", "sla_escalation") and not vars_resolved.get("entity_number"):
+        contact_label = vars_resolved.get("contact_name")
+        if not contact_label:
+            try:
+                from app.models.access import RespondContact
+
+                ident = (
+                    identifier.split(":", 1)[-1] if identifier else (respond_contact_id or "")
+                )
+                contact = None
+                if respond_contact_id:
+                    contact = (
+                        db.query(RespondContact)
+                        .filter(RespondContact.id == respond_contact_id)
+                        .first()
+                    )
+                if contact is None and ident:
+                    contact = (
+                        db.query(RespondContact)
+                        .filter(RespondContact.respond_io_id == ident)
+                        .first()
+                    )
+                if contact is not None:
+                    contact_label = (
+                        contact.name
+                        or " ".join(filter(None, [contact.first_name, contact.last_name]))
+                        or contact.phone_number
+                    )
+            except Exception:
+                logger.exception("send_text_or_template: SLA contact fallback failed")
+        if contact_label:
+            vars_resolved["entity_number"] = contact_label
 
     if window["open"]:
         # Render the same template body the closed-window branch would send, so
@@ -445,6 +623,7 @@ def send_text_or_template(
                 "template_id": result["template_id"],
                 "use_case": use_case,
                 "parameters": result["params"],
+                "button": result.get("button"),
             },
             "window_state": window,
         },
@@ -490,6 +669,14 @@ def build_context_vars(
                 vars_out["entity_number"] = row.complaint_number
                 vars_out["status"] = row.status
                 vars_out["reason"] = row.rejection_reason
+                # Discrete fields for the structured complaint template (Project /
+                # Customer / Delivery Order lines). Unambiguous row columns, so
+                # auto-resolved here; the action-specific `update` core + portal_url
+                # are threaded via extra_context_vars (can't be reconstructed from
+                # the row — reply vs status-change touch the same row).
+                vars_out["project"] = row.project_title
+                vars_out["customer"] = row.customer_name
+                vars_out["delivery_order"] = row.delivery_order_number
         elif use_case == "stock_inquiry":
             from app.models.procurement import StockInquiry
 
@@ -498,6 +685,12 @@ def build_context_vars(
                 vars_out["entity_number"] = row.inquiry_number
                 vars_out["status"] = row.status
                 vars_out["reason"] = row.rejection_reason
+                # Discrete fields for the structured stock-inquiry template (Customer /
+                # Project lines). StockInquiry stores these as project_customer /
+                # project_name (no customer_name/project_title columns).
+                vars_out["customer"] = row.project_customer
+                vars_out["project"] = row.project_name
+                vars_out["product_code"] = row.product_code
         elif use_case in ("purchase_request", "sponsorship_form"):
             from app.models.procurement import PurchaseRequestHeader
 
@@ -509,6 +702,13 @@ def build_context_vars(
             if row:
                 vars_out["entity_number"] = row.request_number
                 vars_out["status"] = row.approval_status or row.status
+                # Rejection reason lives in approval_comments (public/in-system
+                # approval flows write the reviewer's note there).
+                vars_out["reason"] = row.approval_comments
+                # Discrete fields for the structured PR/SF template (Customer /
+                # Project lines) — same unambiguous row columns as complaint.
+                vars_out["customer"] = row.customer_name
+                vars_out["project"] = row.project_title
     except Exception:
         logger.exception("build_context_vars: entity lookup failed (%s)", use_case)
 

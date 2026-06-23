@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/select';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import { useQuery } from '@tanstack/react-query';
 import { usePurchaseRequests } from '../hooks/usePurchaseRequests';
 import { getUsersForApproverSelect } from '../services/purchaseRequestService';
@@ -81,6 +82,55 @@ function getDisplayStatus(row: PurchaseRequest): string {
 }
 
 const DEFAULT_BASE_PATH = '/procurement-management/purchase-requests';
+
+/** The single "variable" column between Project Title and Requested By:
+ *  Sponsor Subject for sponsorship forms, Purpose for purchase requests
+ *  (and the combined/unfiltered list). Honors the fixed-layout rules
+ *  (explicit size, truncate + title). */
+export function purposeOrSponsorSubjectColumn(
+  requestType: 'purchase_request' | 'sponsorship_form' | undefined,
+): ColumnDef<PurchaseRequest> {
+  if (requestType === 'sponsorship_form') {
+    return {
+      accessorKey: 'sponsor_subject',
+      header: ({ column }: { column: Column<PurchaseRequest> }) => (
+        <DataGridColumnHeader title="Sponsor Subject" column={column} />
+      ),
+      size: 160,
+      cell: ({ row }: { row: Row<PurchaseRequest> }) => {
+        const value = row.original.sponsor_subject;
+        if (!value) return '-';
+        const other = row.original.sponsor_subject_other;
+        const suffix = value === 'others' && other ? `: ${other}` : '';
+        return (
+          <span className="truncate" title={`${value}${suffix}`}>
+            <LookupBoundLabel
+              table="purchase_requests"
+              column="sponsor_subject"
+              value={value}
+              fallback="-"
+            />
+            {suffix}
+          </span>
+        );
+      },
+      meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+    };
+  }
+  return {
+    accessorKey: 'purpose',
+    header: ({ column }: { column: Column<PurchaseRequest> }) => (
+      <DataGridColumnHeader title="Purpose" column={column} />
+    ),
+    size: 120,
+    cell: ({ row }: { row: Row<PurchaseRequest> }) => (
+      <span className="truncate" title={row.original.purpose ?? undefined}>
+        {row.original.purpose || '-'}
+      </span>
+    ),
+    meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+  };
+}
 
 interface PurchaseRequestsListProps {
   /** When set, only this type is shown and type filter is hidden (single-type page). */
@@ -285,15 +335,7 @@ export default function PurchaseRequestsList({
         cell: ({ row }) => row.original.project_title || '-',
         meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
-      {
-        accessorKey: 'purpose',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Purpose" column={column} />
-        ),
-        size: 120,
-        cell: ({ row }) => row.original.purpose || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
-      },
+      purposeOrSponsorSubjectColumn(requestType),
       {
         accessorKey: 'requested_by',
         header: ({ column }) => (

@@ -312,6 +312,7 @@ class RespondContactLookupResponse(BaseModel):
 class TeamBase(BaseModel):
     name: str
     description: Optional[str] = None
+    parent_team_id: Optional[str] = None
 
 
 class TeamCreate(TeamBase):
@@ -321,6 +322,7 @@ class TeamCreate(TeamBase):
 class TeamUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    parent_team_id: Optional[str] = None
 
 
 class TeamResponse(TeamBase):
@@ -335,6 +337,7 @@ class TeamMemberResponse(BaseModel):
     team_id: str
     user_id: str
     sort_order: Optional[int] = None
+    include_in_round_robin: bool = True
     created_at: datetime
     class Config:
         from_attributes = True

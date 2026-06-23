@@ -16,6 +16,9 @@ class RespondOutboxRowResponse(BaseModel):
     sent_as: str  # 'text' | 'template'
     message_text: Optional[str] = None
     template_name: Optional[str] = None
+    # Final assembled URL-button link (base + suffix), so the outbox shows the
+    # exact link the contact would tap — surfaces a malformed double-host URL.
+    button_url: Optional[str] = None
     status: str  # success | failed | pending | processing
     status_code: Optional[int] = None
     error_message: Optional[str] = None

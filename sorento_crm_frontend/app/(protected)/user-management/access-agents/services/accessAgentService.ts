@@ -92,6 +92,8 @@ export interface AgentTeamMemberInfo {
   respond_user_id?: string | null;
   /** From users.respond_synced: pending | successful | failed */
   respond_synced?: string | null;
+  /** Per-team round-robin eligibility; false = excluded from auto-assignment. */
+  include_in_round_robin?: boolean;
 }
 
 export interface AgentTeamAssignment {

@@ -428,6 +428,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/sla-management/conversation-sla-tracking',
       },
       {
+        title: 'My Team Tasks',
+        path: '/sla-management/team-pending',
+      },
+      {
         title: 'Form SLA Configuration',
         path: '/sla-management/form-sla-config',
       },
@@ -519,6 +523,13 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/procurement-management/stock-inquiries',
         permission: 'procurement.stock_inquiries.view',
       },
+    ],
+  },
+  {
+    title: 'Project Sales Admin',
+    icon: Briefcase,
+    moduleKey: 'procurement',
+    children: [
       {
         title: 'Purchase Requests',
         path: '/procurement-management/purchase-requests',
@@ -1240,6 +1251,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/sla-management/conversation-sla-tracking',
       },
       {
+        title: 'My Team Tasks',
+        path: '/sla-management/team-pending',
+      },
+      {
         title: 'Form SLA Configuration',
         path: '/sla-management/form-sla-config',
       },
@@ -1331,6 +1346,13 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/procurement-management/stock-inquiries',
         permission: 'procurement.stock_inquiries.view',
       },
+    ],
+  },
+  {
+    title: 'Project Sales Admin',
+    icon: Briefcase,
+    moduleKey: 'procurement',
+    children: [
       {
         title: 'Purchase Requests',
         path: '/procurement-management/purchase-requests',

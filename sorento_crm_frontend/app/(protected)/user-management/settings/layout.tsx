@@ -46,6 +46,10 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
       typeof raw.default_product_standard_lead_time_days === 'number'
         ? raw.default_product_standard_lead_time_days
         : 90,
+    takeoverCooldownSeconds:
+      typeof raw.takeover_cooldown_seconds === 'number'
+        ? raw.takeover_cooldown_seconds
+        : 60,
     purchaseRequestDefaultApproverUserId:
       (raw.purchase_request_default_approver_user_id as string | null) ?? null,
     purchaseRequestDefaultApproverName:
@@ -94,6 +98,7 @@ function createDefaultSettings(): SystemSetting {
     currencyFormat: 'RM {value}',
     defaultProductSupplierId: null,
     defaultProductStandardLeadTimeDays: 90,
+    takeoverCooldownSeconds: 60,
     purchaseRequestDefaultApproverUserId: null,
     purchaseRequestDefaultApproverName: null,
     purchaseRequestDefaultApproverEmail: null,

@@ -245,6 +245,14 @@ export default function RespondOutboxList() {
                   {detail.message_text ?? detail.template_name ?? '—'}
                 </pre>
               </div>
+              {detail.button_url && (
+                <div>
+                  <p className="mb-1 text-xs font-medium text-muted-foreground">Button link</p>
+                  <pre className="whitespace-pre-wrap break-all rounded-md border bg-muted/40 p-3 text-xs">
+                    {detail.button_url}
+                  </pre>
+                </div>
+              )}
               {detail.error_message && (
                 <div>
                   <p className="mb-1 text-xs font-medium text-destructive">Error</p>

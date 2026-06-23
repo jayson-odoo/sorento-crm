@@ -270,10 +270,176 @@ async def get_my_pending_sla_tracking(
     db: Session = Depends(get_db),
 ):
     """Unresolved SLA trackers assigned to the current user (to-do widget)."""
+    from app.services.sla_takeover_service import SlaTakeoverService
+
     try:
         service = ConversationSLATrackingService(db)
         data = service.list_my_pending(current_user["id"], limit=limit)
+        # Attach the inline "being taken over" indicator per row (AC-LINK-5).
+        pending = SlaTakeoverService(db).pending_by_tracking_ids(
+            [r["id"] for r in data], viewer_id=current_user["id"]
+        )
+        for r in data:
+            r["takeover"] = pending.get(r["id"])
         return {"data": data, "empty": len(data) == 0}
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{tracking_id}/takeover-state")
+async def get_takeover_state(
+    tracking_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Pin-fetch one contested task + its latest takeover for the My Pending banner."""
+    from app.services.sla_takeover_service import SlaTakeoverService
+
+    try:
+        return SlaTakeoverService(db).get_takeover_row(tracking_id, current_user["id"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/team-pending")
+async def get_team_pending_sla_tracking(
+    assignee: Optional[str] = Query(None),
+    team: Optional[str] = Query(None),
+    query: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Unresolved SLA tasks of teammates in the current user's visible teams
+    (peers + recursive child/grandchild teams), excluding the user's own.
+    ``query`` free-text search over entity number / contact name / assignee / team."""
+    try:
+        service = ConversationSLATrackingService(db)
+        result = service.list_team_pending(
+            current_user["id"],
+            assignee=assignee,
+            team=team,
+            page=page,
+            limit=limit,
+            query=query,
+        )
+        # Attach pending-takeover state per row (running bar / observer-locked state).
+        from app.services.sla_takeover_service import SlaTakeoverService
+
+        rows = result.get("data", [])
+        pending = SlaTakeoverService(db).pending_by_tracking_ids(
+            [r["id"] for r in rows], viewer_id=current_user["id"]
+        )
+        for r in rows:
+            r["takeover"] = pending.get(r["id"])
+        result["empty"] = len(rows) == 0
+        return result
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/visible-users")
+async def get_visible_users(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Scope-B picker source: users in the caller's visible teams (peers + child
+    teams), excluding self. Used by Reassign + Coverage pickers."""
+    try:
+        service = ConversationSLATrackingService(db)
+        data = service.list_visible_users(current_user["id"])
+        return {"data": data, "empty": len(data) == 0}
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+class _TakeoverRequest(BaseModel):
+    team_id: str
+
+
+@router.post("/{tracking_id}/takeover")
+async def takeover_sla_tracking(
+    tracking_id: str,
+    payload: _TakeoverRequest,
+    response: Response,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Initiate a takeover of a visible team task. With a cooldown configured this
+    creates a PENDING request (veto window); cooldown 0 or an unassigned task commits
+    instantly. Returns `{committed, request?}`. An already-pending task returns 409
+    carrying the existing request so the UI shows the running countdown."""
+    from app.services.sla_takeover_service import SlaTakeoverService
+
+    try:
+        result = SlaTakeoverService(db).initiate(
+            tracking_id, current_user["id"], payload.team_id
+        )
+        if result.get("already_pending"):
+            response.status_code = status.HTTP_409_CONFLICT
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/takeover-requests/{request_id}/cancel")
+async def cancel_takeover_request(
+    request_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Initiator (or admin) withdraws a pending takeover."""
+    from app.services.sla_takeover_service import SlaTakeoverService
+
+    try:
+        return SlaTakeoverService(db).cancel(request_id, current_user["id"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/takeover-requests/{request_id}/reject")
+async def reject_takeover_request(
+    request_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Contested assignee (or admin) vetoes a pending takeover."""
+    from app.services.sla_takeover_service import SlaTakeoverService
+
+    try:
+        return SlaTakeoverService(db).reject(request_id, current_user["id"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+class _ReassignRequest(BaseModel):
+    user_id: str
+
+
+@router.post("/{tracking_id}/reassign")
+async def reassign_sla_tracking(
+    tracking_id: str,
+    payload: _ReassignRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Reassign a task to a chosen person (keeps team + clocks). Target must be in
+    the actor's visible scope (scope-B)."""
+    try:
+        service = ConversationSLATrackingService(db)
+        tracking = service.reassign(tracking_id, current_user["id"], payload.user_id)
+        return build_conversation_sla_tracking_response(db, tracking)
+    except HTTPException:
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -355,6 +521,23 @@ def _notify_conversation_sla_escalation(db, tracking, assignee: dict, reason: st
             send_in_app=True,
             send_email=True,
             send_whatsapp=True,
+            email_pref_attr="notify_email_on_escalation",
+            whatsapp_pref_attr="notify_whatsapp_on_escalation",
+        )
+        # Coverage fan-out: copy escalation to anyone covering the new assignee.
+        from app.services.coverage_subscription_service import fan_out_coverage_copies
+
+        fan_out_coverage_copies(
+            db,
+            target_user_id=user_id,
+            actor_user_id=None,
+            notification_type="conversation_sla",
+            title=title,
+            body=body,
+            data={"tracking_id": str(tracking.id)},
+            source_entity_type="conversation_sla_tracking",
+            source_entity_id=str(tracking.id),
+            event_type="escalated",
             email_pref_attr="notify_email_on_escalation",
             whatsapp_pref_attr="notify_whatsapp_on_escalation",
         )

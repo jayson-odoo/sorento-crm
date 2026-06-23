@@ -229,6 +229,7 @@ export default function Page() {
         ? settings.defaultProductSupplierId
         : NO_DEFAULT_SUPPLIER_VALUE,
     defaultProductStandardLeadTimeDays: settings?.defaultProductStandardLeadTimeDays ?? 90,
+    takeoverCooldownSeconds: settings?.takeoverCooldownSeconds ?? 60,
     purchaseRequestDefaultApproverUserId:
       settings?.purchaseRequestDefaultApproverUserId &&
       settings.purchaseRequestDefaultApproverUserId.length > 0
@@ -277,6 +278,7 @@ export default function Page() {
           ? settings.defaultProductSupplierId
           : NO_DEFAULT_SUPPLIER_VALUE,
       defaultProductStandardLeadTimeDays: settings.defaultProductStandardLeadTimeDays ?? 90,
+      takeoverCooldownSeconds: settings.takeoverCooldownSeconds ?? 60,
       purchaseRequestDefaultApproverUserId:
         settings.purchaseRequestDefaultApproverUserId &&
         settings.purchaseRequestDefaultApproverUserId.length > 0
@@ -309,6 +311,7 @@ export default function Page() {
             ? null
             : values.defaultProductSupplierId,
         default_product_standard_lead_time_days: values.defaultProductStandardLeadTimeDays,
+        takeover_cooldown_seconds: values.takeoverCooldownSeconds,
         purchase_request_default_approver_user_id:
           values.purchaseRequestDefaultApproverUserId === NO_DEFAULT_APPROVER_VALUE
             ? null
@@ -848,6 +851,35 @@ export default function Page() {
                       }}
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="takeoverCooldownSeconds"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Takeover cooldown (seconds)</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={3600}
+                      value={field.value}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '') return;
+                        const n = parseInt(v, 10);
+                        if (!Number.isNaN(n)) field.onChange(n);
+                      }}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    Delay before a takeover commits, during which the original assignee can reject
+                    and the initiator can cancel. Set to 0 to take over instantly.
+                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

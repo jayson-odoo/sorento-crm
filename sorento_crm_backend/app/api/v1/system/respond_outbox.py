@@ -43,14 +43,33 @@ def _render_template_body(body_text: Optional[str], parameters) -> Optional[str]
     return re.sub(r"\{\{(\d+)\}\}", _sub, body_text)
 
 
-def _parse_payload(raw: Optional[str]) -> tuple[str, Optional[str], Optional[str]]:
-    """Return (sent_as, message_text, template_name) from a request_payload string."""
+def _button_final_url(msg: dict) -> Optional[str]:
+    """Assemble the final URL-button link from a stored button payload.
+
+    button = {"text", "url" (with {{1}}), "suffix"}. The contact taps
+    ``url`` with {{1}} replaced by ``suffix`` — so a host mismatch shows up as a
+    double-host link (https://prod/http://localhost/...). Surface it verbatim.
+    """
+    btn = msg.get("button")
+    if not isinstance(btn, dict):
+        return None
+    url = str(btn.get("url") or "")
+    suffix = str(btn.get("suffix") or "")
+    if not url:
+        return None
+    return re.sub(r"\{\{\d+\}\}", lambda _m: suffix, url)
+
+
+def _parse_payload(
+    raw: Optional[str],
+) -> tuple[str, Optional[str], Optional[str], Optional[str]]:
+    """Return (sent_as, message_text, template_name, button_url) from a payload."""
     if not raw:
-        return "text", None, None
+        return "text", None, None, None
     try:
         data = json.loads(raw)
     except (TypeError, ValueError):
-        return "text", raw[:2000], None
+        return "text", raw[:2000], None, None
     msg = (data or {}).get("message") or {}
     mtype = (msg.get("type") or "text").lower()
     if mtype in ("whatsapp_template", "template"):
@@ -62,8 +81,8 @@ def _parse_payload(raw: Optional[str]) -> tuple[str, Optional[str], Optional[str
         if not rendered and isinstance(msg.get("parameters"), list) and msg["parameters"]:
             rendered = " | ".join(str(p) for p in msg["parameters"])
         template_name = msg.get("template_name") or msg.get("template_id")
-        return "template", rendered or None, template_name
-    return "text", msg.get("text") or None, None
+        return "template", rendered or None, template_name, _button_final_url(msg)
+    return "text", msg.get("text") or None, None, None
 
 
 @router.get("/respond-outbox", response_model=ListResponse[RespondOutboxRowResponse])
@@ -116,7 +135,7 @@ async def list_respond_outbox(
 
         data = []
         for r in rows:
-            sent_as, text, tpl = _parse_payload(r.request_payload)
+            sent_as, text, tpl, button_url = _parse_payload(r.request_payload)
             c = contacts.get(str(r.external_reference)) if r.external_reference else None
             data.append(
                 RespondOutboxRowResponse(
@@ -130,6 +149,7 @@ async def list_respond_outbox(
                     sent_as=sent_as,
                     message_text=text,
                     template_name=tpl,
+                    button_url=button_url,
                     status=r.status,
                     status_code=r.status_code,
                     error_message=r.error_message,

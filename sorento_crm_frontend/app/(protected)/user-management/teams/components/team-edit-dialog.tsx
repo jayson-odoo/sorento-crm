@@ -1,7 +1,7 @@
 'use client';
 
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -23,12 +23,21 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { LoaderCircleIcon } from 'lucide-react';
 import type { Team } from '../types/team.types';
-import { createTeam, updateTeam } from '../services/teamService';
+import { createTeam, updateTeam, getTeams } from '../services/teamService';
 import { TeamSchema, type TeamSchemaType } from '../forms/team-schema';
+
+const NO_PARENT = '__none__';
 
 export default function TeamEditDialog({
   open,
@@ -42,23 +51,38 @@ export default function TeamEditDialog({
   const queryClient = useQueryClient();
   const form = useForm<TeamSchemaType>({
     resolver: zodResolver(TeamSchema),
-    defaultValues: { name: '', description: '' },
+    defaultValues: { name: '', description: '', parent_team_id: null },
     mode: 'onSubmit',
   });
+
+  const { data: teams = [] } = useQuery({
+    queryKey: ['user-management-teams'],
+    queryFn: getTeams,
+    enabled: open,
+    staleTime: 60 * 1000,
+  });
+
+  // A team cannot be its own parent (server also rejects deeper cycles).
+  const parentOptions = teams.filter((t) => t.id !== team?.id);
 
   useEffect(() => {
     if (open) {
       form.reset({
         name: team?.name ?? '',
         description: team?.description ?? '',
+        parent_team_id: team?.parent_team_id ?? null,
       });
     }
   }, [form, open, team]);
 
   const mutation = useMutation({
     mutationFn: async (values: TeamSchemaType) => {
-      if (team?.id) return updateTeam(team.id, values);
-      return createTeam(values);
+      const payload = {
+        ...values,
+        parent_team_id: values.parent_team_id ?? null,
+      };
+      if (team?.id) return updateTeam(team.id, payload);
+      return createTeam(payload);
     },
     onSuccess: () => {
       const message = team ? 'Team updated successfully' : 'Team created successfully';
@@ -132,6 +156,34 @@ export default function TeamEditDialog({
                       value={field.value ?? ''}
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="parent_team_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Parent team (optional)</FormLabel>
+                  <Select
+                    value={field.value ?? NO_PARENT}
+                    onValueChange={(v) => field.onChange(v === NO_PARENT ? null : v)}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="No parent team" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value={NO_PARENT}>No parent team</SelectItem>
+                      {parentOptions.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {t.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}

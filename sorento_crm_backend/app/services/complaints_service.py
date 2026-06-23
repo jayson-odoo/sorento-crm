@@ -628,6 +628,24 @@ class ComplaintService:
         view_url = (self._build_complaint_view_url(complaint_id) or "").strip()
         return f"\n\n{view_url}" if view_url else ""
 
+    def _complaint_portal_or_view_url(self, complaint, complaint_id: str) -> str:
+        """Bare interactive portal link for the complaint (contact can act /
+        resubmit), falling back to the read-only public view URL. Same target as
+        the inline body link — used for the ``portal_url`` template variable so
+        the 'Portal URL' button actually opens the portal, not the view token.
+        """
+        if self._complaint_public_view_links_enabled():
+            from app.services.portal_service import PortalService
+
+            portal = PortalService(self.db).submission_link(
+                getattr(complaint, "contact_id", None),
+                "complaint",
+                complaint_id,
+            )
+            if portal:
+                return portal.strip()
+        return (self._build_complaint_view_url(complaint_id) or "").strip()
+
     def _complaint_view_base_url(self, base_url_override: Optional[str] = None) -> str:
         """Resolve the frontend base URL for view links (override → settings → SystemSetting).
 
@@ -1181,6 +1199,13 @@ class ComplaintService:
         display_message = (
             f"There has been an update regarding your complaint{do_spec}: {stored_body}{link_part}"
         )
+        # Structured-template vars: bare `update` core (the technical response) +
+        # explicit link. See PLAN-complaint-structured-update-template.md.
+        reply_extra_vars = {
+            "update": stored_body,
+            "portal_url": self._complaint_portal_or_view_url(complaint, complaint_id),
+            "view_url": (self._build_complaint_view_url(complaint_id) or "").strip(),
+        }
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         sla_service = ConversationSLATrackingService(self.db)
@@ -1255,6 +1280,7 @@ class ComplaintService:
                     respond_user_id=respond_user_id,
                     crm_sender_user_id=crm_sender_user_id,
                     space_id=getattr(complaint, "space_id", None),
+                    extra_context_vars=reply_extra_vars,
                 )
             except Exception:
                 logger.exception(
@@ -1375,6 +1401,18 @@ class ComplaintService:
             f"There has been an update regarding your complaint{do_spec}: "
             f"status changed to {decision}.{reason_part}{link_part}"
         )
+        # Structured-template vars: LEAN `update` core (status only) + link.
+        # "Approved" / "Rejected, reason: X" — no preamble, no inline URL.
+        decide_update_core = (
+            "Approved"
+            if decision == "approved"
+            else (f"Rejected, reason: {normalized_reason}" if normalized_reason else "Rejected")
+        )
+        decide_extra_vars = {
+            "update": decide_update_core,
+            "portal_url": self._complaint_portal_or_view_url(complaint, complaint_id),
+            "view_url": (self._build_complaint_view_url(complaint_id) or "").strip(),
+        }
 
         identifier = self._identifier_from_respond_inbox_url(
             getattr(complaint, "respond_inbox_url", None)
@@ -1405,6 +1443,7 @@ class ComplaintService:
                 respond_user_id=respond_user_id,
                 crm_sender_user_id=crm_sender_user_id,
                 space_id=getattr(complaint, "space_id", None),
+                extra_context_vars=decide_extra_vars,
             )
         else:
             logger.info(
@@ -1474,6 +1513,11 @@ class ComplaintService:
     _FINALIZE_STATUS_LABELS: dict[str, str] = {
         "processed_by_cs": "processed by our customer service team",
         "closed": "closed",
+    }
+    # LEAN labels for the structured-template `update` core (no preamble/URL).
+    _FINALIZE_UPDATE_LABELS: dict[str, str] = {
+        "processed_by_cs": "Processed by CS",
+        "closed": "Closed",
     }
 
     def mark_processed_by_cs(
@@ -1566,6 +1610,16 @@ class ComplaintService:
             f"There has been an update regarding your complaint{do_spec}: "
             f"status changed to {status_label}.{note_part}{link_part}"
         )
+        # Structured-template vars: LEAN `update` core (status only) + link.
+        # "Processed by CS" / "Closed" — optional note kept, no preamble/URL.
+        finalize_update_core = self._FINALIZE_UPDATE_LABELS.get(new_status, status_label)
+        if note_clean:
+            finalize_update_core += f". Note: {note_clean}"
+        finalize_extra_vars = {
+            "update": finalize_update_core,
+            "portal_url": self._complaint_portal_or_view_url(complaint, complaint_id),
+            "view_url": (self._build_complaint_view_url(complaint_id) or "").strip(),
+        }
         identifier = self._identifier_from_respond_inbox_url(
             getattr(complaint, "respond_inbox_url", None)
         )
@@ -1588,6 +1642,7 @@ class ComplaintService:
                     respond_user_id=respond_user_id,
                     crm_sender_user_id=crm_sender_user_id,
                     space_id=getattr(complaint, "space_id", None),
+                    extra_context_vars=finalize_extra_vars,
                 )
             except Exception:
                 logger.exception(
@@ -1772,12 +1827,16 @@ class ComplaintService:
         respond_user_id: str,
         crm_sender_user_id: Optional[str],
         space_id: Optional[str],
+        extra_context_vars: Optional[dict] = None,
     ) -> None:
         """Push a Respond.io send into the RQ ``respond_io`` queue.
 
         Decouples the external API call from the request lifecycle so a Respond.io
         4xx/5xx does not roll back the surrounding business write. Failed jobs land
         in RQ's FailedJobRegistry and a ``status='failed'`` integration_logs row.
+
+        ``extra_context_vars`` carries the structured-template vars (bare ``update``
+        core + ``portal_url``). See PLAN-complaint-structured-update-template.md.
         """
         from app.services.queue_service import enqueue_job
         from app.tasks.respond_io_tasks import send_complaint_respond_message
@@ -1790,6 +1849,7 @@ class ComplaintService:
             respond_user_id,
             crm_sender_user_id,
             space_id,
+            extra_context_vars,
             queue_name="respond_io",
             job_timeout=180,
         )
@@ -1807,6 +1867,7 @@ class ComplaintService:
         display_message: str,
         respond_user_id: str,
         crm_sender_user_id: Optional[str],
+        extra_context_vars: Optional[dict] = None,
     ) -> None:
         """Enqueue a Respond.io send for a complaint (compatibility wrapper)."""
         self._enqueue_respond_message_for_complaint(
@@ -1816,6 +1877,7 @@ class ComplaintService:
             respond_user_id=respond_user_id,
             crm_sender_user_id=crm_sender_user_id,
             space_id=getattr(complaint, "space_id", None),
+            extra_context_vars=extra_context_vars,
         )
 
     def _notify_complaint_field(
@@ -1862,6 +1924,13 @@ class ComplaintService:
             f"There has been an update regarding your complaint{do_spec}: "
             f"{label_word} is identified as {target.name}.{link_part}"
         )
+        # Structured-template vars: LEAN `update` core — "Root cause is X" /
+        # "Resolution is X", no preamble, no inline URL.
+        notify_extra_vars = {
+            "update": f"{label_word} is {target.name}",
+            "portal_url": self._complaint_portal_or_view_url(complaint, complaint_id),
+            "view_url": (self._build_complaint_view_url(complaint_id) or "").strip(),
+        }
 
         self._send_respond_message_for_complaint(
             complaint,
@@ -1869,6 +1938,7 @@ class ComplaintService:
             display_message=display_message,
             respond_user_id=respond_user_id,
             crm_sender_user_id=crm_sender_user_id,
+            extra_context_vars=notify_extra_vars,
         )
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)

@@ -31,6 +31,9 @@ export interface SystemSetting {
   defaultProductSupplierId?: string | null;
   defaultProductStandardLeadTimeDays?: number;
 
+  /** Takeover cooldown window in seconds (0 = instant takeover). */
+  takeoverCooldownSeconds?: number;
+
   /** System default approver for procurement "Send for approval" (skips chooser when set). */
   purchaseRequestDefaultApproverUserId?: string | null;
   purchaseRequestDefaultApproverName?: string | null;

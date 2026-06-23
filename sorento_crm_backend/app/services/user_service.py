@@ -1387,10 +1387,16 @@ class AccessAgentService:
         )
         if not link:
             return None
-        # Get team members (user_ids) in order
+        # Get team members (user_ids) in order. Per-team RR opt-out: members with
+        # include_in_round_robin=false are skipped for AUTO distribution (manual
+        # takeover/reassign can still target them). All members excluded -> treated
+        # the same as an empty team (no eligible assignee), no silent misassign.
         members = (
             self.db.query(TeamMember)
-            .filter(TeamMember.team_id == team_id)
+            .filter(
+                TeamMember.team_id == team_id,
+                TeamMember.include_in_round_robin.is_(True),
+            )
             .order_by(TeamMember.sort_order.asc().nullslast(), TeamMember.user_id.asc())
             .all()
         )
@@ -1542,10 +1548,15 @@ class AccessAgentService:
         }
 
     def _peek_next_assignee(self, agent_id: str, team_id: str) -> tuple[Optional[str], Optional[str]]:
-        """Return (last_assigned_user_id, next_user_id) without updating the cursor."""
+        """Return (last_assigned_user_id, next_user_id) without updating the cursor.
+        Next-in-line considers only RR-eligible members (include_in_round_robin),
+        matching get_next_assignee — excluded members are never auto-assigned."""
         members = (
             self.db.query(TeamMember)
-            .filter(TeamMember.team_id == team_id)
+            .filter(
+                TeamMember.team_id == team_id,
+                TeamMember.include_in_round_robin.is_(True),
+            )
             .order_by(TeamMember.sort_order.asc().nullslast(), TeamMember.user_id.asc())
             .all()
         )
@@ -1590,16 +1601,17 @@ class AccessAgentService:
             member_infos = []
             for m in members:
                 u = self.db.query(User).filter(User.id == m.user_id).first()
-                member_infos.append(
-                    self._user_info(u)
-                    or {
-                        "id": m.user_id,
-                        "name": m.user_id,
-                        "email": None,
-                        "respond_user_id": None,
-                        "respond_synced": None,
-                    }
-                )
+                info = self._user_info(u) or {
+                    "id": m.user_id,
+                    "name": m.user_id,
+                    "email": None,
+                    "respond_user_id": None,
+                    "respond_synced": None,
+                }
+                # Expose RR eligibility so the UI can mark excluded members and the
+                # round-robin order reads true to who actually gets auto-assigned.
+                info = {**info, "include_in_round_robin": bool(m.include_in_round_robin)}
+                member_infos.append(info)
             last_id, next_id = self._peek_next_assignee(agent_id, team_id_str)
             last_user = self.db.query(User).filter(User.id == last_id).first() if last_id else None
             next_user = self.db.query(User).filter(User.id == next_id).first() if next_id else None
@@ -1855,11 +1867,87 @@ class AccessAgentService:
         return None
 
 
+def descendant_team_ids(db: Session, team_ids) -> set:
+    """All team ids at-or-below ``team_ids`` (the seeds themselves + every
+    descendant at any depth via teams.parent_team_id).
+
+    Uses a recursive CTE on Postgres (and SQLite, which also supports
+    WITH RECURSIVE) with a Python BFS fallback so it works in both prod and the
+    sqlite-backed test fixtures regardless of dialect quirks.
+    """
+    seeds = {str(t) for t in (team_ids or []) if t}
+    if not seeds:
+        return set()
+
+    # On Postgres, use a recursive CTE (single round-trip, any depth). On other
+    # dialects (sqlite test fixtures) the pg UUID column strips hyphens in raw SQL,
+    # so use a dialect-agnostic Python BFS over the parent edges via the ORM (which
+    # applies the column's bind/result processors correctly).
+    dialect = getattr(getattr(db, "bind", None), "dialect", None)
+    dialect_name = getattr(dialect, "name", "")
+    if dialect_name == "postgresql":
+        try:
+            from sqlalchemy import text as _text
+
+            placeholders = ", ".join(f":s{i}" for i in range(len(seeds)))
+            params = {f"s{i}": v for i, v in enumerate(seeds)}
+            sql = _text(
+                f"""
+                WITH RECURSIVE descendants(id) AS (
+                    SELECT id FROM teams WHERE id IN ({placeholders})
+                    UNION
+                    SELECT t.id FROM teams t
+                    JOIN descendants d ON t.parent_team_id = d.id
+                )
+                SELECT id FROM descendants
+                """
+            )
+            rows = db.execute(sql, params).fetchall()
+            return {str(r[0]) for r in rows}
+        except Exception:  # noqa: BLE001 — fall back to the ORM BFS
+            db.rollback()
+
+    edges = db.query(Team.id, Team.parent_team_id).all()
+    children: dict = {}
+    for tid, parent in edges:
+        if parent is not None:
+            children.setdefault(str(parent), []).append(str(tid))
+    out: set = set()
+    stack = list(seeds)
+    while stack:
+        cur = stack.pop()
+        if cur in out:
+            continue
+        out.add(cur)
+        stack.extend(children.get(cur, []))
+    return out
+
+
 class TeamService:
     """Service for team and team member operations."""
 
     def __init__(self, db: Session):
         self.db = db
+
+    def descendant_team_ids(self, team_ids) -> set:
+        """Instance wrapper around the module-level recursive descendants helper."""
+        return descendant_team_ids(self.db, team_ids)
+
+    def _guard_parent_team_cycle(
+        self, team_id: Optional[str], parent_team_id: Optional[str]
+    ) -> None:
+        """Reject a parent assignment that would create a cycle: a team cannot be
+        its own parent, nor can it pick one of its own descendants as parent."""
+        if parent_team_id is None:
+            return
+        if team_id is not None and str(parent_team_id) == str(team_id):
+            raise handle_validation_error("A team cannot be its own parent (cannot create a cycle).")
+        if team_id is not None:
+            # The new parent must not be at-or-below this team in the hierarchy.
+            if str(parent_team_id) in self.descendant_team_ids([str(team_id)]):
+                raise handle_validation_error(
+                    "Cannot set that parent: it is a descendant of this team (cannot create a cycle)."
+                )
 
     def list_teams(self):
         """List all teams."""
@@ -1874,7 +1962,11 @@ class TeamService:
 
     def create_team(self, data: TeamCreate) -> Team:
         """Create a team."""
-        t = Team(**data.model_dump())
+        payload = data.model_dump()
+        # New team has no id yet, so only the self-parent case is possible here;
+        # descendant cycles are impossible until children exist.
+        self._guard_parent_team_cycle(None, payload.get("parent_team_id"))
+        t = Team(**payload)
         self.db.add(t)
         self.db.commit()
         self.db.refresh(t)
@@ -1883,7 +1975,10 @@ class TeamService:
     def update_team(self, team_id: str, data: TeamUpdate) -> Team:
         """Update a team."""
         t = self.get_team(team_id)
-        for k, v in data.model_dump(exclude_unset=True).items():
+        payload = data.model_dump(exclude_unset=True)
+        if "parent_team_id" in payload:
+            self._guard_parent_team_cycle(team_id, payload.get("parent_team_id"))
+        for k, v in payload.items():
             setattr(t, k, v)
         self.db.commit()
         self.db.refresh(t)
@@ -1948,7 +2043,13 @@ class TeamService:
             "A user may only belong to one tier-1 team."
         )
 
-    def add_team_member(self, team_id: str, user_id: str, sort_order: Optional[int] = None) -> TeamMember:
+    def add_team_member(
+        self,
+        team_id: str,
+        user_id: str,
+        sort_order: Optional[int] = None,
+        include_in_round_robin: bool = True,
+    ) -> TeamMember:
         """Add a user to a team."""
         self.get_team(team_id)
         existing = (
@@ -1959,8 +2060,37 @@ class TeamService:
         if existing:
             raise handle_conflict("User is already a member of this team.")
         self._validate_tier1_membership_invariant(team_id, user_id)
-        m = TeamMember(team_id=team_id, user_id=user_id, sort_order=sort_order)
+        m = TeamMember(
+            team_id=team_id,
+            user_id=user_id,
+            sort_order=sort_order,
+            include_in_round_robin=bool(include_in_round_robin),
+        )
         self.db.add(m)
+        self.db.commit()
+        self.db.refresh(m)
+        return m
+
+    def update_team_member(
+        self,
+        team_id: str,
+        user_id: str,
+        *,
+        include_in_round_robin: Optional[bool] = None,
+        sort_order: Optional[int] = None,
+    ) -> TeamMember:
+        """Update a team member's RR eligibility / sort order."""
+        m = (
+            self.db.query(TeamMember)
+            .filter(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+            .first()
+        )
+        if not m:
+            raise handle_not_found("Team member", f"{team_id}/{user_id}")
+        if include_in_round_robin is not None:
+            setattr(m, "include_in_round_robin", bool(include_in_round_robin))
+        if sort_order is not None:
+            setattr(m, "sort_order", sort_order)
         self.db.commit()
         self.db.refresh(m)
         return m

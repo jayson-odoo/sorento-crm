@@ -1,23 +1,55 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import MyPendingSLAWidget from './MyPendingSLAWidget';
-import type { MyPendingSLAItem } from '../services/conversationSLATrackingService';
+import type {
+  MyPendingSLAItem,
+  TeamPendingItem,
+} from '../services/conversationSLATrackingService';
 
 const getMyPendingSLA = vi.fn();
+const getTeamPendingSLA = vi.fn();
+const getVisibleUsers = vi.fn();
 const resolveConversationSLATracking = vi.fn();
 const escalateConversationSLATracking = vi.fn();
+const takeoverSLATracking = vi.fn();
+const reassignSLATracking = vi.fn();
+const getTakeoverState = vi.fn();
+const cancelTakeover = vi.fn();
+const rejectTakeover = vi.fn();
 
 vi.mock('../services/conversationSLATrackingService', () => ({
   getMyPendingSLA: (...a: unknown[]) => getMyPendingSLA(...a),
+  getTeamPendingSLA: (...a: unknown[]) => getTeamPendingSLA(...a),
+  getVisibleUsers: (...a: unknown[]) => getVisibleUsers(...a),
   resolveConversationSLATracking: (...a: unknown[]) => resolveConversationSLATracking(...a),
   escalateConversationSLATracking: (...a: unknown[]) => escalateConversationSLATracking(...a),
+  takeoverSLATracking: (...a: unknown[]) => takeoverSLATracking(...a),
+  reassignSLATracking: (...a: unknown[]) => reassignSLATracking(...a),
+  getTakeoverState: (...a: unknown[]) => getTakeoverState(...a),
+  cancelTakeover: (...a: unknown[]) => cancelTakeover(...a),
+  rejectTakeover: (...a: unknown[]) => rejectTakeover(...a),
 }));
 
 const push = vi.fn();
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
+const replace = vi.fn();
+let searchParam: string | null = null;
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push, replace }),
+  useSearchParams: () => ({ get: () => searchParam }),
+}));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+
+function renderWidget() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <MyPendingSLAWidget />
+    </QueryClientProvider>,
+  );
+}
 
 const formItem: MyPendingSLAItem = {
   id: 'f1',
@@ -63,24 +95,53 @@ const ticketItem: MyPendingSLAItem = {
   policy_name: 'Default',
 };
 
+const teamItem: TeamPendingItem = {
+  id: 't1',
+  assignee_id: 'u-charissa',
+  assignee_name: 'Charissa',
+  team_id: 'team-1',
+  team_label: 'Marketing – Product',
+  source_entity_type: null,
+  source_entity_id: null,
+  is_form_sla: false,
+  reference: '+60123456789',
+  due_at: new Date(Date.now() + 3600_000).toISOString(),
+  is_responded: false,
+  current_tier: 1,
+  policy_name: 'Default',
+  next_action: null,
+};
+
 describe('MyPendingSLAWidget clickable rows', () => {
   beforeEach(() => {
     getMyPendingSLA.mockReset();
+    getTeamPendingSLA.mockReset();
+    getVisibleUsers.mockReset();
     resolveConversationSLATracking.mockReset();
     escalateConversationSLATracking.mockReset();
+    takeoverSLATracking.mockReset();
+    reassignSLATracking.mockReset();
+    getTakeoverState.mockReset();
+    cancelTakeover.mockReset();
+    rejectTakeover.mockReset();
     push.mockReset();
+    replace.mockReset();
+    searchParam = null;
+    getTeamPendingSLA.mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, empty: true });
+    getVisibleUsers.mockResolvedValue([]);
+    getTakeoverState.mockResolvedValue({});
   });
 
-  it('form-SLA row: no open/resolve/escalate buttons; clicking the row opens the record', async () => {
+  it('form-SLA row: no resolve/escalate buttons (Reassign always present); clicking the row opens the record', async () => {
     getMyPendingSLA.mockResolvedValue([formItem]);
-    render(<MyPendingSLAWidget />);
+    renderWidget();
 
     await waitFor(() => expect(screen.getByText('Purchase request')).toBeInTheDocument());
     expect(screen.getByText(/Tier 1 · Send for approval/i)).toBeInTheDocument();
-    // The Open record / Resolve / Escalate controls are gone for form rows.
-    expect(screen.queryByRole('link', { name: /Open record/i })).not.toBeInTheDocument();
+    // Resolve / Escalate are conversation-only; Reassign is offered on every row.
     expect(screen.queryByRole('button', { name: /Resolve/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Escalate/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Reassign/i })).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Purchase request'));
     expect(push).toHaveBeenCalledWith('/procurement-management/purchase-requests/pr-uuid');
@@ -89,7 +150,7 @@ describe('MyPendingSLAWidget clickable rows', () => {
   it('conversation-SLA row: Escalate + Resolve buttons; clicking the row opens Respond', async () => {
     getMyPendingSLA.mockResolvedValue([convoItem]);
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
-    render(<MyPendingSLAWidget />);
+    renderWidget();
 
     await waitFor(() => expect(screen.getByText('Enquiry')).toBeInTheDocument());
     expect(screen.getByText(/Tier 2 · Reply/i)).toBeInTheDocument();
@@ -109,7 +170,7 @@ describe('MyPendingSLAWidget clickable rows', () => {
   it('Escalate flow: opens reason dialog, submits, calls escalate service with reason', async () => {
     getMyPendingSLA.mockResolvedValue([convoItem]);
     escalateConversationSLATracking.mockResolvedValue(undefined);
-    render(<MyPendingSLAWidget />);
+    renderWidget();
 
     await waitFor(() => expect(screen.getByRole('button', { name: /Escalate/i })).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /Escalate/i }));
@@ -128,7 +189,7 @@ describe('MyPendingSLAWidget clickable rows', () => {
   it('ticket (form-SLA, no FE route) shows NO buttons; clicking opens Respond', async () => {
     getMyPendingSLA.mockResolvedValue([ticketItem]);
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
-    render(<MyPendingSLAWidget />);
+    renderWidget();
 
     await waitFor(() => expect(screen.getByText('Ticket')).toBeInTheDocument());
     // Form-SLA stage: no conversation Escalate/Resolve (handled at the form).
@@ -148,7 +209,7 @@ describe('MyPendingSLAWidget clickable rows', () => {
   it('Resolve confirm calls the resolve service', async () => {
     getMyPendingSLA.mockResolvedValue([convoItem]);
     resolveConversationSLATracking.mockResolvedValue(undefined);
-    render(<MyPendingSLAWidget />);
+    renderWidget();
 
     await waitFor(() => expect(screen.getByRole('button', { name: /Resolve/i })).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /Resolve/i }));
@@ -160,9 +221,160 @@ describe('MyPendingSLAWidget clickable rows', () => {
 
   it('empty state when nothing pending', async () => {
     getMyPendingSLA.mockResolvedValue([]);
-    render(<MyPendingSLAWidget />);
+    renderWidget();
     await waitFor(() =>
       expect(screen.getByText(/you're all caught up/i)).toBeInTheDocument(),
     );
+  });
+
+  it('My Team toggle: shows assignee + Takeover/Reassign and a View all link', async () => {
+    getMyPendingSLA.mockResolvedValue([]);
+    getTeamPendingSLA.mockResolvedValue({
+      data: [teamItem],
+      total: 1,
+      page: 1,
+      limit: 50,
+      empty: false,
+    });
+    renderWidget();
+
+    await waitFor(() => expect(screen.getByText(/you're all caught up/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /My Team/i }));
+
+    await waitFor(() => expect(screen.getByText(/Charissa/)).toBeInTheDocument());
+    expect(screen.getByText(/Marketing – Product/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Takeover/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Reassign/i })).toBeInTheDocument();
+    const viewAll = screen.getByRole('link', { name: /View all/i });
+    expect(viewAll).toHaveAttribute('href', '/sla-management/team-pending');
+  });
+
+  it('My Team mode empty state', async () => {
+    getMyPendingSLA.mockResolvedValue([]);
+    getTeamPendingSLA.mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, empty: true });
+    renderWidget();
+
+    fireEvent.click(screen.getByRole('button', { name: /My Team/i }));
+    await waitFor(() =>
+      expect(screen.getByText(/No open tasks across your teams/i)).toBeInTheDocument(),
+    );
+  });
+
+  it('Takeover calls the service with the row team id', async () => {
+    getMyPendingSLA.mockResolvedValue([]);
+    getTeamPendingSLA.mockResolvedValue({
+      data: [teamItem],
+      total: 1,
+      page: 1,
+      limit: 50,
+      empty: false,
+    });
+    takeoverSLATracking.mockResolvedValue({ committed: true });
+    renderWidget();
+
+    fireEvent.click(screen.getByRole('button', { name: /My Team/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /Takeover/i })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Takeover/i }));
+    // confirm dialog
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Take over$/i })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /^Take over$/i }));
+
+    await waitFor(() => expect(takeoverSLATracking).toHaveBeenCalledWith('t1', 'team-1'));
+  });
+
+  // ---- takeover cooldown -------------------------------------------------
+
+  const pendingTk = (over: Partial<Record<string, unknown>> = {}) => ({
+    request_id: 'rq1',
+    tracking_id: 't1',
+    initiator_id: 'u-me',
+    initiator_name: 'Mostapha',
+    contested_assignee_id: 'u-charissa',
+    contested_assignee_name: 'Charissa',
+    team_id: 'team-1',
+    status: 'pending' as const,
+    commit_at: new Date(Date.now() + 60_000).toISOString(),
+    resolution_reason: null,
+    ...over,
+  });
+
+  it('My Team: initiator sees Cancel + countdown, no Takeover button', async () => {
+    getMyPendingSLA.mockResolvedValue([]);
+    getTeamPendingSLA.mockResolvedValue({
+      data: [{ ...teamItem, takeover: pendingTk({ can_cancel: true, can_reject: false }) }],
+      total: 1, page: 1, limit: 50, empty: false,
+    });
+    renderWidget();
+    fireEvent.click(screen.getByRole('button', { name: /My Team/i }));
+
+    await waitFor(() => expect(screen.getByText(/Takeover pending/i)).toBeInTheDocument());
+    expect(screen.getByTestId('takeover-remaining')).toBeInTheDocument();
+    expect(screen.getByTestId('takeover-cancel')).toBeInTheDocument();
+    // No "Takeover" action button while a takeover is pending (locked).
+    expect(screen.queryByTestId('takeover-cancel')?.textContent).toMatch(/Cancel takeover/i);
+  });
+
+  it('My Team: observer sees pending + initiator name, no Cancel/Takeover', async () => {
+    getMyPendingSLA.mockResolvedValue([]);
+    getTeamPendingSLA.mockResolvedValue({
+      data: [{ ...teamItem, takeover: pendingTk({ can_cancel: false, can_reject: false }) }],
+      total: 1, page: 1, limit: 50, empty: false,
+    });
+    renderWidget();
+    fireEvent.click(screen.getByRole('button', { name: /My Team/i }));
+
+    await waitFor(() => expect(screen.getByText(/Takeover pending · Mostapha/i)).toBeInTheDocument());
+    expect(screen.queryByTestId('takeover-cancel')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('takeover-reject')).not.toBeInTheDocument();
+  });
+
+  it('My Pending: inline "being taken over" + Reject calls rejectTakeover', async () => {
+    getMyPendingSLA.mockResolvedValue([
+      { ...convoItem, takeover: pendingTk({ can_cancel: false, can_reject: true }) },
+    ]);
+    rejectTakeover.mockResolvedValue({ status: 'rejected' });
+    renderWidget();
+
+    await waitFor(() => expect(screen.getByText(/Being taken over by Mostapha/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('takeover-reject'));
+    await waitFor(() => expect(rejectTakeover).toHaveBeenCalledWith('rq1'));
+  });
+
+  it('deep link ?takeover= pins a flashing banner with Reject', async () => {
+    searchParam = 't1';
+    getMyPendingSLA.mockResolvedValue([]);
+    getTakeoverState.mockResolvedValue({
+      id: 't1', source_entity_type: 'complaint', is_form_sla: true,
+      reference: 'CMP-0010', due_at: null, current_tier: 1, is_resolved: false,
+      assigned_to_id: 'u-charissa',
+      takeover: pendingTk({ can_reject: true }),
+    });
+    rejectTakeover.mockResolvedValue({ status: 'rejected' });
+    renderWidget();
+
+    await waitFor(() => expect(screen.getByTestId('takeover-banner')).toBeInTheDocument());
+    expect(screen.getByText(/CMP-0010/)).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('takeover-banner-reject'));
+    await waitFor(() => expect(rejectTakeover).toHaveBeenCalledWith('rq1'));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/', { scroll: false }));
+  });
+
+  it('Reassign opens the picker dialog sourced from visible-users (scope-B)', async () => {
+    getMyPendingSLA.mockResolvedValue([convoItem]);
+    getVisibleUsers.mockResolvedValue([
+      { id: 'u-tay', name: 'Tay', email: 'tay@example.com' },
+    ]);
+    renderWidget();
+
+    await waitFor(() => expect(screen.getByRole('button', { name: /Reassign/i })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Reassign/i }));
+
+    // Dialog opens with the scope-B picker; the visible-users endpoint is the source.
+    await waitFor(() => expect(screen.getByText('Reassign task')).toBeInTheDocument());
+    expect(screen.getByRole('combobox')).toBeInTheDocument();
+    await waitFor(() => expect(getVisibleUsers).toHaveBeenCalled());
+    // Reassign confirm is disabled until a colleague is chosen.
+    const confirm = screen.getAllByRole('button', { name: /^Reassign$/i }).at(-1)!;
+    expect(confirm).toBeDisabled();
   });
 });

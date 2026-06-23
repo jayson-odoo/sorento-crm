@@ -513,6 +513,7 @@ _PORTAL_LOOKUP_SET_WHITELIST = {
     "complaints_complaint_type",
     "complaints_customer_type",
     "complaints_defects_discovered",
+    "procurement_sponsor_subject",
 }
 
 

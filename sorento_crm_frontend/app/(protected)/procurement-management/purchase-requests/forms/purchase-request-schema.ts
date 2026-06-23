@@ -25,6 +25,7 @@ export const PurchaseRequestSchema = z.object({
   total_project_value: quantitySchema,
   total_project_value_text: z.string().max(2000).optional().nullable(),
   sponsor_subject: z.string().max(500).optional().nullable(),
+  sponsor_subject_other: z.string().max(2000).optional().nullable(),
   expected_delivery_date: z.string().optional().nullable(),
   expected_po_date: z.string().optional().nullable(),
   expected_po_date_text: z.string().max(500).optional().nullable(),

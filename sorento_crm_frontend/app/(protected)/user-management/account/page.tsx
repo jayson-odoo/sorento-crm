@@ -5,6 +5,7 @@ import AccountProfile from './components/account-profile';
 import DailySLASummaryPreference from './components/daily-sla-summary-preference';
 import NotificationChannelsPreference from './components/notification-channels-preference';
 import PushNotificationPreference from './components/push-notification-preference';
+import { CoverageSection } from '@/app/(protected)/account/notifications/components/coverage-section';
 
 export default function Page() {
   return (
@@ -13,6 +14,7 @@ export default function Page() {
         <AccountProfile />
         <DailySLASummaryPreference />
         <NotificationChannelsPreference />
+        <CoverageSection />
         <PushNotificationPreference />
       </div>
     </Container>

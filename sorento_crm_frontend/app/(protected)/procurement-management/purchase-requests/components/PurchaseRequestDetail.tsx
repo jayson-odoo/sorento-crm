@@ -69,6 +69,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { exportPurchaseRequestOrSponsorshipToExcel } from '../lib/purchase-request-excel-export';
 import { toast } from 'sonner';
+import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
 import PurchaseRequestConversationPanel from './PurchaseRequestConversationPanel';
 import { PurchaseRequestSignoffFooter } from './PurchaseRequestSignoffFooter';
@@ -1023,7 +1024,21 @@ export default function PurchaseRequestDetail({
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Sponsor Subject</p>
-                    <p className="font-medium">{request.sponsor_subject || '—'}</p>
+                    <p className="font-medium">
+                      {request.sponsor_subject ? (
+                        <LookupBoundLabel
+                          table="purchase_requests"
+                          column="sponsor_subject"
+                          value={request.sponsor_subject}
+                          fallback="—"
+                        />
+                      ) : (
+                        '—'
+                      )}
+                      {request.sponsor_subject === 'others' && request.sponsor_subject_other
+                        ? `: ${request.sponsor_subject_other}`
+                        : ''}
+                    </p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Date of Delivery</p>
@@ -1082,6 +1097,7 @@ export default function PurchaseRequestDetail({
                             <TableHead className="w-24">Qty</TableHead>
                             <TableHead className="w-28">U/P</TableHead>
                             <TableHead className="w-28">Total</TableHead>
+                            <TableHead>Remark</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1096,6 +1112,7 @@ export default function PurchaseRequestDetail({
                               <TableCell>
                                 {line.total != null ? Number(line.total).toLocaleString() : '—'}
                               </TableCell>
+                              <TableCell>{line.remark ?? '—'}</TableCell>
                             </TableRow>
                           ))}
                         </TableBody>

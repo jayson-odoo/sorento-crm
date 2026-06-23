@@ -56,6 +56,8 @@ class SystemSettingUpdate(BaseModel):
     smtp_from: Optional[str] = None
     default_product_supplier_id: Optional[str] = None
     default_product_standard_lead_time_days: Optional[int] = Field(None, ge=0, le=10950)
+    # Takeover cooldown window in seconds (0 = instant). Cap at 1 hour.
+    takeover_cooldown_seconds: Optional[int] = Field(None, ge=0, le=3600)
     n8n_attachment_webhook_url: Optional[str] = None
     n8n_crm_chat_outbound_webhook_url: Optional[str] = None
     n8n_stock_inquiry_revise_webhook_url: Optional[str] = None
@@ -109,6 +111,9 @@ async def get_settings(
                 "default_product_supplier_id": settings.default_product_supplier_id if settings else None,
                 "default_product_standard_lead_time_days": (
                     settings.default_product_standard_lead_time_days if settings else None
+                ),
+                "takeover_cooldown_seconds": (
+                    getattr(settings, "takeover_cooldown_seconds", 60) if settings else None
                 ),
                 "purchase_request_default_approver_user_id": pr_uid,
                 "purchase_request_default_approver_name": user_pr.name if user_pr else None,

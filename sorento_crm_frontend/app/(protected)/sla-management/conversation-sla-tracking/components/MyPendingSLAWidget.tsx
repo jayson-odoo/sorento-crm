@@ -1,16 +1,21 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   AlertCircle,
+  Ban,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock,
   ExternalLink,
+  Search,
   TrendingUp,
+  UserRoundCog,
+  UserRoundPlus,
+  X,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -39,10 +44,23 @@ const PAGE_SIZE = 5;
 const MAX_TIER = 3;
 import {
   getMyPendingSLA,
+  getTeamPendingSLA,
+  getTakeoverState,
   resolveConversationSLATracking,
   escalateConversationSLATracking,
   type MyPendingSLAItem,
+  type TeamPendingItem,
+  type TakeoverInfo,
+  type TakeoverStateRow,
 } from '../services/conversationSLATrackingService';
+import {
+  useCancelTakeover,
+  useReassignSLATracking,
+  useRejectTakeover,
+  useTakeoverSLATracking,
+} from '../hooks/useTeamPendingSLA';
+import ReassignDialog from './ReassignDialog';
+import { TakeoverCountdown } from './TakeoverCountdown';
 
 // Same inbox base used by the SLA detail page; conversation rows deep-link here
 // because the CRM cannot send files in-app yet — staff reply from Respond.
@@ -55,22 +73,30 @@ const ENTITY_ROUTES: Record<string, { base: string; label: string }> = {
   sponsorship_form: { base: '/procurement-management/purchase-requests', label: 'Sponsorship form' },
 };
 
+type AnyTask = MyPendingSLAItem | TeamPendingItem;
+
 /** Form-vs-conversation is decided by the backend (is_form_sla, from FORM_SLA_TYPES)
  * — never re-derived here, or types the FE route map doesn't know (e.g. 'ticket')
  * silently fall through to the conversation branch. */
-function isFormTask(item: MyPendingSLAItem): boolean {
+function isFormTask(item: AnyTask): boolean {
   return item.is_form_sla;
+}
+
+/** The pending takeover on a row, if any (null otherwise). */
+function pendingTakeover(item: AnyTask): TakeoverInfo | null {
+  const tk = item.takeover;
+  return tk && tk.status === 'pending' ? tk : null;
 }
 
 /** In-system record link when we have a known route for the form type; null when we
  * don't (e.g. ticket — the row falls back to its Respond conversation / SLA detail). */
-function entityHref(item: MyPendingSLAItem): string | null {
+function entityHref(item: AnyTask): string | null {
   const route = ENTITY_ROUTES[item.source_entity_type ?? ''];
   if (route && item.source_entity_id) return `${route.base}/${item.source_entity_id}`;
   return null;
 }
 
-function humanizeType(item: MyPendingSLAItem): string {
+function humanizeType(item: AnyTask): string {
   const route = ENTITY_ROUTES[item.source_entity_type ?? ''];
   if (route) return route.label;
   if (item.is_form_sla && item.source_entity_type) {
@@ -81,8 +107,8 @@ function humanizeType(item: MyPendingSLAItem): string {
   return 'Enquiry';
 }
 
-function inboxUrl(item: MyPendingSLAItem): string | null {
-  return item.respond_io_id ? `${RESPOND_IO_INBOX_BASE_URL}/${item.respond_io_id}` : null;
+function respondId(item: AnyTask): string | null {
+  return (item as MyPendingSLAItem).respond_io_id ?? null;
 }
 
 function dueLabel(due: string | null): { text: string; overdue: boolean } {
@@ -92,21 +118,63 @@ function dueLabel(due: string | null): { text: string; overdue: boolean } {
   return { text: d.toLocaleString(), overdue };
 }
 
+/** Free-text haystack for the search box: entity number (reference) for form rows,
+ * contact name (reference) for conversation rows, plus type + assignee/team. */
+function matchesQuery(item: AnyTask, typeLabel: string, q: string): boolean {
+  if (!q) return true;
+  const t = item as TeamPendingItem;
+  const hay = [
+    typeLabel,
+    item.reference ?? '',
+    t.assignee_name ?? '',
+    t.team_label ?? '',
+    item.source_entity_type ?? '',
+  ]
+    .join(' ')
+    .toLowerCase();
+  return hay.includes(q);
+}
+
+type Mode = 'mine' | 'team';
+
 export default function MyPendingSLAWidget() {
   const router = useRouter();
+  const [mode, setMode] = useState<Mode>('mine');
   const [items, setItems] = useState<MyPendingSLAItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [teamItems, setTeamItems] = useState<TeamPendingItem[] | null>(null);
+  const [teamError, setTeamError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
+  const [search, setSearch] = useState('');
   const [resolveTarget, setResolveTarget] = useState<MyPendingSLAItem | null>(null);
   const [resolving, setResolving] = useState(false);
   const [escalateTarget, setEscalateTarget] = useState<MyPendingSLAItem | null>(null);
   const [escalateReason, setEscalateReason] = useState('');
   const [escalating, setEscalating] = useState(false);
+  const [reassignTarget, setReassignTarget] = useState<{ id: string; label: string } | null>(null);
+  const [takeoverTarget, setTakeoverTarget] = useState<TeamPendingItem | null>(null);
+
+  const takeoverMutation = useTakeoverSLATracking();
+  const reassignMutation = useReassignSLATracking();
+  const cancelMutation = useCancelTakeover();
+  const rejectMutation = useRejectTakeover();
+
+  // Contested-task banner driven by the email deep link ?takeover=<tracking_id>.
+  const searchParams = useSearchParams();
+  const takeoverParam = searchParams.get('takeover');
+  const [banner, setBanner] = useState<TakeoverStateRow | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   const load = useCallback(() => {
     return getMyPendingSLA()
       .then((data) => setItems(data))
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'));
+  }, []);
+
+  const loadTeam = useCallback(() => {
+    return getTeamPendingSLA({ limit: 50 })
+      .then((res) => setTeamItems(res.data))
+      .catch((e) => setTeamError(e instanceof Error ? e.message : 'Failed to load'));
   }, []);
 
   useEffect(() => {
@@ -119,21 +187,121 @@ export default function MyPendingSLAWidget() {
     };
   }, []);
 
-  // Clicking a row performs its natural action: form rows open the in-system
-  // record, conversation rows open the Respond inbox (or the SLA detail when the
-  // contact has no resolvable Respond id).
-  const doRowAction = useCallback(
-    (item: MyPendingSLAItem) => {
-      // Form rows with a known record route open the record; otherwise (incl. ticket,
-      // and all conversation rows) open the Respond inbox, else the SLA detail.
+  // Team list is loaded lazily the first time the user switches to "My Team".
+  useEffect(() => {
+    if (mode !== 'team' || teamItems !== null || teamError !== null) return;
+    let active = true;
+    getTeamPendingSLA({ limit: 50 })
+      .then((res) => active && setTeamItems(res.data))
+      .catch((e) => active && setTeamError(e instanceof Error ? e.message : 'Failed to load'));
+    return () => {
+      active = false;
+    };
+  }, [mode, teamItems, teamError]);
+
+  // Reset paging when switching modes or searching.
+  useEffect(() => {
+    setPage(0);
+  }, [mode, search]);
+
+  // Deep-link banner: pin-fetch the contested task by id (pagination-proof). Switch to
+  // My Pending so the owner sees their own row context too.
+  useEffect(() => {
+    if (!takeoverParam || bannerDismissed) {
+      setBanner(null);
+      return;
+    }
+    let active = true;
+    setMode('mine');
+    getTakeoverState(takeoverParam)
+      .then((row) => active && setBanner(row))
+      .catch(() => active && setBanner(null));
+    return () => {
+      active = false;
+    };
+  }, [takeoverParam, bannerDismissed]);
+
+  // Light polling while any pending takeover is on screen (bar / banner transitions).
+  const hasPending = useMemo(() => {
+    const a = (items ?? []).some((it) => pendingTakeover(it));
+    const b = (teamItems ?? []).some((it) => pendingTakeover(it));
+    const c = banner?.takeover?.status === 'pending';
+    return a || b || c;
+  }, [items, teamItems, banner]);
+
+  useEffect(() => {
+    if (!hasPending) return;
+    const t = setInterval(() => {
+      void load();
+      if (mode === 'team' || teamItems !== null) void loadTeam();
+      if (takeoverParam && !bannerDismissed) {
+        getTakeoverState(takeoverParam).then(setBanner).catch(() => {});
+      }
+    }, 5000);
+    return () => clearInterval(t);
+  }, [hasPending, mode, teamItems, takeoverParam, bannerDismissed, load, loadTeam]);
+
+  const clearTakeoverParam = useCallback(() => {
+    setBannerDismissed(true);
+    setBanner(null);
+    if (takeoverParam) router.replace('/', { scroll: false });
+  }, [router, takeoverParam]);
+
+  const handleCancelTakeover = (requestId: string) => {
+    cancelMutation.mutate(requestId, {
+      onSuccess: () => void Promise.all([loadTeam(), load()]),
+    });
+  };
+
+  const handleRejectTakeover = (requestId: string, fromBanner = false) => {
+    rejectMutation.mutate(requestId, {
+      onSuccess: () => {
+        if (fromBanner) clearTakeoverParam();
+        void Promise.all([load(), loadTeam()]);
+      },
+    });
+  };
+
+  const confirmTakeover = () => {
+    if (!takeoverTarget) return;
+    const t = takeoverTarget;
+    takeoverMutation.mutate(
+      { id: t.id, teamId: t.team_id },
+      {
+        onSuccess: () => {
+          setTakeoverTarget(null);
+          void Promise.all([loadTeam(), load()]);
+        },
+      },
+    );
+  };
+
+  const handleReassignConfirm = (userId: string) => {
+    if (!reassignTarget) return;
+    reassignMutation.mutate(
+      { id: reassignTarget.id, userId },
+      {
+        onSuccess: () => {
+          setReassignTarget(null);
+          void Promise.all([loadTeam(), load()]);
+        },
+      },
+    );
+  };
+
+  // Clicking a row performs its natural action (identical for My Pending and My
+  // Team): form rows open the in-system record, conversation rows open the Respond
+  // inbox (or the SLA detail when the contact has no resolvable Respond id).
+  const openTask = useCallback(
+    (item: AnyTask) => {
       const record = entityHref(item);
       if (record) {
         router.push(record);
         return;
       }
-      const url = inboxUrl(item);
-      if (url) {
-        window.open(url, '_blank', 'noopener,noreferrer');
+      const rid = respondId(item);
+      if (rid) {
+        window.open(`${RESPOND_IO_INBOX_BASE_URL}/${rid}`, '_blank', 'noopener,noreferrer');
         return;
       }
       router.push(`/sla-management/conversation-sla-tracking/${item.id}`);
@@ -174,24 +342,389 @@ export default function MyPendingSLAWidget() {
     }
   };
 
-  const total = items?.length ?? 0;
+  const q = search.trim().toLowerCase();
+
+  const filteredMine = useMemo(
+    () => (items ?? []).filter((it) => matchesQuery(it, humanizeType(it), q)),
+    [items, q],
+  );
+  const filteredTeam = useMemo(
+    () => (teamItems ?? []).filter((it) => matchesQuery(it, humanizeType(it), q)),
+    [teamItems, q],
+  );
+
+  const total = filteredMine.length;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);
-  const pageItems = items ? items.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE) : [];
+  const pageItems = filteredMine.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE);
+
+  const teamTotal = filteredTeam.length;
+  const teamPageCount = Math.max(1, Math.ceil(teamTotal / PAGE_SIZE));
+  const teamCurrentPage = Math.min(page, teamPageCount - 1);
+  const teamPageItems = filteredTeam.slice(
+    teamCurrentPage * PAGE_SIZE,
+    teamCurrentPage * PAGE_SIZE + PAGE_SIZE,
+  );
+
+  const mutatingId =
+    (takeoverMutation.isPending && takeoverMutation.variables?.id) ||
+    (reassignMutation.isPending && reassignMutation.variables?.id) ||
+    null;
+
+  const activeLoaded = mode === 'team' ? teamItems !== null : items !== null;
+
+  // One row renderer for BOTH tabs so the layout never drifts (responsive: title
+  // block wraps/truncates, due + chevron stay on the right, actions wrap below).
+  const renderRow = (item: AnyTask) => {
+    const isTeam = mode === 'team';
+    const form = isFormTask(item);
+    const due = dueLabel(item.due_at);
+    const typeLabel = humanizeType(item);
+    const rowBusy = mutatingId === item.id;
+    const teamItem = item as TeamPendingItem;
+    const mineItem = item as MyPendingSLAItem;
+    const tk = pendingTakeover(item);
+    const subline = isTeam
+      ? `${teamItem.assignee_name ?? '—'} · ${teamItem.team_label ?? '—'} · Tier ${item.current_tier}`
+      : `Tier ${item.current_tier} · ${form ? mineItem.next_action ?? 'Action required' : 'Reply'}`;
+    const atMaxTier = item.current_tier >= MAX_TIER;
+
+    return (
+      <li key={item.id} className="py-1">
+        <div
+          tabIndex={0}
+          role="button"
+          onClick={() => openTask(item)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              openTask(item);
+            }
+          }}
+          className="-mx-2 cursor-pointer rounded-md px-2 py-2 transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium" title={`${typeLabel}${item.reference ? ` · ${item.reference}` : ''}`}>
+                {typeLabel}
+                {item.reference ? (
+                  <span className="text-muted-foreground"> · {item.reference}</span>
+                ) : null}
+              </p>
+              <p className="truncate text-xs text-muted-foreground" title={subline}>
+                {subline}
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <span
+                className={`text-xs ${due.overdue ? 'font-medium text-destructive' : 'text-muted-foreground'}`}
+                title={due.text}
+              >
+                {due.overdue ? 'Overdue' : 'Due'}: {due.text}
+              </span>
+              {!entityHref(item) && respondId(item) ? (
+                <ExternalLink className="size-3.5 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="size-4 text-muted-foreground" />
+              )}
+            </div>
+          </div>
+
+          {/* Inline actions; clicks here must not trigger the row's open action. */}
+          <div className="mt-2 flex flex-col gap-2" onClick={(e) => e.stopPropagation()}>
+            {tk && (
+              <div className="rounded-md border border-amber-300/60 bg-amber-50/60 px-2.5 py-2 dark:bg-amber-950/20">
+                <div className="mb-1.5 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                  <Ban className="size-3.5" />
+                  <span className="font-medium">
+                    {isTeam
+                      ? `Takeover pending${tk.can_cancel ? '' : ` · ${tk.initiator_name}`}`
+                      : `Being taken over by ${tk.initiator_name}`}
+                  </span>
+                </div>
+                <TakeoverCountdown
+                  commitAt={tk.commit_at}
+                  windowSeconds={tk.window_seconds}
+                  onExpire={() => {
+                    void load();
+                    void loadTeam();
+                  }}
+                />
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {tk.can_cancel && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7"
+                      data-testid="takeover-cancel"
+                      disabled={cancelMutation.isPending}
+                      onClick={() => handleCancelTakeover(tk.request_id)}
+                    >
+                      <X className="size-3.5" />
+                      Cancel takeover
+                    </Button>
+                  )}
+                  {tk.can_reject && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 border-destructive/40 text-destructive hover:text-destructive"
+                      data-testid="takeover-reject"
+                      disabled={rejectMutation.isPending}
+                      onClick={() => handleRejectTakeover(tk.request_id)}
+                    >
+                      <Ban className="size-3.5" />
+                      Reject
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              {isTeam ? (
+                !tk && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7"
+                    disabled={rowBusy}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setTakeoverTarget(teamItem);
+                    }}
+                  >
+                    <UserRoundPlus className="size-3.5" />
+                    Takeover
+                  </Button>
+                )
+              ) : (
+                !form && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7"
+                      disabled={atMaxTier}
+                      title={atMaxTier ? 'Already at the maximum tier' : 'Escalate to the next tier'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEscalateReason('');
+                        setEscalateTarget(mineItem);
+                      }}
+                    >
+                      <TrendingUp className="size-3.5" />
+                      Escalate
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setResolveTarget(mineItem);
+                      }}
+                    >
+                      <CheckCircle2 className="size-3.5" />
+                      Resolve
+                    </Button>
+                  </>
+                )
+              )}
+              {/* Reassign is locked while a takeover is pending (soft lock). */}
+              {!tk && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7"
+                  disabled={rowBusy}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setReassignTarget({
+                      id: item.id,
+                      label: `${typeLabel}${item.reference ? ` · ${item.reference}` : ''}`,
+                    });
+                  }}
+                >
+                  <UserRoundCog className="size-3.5" />
+                  Reassign
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      </li>
+    );
+  };
+
+  const renderPager = (cur: number, count: number, totalCount: number) => (
+    <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
+      <span>
+        {totalCount === 0
+          ? '0 of 0'
+          : `${cur * PAGE_SIZE + 1}–${Math.min((cur + 1) * PAGE_SIZE, totalCount)} of ${totalCount}`}
+      </span>
+      {totalCount > PAGE_SIZE && (
+        <div className="flex items-center gap-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-7"
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={cur === 0}
+            aria-label="Previous page"
+          >
+            <ChevronLeft className="size-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="size-7"
+            onClick={() => setPage((p) => Math.min(count - 1, p + 1))}
+            disabled={cur >= count - 1}
+            aria-label="Next page"
+          >
+            <ChevronRight className="size-4" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="rounded-lg border bg-card p-4">
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <Clock className="size-4 text-muted-foreground" />
-        <h2 className="text-sm font-semibold">My pending tasks</h2>
-        {items !== null && (
+        <h2 className="text-sm font-semibold">
+          {mode === 'mine' ? 'My pending tasks' : 'My team tasks'}
+        </h2>
+        {mode === 'mine' && items !== null && (
           <Badge variant="secondary" className="ml-1">
             {items.length}
           </Badge>
         )}
+        {mode === 'team' && teamItems !== null && (
+          <Badge variant="secondary" className="ml-1">
+            {teamItems.length}
+          </Badge>
+        )}
+        <div className="ml-auto inline-flex rounded-md border p-0.5">
+          <Button
+            type="button"
+            size="sm"
+            variant={mode === 'mine' ? 'primary' : 'ghost'}
+            className="h-7 px-2.5"
+            onClick={() => setMode('mine')}
+          >
+            My Pending
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={mode === 'team' ? 'primary' : 'ghost'}
+            className="h-7 px-2.5"
+            onClick={() => setMode('team')}
+          >
+            My Team
+          </Button>
+        </div>
       </div>
 
-      {error ? (
+      {activeLoaded && (
+        <div className="relative mb-3">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search by number, contact, or type…"
+            className="h-8 pl-8 text-sm"
+          />
+        </div>
+      )}
+
+      {banner && (
+        <div
+          data-testid="takeover-banner"
+          className="takeover-flash mb-3 rounded-lg border-2 border-amber-400 bg-amber-50/70 p-3 dark:bg-amber-950/30"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">
+                {humanizeType(banner as unknown as AnyTask)}
+                {banner.reference ? (
+                  <span className="text-muted-foreground"> · {banner.reference}</span>
+                ) : null}
+              </p>
+              {banner.takeover?.status === 'pending' ? (
+                <p className="mt-0.5 text-xs text-amber-700 dark:text-amber-400">
+                  {banner.takeover.initiator_name} wants to take over this task.
+                </p>
+              ) : (
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  This takeover is {banner.takeover?.status ?? 'no longer pending'}.
+                </p>
+              )}
+            </div>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-6 shrink-0"
+              aria-label="Dismiss"
+              onClick={clearTakeoverParam}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+          {banner.takeover?.status === 'pending' && (
+            <div className="mt-2">
+              <TakeoverCountdown
+                commitAt={banner.takeover.commit_at}
+                windowSeconds={banner.takeover.window_seconds}
+                onExpire={() => {
+                  if (takeoverParam) getTakeoverState(takeoverParam).then(setBanner).catch(() => {});
+                }}
+              />
+              {banner.takeover.can_reject && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 h-7 border-destructive/40 text-destructive hover:text-destructive"
+                  data-testid="takeover-banner-reject"
+                  disabled={rejectMutation.isPending}
+                  onClick={() => handleRejectTakeover(banner.takeover!.request_id, true)}
+                >
+                  <Ban className="size-3.5" />
+                  Reject takeover
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {mode === 'team' ? (
+        teamError ? (
+          <p className="flex items-center gap-2 text-sm text-destructive">
+            <AlertCircle className="size-4" /> {teamError}
+          </p>
+        ) : teamItems === null ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : teamItems.length === 0 ? (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <CheckCircle2 className="size-4 text-emerald-600" />
+            No open tasks across your teams.
+          </p>
+        ) : teamPageItems.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No tasks match “{search}”.</p>
+        ) : (
+          <>
+            <ul className="divide-y">{teamPageItems.map(renderRow)}</ul>
+            {renderPager(teamCurrentPage, teamPageCount, teamTotal)}
+          </>
+        )
+      ) : error ? (
         <p className="flex items-center gap-2 text-sm text-destructive">
           <AlertCircle className="size-4" /> {error}
         </p>
@@ -202,130 +735,39 @@ export default function MyPendingSLAWidget() {
           <CheckCircle2 className="size-4 text-emerald-600" />
           Nothing pending — you&apos;re all caught up.
         </p>
+      ) : pageItems.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No tasks match “{search}”.</p>
       ) : (
         <>
-          <ul className="divide-y">
-            {pageItems.map((item) => {
-              const form = isFormTask(item);
-              const due = dueLabel(item.due_at);
-              const typeLabel = humanizeType(item);
-              // Next action follows the SLA config for form rows ("Send for
-              // approval", "Approve", "Mark resolved"); conversation rows reply in
-              // Respond. No generic "responded/awaiting" wording, no extra line.
-              const actionLabel = form ? item.next_action ?? 'Action required' : 'Reply';
-              const atMaxTier = item.current_tier >= MAX_TIER;
-
-              return (
-                <li key={item.id} className="py-1">
-                  <div
-                    tabIndex={0}
-                    onClick={() => doRowAction(item)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        doRowAction(item);
-                      }
-                    }}
-                    className="-mx-2 cursor-pointer rounded-md px-2 py-2 transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">
-                          {typeLabel}
-                          {item.reference ? (
-                            <span className="text-muted-foreground"> · {item.reference}</span>
-                          ) : null}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          Tier {item.current_tier} · {actionLabel}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        <span
-                          className={`text-xs ${due.overdue ? 'font-medium text-destructive' : 'text-muted-foreground'}`}
-                          title={due.text}
-                        >
-                          {due.overdue ? 'Overdue' : 'Due'}: {due.text}
-                        </span>
-                        {!entityHref(item) && item.respond_io_id ? (
-                          <ExternalLink className="size-3.5 text-muted-foreground" />
-                        ) : (
-                          <ChevronRight className="size-4 text-muted-foreground" />
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Conversation rows carry inline actions; clicks here must not
-                        trigger the row's open action. Form rows have none. */}
-                    {!form && (
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7"
-                          disabled={atMaxTier}
-                          title={atMaxTier ? 'Already at the maximum tier' : 'Escalate to the next tier'}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEscalateReason('');
-                            setEscalateTarget(item);
-                          }}
-                        >
-                          <TrendingUp className="size-3.5" />
-                          Escalate
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setResolveTarget(item);
-                          }}
-                        >
-                          <CheckCircle2 className="size-3.5" />
-                          Resolve
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-          {total > PAGE_SIZE && (
-            <div className="mt-3 flex items-center justify-between text-xs text-muted-foreground">
-              <span>
-                {currentPage * PAGE_SIZE + 1}–{Math.min((currentPage + 1) * PAGE_SIZE, total)} of {total}
-              </span>
-              <div className="flex items-center gap-1">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="size-7"
-                  onClick={() => setPage((p) => Math.max(0, p - 1))}
-                  disabled={currentPage === 0}
-                  aria-label="Previous page"
-                >
-                  <ChevronLeft className="size-4" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="size-7"
-                  onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
-                  disabled={currentPage >= pageCount - 1}
-                  aria-label="Next page"
-                >
-                  <ChevronRight className="size-4" />
-                </Button>
-              </div>
-            </div>
-          )}
+          <ul className="divide-y">{pageItems.map(renderRow)}</ul>
+          {renderPager(currentPage, pageCount, total)}
         </>
       )}
+
+      <AlertDialog open={!!takeoverTarget} onOpenChange={(o) => !o && setTakeoverTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Take over this task?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {takeoverTarget
+                ? `${humanizeType(takeoverTarget)}${takeoverTarget.reference ? ` · ${takeoverTarget.reference}` : ''} — currently with ${takeoverTarget.assignee_name ?? 'a teammate'}. It will move to your pending tasks at your tier. The SLA clock is not reset.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={takeoverMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                confirmTakeover();
+              }}
+              disabled={takeoverMutation.isPending}
+            >
+              {takeoverMutation.isPending ? 'Taking over…' : 'Take over'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!resolveTarget} onOpenChange={(o) => !o && setResolveTarget(null)}>
         <AlertDialogContent>
@@ -395,6 +837,14 @@ export default function MyPendingSLAWidget() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ReassignDialog
+        open={!!reassignTarget}
+        onOpenChange={(o) => !o && setReassignTarget(null)}
+        taskLabel={reassignTarget?.label}
+        submitting={reassignMutation.isPending}
+        onConfirm={handleReassignConfirm}
+      />
     </div>
   );
 }

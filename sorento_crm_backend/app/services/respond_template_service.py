@@ -63,6 +63,24 @@ PARAM_VARIABLES = (
     # SLA assignment / escalation destination link: the form record for routed types,
     # or the Respond inbox for ticket / conversation — same target as clicking the task.
     "form_url",
+    # Structured complaint update template (PLAN-complaint-structured-update-template.md):
+    # discrete fields so the body reads as labelled lines (Project / Customer / DO) with
+    # the bare action core after "Update:" — instead of one verbose run-on sentence.
+    # ``update`` = the bare core (tech response / status change / resolution);
+    # ``project`` / ``customer`` / ``delivery_order`` auto-resolve from the complaint row.
+    "update",
+    "project",
+    "customer",
+    "delivery_order",
+    # Stock-inquiry product code line.
+    "product_code",
+    # Read-only public view link (token URL) — distinct from ``portal_url`` which
+    # is the interactive portal the contact can act/resubmit on. Complaint sends
+    # thread both via extra_context_vars.
+    "view_url",
+    # SLA takeover: the initiator (teammate who started the takeover) — the
+    # "Requested by" line in the takeover-pending template.
+    "initiator",
 )
 
 # Use cases whose template MUST map a slot to a specific variable, or the message
@@ -90,6 +108,56 @@ def _body_text_of(components: List[dict]) -> str:
 def _param_count_of(body_text: str) -> int:
     nums = [int(m) for m in _PARAM_RE.findall(body_text or "")]
     return max(nums) if nums else 0
+
+
+# Reserved (non-numeric) param_mapping key for a template's dynamic URL button.
+# Body slots stay "1".."n"; the button link var lives under this key so it never
+# collides with a positional body param.
+BUTTON_URL_KEY = "button_url"
+
+
+def url_button_of(components: List[dict]) -> Optional[dict]:
+    """The dynamic-URL CTA button from a respond.io ``buttons`` component, or None.
+
+    respond.io shape: ``{"type":"buttons","buttons":[{"type":"url",
+    "url":"https://x/{{1}}","parameters":[...]}]}``. "Dynamic" = the url carries a
+    ``{{n}}`` placeholder; a static url button (no placeholder) is ignored — there
+    is nothing to fill at send time.
+    """
+    for comp in components or []:
+        if not isinstance(comp, dict) or comp.get("type") != "buttons":
+            continue
+        for btn in comp.get("buttons") or []:
+            if (
+                isinstance(btn, dict)
+                and btn.get("type") == "url"
+                and _PARAM_RE.search(str(btn.get("url") or ""))
+            ):
+                return btn
+    return None
+
+
+def button_url_base(button: Optional[dict]) -> Optional[str]:
+    """Static prefix of a dynamic URL button (everything before the ``{{n}}``)."""
+    if not button:
+        return None
+    url = str(button.get("url") or "")
+    m = _PARAM_RE.search(url)
+    return url[: m.start()] if m else None
+
+
+def is_copy_code_button(button: Optional[dict]) -> bool:
+    """True for a WhatsApp Authentication COPY_CODE button.
+
+    These render as a dynamic URL button (the url carries ``{{1}}``), but the
+    param is the OTP code itself — Meta copies the button parameter, not a CRM
+    link. Admins must NOT map a link variable for it; the send path reuses the
+    code already mapped to the body. Detected by the copy-code URL signature.
+    """
+    if not button:
+        return False
+    url = str(button.get("url") or "").lower()
+    return "otp_type=copy_code" in url or "whatsapp.com/otp" in url
 
 
 def _client_for_workspace(workspace: RespondWorkspace):
@@ -260,6 +328,7 @@ def list_templates(
 
 
 def serialize_template(t: RespondMessageTemplate) -> Dict[str, Any]:
+    url_button = url_button_of(t.components)
     return {
         "id": str(t.id),
         "respond_template_id": str(t.respond_template_id),
@@ -269,6 +338,13 @@ def serialize_template(t: RespondMessageTemplate) -> Dict[str, Any]:
         "status": t.status,
         "body_text": t.body_text,
         "param_count": t.param_count,
+        # Dynamic URL button: lets the defaults modal show the extra "Button link"
+        # mapping row and require it before saving.
+        "has_url_button": url_button is not None,
+        "button_url_base": button_url_base(url_button),
+        "button_text": (url_button.get("text") if url_button else None),
+        # COPY_CODE auth buttons: no link var to map (the OTP code auto-fills).
+        "button_is_copy_code": is_copy_code_button(url_button),
         "channel_name": t.channel.name if t.channel else None,
         "synced_at": t.synced_at.isoformat() if t.synced_at else None,
     }
@@ -279,8 +355,17 @@ def _default_is_valid(row: Optional[RespondTemplateDefault]) -> bool:
         return False
     if row.template.status != "approved":
         return False
+    mapping = row.param_mapping or {}
     needed = {str(i + 1) for i in range(row.template.param_count)}
-    return needed <= set((row.param_mapping or {}).keys())
+    if not (needed <= set(mapping.keys())):
+        return False
+    # A dynamic URL button needs its link variable mapped, or the button has
+    # nothing to fill (Meta rejects a missing button param). COPY_CODE auth
+    # buttons are exempt — their param is the OTP code, auto-filled at send.
+    _btn = url_button_of(getattr(row.template, "components", None))
+    if _btn and not is_copy_code_button(_btn) and not mapping.get(BUTTON_URL_KEY):
+        return False
+    return True
 
 
 def serialize_default(
@@ -292,12 +377,25 @@ def serialize_default(
         template_name = template.name
     elif row is not None and row.template_name_snapshot:
         template_name = row.template_name_snapshot
+    url_button = (
+        url_button_of(getattr(template, "components", None))
+        if template is not None
+        else None
+    )
+    mapping = dict(row.param_mapping or {}) if row else {}
     return {
         "use_case": use_case,
         "template_id": str(row.template_id) if row and row.template_id else None,
         "template_name": template_name,
         "template_status": template.status if template else None,
-        "param_mapping": dict(row.param_mapping or {}) if row else {},
+        "param_mapping": mapping,
+        # Dynamic URL button metadata so the admin modal can render the extra
+        # "Button link → [var]" mapping row and know the static base.
+        "has_url_button": url_button is not None,
+        "button_url_base": button_url_base(url_button),
+        "button_url_var": mapping.get(BUTTON_URL_KEY),
+        # COPY_CODE auth buttons: no link var to map (the OTP code auto-fills).
+        "button_is_copy_code": is_copy_code_button(url_button),
         # True only when the template exists, is approved and fully mapped.
         "is_valid": _default_is_valid(row),
         # Template was set once but hard-deleted by a later sync.
@@ -369,8 +467,23 @@ def set_default(
             f"Unknown param variables: {', '.join(invalid_vars)}. Allowed: {', '.join(PARAM_VARIABLES)}"
         )
     # Drop mapping entries beyond the template's params (stale keys from a
-    # previously-selected template).
-    mapping = {k: v for k, v in mapping.items() if k in needed}
+    # previously-selected template). Keep the reserved BUTTON_URL_KEY — it is not
+    # a positional body slot.
+    mapping = {k: v for k, v in mapping.items() if k in needed or k == BUTTON_URL_KEY}
+
+    # Dynamic URL button: require its link variable mapped (else Meta rejects the
+    # button param). No button → drop a stale button_url key. COPY_CODE auth
+    # buttons are exempt — their param is the OTP code (auto-filled at send), so
+    # admins map no link variable; drop any stale key.
+    _url_btn = url_button_of(template.components)
+    if _url_btn and not is_copy_code_button(_url_btn):
+        if not mapping.get(BUTTON_URL_KEY):
+            raise handle_validation_error(
+                "This template has a dynamic URL button; map 'button_url' to a "
+                "link variable (e.g. portal_url)."
+            )
+    else:
+        mapping.pop(BUTTON_URL_KEY, None)
 
     # Some use cases must carry a specific variable (e.g. OTP must contain the
     # code). Checked after the trim so a slot beyond the body's params doesn't

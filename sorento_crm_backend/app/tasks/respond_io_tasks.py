@@ -192,8 +192,14 @@ def send_complaint_respond_message(
     respond_user_id: str,
     crm_sender_user_id: Optional[str],
     space_id: Optional[str],
+    extra_context_vars: Optional[dict] = None,
 ) -> dict:
-    """Worker-side: window-aware Respond.io send for a complaint update."""
+    """Worker-side: window-aware Respond.io send for a complaint update.
+
+    ``extra_context_vars`` carries the action-specific structured-template vars
+    (bare ``update`` core + explicit ``portal_url``) that can't be reconstructed
+    from the complaint row alone. See PLAN-complaint-structured-update-template.md.
+    """
     return _send_and_log(
         use_case="complaint",
         business_table="complaints",
@@ -204,6 +210,7 @@ def send_complaint_respond_message(
         crm_sender_user_id=crm_sender_user_id,
         space_id=space_id,
         sla_entity_type="complaint",
+        extra_context_vars=extra_context_vars,
     )
 
 
@@ -215,12 +222,17 @@ def send_stock_inquiry_respond_message(
     crm_sender_user_id: Optional[str],
     space_id: Optional[str],
     verify_delivery: bool = True,
+    extra_context_vars: Optional[dict] = None,
 ) -> dict:
     """Worker-side: window-aware Respond.io send for a stock inquiry update.
 
     ``verify_delivery`` is accepted for enqueue-signature compatibility but
     ignored — post-send delivery polling was removed in favour of the up-front
     window check.
+
+    ``extra_context_vars`` carries the action-specific structured-template vars
+    (bare ``update`` core + explicit ``portal_url``) that can't be reconstructed
+    from the inquiry row alone.
     """
     return _send_and_log(
         use_case="stock_inquiry",
@@ -232,4 +244,5 @@ def send_stock_inquiry_respond_message(
         crm_sender_user_id=crm_sender_user_id,
         space_id=space_id,
         sla_entity_type="stock_inquiry",
+        extra_context_vars=extra_context_vars,
     )

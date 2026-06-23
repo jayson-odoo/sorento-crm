@@ -6,6 +6,7 @@ import {
   getUsersSelect,
   addTeamMember,
   removeTeamMember,
+  updateTeamMember,
 } from '../services/teamService';
 import type { TeamAddMemberPayload } from '../types/team.types';
 
@@ -52,6 +53,18 @@ export function useRemoveTeamMember(teamId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['user-management-team-members', teamId] });
       toast.success('Member removed');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+export function useUpdateTeamMemberRoundRobin(teamId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, includeInRoundRobin }: { userId: string; includeInRoundRobin: boolean }) =>
+      updateTeamMember(teamId, userId, { include_in_round_robin: includeInRoundRobin }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['user-management-team-members', teamId] });
     },
     onError: (error: Error) => toast.error(error.message),
   });

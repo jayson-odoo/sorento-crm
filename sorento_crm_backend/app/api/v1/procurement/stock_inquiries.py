@@ -344,7 +344,18 @@ async def project_sales_approve_stock_inquiry(
     """Move stock inquiry from pending_project_sales to pending_purchasing."""
     try:
         service = StockInquiryService(db)
-        inquiry = service.project_sales_approve_inquiry(inquiry_id)
+        user_id = (current_user or {}).get("id")
+        respond_user_id = (
+            (current_user or {}).get("respond_user_id")
+            or (current_user or {}).get("respondUserId")
+            or user_id
+        )
+        inquiry = service.project_sales_approve_inquiry(
+            inquiry_id,
+            actor_user_id=user_id,
+            crm_sender_user_id=user_id,
+            respond_user_id_fallback=str(respond_user_id or ""),
+        )
         return inquiry
     except HTTPException:
         raise

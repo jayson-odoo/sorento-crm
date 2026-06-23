@@ -1,5 +1,5 @@
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { RespondConversationResponse } from '@/app/(protected)/procurement-management/stock-inquiries/services/stockInquiryService';
 import type { ConversationSLATracking, ConversationSLATrackingDetail, ConversationSLAEventLog, SLATrackingDashboardMetrics } from '../types/conversationSLATracking.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
@@ -69,6 +69,27 @@ export async function getSLATrackingDashboardMetrics(): Promise<SLATrackingDashb
   return response.json();
 }
 
+/** A pending (or just-resolved) takeover attached to an SLA row. Drives the countdown
+ *  bar, the Cancel/Reject affordances, and the contested-task banner. */
+export interface TakeoverInfo {
+  request_id: string;
+  tracking_id: string;
+  initiator_id: string;
+  initiator_name: string;
+  contested_assignee_id: string | null;
+  contested_assignee_name: string | null;
+  team_id: string | null;
+  status: 'pending' | 'committed' | 'cancelled' | 'rejected' | 'voided';
+  /** Absolute ISO timestamp the takeover commits — drives the countdown locally. */
+  commit_at: string | null;
+  /** Total cooldown window in seconds — fixed bar denominator (survives remounts). */
+  window_seconds?: number | null;
+  resolution_reason: string | null;
+  /** Viewer-relative (server-computed): initiator/admin can cancel; owner/admin can reject. */
+  can_cancel?: boolean;
+  can_reject?: boolean;
+}
+
 export interface MyPendingSLAItem {
   id: string;
   source_entity_type: string | null;
@@ -86,6 +107,8 @@ export interface MyPendingSLAItem {
   is_responded: boolean;
   current_tier: number;
   policy_name: string | null;
+  /** Pending takeover on this row, if any (inline "being taken over" indicator). */
+  takeover?: TakeoverInfo | null;
 }
 
 export async function getMyPendingSLA(limit = 50): Promise<MyPendingSLAItem[]> {
@@ -211,6 +234,176 @@ export async function getSlaTrackingConversation(
     throw new Error(err.detail || err.message || 'Failed to load conversation');
   }
   return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// My Team Tasks / Takeover / Reassign (team coverage & reassignment)
+// ---------------------------------------------------------------------------
+
+/** One visible-team pending SLA task. Names are resolved server-side (no UUIDs in UI). */
+export interface TeamPendingItem {
+  id: string;
+  assignee_id: string;
+  assignee_name: string;
+  team_id: string;
+  team_label: string;
+  source_entity_type: string | null;
+  source_entity_id: string | null;
+  is_form_sla: boolean;
+  reference: string | null;
+  due_at: string | null;
+  is_responded: boolean;
+  current_tier: number;
+  policy_name: string | null;
+  next_action: string | null;
+  /** Pending takeover on this row (running bar / observer-locked state). */
+  takeover?: TakeoverInfo | null;
+}
+
+export interface TeamPendingResponse {
+  data: TeamPendingItem[];
+  total: number;
+  page: number;
+  limit: number;
+  empty: boolean;
+}
+
+export interface TeamPendingFilters {
+  page?: number;
+  limit?: number;
+  assignee?: string;
+  team?: string;
+  query?: string;
+}
+
+/** Visible-team pending tasks (peers + descendant teams), excluding my own. */
+export async function getTeamPendingSLA(filters: TeamPendingFilters = {}): Promise<TeamPendingResponse> {
+  const { page = 1, limit = 50, assignee, team, query } = filters;
+  const params = buildDataGridParams(
+    { pageIndex: page - 1, pageSize: limit },
+    { assignee, team, ...(query ? { query } : {}) },
+  );
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/team-pending?${params.toString()}`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to fetch team tasks'));
+  }
+  return response.json();
+}
+
+/** Scope-B user picker source (members of teams I can see, excluding me). */
+export interface VisibleUser {
+  id: string;
+  name: string;
+  email: string;
+}
+
+export async function getVisibleUsers(): Promise<VisibleUser[]> {
+  const response = await apiFetch(
+    '/api/v1/sla-management/conversation-sla-tracking/visible-users',
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to fetch visible users'));
+  }
+  const body = await response.json();
+  return Array.isArray(body?.data) ? (body.data as VisibleUser[]) : [];
+}
+
+/** Result of initiating a takeover. With a cooldown configured the takeover is
+ *  PENDING (a veto window); cooldown 0 or an unassigned task commits instantly. */
+export interface TakeoverInitiateResult {
+  committed: boolean;
+  request?: TakeoverInfo;
+  /** True when a takeover was already pending — `request` is the existing one (bar resumes). */
+  already_pending?: boolean;
+}
+
+/** Initiate a takeover. 409 (already pending) is NOT an error — the existing request
+ *  is returned so the UI shows the running countdown. */
+export async function takeoverSLATracking(
+  id: string,
+  teamId: string,
+): Promise<TakeoverInitiateResult> {
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/${id}/takeover`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ team_id: teamId }),
+    },
+  );
+  if (response.status === 409) {
+    const body = await response.json().catch(() => ({}));
+    return { committed: false, already_pending: true, request: body?.request };
+  }
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to take over task'));
+  }
+  return response.json();
+}
+
+/** Initiator (or admin) withdraws a pending takeover. */
+export async function cancelTakeover(requestId: string): Promise<TakeoverInfo> {
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/takeover-requests/${requestId}/cancel`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to cancel takeover'));
+  }
+  return response.json();
+}
+
+/** Contested assignee (or admin) vetoes a pending takeover. */
+export async function rejectTakeover(requestId: string): Promise<TakeoverInfo> {
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/takeover-requests/${requestId}/reject`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to reject takeover'));
+  }
+  return response.json();
+}
+
+/** Pin-fetch a single contested task + its latest takeover, for the My Pending banner. */
+export interface TakeoverStateRow {
+  id: string;
+  source_entity_type: string | null;
+  source_entity_id: string | null;
+  is_form_sla: boolean;
+  reference: string | null;
+  due_at: string | null;
+  current_tier: number | null;
+  is_resolved: boolean;
+  assigned_to_id: string | null;
+  takeover: TakeoverInfo | null;
+}
+
+export async function getTakeoverState(trackingId: string): Promise<TakeoverStateRow> {
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/${trackingId}/takeover-state`,
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load takeover'));
+  }
+  return response.json();
+}
+
+/** Hand a task to a chosen user, keeping the original team/tier/clock. */
+export async function reassignSLATracking(id: string, userId: string): Promise<void> {
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/${id}/reassign`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to reassign task'));
+  }
 }
 
 export async function postSlaTrackingConversationReply(

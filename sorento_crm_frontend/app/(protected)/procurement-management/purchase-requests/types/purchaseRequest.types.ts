@@ -34,6 +34,7 @@ export interface PurchaseRequest {
   total_project_value?: number | null;
   total_project_value_text?: string | null;
   sponsor_subject?: string | null;
+  sponsor_subject_other?: string | null;
   expected_delivery_date?: string | null;
   expected_po_date?: string | null;
   expected_po_date_text?: string | null;
@@ -97,6 +98,7 @@ export interface PurchaseRequestFormData {
   total_project_value?: number;
   total_project_value_text?: string;
   sponsor_subject?: string;
+  sponsor_subject_other?: string;
   expected_delivery_date?: string;
   expected_po_date?: string;
   expected_po_date_text?: string;

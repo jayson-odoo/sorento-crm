@@ -130,6 +130,72 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
     return f"/{source_entity_type.replace('_', '-')}/{source_entity_id}"
 
 
+def build_sla_whatsapp_data(
+    db: Session,
+    tracking,
+    recipient_id: Optional[str],
+    body: str,
+    *,
+    use_case: str = "sla_assignment",
+    reason: str = "",
+    extra_vars: Optional[dict] = None,
+) -> dict:
+    """Build the ``whatsapp_*`` keys for a notification's ``data`` so the WhatsApp
+    delivery (``_send_whatsapp_for_notification``) renders the approved template
+    out-of-window and sends ``body`` as text in-window — identical to the canonical
+    SLA-assignment path (``_notify_assignee``). Works for both form and conversation
+    trackers (conversation rows have no entity number → falls back to a generic ref).
+    """
+    from app.config import settings as _settings
+    from app.models.user import User as _User
+
+    s_type = str(getattr(tracking, "source_entity_type", "") or "")
+    s_id = str(getattr(tracking, "source_entity_id", "") or "")
+    number = _resolve_entity_number(db, s_type, s_id) or (s_type.replace("_", " ").title() or "an SLA task")
+    due_str = _fmt_due(getattr(tracking, "due_at", None))
+    resolve_due_str = _fmt_due(getattr(tracking, "due_at_resolution", None))
+    base_url = (getattr(_settings, "frontend_base_url", None) or "").strip().rstrip("/")
+    today_date = datetime.now(timezone(timedelta(hours=8))).strftime("%d/%m/%Y")
+    recipient = (
+        db.query(_User).filter(_User.id == str(recipient_id)).first() if recipient_id else None
+    )
+    contact_name = ((recipient.name or recipient.email) if recipient else None) or "there"
+    if s_type in FORM_SLA_TYPES:
+        form_url = _full_form_link(s_type, s_id)
+    else:
+        from app.services.respond_identifier import format_respond_inbox_url
+
+        _rio = getattr(getattr(tracking, "contact", None), "respond_io_id", None)
+        form_url = (
+            format_respond_inbox_url(
+                getattr(_settings, "respond_app_base_url", None),
+                getattr(_settings, "respond_space_id", None),
+                str(_rio) if _rio else None,
+            )
+            or (f"{base_url}/sla-management/conversation-sla-tracking/{getattr(tracking, 'id', '')}" if base_url else "")
+        )
+    context_vars = {
+        "contact_name": contact_name,
+        "entity_number": number,
+        "reason": reason or "",
+        "respond_due_at": due_str or "",
+        "resolve_due_at": resolve_due_str or "",
+        "today_date": today_date,
+        "system_url": base_url,
+        "form_url": form_url,
+        "portal_url": form_url,
+        "message": body,
+    }
+    # Caller-supplied vars (e.g. takeover ``initiator`` name) override defaults.
+    if extra_vars:
+        context_vars.update({k: v for k, v in extra_vars.items() if v is not None})
+    return {
+        "whatsapp_use_case": use_case,
+        "whatsapp_text": body,
+        "whatsapp_context_vars": context_vars,
+    }
+
+
 class FormEscalationBlocked(Exception):
     """Escalation cannot proceed: no next tier, or no resolvable assignee.
 
@@ -436,6 +502,10 @@ class FormSLAOrchestrator:
             self.db.rollback()
             logger.exception("Commit failed after manual form SLA escalation: %s", e)
             raise
+        # Escalation changed owner/tier — void any pending takeover (AC-VOID-3).
+        from app.services.sla_takeover_service import SlaTakeoverService
+
+        SlaTakeoverService(self.db).void_for_tracking(str(tracker.id), "escalated")
         return tracker
 
     # ---------------- internals ----------------
@@ -883,6 +953,33 @@ class FormSLAOrchestrator:
                 whatsapp_pref_attr=whatsapp_pref,
                 email_pref_attr=email_pref,
             )
+            # Coverage fan-out: copy this assignment/escalation to anyone covering
+            # the assignee. Best-effort; gated by the subscriber's own toggles.
+            if kind in ("assigned", "escalated"):
+                from app.services.coverage_subscription_service import (
+                    fan_out_coverage_copies,
+                )
+
+                fan_out_coverage_copies(
+                    self.db,
+                    target_user_id=str(tracker.assigned_to_id),
+                    actor_user_id=None,
+                    notification_type="form_sla",
+                    title=title,
+                    body=body,
+                    data={
+                        "tracking_id": str(tracker.id),
+                        "source_entity_type": tracker.source_entity_type,
+                        "source_entity_id": tracker.source_entity_id,
+                        "link": link,
+                    },
+                    source_entity_type="form_sla_tracking",
+                    source_entity_id=str(tracker.id),
+                    event_type=kind,
+                    email_pref_attr=email_pref,
+                    whatsapp_pref_attr=whatsapp_pref,
+                    send_whatsapp=whatsapp_eligible,
+                )
         except Exception as e:
             logger.warning(
                 "Failed to send form SLA notification for tracker %s: %s",

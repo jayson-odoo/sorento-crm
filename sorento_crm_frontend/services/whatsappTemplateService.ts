@@ -63,6 +63,9 @@ export type UseCase =
   | 'sla_daily_summary'
   | 'sla_assignment'
   | 'sla_escalation'
+  | 'sla_takeover_pending'
+  | 'sla_task_moved'
+  | 'sla_takeover_cancelled'
   | 'product_discontinued';
 
 export type ParamVariable =
@@ -82,7 +85,14 @@ export type ParamVariable =
   | 'system_url'
   | 'respond_due_at'
   | 'resolve_due_at'
-  | 'form_url';
+  | 'form_url'
+  | 'customer'
+  | 'delivery_order'
+  | 'update'
+  | 'view_url'
+  | 'project'
+  | 'product_code'
+  | 'initiator';
 
 export interface WhatsAppTemplate {
   id: string;
@@ -93,6 +103,13 @@ export interface WhatsAppTemplate {
   status: TemplateStatus;
   body_text: string; // body component text containing {{1}}..{{n}}
   param_count: number;
+  /** true when the template carries a dynamic URL button (url has {{n}}) */
+  has_url_button: boolean;
+  /** static prefix before the {{n}} in the button URL, e.g. https://fe-sorento.foundryx.my/ */
+  button_url_base: string | null;
+  button_text: string | null;
+  /** true for a WhatsApp Authentication COPY_CODE button — no link variable to map */
+  button_is_copy_code?: boolean;
   channel_name: string;
   synced_at: string; // ISO UTC
 }
@@ -105,7 +122,25 @@ export interface TemplateDefault {
   param_mapping: Record<string, ParamVariable>;
   /** false when the referenced template vanished on sync or lost approval */
   is_valid: boolean;
+  /** dynamic URL button metadata (present when the template has one) */
+  has_url_button?: boolean;
+  button_url_base?: string | null;
+  button_url_var?: ParamVariable | null;
+  /** true for a WhatsApp Authentication COPY_CODE button — no link variable to map */
+  button_is_copy_code?: boolean;
 }
+
+/** Reserved (non-numeric) param_mapping key for a template's dynamic URL button. */
+export const BUTTON_URL_KEY = 'button_url';
+
+/** Link-type variables offered for a dynamic URL button mapping. */
+export const BUTTON_LINK_VARIABLES: ParamVariable[] = [
+  'portal_url',
+  'view_url',
+  'form_url',
+  'discontinued_link',
+  'system_url',
+];
 
 export interface WindowState {
   open: boolean;
@@ -170,6 +205,24 @@ export const USE_CASES: { key: UseCase; label: string; description: string }[] =
       'Sent to a staff member when an SLA task escalates to them. Map params to "Contact name" and "Full update message" at minimum; add "Entity number" / "Status" when the template carries them.',
   },
   {
+    key: 'sla_takeover_pending',
+    label: 'SLA Takeover — Pending',
+    description:
+      'Sent to a task’s current assignee when a teammate starts a takeover (cooldown window). Map params to "Contact name" (the assignee) and "Full update message" at minimum; add "Entity number" when the template carries it.',
+  },
+  {
+    key: 'sla_task_moved',
+    label: 'SLA Task Moved',
+    description:
+      'Sent to the previous assignee when their SLA task is reassigned/taken over. Map params to "Contact name" and "Full update message" at minimum; add "Entity number" when present.',
+  },
+  {
+    key: 'sla_takeover_cancelled',
+    label: 'SLA Takeover — Cancelled',
+    description:
+      'Sent to the initiator when their takeover is rejected by the owner or voided (task resolved / reassigned / escalated). Map params to "Contact name" and "Full update message" at minimum.',
+  },
+  {
     key: 'product_discontinued',
     label: 'Product Discontinued',
     description:
@@ -182,7 +235,8 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'entity_number', label: 'Entity number', description: 'e.g. CMP-2606-0012 / RMA-PS2605-0017' },
   { key: 'status', label: 'Status', description: 'New status of the record (approved, rejected…)' },
   { key: 'reason', label: 'Reason', description: 'Decision reason when present' },
-  { key: 'portal_url', label: 'Portal URL', description: 'Customer portal link for the record' },
+  { key: 'portal_url', label: 'Portal URL', description: 'Interactive portal link — contact can act / resubmit (complaint: /portal/c/…)' },
+  { key: 'view_url', label: 'View link', description: 'Read-only public view of the record (token link, /view/…)' },
   { key: 'message', label: 'Full update message', description: 'The composed update text, flattened to one line' },
   { key: 'otp_code', label: 'OTP code', description: 'The 6-digit portal login verification code' },
   { key: 'outstanding', label: 'Outstanding count', description: 'Outstanding conversations assigned to the staff member' },
@@ -195,6 +249,12 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'respond_due_at', label: 'Respond by', description: 'SLA response deadline (KL wall time)' },
   { key: 'resolve_due_at', label: 'Resolve by', description: 'SLA resolution deadline (KL wall time)' },
   { key: 'form_url', label: 'Form link', description: 'Opens the form record (or the Respond inbox for ticket/conversation) — same as clicking the task' },
+  { key: 'customer', label: 'Customer name', description: 'Customer name on the record (complaint / purchase request)' },
+  { key: 'project', label: 'Project name', description: 'Project name/title on the record (complaint / purchase request)' },
+  { key: 'delivery_order', label: 'DO number', description: 'Delivery order number on the complaint' },
+  { key: 'product_code', label: 'Product code', description: 'Product code on the stock inquiry' },
+  { key: 'initiator', label: 'Initiator', description: 'SLA takeover: teammate who requested the takeover ("Requested by")' },
+  { key: 'update', label: 'Update', description: 'Lean action core — technical reply / "Approved" / "Rejected, reason: X" / "Processed by CS" / "Root cause is X" / "Resolution is X". No preamble or link.' },
 ];
 
 

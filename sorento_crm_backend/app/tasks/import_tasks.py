@@ -21,7 +21,11 @@ from app.services.order_service import OrderService
 from app.services.product_service import ProductService
 from app.services.import_log_service import ImportLogService
 from app.services.job_service import JobService
-from app.services.procurement_service import SPOAllocationService, PickingHeaderService
+from app.services.procurement_service import (
+    SPOAllocationService,
+    PickingHeaderService,
+    AllocationReceivedGuardError,
+)
 from app.services.resources_service import (
     AttachmentDirectoryService,
     AttachmentService,
@@ -988,8 +992,10 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
         job_service.update_job_progress(job_id_str, total_rows=total_data_rows)
 
         successful = 0
+        updated = 0
+        unchanged = 0
         failed = 0
-        skipped_groups = 0
+        guarded_skipped = 0
         processed = 0
         errors: List[str] = []
         proc_service = SPOAllocationService(db)
@@ -1007,17 +1013,21 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
                     quantity_received=0,
                     quantity_rejected=0,
                 )
-                proc_service.create_allocation(allocation_data, user_id)
-                successful += 1
+                action, _allocation = proc_service.upsert_allocation(allocation_data, user_id)
+                if action == "created":
+                    successful += 1
+                elif action == "updated":
+                    updated += 1
+                else:  # "unchanged"
+                    unchanged += 1
+            except AllocationReceivedGuardError as e:
+                guarded_skipped += 1
+                errors.append(str(e))
             except Exception as e:
-                if "already exists" in str(e).lower() or "conflict" in str(e).lower():
-                    skipped_groups += 1
-                    errors.append(f"Skipped duplicate: {spo_number} / product {product_id} / warehouse {warehouse_id}")
-                else:
-                    failed += 1
-                    errors.append(f"Create allocation: {e}")
+                failed += 1
+                errors.append(f"Upsert allocation: {e}")
 
-            total_skipped = row_level_skipped + skipped_groups
+            total_skipped = row_level_skipped + guarded_skipped
             job_service.update_job_progress(
                 job_id_str,
                 processed_rows=processed,
@@ -1027,7 +1037,7 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
                 result={"errors": errors[-50:], "skipped_rows_detail": skipped_rows_detail[-200:]},
             )
 
-        total_skipped = row_level_skipped + skipped_groups
+        total_skipped = row_level_skipped + guarded_skipped
         _skip_errors, skip_warnings = partition_spo_skip_reasons(skipped_rows_detail)
         job_service.complete_job(
             job_id=job_id_str,
@@ -1035,6 +1045,8 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
                 "message": "SPO import completed",
                 "data_rows": total_data_rows,
                 "allocations_created": successful,
+                "allocations_updated": updated,
+                "allocations_unchanged": unchanged,
                 "skipped_rows_detail": _json_safe(skipped_rows_detail[-200:]),
                 "skipped_rows_count": total_skipped,
                 "warnings": _json_safe(skip_warnings[-100:]),

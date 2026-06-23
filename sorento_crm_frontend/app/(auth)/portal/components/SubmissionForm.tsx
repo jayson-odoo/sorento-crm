@@ -44,6 +44,7 @@ import {
   uploadAttachment,
 } from '../lib/portal-client';
 import { portalHomePath, portalVerifyPath } from '../lib/portal-paths';
+import { cleanLineItems } from '../lib/line-items';
 import { AIExtractDialog, AIExtractApplyPayload } from './AIExtractDialog';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import { AsyncCombobox } from './AsyncCombobox';
@@ -91,6 +92,9 @@ interface FieldDef {
   defaultToday?: boolean;
   placeholder?: string;
   required?: boolean;
+  /** Render this field only when the predicate (given the current field values)
+   *  returns true. Used e.g. for the sponsor-subject "Others" companion input. */
+  showWhen?: (fields: Record<string, string | string[]>) => boolean;
 }
 
 const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
@@ -184,19 +188,32 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
     { name: 'requested_by', label: 'Requested by', defaultFromContact: 'fullname' },
     { name: 'external_reference', label: 'External reference' },
   ],
+  // Field order mirrors the system document view (PurchaseRequestDocumentEditCard /
+  // detail): Customer → Delivery Address → Project Title → Total Project Value →
+  // Sponsor Subject → Date of Delivery → Request date → Requested by.
   sponsorship_form: [
     { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
-    { name: 'project_title', label: 'Project title' },
-    { name: 'sponsor_subject', label: 'Sponsor subject' },
-    { name: 'purpose', label: 'Purpose', widget: 'textarea' },
     { name: 'delivery_address', label: 'Delivery address', widget: 'textarea' },
+    { name: 'project_title', label: 'Project title' },
     { name: 'total_project_value', label: 'Total project value' },
-    { name: 'request_date', label: 'Request date', widget: 'date' },
+    {
+      name: 'sponsor_subject',
+      label: 'Sponsor subject',
+      widget: 'lookup-select',
+      setKey: 'procurement_sponsor_subject',
+    },
+    {
+      name: 'sponsor_subject_other',
+      label: 'Please specify',
+      placeholder: 'Specify the sponsor subject',
+      showWhen: (f) => (typeof f.sponsor_subject === 'string' ? f.sponsor_subject : '') === 'others',
+    },
     {
       name: 'expected_delivery_date',
       label: 'Expected delivery date',
       widget: 'date',
     },
+    { name: 'request_date', label: 'Request date', widget: 'date' },
     { name: 'requested_by', label: 'Requested by', defaultFromContact: 'fullname' },
   ],
 };
@@ -372,6 +389,11 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         if (value) out[f.name] = value;
       }
     }
+    // Sponsorship: the "Others" detail only applies when the subject is 'others'.
+    // Drop a stale value so switching back to Showroom/Mockup doesn't persist it.
+    if (kind === 'sponsorship_form' && out.sponsor_subject !== 'others') {
+      delete out.sponsor_subject_other;
+    }
     // Complaint: structured per-product lines are the source of truth. Backend
     // re-derives the legacy product_code / product_type / quantity CSV columns.
     if (kind === 'complaint') {
@@ -389,15 +411,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
 
   const cleanedProducts = useMemo(() => {
     if (!showLines) return undefined;
-    return products
-      .map((p) => ({
-        item_code: (p.item_code ?? '').trim() || null,
-        quantity: (p.quantity ?? '').trim() || null,
-        unit_price: (p.unit_price ?? '').trim() || null,
-        total: (p.total ?? '').trim() || null,
-        remark: (p.remark ?? '').trim() || null,
-      }))
-      .filter((p) => p.item_code || p.quantity || p.remark);
+    return cleanLineItems(products);
   }, [products, showLines]);
 
   const flushPendingFiles = async (id: string) => {
@@ -1472,20 +1486,22 @@ function PurchaseRequestFormSection({
             {heading}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-5">
-            {fieldDefs.map((f) => (
-              <div
-                key={f.name}
-                className={`min-w-0 ${fieldSpansFullWidth(f) ? 'sm:col-span-2' : ''}`}
-              >
-                <FieldInput
-                  field={f}
-                  value={fields[f.name] ?? ''}
-                  onChange={(v) => setFieldValue(f.name, v)}
-                  onItemSelect={(item) => onProductItemSelected(f.name, item)}
-                  disabled={!isEditable}
-                />
-              </div>
-            ))}
+            {fieldDefs
+              .filter((f) => (f.showWhen ? f.showWhen(fields) : true))
+              .map((f) => (
+                <div
+                  key={f.name}
+                  className={`min-w-0 ${fieldSpansFullWidth(f) ? 'sm:col-span-2' : ''}`}
+                >
+                  <FieldInput
+                    field={f}
+                    value={fields[f.name] ?? ''}
+                    onChange={(v) => setFieldValue(f.name, v)}
+                    onItemSelect={(item) => onProductItemSelected(f.name, item)}
+                    disabled={!isEditable}
+                  />
+                </div>
+              ))}
           </div>
         </CardContent>
       </Card>

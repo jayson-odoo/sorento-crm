@@ -55,3 +55,13 @@
 [data-ai-assistant-root] * {
   pointer-events: auto !important;
 }
+
+/* Takeover contested-task banner: a brief border/background flash to draw the eye
+   when arriving via the email deep link (?takeover=). See MyPendingSLAWidget. */
+@keyframes takeoverFlash {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 0%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in oklab, var(--primary) 45%, transparent); }
+}
+.takeover-flash {
+  animation: takeoverFlash 1.1s ease-in-out 3;
+}

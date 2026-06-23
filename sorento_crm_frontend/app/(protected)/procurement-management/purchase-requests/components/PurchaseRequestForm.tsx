@@ -58,7 +58,7 @@ import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSecti
 import { PurchaseRequestDocumentEditCard } from './PurchaseRequestDocumentEditCard';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 import { purchaseRequestNumberFieldLabel, purchaseRequestNumberReplyPhrase } from '../lib/purchase-request-field-labels';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import LookupBoundField from '@/components/common/LookupBoundField';
 import { cn } from '@/lib/utils';
 
 const PURCHASE_REQUESTS_EDIT = '/procurement-management/purchase-requests';
@@ -69,29 +69,6 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
   sponsorship_form: 'Sponsorship Form',
 };
 
-type SponsorPreset = 'showroom' | 'mock_up' | 'others';
-
-function decodeSponsorSubject(v: string | null | undefined): {
-  preset: SponsorPreset;
-  others: string;
-} {
-  const s = (v ?? '').trim();
-  if (!s) return { preset: 'mock_up', others: '' };
-  const sl = s.toLowerCase();
-  if (sl === 'showroom') return { preset: 'showroom', others: '' };
-  if (sl === 'mock up' || sl === 'mockup') return { preset: 'mock_up', others: '' };
-  if (sl === 'others') return { preset: 'others', others: '' };
-  const m = s.match(/^others\s*:\s*(.*)$/i);
-  if (m) return { preset: 'others', others: m[1].trim() };
-  return { preset: 'others', others: s };
-}
-
-function encodeSponsorSubject(preset: SponsorPreset, others: string): string {
-  if (preset === 'showroom') return 'Showroom';
-  if (preset === 'mock_up') return 'Mock up';
-  const t = others.trim();
-  return t ? `Others: ${t}` : 'Others';
-}
 
 interface PurchaseRequestFormProps {
   requestId?: string;
@@ -152,6 +129,7 @@ export default function PurchaseRequestForm({
       total_project_value: null,
       total_project_value_text: null,
       sponsor_subject: null,
+      sponsor_subject_other: null,
       expected_delivery_date: null,
       expected_po_date: null,
       expected_po_date_text: null,
@@ -215,6 +193,7 @@ export default function PurchaseRequestForm({
         total_project_value: request.total_project_value != null ? Number(request.total_project_value) : null,
         total_project_value_text: request.total_project_value_text ?? null,
         sponsor_subject: request.sponsor_subject ?? null,
+        sponsor_subject_other: request.sponsor_subject_other ?? null,
         expected_delivery_date: request.expected_delivery_date
           ? new Date(request.expected_delivery_date).toISOString().split('T')[0]
           : null,
@@ -254,6 +233,14 @@ export default function PurchaseRequestForm({
           ? data.total_project_value_text.trim()
           : undefined,
         sponsor_subject: data.sponsor_subject ?? undefined,
+        // Only carry the "Others" detail when the sponsor subject is 'others';
+        // sending '' otherwise clears any stale parked text on the backend.
+        sponsor_subject_other:
+          isSponsorship && data.sponsor_subject === 'others'
+            ? data.sponsor_subject_other?.trim() || undefined
+            : isSponsorship
+              ? ''
+              : undefined,
         expected_delivery_date: data.expected_delivery_date || undefined,
         expected_po_date: data.expected_po_date || undefined,
         expected_po_date_text: data.expected_po_date_text || undefined,
@@ -477,64 +464,57 @@ export default function PurchaseRequestForm({
                     <FormField
                       control={form.control}
                       name="sponsor_subject"
-                      render={({ field }) => {
-                        const dec = decodeSponsorSubject(field.value);
-                        return (
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Sponsor Subject</FormLabel>
+                          <FormControl>
+                            <LookupBoundField
+                              table="purchase_requests"
+                              column="sponsor_subject"
+                              value={field.value}
+                              onChange={field.onChange}
+                              placeholder="Select sponsor subject"
+                              renderFallback={() => (
+                                <Select
+                                  key={field.value || 'empty'}
+                                  onValueChange={field.onChange}
+                                  value={field.value || undefined}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select sponsor subject" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="showroom">Showroom</SelectItem>
+                                    <SelectItem value="mockup">Mockup</SelectItem>
+                                    <SelectItem value="others">Others</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              )}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    {form.watch('sponsor_subject') === 'others' && (
+                      <FormField
+                        control={form.control}
+                        name="sponsor_subject_other"
+                        render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Sponsor Subject</FormLabel>
+                            <FormLabel>Please specify</FormLabel>
                             <FormControl>
-                              <RadioGroup
-                                className="grid gap-3 pt-1"
-                                value={dec.preset}
-                                onValueChange={(v) => {
-                                  const preset = v as SponsorPreset;
-                                  field.onChange(
-                                    encodeSponsorSubject(
-                                      preset,
-                                      preset === 'others' ? dec.others : '',
-                                    ),
-                                  );
-                                }}
-                              >
-                                <div className="flex items-center gap-2">
-                                  <RadioGroupItem value="showroom" id="sp-showroom" />
-                                  <Label htmlFor="sp-showroom" className="font-normal cursor-pointer">
-                                    Showroom
-                                  </Label>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <RadioGroupItem value="mock_up" id="sp-mockup" />
-                                  <Label htmlFor="sp-mockup" className="font-normal cursor-pointer">
-                                    Mock up
-                                  </Label>
-                                </div>
-                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-                                  <div className="flex items-center gap-2">
-                                    <RadioGroupItem value="others" id="sp-others" />
-                                    <Label htmlFor="sp-others" className="font-normal cursor-pointer">
-                                      Others
-                                    </Label>
-                                  </div>
-                                  {dec.preset === 'others' && (
-                                    <Input
-                                      className="sm:max-w-md"
-                                      placeholder="Specify"
-                                      value={dec.others}
-                                      onChange={(e) =>
-                                        field.onChange(
-                                          encodeSponsorSubject('others', e.target.value),
-                                        )
-                                      }
-                                    />
-                                  )}
-                                </div>
-                              </RadioGroup>
+                              <Input
+                                placeholder="Specify the sponsor subject"
+                                {...field}
+                                value={field.value ?? ''}
+                              />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
-                        );
-                      }}
-                    />
+                        )}
+                      />
+                    )}
                   </>
                 )}
                 <FormField
@@ -647,7 +627,7 @@ export default function PurchaseRequestForm({
                       <TableHead className="min-w-[80px]">Qty</TableHead>
                       {isSponsorship && <TableHead>U/P</TableHead>}
                       {isSponsorship && <TableHead>Total</TableHead>}
-                      {!isSponsorship && <TableHead>Remark</TableHead>}
+                      <TableHead>Remark</TableHead>
                       <TableHead className="w-12" />
                     </TableRow>
                   </TableHeader>
@@ -765,27 +745,25 @@ export default function PurchaseRequestForm({
                             />
                           </TableCell>
                         )}
-                        {!isSponsorship && (
-                          <TableCell>
-                            <FormField
-                              control={form.control}
-                              name={`products.${index}.remark`}
-                              render={({ field: f }) => (
-                                <FormItem>
-                                  <FormControl>
-                                    <Input
-                                      placeholder="Remark"
-                                      {...f}
-                                      value={f.value ?? ''}
-                                      className="h-8"
-                                    />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          </TableCell>
-                        )}
+                        <TableCell>
+                          <FormField
+                            control={form.control}
+                            name={`products.${index}.remark`}
+                            render={({ field: f }) => (
+                              <FormItem>
+                                <FormControl>
+                                  <Input
+                                    placeholder="Remark"
+                                    {...f}
+                                    value={f.value ?? ''}
+                                    className="h-8"
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </TableCell>
                         <TableCell>
                           <Button
                             type="button"

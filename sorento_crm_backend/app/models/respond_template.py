@@ -56,6 +56,15 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # ``entity_number`` / ``status`` when the template carries them.
     "sla_assignment",
     "sla_escalation",
+    # Takeover cooldown (PLAN-takeover-cooldown). Distinct from assignment so the
+    # out-of-window template wording is accurate per event (not "assigned to you").
+    # Each maps params to ``contact_name`` (recipient) + ``message`` at minimum;
+    # ``entity_number`` when the template carries it. In-window always sends the real
+    # text; out-of-window an unconfigured use-case simply skips WhatsApp (in-app +
+    # email still fire) until an admin maps an approved template.
+    "sla_takeover_pending",   # -> contested assignee: "someone wants to take over your task"
+    "sla_task_moved",         # -> previous assignee: "your task was moved"
+    "sla_takeover_cancelled", # -> initiator: takeover rejected / voided
     # Product discontinued — batch notification to subscribed staff. Sent when their
     # 24h window is closed (the usual case). Map params to ``discontinued_count`` +
     # ``discontinued_link`` (deep link to the product list filtered to that batch).
