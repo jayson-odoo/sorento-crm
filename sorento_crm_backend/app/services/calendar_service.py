@@ -260,6 +260,31 @@ class CalendarService:
             return datetime.combine(end_date, start_value.time())
         return datetime.combine(end_date, datetime.min.time())
 
+    def add_working_days(
+        self,
+        start_value: date | datetime,
+        n_days: int,
+        working_weekdays: Optional[Set[int]] = None,
+        holidays: Optional[Set[date]] = None,
+    ) -> Optional[datetime]:
+        """Add ``n_days`` *working* days to ``start_value`` (skipping weekends + KL
+        public holidays), preserving the time-of-day. Thin alias over
+        ``add_business_days`` with a name that matches the SLA extend-deadline calc
+        (``add_working_days`` reads as "N whole working days", never hours)."""
+        return self.add_business_days(start_value, n_days, working_weekdays, holidays)
+
+    def count_working_days(
+        self,
+        start_value: date | datetime,
+        end_value: date | datetime,
+        working_weekdays: Optional[Set[int]] = None,
+        holidays: Optional[Set[date]] = None,
+    ) -> int:
+        """Count *working* days strictly after ``start_value`` up to and including
+        ``end_value`` (skipping weekends + KL public holidays). Thin alias over
+        ``business_days_between`` for the extend-deadline date-mode derivation."""
+        return self.business_days_between(start_value, end_value, working_weekdays, holidays)
+
     def add_working_days_from_hours(
         self,
         start_value: datetime,

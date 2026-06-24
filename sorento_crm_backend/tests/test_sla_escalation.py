@@ -12,6 +12,26 @@ from app.services.sla_service import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_coverage_redirect():
+    """These tests drive SLA assignment against fully-mocked DB sessions. The
+    coverage-redirect inject points call ``resolve_assignee_with_coverage`` /
+    ``coverage_note`` right before ``assigned_to_id`` is set; against a MagicMock
+    session those issue an extra query whose ``.first()`` returns a truthy MagicMock,
+    so the assignee would be "redirected" to a fake coverer. On a real DB with no
+    coverage they are no-ops. Patch the SOURCE namespace (the inject points import it
+    lazily) to reflect real-DB "no coverer" behaviour: passthrough assignee, empty note.
+    """
+    with patch(
+        "app.services.coverage_subscription_service.resolve_assignee_with_coverage",
+        side_effect=lambda db, assignee: (assignee, None),
+    ), patch(
+        "app.services.coverage_subscription_service.coverage_note",
+        return_value="",
+    ):
+        yield
+
+
 def _http_exception_message(exc: HTTPException) -> str:
     detail = exc.detail
     if isinstance(detail, dict):

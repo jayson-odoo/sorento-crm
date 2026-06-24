@@ -104,6 +104,20 @@ export interface MyPendingSLAItem {
   /** SLA-config-driven next action for form rows (e.g. "Send for approval"); null for conversation rows. */
   next_action: string | null;
   due_at: string | null;
+  /** Resolution deadline (the clock Extend targets). Emitted by the `/my-pending`
+   *  serializer so the Extend gate hides when there is no resolution due and the
+   *  dialog can show "Current due". Null when the row has no resolution deadline.
+   *  See PLAN-sla-extend-deadline.md. */
+  due_at_resolution?: string | null;
+  /** The deadline this row is actually racing for its next action: resolution due for
+   *  resolution-phase rows (what Extend moves), response due otherwise. Use this for the
+   *  row's deadline badge so an extended resolution deadline shows instead of a stale
+   *  response clock. Falls back to due_at when absent. */
+  active_due_at?: string | null;
+  /** Which clock active_due_at represents — drives the primary badge label. */
+  due_kind?: 'respond' | 'resolve';
+  /** When the response clock was satisfied (for the muted "Responded ✓" context line). */
+  responded_at?: string | null;
   is_responded: boolean;
   current_tier: number;
   policy_name: string | null;
@@ -148,6 +162,73 @@ export async function escalateConversationSLATracking(id: string, reason: string
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to escalate conversation SLA'));
   }
+}
+
+// ---------------------------------------------------------------------------
+// Extend resolution deadline (assignee action) — see PLAN-sla-extend-deadline.md
+// ---------------------------------------------------------------------------
+
+/** Exactly one of `days` / `target_date` is supplied (mutually exclusive views
+ *  of one target datetime). `target_date` is a calendar day "YYYY-MM-DD". */
+export interface ExtendSLAInput {
+  days?: number;
+  target_date?: string;
+}
+
+/** Preview response (no mutation). `warnings` are non-blocking soft-limit breaches
+ *  surfaced from the policy config; the extension still applies on confirm. */
+export interface ExtendSLAPreview {
+  current_due_at: string | null;
+  new_due_at: string | null;
+  working_days: number;
+  warnings: string[];
+}
+
+/**
+ * Preview a resolution-deadline extension. The backend owns the holiday calendar
+ * and work-calendar config, so the working-day math + soft-limit warnings come
+ * from here — never recomputed on the client. No mutation.
+ */
+export async function getExtendPreview(
+  id: string,
+  input: ExtendSLAInput,
+): Promise<ExtendSLAPreview> {
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/${id}/extend/preview`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to preview extension'));
+  }
+  return response.json();
+}
+
+/**
+ * Extend the resolution deadline (current assignee only). The backend recomputes
+ * the new due authoritatively (ignores the client-previewed value), bumps the
+ * extension counters, resets the reminder cycle, writes an `extend` event log,
+ * and best-effort notifies the next escalation tier.
+ */
+export async function extendSLATracking(
+  id: string,
+  input: ExtendSLAInput & { reason: string },
+): Promise<ConversationSLATracking> {
+  const response = await apiFetch(
+    `/api/v1/sla-management/conversation-sla-tracking/${id}/extend`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to extend deadline'));
+  }
+  return response.json();
 }
 
 export async function deleteConversationSLATracking(id: string): Promise<void> {
@@ -252,6 +333,11 @@ export interface TeamPendingItem {
   is_form_sla: boolean;
   reference: string | null;
   due_at: string | null;
+  due_at_resolution?: string | null;
+  /** Governing deadline for this row's next action (see MyPendingSLAItem.active_due_at). */
+  active_due_at?: string | null;
+  due_kind?: 'respond' | 'resolve';
+  responded_at?: string | null;
   is_responded: boolean;
   current_tier: number;
   policy_name: string | null;

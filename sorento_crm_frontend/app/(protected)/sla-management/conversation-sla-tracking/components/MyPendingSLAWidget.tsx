@@ -61,6 +61,7 @@ import {
 } from '../hooks/useTeamPendingSLA';
 import ReassignDialog from './ReassignDialog';
 import { TakeoverCountdown } from './TakeoverCountdown';
+import ExtendDueButton from './ExtendDueButton';
 
 // Same inbox base used by the SLA detail page; conversation rows deep-link here
 // because the CRM cannot send files in-app yet — staff reply from Respond.
@@ -162,6 +163,10 @@ export default function MyPendingSLAWidget() {
   // Contested-task banner driven by the email deep link ?takeover=<tracking_id>.
   const searchParams = useSearchParams();
   const takeoverParam = searchParams.get('takeover');
+  // Coverage deep link ?team_task=<tracking_id>: open My Team + highlight the row so the
+  // coverer can take it over (the colleague's task surfaces in My Team).
+  const teamTaskParam = searchParams.get('team_task');
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const [banner, setBanner] = useState<TakeoverStateRow | null>(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
@@ -220,6 +225,17 @@ export default function MyPendingSLAWidget() {
       active = false;
     };
   }, [takeoverParam, bannerDismissed]);
+
+  // Coverage deep link: open My Team and highlight the target row. The highlight
+  // auto-clears after a few seconds; the row's existing Takeover button does the rest.
+  useEffect(() => {
+    if (!teamTaskParam) return;
+    setMode('team');
+    setPage(0); // pinned task sits on the first page's first row
+    setHighlightId(teamTaskParam);
+    const t = setTimeout(() => setHighlightId(null), 6000);
+    return () => clearTimeout(t);
+  }, [teamTaskParam]);
 
   // Light polling while any pending takeover is on screen (bar / banner transitions).
   const hasPending = useMemo(() => {
@@ -352,16 +368,26 @@ export default function MyPendingSLAWidget() {
     () => (teamItems ?? []).filter((it) => matchesQuery(it, humanizeType(it), q)),
     [teamItems, q],
   );
+  // Coverage deep link: pin the targeted task to the FIRST row (pagination-proof) so the
+  // coverer sees it immediately and can take it over — mirrors the takeover pin.
+  const orderedTeam = useMemo(() => {
+    if (!teamTaskParam) return filteredTeam;
+    const idx = filteredTeam.findIndex((it) => it.id === teamTaskParam);
+    if (idx <= 0) return filteredTeam;
+    const copy = filteredTeam.slice();
+    const [pinned] = copy.splice(idx, 1);
+    return [pinned, ...copy];
+  }, [filteredTeam, teamTaskParam]);
 
   const total = filteredMine.length;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);
   const pageItems = filteredMine.slice(currentPage * PAGE_SIZE, currentPage * PAGE_SIZE + PAGE_SIZE);
 
-  const teamTotal = filteredTeam.length;
+  const teamTotal = orderedTeam.length;
   const teamPageCount = Math.max(1, Math.ceil(teamTotal / PAGE_SIZE));
   const teamCurrentPage = Math.min(page, teamPageCount - 1);
-  const teamPageItems = filteredTeam.slice(
+  const teamPageItems = orderedTeam.slice(
     teamCurrentPage * PAGE_SIZE,
     teamCurrentPage * PAGE_SIZE + PAGE_SIZE,
   );
@@ -378,7 +404,16 @@ export default function MyPendingSLAWidget() {
   const renderRow = (item: AnyTask) => {
     const isTeam = mode === 'team';
     const form = isFormTask(item);
-    const due = dueLabel(item.due_at);
+    // Show the deadline this row is racing for its next action (resolution due for
+    // resolution-phase rows — the one Extend moves), falling back to the response due.
+    const meta = item as MyPendingSLAItem;
+    // Show ONLY the active clock the row is racing for its next action (resolution due
+    // for resolution-phase rows — the one Extend moves; response due otherwise). One
+    // line, labelled by phase. Red already conveys overdue — no extra "overdue" text.
+    const due = dueLabel(meta.active_due_at ?? item.due_at);
+    const primaryLabel = (meta.due_kind ?? 'respond') === 'resolve'
+      ? 'Resolve by'
+      : 'Respond by';
     const typeLabel = humanizeType(item);
     const rowBusy = mutatingId === item.id;
     const teamItem = item as TeamPendingItem;
@@ -388,9 +423,18 @@ export default function MyPendingSLAWidget() {
       ? `${teamItem.assignee_name ?? '—'} · ${teamItem.team_label ?? '—'} · Tier ${item.current_tier}`
       : `Tier ${item.current_tier} · ${form ? mineItem.next_action ?? 'Action required' : 'Reply'}`;
     const atMaxTier = item.current_tier >= MAX_TIER;
+    const highlighted = !!highlightId && item.id === highlightId;
 
     return (
-      <li key={item.id} className="py-1">
+      <li
+        key={item.id}
+        className="py-1"
+        ref={
+          highlighted
+            ? (el) => el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+            : undefined
+        }
+      >
         <div
           tabIndex={0}
           role="button"
@@ -401,7 +445,9 @@ export default function MyPendingSLAWidget() {
               openTask(item);
             }
           }}
-          className="-mx-2 cursor-pointer rounded-md px-2 py-2 transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className={`-mx-2 cursor-pointer rounded-md px-2 py-2 transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring${
+            highlighted ? ' ring-2 ring-primary bg-primary/5 animate-pulse' : ''
+          }`}
         >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
@@ -420,7 +466,7 @@ export default function MyPendingSLAWidget() {
                 className={`text-xs ${due.overdue ? 'font-medium text-destructive' : 'text-muted-foreground'}`}
                 title={due.text}
               >
-                {due.overdue ? 'Overdue' : 'Due'}: {due.text}
+                {primaryLabel}: {due.text}
               </span>
               {!entityHref(item) && respondId(item) ? (
                 <ExternalLink className="size-3.5 text-muted-foreground" />
@@ -530,6 +576,22 @@ export default function MyPendingSLAWidget() {
                     </Button>
                   </>
                 )
+              )}
+              {/* Extend the resolution deadline. Only on My Pending rows (the
+                  viewer owns them → assignee gate satisfied). /my-pending now emits
+                  due_at_resolution, so gate strictly: hidden when there is no
+                  resolution deadline. The dialog shows it as "Current due". */}
+              {!isTeam && (
+                <ExtendDueButton
+                  trackingId={item.id}
+                  isResolved={false}
+                  isAssignee
+                  takeoverPending={!!tk}
+                  currentDueAt={mineItem.due_at_resolution ?? null}
+                  label={`${typeLabel}${item.reference ? ` · ${item.reference}` : ''}`}
+                  variant="ghost"
+                  onExtended={() => void load()}
+                />
               )}
               {/* Reassign is locked while a takeover is pending (soft lock). */}
               {!tk && (

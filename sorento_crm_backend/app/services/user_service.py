@@ -688,11 +688,18 @@ class UserRoleService:
         roles = q.order_by(UserRole.name).all()
         return roles
     
-    def list_roles(self, page: int = 1, limit: int = 50):
+    def list_roles(self, page: int = 1, limit: int = 50, query: Optional[str] = None):
         """List user roles with permissions loaded."""
         q = self.db.query(UserRole).options(
             joinedload(UserRole.permissions).joinedload(UserRolePermission.permission)
         )
+
+        if query:
+            q = q.filter(
+                (UserRole.name.ilike(f"%{query}%")) |
+                (UserRole.slug.ilike(f"%{query}%"))
+            )
+
         total = q.count()
         offset = (page - 1) * limit
         roles = q.offset(offset).limit(limit).all()

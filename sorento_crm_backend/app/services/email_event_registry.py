@@ -139,6 +139,12 @@ EMAIL_EVENT_REGISTRY: list[EventDef] = [
         "Notifies the assignee on SLA state transitions (responded, resolved, etc.).",
     ),
     EventDef(
+        "sla_deadline_extended",
+        "SLA deadline extended",
+        "Notifies the next escalation tier when an assignee extends a task's "
+        "resolution deadline.",
+    ),
+    EventDef(
         "import_job_completed",
         "Bulk import job completed",
         "Notifies the job owner when a bulk import reaches a terminal state.",

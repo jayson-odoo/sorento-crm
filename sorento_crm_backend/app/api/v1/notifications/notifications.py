@@ -94,6 +94,8 @@ _SLA_NOTIFY_FIELDS = (
     "notify_email_on_escalation",
     "notify_whatsapp_on_assignment",
     "notify_whatsapp_on_escalation",
+    "notify_email_on_deadline_extended",
+    "notify_whatsapp_on_deadline_extended",
 )
 
 
@@ -105,6 +107,8 @@ class _ChannelPrefsUpdate(BaseModel):
     notify_email_on_escalation: Optional[bool] = None
     notify_whatsapp_on_assignment: Optional[bool] = None
     notify_whatsapp_on_escalation: Optional[bool] = None
+    notify_email_on_deadline_extended: Optional[bool] = None
+    notify_whatsapp_on_deadline_extended: Optional[bool] = None
 
 
 def _channel_prefs(user) -> dict:

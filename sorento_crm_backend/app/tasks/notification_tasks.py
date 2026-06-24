@@ -1,5 +1,6 @@
 """Background tasks for notification delivery (email via outbox, web push direct)."""
 import os
+import re
 import logging
 import importlib
 from datetime import datetime
@@ -34,6 +35,11 @@ _NOTIFICATION_TYPE_TO_EVENT_KEY: dict[str, str] = {
     "form_sla:resolved": "form_sla_updated",
     "form_sla_assigned": "form_sla_assigned",
     "form_sla_escalated": "form_sla_escalated",
+    # SLA deadline extended (PLAN-sla-extend-deadline) — next-tier notification. Sent
+    # as conversation_sla or form_sla with event_type="deadline_extended"; both map to
+    # the same outbox event key / template use case (sla_deadline_extended).
+    "form_sla:deadline_extended": "sla_deadline_extended",
+    "conversation_sla:deadline_extended": "sla_deadline_extended",
     "import_job_finished": "import_job_completed",
     "import_job_failed": "import_job_completed",
     "user_invitation": "user_invitation",
@@ -51,6 +57,10 @@ def _resolve_event_key(notification: Notification) -> str:
     """
     notif_type = str(getattr(notification, "type", "") or "")
     event_type = str(getattr(notification, "event_type", "") or "")
+    # Strip a trailing ":<n>" occurrence suffix (e.g. "deadline_extended:2") so
+    # per-occurrence event types map like their base. No existing event key ends in
+    # ":<digits>", so this is safe.
+    event_type = re.sub(r":\d+$", "", event_type)
     composite = f"{notif_type}:{event_type}" if event_type else notif_type
     if composite in _NOTIFICATION_TYPE_TO_EVENT_KEY:
         return _NOTIFICATION_TYPE_TO_EVENT_KEY[composite]
