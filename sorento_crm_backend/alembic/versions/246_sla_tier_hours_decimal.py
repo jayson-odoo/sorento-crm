@@ -1,7 +1,7 @@
 """SLA tier response/resolution hours: Integer -> Numeric(6,2) for sub-hour SLAs.
 
 Revision ID: 246_sla_tier_hours_decimal
-Revises: 245_coverage_redirect_assignments
+Revises: 246_automation_group_matches
 Create Date: 2026-06-24
 
 Requirement: SLAs shorter than one hour (e.g. 30 minutes = 0.5). The columns were
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 revision = "246_sla_tier_hours_decimal"
-down_revision = "245_coverage_redirect_assignments"
+down_revision = "246_automation_group_matches"
 branch_labels = None
 depends_on = None
 

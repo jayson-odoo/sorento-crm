@@ -19,6 +19,8 @@ TEMPLATE_VARIABLE_CATALOG: list[dict[str, Any]] = [
     {"key": "promotion.end_date", "label": "Promotion End Date", "sample": "2026-05-15"},
     {"key": "promotion.link", "label": "Promotion Link", "sample": "https://crm.example.com/marketing/promotions/{id}"},
     {"key": "promotion.days_until_end", "label": "Days Until Promotion Ends", "sample": "7"},
+    {"key": "promotions", "label": "All Expiring Promotions (loop with {% for p in promotions %})", "sample": "[ { name, start_date, end_date, link, days_until_end }, ... ]"},
+    {"key": "promotions_count", "label": "Number Of Expiring Promotions", "sample": "5"},
     {"key": "complaint.complaint_number", "label": "Complaint Number", "sample": "CMP-2026-0001"},
     {"key": "complaint.delivery_order_number", "label": "Complaint DO Number", "sample": "DO-12345"},
     {"key": "complaint.customer_name", "label": "Complaint Customer", "sample": "ACME Sdn Bhd"},
@@ -54,15 +56,28 @@ TEMPLATE_VARIABLE_CATALOG: list[dict[str, Any]] = [
 
 def sample_context() -> dict[str, Any]:
     today = date.today()
+    sample_promo = {
+        "code": "PROMO-001",
+        "name": "Year-End Sale",
+        "start_date": today.isoformat(),
+        "end_date": today.isoformat(),
+        "link": "https://crm.example.com/marketing/promotions/sample",
+        "days_until_end": 7,
+    }
     return {
-        "promotion": {
-            "code": "PROMO-001",
-            "name": "Year-End Sale",
-            "start_date": today.isoformat(),
-            "end_date": today.isoformat(),
-            "link": "https://crm.example.com/marketing/promotions/sample",
-            "days_until_end": 7,
-        },
+        "promotion": sample_promo,
+        "promotions": [
+            sample_promo,
+            {
+                "code": "PROMO-002",
+                "name": "Clearance Bonanza",
+                "start_date": today.isoformat(),
+                "end_date": today.isoformat(),
+                "link": "https://crm.example.com/marketing/promotions/sample-2",
+                "days_until_end": 7,
+            },
+        ],
+        "promotions_count": 2,
         "complaint": {
             "id": "sample",
             "complaint_number": "CMP-2026-0001",

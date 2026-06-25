@@ -13,6 +13,11 @@ export interface ListPageToolbarProps {
   /** Called on Enter; use to e.g. reset pagination */
   onSearchSubmit?: () => void;
   createButton: React.ReactNode;
+  /**
+   * Accepted for API compatibility but intentionally NOT applied to the search
+   * input — disabling the field on each query causes focus loss while typing.
+   * Gate your create/columns buttons on their own loading state instead.
+   */
   isLoading?: boolean;
   /** Hide search input when true (e.g. for small lists) */
   hideSearch?: boolean;
@@ -28,7 +33,7 @@ export function ListPageToolbar({
   onSearchChange,
   onSearchSubmit,
   createButton,
-  isLoading = false,
+  // `isLoading` is intentionally not destructured/used here (see prop doc).
   hideSearch = false,
 }: ListPageToolbarProps) {
   return (
@@ -36,12 +41,20 @@ export function ListPageToolbar({
       {!hideSearch && (
         <div className="relative">
           <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+          {/*
+            Do NOT disable the search input while loading. Each keystroke
+            updates a query whose key includes the search term, so the query
+            briefly enters its pending state (isLoading=true). Disabling the
+            input on that flip makes the browser blur the (now disabled) field,
+            losing focus after every character. Keep the field always
+            interactive so typing is continuous; the create/columns buttons in
+            `createButton` gate themselves on their own loading state.
+          */}
           <Input
             placeholder={searchPlaceholder}
             value={searchValue}
             onChange={(e) => onSearchChange?.(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && (onSearchSubmit?.(), e.preventDefault())}
-            disabled={isLoading}
             className="ps-9 w-full md:w-64"
           />
           {searchValue && (

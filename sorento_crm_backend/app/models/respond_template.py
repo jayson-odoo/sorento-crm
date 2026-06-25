@@ -65,6 +65,11 @@ TEMPLATE_DEFAULT_USE_CASES = (
     "sla_takeover_pending",   # -> contested assignee: "someone wants to take over your task"
     "sla_task_moved",         # -> previous assignee: "your task was moved"
     "sla_takeover_cancelled", # -> initiator: takeover rejected / voided
+    # SLA deadline extended (PLAN-sla-extend-deadline). Sent to the NEXT escalation
+    # tier when the current assignee pushes out the resolution deadline. Map params
+    # to ``contact_name`` (recipient) + ``message`` at minimum; ``entity_number`` /
+    # ``resolve_due_at`` / ``reason`` when the template carries them.
+    "sla_deadline_extended",  # -> next-tier assignee: "the deadline for X was extended"
     # Product discontinued — batch notification to subscribed staff. Sent when their
     # 24h window is closed (the usual case). Map params to ``discontinued_count`` +
     # ``discontinued_link`` (deep link to the product list filtered to that batch).

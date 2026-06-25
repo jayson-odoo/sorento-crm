@@ -64,13 +64,12 @@ import { type MenuConfig } from './types';
 
 export const MENU_SIDEBAR: MenuConfig = [
   {
+    // Dashboards is the system's default landing page — a direct, clickable link
+    // (no submenu) to '/'.
     title: 'Dashboards',
     icon: LayoutGrid,
-    children: [
-      { title: 'Light Sidebar', path: '/' },
-    ],
+    path: '/',
   },
-  { heading: 'User' },
   // Hidden: Public Profile
   // {
   //   title: 'Public Profile',
@@ -287,7 +286,6 @@ export const MENU_SIDEBAR: MenuConfig = [
   //     { title: 'Error 500', path: '/error/500' },
   //   ],
   // },
-  { heading: 'Apps' },
   {
     title: 'User Management',
     icon: ShieldUser,

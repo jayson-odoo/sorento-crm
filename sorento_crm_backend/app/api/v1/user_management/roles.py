@@ -31,13 +31,14 @@ async def get_roles_select(
 async def get_roles(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
+    query: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission("user_management.roles.view")),
     db: Session = Depends(get_db)
 ):
     """Get user roles with pagination."""
     try:
         service = UserRoleService(db)
-        result = service.list_roles(page=page, limit=limit)
+        result = service.list_roles(page=page, limit=limit, query=query)
         return result
     except Exception as e:
         raise handle_internal_error(str(e))

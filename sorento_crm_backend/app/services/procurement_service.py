@@ -5166,7 +5166,7 @@ class PurchaseRequestService:
                 ),
                 "expected_po_date_text": getattr(header, "expected_po_date_text", None),
                 "status": "approved",
-                "link": _build_purchase_request_link(header_id),
+                "link": _build_purchase_request_link(header_id, request_type),
             },
             "today": _date.today().isoformat(),
         }

@@ -3,7 +3,7 @@ import re
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func, update
 from typing import Optional
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
 from app.models.access import RespondContact
 from app.schemas.sla import (
@@ -914,6 +914,19 @@ class ConversationSLATrackingService:
                     else None
                 ),
                 "due_at": r.due_at.isoformat() if r.due_at else None,
+                # Resolution deadline — the Extend action targets this. Emitted so the
+                # widget can gate the Extend button client-side (hidden when null) and
+                # the dialog can show "Current due" without a preview round-trip.
+                "due_at_resolution": (
+                    r.due_at_resolution.isoformat() if r.due_at_resolution else None
+                ),
+                # The deadline the assignee is actually racing: BEFORE responding it's
+                # the response due; AFTER responding it's the resolution due (the one
+                # Extend moves). Keyed purely on is_responded.
+                "active_due_at": self._active_due_iso(r, bool(r.is_responded)),
+                # Which clock the active deadline is, so the FE labels the badge:
+                # "Respond by" until responded, "Resolve by" after.
+                "due_kind": "resolve" if bool(r.is_responded) else "respond",
                 "is_responded": bool(r.is_responded),
                 "current_tier": r.current_tier,
                 "policy_name": r.policy.name if r.policy else None,
@@ -1109,6 +1122,11 @@ class ConversationSLATrackingService:
                     "is_form_sla": r.source_entity_type in FORM_SLA_TYPES,
                     "reference": reference_by_row.get(str(r.id)),
                     "due_at": r.due_at.isoformat() if r.due_at else None,
+                    "due_at_resolution": (
+                        r.due_at_resolution.isoformat() if r.due_at_resolution else None
+                    ),
+                    "active_due_at": self._active_due_iso(r, bool(r.is_responded)),
+                    "due_kind": "resolve" if bool(r.is_responded) else "respond",
                     "is_responded": bool(r.is_responded),
                     "current_tier": r.current_tier,
                     "policy_name": r.policy.name if r.policy else None,
@@ -1491,6 +1509,31 @@ class ConversationSLATrackingService:
             raise handle_not_found("User", target_user_id)
         old_assignee_id = getattr(tracking, "assigned_to_id", None)
 
+        # Coverage redirect (manual reassign, decision 2): if the chosen target is
+        # covered (on leave), route to their coverer instead. The scope-B check above
+        # validated the actor's chosen target; the coverer inherits the assignment.
+        # One hop. reassign_covered_for_id stamps the event log.
+        from app.services.coverage_subscription_service import (
+            resolve_assignee_with_coverage,
+        )
+
+        reassign_covered_for_id: Optional[str] = None
+        _target_rid = getattr(target, "respond_user_id", None)
+        _redirected, reassign_covered_for_id = resolve_assignee_with_coverage(
+            self.db,
+            {
+                "id": str(target_user_id),
+                "email": getattr(target, "email", None),
+                "name": getattr(target, "name", None),
+                "respond_user_id": _target_rid,
+            },
+        )
+        if reassign_covered_for_id and _redirected:
+            target_user_id = str(_redirected["id"])
+            target = self.db.query(User).filter(User.id == target_user_id).first()
+            if not target:
+                raise handle_not_found("User", target_user_id)
+
         # Takeover-cooldown interaction: a third party cannot reassign a task that has a
         # pending takeover (soft lock, AC-VOID-4); the owner reassigning their own task
         # away IS allowed and voids the pending takeover (implicit veto, AC-VOID-2).
@@ -1517,11 +1560,16 @@ class ConversationSLATrackingService:
         self.db.commit()
         self.db.refresh(tracking)
 
+        reassign_reason = "reassign"
+        if reassign_covered_for_id:
+            from app.services.coverage_subscription_service import coverage_note
+
+            reassign_reason = f"reassign{coverage_note(self.db, reassign_covered_for_id)}"
         self._write_reassignment_log(
             tracking,
             assigned_to_id=str(target_user_id),
             triggered_by_id=str(user_id),
-            reason="reassign",
+            reason=reassign_reason,
         )
         self._push_respond_assignee(tracking, getattr(target, "respond_user_id", None))
         self._notify_reassignment(
@@ -1625,6 +1673,15 @@ class ConversationSLATrackingService:
             if event:
                 out[str(r.id)] = _humanize_sla_event(event)
         return out
+
+    @staticmethod
+    def _active_due_iso(r: ConversationSLATracking, resolution_phase: bool) -> Optional[str]:
+        """The governing deadline as ISO: resolution due when responded (with response
+        due as a fallback when resolution due is unset), else the response due."""
+        resolution = getattr(r, "due_at_resolution", None)
+        response = getattr(r, "due_at", None)
+        chosen = (resolution or response) if resolution_phase else response
+        return chosen.isoformat() if chosen else None
 
     def _resolve_my_pending_references(
         self, rows: list[ConversationSLATracking]
@@ -1933,6 +1990,16 @@ class ConversationSLATrackingService:
             raise handle_validation_error(
                 f"No assignee in team for agent '{agent_code}' tier {target_tier}. Ensure the team has members."
             )
+        # Coverage redirect: if the RR-resolved assignee is covered (on leave), route
+        # to their coverer. The RR cursor already advanced to the covered user above
+        # (fairness, decision 4); we only swap the returned dict. One hop. This is the
+        # single resolution point for conversation-SLA escalation AND conversation-SLA
+        # initial assignment (create_tracking's RR branch), so both redirect here.
+        from app.services.coverage_subscription_service import (
+            resolve_assignee_with_coverage,
+        )
+
+        assignee, _covered_for_id = resolve_assignee_with_coverage(self.db, assignee)
         return assignee
 
     def escalate_tracking(
@@ -2037,6 +2104,437 @@ class ConversationSLATrackingService:
 
         SlaTakeoverService(self.db).void_for_tracking(str(tracking.id), "escalated")
         return tracking
+
+    # ---- Extend resolution deadline (PLAN-sla-extend-deadline) ---------------
+
+    def _extension_base(self, tracking: ConversationSLATracking) -> datetime:
+        """Base point for an extension = the current due_at_resolution (naive UTC).
+
+        Always relative to the existing deadline, NEVER `now` — extending an overdue
+        row adds working days onto its original due (e.g. due 13/05 + 1 wd = 14/05),
+        not onto today. The increment is still strictly after the current due (days>=1
+        / target_date guard), so 'can only extend' holds even when the result is still
+        in the past."""
+        now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+        due = getattr(tracking, "due_at_resolution", None)
+        if not isinstance(due, datetime):
+            return now_naive
+        return due.replace(tzinfo=None) if due.tzinfo is not None else due
+
+    def compute_extension(
+        self,
+        tracking: ConversationSLATracking,
+        *,
+        days: Optional[int] = None,
+        target_date: Optional[str] = None,
+    ) -> tuple[datetime, int]:
+        """Resolve the new resolution deadline for an extension. Returns
+        (new_due_at_resolution naive-UTC, working_days_added).
+
+        Exactly one of ``days`` / ``target_date`` must be given. Base point is
+        max(current due, now) so the result is always in the future; the current
+        due's time-of-day is preserved (matches add_working_days_from_hours / the
+        rest of the SLA module). ``target_date`` must yield a new due strictly after
+        the current due, else a validation error.
+        """
+        from app.services.calendar_service import CalendarService
+        from app.services.error_handler import AppException
+
+        def _invalid(msg: str) -> AppException:
+            # 422 to match the gate/reason checks (_assert_can_extend, reason) so the
+            # whole extend/preview contract returns a single validation status.
+            return AppException(status_code=422, message=msg, code="VALIDATION_ERROR")
+
+        if (days is None) == (target_date is None):
+            raise _invalid("Provide exactly one of 'days' or 'target_date'.")
+
+        base = self._extension_base(tracking)
+        cal = CalendarService(self.db)
+
+        current_due_raw = getattr(tracking, "due_at_resolution", None)
+        current_due = (
+            (current_due_raw.replace(tzinfo=None) if current_due_raw.tzinfo is not None else current_due_raw)
+            if isinstance(current_due_raw, datetime)
+            else None
+        )
+
+        if days is not None:
+            try:
+                n = int(days)
+            except (TypeError, ValueError):
+                raise _invalid("Working days must be a whole number >= 1.")
+            if n < 1:
+                raise _invalid("Working days must be at least 1 (cannot reduce or no-op).")
+            new_due = cal.add_working_days(base, n)
+            if new_due is None:
+                raise _invalid("Could not compute the new deadline.")
+            # add_working_days preserves the base's time-of-day; on an overdue row the
+            # base is `now`, so re-apply the current due's wall-clock time to keep the
+            # deadline's time-of-day stable (UAC-8 / decision 4). Adds >=1 working day,
+            # so the result is still strictly after the current due.
+            if current_due is not None:
+                new_due = datetime.combine(new_due.date(), current_due.time())
+            return new_due, n
+
+        # target_date mode: parse the date, apply the current due's time-of-day,
+        # validate strictly after current due, derive the working-day count.
+        try:
+            d = date.fromisoformat(str(target_date).strip())
+        except (TypeError, ValueError):
+            raise _invalid("target_date must be an ISO date (YYYY-MM-DD).")
+        time_of_day = (current_due or base).time()
+        new_due = datetime.combine(d, time_of_day)
+        if current_due is not None and new_due <= current_due:
+            raise _invalid(
+                "The chosen date must be after the current resolution deadline (can only extend)."
+            )
+        # Working days from base (max(current due, now)) up to the chosen date.
+        working_days = cal.count_working_days(base, new_due)
+        if working_days < 1:
+            raise _invalid(
+                "The chosen date does not add any working days to the deadline."
+            )
+        return new_due, working_days
+
+    def evaluate_extension_warnings(
+        self,
+        tracking: ConversationSLATracking,
+        policy,
+        added_days: int,
+    ) -> list[str]:
+        """Soft-limit warnings for an extension (config-driven, never blocking).
+        Null caps -> no warning. Mirrors the three sla_policies limit columns."""
+        warnings: list[str] = []
+        if policy is None:
+            return warnings
+
+        per_request = getattr(policy, "max_extension_days_per_request", None)
+        if per_request is not None and added_days > int(per_request):
+            warnings.append(
+                f"This extension adds {added_days} working day(s), exceeding the "
+                f"per-request limit of {int(per_request)}."
+            )
+
+        count_cap = getattr(policy, "max_extension_count", None)
+        current_count = int(getattr(tracking, "extension_count", 0) or 0)
+        if count_cap is not None and (current_count + 1) > int(count_cap):
+            warnings.append(
+                f"This would be extension #{current_count + 1}, exceeding the "
+                f"limit of {int(count_cap)} extension(s) for this task."
+            )
+
+        total_cap = getattr(policy, "max_extension_days_total", None)
+        current_total = float(getattr(tracking, "extension_days_total", 0) or 0)
+        if total_cap is not None and (current_total + added_days) > float(total_cap):
+            warnings.append(
+                f"Cumulative extension would reach {current_total + added_days:g} working "
+                f"day(s), exceeding the total limit of {float(total_cap):g}."
+            )
+        return warnings
+
+    def _assert_can_extend(self, tracking: ConversationSLATracking, actor_user_id: str) -> None:
+        """Gating for extend (UAC-2/3/4): assignee-only, unresolved, has a
+        resolution deadline. 403 for non-assignee, 422 otherwise."""
+        from app.services.error_handler import AppException
+
+        assignee = getattr(tracking, "assigned_to_id", None)
+        if assignee is None or str(assignee) != str(actor_user_id):
+            raise AppException(
+                status_code=403,
+                message="Only the current assignee can extend this SLA deadline.",
+                code="FORBIDDEN",
+            )
+        if bool(getattr(tracking, "is_resolved", False)):
+            raise AppException(
+                status_code=422,
+                message="Cannot extend a resolved SLA task.",
+                code="VALIDATION_ERROR",
+            )
+        if getattr(tracking, "due_at_resolution", None) is None:
+            raise AppException(
+                status_code=422,
+                message="This SLA task has no resolution deadline to extend.",
+                code="VALIDATION_ERROR",
+            )
+
+    def extend_tracking(
+        self,
+        tracking_id: str,
+        actor_user_id: str,
+        *,
+        days: Optional[int] = None,
+        target_date: Optional[str] = None,
+        reason: str,
+    ) -> ConversationSLATracking:
+        """Push out the resolution deadline (due_at_resolution) for the current
+        assignee. Recomputes authoritatively (ignores any client-previewed value),
+        bumps the denormalized counters, resets the reminder cycle, writes one
+        'extend' event log, then best-effort notifies the next escalation tier.
+        Works for both conversation and form SLA rows (shared table).
+        """
+        from app.services.error_handler import AppException
+
+        if not reason or not str(reason).strip():
+            raise AppException(
+                status_code=422,
+                message="A reason is required to extend the deadline.",
+                code="VALIDATION_ERROR",
+            )
+        reason = str(reason).strip()
+
+        tracking = self.get_tracking(tracking_id, load_event_logs=False)
+        self._assert_can_extend(tracking, actor_user_id)
+
+        old_due = getattr(tracking, "due_at_resolution", None)
+        new_due, added_days = self.compute_extension(
+            tracking, days=days, target_date=target_date
+        )
+
+        tier = int(getattr(tracking, "current_tier", 0) or 0)
+        setattr(tracking, "due_at_resolution", new_due)
+        setattr(
+            tracking,
+            "extension_count",
+            int(getattr(tracking, "extension_count", 0) or 0) + 1,
+        )
+        setattr(
+            tracking,
+            "extension_days_total",
+            float(getattr(tracking, "extension_days_total", 0) or 0) + added_days,
+        )
+        # Fresh reminder cycle for the new deadline (UAC-22).
+        # reminder_count / last_reminder_at live on the event log; the tracker has no
+        # such columns, so the reset is reflected by resetting the latest reminder
+        # bookkeeping on the tracker if present. Columns guarded with hasattr so this
+        # stays correct whether or not the tracker carries reminder state.
+        if hasattr(tracking, "reminder_count"):
+            setattr(tracking, "reminder_count", 0)
+        if hasattr(tracking, "last_reminder_at"):
+            setattr(tracking, "last_reminder_at", None)
+        self.db.commit()
+        self.db.refresh(tracking)
+
+        # One 'extend' event log. Wrap naive-UTC datetimes with _to_aware_utc so
+        # create_event_log (which treats naive as Malaysia time, -8h) stores them
+        # correctly. duration = working days added.
+        try:
+            self.create_event_log(
+                ConversationSLAEventLogCreate(
+                    sla_tracking_id=str(getattr(tracking, "id")),
+                    event_type="extend",
+                    from_tier=tier if tier >= 1 else None,
+                    to_tier=tier if tier >= 1 else None,
+                    event_at=_now_utc(),
+                    from_time=(
+                        _to_aware_utc(old_due)
+                        if isinstance(old_due, datetime)
+                        else None
+                    ),
+                    due_at=_to_aware_utc(new_due),
+                    duration=added_days,
+                    reason=reason,
+                    assigned_to_id=(
+                        str(getattr(tracking, "assigned_to_id"))
+                        if getattr(tracking, "assigned_to_id", None) is not None
+                        else None
+                    ),
+                    trigger="manual",
+                    triggered_by_id=str(actor_user_id),
+                )
+            )
+        except Exception as e:  # noqa: BLE001 — mutation already committed
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "extend event log failed for %s: %s", getattr(tracking, "id", "?"), e
+            )
+
+        # Best-effort: notify the NEXT escalation tier only (notify-only — no tier /
+        # clock mutation). Never raise (must not 500 a successful extend).
+        self._notify_next_tier_deadline_extended(tracking, reason=reason)
+        return tracking
+
+    def _notify_next_tier_deadline_extended(
+        self, tracking: ConversationSLATracking, *, reason: str
+    ) -> None:
+        """Notify the next escalation tier's assignee that the deadline was extended.
+        Next-tier resolution uses the SAME path as escalation per system:
+          - form SLA: (source_entity_type, team_set_code) + tier via
+            resolve_team_with_tier_fallback (current tier + 1).
+          - conversation SLA: get_escalation_assignee_for_tier (current tier + 1,
+            capped at 3) under the row's agent_id / team_set_code.
+        No next tier (top tier / unresolvable) -> skip silently. Never raises.
+        """
+        import logging
+
+        log = logging.getLogger(__name__)
+        try:
+            from app.services.form_sla_service import FORM_SLA_TYPES
+
+            from_tier = int(getattr(tracking, "current_tier", 0) or 0)
+            if from_tier < 1:
+                return
+            target_tier = from_tier + 1
+            if target_tier > 3:
+                return  # already top tier -> no next tier (UAC-24)
+
+            s_type = getattr(tracking, "source_entity_type", None)
+            assignee_id: Optional[str] = None
+
+            # Notify-only: resolve the next-tier recipient by PEEKING the round-robin
+            # cursor (never advancing it). Advancing here would steal a turn from the
+            # next real escalation to that tier (PLAN decision 11: no tier/clock/RR
+            # mutation on extend). Both paths resolve (agent_id, team_id) then peek.
+            from app.services.user_service import AccessAgentService
+
+            agent_svc = AccessAgentService(self.db)
+            team_id: Optional[str] = None
+            agent_id: Optional[str] = None
+
+            if s_type in FORM_SLA_TYPES:
+                agent_id = (
+                    str(getattr(tracking, "agent_id"))
+                    if getattr(tracking, "agent_id", None) is not None
+                    else None
+                )
+                if not agent_id:
+                    return
+                resolved = agent_svc.resolve_team_with_tier_fallback(
+                    agent_id,
+                    target_tier,
+                    team_set_code=getattr(tracking, "team_set_code", None),
+                )
+                if not resolved:
+                    return  # no higher-tier team configured
+                team_id, _actual_tier = resolved
+            else:
+                # Conversation SLA — mirror get_escalation_assignee_for_tier's TEAM
+                # resolution (agent id + tier team) but stop short of get_next_assignee.
+                agent_id_override = getattr(tracking, "agent_id", None) or None
+                if agent_id_override:
+                    agent_id = str(agent_id_override)
+                else:
+                    agent_code = self.ENTITY_TYPE_TO_AGENT_CODE.get(
+                        (s_type or "").strip().lower()
+                    ) or "complaint"
+                    agent_id = agent_svc.get_agent_id_by_code(agent_code)
+                if not agent_id:
+                    return
+                team_id = agent_svc.get_team_id_by_tier(
+                    agent_id,
+                    target_tier,
+                    team_set_code=getattr(tracking, "team_set_code", None) or None,
+                )
+                if not team_id:
+                    return  # no tier team configured
+
+            _last_id, next_id = agent_svc._peek_next_assignee(agent_id, team_id)
+            assignee_id = str(next_id) if next_id else None
+
+            if not assignee_id:
+                return
+            # Do not self-notify the actor's own row owner if they happen to also be
+            # the next-tier assignee resolution target — the recipient is the next
+            # tier, distinct from the current assignee by construction; still guard
+            # against an identical id.
+            if str(assignee_id) == str(getattr(tracking, "assigned_to_id", "")):
+                # Next tier resolves to the same person (single-member chain) — still
+                # notify them: they own the next tier too. No suppression.
+                pass
+
+            self._notify_user_deadline_extended(
+                tracking, recipient_user_id=assignee_id, reason=reason
+            )
+        except Exception as e:  # noqa: BLE001 — best-effort, extend already committed
+            log.warning(
+                "deadline-extended notify failed for %s: %s",
+                getattr(tracking, "id", "?"),
+                e,
+            )
+
+    def _notify_user_deadline_extended(
+        self,
+        tracking: ConversationSLATracking,
+        *,
+        recipient_user_id: str,
+        reason: str,
+    ) -> None:
+        """Build + send the deadline_extended notification to a specific user
+        (the next-tier assignee), reusing the same WhatsApp data builder as the
+        SLA assignment/escalation path. In-app always; email/WhatsApp gated by the
+        recipient's notify_*_on_deadline_extended toggles."""
+        from app.services.notification_service import NotificationService
+        from app.services.form_sla_service import (
+            build_sla_whatsapp_data,
+            _resolve_entity_number,
+            _full_form_link,
+            _fmt_due,
+            FORM_SLA_TYPES,
+        )
+        from app.config import settings
+
+        s_type = str(getattr(tracking, "source_entity_type", "") or "")
+        s_id = str(getattr(tracking, "source_entity_id", "") or "")
+        number = (
+            _resolve_entity_number(self.db, s_type, s_id)
+            or (s_type.replace("_", " ").title() if s_type else "an SLA task")
+        )
+        new_due_str = _fmt_due(getattr(tracking, "due_at_resolution", None))
+        base_url = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+        if s_type in FORM_SLA_TYPES:
+            link = _full_form_link(s_type, s_id)
+        else:
+            link = (
+                f"{base_url}/sla-management/conversation-sla-tracking/{tracking.id}"
+                if base_url
+                else ""
+            )
+
+        title = f"SLA deadline extended: {number}"
+        body = (
+            f"The resolution deadline for {number} was extended"
+            + (f" to {new_due_str}" if new_due_str else "")
+            + f". Reason: {reason}."
+        )
+        if link:
+            body += f"\n\nOpen: {link}"
+
+        data = {
+            "tracking_id": str(tracking.id),
+            "source_entity_type": tracking.source_entity_type,
+            "source_entity_id": tracking.source_entity_id,
+            **build_sla_whatsapp_data(
+                self.db,
+                tracking,
+                str(recipient_user_id),
+                body,
+                use_case="sla_deadline_extended",
+                reason=reason,
+            ),
+        }
+        NotificationService(self.db).create_with_channel_preferences(
+            user_id=str(recipient_user_id),
+            type="conversation_sla" if s_type not in FORM_SLA_TYPES else "form_sla",
+            title=title,
+            body=body,
+            data=data,
+            source_entity_type=(
+                "form_sla_tracking" if s_type in FORM_SLA_TYPES else "conversation_sla_tracking"
+            ),
+            source_entity_id=str(tracking.id),
+            # Suffix with the extension occurrence so EACH extend re-notifies (the
+            # dedup key is (user, source_type, source_id, event_type)). Without the
+            # suffix the 2nd+ extension on the same tracking would dedup to the first
+            # and send nothing. Retrying the SAME extension stays idempotent (same
+            # count). The email-key resolver strips the ":N" so it still maps to the
+            # sla_deadline_extended event.
+            event_type=f"deadline_extended:{int(getattr(tracking, 'extension_count', 0) or 0)}",
+            send_in_app=True,
+            send_email=True,
+            send_whatsapp=True,
+            email_pref_attr="notify_email_on_deadline_extended",
+            whatsapp_pref_attr="notify_whatsapp_on_deadline_extended",
+        )
 
     def list_due_escalations(self) -> list[dict]:
         """Work-list for the scheduled escalation runner (n8n).
@@ -2582,6 +3080,11 @@ class ConversationSLATrackingService:
             (aid_raw is not None and str(aid_raw).strip() != "")
             or (ato_raw is not None and str(ato_raw).strip() != "")
         )
+        # Set when the RR branch resolved the assignee via get_escalation_assignee_for_tier,
+        # which already applied the coverage redirect — so the generic redirect below must
+        # NOT run again (would be a 2nd hop, violating one-hop). Explicit-assignee paths are
+        # NOT redirected yet → the block below handles them.
+        coverage_applied_in_rr = False
         if raw_agent_code:
             from app.models.access import AccessAgent as _AccessAgent
             from app.models.user import User as _User
@@ -2667,6 +3170,8 @@ class ConversationSLATrackingService:
                     if assignee.get("respond_user_id") is not None
                     else None
                 )
+                # get_escalation_assignee_for_tier already applied the coverage redirect.
+                coverage_applied_in_rr = True
         elif not tracking_dict.get("assigned_to_id") and tracking_dict.get("assigned_to"):
             # Fallback: resolve explicit assigned_to (respond_user_id / user id / email) to assigned_to_id
             from app.models.user import User
@@ -2682,6 +3187,37 @@ class ConversationSLATrackingService:
                     f"User not found for respond_user_id: {assigned_to_value}"
                 )
             tracking_dict["assigned_to_id"] = user.id
+
+        # Coverage redirect (conversation-SLA initial assignment): if the resolved
+        # assignee is covered (on leave), route the new tracking to their coverer.
+        # The RR branch already redirected via get_escalation_assignee_for_tier; this
+        # covers the explicit-assignee path (n8n routing posts assigned_to_id/_to).
+        # Applied to the resolved tracking_dict so it flows into both the new-row and
+        # overwrite-resolved branches; the idempotent-active branch returns earlier
+        # without touching the assignee. One hop. covered_for_id stamped on the log.
+        coverage_covered_for_id: Optional[str] = None
+        if tracking_dict.get("assigned_to_id") and not coverage_applied_in_rr:
+            from app.services.coverage_subscription_service import (
+                resolve_assignee_with_coverage,
+            )
+
+            _cur_rid = tracking_dict.get("assigned_to")
+            _coverer, coverage_covered_for_id = resolve_assignee_with_coverage(
+                self.db,
+                {
+                    "id": str(tracking_dict["assigned_to_id"]),
+                    "email": None,
+                    "name": None,
+                    "respond_user_id": _cur_rid,
+                },
+            )
+            if coverage_covered_for_id and _coverer:
+                tracking_dict["assigned_to_id"] = _coverer["id"]
+                tracking_dict["assigned_to"] = (
+                    str(_coverer["respond_user_id"])
+                    if _coverer.get("respond_user_id")
+                    else None
+                )
 
         # Auto-populate initiated_at and current_tier_started_at to now (UTC)
         now_utc = _now_utc()
@@ -2767,7 +3303,8 @@ class ConversationSLATrackingService:
 
             self.db.commit()
             self.db.refresh(existing)
-            self._write_assign_event_log(existing)
+            self._write_assign_event_log(existing, covered_for_id=coverage_covered_for_id)
+            self._fan_out_assignment_coverage(existing)
             setattr(existing, "_overwrote_resolved", True)
             return existing
 
@@ -2780,10 +3317,16 @@ class ConversationSLATrackingService:
         self.db.add(tracking)
         self.db.commit()
         self.db.refresh(tracking)
-        self._write_assign_event_log(tracking)
+        self._write_assign_event_log(tracking, covered_for_id=coverage_covered_for_id)
+        self._fan_out_assignment_coverage(tracking)
         return tracking
 
-    def _write_assign_event_log(self, tracking: ConversationSLATracking) -> None:
+    def _write_assign_event_log(
+        self,
+        tracking: ConversationSLATracking,
+        *,
+        covered_for_id: Optional[str] = None,
+    ) -> None:
         """Write the initial 'assign' event log for a newly started conversation.
 
         Owned by the backend (n8n's flow no longer posts it) so an idempotent
@@ -2804,6 +3347,11 @@ class ConversationSLATrackingService:
             label, user_id = event_log_assignee_fields(self.db, assignee_ref)
             tier = getattr(tracking, "current_tier", 1)
             due_at = getattr(tracking, "due_at", None)
+            base_reason = f"New Assignee {label}" if label else "New conversation tracking"
+            if covered_for_id:
+                from app.services.coverage_subscription_service import coverage_note
+
+                base_reason = f"{base_reason}{coverage_note(self.db, covered_for_id)}"
             self.create_event_log(ConversationSLAEventLogCreate(
                 sla_tracking_id=str(tracking.id),
                 event_type="assign",
@@ -2815,7 +3363,7 @@ class ConversationSLATrackingService:
                 # DB stores naive UTC; pass aware UTC so create_event_log's
                 # naive-means-MYT normalization doesn't shift it by -8h.
                 due_at=_to_aware_utc(due_at) if isinstance(due_at, datetime) else None,
-                reason=f"New Assignee {label}" if label else "New conversation tracking",
+                reason=base_reason,
             ))
         except Exception:
             self.db.rollback()
@@ -2825,7 +3373,83 @@ class ConversationSLATrackingService:
                 getattr(tracking, "id", None),
                 exc_info=True,
             )
-    
+
+    def _fan_out_assignment_coverage(self, tracking: ConversationSLATracking) -> None:
+        """Best-effort: notify the assignee's COVERAGE subscribers (notify-only coverage)
+        that a conversation SLA was assigned to the person they cover. Conversation
+        create previously had no assignment notify at all, so coverage subscribers never
+        heard about INITIAL assignments (only reassign/escalate/takeover fanned out).
+        Mirrors _notify_reassignment's fan-out. The assignee notification itself stays
+        with n8n/Respond — we only add the coverage copies here. Never raises."""
+        import logging
+
+        log = logging.getLogger(__name__)
+        try:
+            assignee_id = getattr(tracking, "assigned_to_id", None)
+            if not assignee_id:
+                return
+            from app.config import settings
+            from app.services.coverage_subscription_service import fan_out_coverage_copies
+            from app.services.form_sla_service import build_sla_whatsapp_data
+
+            from app.models.user import User as _User
+
+            base_url = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+            # Deep link to the dashboard "My pending tasks" → My Team, with the colleague's
+            # task highlighted so the coverer can take it over (?team_task=<id>). NOT the
+            # detail page — the action they need (takeover) lives in the My Team widget.
+            team_link = f"{base_url}/?team_task={tracking.id}" if base_url else ""
+            ref = (self._resolve_my_pending_references([tracking]) or {}).get(
+                str(tracking.id)
+            ) or "an SLA task"
+            covered = self.db.query(_User).filter(_User.id == str(assignee_id)).first()
+            covered_name = (
+                (covered.name or covered.email) if covered else str(assignee_id)
+            ) or "a teammate"
+            # NOTIFY-ONLY coverage: the task is assigned to the colleague, not the
+            # subscriber. Word it that way (auto-assign uses the normal "assigned to you"
+            # notification, since the coverer IS the assignee there).
+            cover_title = f"SLA task assigned to {covered_name}"
+            cover_body = f"{ref} has been assigned to {covered_name}."
+            cover_body += f"\n\nYou're receiving this because you cover for {covered_name}."
+            if team_link:
+                cover_body += f"\n\nTake over: {team_link}"
+            # Distinct event_type PER assignment occurrence so a re-assignment of the SAME
+            # (reused) conversation tracker after a resolve re-notifies coverers — the
+            # dedup key is (user, source_type, source_id, event_type) and the tracker id is
+            # reused across conversations. Key off the assignment's start time (reset on
+            # each new conversation). The email-key resolver strips the numeric suffix.
+            started = (
+                getattr(tracking, "current_tier_started_at", None)
+                or getattr(tracking, "initiated_at", None)
+            )
+            occ = int(started.timestamp()) if isinstance(started, datetime) else 0
+            fan_out_coverage_copies(
+                self.db,
+                target_user_id=str(assignee_id),
+                actor_user_id=None,
+                notification_type="conversation_sla",
+                title=cover_title,
+                body=cover_body,
+                data={"tracking_id": str(tracking.id)},
+                source_entity_type="conversation_sla_tracking",
+                source_entity_id=str(tracking.id),
+                event_type=f"assigned:{occ}",
+                email_pref_attr="notify_email_on_assignment",
+                whatsapp_pref_attr="notify_whatsapp_on_assignment",
+                cover_title=cover_title,
+                cover_body=cover_body,
+                tracking=tracking,
+                whatsapp_use_case="sla_assignment",
+            )
+        except Exception:
+            self.db.rollback()
+            log.warning(
+                "coverage fan-out on conversation assignment failed for %s",
+                getattr(tracking, "id", None),
+                exc_info=True,
+            )
+
     def update_tracking(self, tracking_id: str, tracking_data: ConversationSLATrackingUpdate):
         """Update a tracking record."""
         from datetime import datetime, timezone

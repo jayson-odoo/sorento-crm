@@ -545,6 +545,105 @@ def _notify_conversation_sla_escalation(db, tracking, assignee: dict, reason: st
         log.warning("conversation SLA escalate notify failed for %s: %s", getattr(tracking, "id", "?"), e)
 
 
+class _ExtendPreviewRequest(BaseModel):
+    days: Optional[int] = Field(None, ge=1)
+    target_date: Optional[str] = None  # YYYY-MM-DD
+
+
+class _ExtendRequest(BaseModel):
+    days: Optional[int] = Field(None, ge=1)
+    target_date: Optional[str] = None  # YYYY-MM-DD
+    reason: str = Field(..., min_length=1)
+
+
+def _assert_extend_assignee(tracking, current_user: dict) -> None:
+    """Gate the extend endpoints to the current assignee (403 otherwise). Mirrors
+    the service-side gate so the preview endpoint enforces the same scope without a
+    mutation."""
+    assignee = getattr(tracking, "assigned_to_id", None)
+    if assignee is None or str(assignee) != str(current_user.get("id")):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the current assignee can extend this SLA deadline.",
+        )
+
+
+@router.post("/{tracking_id}/extend/preview")
+async def preview_extend_sla_tracking(
+    tracking_id: UUID,
+    payload: _ExtendPreviewRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Preview a resolution-deadline extension (no mutation). Returns the recomputed
+    new due, the working-days delta, and any soft-limit warnings. Exactly one of
+    `days` / `target_date` must be supplied. Assignee-only (same scope as extend)."""
+    if (payload.days is None) == (payload.target_date is None):
+        raise HTTPException(
+            status_code=422,
+            detail="Provide exactly one of 'days' or 'target_date'.",
+        )
+    try:
+        service = ConversationSLATrackingService(db)
+        tracking = service.get_tracking(str(tracking_id), load_event_logs=False)
+        _assert_extend_assignee(tracking, current_user)
+        if getattr(tracking, "due_at_resolution", None) is None:
+            raise HTTPException(
+                status_code=422,
+                detail="This SLA task has no resolution deadline to extend.",
+            )
+        new_due, working_days = service.compute_extension(
+            tracking, days=payload.days, target_date=payload.target_date
+        )
+        warnings = service.evaluate_extension_warnings(
+            tracking, getattr(tracking, "policy", None), working_days
+        )
+        current_due = getattr(tracking, "due_at_resolution", None)
+        return {
+            "current_due_at": current_due.isoformat() if current_due else None,
+            "new_due_at": new_due.isoformat() if new_due else None,
+            "working_days": working_days,
+            "warnings": warnings,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{tracking_id}/extend", response_model=ConversationSLATrackingResponse)
+async def extend_sla_tracking(
+    tracking_id: UUID,
+    payload: _ExtendRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Extend the resolution deadline (current assignee only). Recomputes the new due
+    authoritatively (ignores any client-previewed value), bumps the extension
+    counters, resets the reminder cycle, writes an 'extend' event log, and
+    best-effort notifies the next escalation tier. Works for both conversation and
+    form SLA rows."""
+    if (payload.days is None) == (payload.target_date is None):
+        raise HTTPException(
+            status_code=422,
+            detail="Provide exactly one of 'days' or 'target_date'.",
+        )
+    try:
+        service = ConversationSLATrackingService(db)
+        tracking = service.extend_tracking(
+            str(tracking_id),
+            current_user["id"],
+            days=payload.days,
+            target_date=payload.target_date,
+            reason=payload.reason,
+        )
+        return build_conversation_sla_tracking_response(db, tracking)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/", response_model=ListResponse[ConversationSLATrackingResponse])
 async def get_sla_tracking(
     page: int = Query(1, ge=1),
@@ -867,9 +966,11 @@ async def escalate_sla_tracking_integration(
         raise handle_internal_error(str(e))
 
 
-# Declared AFTER the static /integration/* routes so "integration" is not captured
-# as {tracking_id} (which would force JWT auth and 401 n8n's API-key call). See
-# the route-shadowing lesson in CLAUDE.md (static before parametric).
+# NOTE: declared AFTER /integration/escalate on purpose. FastAPI matches routes in
+# declaration order; a parametric "/{tracking_id}/escalate" declared earlier would
+# capture the literal "/integration/escalate" path (tracking_id="integration") and
+# shadow the n8n integration endpoint. Keep all static "/integration/*" routes above
+# this parametric one.
 @router.post("/{tracking_id}/escalate")
 async def escalate_conversation_sla_tracking(
     tracking_id: str,

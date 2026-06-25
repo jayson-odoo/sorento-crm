@@ -17,9 +17,13 @@ class SLAPolicy(Base):
     name = Column(Text, nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    # Extend-deadline soft limits (PLAN-sla-extend-deadline). All nullable = no limit.
+    # Breach is a warning only; the extension still applies.
+    max_extension_days_per_request = Column(Integer, nullable=True)  # max working days per single extend
+    max_extension_count = Column(Integer, nullable=True)             # max number of extends per tracker
+    max_extension_days_total = Column(Numeric(10, 2), nullable=True) # max cumulative working days extended
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
-    
     # passive_deletes=True: rely on the DB-level ON DELETE CASCADE (sla_policy_tiers.policy_id)
     # instead of the ORM nulling child FKs before delete (which violates NOT NULL).
     tiers = relationship(
@@ -89,7 +93,11 @@ class ConversationSLATracking(Base):
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     resolution_duration = Column(Numeric(10, 2), nullable=True)
-    
+    # Extend-deadline denormalized counters (PLAN-sla-extend-deadline). The event log
+    # is the immutable trail; these are fast-read for soft-limit checks + row chip.
+    extension_count = Column(Integer, nullable=False, server_default=text("0"), default=0)
+    extension_days_total = Column(Numeric(10, 2), nullable=False, server_default=text("0"), default=0)
+
     policy = relationship("SLAPolicy", back_populates="tracking")
     event_logs = relationship(
         "ConversationSLAEventLog",

@@ -13,6 +13,8 @@ type ChannelPrefs = {
   notify_email_on_escalation: boolean;
   notify_whatsapp_on_assignment: boolean;
   notify_whatsapp_on_escalation: boolean;
+  notify_email_on_deadline_extended: boolean;
+  notify_whatsapp_on_deadline_extended: boolean;
 };
 
 const SLA_TOGGLES: { key: keyof ChannelPrefs; label: string }[] = [
@@ -20,6 +22,8 @@ const SLA_TOGGLES: { key: keyof ChannelPrefs; label: string }[] = [
   { key: 'notify_email_on_escalation', label: 'Email on escalation' },
   { key: 'notify_whatsapp_on_assignment', label: 'WhatsApp on assignment' },
   { key: 'notify_whatsapp_on_escalation', label: 'WhatsApp on escalation' },
+  { key: 'notify_email_on_deadline_extended', label: 'Email on deadline extended' },
+  { key: 'notify_whatsapp_on_deadline_extended', label: 'WhatsApp on deadline extended' },
 ];
 
 /**
@@ -34,6 +38,8 @@ export default function NotificationChannelsPreference() {
     notify_email_on_escalation: true,
     notify_whatsapp_on_assignment: false,
     notify_whatsapp_on_escalation: false,
+    notify_email_on_deadline_extended: true,
+    notify_whatsapp_on_deadline_extended: false,
   });
   const [loading, setLoading] = useState(true);
 
@@ -49,6 +55,8 @@ export default function NotificationChannelsPreference() {
           notify_email_on_escalation: data.notify_email_on_escalation ?? true,
           notify_whatsapp_on_assignment: Boolean(data.notify_whatsapp_on_assignment),
           notify_whatsapp_on_escalation: Boolean(data.notify_whatsapp_on_escalation),
+          notify_email_on_deadline_extended: data.notify_email_on_deadline_extended ?? true,
+          notify_whatsapp_on_deadline_extended: Boolean(data.notify_whatsapp_on_deadline_extended),
         });
       } catch {
         // keep defaults; don't block the page

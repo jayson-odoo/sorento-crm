@@ -121,7 +121,9 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
     """Build a frontend deep link for the form's detail page (consumed by notification UI)."""
     if source_entity_type == "stock_inquiry":
         return f"/procurement-management/stock-inquiries/{source_entity_id}"
-    if source_entity_type in ("purchase_request", "sponsorship_form"):
+    if source_entity_type == "sponsorship_form":
+        return f"/procurement-management/sponsorship-forms/{source_entity_id}"
+    if source_entity_type == "purchase_request":
         return f"/procurement-management/purchase-requests/{source_entity_id}"
     if source_entity_type == "complaint":
         return f"/complaint-management/complaints/{source_entity_id}"
@@ -413,6 +415,14 @@ class FormSLAOrchestrator:
         if not assignee:
             raise FormEscalationBlocked("no_assignee", f"No available assignee for tier {actual_tier}.")
 
+        # Coverage redirect: route escalation to the covered user's coverer. RR cursor
+        # already advanced to the covered user (fairness) — only swap the result.
+        from app.services.coverage_subscription_service import (
+            resolve_assignee_with_coverage,
+        )
+
+        assignee, covered_for_id = resolve_assignee_with_coverage(self.db, assignee)
+
         response_hrs = float(getattr(next_tier, "response_hours", 24) or 24)
         resolution_hrs = float(getattr(next_tier, "resolution_hours", 24) or 24)
         tracker.current_tier = actual_tier
@@ -427,12 +437,17 @@ class FormSLAOrchestrator:
         )
         self.db.flush()
 
+        log_reason = reason
+        if covered_for_id:
+            from app.services.coverage_subscription_service import coverage_note
+
+            log_reason = f"{reason}{coverage_note(self.db, covered_for_id)}"
         self._write_event_log(
             tracker_id=str(tracker.id),
             event_type="escalation",
             from_tier=target_tier - 1,
             to_tier=target_tier,
-            reason=reason,
+            reason=log_reason,
             assigned_to_id=assignee["id"],
             due_at=tracker.due_at,
             trigger=trigger,
@@ -636,6 +651,15 @@ class FormSLAOrchestrator:
                 f"No members in tier {start_tier} team for agent '{config.agent_code}'."
             )
 
+        # Coverage redirect: if the resolved assignee is on leave (covered), route
+        # the task to their coverer instead. RR cursor already advanced to the
+        # covered user above (fairness, decision 4) — we only swap the result.
+        from app.services.coverage_subscription_service import (
+            resolve_assignee_with_coverage,
+        )
+
+        assignee, covered_for_id = resolve_assignee_with_coverage(self.db, assignee)
+
         tier_row = (
             self.db.query(SLAPolicyTier)
             .filter(
@@ -676,6 +700,21 @@ class FormSLAOrchestrator:
         self.db.add(tracker)
         self.db.commit()
         self.db.refresh(tracker)
+
+        # Coverage redirect → record why the task landed on the coverer (best-effort).
+        if covered_for_id:
+            from app.services.coverage_subscription_service import coverage_note
+
+            self._write_event_log(
+                tracker_id=str(tracker.id),
+                event_type="assign",
+                from_tier=start_tier,
+                to_tier=start_tier,
+                reason=f"Initial assignment{coverage_note(self.db, covered_for_id)}",
+                assigned_to_id=assignee["id"],
+                due_at=tracker.due_at,
+                trigger="auto",
+            )
 
         # Per-stage toggle: some stages route silently (no assignee notification).
         if getattr(config, "notify_assignee", True):

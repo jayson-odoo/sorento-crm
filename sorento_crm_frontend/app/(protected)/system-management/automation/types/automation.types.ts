@@ -19,6 +19,9 @@ export interface Automation {
   email_template_id: string;
   email_template_name?: string | null;
   recipient_config: RecipientConfig;
+  /** When true, a daily run matching multiple promotions sends one combined
+   * email per recipient instead of one email per promotion. */
+  group_matches: boolean;
   schedule_type: 'manual' | 'daily';
   run_time: string | null;
   timezone: string;
@@ -40,6 +43,7 @@ export interface AutomationCreateBody {
   action_type?: string;
   email_template_id: string;
   recipient_config?: RecipientConfig;
+  group_matches?: boolean;
   schedule_type?: 'manual' | 'daily';
   run_time?: string | null;
   timezone?: string;

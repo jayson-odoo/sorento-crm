@@ -60,6 +60,11 @@ class User(Base):
     # whatsapp each gated by its toggle). Both off => not a recipient, gets nothing.
     notify_email_on_product_discontinued = Column(Boolean, default=False, nullable=False, server_default="false")
     notify_whatsapp_on_product_discontinued = Column(Boolean, default=False, nullable=False, server_default="false")
+    # SLA extend-deadline notification opt-ins (PLAN-sla-extend-deadline). Recipient is
+    # the NEXT escalation tier assignee. Email defaults on; WhatsApp off (mirrors the
+    # assignment/escalation toggle defaults). In-app always fires.
+    notify_email_on_deadline_extended = Column(Boolean, default=True, nullable=False, server_default="true")
+    notify_whatsapp_on_deadline_extended = Column(Boolean, default=False, nullable=False, server_default="false")
 
     role_assignments = relationship("UserRoleAssignment", back_populates="user", cascade="all, delete-orphan")
     system_logs = relationship("SystemLog", back_populates="user")

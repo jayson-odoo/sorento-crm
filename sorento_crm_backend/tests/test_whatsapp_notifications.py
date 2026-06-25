@@ -21,6 +21,7 @@ from app.database import Base
 from app.models.access import RespondContact
 from app.models.lookup import LookupBinding
 from app.models.notification import Notification, NotificationDelivery
+from app.models.integration import IntegrationLog
 from app.models.user import User
 from app.services.notification_service import NotificationService
 
@@ -41,7 +42,8 @@ def db():
         poolclass=StaticPool,
     )
     _sqlite_safe(
-        RespondContact.__table__, Notification.__table__, NotificationDelivery.__table__
+        RespondContact.__table__, Notification.__table__, NotificationDelivery.__table__,
+        IntegrationLog.__table__,
     )
     Base.metadata.create_all(
         engine,
@@ -51,6 +53,7 @@ def db():
             NotificationDelivery.__table__,
             User.__table__,
             LookupBinding.__table__,
+            IntegrationLog.__table__,
         ],
     )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

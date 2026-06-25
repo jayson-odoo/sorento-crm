@@ -21,6 +21,9 @@ router = APIRouter()
 class _SubscribeRequest(BaseModel):
     target_user_id: str
     expires_at: Optional[datetime] = None
+    # True = auto-assign the target's future SLA tasks to me (redirect; sole coverer).
+    # False = notify-only (default): I'm notified and take over manually.
+    redirect_assignments: bool = False
 
 
 @router.get("/")
@@ -47,12 +50,16 @@ async def subscribe_coverage(
     """Subscribe to a colleague (scope-B). Reactivates an existing row if present."""
     try:
         sub = CoverageSubscriptionService(db).subscribe(
-            current_user["id"], payload.target_user_id, payload.expires_at
+            current_user["id"],
+            payload.target_user_id,
+            payload.expires_at,
+            redirect_assignments=payload.redirect_assignments,
         )
         return {
             "id": str(sub.id),
             "target_user_id": str(sub.target_user_id),
             "is_active": bool(sub.is_active),
+            "redirect_assignments": bool(getattr(sub, "redirect_assignments", False)),
             "expires_at": (
                 getattr(sub, "expires_at").isoformat()
                 if getattr(sub, "expires_at", None)
