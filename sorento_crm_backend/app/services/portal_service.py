@@ -1111,7 +1111,15 @@ class PortalService:
                 if field in self._date_fields(kind):
                     value = self._coerce_date(value)
                 if field in self._decimal_fields(kind):
-                    value = self._coerce_decimal(value)
+                    coerced = self._coerce_decimal(value)
+                    # Reject non-numeric input instead of silently saving NULL.
+                    # Empty already became None above (allowed); a non-empty value
+                    # that won't parse is a user error, not a discard.
+                    if coerced is None and value not in (None, ""):
+                        raise handle_validation_error(
+                            "Total project value must be a number."
+                        )
+                    value = coerced
                 if (
                     kind == "stock_inquiry"
                     and field == "quantity"
