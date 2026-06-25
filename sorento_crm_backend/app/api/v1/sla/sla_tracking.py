@@ -657,6 +657,7 @@ async def get_sla_tracking(
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
     assigned_to: Optional[str] = Query(None),
+    scope: str = Query("conversation", description="conversation (contact-keyed) or form (per-entity stage rows)"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -672,6 +673,7 @@ async def get_sla_tracking(
             sort_field=sort or "created_at",
             sort_dir=dir or "desc",
             assigned_to=assigned_to,
+            scope="form" if scope == "form" else "conversation",
         )
         return result
     except Exception as e:
