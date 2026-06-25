@@ -177,12 +177,12 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="flex max-h-[90vh] max-w-3xl flex-col">
         <DialogHeader>
           <DialogTitle>{isEdit ? 'Edit automation' : 'New automation'}</DialogTitle>
         </DialogHeader>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto px-1 md:grid-cols-2">
           <div className="space-y-1 md:col-span-2">
             <Label htmlFor="auto-name">Name</Label>
             <Input
