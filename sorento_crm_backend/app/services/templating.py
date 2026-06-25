@@ -1,7 +1,9 @@
 """Sandboxed Jinja2 rendering for email templates and automation messages."""
 from __future__ import annotations
 
+import html as _html
 import logging
+import re
 from typing import Any
 
 from jinja2 import Undefined
@@ -65,9 +67,30 @@ _text_env = SandboxedEnvironment(
 )
 
 
+# Matches Jinja statement/expression blocks so we can repair their contents.
+_JINJA_TAG_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.DOTALL)
+
+
+def _unescape_jinja_tags(source: str) -> str:
+    """Un-escape HTML entities *inside* Jinja ``{% %}`` / ``{{ }}`` blocks.
+
+    Rich-text/HTML email editors entity-escape control operators they don't
+    understand, so an authored ``{% if x > 1 %}`` is persisted as
+    ``{% if x &gt; 1 %}``. Jinja's lexer then aborts on the ``&`` with
+    ``unexpected char '&'`` and the whole template renders as
+    ``[template-error:...]``. Entities never carry meaning *inside* a Jinja tag
+    (logic uses ``and``/``or``/``>``/``"``, never ``&amp;``), so decoding within
+    the delimiters is safe and leaves output text — where ``&amp;`` is real —
+    untouched.
+    """
+    if not source or "&" not in source:
+        return source
+    return _JINJA_TAG_RE.sub(lambda m: _html.unescape(m.group(0)), source)
+
+
 def _render(env: SandboxedEnvironment, source: str, context: dict[str, Any]) -> str:
     try:
-        template = env.from_string(source or "")
+        template = env.from_string(_unescape_jinja_tags(source or ""))
         return template.render(**(context or {}))
     except TemplateError as exc:
         logger.warning("Template render error: %s", exc)
