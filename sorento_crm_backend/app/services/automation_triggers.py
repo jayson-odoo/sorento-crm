@@ -81,9 +81,12 @@ def _build_complaint_link(complaint_id: str) -> str:
     return f"{base}/complaint-management/complaints/{complaint_id}"
 
 
-def _build_purchase_request_link(request_id: str) -> str:
+def _build_purchase_request_link(request_id: str, request_type: str | None = None) -> str:
     base = (settings.frontend_base_url or "").rstrip("/")
-    path = f"/procurement-management/purchase-requests/{request_id}"
+    if (request_type or "").strip() == "sponsorship_form":
+        path = f"/procurement-management/sponsorship-forms/{request_id}"
+    else:
+        path = f"/procurement-management/purchase-requests/{request_id}"
     return f"{base}{path}" if base else path
 
 

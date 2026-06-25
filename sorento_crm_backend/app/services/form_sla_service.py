@@ -121,7 +121,9 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
     """Build a frontend deep link for the form's detail page (consumed by notification UI)."""
     if source_entity_type == "stock_inquiry":
         return f"/procurement-management/stock-inquiries/{source_entity_id}"
-    if source_entity_type in ("purchase_request", "sponsorship_form"):
+    if source_entity_type == "sponsorship_form":
+        return f"/procurement-management/sponsorship-forms/{source_entity_id}"
+    if source_entity_type == "purchase_request":
         return f"/procurement-management/purchase-requests/{source_entity_id}"
     if source_entity_type == "complaint":
         return f"/complaint-management/complaints/{source_entity_id}"
