@@ -21,7 +21,11 @@ from app.services.sla_service import ConversationSLATrackingService
 @pytest.fixture
 def client():
     from app.database import get_db as database_get_db
-    from app.dependencies import get_db as dependencies_get_db, get_current_user_or_api_key
+    from app.dependencies import (
+        get_db as dependencies_get_db,
+        get_current_user_or_api_key,
+        get_current_user,
+    )
     from app.main import app
 
     def _user():
@@ -31,6 +35,7 @@ def client():
         yield MagicMock()
 
     app.dependency_overrides[get_current_user_or_api_key] = _user
+    app.dependency_overrides[get_current_user] = _user
     app.dependency_overrides[database_get_db] = _db
     app.dependency_overrides[dependencies_get_db] = _db
     yield TestClient(app)

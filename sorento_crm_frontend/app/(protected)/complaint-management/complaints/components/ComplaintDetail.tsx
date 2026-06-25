@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
-import { SlaEscalationBanner } from '@/app/(protected)/sla-management/_shared/SlaEscalationBanner';
+import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { complaintStatusPillClass, complaintStatusLabel } from '@/lib/complaint-status';
@@ -768,10 +768,14 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         </DialogContent>
       </Dialog>
 
-      <SlaEscalationBanner
-        reason={activeTracker?.escalation_reason}
-        tier={activeTracker?.current_tier}
-        assignee={activeTracker?.assigned_user_name}
+      <SlaActiveTrackerControls
+        activeTracker={activeTracker}
+        label={`Complaint${complaint.complaint_number ? ` · ${complaint.complaint_number}` : ''}`}
+        onExtended={() =>
+          void queryClient.invalidateQueries({
+            queryKey: ['form-sla-trackers', 'complaint', complaintId],
+          })
+        }
       />
 
       {/* Complaint Information */}

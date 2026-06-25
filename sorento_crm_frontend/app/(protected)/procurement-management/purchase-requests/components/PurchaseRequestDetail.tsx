@@ -52,7 +52,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs, submitApprovalDecision } from '../services/purchaseRequestService';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
-import { SlaEscalationBanner } from '@/app/(protected)/sla-management/_shared/SlaEscalationBanner';
+import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { ArrowUpCircle, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -818,10 +818,14 @@ export default function PurchaseRequestDetail({
         onSuccess={() => router.push(basePath)}
       />
 
-      <SlaEscalationBanner
-        reason={activeTracker?.escalation_reason}
-        tier={activeTracker?.current_tier}
-        assignee={activeTracker?.assigned_user_name}
+      <SlaActiveTrackerControls
+        activeTracker={activeTracker}
+        label={`${typeLabel}${request.request_number ? ` · ${request.request_number}` : ''}`}
+        onExtended={() =>
+          void queryClient.invalidateQueries({
+            queryKey: ['form-sla-trackers', requestTypeForNav, requestId],
+          })
+        }
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

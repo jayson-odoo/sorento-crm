@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
-import { SlaEscalationBanner } from '@/app/(protected)/sla-management/_shared/SlaEscalationBanner';
+import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { Button } from '@/components/ui/button';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -683,10 +683,14 @@ export default function StockInquiryDetail({
         </DialogContent>
       </Dialog>
 
-      <SlaEscalationBanner
-        reason={activeTracker?.escalation_reason}
-        tier={activeTracker?.current_tier}
-        assignee={activeTracker?.assigned_user_name}
+      <SlaActiveTrackerControls
+        activeTracker={activeTracker}
+        label={`Stock Inquiry${inquiry.inquiry_number ? ` · ${inquiry.inquiry_number}` : ''}`}
+        onExtended={() =>
+          void queryClient.invalidateQueries({
+            queryKey: ['form-sla-trackers', 'stock_inquiry', inquiryId],
+          })
+        }
       />
 
       <ProductInquiryFormLayout>

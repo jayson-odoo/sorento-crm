@@ -16,11 +16,17 @@ export function useMyCoverage() {
   });
 }
 
+interface CoverageMutationVars {
+  targetUserId: string;
+  expiresAt?: string;
+  redirectAssignments?: boolean;
+}
+
 export function useSubscribeCoverage() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ targetUserId, expiresAt }: { targetUserId: string; expiresAt?: string }) =>
-      subscribeCoverage(targetUserId, expiresAt),
+    mutationFn: ({ targetUserId, expiresAt, redirectAssignments }: CoverageMutationVars) =>
+      subscribeCoverage(targetUserId, expiresAt, redirectAssignments),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: COVERAGE_KEY });
       toast.success('Coverage added.');
@@ -33,9 +39,10 @@ export function useUpdateCoverage() {
   const queryClient = useQueryClient();
   return useMutation({
     // Backend POST is an upsert keyed by (subscriber, target): re-posting an
-    // already-covered colleague updates expires_at in place (and reactivates).
-    mutationFn: ({ targetUserId, expiresAt }: { targetUserId: string; expiresAt?: string }) =>
-      subscribeCoverage(targetUserId, expiresAt),
+    // already-covered colleague updates expires_at + redirect mode in place (and
+    // reactivates).
+    mutationFn: ({ targetUserId, expiresAt, redirectAssignments }: CoverageMutationVars) =>
+      subscribeCoverage(targetUserId, expiresAt, redirectAssignments),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: COVERAGE_KEY });
       toast.success('Coverage updated.');

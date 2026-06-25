@@ -76,6 +76,15 @@ class NotificationSubscription(Base):
         String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     is_active = Column(Boolean, default=True, nullable=False, server_default=text("true"))
+    # Per-coverage mode. True = auto-assign the target's future SLA tasks to the
+    # subscriber (redirect assignment/escalation); the subscriber must be the SOLE
+    # active coverer. False = notify-only (original behaviour): fan-out coverage
+    # notification copies, subscriber takes over manually; multiple notify-only
+    # coverers per target are allowed. server_default false → existing rows stay
+    # notify-only (backward-compatible).
+    redirect_assignments = Column(
+        Boolean, default=False, nullable=False, server_default=text("false")
+    )
     expires_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 

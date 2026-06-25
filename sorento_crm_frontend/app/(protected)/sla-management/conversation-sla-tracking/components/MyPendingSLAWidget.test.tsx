@@ -34,10 +34,19 @@ vi.mock('../services/conversationSLATrackingService', () => ({
 
 const push = vi.fn();
 const replace = vi.fn();
+// `searchParam` is the legacy single value: it maps to the ?takeover= param so the
+// existing banner tests keep working. `extraParams` lets a test set other keys
+// (e.g. team_task) independently.
 let searchParam: string | null = null;
+let extraParams: Record<string, string | null> = {};
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, replace }),
-  useSearchParams: () => ({ get: () => searchParam }),
+  useSearchParams: () => ({
+    get: (key: string) => {
+      if (key === 'takeover') return searchParam;
+      return extraParams[key] ?? null;
+    },
+  }),
 }));
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
@@ -49,6 +58,29 @@ function renderWidget() {
       <MyPendingSLAWidget />
     </QueryClientProvider>,
   );
+}
+
+// Each task row is itself a clickable `<div role="button">`, so its accessible name
+// includes ALL of its child text (the type, subline like "Mark CS resolved", and the
+// inline action labels). A bare getByRole('button', { name: /Escalate/i }) therefore
+// matches BOTH the row and the real action button. These helpers narrow to the actual
+// HTML <button> action element (the row is a <div>), keeping each assertion's intent.
+function actionButtons(name: RegExp): HTMLElement[] {
+  return screen
+    .queryAllByRole('button', { name })
+    .filter((el) => el.tagName === 'BUTTON');
+}
+function getActionButton(name: RegExp): HTMLElement {
+  const matches = actionButtons(name);
+  if (matches.length !== 1) {
+    throw new Error(
+      `expected exactly one action <button> matching ${name}, found ${matches.length}`,
+    );
+  }
+  return matches[0];
+}
+function hasActionButton(name: RegExp): boolean {
+  return actionButtons(name).length > 0;
 }
 
 const formItem: MyPendingSLAItem = {
@@ -127,6 +159,7 @@ describe('MyPendingSLAWidget clickable rows', () => {
     push.mockReset();
     replace.mockReset();
     searchParam = null;
+    extraParams = {};
     getTeamPendingSLA.mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, empty: true });
     getVisibleUsers.mockResolvedValue([]);
     getTakeoverState.mockResolvedValue({});
@@ -139,9 +172,9 @@ describe('MyPendingSLAWidget clickable rows', () => {
     await waitFor(() => expect(screen.getByText('Purchase request')).toBeInTheDocument());
     expect(screen.getByText(/Tier 1 · Send for approval/i)).toBeInTheDocument();
     // Resolve / Escalate are conversation-only; Reassign is offered on every row.
-    expect(screen.queryByRole('button', { name: /Resolve/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Escalate/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Reassign/i })).toBeInTheDocument();
+    expect(hasActionButton(/Resolve/i)).toBe(false);
+    expect(hasActionButton(/Escalate/i)).toBe(false);
+    expect(getActionButton(/Reassign/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Purchase request'));
     expect(push).toHaveBeenCalledWith('/procurement-management/purchase-requests/pr-uuid');
@@ -154,9 +187,9 @@ describe('MyPendingSLAWidget clickable rows', () => {
 
     await waitFor(() => expect(screen.getByText('Enquiry')).toBeInTheDocument());
     expect(screen.getByText(/Tier 2 · Reply/i)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Open in Respond/i })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Escalate/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Resolve/i })).toBeInTheDocument();
+    expect(hasActionButton(/Open in Respond/i)).toBe(false);
+    expect(getActionButton(/Escalate/i)).toBeInTheDocument();
+    expect(getActionButton(/Resolve/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Enquiry'));
     expect(openSpy).toHaveBeenCalledWith(
@@ -172,13 +205,14 @@ describe('MyPendingSLAWidget clickable rows', () => {
     escalateConversationSLATracking.mockResolvedValue(undefined);
     renderWidget();
 
-    await waitFor(() => expect(screen.getByRole('button', { name: /Escalate/i })).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: /Escalate/i }));
+    await waitFor(() => expect(getActionButton(/Escalate/i)).toBeInTheDocument());
+    fireEvent.click(getActionButton(/Escalate/i));
 
     await waitFor(() => expect(screen.getByText('Escalate to tier 3')).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText('Reason'), { target: { value: 'Customer angry' } });
-    // The dialog submit button is the second "Escalate" (the row button is the first).
-    const escalateButtons = screen.getAllByRole('button', { name: /^Escalate$/i });
+    // Once the dialog is open there are two real "Escalate" <button>s (row + dialog
+    // submit); the dialog submit is the last one.
+    const escalateButtons = actionButtons(/^Escalate$/i);
     fireEvent.click(escalateButtons[escalateButtons.length - 1]);
 
     await waitFor(() =>
@@ -192,9 +226,11 @@ describe('MyPendingSLAWidget clickable rows', () => {
     renderWidget();
 
     await waitFor(() => expect(screen.getByText('Ticket')).toBeInTheDocument());
-    // Form-SLA stage: no conversation Escalate/Resolve (handled at the form).
-    expect(screen.queryByRole('button', { name: /Escalate/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Resolve/i })).not.toBeInTheDocument();
+    // Form-SLA stage: no conversation Escalate/Resolve (handled at the form). Note the
+    // row subline reads "Mark CS resolved" — a substring match on the row's accessible
+    // name, not a real action <button>, so we filter to actual buttons.
+    expect(hasActionButton(/Escalate/i)).toBe(false);
+    expect(hasActionButton(/Resolve/i)).toBe(false);
     // It has a Respond contact but no FE record route → clicking opens Respond.
     fireEvent.click(screen.getByText('Ticket'));
     expect(openSpy).toHaveBeenCalledWith(
@@ -211,8 +247,8 @@ describe('MyPendingSLAWidget clickable rows', () => {
     resolveConversationSLATracking.mockResolvedValue(undefined);
     renderWidget();
 
-    await waitFor(() => expect(screen.getByRole('button', { name: /Resolve/i })).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: /Resolve/i }));
+    await waitFor(() => expect(getActionButton(/Resolve/i)).toBeInTheDocument());
+    fireEvent.click(getActionButton(/Resolve/i));
     await waitFor(() => expect(screen.getByText('Mark as resolved')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /^Confirm$/i }));
 
@@ -227,7 +263,7 @@ describe('MyPendingSLAWidget clickable rows', () => {
     );
   });
 
-  it('My Team toggle: shows assignee + Takeover/Reassign and a View all link', async () => {
+  it('My Team toggle: shows assignee + Takeover/Reassign', async () => {
     getMyPendingSLA.mockResolvedValue([]);
     getTeamPendingSLA.mockResolvedValue({
       data: [teamItem],
@@ -243,10 +279,8 @@ describe('MyPendingSLAWidget clickable rows', () => {
 
     await waitFor(() => expect(screen.getByText(/Charissa/)).toBeInTheDocument());
     expect(screen.getByText(/Marketing – Product/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Takeover/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Reassign/i })).toBeInTheDocument();
-    const viewAll = screen.getByRole('link', { name: /View all/i });
-    expect(viewAll).toHaveAttribute('href', '/sla-management/team-pending');
+    expect(getActionButton(/Takeover/i)).toBeInTheDocument();
+    expect(getActionButton(/Reassign/i)).toBeInTheDocument();
   });
 
   it('My Team mode empty state', async () => {
@@ -273,8 +307,8 @@ describe('MyPendingSLAWidget clickable rows', () => {
     renderWidget();
 
     fireEvent.click(screen.getByRole('button', { name: /My Team/i }));
-    await waitFor(() => expect(screen.getByRole('button', { name: /Takeover/i })).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: /Takeover/i }));
+    await waitFor(() => expect(getActionButton(/Takeover/i)).toBeInTheDocument());
+    fireEvent.click(getActionButton(/Takeover/i));
     // confirm dialog
     await waitFor(() => expect(screen.getByRole('button', { name: /^Take over$/i })).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: /^Take over$/i }));
@@ -366,15 +400,61 @@ describe('MyPendingSLAWidget clickable rows', () => {
     ]);
     renderWidget();
 
-    await waitFor(() => expect(screen.getByRole('button', { name: /Reassign/i })).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: /Reassign/i }));
+    await waitFor(() => expect(getActionButton(/Reassign/i)).toBeInTheDocument());
+    fireEvent.click(getActionButton(/Reassign/i));
 
     // Dialog opens with the scope-B picker; the visible-users endpoint is the source.
     await waitFor(() => expect(screen.getByText('Reassign task')).toBeInTheDocument());
     expect(screen.getByRole('combobox')).toBeInTheDocument();
     await waitFor(() => expect(getVisibleUsers).toHaveBeenCalled());
-    // Reassign confirm is disabled until a colleague is chosen.
-    const confirm = screen.getAllByRole('button', { name: /^Reassign$/i }).at(-1)!;
+    // Once the dialog is open there are two real "Reassign" <button>s (row + dialog
+    // confirm); the confirm is the last and is disabled until a colleague is chosen.
+    const confirm = actionButtons(/^Reassign$/i).at(-1)!;
     expect(confirm).toBeDisabled();
+  });
+
+  // ---- coverage deep link ?team_task= ------------------------------------
+
+  it('deep link ?team_task= switches to My Team and pins+highlights the target row first', async () => {
+    extraParams = { team_task: 't2' }; // target the SECOND team row
+    getMyPendingSLA.mockResolvedValue([]);
+    const other: TeamPendingItem = {
+      ...teamItem,
+      id: 't1',
+      reference: 'FIRST-REF',
+      assignee_name: 'Alice',
+    };
+    const target: TeamPendingItem = {
+      ...teamItem,
+      id: 't2',
+      reference: 'TARGET-REF',
+      assignee_name: 'Bob',
+    };
+    // Backend returns the target NOT first; the widget must pin it to row 0.
+    getTeamPendingSLA.mockResolvedValue({
+      data: [other, target],
+      total: 2,
+      page: 1,
+      limit: 50,
+      empty: false,
+    });
+    renderWidget();
+
+    // Switched to My Team automatically (no click) and rendered the rows.
+    await waitFor(() => expect(screen.getByText(/TARGET-REF/)).toBeInTheDocument());
+    expect(screen.getByText('My team tasks')).toBeInTheDocument();
+
+    // The pinned target sits in the FIRST <li> of the list.
+    const list = document.querySelector('ul.divide-y') as HTMLElement;
+    const rows = list.querySelectorAll('li');
+    expect(rows.length).toBe(2);
+    expect(rows[0].textContent).toContain('TARGET-REF');
+    expect(rows[1].textContent).toContain('FIRST-REF');
+
+    // The target row is highlighted (ring-2 ring-primary), the other is not.
+    const targetButton = rows[0].querySelector('[role="button"]') as HTMLElement;
+    const otherButton = rows[1].querySelector('[role="button"]') as HTMLElement;
+    expect(targetButton.className).toMatch(/ring-2 ring-primary/);
+    expect(otherButton.className).not.toMatch(/ring-2 ring-primary/);
   });
 });

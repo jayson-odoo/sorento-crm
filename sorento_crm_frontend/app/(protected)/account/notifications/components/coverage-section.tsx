@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { useVisibleUsers } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import {
@@ -37,17 +38,25 @@ import {
 } from '../hooks/useCoverage';
 import type { CoverageSub } from '../services/coverageService';
 
-function formatDate(iso: string | null): string {
+/** `expires_at` is a DATE (coverage end day), not a timezone-bearing instant. Take the
+ *  yyyy-mm-dd calendar prefix directly — never round-trip through `new Date(...)`, which
+ *  parses a naive backend timestamp as local then shifts it to UTC (−1 day in UTC+8). */
+function dateOnly(iso: string | null): string {
   if (!iso) return '';
-  return new Date(iso).toLocaleDateString();
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(iso);
+  return m ? m[1] : '';
 }
 
-/** ISO timestamp → yyyy-mm-dd for a native <input type="date">. */
+function formatDate(iso: string | null): string {
+  const d = dateOnly(iso);
+  if (!d) return '';
+  const [y, mo, day] = d.split('-');
+  return `${day}/${mo}/${y}`; // dd/mm/yyyy, tz-safe
+}
+
+/** ISO timestamp → yyyy-mm-dd for a native <input type="date"> (tz-safe). */
 function toDateInput(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  return d.toISOString().slice(0, 10);
+  return dateOnly(iso);
 }
 
 export function CoverageSection() {
@@ -60,9 +69,12 @@ export function CoverageSection() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [selectedId, setSelectedId] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
+  // Default ON: auto-assign is the primary ask. Off = notify-only.
+  const [redirect, setRedirect] = useState(true);
   const [removeTarget, setRemoveTarget] = useState<CoverageSub | null>(null);
   const [editId, setEditId] = useState('');
   const [editDate, setEditDate] = useState('');
+  const [editRedirect, setEditRedirect] = useState(true);
 
   // Don't offer colleagues I'm already covering.
   const covered = new Set(coverage.map((c) => c.target_user_id));
@@ -72,11 +84,16 @@ export function CoverageSection() {
   const handleAdd = () => {
     if (!selectedId) return;
     subscribe.mutate(
-      { targetUserId: selectedId, expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined },
+      {
+        targetUserId: selectedId,
+        expiresAt: expiresAt ? new Date(expiresAt).toISOString() : undefined,
+        redirectAssignments: redirect,
+      },
       {
         onSuccess: () => {
           setSelectedId('');
           setExpiresAt('');
+          setRedirect(true);
         },
       },
     );
@@ -92,6 +109,7 @@ export function CoverageSection() {
   const startEdit = (c: CoverageSub) => {
     setEditId(c.target_user_id);
     setEditDate(toDateInput(c.expires_at));
+    setEditRedirect(c.redirect_assignments);
   };
 
   const cancelEdit = () => {
@@ -104,6 +122,7 @@ export function CoverageSection() {
       {
         targetUserId: c.target_user_id,
         expiresAt: editDate ? new Date(editDate).toISOString() : undefined,
+        redirectAssignments: editRedirect,
       },
       { onSuccess: () => cancelEdit() },
     );
@@ -114,7 +133,8 @@ export function CoverageSection() {
       <CardHeader className="gap-1">
         <CardTitle>Coverage</CardTitle>
         <p className="text-sm text-muted-foreground">
-          Get notified about a colleague&apos;s SLA assignments while you cover for them.
+          Auto-assign: their SLA tasks (assignment &amp; escalation) are reassigned to you.
+          Notify only: you&apos;re notified and can take over manually.
         </p>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -172,6 +192,20 @@ export function CoverageSection() {
               className="w-full sm:w-44"
             />
           </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="coverage-redirect">Auto-assign their tasks to me</Label>
+            <div className="flex h-9 items-center gap-2">
+              <Switch
+                id="coverage-redirect"
+                checked={redirect}
+                onCheckedChange={setRedirect}
+                disabled={subscribe.isPending}
+              />
+              <span className="text-xs text-muted-foreground">
+                {redirect ? 'Auto-assign' : 'Notify only'}
+              </span>
+            </div>
+          </div>
           <Button onClick={handleAdd} disabled={!selectedId || subscribe.isPending}>
             {subscribe.isPending ? (
               <LoaderCircleIcon className="animate-spin me-2 size-4" />
@@ -196,7 +230,7 @@ export function CoverageSection() {
               You&apos;re not covering for anyone yet.
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Pick a colleague above to receive their SLA assignment and escalation alerts.
+              Pick a colleague above to hold their incoming SLA tasks while they&apos;re away.
             </p>
           </div>
         ) : (
@@ -210,11 +244,26 @@ export function CoverageSection() {
                     <p className="truncate text-sm font-medium" title={c.target_user_name ?? ''}>
                       {c.target_user_name}
                     </p>
-                    <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                    <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       {c.is_active ? (
                         <Badge variant="success" appearance="ghost">Active</Badge>
                       ) : (
                         <Badge variant="secondary" appearance="ghost">Inactive</Badge>
+                      )}
+                      {editing ? (
+                        <span className="flex items-center gap-1.5">
+                          <Switch
+                            checked={editRedirect}
+                            onCheckedChange={setEditRedirect}
+                            disabled={savingThis}
+                            aria-label={`Auto-assign tasks for ${c.target_user_name}`}
+                          />
+                          <span>{editRedirect ? 'Auto-assign' : 'Notify only'}</span>
+                        </span>
+                      ) : c.redirect_assignments ? (
+                        <Badge variant="primary" appearance="ghost">Auto-assign</Badge>
+                      ) : (
+                        <Badge variant="secondary" appearance="ghost">Notify only</Badge>
                       )}
                       {editing ? (
                         <span className="flex items-center gap-2">

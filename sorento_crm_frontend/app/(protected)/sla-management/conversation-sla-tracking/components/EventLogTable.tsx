@@ -61,6 +61,7 @@ export const EVENT_TYPE_OPTIONS = [
   { value: 'reassignment', label: 'Reassignment' },
   { value: 'response', label: 'Response' },
   { value: 'resolution', label: 'Resolution' },
+  { value: 'extend', label: 'Extend' },
 ];
 
 interface EventLogTableProps {

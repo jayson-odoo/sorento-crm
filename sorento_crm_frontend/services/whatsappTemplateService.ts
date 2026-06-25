@@ -63,6 +63,7 @@ export type UseCase =
   | 'sla_daily_summary'
   | 'sla_assignment'
   | 'sla_escalation'
+  | 'sla_deadline_extended'
   | 'sla_takeover_pending'
   | 'sla_task_moved'
   | 'sla_takeover_cancelled'
@@ -203,6 +204,12 @@ export const USE_CASES: { key: UseCase; label: string; description: string }[] =
     label: 'SLA Escalation',
     description:
       'Sent to a staff member when an SLA task escalates to them. Map params to "Contact name" and "Full update message" at minimum; add "Entity number" / "Status" when the template carries them.',
+  },
+  {
+    key: 'sla_deadline_extended',
+    label: 'SLA Deadline Extended',
+    description:
+      'Sent to the next escalation tier when an assignee extends a task’s resolution deadline. Map params to "Contact name" and "Reason" at minimum; add "Entity number" / "Resolve by" when the template carries them.',
   },
   {
     key: 'sla_takeover_pending',
