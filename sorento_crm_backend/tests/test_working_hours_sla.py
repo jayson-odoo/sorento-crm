@@ -110,9 +110,17 @@ def test_working_days_skip_holiday():
     assert (got.month, got.day) == (6, 15)
 
 
-def test_sub_24h_same_day():
-    got = _add_days(datetime(2026, 6, 8, 10, 0), 4)  # 4/24 ~ 0 days -> same time
-    assert (got.month, got.day, got.hour) == (6, 8, 10)
+def test_sub_24h_is_wall_clock():
+    # Sub-day SLAs (e.g. warehouse 0.5h / 1h) are wall-clock, not rounded to whole
+    # working days — the day model would lose the deadline (4/24 → 0 days). 4h → +4h.
+    got = _add_days(datetime(2026, 6, 8, 10, 0), 4)
+    assert (got.month, got.day, got.hour) == (6, 8, 14)
+
+
+def test_sub_hour_is_wall_clock():
+    # 0.5h must yield +30 minutes (the warehouse fast-SLA requirement, UAC-11).
+    got = _add_days(datetime(2026, 6, 8, 10, 0), 0.5)
+    assert (got.month, got.day, got.hour, got.minute) == (6, 8, 10, 30)
 
 
 def test_degenerate_calendar_falls_back_to_calendar_hours():

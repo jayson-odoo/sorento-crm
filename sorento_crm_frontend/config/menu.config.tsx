@@ -428,6 +428,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/sla-management/conversation-sla-tracking',
       },
       {
+        title: 'Form SLA Tracking',
+        path: '/sla-management/form-sla-tracking',
+      },
+      {
         title: 'My Team Tasks',
         path: '/sla-management/team-pending',
       },
@@ -1249,6 +1253,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Conversation SLA Tracking',
         path: '/sla-management/conversation-sla-tracking',
+      },
+      {
+        title: 'Form SLA Tracking',
+        path: '/sla-management/form-sla-tracking',
       },
       {
         title: 'My Team Tasks',

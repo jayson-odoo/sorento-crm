@@ -545,80 +545,6 @@ def _notify_conversation_sla_escalation(db, tracking, assignee: dict, reason: st
         log.warning("conversation SLA escalate notify failed for %s: %s", getattr(tracking, "id", "?"), e)
 
 
-@router.post("/{tracking_id}/escalate")
-async def escalate_conversation_sla_tracking(
-    tracking_id: str,
-    payload: _ConversationEscalateRequest,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """Manually escalate a CONVERSATION SLA tracker to the next tier (with reason).
-
-    UI counterpart of POST /integration/escalate: keyed by tracking_id, target tier
-    is always current+1, capped at tier 3. Form-SLA rows must use the form-SLA
-    escalate endpoint. The reason is stored as ``manual: <reason>`` and the
-    escalation event log records the new-tier assignee.
-    """
-    from app.services.form_sla_service import FORM_SLA_TYPES
-
-    reason = (payload.reason or "").strip()
-    if not reason:
-        raise HTTPException(status_code=422, detail="A reason is required to escalate.")
-
-    service = ConversationSLATrackingService(db)
-    tracking = service.get_tracking(tracking_id, load_event_logs=False)
-    if not tracking:
-        raise handle_not_found("Conversation SLA tracking", tracking_id)
-    if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
-        raise handle_validation_error(
-            "This is a form-SLA stage; escalate it from the form record instead."
-        )
-    if bool(getattr(tracking, "is_resolved", False)):
-        raise handle_validation_error("Cannot escalate a resolved conversation SLA tracking.")
-
-    from_tier = int(getattr(tracking, "current_tier", 0) or 0)
-    if from_tier < 1:
-        raise handle_validation_error("Current SLA tier is invalid for escalation.")
-    if from_tier >= 3:
-        raise handle_validation_error(
-            "Already at the maximum tier (3); cannot escalate further."
-        )
-    contact_id = getattr(tracking, "respond_contact_id", None)
-    if not contact_id:
-        raise handle_validation_error(
-            "This SLA tracking has no linked contact and cannot be escalated."
-        )
-
-    target_tier = from_tier + 1
-    # Resolve the new-tier assignee BEFORE escalating so the event log records the
-    # correct assignee (mirrors POST /integration/escalate). Raises 422 with a clear
-    # message when the agent / tier team / membership is not configured.
-    assignee = service.get_escalation_assignee_for_tier(
-        getattr(tracking, "source_entity_type", None),
-        target_tier,
-        getattr(tracking, "team_set_code", None) or None,
-        agent_id_override=getattr(tracking, "agent_id", None) or None,
-    )
-    tracking = service.escalate_tracking(
-        respond_contact_id=str(contact_id),
-        policy_id=str(getattr(tracking, "policy_id")),
-        current_tier=target_tier,
-        escalation_reason=f"manual: {reason}",
-        assigned_to_id=str(assignee["id"]),
-        assigned_to_respond_user_id=(
-            str(assignee["respond_user_id"])
-            if assignee.get("respond_user_id") is not None
-            else None
-        ),
-    )
-    # Notify the new assignee — same channels + per-event toggles as form-SLA
-    # escalation, so ALL escalations behave the same. Best-effort: the escalation
-    # already committed. NOT placed in escalate_tracking, since n8n's integration
-    # escalate posts its own notification (avoids double-notify).
-    _notify_conversation_sla_escalation(db, tracking, assignee, reason)
-    return build_conversation_sla_tracking_response(db, tracking)
-
-
 @router.get("/", response_model=ListResponse[ConversationSLATrackingResponse])
 async def get_sla_tracking(
     page: int = Query(1, ge=1),
@@ -939,6 +865,83 @@ async def escalate_sla_tracking_integration(
         except Exception:
             pass
         raise handle_internal_error(str(e))
+
+
+# Declared AFTER the static /integration/* routes so "integration" is not captured
+# as {tracking_id} (which would force JWT auth and 401 n8n's API-key call). See
+# the route-shadowing lesson in CLAUDE.md (static before parametric).
+@router.post("/{tracking_id}/escalate")
+async def escalate_conversation_sla_tracking(
+    tracking_id: str,
+    payload: _ConversationEscalateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Manually escalate a CONVERSATION SLA tracker to the next tier (with reason).
+
+    UI counterpart of POST /integration/escalate: keyed by tracking_id, target tier
+    is always current+1, capped at tier 3. Form-SLA rows must use the form-SLA
+    escalate endpoint. The reason is stored as ``manual: <reason>`` and the
+    escalation event log records the new-tier assignee.
+    """
+    from app.services.form_sla_service import FORM_SLA_TYPES
+
+    reason = (payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=422, detail="A reason is required to escalate.")
+
+    service = ConversationSLATrackingService(db)
+    tracking = service.get_tracking(tracking_id, load_event_logs=False)
+    if not tracking:
+        raise handle_not_found("Conversation SLA tracking", tracking_id)
+    if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
+        raise handle_validation_error(
+            "This is a form-SLA stage; escalate it from the form record instead."
+        )
+    if bool(getattr(tracking, "is_resolved", False)):
+        raise handle_validation_error("Cannot escalate a resolved conversation SLA tracking.")
+
+    from_tier = int(getattr(tracking, "current_tier", 0) or 0)
+    if from_tier < 1:
+        raise handle_validation_error("Current SLA tier is invalid for escalation.")
+    if from_tier >= 3:
+        raise handle_validation_error(
+            "Already at the maximum tier (3); cannot escalate further."
+        )
+    contact_id = getattr(tracking, "respond_contact_id", None)
+    if not contact_id:
+        raise handle_validation_error(
+            "This SLA tracking has no linked contact and cannot be escalated."
+        )
+
+    target_tier = from_tier + 1
+    # Resolve the new-tier assignee BEFORE escalating so the event log records the
+    # correct assignee (mirrors POST /integration/escalate). Raises 422 with a clear
+    # message when the agent / tier team / membership is not configured.
+    assignee = service.get_escalation_assignee_for_tier(
+        getattr(tracking, "source_entity_type", None),
+        target_tier,
+        getattr(tracking, "team_set_code", None) or None,
+        agent_id_override=getattr(tracking, "agent_id", None) or None,
+    )
+    tracking = service.escalate_tracking(
+        respond_contact_id=str(contact_id),
+        policy_id=str(getattr(tracking, "policy_id")),
+        current_tier=target_tier,
+        escalation_reason=f"manual: {reason}",
+        assigned_to_id=str(assignee["id"]),
+        assigned_to_respond_user_id=(
+            str(assignee["respond_user_id"])
+            if assignee.get("respond_user_id") is not None
+            else None
+        ),
+    )
+    # Notify the new assignee — same channels + per-event toggles as form-SLA
+    # escalation, so ALL escalations behave the same. Best-effort: the escalation
+    # already committed. NOT placed in escalate_tracking, since n8n's integration
+    # escalate posts its own notification (avoids double-notify).
+    _notify_conversation_sla_escalation(db, tracking, assignee, reason)
+    return build_conversation_sla_tracking_response(db, tracking)
 
 
 @router.post("/integration", status_code=status.HTTP_200_OK)

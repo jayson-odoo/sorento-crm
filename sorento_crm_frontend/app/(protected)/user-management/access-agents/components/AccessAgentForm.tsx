@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { LoaderCircleIcon, Plus, Save, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -30,6 +31,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent, useAccessAgents, useAgentTeams, useTeams, useAgentMcpToolBindings, useSetAgentMcpToolBindings } from '../hooks/useAccessAgents';
 import { setAgentTeams, type McpToolBindingInput } from '../services/accessAgentService';
+import { getSLAPolicies } from '@/app/(protected)/sla-management/sla-policies/services/slaPolicyService';
 import { McpToolBindingsEditor } from './McpToolBindingsEditor';
 import { AccessAgentSchema, type AccessAgentSchemaType } from '../forms/access-agent-schema';
 import type { AccessAgentFormData } from '../types/accessAgent.types';
@@ -41,7 +43,9 @@ interface AccessAgentFormProps {
 }
 
 type AssignmentRow = { id: string; tier: number | null; team_id: string };
-type AssignmentGroup = { id: string; code: string; rows: AssignmentRow[] };
+type AssignmentGroup = { id: string; code: string; policy_id: string | null; rows: AssignmentRow[] };
+
+const NO_POLICY = '__none__';
 
 export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgentFormProps) {
   const router = useRouter();
@@ -65,6 +69,21 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
   const { data: agentTeamsData } = useAgentTeams(isEditMode ? accessAgentId ?? null : null);
   const { data: teamsList = [] } = useTeams();
   const [assignmentGroups, setAssignmentGroups] = useState<AssignmentGroup[]>([]);
+
+  // SLA policies for the per-group policy picker. One policy per team-set group; on save
+  // it is stamped onto every tier row of that group (backend casts it to all rows).
+  const { data: slaPoliciesData } = useQuery({
+    queryKey: ['sla-policies', 'access-agent-picker'],
+    queryFn: () =>
+      getSLAPolicies({
+        pageIndex: 0,
+        pageSize: 100,
+        sorting: [{ id: 'name', desc: false }],
+        searchQuery: '',
+      }),
+    enabled: isEditMode,
+  });
+  const slaPolicies = slaPoliciesData?.data ?? [];
 
   const { data: agentMcpBindingsData } = useAgentMcpToolBindings(isEditMode ? accessAgentId ?? null : null);
   const setAgentMcpToolBindingsMutation = useSetAgentMcpToolBindings();
@@ -93,9 +112,19 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
     for (const assignment of fromServer) {
       const code = String(assignment.code ?? '').trim();
       if (!grouped.has(code)) {
-        grouped.set(code, { id: crypto.randomUUID(), code, rows: [] });
+        grouped.set(code, {
+          id: crypto.randomUUID(),
+          code,
+          // Rows of a group share one policy_id; read the first non-null seen.
+          policy_id: assignment.policy_id ? String(assignment.policy_id) : null,
+          rows: [],
+        });
       }
-      grouped.get(code)?.rows.push({
+      const grp = grouped.get(code);
+      if (grp && !grp.policy_id && assignment.policy_id) {
+        grp.policy_id = String(assignment.policy_id);
+      }
+      grp?.rows.push({
         id: crypto.randomUUID(),
         tier:
           assignment.tier != null && Number(assignment.tier) >= 1 && Number(assignment.tier) <= 3
@@ -165,6 +194,8 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
               code: String(group.code).trim(),
               team_id: String(row.team_id),
               tier: row.tier != null && row.tier >= 1 && row.tier <= 3 ? row.tier : undefined,
+              // Stamp the group's policy onto every row; backend casts one policy per code.
+              policy_id: group.policy_id || undefined,
             })),
           )
           .filter((a) => a.code && a.team_id);
@@ -336,7 +367,7 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
                 <div className="space-y-4">
                   {assignmentGroups.map((group, groupIdx) => (
                     <div key={group.id} className="space-y-3 rounded-md border p-3">
-                      <div className="flex items-end gap-3">
+                      <div className="flex flex-wrap items-end gap-3">
                         <div className="flex-1 min-w-[140px]">
                           <label className="text-xs text-muted-foreground mb-1 block">Code</label>
                           <Input
@@ -350,6 +381,33 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
                             }}
                             className="font-mono text-sm"
                           />
+                        </div>
+                        <div className="flex-1 min-w-[200px]">
+                          <label className="text-xs text-muted-foreground mb-1 block">SLA policy</label>
+                          <Select
+                            value={group.policy_id ?? NO_POLICY}
+                            disabled={isLoading}
+                            onValueChange={(v) => {
+                              const next = [...assignmentGroups];
+                              next[groupIdx] = {
+                                ...next[groupIdx],
+                                policy_id: v === NO_POLICY ? null : v,
+                              };
+                              setAssignmentGroups(next);
+                            }}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select SLA policy" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value={NO_POLICY}>— No policy —</SelectItem>
+                              {slaPolicies.map((policy) => (
+                                <SelectItem key={policy.id} value={policy.id}>
+                                  {policy.name} ({policy.code})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
                         <Button
                           type="button"
@@ -466,6 +524,7 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
                         {
                           id: crypto.randomUUID(),
                           code: '',
+                          policy_id: null,
                           rows: [{ id: crypto.randomUUID(), tier: null, team_id: teamsList[0]?.id ?? '' }],
                         },
                       ]);

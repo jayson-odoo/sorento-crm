@@ -39,6 +39,13 @@ interface SLAPolicyTiersTableProps {
   policyId: string;
 }
 
+/** Hours come from the backend as a Decimal string ("0.50"); show trimmed (0.5, 24). */
+function formatHours(v: number | string | null | undefined): string {
+  if (v === null || v === undefined || v === '') return '—';
+  const n = Number(v);
+  return Number.isFinite(n) ? String(n) : String(v);
+}
+
 /** Group users by tier for display in the tiers table */
 function useUsersByTier(tierLevels: number[]) {
   const tierParam = tierLevels.length ? tierLevels.join(',') : '';
@@ -161,12 +168,14 @@ export default function SLAPolicyTiersTable({ policyId }: SLAPolicyTiersTablePro
       {
         accessorKey: 'response_hours',
         header: ({ column }) => <DataGridColumnHeader title="Response Hours" column={column} />,
+        cell: ({ row }) => formatHours(row.original.response_hours),
         size: 150,
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'resolution_hours',
         header: ({ column }) => <DataGridColumnHeader title="Resolution Hours" column={column} />,
+        cell: ({ row }) => formatHours(row.original.resolution_hours),
         size: 150,
         meta: { skeleton: <Skeleton className="h-4 w-20" /> },
       },

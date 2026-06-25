@@ -103,8 +103,7 @@ async def delete_sla_policy(
     """Delete an SLA policy."""
     try:
         service = SLAPolicyService(db)
-        # Implement delete logic
-        return {"message": "SLA policy deleted successfully"}
+        return service.delete_policy(policy_id)
     except HTTPException:
         raise
     except Exception as e:

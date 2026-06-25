@@ -26,11 +26,12 @@ export const SLAPolicyTierSchema = z.object({
     .string()
     .min(1, { message: 'Tier name is required.' })
     .max(255, { message: 'Tier name must not exceed 255 characters.' }),
+  // Decimals allowed so sub-hour SLAs are expressible (0.5 = 30 minutes).
   response_hours: z
-    .union([z.number().int().min(1), z.undefined()])
+    .union([z.number().positive({ message: 'Must be greater than 0.' }), z.undefined()])
     .transform((x) => (x === undefined ? 1 : x)),
   resolution_hours: z
-    .union([z.number().int().min(1), z.undefined()])
+    .union([z.number().positive({ message: 'Must be greater than 0.' }), z.undefined()])
     .transform((x) => (x === undefined ? 1 : x)),
 });
 

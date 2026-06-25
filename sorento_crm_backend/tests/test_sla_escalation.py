@@ -137,11 +137,17 @@ def test_create_tracking_agent_code_with_explicit_assignee_skips_round_robin():
     mock_db.query.side_effect = query_side_effect
 
     service = ConversationSLATrackingService(mock_db)
+    # The backend now resolves the policy from (agent, team_set); with no binding
+    # it falls back to the n8n-supplied policy_id (D8). Stub the resolver to None so
+    # it doesn't consume the mocked query sequence — the fallback uses payload policy.
     with patch.object(
         service,
         "get_escalation_assignee_for_tier",
         side_effect=AssertionError("round-robin should not run when assignee is explicit"),
-    ), patch.object(service, "_write_assign_event_log"):
+    ), patch.object(service, "_write_assign_event_log"), patch(
+        "app.services.user_service.AccessAgentService.resolve_policy_id_for",
+        return_value=None,
+    ):
         payload = ConversationSLATrackingCreate(
             contact_phone_number="+60166753328",
             policy_id="policy-1",

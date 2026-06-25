@@ -20,7 +20,14 @@ class SLAPolicy(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     
-    tiers = relationship("SLAPolicyTier", back_populates="policy")
+    # passive_deletes=True: rely on the DB-level ON DELETE CASCADE (sla_policy_tiers.policy_id)
+    # instead of the ORM nulling child FKs before delete (which violates NOT NULL).
+    tiers = relationship(
+        "SLAPolicyTier",
+        back_populates="policy",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
     tracking = relationship("ConversationSLATracking", back_populates="policy")
     
     __table_args__ = (
@@ -36,8 +43,9 @@ class SLAPolicyTier(Base):
     policy_id = Column(UUID(as_uuid=False), ForeignKey("sla_policies.id", ondelete="CASCADE"), nullable=False)
     tier_level = Column(Integer, nullable=False)
     tier_name = Column(Text, nullable=False)
-    response_hours = Column(Integer, nullable=False)
-    resolution_hours = Column(Integer, nullable=False, server_default="24")
+    # Numeric so sub-hour SLAs are expressible (e.g. 0.5 = 30 minutes).
+    response_hours = Column(Numeric(6, 2), nullable=False)
+    resolution_hours = Column(Numeric(6, 2), nullable=False, server_default="24")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     

@@ -359,8 +359,13 @@ def test_apply_missing_policy_tier_keeps_clocks_but_fixes_routing():
     mock_db = MagicMock()
     original_due = datetime(2026, 6, 1, tzinfo=timezone.utc)
     tracking = _tracking_mock(due_at=original_due, current_tier_started_at="sentinel")
+    # _resolve_tier_with_clamp issues up to three SLAPolicyTier queries before
+    # giving up (exact -> clamp-down -> clamp-to-lowest). All None = policy has zero
+    # tiers (misconfigured) -> tier_row None -> clocks preserved, routing still fixed.
     mock_db.query.side_effect = [
-        _chain(first_result=None),  # SLAPolicyTier missing
+        _chain(first_result=None),  # SLAPolicyTier exact-level miss
+        _chain(first_result=None),  # clamp-down (<= requested) miss
+        _chain(first_result=None),  # clamp-to-lowest miss
         _chain(first_result=MagicMock()),  # cursor
     ]
     service = ConversationSLATrackingService(mock_db)

@@ -327,6 +327,10 @@ class AgentTeam(Base):
     code = Column(Text, nullable=False)  # Team set code (e.g. marketing_product, retail_director)
     team_id = Column(UUID(as_uuid=False), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
     tier = Column(Integer, nullable=True)  # Explicit tier: 1/2/3 within a team set
+    # Conversation SLA policy bound to this team set. One policy per (agent, code),
+    # cast to every tier row of the set by set_agent_teams. RESTRICT so a policy in
+    # use can't be deleted (mirrors the SLA-policy delete guard).
+    policy_id = Column(UUID(as_uuid=False), ForeignKey("sla_policies.id", ondelete="RESTRICT"), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     agent = relationship("AccessAgent", back_populates="agent_teams")

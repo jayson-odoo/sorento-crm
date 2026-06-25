@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_, func, update
 from typing import Optional
 from datetime import datetime, timezone, timedelta
-from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog
+from app.models.sla import SLAPolicy, SLAPolicyTier, ConversationSLATracking, ConversationSLAEventLog, FormSLAConfig
 from app.models.access import RespondContact
 from app.schemas.sla import (
     SLAPolicyCreate, SLAPolicyUpdate, SLAPolicyTierCreate, SLAPolicyTierUpdate,
@@ -171,7 +171,7 @@ class SLAPolicyService:
             result.append(policy_dict)
         
         return {
-            "data": policies,
+            "data": result,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0
         }
@@ -197,7 +197,9 @@ class SLAPolicyService:
         # Create tiers if provided
         if policy_data.tiers:
             for tier_data in policy_data.tiers:
-                tier = SLAPolicyTier(**tier_data.model_dump(), policy_id=policy.id)
+                # exclude policy_id: it's optional in the payload and we force it to
+                # the new policy's id (avoids a duplicate-kwarg TypeError).
+                tier = SLAPolicyTier(**tier_data.model_dump(exclude={"policy_id"}), policy_id=policy.id)
                 self.db.add(tier)
         
         self.db.commit()
@@ -215,6 +217,37 @@ class SLAPolicyService:
         self.db.commit()
         self.db.refresh(policy)
         return policy
+
+    def delete_policy(self, policy_id: str):
+        """Hard-delete an SLA policy. Tiers cascade at DB level; refuse when
+        the policy is still referenced by conversation tracking, form-SLA configs,
+        or team-set bindings (those FKs are RESTRICT / NO ACTION and would raise at commit)."""
+        from app.models.access import AgentTeam
+
+        policy = self.get_policy(policy_id)
+
+        tracking_count = self.db.query(func.count(ConversationSLATracking.id)).filter(
+            ConversationSLATracking.policy_id == policy_id
+        ).scalar() or 0
+        config_count = self.db.query(func.count(FormSLAConfig.id)).filter(
+            FormSLAConfig.policy_id == policy_id
+        ).scalar() or 0
+        # Distinct team sets (agent, code) bound to this policy — every tier row of a
+        # set shares the policy, so count distinct (agent_id, code) for a clean message.
+        binding_count = self.db.query(
+            func.count(func.distinct(func.concat(AgentTeam.agent_id, ':', AgentTeam.code)))
+        ).filter(AgentTeam.policy_id == policy_id).scalar() or 0
+        if tracking_count or config_count or binding_count:
+            raise handle_conflict(
+                "Cannot delete SLA policy: it is still referenced by "
+                f"{tracking_count} conversation tracking record(s), "
+                f"{config_count} form SLA config(s), and "
+                f"{binding_count} team-set binding(s)."
+            )
+
+        self.db.delete(policy)
+        self.db.commit()
+        return {"message": "SLA policy deleted successfully"}
 
 
 class SLAPolicyTierService:
@@ -353,7 +386,8 @@ def compute_tracking_timings(tracking, tier) -> dict:
     responded_at = _to_aware_utc(tracking.responded_at)
     resolved_at = _to_aware_utc(tracking.resolved_at)
     due_at_resolution = _to_aware_utc(getattr(tracking, "due_at_resolution", None))
-    resolution_hours = getattr(tier, "resolution_hours", None) or 24
+    # float() — resolution_hours is a Decimal column; timedelta rejects Decimal.
+    resolution_hours = float(getattr(tier, "resolution_hours", None) or 24)
     resolution_due_at = due_at_resolution if due_at_resolution is not None else (
         (current_tier_started_at + timedelta(hours=resolution_hours)) if current_tier_started_at else None
     )
@@ -454,6 +488,59 @@ class ConversationSLATrackingService:
     def __init__(self, db: Session):
         self.db = db
 
+    def _resolve_tier_with_clamp(
+        self, policy_id: str, tier_level: int
+    ) -> Optional[SLAPolicyTier]:
+        """Resolve the SLAPolicyTier for ``(policy_id, tier_level)`` with clamping (D7).
+
+        - exact match wins
+        - else the highest defined tier with ``tier_level <= requested`` (clamp up to ceiling)
+        - else the lowest defined tier (requested below all defined tiers)
+        - None only when the policy has zero tiers
+
+        Logs a warning whenever the returned tier differs from the requested level so the
+        operator sees that escalation overran the policy's defined tiers.
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        exact = (
+            self.db.query(SLAPolicyTier)
+            .filter(
+                SLAPolicyTier.policy_id == policy_id,
+                SLAPolicyTier.tier_level == tier_level,
+            )
+            .first()
+        )
+        if exact:
+            return exact
+
+        clamped = (
+            self.db.query(SLAPolicyTier)
+            .filter(
+                SLAPolicyTier.policy_id == policy_id,
+                SLAPolicyTier.tier_level <= tier_level,
+            )
+            .order_by(SLAPolicyTier.tier_level.desc())
+            .first()
+        )
+        if not clamped:
+            clamped = (
+                self.db.query(SLAPolicyTier)
+                .filter(SLAPolicyTier.policy_id == policy_id)
+                .order_by(SLAPolicyTier.tier_level.asc())
+                .first()
+            )
+        if clamped is not None:
+            logger.warning(
+                "conversation SLA: tier %s not defined for policy %s; clamping to tier %s hours",
+                tier_level,
+                policy_id,
+                getattr(clamped, "tier_level", None),
+            )
+        return clamped
+
     def _resolve_tracking_assignee_user_id(self, tracking: ConversationSLATracking) -> Optional[str]:
         """Current assignee as users.id before clearing assignment (FK first, then legacy assigned_to text)."""
         assigned_to_id = getattr(tracking, "assigned_to_id", None)
@@ -484,8 +571,15 @@ class ConversationSLATrackingService:
         sort_dir: str = "desc",
         assigned_to: Optional[str] = None,
         tracking_ids: Optional[list[str]] = None,
+        scope: str = "conversation",
     ):
-        """List SLA tracking records. query filters by contact phone or contact name."""
+        """List SLA tracking records. query filters by contact phone or contact name.
+
+        scope="conversation" (default) lists contact-keyed conversation SLA rows;
+        scope="form" lists per-entity form SLA stage rows (source_entity_type in
+        FORM_SLA_TYPES). Both live in the same table — see conversation_tracking_scope.
+        """
+        from app.services.form_sla_service import FORM_SLA_TYPES
         from sqlalchemy.orm import joinedload
         from sqlalchemy import asc, desc
         from app.models.sla import ConversationSLAEventLog
@@ -503,8 +597,11 @@ class ConversationSLATrackingService:
         # Conversation SLA list excludes form trackers (stock_inquiry / purchase_request /
         # sponsorship_form / complaint). Those have their own per-form SLA Tracking tab and
         # detail flow; surfacing them in this list inflates contact-keyed rows and breaks
-        # back-navigation to the originating form.
-        q = q.filter(conversation_tracking_scope())
+        # back-navigation to the originating form. The form scope is the inverse.
+        if scope == "form":
+            q = q.filter(ConversationSLATracking.source_entity_type.in_(FORM_SLA_TYPES))
+        else:
+            q = q.filter(conversation_tracking_scope())
 
         if policy_id:
             q = q.filter(ConversationSLATracking.policy_id == policy_id)
@@ -512,7 +609,10 @@ class ConversationSLATrackingService:
         if tracking_ids is not None:
             q = q.filter(ConversationSLATracking.id.in_(tracking_ids))
 
-        if query and query.strip():
+        # Conversation search filters by contact phone/name (form rows have no
+        # contact); the form search is applied in-memory against resolved entity
+        # references / next-actions below.
+        if scope != "form" and query and query.strip():
             term = f"%{query.strip()}%"
             q = q.join(RespondContact, ConversationSLATracking.respond_contact_id == RespondContact.id).filter(
                 or_(
@@ -539,10 +639,32 @@ class ConversationSLATrackingService:
         else:
             q = q.order_by(ConversationSLATracking.created_at.desc())
 
-        total = q.count()
-        offset = (page - 1) * limit
-        tracking = q.offset(offset).limit(limit).all()
-        
+        ref_map: dict = {}
+        action_map: dict = {}
+        if scope == "form":
+            # Form rows carry an entity reference + stage next-action resolved here so
+            # the list mirrors the conversation list (no UUIDs). Volume is modest, so
+            # search/paginate in Python after resolution.
+            all_rows = q.all()
+            ref_map = self._resolve_my_pending_references(all_rows)
+            action_map = self._form_next_actions(all_rows)
+            if query and query.strip():
+                ql = query.strip().lower()
+                def _match(r):
+                    ref = (ref_map.get(str(r.id)) or "")
+                    act = (action_map.get(str(r.id)) or "")
+                    pol = (r.policy.name if r.policy else "") or ""
+                    et = (getattr(r, "source_entity_type", None) or "")
+                    return any(ql in str(v).lower() for v in (ref, act, pol, et))
+                all_rows = [r for r in all_rows if _match(r)]
+            total = len(all_rows)
+            offset = (page - 1) * limit
+            tracking = all_rows[offset:offset + limit]
+        else:
+            total = q.count()
+            offset = (page - 1) * limit
+            tracking = q.offset(offset).limit(limit).all()
+
         # Convert to dict for proper validation with relationships
         result_data = []
         for track in tracking:
@@ -632,6 +754,10 @@ class ConversationSLATrackingService:
                 "assigned_user_email": assigned_user_email,
                 "responded_by_user_name": responded_by_user_name,
                 "resolved_by_user_name": resolved_by_user_name,
+                "source_entity_type": getattr(track, "source_entity_type", None),
+                "source_entity_id": str(track.source_entity_id) if getattr(track, "source_entity_id", None) else None,
+                "reference": ref_map.get(str(track.id)),
+                "next_action": action_map.get(str(track.id)),
                 "event_logs": []  # Initialize as empty
             }
             # Compute time-in-tier and time-remaining (response stops when is_responded, resolution when is_resolved)
@@ -1842,10 +1968,7 @@ class ConversationSLATrackingService:
                 "Cannot escalate a resolved conversation SLA tracking."
             )
 
-        tier = self.db.query(SLAPolicyTier).filter(
-            SLAPolicyTier.policy_id == tracking.policy_id,
-            SLAPolicyTier.tier_level == current_tier,
-        ).first()
+        tier = self._resolve_tier_with_clamp(tracking.policy_id, current_tier)
         if not tier:
             raise handle_validation_error(
                 f"SLA policy tier {current_tier} not found for policy {tracking.policy_id}."
@@ -2350,10 +2473,8 @@ class ConversationSLATrackingService:
 
         # Restart the tier clock from the matched tier's policy hours. If the tier row is
         # missing (misconfigured policy), keep existing clocks — routing fix still applies.
-        tier_row = self.db.query(SLAPolicyTier).filter(
-            SLAPolicyTier.policy_id == tracking.policy_id,
-            SLAPolicyTier.tier_level == derived["tier"],
-        ).first()
+        # Clamp past the policy's top defined tier rather than fabricate 24h (D7).
+        tier_row = self._resolve_tier_with_clamp(tracking.policy_id, derived["tier"])
         if tier_row is not None:
             response_hours = float(getattr(tier_row, "response_hours", None) or 24.0)
             resolution_hours = float(getattr(tier_row, "resolution_hours", None) or 24.0)
@@ -2425,8 +2546,16 @@ class ConversationSLATrackingService:
         from datetime import timedelta, datetime, timezone
         from app.models.sla import SLAPolicy, SLAPolicyTier
         
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         tracking_dict = tracking_data.model_dump()
         contact_phone_number = tracking_dict.pop("contact_phone_number", None)
+
+        # Conversation SLA always starts at tier 1 — any n8n-supplied current_tier is
+        # ignored (D2). Forced BEFORE the assignee/tier logic that reads current_tier.
+        tracking_dict["current_tier"] = 1
 
         # contact_phone_number is required and validated in schema
         if not contact_phone_number:
@@ -2466,6 +2595,35 @@ class ConversationSLATrackingService:
                     "Create the Access Agent first."
                 )
             tracking_dict["agent_id"] = str(_agent.id)
+
+            # Resolve the SLA policy server-side from (agent, team_set) binding (D4).
+            # The CRM owns the policy; any n8n-supplied policy_id is only a transition
+            # fallback (D8) until every team set is bound, then unbound = 422.
+            from app.services.user_service import AccessAgentService as _AccessAgentService
+
+            team_set_code = tracking_dict.get("team_set_code")
+            # resolve_policy_id_for raises 409 when the team set has inconsistent policies.
+            resolved_policy_id = _AccessAgentService(self.db).resolve_policy_id_for(
+                str(_agent.id), str(team_set_code or "")
+            )
+            if resolved_policy_id:
+                tracking_dict["policy_id"] = resolved_policy_id
+            else:
+                fallback_policy_id = tracking_dict.get("policy_id")
+                if fallback_policy_id:
+                    logger.warning(
+                        "conversation SLA: no policy bound for agent=%s team_set=%s; "
+                        "falling back to n8n-supplied policy_id %s",
+                        raw_agent_code,
+                        team_set_code,
+                        fallback_policy_id,
+                    )
+                else:
+                    raise handle_validation_error(
+                        f"No SLA policy bound for agent '{raw_agent_code}' / "
+                        f"team set '{team_set_code}'."
+                    )
+
             if has_explicit_assignee:
                 if aid_raw is not None and str(aid_raw).strip():
                     user = self.db.query(_User).filter(_User.id == str(aid_raw).strip()).first()
@@ -2554,10 +2712,10 @@ class ConversationSLATrackingService:
         if not policy:
             raise handle_not_found("SLA Policy", tracking_dict["policy_id"])
         
-        tier = self.db.query(SLAPolicyTier).filter(
-            SLAPolicyTier.policy_id == tracking_dict["policy_id"],
-            SLAPolicyTier.tier_level == tracking_dict["current_tier"]
-        ).first()
+        # Clamp to the policy's defined tiers (D7); only error when the policy has none.
+        tier = self._resolve_tier_with_clamp(
+            tracking_dict["policy_id"], tracking_dict["current_tier"]
+        )
         if not tier:
             raise handle_validation_error(
                 f"SLA policy tier {tracking_dict['current_tier']} not found for policy {tracking_dict['policy_id']}"
@@ -2996,10 +3154,7 @@ class ConversationSLATrackingService:
                 raise handle_validation_error("current_tier_started_at must be a valid datetime.")
             setattr(tracking, "current_tier_started_at", started)
 
-            tier = self.db.query(SLAPolicyTier).filter(
-                SLAPolicyTier.policy_id == tracking.policy_id,
-                SLAPolicyTier.tier_level == tracking.current_tier,
-            ).first()
+            tier = self._resolve_tier_with_clamp(tracking.policy_id, tracking.current_tier)
             if not tier:
                 raise handle_validation_error(
                     f"No tier {tracking.current_tier} for this policy."

@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { LoaderCircleIcon, Plus, Save, Trash2 } from 'lucide-react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, useQuery } from '@tanstack/react-query';
+import { getSLAPolicies } from '@/app/(protected)/sla-management/sla-policies/services/slaPolicyService';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -55,7 +56,10 @@ interface AccessAgentFormModalProps {
 }
 
 type AssignmentRow = { id: string; tier: number | null; team_id: string };
-type AssignmentGroup = { id: string; code: string; rows: AssignmentRow[] };
+type AssignmentGroup = { id: string; code: string; policy_id: string | null; rows: AssignmentRow[] };
+
+// Sentinel for the "no policy bound" Select option (empty string isn't a valid Radix value).
+const NO_POLICY = '__no_policy__';
 
 export default function AccessAgentFormModal({
   open,
@@ -71,6 +75,17 @@ export default function AccessAgentFormModal({
   const { data: agentTeamsData } = useAgentTeams(isEditMode ? accessAgentId ?? null : null);
   const { data: teamsList = [] } = useTeams();
   const [assignmentGroups, setAssignmentGroups] = useState<AssignmentGroup[]>([]);
+
+  // Reusable SLA-policy list for the per-group conversation policy picker (one policy
+  // per team-set group; cast to all tier rows of that code on save).
+  const { data: slaPoliciesData } = useQuery({
+    queryKey: ['sla-policies', 'access-agent-modal-picker'],
+    queryFn: () =>
+      getSLAPolicies({ pageIndex: 0, pageSize: 100, sorting: [{ id: 'name', desc: false }], searchQuery: '' }),
+    enabled: open,
+    staleTime: 1000 * 60 * 5,
+  });
+  const slaPolicies = slaPoliciesData?.data ?? [];
 
   const { data: agentMcpBindingsData } = useAgentMcpToolBindings(isEditMode ? accessAgentId ?? null : null);
   const setAgentMcpToolBindingsMutation = useSetAgentMcpToolBindings();
@@ -126,7 +141,12 @@ export default function AccessAgentFormModal({
     for (const assignment of fromServer) {
       const code = String(assignment.code ?? '').trim();
       if (!grouped.has(code)) {
-        grouped.set(code, { id: crypto.randomUUID(), code, rows: [] });
+        grouped.set(code, { id: crypto.randomUUID(), code, policy_id: null, rows: [] });
+      }
+      const grp = grouped.get(code);
+      // Rows of a group share one policy_id; take the first non-null seen.
+      if (grp && !grp.policy_id && assignment.policy_id) {
+        grp.policy_id = String(assignment.policy_id);
       }
       grouped.get(code)?.rows.push({
         id: crypto.randomUUID(),
@@ -162,6 +182,8 @@ export default function AccessAgentFormModal({
               code: String(group.code).trim(),
               team_id: String(row.team_id),
               tier: row.tier != null && row.tier >= 1 && row.tier <= 3 ? row.tier : undefined,
+              // Stamp the group's policy onto every row; backend casts one policy per code.
+              policy_id: group.policy_id || undefined,
             })),
           )
           .filter((a) => a.code && a.team_id);
@@ -313,6 +335,33 @@ export default function AccessAgentFormModal({
                                     className="font-mono text-sm"
                                   />
                                 </div>
+                                <div className="flex-1 min-w-[180px]">
+                                  <label className="text-xs text-muted-foreground mb-1 block">SLA policy</label>
+                                  <Select
+                                    value={group.policy_id ?? NO_POLICY}
+                                    disabled={isLoading}
+                                    onValueChange={(v) => {
+                                      const next = [...assignmentGroups];
+                                      next[groupIdx] = {
+                                        ...next[groupIdx],
+                                        policy_id: v === NO_POLICY ? null : v,
+                                      };
+                                      setAssignmentGroups(next);
+                                    }}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Select SLA policy" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value={NO_POLICY}>— No policy —</SelectItem>
+                                      {slaPolicies.map((policy) => (
+                                        <SelectItem key={policy.id} value={policy.id}>
+                                          {policy.name} ({policy.code})
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
                                 <Button
                                   type="button"
                                   variant="ghost"
@@ -433,6 +482,7 @@ export default function AccessAgentFormModal({
                             {
                               id: crypto.randomUUID(),
                               code: '',
+                              policy_id: null,
                               rows: [{ id: crypto.randomUUID(), tier: null, team_id: teamsList[0]?.id ?? '' }],
                             },
                           ])

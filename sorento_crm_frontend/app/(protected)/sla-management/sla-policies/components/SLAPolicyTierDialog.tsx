@@ -33,6 +33,15 @@ interface SLAPolicyTierDialogProps {
   tier?: SLAPolicyTier | null;
 }
 
+/** Keep only digits and a single decimal point as the user types. */
+function sanitizeDecimal(raw: string): string {
+  const cleaned = raw.replace(/[^0-9.]/g, '');
+  const firstDot = cleaned.indexOf('.');
+  if (firstDot === -1) return cleaned;
+  // collapse any dots after the first
+  return cleaned.slice(0, firstDot + 1) + cleaned.slice(firstDot + 1).replace(/\./g, '');
+}
+
 export default function SLAPolicyTierDialog({
   open,
   onOpenChange,
@@ -66,12 +75,12 @@ export default function SLAPolicyTierDialog({
         form.reset({
           tier_level: tier.tier_level,
           tier_name: tier.tier_name,
-          response_hours: tier.response_hours,
-          resolution_hours: tier.resolution_hours ?? 24,
+          response_hours: Number(tier.response_hours),
+          resolution_hours: Number(tier.resolution_hours ?? 24),
         });
         setTierLevelStr(String(tier.tier_level));
-        setResponseHoursStr(String(tier.response_hours));
-        setResolutionHoursStr(String(tier.resolution_hours ?? 24));
+        setResponseHoursStr(String(Number(tier.response_hours)));
+        setResolutionHoursStr(String(Number(tier.resolution_hours ?? 24)));
         setFormInitialized(true);
       }, 0);
 
@@ -103,8 +112,9 @@ export default function SLAPolicyTierDialog({
   const onSubmit = async (data: SLAPolicyTierFormInputType) => {
     // Use local number strings so values are correct; allow empty -> 1
     const tierLevel = Math.max(1, parseInt(tierLevelStr, 10) || 1);
-    const responseHours = Math.max(1, parseInt(responseHoursStr, 10) || 1);
-    const resolutionHours = Math.max(1, parseInt(resolutionHoursStr, 10) || 1);
+    // Decimals allowed (0.5 = 30 min); floor at a small positive value.
+    const responseHours = Math.max(0.01, parseFloat(responseHoursStr) || 0.01);
+    const resolutionHours = Math.max(0.01, parseFloat(resolutionHoursStr) || 0.01);
     try {
       if (isEditMode && tier) {
         await updateMutation.mutateAsync({
@@ -200,14 +210,14 @@ export default function SLAPolicyTierDialog({
                   <FormControl>
                     <Input
                       type="text"
-                      inputMode="numeric"
-                      placeholder="e.g. 24 or 72"
+                      inputMode="decimal"
+                      placeholder="e.g. 0.5, 24 or 72"
                       {...field}
                       value={responseHoursStr}
-                      onChange={(e) => setResponseHoursStr(e.target.value.replace(/\D/g, ''))}
+                      onChange={(e) => setResponseHoursStr(sanitizeDecimal(e.target.value))}
                     />
                   </FormControl>
-                  <p className="text-xs text-muted-foreground">Conversation must be responded within this many hours (e.g. 24, 72).</p>
+                  <p className="text-xs text-muted-foreground">Hours to respond. Decimals allowed (0.5 = 30 minutes).</p>
                   <FormMessage />
                 </FormItem>
               )}
@@ -222,14 +232,14 @@ export default function SLAPolicyTierDialog({
                   <FormControl>
                     <Input
                       type="text"
-                      inputMode="numeric"
-                      placeholder="e.g. 24 or 72"
+                      inputMode="decimal"
+                      placeholder="e.g. 0.5, 24 or 72"
                       {...field}
                       value={resolutionHoursStr}
-                      onChange={(e) => setResolutionHoursStr(e.target.value.replace(/\D/g, ''))}
+                      onChange={(e) => setResolutionHoursStr(sanitizeDecimal(e.target.value))}
                     />
                   </FormControl>
-                  <p className="text-xs text-muted-foreground">Conversation must be resolved within this many hours (KPI for resolution time; e.g. 24, 72).</p>
+                  <p className="text-xs text-muted-foreground">Hours to resolve (KPI for resolution time). Decimals allowed (0.5 = 30 minutes).</p>
                   <FormMessage />
                 </FormItem>
               )}

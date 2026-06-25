@@ -83,9 +83,17 @@ function datetimeLocalToISO(local: string): string {
 
 interface ConversationSLATrackingDetailProps {
   trackingId: string;
+  /** Where to return after delete / not-found. Defaults to the conversation list;
+   *  the form SLA tracking page passes its own list so back-navigation stays in-context. */
+  backHref?: string;
+  backLabel?: string;
 }
 
-export default function ConversationSLATrackingDetail({ trackingId }: ConversationSLATrackingDetailProps) {
+export default function ConversationSLATrackingDetail({
+  trackingId,
+  backHref = '/sla-management/conversation-sla-tracking',
+  backLabel = 'Conversation SLA Tracking',
+}: ConversationSLATrackingDetailProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const canSlaTestOverride = useHasPermission(SLA_TEST_OVERRIDE_PERMISSION);
@@ -190,7 +198,7 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
   const handleDelete = () => {
     deleteMutation.mutate(trackingId, {
       onSuccess: () => {
-        router.push('/sla-management/conversation-sla-tracking');
+        router.push(backHref);
       },
     });
   };
@@ -207,9 +215,9 @@ export default function ConversationSLATrackingDetail({ trackingId }: Conversati
   if (!tracking) {
     return (
       <div className="text-center py-12">
-        <p className="text-muted-foreground">Conversation SLA tracking not found</p>
-        <Button variant="outline" onClick={() => router.push('/sla-management/conversation-sla-tracking')} className="mt-4">
-          Back to Conversation SLA Tracking
+        <p className="text-muted-foreground">SLA tracking not found</p>
+        <Button variant="outline" onClick={() => router.push(backHref)} className="mt-4">
+          Back to {backLabel}
         </Button>
       </div>
     );

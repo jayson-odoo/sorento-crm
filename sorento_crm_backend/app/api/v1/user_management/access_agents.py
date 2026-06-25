@@ -164,7 +164,7 @@ async def set_agent_teams(
     try:
         service = AccessAgentService(db)
         if body.assignments is not None:
-            payload = [{"code": a.code, "team_id": a.team_id, "tier": getattr(a, "tier", None)} for a in body.assignments]
+            payload = [{"code": a.code, "team_id": a.team_id, "tier": getattr(a, "tier", None), "policy_id": getattr(a, "policy_id", None)} for a in body.assignments]
             service.set_agent_teams(agent_id, payload)
             assignments_with_state = service.list_agent_teams_with_round_robin_state(agent_id)
             return {"assignments": assignments_with_state}

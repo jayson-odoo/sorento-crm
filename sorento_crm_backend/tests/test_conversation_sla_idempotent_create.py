@@ -22,7 +22,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
-from app.models.access import RespondContact
+from app.models.access import AccessAgent, AgentTeam, RespondContact, Team
 from app.models.lookup import LookupBinding  # validator listener checks this table
 from app.models.sla import (
     ConversationSLAEventLog,
@@ -55,6 +55,18 @@ def db():
             col.type = GenericJSON()
             col.server_default = None
 
+    # AgentTeam's partial unique indexes (postgresql_where) render as plain UNIQUE
+    # on SQLite and falsely collide multi-tier rows — strip them for the fixture.
+    AgentTeam.__table__.indexes = {
+        ix
+        for ix in AgentTeam.__table__.indexes
+        if ix.name
+        not in {
+            "uq_agent_teams_agent_code_tier_null",
+            "uq_agent_teams_agent_code_tier_not_null",
+        }
+    }
+
     Base.metadata.create_all(
         engine,
         tables=[
@@ -64,6 +76,9 @@ def db():
             ConversationSLAEventLog.__table__,
             RespondContact.__table__,
             User.__table__,
+            AccessAgent.__table__,
+            AgentTeam.__table__,
+            Team.__table__,
             LookupBinding.__table__,
         ],
     )
@@ -106,12 +121,37 @@ def _seed(db) -> dict:
             respond_user_id="900001",
         )
     )
+    # Schema now requires (agent_code, team_set_code); create_tracking resolves the
+    # policy from the (agent, team_set) binding (PLAN-conversation-policy-binding).
+    agent_id = str(uuid.uuid4())
+    db.add(AccessAgent(id=agent_id, code="AGENT1", name="Agent 1"))
+    team_id = str(uuid.uuid4())
+    db.add(Team(id=team_id, name="Team 1"))
+    db.add(
+        AgentTeam(
+            id=str(uuid.uuid4()),
+            agent_id=agent_id,
+            code="general",
+            team_id=team_id,
+            tier=1,
+            policy_id=policy_id,
+        )
+    )
     db.commit()
-    return {"policy_id": policy_id, "contact_id": contact_id, "user_id": user_id}
+    return {
+        "policy_id": policy_id,
+        "contact_id": contact_id,
+        "user_id": user_id,
+        "agent_id": agent_id,
+        "agent_code": "AGENT1",
+        "team_set_code": "general",
+    }
 
 
 def _payload(seed, *, message_id=None) -> ConversationSLATrackingCreate:
     return ConversationSLATrackingCreate(
+        agent_code=seed["agent_code"],
+        team_set_code=seed["team_set_code"],
         policy_id=seed["policy_id"],
         current_tier=1,
         assigned_to_id=seed["user_id"],

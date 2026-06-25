@@ -36,19 +36,21 @@ class SLAPolicyTierBase(BaseModel):
     policy_id: str
     tier_level: int
     tier_name: str
-    response_hours: int
-    resolution_hours: int = 24
+    response_hours: Decimal  # supports decimals, e.g. 0.5 = 30 minutes
+    resolution_hours: Decimal = Decimal("24")
 
 
 class SLAPolicyTierCreate(SLAPolicyTierBase):
-    pass
+    # Optional in the body: the route injects it from the /{policy_id}/tiers path,
+    # so the frontend never has to send it. Validation must not reject its absence.
+    policy_id: Optional[str] = None
 
 
 class SLAPolicyTierUpdate(BaseModel):
     tier_level: Optional[int] = None
     tier_name: Optional[str] = None
-    response_hours: Optional[int] = None
-    resolution_hours: Optional[int] = None
+    response_hours: Optional[Decimal] = None
+    resolution_hours: Optional[Decimal] = None
 
 
 class SLAPolicyTierResponse(SLAPolicyTierBase):
@@ -114,8 +116,10 @@ class ConversationSLATrackingBase(BaseModel):
 
 
 class ConversationSLATrackingCreate(BaseModel):
-    policy_id: str
-    current_tier: int
+    # Ignored: the backend resolves policy from (agent_code, team_set_code). Accepted
+    # only as a transition fallback during rollout, and current_tier is forced to 1.
+    policy_id: Optional[str] = None
+    current_tier: Optional[int] = None
     assigned_to: Optional[str] = None  # Keep for backward compatibility
     assigned_to_id: Optional[str] = None  # FK to users
     initiated_at: Optional[datetime] = None  # Auto-populated to now if not provided
@@ -132,10 +136,19 @@ class ConversationSLATrackingCreate(BaseModel):
     resolved_by: Optional[str] = None  # Will be reset to None
     respond_contact_id: Optional[str] = None  # FK to respond_contacts
     resolution_duration: Optional[Decimal] = None  # Will be reset to None
-    agent_code: Optional[str] = None  # resolved → agent_id FK in service
-    team_set_code: Optional[str] = None  # Team assignment set code for escalation
+    # Required: the (agent_code, team_set_code) pair is the policy-resolution key.
+    # The backend owns policy selection — n8n's policy_id/current_tier are ignored.
+    agent_code: str  # resolved → agent_id FK in service
+    team_set_code: str  # team set; (agent_code, team_set_code) → SLA policy
     message_id: OptionalMessageId = None
     contact_phone_number: str  # Required field
+
+    @field_validator('agent_code', 'team_set_code')
+    @classmethod
+    def _require_non_empty(cls, v, info):
+        if v is None or not str(v).strip():
+            raise ValueError(f"{info.field_name} is required and cannot be empty")
+        return str(v).strip()
 
     @field_validator('contact_phone_number')
     @classmethod
@@ -432,8 +445,8 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     time_remaining_resolution_seconds: Optional[float] = None
     resolution_due_at: Optional[datetime] = None  # current_tier_started_at + tier.resolution_hours
     # Tier KPI hours (for frontend to color response_time / resolution_duration)
-    tier_response_hours: Optional[int] = None
-    tier_resolution_hours: Optional[int] = None
+    tier_response_hours: Optional[Decimal] = None
+    tier_resolution_hours: Optional[Decimal] = None
     # Idempotent-update indicators: true when the caller tried to resolve an
     # already-resolved tracking. The body is still returned so the caller can
     # branch its own routing without parsing a 4xx error envelope.
@@ -443,6 +456,13 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     # tracking for the contact and returned it (message_id refreshed) instead of
     # creating a new row. n8n branches on this to skip new-conversation steps.
     already_active: Optional[bool] = False
+    # Form-SLA fields (populated for form-scoped listings): the originating entity
+    # and a human-readable reference / next action so the Form SLA list mirrors the
+    # conversation list without exposing UUIDs.
+    source_entity_type: Optional[str] = None
+    source_entity_id: Optional[str] = None
+    reference: Optional[str] = None  # entity number (complaint/inquiry/request/ticket)
+    next_action: Optional[str] = None  # stage-derived next action label
 
     @model_serializer(mode='wrap', when_used='json')
     def serialize_model(self, serializer, info):

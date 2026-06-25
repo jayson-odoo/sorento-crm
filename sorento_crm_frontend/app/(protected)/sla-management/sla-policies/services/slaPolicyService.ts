@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type { SLAPolicy, SLAPolicyFormData, SLAPolicyDetail, SLAPolicyTier, SLAPolicyTierFormData } from '../types/slaPolicy.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
@@ -31,8 +32,7 @@ export async function createSLAPolicy(data: SLAPolicyFormData): Promise<SLAPolic
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to create SLA policy' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to create SLA policy'));
   }
   return response.json();
 }
@@ -44,8 +44,7 @@ export async function updateSLAPolicy(id: string, data: Partial<SLAPolicyFormDat
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to update SLA policy' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to update SLA policy'));
   }
   return response.json();
 }
@@ -53,8 +52,7 @@ export async function updateSLAPolicy(id: string, data: Partial<SLAPolicyFormDat
 export async function deleteSLAPolicy(id: string): Promise<void> {
   const response = await apiFetch(`/api/v1/sla-management/sla-policies/${id}`, { method: 'DELETE' });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to delete SLA policy' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to delete SLA policy'));
   }
 }
 
@@ -75,8 +73,7 @@ export async function createSLAPolicyTier(policyId: string, data: SLAPolicyTierF
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to create SLA policy tier' }));
-    throw new Error(error.message || 'Failed to create SLA policy tier');
+    throw new Error(await extractApiError(response, 'Failed to create SLA policy tier'));
   }
   return response.json();
 }
@@ -88,8 +85,7 @@ export async function updateSLAPolicyTier(policyId: string, tierId: string, data
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to update SLA policy tier' }));
-    throw new Error(error.message || 'Failed to update SLA policy tier');
+    throw new Error(await extractApiError(response, 'Failed to update SLA policy tier'));
   }
   return response.json();
 }
@@ -97,7 +93,6 @@ export async function updateSLAPolicyTier(policyId: string, tierId: string, data
 export async function deleteSLAPolicyTier(policyId: string, tierId: string): Promise<void> {
   const response = await apiFetch(`/api/v1/sla-management/sla-policies/${policyId}/tiers/${tierId}`, { method: 'DELETE' });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to delete SLA policy tier' }));
-    throw new Error(error.message || 'Failed to delete SLA policy tier');
+    throw new Error(await extractApiError(response, 'Failed to delete SLA policy tier'));
   }
 }

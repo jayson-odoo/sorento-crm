@@ -1524,13 +1524,16 @@ class AccessAgentService:
         }
 
     def list_agent_teams(self, agent_id: str) -> list[dict]:
-        """Return list of {code, team_id, tier} assignments for this agent."""
+        """Return list of {code, team_id, tier, policy_id} assignments for this agent."""
         rows = (
-            self.db.query(AgentTeam.code, AgentTeam.team_id, AgentTeam.tier)
+            self.db.query(AgentTeam.code, AgentTeam.team_id, AgentTeam.tier, AgentTeam.policy_id)
             .filter(AgentTeam.agent_id == agent_id)
             .all()
         )
-        return [{"code": r[0], "team_id": str(r[1]), "tier": r[2]} for r in rows]
+        return [
+            {"code": r[0], "team_id": str(r[1]), "tier": r[2], "policy_id": str(r[3]) if r[3] else None}
+            for r in rows
+        ]
 
     def _user_info(self, user: Optional[User]) -> Optional[dict]:
         """Return {id, name, email, respond_user_id, respond_synced} for display; None if user is None."""
@@ -1583,12 +1586,12 @@ class AccessAgentService:
     def list_agent_teams_with_round_robin_state(self, agent_id: str) -> list[dict]:
         """Return assignments with team name, tier, members (ordered), last_assigned, next_in_line (read-only peek)."""
         rows = (
-            self.db.query(AgentTeam.code, AgentTeam.team_id, AgentTeam.tier)
+            self.db.query(AgentTeam.code, AgentTeam.team_id, AgentTeam.tier, AgentTeam.policy_id)
             .filter(AgentTeam.agent_id == agent_id)
             .all()
         )
         result = []
-        for code, team_id, tier in rows:
+        for code, team_id, tier, policy_id in rows:
             team_id_str = str(team_id)
             team = self.db.query(Team).filter(Team.id == team_id).first()
             team_name = team.name if team else team_id_str
@@ -1619,6 +1622,7 @@ class AccessAgentService:
                 "code": code,
                 "team_id": team_id_str,
                 "tier": tier,
+                "policy_id": str(policy_id) if policy_id else None,
                 "team_name": team_name,
                 "members": member_infos,
                 "last_assigned": self._user_info(last_user) if last_id else None,
@@ -1754,6 +1758,17 @@ class AccessAgentService:
 
         self._validate_tier1_invariant_for_assignments(agent_id, assignments or [])
 
+        # One SLA policy per team-set code: cast the first non-null policy_id seen for
+        # each code onto every tier row of that code so new tier rows inherit it (D3).
+        policy_by_code: dict[str, str] = {}
+        for a in assignments or []:
+            raw_code = a.get("code")
+            code = str(raw_code).strip() if raw_code is not None else ""
+            policy_id = a.get("policy_id")
+            policy_id = str(policy_id).strip() if policy_id else None
+            if code and policy_id and code not in policy_by_code:
+                policy_by_code[code] = policy_id
+
         self.db.query(AgentTeam).filter(AgentTeam.agent_id == agent_id).delete()
         for a in assignments or []:
             raw_code = a.get("code")
@@ -1763,7 +1778,13 @@ class AccessAgentService:
             if tier is not None and (tier < 1 or tier > 3):
                 tier = None
             if code and team_id:
-                self.db.add(AgentTeam(agent_id=agent_id, code=code, team_id=team_id, tier=tier))
+                self.db.add(AgentTeam(
+                    agent_id=agent_id,
+                    code=code,
+                    team_id=team_id,
+                    tier=tier,
+                    policy_id=policy_by_code.get(code),
+                ))
         try:
             self.db.commit()
         except IntegrityError:
@@ -1822,6 +1843,36 @@ class AccessAgentService:
         """Resolve agent_id from access agent code. Returns None if not found."""
         agent = self.db.query(AccessAgent.id).filter(AccessAgent.code == code).first()
         return str(agent[0]) if agent else None
+
+    def resolve_policy_id_for(self, agent_id: str, team_set_code: str) -> Optional[str]:
+        """Resolve the single SLA policy bound to ``(agent_id, team_set_code)`` (D4).
+
+        Distinct non-null ``policy_id`` over the team-set rows:
+        - zero rows  -> None (caller decides: rollout fallback vs 422 end-state)
+        - exactly one -> that policy_id
+        - more than one distinct -> 409 misconfig (inconsistent binding)
+        """
+        c = str(team_set_code).strip() if team_set_code is not None else ""
+        if not agent_id or not c:
+            return None
+        rows = (
+            self.db.query(AgentTeam.policy_id)
+            .filter(
+                AgentTeam.agent_id == agent_id,
+                AgentTeam.code == c,
+                AgentTeam.policy_id.isnot(None),
+            )
+            .distinct()
+            .all()
+        )
+        policy_ids = {str(r[0]) for r in rows if r[0] is not None}
+        if not policy_ids:
+            return None
+        if len(policy_ids) > 1:
+            raise handle_conflict(
+                f"SLA policy is inconsistent across the '{c}' team set; rebind a single policy."
+            )
+        return next(iter(policy_ids))
 
     def resolve_team_with_tier_fallback(
         self, agent_id: str, start_tier: int, team_set_code: Optional[str] = None

@@ -101,6 +101,8 @@ export interface AgentTeamAssignment {
   team_id: string;
   /** Explicit tier: 1 = initial notifications, 2/3 = escalation (within the same code/team set). */
   tier?: number | null;
+  /** SLA policy bound to this team set; shared across every tier row of the same code. */
+  policy_id?: string | null;
   team_name?: string;
   members?: AgentTeamMemberInfo[];
   last_assigned?: AgentTeamMemberInfo | null;

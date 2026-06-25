@@ -347,6 +347,9 @@ class AgentTeamAssignment(BaseModel):
     code: str
     team_id: str
     tier: Optional[int] = None  # 1=initial, 2/3=escalation; one team per tier per agent
+    # Conversation SLA policy for this team set. One policy per (agent, code); the
+    # service casts it onto every tier row of the set. None = unbound.
+    policy_id: Optional[str] = None
 
 
 class AgentTeamsUpdate(BaseModel):
