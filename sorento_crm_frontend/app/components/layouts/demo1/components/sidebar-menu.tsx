@@ -163,11 +163,11 @@ export function SidebarMenu() {
           <Link
             href={item.path || '#'}
             prefetch={false}
-            className="flex items-center justify-between grow gap-2 min-w-0"
+            className="flex items-center grow gap-2 min-w-0"
           >
             {item.icon && <item.icon data-slot="accordion-menu-icon" className="shrink-0" />}
             <span data-slot="accordion-menu-title" className="truncate">{item.title}</span>
-            {item.path && <MenuItemPinButton path={item.path} title={item.title} />}
+            {item.path && <MenuItemPinButton path={item.path} title={item.title} className="ms-auto" />}
           </Link>
         </AccordionMenuItem>
       );
