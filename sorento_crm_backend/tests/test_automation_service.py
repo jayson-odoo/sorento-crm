@@ -49,7 +49,7 @@ def _clean_automation_state():
         conn.execute(text("DELETE FROM automation_runs"))
         conn.execute(text("DELETE FROM automations"))
         conn.execute(text("DELETE FROM email_templates WHERE code LIKE 'tpl-%'"))
-        conn.execute(text("DELETE FROM promotions WHERE name = 'Test Promo'"))
+        conn.execute(text("DELETE FROM promotions WHERE description LIKE 'Test Promo%'"))
         conn.commit()
     yield
 
@@ -93,13 +93,15 @@ def _mk_template(db: Session) -> EmailTemplate:
         id=str(uuid.uuid4()),
         code=f"tpl-{uuid.uuid4().hex[:8]}",
         name="Promotion expiry reminder",
-        subject="Promo {{ promotion.code }} expiring on {{ promotion.end_date }}",
+        subject="Promo {{ promotion.name }} expiring on {{ promotion.end_date }}",
         body_html=(
             "<p>Hi {{ recipient.name }},</p>"
-            "<p>Promotion <strong>{{ promotion.code }}</strong> "
-            "({{ promotion.start_date }} → {{ promotion.end_date }}) "
-            "expires in {{ promotion.days_until_end }} days.</p>"
-            "<p><a href='{{ promotion.link }}'>Open promotion</a></p>"
+            "<ul>{% for p in promotions or [promotion] %}"
+            "<li>Promotion <strong>{{ p.name }}</strong> "
+            "({{ p.start_date }} → {{ p.end_date }}) "
+            "expires in {{ p.days_until_end }} days. "
+            "<a href='{{ p.link }}'>Open</a></li>"
+            "{% endfor %}</ul>"
         ),
         body_text=None,
         is_active=True,
@@ -133,6 +135,7 @@ def _mk_automation(
     role_ids: list[str] | None = None,
     extra_emails: list[str] | None = None,
     schedule_type: str = "manual",
+    group_matches: bool = True,
 ) -> Automation:
     a = Automation(
         id=str(uuid.uuid4()),
@@ -148,6 +151,7 @@ def _mk_automation(
             "include_promotion_owner": False,
             "extra_emails": extra_emails or [],
         },
+        group_matches=group_matches,
         schedule_type=schedule_type,
         run_time=time(9, 0) if schedule_type == "daily" else None,
         timezone="Asia/Kuala_Lumpur",
@@ -243,6 +247,86 @@ def test_run_now_inserts_pending_email_deliveries_for_each_recipient(
 
     # No actual SMTP send was attempted.
     assert smtp_sent == []
+
+
+def test_grouped_run_sends_one_email_per_recipient_with_all_promotions(
+    db: Session, monkeypatch
+) -> None:
+    """5 promos expiring the same day -> ONE email per recipient listing all 5."""
+    from app.services.automation_service import AutomationService
+    from app.services import notification_email
+
+    monkeypatch.setattr(notification_email, "send_notification_email", lambda *a, **kw: None)
+    monkeypatch.setattr(notification_email, "send_notification_email_multi", lambda *a, **kw: None)
+
+    creator = _mk_user(db, email=f"creator-grp-{uuid.uuid4().hex[:6]}@test.local")
+    template = _mk_template(db)
+    promos = [_mk_promotion(db, days_until_end=7) for _ in range(5)]
+    db.commit()
+
+    automation = _mk_automation(
+        db,
+        template=template,
+        creator=creator,
+        days_before=7,
+        extra_emails=["digest@example.com"],
+        group_matches=True,
+    )
+    db.commit()
+
+    result = AutomationService(db).run_now(str(automation.id))
+    assert result["status"] == "success"
+    # one recipient -> exactly one combined email, not five
+    assert int(result["recipients_attempted"]) == 1
+    assert result["summary"]["grouped"] is True
+    assert result["summary"]["matches"] == 5
+
+    notifs = (
+        db.query(Notification)
+        .filter(
+            Notification.source_entity_type == "automation_run",
+            Notification.source_entity_id == result["run_id"],
+        )
+        .all()
+    )
+    assert len(notifs) == 1
+    data = dict(getattr(notifs[0], "data") or {})
+    body = str(data.get("body_html") or "")
+    # every promotion appears in the single combined email
+    for p in promos:
+        assert p.description in body
+    assert len(data.get("promotion_ids") or []) == 5
+
+
+def test_ungrouped_run_sends_one_email_per_promotion(db: Session, monkeypatch) -> None:
+    """group_matches=False -> legacy behavior: one email per (promo x recipient)."""
+    from app.services.automation_service import AutomationService
+    from app.services import notification_email
+
+    monkeypatch.setattr(notification_email, "send_notification_email", lambda *a, **kw: None)
+    monkeypatch.setattr(notification_email, "send_notification_email_multi", lambda *a, **kw: None)
+
+    creator = _mk_user(db, email=f"creator-ungrp-{uuid.uuid4().hex[:6]}@test.local")
+    template = _mk_template(db)
+    for _ in range(3):
+        _mk_promotion(db, days_until_end=7)
+    db.commit()
+
+    automation = _mk_automation(
+        db,
+        template=template,
+        creator=creator,
+        days_before=7,
+        extra_emails=["solo@example.com"],
+        group_matches=False,
+    )
+    db.commit()
+
+    result = AutomationService(db).run_now(str(automation.id))
+    assert result["status"] == "success"
+    # 3 promos x 1 recipient = 3 separate emails
+    assert int(result["recipients_attempted"]) == 3
+    assert result["summary"]["grouped"] is False
 
 
 def test_run_now_dedupes_recipients_by_email(db: Session, monkeypatch) -> None:

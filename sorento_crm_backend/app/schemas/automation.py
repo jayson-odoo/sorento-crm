@@ -24,6 +24,7 @@ class AutomationBase(BaseModel):
     action_type: str = Field(default="send_email", max_length=80)
     email_template_id: str
     recipient_config: RecipientConfig = Field(default_factory=RecipientConfig)
+    group_matches: bool = True
     schedule_type: str = Field(default="manual")  # manual | daily
     run_time: Optional[time] = None
     timezone: str = Field(default="Asia/Kuala_Lumpur", max_length=80)
@@ -42,6 +43,7 @@ class AutomationUpdate(BaseModel):
     action_type: Optional[str] = None
     email_template_id: Optional[str] = None
     recipient_config: Optional[RecipientConfig] = None
+    group_matches: Optional[bool] = None
     schedule_type: Optional[str] = None
     run_time: Optional[time] = None
     timezone: Optional[str] = None
@@ -58,6 +60,7 @@ class AutomationResponse(BaseModel):
     email_template_id: str
     email_template_name: Optional[str] = None
     recipient_config: dict[str, Any]
+    group_matches: bool = True
     schedule_type: str
     run_time: Optional[time]
     timezone: str

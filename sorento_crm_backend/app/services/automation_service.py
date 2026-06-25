@@ -118,6 +118,7 @@ class AutomationService:
             action_type=payload.get("action_type") or "send_email",
             email_template_id=payload["email_template_id"],
             recipient_config=self._normalize_recipient_config(payload.get("recipient_config")),
+            group_matches=payload.get("group_matches", True),
             schedule_type=payload.get("schedule_type") or "manual",
             run_time=payload.get("run_time"),
             timezone=payload.get("timezone") or "Asia/Kuala_Lumpur",
@@ -144,6 +145,7 @@ class AutomationService:
             "action_type",
             "email_template_id",
             "recipient_config",
+            "group_matches",
             "schedule_type",
             "run_time",
             "timezone",
@@ -357,49 +359,22 @@ class AutomationService:
                 )
 
             template_service = EmailTemplateService(self.db)
-            attempted = 0
-            per_promotion: list[dict[str, Any]] = []
 
-            for match in matches:
-                recipients = automation_recipients.resolve_recipients(
-                    self.db,
-                    dict(automation.recipient_config or {}),
-                    promotion_context=match.context,
-                    source_id=match.source_id,
+            # Group only the promotion-expiry trigger: it is the sole multi-match
+            # scheduled trigger and its template renders a `promotions` list. Other
+            # (event-driven) triggers always have one match and singular-entity
+            # templates, so they always take the per-match path.
+            do_group = bool(getattr(automation, "group_matches", True)) and (
+                str(automation.trigger_type) == "days_before_promotion_end"
+            )
+
+            if do_group:
+                attempted, summary = self._send_grouped(
+                    automation, run, matches, template, template_service, owner_user_id
                 )
-                rendered_per_recipient: list[dict[str, Any]] = []
-                for recipient in recipients:
-                    ctx = dict(match.context)
-                    ctx["recipient"] = {
-                        "name": recipient.get("name") or recipient["email"],
-                        "email": recipient["email"],
-                    }
-                    rendered = template_service.render(template, ctx)
-                    self._enqueue_email(
-                        owner_user_id=owner_user_id,
-                        recipient=recipient,
-                        subject=rendered["subject"],
-                        body_html=rendered["body_html"],
-                        body_text=rendered["body_text"],
-                        metadata={
-                            "automation_id": str(automation.id),
-                            "automation_run_id": str(run.id),
-                            "promotion_id": match.source_id,
-                            "source_kind": match.source_kind,
-                            "source_id": match.source_id,
-                            "trigger_type": str(automation.trigger_type),
-                        },
-                    )
-                    attempted += 1
-                    rendered_per_recipient.append(
-                        {"email": recipient["email"], "subject": rendered["subject"]}
-                    )
-                per_promotion.append(
-                    {
-                        "source_kind": match.source_kind,
-                        "source_id": match.source_id,
-                        "recipients": rendered_per_recipient,
-                    }
+            else:
+                attempted, summary = self._send_per_match(
+                    automation, run, matches, template, template_service, owner_user_id
                 )
 
             self._maybe_enqueue_worker()
@@ -409,11 +384,7 @@ class AutomationService:
             run.status = "success"
             run.finished_at = datetime.utcnow()
             run.duration_ms = int((run.finished_at - started_at).total_seconds() * 1000)
-            run.summary = {
-                "matches": len(per_promotion),
-                "recipients_attempted": attempted,
-                "matches_detail": per_promotion[:50],  # keep summary bounded
-            }
+            run.summary = summary
 
             automation.last_run_at = datetime.utcnow()
             automation.last_status = "success"
@@ -448,6 +419,150 @@ class AutomationService:
             self.db.commit()
             logger.exception("Automation %s execution failed", automation.id)
             raise
+
+    def _send_per_match(
+        self,
+        automation: Automation,
+        run: AutomationRun,
+        matches: list["automation_triggers.TriggerMatch"],
+        template: EmailTemplate,
+        template_service: EmailTemplateService,
+        owner_user_id: Optional[str],
+    ) -> tuple[int, dict[str, Any]]:
+        """One email per (match × recipient) — the original behavior."""
+        attempted = 0
+        per_match: list[dict[str, Any]] = []
+        for match in matches:
+            recipients = automation_recipients.resolve_recipients(
+                self.db,
+                dict(automation.recipient_config or {}),
+                promotion_context=match.context,
+                source_id=match.source_id,
+            )
+            rendered_per_recipient: list[dict[str, Any]] = []
+            for recipient in recipients:
+                ctx = dict(match.context)
+                ctx["recipient"] = {
+                    "name": recipient.get("name") or recipient["email"],
+                    "email": recipient["email"],
+                }
+                rendered = template_service.render(template, ctx)
+                self._enqueue_email(
+                    owner_user_id=owner_user_id,
+                    recipient=recipient,
+                    subject=rendered["subject"],
+                    body_html=rendered["body_html"],
+                    body_text=rendered["body_text"],
+                    metadata={
+                        "automation_id": str(automation.id),
+                        "automation_run_id": str(run.id),
+                        "promotion_id": match.source_id,
+                        "source_kind": match.source_kind,
+                        "source_id": match.source_id,
+                        "trigger_type": str(automation.trigger_type),
+                    },
+                )
+                attempted += 1
+                rendered_per_recipient.append(
+                    {"email": recipient["email"], "subject": rendered["subject"]}
+                )
+            per_match.append(
+                {
+                    "source_kind": match.source_kind,
+                    "source_id": match.source_id,
+                    "recipients": rendered_per_recipient,
+                }
+            )
+        summary = {
+            "grouped": False,
+            "matches": len(per_match),
+            "recipients_attempted": attempted,
+            "matches_detail": per_match[:50],  # keep summary bounded
+        }
+        return attempted, summary
+
+    def _send_grouped(
+        self,
+        automation: Automation,
+        run: AutomationRun,
+        matches: list["automation_triggers.TriggerMatch"],
+        template: EmailTemplate,
+        template_service: EmailTemplateService,
+        owner_user_id: Optional[str],
+    ) -> tuple[int, dict[str, Any]]:
+        """One combined email per recipient listing every promotion they match.
+
+        Recipients are still resolved per-match so per-promotion entitlement
+        (include_promotion_owner / include_assigned_cs_pic) is respected — a
+        recipient only receives the promotions they are actually entitled to.
+        """
+        # email(lower) -> {"recipient": {...}, "promotions": [...], "source_ids": [...]}
+        buckets: dict[str, dict[str, Any]] = {}
+        for match in matches:
+            recipients = automation_recipients.resolve_recipients(
+                self.db,
+                dict(automation.recipient_config or {}),
+                promotion_context=match.context,
+                source_id=match.source_id,
+            )
+            promo = match.context.get("promotion") or {}
+            for recipient in recipients:
+                key = recipient["email"].lower()
+                bucket = buckets.setdefault(
+                    key,
+                    {"recipient": recipient, "promotions": [], "source_ids": []},
+                )
+                bucket["promotions"].append(promo)
+                bucket["source_ids"].append(match.source_id)
+
+        today = matches[0].context.get("today") if matches else None
+        attempted = 0
+        groups_detail: list[dict[str, Any]] = []
+        for bucket in buckets.values():
+            recipient = bucket["recipient"]
+            promotions = bucket["promotions"]
+            ctx: dict[str, Any] = {
+                "promotions": promotions,
+                "promotion": promotions[0],  # back-compat: singular = first promo
+                "promotions_count": len(promotions),
+                "today": today,
+                "recipient": {
+                    "name": recipient.get("name") or recipient["email"],
+                    "email": recipient["email"],
+                },
+            }
+            rendered = template_service.render(template, ctx)
+            self._enqueue_email(
+                owner_user_id=owner_user_id,
+                recipient=recipient,
+                subject=rendered["subject"],
+                body_html=rendered["body_html"],
+                body_text=rendered["body_text"],
+                metadata={
+                    "automation_id": str(automation.id),
+                    "automation_run_id": str(run.id),
+                    "promotion_ids": bucket["source_ids"],
+                    "source_kind": "promotion_group",
+                    "source_id": str(run.id),
+                    "trigger_type": str(automation.trigger_type),
+                },
+            )
+            attempted += 1
+            groups_detail.append(
+                {
+                    "email": recipient["email"],
+                    "promotions": len(promotions),
+                    "subject": rendered["subject"],
+                }
+            )
+        summary = {
+            "grouped": True,
+            "matches": len(matches),
+            "emails_sent": attempted,
+            "recipients_attempted": attempted,
+            "groups_detail": groups_detail[:50],  # keep summary bounded
+        }
+        return attempted, summary
 
     def _enqueue_email(
         self,

@@ -39,6 +39,11 @@ class Automation(Base):
 
     recipient_config = Column(JSONB, nullable=False, default=dict)
 
+    # When true (default), a multi-match scheduled run (only the
+    # days_before_promotion_end trigger today) sends ONE combined email per
+    # recipient listing every matched promotion, instead of one email per match.
+    group_matches = Column(Boolean, nullable=False, default=True)
+
     schedule_type = Column(String(20), nullable=False, default="manual")  # manual | daily
     run_time = Column(Time, nullable=True)
     timezone = Column(String(80), nullable=False, default="Asia/Kuala_Lumpur")

@@ -66,6 +66,7 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
   const [daysBefore, setDaysBefore] = useState<number>(7);
   const [emailTemplateId, setEmailTemplateId] = useState<string>('');
   const [recipientConfig, setRecipientConfig] = useState<RecipientConfig>(emptyRecipients);
+  const [groupMatches, setGroupMatches] = useState(true);
   const [scheduleType, setScheduleType] = useState<'manual' | 'daily'>('manual');
   const [runTime, setRunTime] = useState<string>('09:00');
   const [timezone, setTimezone] = useState<string>('Asia/Kuala_Lumpur');
@@ -94,6 +95,7 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
         include_promotion_owner: automation.recipient_config?.include_promotion_owner ?? false,
         extra_emails: automation.recipient_config?.extra_emails ?? [],
       });
+      setGroupMatches(automation.group_matches ?? true);
       setScheduleType(automation.schedule_type);
       setRunTime(automation.run_time ? automation.run_time.slice(0, 5) : '09:00');
       setTimezone(automation.timezone || 'Asia/Kuala_Lumpur');
@@ -105,6 +107,7 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       setDaysBefore(7);
       setEmailTemplateId('');
       setRecipientConfig(emptyRecipients);
+      setGroupMatches(true);
       setScheduleType('manual');
       setRunTime('09:00');
       setTimezone('Asia/Kuala_Lumpur');
@@ -152,6 +155,7 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       action_type: 'send_email',
       email_template_id: emailTemplateId,
       recipient_config: recipientConfig,
+      group_matches: triggerType === 'days_before_promotion_end' ? groupMatches : true,
       schedule_type: scheduleType,
       run_time: scheduleType === 'daily' ? `${runTime}:00` : null,
       timezone,
@@ -250,6 +254,25 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
             <Label>Recipients</Label>
             <RecipientPicker value={recipientConfig} onChange={setRecipientConfig} />
           </div>
+
+          {triggerType === 'days_before_promotion_end' && (
+            <div className="md:col-span-2 rounded-md border p-3">
+              <div className="flex items-start gap-3">
+                <Switch
+                  id="auto-group"
+                  checked={groupMatches}
+                  onCheckedChange={setGroupMatches}
+                />
+                <div className="space-y-0.5">
+                  <Label htmlFor="auto-group">Combine into one email</Label>
+                  <p className="text-xs text-muted-foreground">
+                    When several promotions expire on the same day, send each recipient a
+                    single email listing them all instead of one email per promotion.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2 md:col-span-2">
             <Label>Schedule</Label>
