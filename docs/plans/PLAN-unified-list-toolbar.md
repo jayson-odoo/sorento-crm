@@ -132,6 +132,27 @@ Built the keystones:
 
 Deferred to Phase 2 (folded into Stock migration): all-records "select all N" banner + server sync-stream export wiring.
 
+## Phase 4 — sweep (scope decided 2026-06-26)
+
+**Inventory reality:** 96–97 DataGrid list components, NOT ~20. Only 1 ref to `standardToolbarProps` (none rely on the auto toolbar for content); ~78 rendered their own CardHeader toolbar AND the vestigial auto toolbar = duplication.
+
+**Done — global dup kill:** flipped DataGrid default `standardToolbar` → false. Single toolbar everywhere; dead auto-filters gone. Validated Orders + Suppliers (was double → single). Collateral: partial-reliance pages (e.g. Brands: only Search+Create in own toolbar, leaned on auto for Columns/Export) lost Columns/Export — restored by migrating them.
+
+**Scope decision (user, AskUserQuestion):** "Key lists + restore gaps." Fully migrate the ~29 main entity lists to `DataGridListToolbar`; restore lost Columns/Export on partial-reliance pages; leave long-tail admin/system sub-tables on their clean single toolbar.
+
+### Target lists to migrate (~29)
+order-management: OrdersList*, CustomersList, OrderStatusesList · master-data: ProductsList*, BrandsList/BrandTable, categories, UOMList · procurement: SuppliersList*, PurchaseRequestsList, GRNList, PackingListsList, StockInquiriesList · marketing: PromotionsList*, CampaignsList · complaint: ComplaintsList · inventory: WarehousesList, BatchesList, StockLedgerList · sla: SLAPoliciesList · user-management: ContactsList, user-list, role-list, team-list, permission-list, AccessAgentsList · forms: FormsList · workflow-forms: WorkflowDefinitionsList*, WorkflowSubmissionsList* · resource-management: AttachmentBrowser/AttachmentsInFolderPanel
+(* = listQuery export/filter resources — need the toolbar's listQuery-export mode, TODO before migrating these.)
+
+### Migration recipe (per page; Stock = reference at StockBalanceGrid.tsx)
+1. Render `<DataGridListToolbar table={table} .../>` inside `<CardHeader className="block">`; delete the hand-rolled toolbar. (DataGrid default already `standardToolbar={false}`.)
+2. Selection: if the page has bulk actions or selection-export, use `buildSelectColumn` + react-table `rowSelection` (convert any `customSet`). Else omit selection (no Export gating needed — pass `exportConfig={false}` or a listQuery export).
+3. Wire slots: `searchSlot`, `filters` (custom popover content OR `{kind:'listQuery',...}`), `exportConfig` (selection client+allRecords OR listQuery server — TODO add listQuery mode), `primaryAction` (Create), `secondaryActions[]` (Import etc.), `bulkActions[]` (Delete), `onRefresh`.
+4. Typecheck; Playwright-validate ≥1 per module.
+
+### TODO before listQuery pages
+Add a `listQuery` export variant to `DataGridListToolbar.exportConfig` (reuse `ListQueryExportDialog`, non-selection-gated — exports the filtered set server-side, which already satisfies "reflects columns / full set"). Deviation from D4 selection-gating is intentional for listQuery resources and documented here.
+
 ## Key files (from codebase survey)
 
 - `components/ui/data-grid.tsx` — DataGrid, defaults `standardToolbar: true`.
