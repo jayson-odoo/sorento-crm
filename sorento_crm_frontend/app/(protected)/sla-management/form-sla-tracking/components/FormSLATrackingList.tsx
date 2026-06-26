@@ -6,6 +6,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   VisibilityState,
   useReactTable,
@@ -13,13 +14,14 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { AlertCircle, CheckCircle, ChevronRight, Clock, Columns3, RefreshCw, Search, X } from 'lucide-react';
+import { AlertCircle, CheckCircle, ChevronRight, Clock, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -47,13 +49,13 @@ export default function FormSLATrackingList() {
     team_set_code: false,
   });
   const [searchQuery, setSearchQuery] = useState('');
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [searchQuery]);
 
-  const { data, isLoading, refetch, isFetching } = useFormSLATracking({
+  const { data, isLoading, isFetching } = useFormSLATracking({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -61,9 +63,7 @@ export default function FormSLATrackingList() {
   });
 
   const handleRefresh = async () => {
-    setIsRefreshing(true);
     await queryClient.invalidateQueries({ queryKey: ['form-sla-tracking'] });
-    setIsRefreshing(false);
   };
 
   const handleRowClick = (row: FormSLATracking) => {
@@ -135,12 +135,13 @@ export default function FormSLATrackingList() {
 
   const columns = useMemo<ColumnDef<FormSLATracking>[]>(
     () => [
+      buildSelectColumn<FormSLATracking>(),
       {
         accessorKey: 'reference',
         header: ({ column }) => <DataGridColumnHeader title="Reference" column={column} />,
         cell: ({ row }) => row.original.reference || '—',
         size: 180,
-        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'Reference', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'source_entity_type',
@@ -150,7 +151,7 @@ export default function FormSLATrackingList() {
           return et ? ENTITY_TYPE_LABELS[et] || et : '—';
         },
         size: 160,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'policy_name',
@@ -162,20 +163,21 @@ export default function FormSLATrackingList() {
           row.original.policy_code ||
           '—',
         size: 180,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Policy', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'current_tier',
         header: ({ column }) => <DataGridColumnHeader title="Current Tier" column={column} />,
         cell: ({ row }) => <Badge variant="secondary">Tier {row.original.current_tier}</Badge>,
         size: 120,
+        meta: { headerTitle: 'Current Tier' },
       },
       {
         accessorKey: 'next_action',
         header: ({ column }) => <DataGridColumnHeader title="Next action" column={column} />,
         cell: ({ row }) => row.original.next_action || '—',
         size: 180,
-        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'Next action', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'assigned_user_name',
@@ -187,13 +189,14 @@ export default function FormSLATrackingList() {
           row.original.assigned_to ||
           '—',
         size: 160,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Assigned To', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'initiated_at',
         header: ({ column }) => <DataGridColumnHeader title="Initiated At" column={column} />,
         cell: ({ row }) => formatDateTime(parseDateTimeAsUTC(row.original.initiated_at)),
         size: 180,
+        meta: { headerTitle: 'Initiated At' },
       },
       {
         accessorKey: 'due_at',
@@ -216,6 +219,7 @@ export default function FormSLATrackingList() {
           );
         },
         size: 180,
+        meta: { headerTitle: 'Due at (response)' },
       },
       {
         accessorKey: 'due_at_resolution',
@@ -240,12 +244,14 @@ export default function FormSLATrackingList() {
           );
         },
         size: 180,
+        meta: { headerTitle: 'Due at (resolution)' },
       },
       {
         accessorKey: 'time_elapsed',
         header: ({ column }) => <DataGridColumnHeader title="Time elapsed" column={column} />,
         cell: ({ row }) => <span className="text-sm">{getTimeElapsed(row.original)}</span>,
         size: 120,
+        meta: { headerTitle: 'Time elapsed' },
       },
       {
         accessorKey: 'time_remaining_response',
@@ -285,6 +291,7 @@ export default function FormSLATrackingList() {
           );
         },
         size: 200,
+        meta: { headerTitle: 'Response' },
       },
       {
         accessorKey: 'time_remaining_resolution',
@@ -315,13 +322,14 @@ export default function FormSLATrackingList() {
           );
         },
         size: 200,
+        meta: { headerTitle: 'Resolution' },
       },
       {
         accessorKey: 'team_set_code',
         header: ({ column }) => <DataGridColumnHeader title="Team Set Code" column={column} />,
         cell: ({ row }) => row.original.team_set_code || '—',
         size: 160,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Team Set Code', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'is_resolved',
@@ -351,12 +359,14 @@ export default function FormSLATrackingList() {
           );
         },
         size: 120,
+        meta: { headerTitle: 'Status' },
       },
       {
         accessorKey: 'actions',
         header: () => <span className="sr-only">Actions</span>,
         cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
         size: 60,
+        enableHiding: false,
       },
     ],
     [],
@@ -367,7 +377,9 @@ export default function FormSLATrackingList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting, columnVisibility },
+    state: { pagination, sorting, columnVisibility, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,
@@ -382,55 +394,44 @@ export default function FormSLATrackingList() {
   return (
     <DataGrid
       table={table}
-      tableLayout={{ columnsVisibility: true }}
+      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex flex-row flex-wrap items-center gap-2 py-5">
-          <div className="flex items-center gap-2">
-            <div className="relative w-64 min-w-[140px] max-w-[280px]">
-              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-              <Input
-                placeholder="Search by reference, type, or policy..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && setPagination((prev) => ({ ...prev, pageIndex: 0 }))}
-                className="ps-9 w-full"
-              />
-              {searchQuery && (
-                <Button
-                  mode="icon"
-                  variant="dim"
-                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                  onClick={() => {
-                    setSearchQuery('');
-                    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                  }}
-                >
-                  <X />
-                </Button>
-              )}
-            </div>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing || isLoading}>
-              <RefreshCw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-          </div>
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative w-64 min-w-[140px] max-w-[280px]">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search by reference, type, or policy..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && setPagination((prev) => ({ ...prev, pageIndex: 0 }))}
+                  className="ps-9 w-full"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                    }}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            exportConfig={{ filename: 'form_sla_tracking_export.xlsx' }}
+            onRefresh={handleRefresh}
+            isRefreshing={isFetching && !isLoading}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>

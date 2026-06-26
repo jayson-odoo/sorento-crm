@@ -48,20 +48,26 @@ import {
   MODULE_PURGE_TABLES,
   type TenantModuleState,
 } from '../services/appModulesService';
-import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
+import {
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+  type RowSelectionState,
+} from '@tanstack/react-table';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { ModuleInstallEvent } from '../services/appModulesService';
-import { Columns3 } from 'lucide-react';
 
 export default function AppStoreAdmin() {
   const queryClient = useQueryClient();
   const canManage = useHasPermission('system.modules.manage');
   const { raw, refetch } = useTenantModules();
   const [bundleKey, setBundleKey] = useState<string>('');
+  const [eventsRowSelection, setEventsRowSelection] = useState<RowSelectionState>({});
 
   const eventsQuery = useQuery({
     queryKey: ['module-install-events'],
@@ -148,6 +154,7 @@ export default function AppStoreAdmin() {
 
   const eventColumns = useMemo<ColumnDef<ModuleInstallEvent>[]>(
     () => [
+      buildSelectColumn<ModuleInstallEvent>(),
       {
         id: 'created_at',
         accessorFn: (row) => row.created_at ?? null,
@@ -198,7 +205,10 @@ export default function AppStoreAdmin() {
     getRowId: (row) => row.id,
     state: {
       pagination: { pageIndex: 0, pageSize: 10 },
+      rowSelection: eventsRowSelection,
     },
+    enableRowSelection: true,
+    onRowSelectionChange: setEventsRowSelection,
     getCoreRowModel: getCoreRowModel(),
   });
 
@@ -302,19 +312,16 @@ export default function AppStoreAdmin() {
 
       {canManage && (
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-3">
+          <CardHeader className="block space-y-3">
             <div>
               <CardTitle>Recent install events</CardTitle>
               <CardDescription>Audit trail for this tenant.</CardDescription>
             </div>
-            <DataGridColumnVisibility
+            <DataGridListToolbar
               table={eventsTable}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1" disabled={eventsQuery.isLoading}>
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
+              exportConfig={{ filename: 'module_install_events_export.xlsx' }}
+              onRefresh={() => void eventsQuery.refetch()}
+              isRefreshing={eventsQuery.isFetching && !eventsQuery.isLoading}
             />
           </CardHeader>
           <CardContent>

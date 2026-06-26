@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
+  RowSelectionState,
   useReactTable,
   getCoreRowModel,
   getPaginationRowModel,
@@ -11,7 +12,8 @@ import {
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -22,7 +24,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useScheduledTasks } from '../hooks/useScheduledTasks';
 import type { ScheduledTask } from '../types/scheduledTask.types';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
-import { ChevronRight, Columns3 } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 
 const INTERVAL_LABELS: Record<string, string> = {
   seconds: 'sec',
@@ -39,6 +41,7 @@ function formatFrequency(task: ScheduledTask): string {
 export default function ScheduledTasksList() {
   const router = useRouter();
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data, isLoading, refetch, isFetching } = useScheduledTasks();
   const tasks = data?.data ?? [];
@@ -46,6 +49,7 @@ export default function ScheduledTasksList() {
 
   const columns = useMemo<ColumnDef<ScheduledTask>[]>(
     () => [
+      buildSelectColumn<ScheduledTask>(),
       {
         accessorKey: 'name',
         header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
@@ -61,7 +65,7 @@ export default function ScheduledTasksList() {
         ),
         size: 220,
         minSize: 140,
-        meta: { skeleton: <Skeleton className="h-8 w-40" /> },
+        meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-8 w-40" /> },
       },
       {
         accessorKey: 'key',
@@ -73,6 +77,7 @@ export default function ScheduledTasksList() {
         ),
         size: 180,
         minSize: 100,
+        meta: { headerTitle: 'Key' },
       },
       {
         accessorKey: 'enabled',
@@ -83,12 +88,14 @@ export default function ScheduledTasksList() {
           </Badge>
         ),
         size: 90,
+        meta: { headerTitle: 'Enabled' },
       },
       {
         accessorKey: 'interval',
         header: ({ column }) => <DataGridColumnHeader title="Frequency" column={column} />,
         cell: ({ row }) => formatFrequency(row.original),
         size: 120,
+        meta: { headerTitle: 'Frequency' },
       },
       {
         accessorKey: 'next_run_at',
@@ -98,6 +105,7 @@ export default function ScheduledTasksList() {
             ? formatDateTimeInMalaysia(row.original.next_run_at)
             : '-',
         size: 160,
+        meta: { headerTitle: 'Next Run' },
       },
       {
         accessorKey: 'last_run_at',
@@ -107,6 +115,7 @@ export default function ScheduledTasksList() {
             ? formatDateTimeInMalaysia(row.original.last_run_at)
             : '-',
         size: 160,
+        meta: { headerTitle: 'Last Run' },
       },
       {
         accessorKey: 'last_status',
@@ -120,6 +129,7 @@ export default function ScheduledTasksList() {
           );
         },
         size: 100,
+        meta: { headerTitle: 'Last Status' },
       },
       {
         accessorKey: 'actions',
@@ -135,6 +145,7 @@ export default function ScheduledTasksList() {
           </Button>
         ),
         size: 60,
+        enableHiding: false,
       },
     ],
     [router],
@@ -143,7 +154,10 @@ export default function ScheduledTasksList() {
   const table = useReactTable({
     data: tasks,
     columns,
-    state: { pagination },
+    getRowId: (row) => row.id,
+    state: { pagination, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: (updater) => {
       const next = typeof updater === 'function' ? updater(pagination) : updater;
       setPagination(next);
@@ -161,27 +175,22 @@ export default function ScheduledTasksList() {
       isLoading={isLoading}
       onRowClick={(task) => task?.id && router.push(`/system-management/scheduled-tasks/${task.id}`)}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex items-center justify-end">
-          <DataGridColumnVisibility
+        <CardHeader className="block">
+          <DataGridListToolbar
             table={table}
-            trigger={
-              <Button variant="outline" size="sm" className="gap-1">
-                <Columns3 className="size-4" />
-                Columns
-              </Button>
-            }
+            exportConfig={{ filename: 'scheduled_tasks_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
           />
-          <CardTable>
-            <ScrollArea className="w-full">
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
-          </CardTable>
         </CardHeader>
+        <CardTable>
+          <ScrollArea className="w-full">
+            <DataGridTable />
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
+        </CardTable>
         <CardFooter className="flex justify-between border-t px-4 py-3">
           <DataGridPagination />
         </CardFooter>

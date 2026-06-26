@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   VisibilityState,
   useReactTable,
@@ -13,13 +14,14 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { AlertCircle, CheckCircle, ChevronRight, Clock, Columns3, Filter, RefreshCw, Search, UserRound, X } from 'lucide-react';
+import { AlertCircle, CheckCircle, ChevronRight, Clock, Search, UserRound, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -32,7 +34,6 @@ import {
 } from '@/components/ui/select';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { useConversationSLATracking, useSyncAssigneeFromRespond } from '../hooks/useConversationSLATracking';
@@ -51,14 +52,14 @@ export default function ConversationSLATrackingList() {
     team_set_code: false,
   });
   const [searchQuery, setSearchQuery] = useState('');
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [assignedToFilter, setAssignedToFilter] = useState('__all__');
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [searchQuery, assignedToFilter]);
 
-  const { data, isLoading, refetch, isFetching } = useConversationSLATracking({
+  const { data, isLoading, isFetching } = useConversationSLATracking({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -79,10 +80,8 @@ export default function ConversationSLATrackingList() {
   });
 
   const handleRefresh = async () => {
-    setIsRefreshing(true);
     await queryClient.invalidateQueries({ queryKey: ['conversation-sla-tracking'] });
     await queryClient.invalidateQueries({ queryKey: ['conversation-sla-tracking-detail'] });
-    setIsRefreshing(false);
   };
 
   const syncAssigneeMutation = useSyncAssigneeFromRespond();
@@ -180,43 +179,44 @@ export default function ConversationSLATrackingList() {
 
   const columns = useMemo<ColumnDef<ConversationSLATracking>[]>(
     () => [
+      buildSelectColumn<ConversationSLATracking>(),
       {
         accessorKey: 'contact_phone',
         header: ({ column }) => <DataGridColumnHeader title="Contact Phone" column={column} />,
         cell: ({ row }) => {
-          const phone = row.original.contact_phone || 
-                       row.original.contact?.phone_number || 
+          const phone = row.original.contact_phone ||
+                       row.original.contact?.phone_number ||
                        '-';
           return phone;
         },
         size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Contact Phone', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'contact_name',
         header: ({ column }) => <DataGridColumnHeader title="Contact Name" column={column} />,
         cell: ({ row }) => {
-          const name = row.original.contact_name || 
-                      row.original.contact?.name || 
+          const name = row.original.contact_name ||
+                      row.original.contact?.name ||
                       '-';
           return name;
         },
         size: 220,
-        meta: { skeleton: <Skeleton className="h-4 w-36" /> },
+        meta: { headerTitle: 'Contact Name', skeleton: <Skeleton className="h-4 w-36" /> },
       },
       {
         accessorKey: 'policy_name',
         header: ({ column }) => <DataGridColumnHeader title="Policy" column={column} />,
         cell: ({ row }) => {
-          const policyName = row.original.policy?.name || 
-                            row.original.policy_name || 
-                            row.original.policy?.code || 
-                            row.original.policy_code || 
+          const policyName = row.original.policy?.name ||
+                            row.original.policy_name ||
+                            row.original.policy?.code ||
+                            row.original.policy_code ||
                             '-';
           return policyName;
         },
         size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Policy', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'current_tier',
@@ -225,26 +225,28 @@ export default function ConversationSLATrackingList() {
           <Badge variant="secondary">Tier {row.original.current_tier}</Badge>
         ),
         size: 120,
+        meta: { headerTitle: 'Current Tier' },
       },
       {
         accessorKey: 'assigned_user_name',
         header: ({ column }) => <DataGridColumnHeader title="Assigned To" column={column} />,
         cell: ({ row }) => {
-          const userName = row.original.assigned_user_name || 
-                          row.original.assigned_user?.name || 
-                          row.original.assigned_user?.email || 
-                          row.original.assigned_to || 
+          const userName = row.original.assigned_user_name ||
+                          row.original.assigned_user?.name ||
+                          row.original.assigned_user?.email ||
+                          row.original.assigned_to ||
                           '-';
           return userName;
         },
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Assigned To', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'initiated_at',
         header: ({ column }) => <DataGridColumnHeader title="Initiated At" column={column} />,
         cell: ({ row }) => formatDateTime(parseDateTimeAsUTC(row.original.initiated_at)),
         size: 180,
+        meta: { headerTitle: 'Initiated At' },
       },
       {
         accessorKey: 'due_at',
@@ -267,6 +269,7 @@ export default function ConversationSLATrackingList() {
           );
         },
         size: 180,
+        meta: { headerTitle: 'Due at (response)' },
       },
       {
         accessorKey: 'due_at_resolution',
@@ -291,6 +294,7 @@ export default function ConversationSLATrackingList() {
           );
         },
         size: 180,
+        meta: { headerTitle: 'Due at (resolution)' },
       },
       {
         accessorKey: 'time_elapsed',
@@ -300,6 +304,7 @@ export default function ConversationSLATrackingList() {
           return <span className="text-sm">{getTimeElapsed(o)}</span>;
         },
         size: 120,
+        meta: { headerTitle: 'Time elapsed' },
       },
       {
         accessorKey: 'time_remaining_response',
@@ -340,6 +345,7 @@ export default function ConversationSLATrackingList() {
           );
         },
         size: 200,
+        meta: { headerTitle: 'Response' },
       },
       {
         accessorKey: 'time_remaining_resolution',
@@ -372,20 +378,21 @@ export default function ConversationSLATrackingList() {
           );
         },
         size: 200,
+        meta: { headerTitle: 'Resolution' },
       },
       {
         accessorKey: 'agent_code',
         header: ({ column }) => <DataGridColumnHeader title="Agent Code" column={column} />,
         cell: ({ row }) => row.original.agent_code || '-',
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Agent Code', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'team_set_code',
         header: ({ column }) => <DataGridColumnHeader title="Team Set Code" column={column} />,
         cell: ({ row }) => row.original.team_set_code || '-',
         size: 160,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Team Set Code', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'is_resolved',
@@ -415,6 +422,7 @@ export default function ConversationSLATrackingList() {
           );
         },
         size: 120,
+        meta: { headerTitle: 'Status' },
       },
       {
         accessorKey: 'actions',
@@ -444,6 +452,7 @@ export default function ConversationSLATrackingList() {
           </div>
         ),
         size: 80,
+        enableHiding: false,
       },
     ],
     [syncAssigneeMutation],
@@ -454,7 +463,9 @@ export default function ConversationSLATrackingList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting, columnVisibility },
+    state: { pagination, sorting, columnVisibility, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     onColumnVisibilityChange: setColumnVisibility,
@@ -466,7 +477,7 @@ export default function ConversationSLATrackingList() {
     manualFiltering: true,
   });
 
-  const hasActiveFilters = assignedToFilter && assignedToFilter !== '__all__';
+  const hasActiveFilters = Boolean(assignedToFilter && assignedToFilter !== '__all__');
 
   const handleClearFilters = () => {
     setAssignedToFilter('__all__');
@@ -476,99 +487,79 @@ export default function ConversationSLATrackingList() {
   return (
     <DataGrid
       table={table}
-      tableLayout={{ columnsVisibility: true }}
+      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex flex-row flex-wrap items-center gap-2 py-5">
-          <div className="flex items-center gap-2">
-            <div className="relative w-64 min-w-[140px] max-w-[280px]">
-              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-              <Input
-                placeholder="Search by contact phone or name..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && setPagination((prev) => ({ ...prev, pageIndex: 0 }))}
-                className="ps-9 w-full"
-              />
-              {searchQuery && (
-                <Button
-                  mode="icon"
-                  variant="dim"
-                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                  onClick={() => {
-                    setSearchQuery('');
-                    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                  }}
-                >
-                  <X />
-                </Button>
-              )}
-            </div>
-            <Popover>
-            <PopoverTrigger asChild>
-              <Button variant="outline" size="icon" disabled={isLoading} title="Filters" className="relative">
-                <Filter className="size-4" />
-                {hasActiveFilters && (
-                  <span className="absolute -top-1 -end-1 size-2.5 rounded-full bg-primary" />
-                )}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-72" align="start">
-              <div className="space-y-3">
-                <h4 className="font-medium text-sm">Filters</h4>
-                <Select
-                  value={assignedToFilter}
-                  onValueChange={(value) => {
-                    setAssignedToFilter(value);
-                    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                  }}
-                  disabled={isLoading}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Assignee" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">All assignees</SelectItem>
-                    {(respondUsers || []).map((user: { id: string; name?: string | null; respond_user_id?: string | null; email: string }) => (
-                      <SelectItem key={user.id} value={user.respond_user_id || user.id}>
-                        {user.name || user.email}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {hasActiveFilters && (
-                  <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">
-                    Clear Filters
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative w-64 min-w-[140px] max-w-[280px]">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search by contact phone or name..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && setPagination((prev) => ({ ...prev, pageIndex: 0 }))}
+                  className="ps-9 w-full"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                    }}
+                  >
+                    <X />
                   </Button>
                 )}
               </div>
-            </PopoverContent>
-          </Popover>
-          </div>
-          <div className="ml-auto flex items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={handleRefresh}
-              disabled={isRefreshing || isLoading}
-            >
-              <RefreshCw className={`size-4 mr-2 ${isRefreshing ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-          </div>
+            }
+            filters={{
+              kind: 'custom',
+              active: hasActiveFilters,
+              activeCount: hasActiveFilters ? 1 : 0,
+              content: (
+                <div className="space-y-3">
+                  <h4 className="font-medium text-sm">Filters</h4>
+                  <Select
+                    value={assignedToFilter}
+                    onValueChange={(value) => {
+                      setAssignedToFilter(value);
+                      setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                    }}
+                    disabled={isLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Assignee" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">All assignees</SelectItem>
+                      {(respondUsers || []).map((user: { id: string; name?: string | null; respond_user_id?: string | null; email: string }) => (
+                        <SelectItem key={user.id} value={user.respond_user_id || user.id}>
+                          {user.name || user.email}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {hasActiveFilters && (
+                    <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">
+                      Clear Filters
+                    </Button>
+                  )}
+                </div>
+              ),
+            }}
+            exportConfig={{ filename: 'conversation_sla_tracking_export.xlsx' }}
+            onRefresh={handleRefresh}
+            isRefreshing={isFetching && !isLoading}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>

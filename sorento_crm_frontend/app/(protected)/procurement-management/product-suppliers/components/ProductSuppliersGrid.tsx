@@ -4,18 +4,20 @@ import { useMemo, useState } from 'react';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, Columns3 } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -29,8 +31,9 @@ export default function ProductSuppliersGrid() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['product-suppliers', pagination, sorting, searchQuery],
     queryFn: () => getProductSuppliers({
       pageIndex: pagination.pageIndex,
@@ -46,31 +49,34 @@ export default function ProductSuppliersGrid() {
 
   const columns = useMemo<ColumnDef<ProductSupplier>[]>(
     () => [
+      buildSelectColumn<ProductSupplier>(),
       {
         accessorKey: 'product.product_code',
         header: ({ column }) => <DataGridColumnHeader title="Product Code" column={column} />,
         size: 150,
         cell: ({ row }) => row.original.product?.product_code || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Product Code', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'product.product_name',
         header: ({ column }) => <DataGridColumnHeader title="Product Name" column={column} />,
         size: 250,
         cell: ({ row }) => row.original.product?.product_name || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Product Name', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'supplier.supplier_code',
         header: ({ column }) => <DataGridColumnHeader title="Supplier Code" column={column} />,
         size: 150,
         cell: ({ row }) => row.original.supplier?.supplier_code || '-',
+        meta: { headerTitle: 'Supplier Code' },
       },
       {
         accessorKey: 'supplier.supplier_name',
         header: ({ column }) => <DataGridColumnHeader title="Supplier Name" column={column} />,
         size: 200,
         cell: ({ row }) => row.original.supplier?.supplier_name || '-',
+        meta: { headerTitle: 'Supplier Name' },
       },
     ],
     [],
@@ -81,7 +87,9 @@ export default function ProductSuppliersGrid() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -93,39 +101,42 @@ export default function ProductSuppliersGrid() {
   });
 
   return (
-    <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
+    <DataGrid
+      table={table}
+      recordCount={data?.pagination.total || 0}
+      isLoading={isLoading}
+      standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search product suppliers..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-64"
-            />
-            {searchQuery && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
-              </Button>
-            )}
-          </div>
-                    <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search product suppliers..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="ps-9 w-64"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            exportConfig={{ filename: 'product_suppliers_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>

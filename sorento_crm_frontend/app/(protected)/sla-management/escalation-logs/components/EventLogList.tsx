@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
@@ -16,8 +17,9 @@ import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { DataGridStandardToolbar } from '@/components/ui/data-grid-standard-toolbar';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -40,8 +42,9 @@ export default function EventLogList() {
   const [trackingId, setTrackingId] = useState('');
   const [eventType, setEventType] = useState('__all__');
   const [assignedTo, setAssignedTo] = useState('__all__');
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading } = useEventLogs({
+  const { data, isLoading, refetch, isFetching } = useEventLogs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -68,53 +71,60 @@ export default function EventLogList() {
 
   const columns = useMemo<ColumnDef<ConversationSLAEventLog>[]>(
     () => [
+      buildSelectColumn<ConversationSLAEventLog>(),
       {
         accessorKey: 'event_type',
         header: ({ column }) => <DataGridColumnHeader title="Event Type" column={column} />,
         size: 140,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Event Type', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'sla_tracking_id',
         header: ({ column }) => <DataGridColumnHeader title="Tracking ID" column={column} />,
         size: 220,
-        meta: { skeleton: <Skeleton className="h-4 w-40" /> },
+        meta: { headerTitle: 'Tracking ID', skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
         accessorKey: 'from_tier',
         header: ({ column }) => <DataGridColumnHeader title="From Tier" column={column} />,
         cell: ({ row }) => row.original.from_tier ? `Tier ${row.original.from_tier}` : '-',
         size: 120,
+        meta: { headerTitle: 'From Tier' },
       },
       {
         accessorKey: 'to_tier',
         header: ({ column }) => <DataGridColumnHeader title="To Tier" column={column} />,
         cell: ({ row }) => row.original.to_tier ? `Tier ${row.original.to_tier}` : '-',
         size: 120,
+        meta: { headerTitle: 'To Tier' },
       },
       {
         accessorKey: 'event_at',
         header: ({ column }) => <DataGridColumnHeader title="Event At" column={column} />,
         cell: ({ row }) => formatDateTime(new Date(row.original.event_at)),
         size: 200,
+        meta: { headerTitle: 'Event At' },
       },
       {
         accessorKey: 'assigned_to',
         header: ({ column }) => <DataGridColumnHeader title="Assigned To" column={column} />,
         cell: ({ row }) => row.original.assigned_to || '-',
         size: 160,
+        meta: { headerTitle: 'Assigned To' },
       },
       {
         accessorKey: 'response_time',
         header: ({ column }) => <DataGridColumnHeader title="Response Time" column={column} />,
         cell: ({ row }) => row.original.response_time ?? '-',
         size: 140,
+        meta: { headerTitle: 'Response Time' },
       },
       {
         accessorKey: 'resolution_time',
         header: ({ column }) => <DataGridColumnHeader title="Resolution Time" column={column} />,
         cell: ({ row }) => row.original.resolution_time ?? '-',
         size: 140,
+        meta: { headerTitle: 'Resolution Time' },
       },
     ],
     [],
@@ -125,7 +135,9 @@ export default function EventLogList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -136,14 +148,15 @@ export default function EventLogList() {
     manualFiltering: true,
   });
 
+  const advancedFiltersActive = eventType !== '__all__' || assignedTo !== '__all__';
+
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
-      tableLayout={{ columnsVisibility: true }}
-      standardToolbar={false}
+      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
     >
       <Card>
-        <CardHeader>
-          <DataGridStandardToolbar
+        <CardHeader className="block">
+          <DataGridListToolbar
             table={table}
             searchSlot={
               <div className="relative">
@@ -156,8 +169,11 @@ export default function EventLogList() {
                 />
               </div>
             }
-            advancedFilters={{
-              active: eventType !== '__all__' || assignedTo !== '__all__',
+            filters={{
+              kind: 'custom',
+              active: advancedFiltersActive,
+              activeCount:
+                (eventType !== '__all__' ? 1 : 0) + (assignedTo !== '__all__' ? 1 : 0),
               content: (
                 <div className="space-y-3">
                   <p className="text-sm font-medium">Advanced filters</p>
@@ -201,6 +217,8 @@ export default function EventLogList() {
               ),
             }}
             exportConfig={{ filename: 'sla_event_logs_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
           />
         </CardHeader>
         <CardTable>

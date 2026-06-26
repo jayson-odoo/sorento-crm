@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   useReactTable,
   getCoreRowModel,
   getPaginationRowModel,
@@ -12,7 +13,8 @@ import {
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -20,7 +22,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Columns3, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useQueryClient } from '@tanstack/react-query';
 import { getImportJob } from '../services/importJobService';
@@ -52,6 +54,7 @@ export default function ImportJobsList() {
   const [statusFilter, setStatusFilter] = useState('');
   const [cancelingJobId, setCancelingJobId] = useState<string | null>(null);
   const [refreshingJobId, setRefreshingJobId] = useState<string | null>(null);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data, isLoading, refetch, isFetching } = useImportJobs({
     pageIndex: pagination.pageIndex,
@@ -63,6 +66,7 @@ export default function ImportJobsList() {
 
   const columns = useMemo<ColumnDef<ImportJob>[]>(
     () => [
+      buildSelectColumn<ImportJob>(),
       {
         accessorKey: 'job_type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
@@ -73,7 +77,7 @@ export default function ImportJobsList() {
         ),
         size: 140,
         minSize: 80,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'status',
@@ -85,6 +89,7 @@ export default function ImportJobsList() {
         ),
         size: 120,
         minSize: 80,
+        meta: { headerTitle: 'Status' },
       },
       {
         accessorKey: 'filename',
@@ -99,6 +104,7 @@ export default function ImportJobsList() {
         },
         size: 300,
         minSize: 180,
+        meta: { headerTitle: 'Filename' },
       },
       {
         accessorKey: 'total_rows',
@@ -106,6 +112,7 @@ export default function ImportJobsList() {
         cell: ({ row }) => row.original.total_rows,
         size: 100,
         minSize: 70,
+        meta: { headerTitle: 'Total Rows' },
       },
       {
         accessorKey: 'processed_rows',
@@ -124,6 +131,7 @@ export default function ImportJobsList() {
         },
         size: 160,
         minSize: 120,
+        meta: { headerTitle: 'Processed' },
       },
       {
         accessorKey: 'successful_rows',
@@ -132,6 +140,7 @@ export default function ImportJobsList() {
           <span className="text-emerald-600 font-medium">{row.original.successful_rows}</span>
         ),
         size: 100,
+        meta: { headerTitle: 'Success' },
       },
       {
         accessorKey: 'failed_rows',
@@ -140,6 +149,7 @@ export default function ImportJobsList() {
           <span className="text-red-600 font-medium">{row.original.failed_rows}</span>
         ),
         size: 100,
+        meta: { headerTitle: 'Failed' },
       },
       {
         accessorKey: 'skipped_rows',
@@ -149,30 +159,35 @@ export default function ImportJobsList() {
         ),
         size: 100,
         minSize: 70,
+        meta: { headerTitle: 'Skipped' },
       },
       {
         accessorKey: 'created_at',
         header: ({ column }) => <DataGridColumnHeader title="Created At" column={column} />,
         cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
         size: 200,
+        meta: { headerTitle: 'Created At' },
       },
       {
         accessorKey: 'started_at',
         header: ({ column }) => <DataGridColumnHeader title="Started At" column={column} />,
         cell: ({ row }) => row.original.started_at ? formatDateTimeInMalaysia(row.original.started_at) : '-',
         size: 200,
+        meta: { headerTitle: 'Started At' },
       },
       {
         accessorKey: 'completed_at',
         header: ({ column }) => <DataGridColumnHeader title="Completed At" column={column} />,
         cell: ({ row }) => row.original.completed_at ? formatDateTimeInMalaysia(row.original.completed_at) : '-',
         size: 200,
+        meta: { headerTitle: 'Completed At' },
       },
       {
         accessorKey: 'updated_at',
         header: ({ column }) => <DataGridColumnHeader title="Updated At" column={column} />,
         cell: ({ row }) => row.original.updated_at ? formatDateTimeInMalaysia(row.original.updated_at) : '-',
         size: 200,
+        meta: { headerTitle: 'Updated At' },
       },
       {
         accessorKey: 'actions',
@@ -244,6 +259,7 @@ export default function ImportJobsList() {
           );
         },
         size: 140,
+        enableHiding: false,
       },
     ],
     [
@@ -263,7 +279,9 @@ export default function ImportJobsList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.job_id,
-    state: { pagination },
+    state: { pagination, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -286,34 +304,47 @@ export default function ImportJobsList() {
       isLoading={isLoading}
       onRowClick={(row) => handleRowClick(row.job_id)}
       tableLayout={{ columnsVisibility: true,  width: 'fixed', columnsResizable: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex gap-2 items-center">
-            <Input
-              placeholder="Filter by type..."
-              value={jobType}
-              onChange={(e) => setJobType(e.target.value)}
-              className="w-48"
-            />
-            <Input
-              placeholder="Filter by status..."
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-48"
-            />
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-          </div>
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            filters={{
+              kind: 'custom',
+              active: Boolean(jobType || statusFilter),
+              activeCount: (jobType ? 1 : 0) + (statusFilter ? 1 : 0),
+              content: (
+                <div className="space-y-3">
+                  <Input
+                    placeholder="Filter by type..."
+                    value={jobType}
+                    onChange={(e) => setJobType(e.target.value)}
+                  />
+                  <Input
+                    placeholder="Filter by status..."
+                    value={statusFilter}
+                    onChange={(e) => setStatusFilter(e.target.value)}
+                  />
+                  {(jobType || statusFilter) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => {
+                        setJobType('');
+                        setStatusFilter('');
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  )}
+                </div>
+              ),
+            }}
+            exportConfig={{ filename: 'import_jobs_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>

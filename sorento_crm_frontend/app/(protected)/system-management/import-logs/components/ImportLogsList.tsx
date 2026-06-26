@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   useReactTable,
   getCoreRowModel,
   getPaginationRowModel,
@@ -12,7 +13,8 @@ import {
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -23,12 +25,12 @@ import { Button } from '@/components/ui/button';
 import { formatDateTime } from '@/lib/helpers';
 import { useImportLogs } from '../hooks/useImportLogs';
 import type { ImportLog } from '../types/importLog.types';
-import { Columns3 } from 'lucide-react';
 
 export default function ImportLogsList() {
   const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [entityType, setEntityType] = useState('');
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // Helper function to extract product codes from warnings/errors for description
   const getDescription = (log: ImportLog): string => {
@@ -92,6 +94,7 @@ export default function ImportLogsList() {
 
   const columns = useMemo<ColumnDef<ImportLog>[]>(
     () => [
+      buildSelectColumn<ImportLog>(),
       {
         accessorKey: 'entity_type',
         header: ({ column }) => <DataGridColumnHeader title="Entity" column={column} />,
@@ -101,36 +104,41 @@ export default function ImportLogsList() {
           </Badge>
         ),
         size: 120,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Entity', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'filename',
         header: ({ column }) => <DataGridColumnHeader title="Filename" column={column} />,
         cell: ({ row }) => row.original.filename || '-',
         size: 220,
+        meta: { headerTitle: 'Filename' },
       },
       {
         accessorKey: 'import_type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
         size: 140,
+        meta: { headerTitle: 'Type' },
       },
       {
         accessorKey: 'successful_rows',
         header: ({ column }) => <DataGridColumnHeader title="Success" column={column} />,
         cell: ({ row }) => row.original.successful_rows,
         size: 100,
+        meta: { headerTitle: 'Success' },
       },
       {
         accessorKey: 'skipped_rows',
         header: ({ column }) => <DataGridColumnHeader title="Skipped" column={column} />,
         cell: ({ row }) => row.original.skipped_rows,
         size: 100,
+        meta: { headerTitle: 'Skipped' },
       },
       {
         accessorKey: 'failed_rows',
         header: ({ column }) => <DataGridColumnHeader title="Failed" column={column} />,
         cell: ({ row }) => row.original.failed_rows,
         size: 100,
+        meta: { headerTitle: 'Failed' },
       },
       {
         id: 'description',
@@ -144,24 +152,28 @@ export default function ImportLogsList() {
           );
         },
         size: 300,
+        meta: { headerTitle: 'Description' },
       },
       {
         accessorKey: 'imported_by',
         header: ({ column }) => <DataGridColumnHeader title="Imported By" column={column} />,
         cell: ({ row }) => row.original.imported_by || '-',
         size: 180,
+        meta: { headerTitle: 'Imported By' },
       },
       {
         accessorKey: 'imported_at',
         header: ({ column }) => <DataGridColumnHeader title="Created At" column={column} />,
         cell: ({ row }) => formatDateTime(new Date(row.original.imported_at)),
         size: 200,
+        meta: { headerTitle: 'Created At' },
       },
       {
         accessorKey: 'duration_ms',
         header: ({ column }) => <DataGridColumnHeader title="Duration" column={column} />,
         cell: ({ row }) => (row.original.duration_ms ? `${row.original.duration_ms} ms` : '-'),
         size: 120,
+        meta: { headerTitle: 'Duration' },
       },
     ],
     [],
@@ -172,7 +184,9 @@ export default function ImportLogsList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination },
+    state: { pagination, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -190,28 +204,39 @@ export default function ImportLogsList() {
       isLoading={isLoading}
       onRowClick={(row) => handleRowClick(row.id)}
       tableLayout={{ columnsVisibility: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative">
-            <Input
-              placeholder="Filter by entity type..."
-              value={entityType}
-              onChange={(e) => setEntityType(e.target.value)}
-              className="w-64"
-            />
-          </div>
-                    <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            filters={{
+              kind: 'custom',
+              active: Boolean(entityType),
+              activeCount: entityType ? 1 : 0,
+              content: (
+                <div className="space-y-3">
+                  <Input
+                    placeholder="Filter by entity type..."
+                    value={entityType}
+                    onChange={(e) => setEntityType(e.target.value)}
+                  />
+                  {entityType && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => setEntityType('')}
+                    >
+                      Clear filters
+                    </Button>
+                  )}
+                </div>
+              ),
+            }}
+            exportConfig={{ filename: 'import_logs_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>

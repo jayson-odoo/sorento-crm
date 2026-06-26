@@ -5,6 +5,7 @@ import Link from 'next/link';
 import type {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
 } from '@tanstack/react-table';
 import {
@@ -12,13 +13,14 @@ import {
   getCoreRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, Columns3 } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -38,6 +40,7 @@ export default function PickingLinesList() {
     { id: 'spo_allocation', desc: false },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const sortField = (sorting[0]?.id as SortField) || 'spo_allocation';
   const sortDir = sorting[0]?.desc ? 'desc' : 'asc';
@@ -60,6 +63,7 @@ export default function PickingLinesList() {
 
   const columns = useMemo<ColumnDef<PickingLineListItem>[]>(
     () => [
+      buildSelectColumn<PickingLineListItem>(),
       {
         id: 'spo_allocation',
         accessorFn: (row) => row.spo_allocation?.spo_number ?? '',
@@ -79,7 +83,7 @@ export default function PickingLinesList() {
           );
         },
         size: 160,
-        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'SPO Allocation', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         id: 'product',
@@ -89,7 +93,7 @@ export default function PickingLinesList() {
         ),
         cell: ({ row }) => row.original.product?.product_code ?? '-',
         size: 140,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'location',
@@ -103,7 +107,7 @@ export default function PickingLinesList() {
           row.original.destination_warehouse?.warehouse_code ??
           '-',
         size: 120,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         id: 'quantity_expected',
@@ -113,7 +117,7 @@ export default function PickingLinesList() {
         ),
         cell: ({ row }) => row.original.quantity_expected,
         size: 100,
-        meta: { skeleton: <Skeleton className="h-4 w-12" /> },
+        meta: { headerTitle: 'Expected', skeleton: <Skeleton className="h-4 w-12" /> },
       },
       {
         id: 'quantity_picked',
@@ -123,7 +127,7 @@ export default function PickingLinesList() {
         ),
         cell: ({ row }) => row.original.quantity_picked,
         size: 100,
-        meta: { skeleton: <Skeleton className="h-4 w-12" /> },
+        meta: { headerTitle: 'Picked', skeleton: <Skeleton className="h-4 w-12" /> },
       },
     ],
     [],
@@ -134,7 +138,9 @@ export default function PickingLinesList() {
     data: data?.data ?? [],
     pageCount: Math.ceil((data?.pagination?.total ?? 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -148,41 +154,38 @@ export default function PickingLinesList() {
       table={table}
       recordCount={data?.pagination?.total ?? 0}
       isLoading={isLoading}
-    
+      standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search by SPO allocation or product..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-72"
-            />
-            {searchQuery && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
-              </Button>
-            )}
-          </div>
-                    <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search by SPO allocation or product..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="ps-9 w-72"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            exportConfig={{ filename: 'picking_lines_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>

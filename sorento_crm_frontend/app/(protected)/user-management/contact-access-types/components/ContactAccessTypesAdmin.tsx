@@ -2,9 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
-import { Plus, Pencil, Trash2, Columns3 } from 'lucide-react';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -19,9 +19,15 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
+import {
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+  type RowSelectionState,
+} from '@tanstack/react-table';
 import { toast } from 'sonner';
 import {
   getAllContactAccessTypes,
@@ -79,6 +85,7 @@ export default function ContactAccessTypesAdmin() {
   const [typeDialogOpen, setTypeDialogOpen] = useState(false);
   const [editingType, setEditingType] = useState<ContactAccessTypeAdmin | null>(null);
   const [deleteTypeCode, setDeleteTypeCode] = useState<string | null>(null);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [typeForm, setTypeForm] = useState({
     code: '',
     name: '',
@@ -164,6 +171,7 @@ export default function ContactAccessTypesAdmin() {
 
   const typeColumns = useMemo<ColumnDef<ContactAccessTypeAdmin>[]>(
     () => [
+      buildSelectColumn<ContactAccessTypeAdmin>(),
       {
         id: 'code',
         accessorFn: (row) => row.code,
@@ -266,43 +274,40 @@ export default function ContactAccessTypesAdmin() {
     getRowId: (row) => row.code,
     state: {
       pagination: { pageIndex: 0, pageSize: 10 },
+      rowSelection,
     },
+    onRowSelectionChange: setRowSelection,
+    enableRowSelection: true,
     getCoreRowModel: getCoreRowModel(),
   });
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>Contact access types</CardTitle>
-          <div className="flex items-center gap-2">
-            <DataGridColumnVisibility
+      <DataGrid
+        table={typeTable}
+        recordCount={types.length}
+        isLoading={typesLoading}
+        emptyMessage="No access types. Add one to get started."
+        tableLayout={{ width: 'fixed', columnsVisibility: true }}
+      >
+        <Card>
+          <CardHeader className="block">
+            <DataGridListToolbar
               table={typeTable}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
+              exportConfig={{ filename: 'contact_access_types_export.xlsx' }}
+              primaryAction={
+                <Button onClick={openCreateType}>
+                  <Plus className="size-4 mr-2" />
+                  Add type
                 </Button>
               }
             />
-            <Button onClick={openCreateType}>
-              <Plus className="size-4 mr-2" />
-              Add type
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <DataGrid
-            table={typeTable}
-            recordCount={types.length}
-            isLoading={typesLoading}
-            emptyMessage="No access types. Add one to get started."
-            tableLayout={{ width: 'fixed' }}
-          >
+          </CardHeader>
+          <CardContent>
             <DataGridTable />
-          </DataGrid>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </DataGrid>
 
       {/* Type create/edit dialog */}
       <Dialog open={typeDialogOpen} onOpenChange={setTypeDialogOpen}>

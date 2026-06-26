@@ -5,19 +5,21 @@ import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Columns3, RefreshCw, Search, X } from 'lucide-react';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
+import { ChevronRight, RefreshCw, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -37,6 +39,7 @@ export default function SmartLinkageList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [channelFilter, setChannelFilter] = useState<string>('all');
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // Always filter by business_table = 'attachments'
   const { data, isLoading, refetch } = useIntegrationLogs({
@@ -53,6 +56,7 @@ export default function SmartLinkageList() {
 
   const columns = useMemo<ColumnDef<IntegrationLog>[]>(
     () => [
+      buildSelectColumn<IntegrationLog>(),
       {
         accessorKey: 'integration_channel',
         header: ({ column }) => <DataGridColumnHeader title="Channel" column={column} />,
@@ -62,7 +66,7 @@ export default function SmartLinkageList() {
           </Badge>
         ),
         size: 120,
-        meta: { skeleton: <Skeleton className="h-4 w-16" /> },
+        meta: { headerTitle: 'Channel', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         accessorKey: 'business_id',
@@ -71,6 +75,7 @@ export default function SmartLinkageList() {
           <span className="font-mono text-xs">{row.original.business_id.substring(0, 8)}...</span>
         ),
         size: 120,
+        meta: { headerTitle: 'Attachment ID' },
       },
       {
         accessorKey: 'status',
@@ -84,12 +89,14 @@ export default function SmartLinkageList() {
           );
         },
         size: 120,
+        meta: { headerTitle: 'Status' },
       },
       {
         accessorKey: 'retry_count',
         header: ({ column }) => <DataGridColumnHeader title="Retries" column={column} />,
         cell: ({ row }) => `${row.original.retry_count}/${row.original.max_retry_allowed}`,
         size: 100,
+        meta: { headerTitle: 'Retries' },
       },
       {
         accessorKey: 'created_at',
@@ -99,6 +106,7 @@ export default function SmartLinkageList() {
           return formatDistanceToNow(date, { addSuffix: true });
         },
         size: 150,
+        meta: { headerTitle: 'Created' },
       },
       {
         accessorKey: 'processed_at',
@@ -109,6 +117,7 @@ export default function SmartLinkageList() {
           return formatDistanceToNow(date, { addSuffix: true });
         },
         size: 150,
+        meta: { headerTitle: 'Processed' },
       },
       {
         accessorKey: 'actions',
@@ -151,21 +160,26 @@ export default function SmartLinkageList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
+    onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
+    enableRowSelection: true,
   });
 
+  const filtersActiveCount =
+    (statusFilter !== 'all' ? 1 : 0) + (channelFilter !== 'all' ? 1 : 0);
+
   return (
-    <DataGrid 
-      table={table} 
-      recordCount={data?.pagination.total || 0} 
+    <DataGrid
+      table={table}
+      recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       tableLayout={{ columnsVisibility: true }}
       onRowClick={(row) => {
@@ -173,70 +187,73 @@ export default function SmartLinkageList() {
       }}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-          <div className="flex items-center gap-2 flex-1">
-            <div className="relative flex-1 max-w-xs">
-              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-              <Input
-                placeholder="Search logs..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="ps-9"
-              />
-              {searchQuery && (
-                <Button
-                  mode="icon"
-                  variant="dim"
-                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                  onClick={() => setSearchQuery('')}
-                >
-                  <X />
-                </Button>
-              )}
-            </div>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="processing">Processing</SelectItem>
-                <SelectItem value="success">Success</SelectItem>
-                <SelectItem value="failed">Failed</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={channelFilter} onValueChange={setChannelFilter}>
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Channel" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Channels</SelectItem>
-                <SelectItem value="n8n">n8n</SelectItem>
-              </SelectContent>
-            </Select>
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                refetch();
-                toast.success('List refreshed');
-              }}
-              disabled={isLoading}
-            >
-              <RefreshCw className={`size-4 ${isLoading ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
-          </div>
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search logs..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="ps-9 w-64"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            filters={{
+              kind: 'custom',
+              active: filtersActiveCount > 0,
+              activeCount: filtersActiveCount,
+              content: (
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium">Status</p>
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Status</SelectItem>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="processing">Processing</SelectItem>
+                        <SelectItem value="success">Success</SelectItem>
+                        <SelectItem value="failed">Failed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium">Channel</p>
+                    <Select value={channelFilter} onValueChange={setChannelFilter}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Channel" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Channels</SelectItem>
+                        <SelectItem value="n8n">n8n</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              ),
+            }}
+            exportConfig={{ filename: 'smart_linkage_export.xlsx' }}
+            onRefresh={() => {
+              refetch();
+              toast.success('List refreshed');
+            }}
+            isRefreshing={isLoading}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>

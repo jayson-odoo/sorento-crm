@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   useReactTable,
   getCoreRowModel,
   getPaginationRowModel,
@@ -11,7 +12,8 @@ import {
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -33,7 +35,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { Eye, Columns3 } from 'lucide-react';
+import { Eye, Search, X } from 'lucide-react';
 import { useOutgoingMails } from '../hooks/useOutgoingMails';
 import type { OutgoingMail } from '../types/outgoingMail.types';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
@@ -81,6 +83,7 @@ export default function OutgoingMailsList() {
   const [status, setStatus] = useState<string>('__all__');
   const [query, setQuery] = useState<string>('');
   const [contentMail, setContentMail] = useState<OutgoingMail | null>(null);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data, isLoading, refetch, isFetching } = useOutgoingMails({
     pageIndex: pagination.pageIndex,
@@ -91,12 +94,13 @@ export default function OutgoingMailsList() {
 
   const columns = useMemo<ColumnDef<OutgoingMail>[]>(
     () => [
+      buildSelectColumn<OutgoingMail>(),
       {
         accessorKey: 'created_at',
         header: ({ column }) => <DataGridColumnHeader title="Queued At" column={column} />,
         cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
         size: 180,
-        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'Queued At', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'to_email',
@@ -105,6 +109,7 @@ export default function OutgoingMailsList() {
           <span className="font-mono text-xs">{row.original.to_email || '-'}</span>
         ),
         size: 220,
+        meta: { headerTitle: 'To' },
       },
       {
         accessorKey: 'subject',
@@ -115,6 +120,7 @@ export default function OutgoingMailsList() {
           </span>
         ),
         size: 420,
+        meta: { headerTitle: 'Subject' },
       },
       {
         id: 'content',
@@ -149,6 +155,7 @@ export default function OutgoingMailsList() {
           );
         },
         size: 320,
+        meta: { headerTitle: 'Content' },
       },
       {
         accessorKey: 'status',
@@ -159,6 +166,7 @@ export default function OutgoingMailsList() {
           </Badge>
         ),
         size: 120,
+        meta: { headerTitle: 'Status' },
       },
       {
         accessorKey: 'sent_at',
@@ -166,6 +174,7 @@ export default function OutgoingMailsList() {
         cell: ({ row }) =>
           row.original.sent_at ? formatDateTimeInMalaysia(row.original.sent_at) : '-',
         size: 180,
+        meta: { headerTitle: 'Sent At' },
       },
       {
         accessorKey: 'error_message',
@@ -176,6 +185,7 @@ export default function OutgoingMailsList() {
           </span>
         ),
         size: 320,
+        meta: { headerTitle: 'Error' },
       },
     ],
     [],
@@ -186,7 +196,9 @@ export default function OutgoingMailsList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination },
+    state: { pagination, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -196,41 +208,66 @@ export default function OutgoingMailsList() {
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
       tableLayout={{ columnsVisibility: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="w-48">
-              <Select value={status} onValueChange={setStatus}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">All statuses</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="sent">Sent</SelectItem>
-                  <SelectItem value="failed">Failed</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <Input
-              placeholder="Search by email or subject..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              className="w-72"
-            />
-          </div>
-                    <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search by email or subject..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  className="ps-9 w-72"
+                />
+                {query && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            filters={{
+              kind: 'custom',
+              active: status !== '__all__',
+              activeCount: status !== '__all__' ? 1 : 0,
+              content: (
+                <div className="space-y-3">
+                  <Select value={status} onValueChange={setStatus}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">All statuses</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="sent">Sent</SelectItem>
+                      <SelectItem value="failed">Failed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {status !== '__all__' && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => setStatus('__all__')}
+                    >
+                      Clear filters
+                    </Button>
+                  )}
+                </div>
+              ),
+            }}
+            exportConfig={{ filename: 'outgoing_mails_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>

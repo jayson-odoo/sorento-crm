@@ -4,18 +4,20 @@ import { useMemo, useState } from 'react';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Columns3, Edit2, Plus, Trash2 } from 'lucide-react';
+import { Edit2, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -31,6 +33,7 @@ export default function PublicHolidaysList() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [selectedHoliday, setSelectedHoliday] = useState<PublicHoliday | null>(null);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data, isLoading, refetch, isFetching } = usePublicHolidays({
     pageIndex: pagination.pageIndex,
@@ -40,25 +43,26 @@ export default function PublicHolidaysList() {
 
   const columns = useMemo<ColumnDef<PublicHoliday>[]>(
     () => [
+      buildSelectColumn<PublicHoliday>(),
       {
         accessorKey: 'date',
         header: ({ column }) => <DataGridColumnHeader title="Date" column={column} />,
         cell: ({ row }) => row.original.date,
         size: 140,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Date', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'name',
         header: ({ column }) => <DataGridColumnHeader title="Holiday" column={column} />,
         size: 220,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Holiday', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'description',
         header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
         size: 300,
         cell: ({ row }) => row.original.description || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-40" /> },
+        meta: { headerTitle: 'Description', skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
         id: 'actions',
@@ -92,6 +96,7 @@ export default function PublicHolidaysList() {
           </div>
         ),
         size: 100,
+        enableHiding: false,
       },
     ],
     [],
@@ -100,7 +105,10 @@ export default function PublicHolidaysList() {
   const table = useReactTable({
     data: data?.data || [],
     columns,
-    state: { pagination, sorting },
+    getRowId: (row) => row.id,
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -116,36 +124,31 @@ export default function PublicHolidaysList() {
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
-      tableLayout={{ columnsVisibility: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
+        tableLayout={{ columnsVisibility: true }}
       >
         <Card>
-          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <CardHeader className="block space-y-3">
             <div>
               <h3 className="text-base font-semibold">Public Holidays</h3>
               <p className="text-sm text-muted-foreground">Dates excluded from delivery calculations.</p>
             </div>
-            <div className="flex items-center gap-2">
-              <DataGridColumnVisibility
-                table={table}
-                trigger={
-                  <Button variant="outline" size="sm" className="gap-1">
-                    <Columns3 className="size-4" />
-                    Columns
-                  </Button>
-                }
-              />
-              <Button
-                onClick={() => {
-                setSelectedHoliday(null);
-                setIsFormOpen(true);
-              }}
-            >
-              <Plus className="size-4 mr-2" />
-              Add Holiday
-              </Button>
-            </div>
+            <DataGridListToolbar
+              table={table}
+              exportConfig={{ filename: 'public_holidays_export.xlsx' }}
+              onRefresh={() => void refetch()}
+              isRefreshing={isFetching && !isLoading}
+              primaryAction={
+                <Button
+                  onClick={() => {
+                    setSelectedHoliday(null);
+                    setIsFormOpen(true);
+                  }}
+                >
+                  <Plus className="size-4 mr-2" />
+                  Add Holiday
+                </Button>
+              }
+            />
           </CardHeader>
           <CardTable>
             <ScrollArea className="w-full">

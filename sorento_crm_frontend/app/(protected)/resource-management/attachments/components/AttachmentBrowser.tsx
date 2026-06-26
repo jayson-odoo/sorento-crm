@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable, DataGridTableRowSelect, DataGridTableRowSelectAll } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -296,7 +297,7 @@ export default function AttachmentBrowser() {
         cell: ({ row }) => <span>{row.original.stored_filename || row.original.original_filename}</span>,
         header: ({ column }) => <DataGridColumnHeader title="Filename" column={column} />,
         size: 250,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Filename', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'mime_type',
@@ -312,42 +313,47 @@ export default function AttachmentBrowser() {
           );
         },
         size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'attachment_type',
         header: ({ column }) => <DataGridColumnHeader title="Attachment Type" column={column} />,
         cell: ({ row }) => row.original.attachment_type?.type_name ?? '-',
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Attachment Type', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'file_size_bytes',
         header: ({ column }) => <DataGridColumnHeader title="Size" column={column} />,
         cell: ({ row }) => row.original.file_size_bytes ? formatFileSize(row.original.file_size_bytes) : '-',
         size: 100,
+        meta: { headerTitle: 'Size' },
       },
       {
         accessorKey: 'uploaded_by_user.name',
         header: ({ column }) => <DataGridColumnHeader title="Uploaded By" column={column} />,
         cell: ({ row }) => row.original.uploaded_by_user?.name ?? row.original.uploaded_by_user?.email ?? '-',
         size: 150,
+        meta: { headerTitle: 'Uploaded By' },
       },
       {
         accessorKey: 'uploaded_at',
         header: ({ column }) => <DataGridColumnHeader title="Upload at" column={column} />,
         cell: ({ row }) => formatDateTime(new Date(row.original.uploaded_at)),
         size: 180,
+        meta: { headerTitle: 'Upload at' },
       },
       {
         accessorKey: 'entity_type',
         header: ({ column }) => <DataGridColumnHeader title="Entity" column={column} />,
         size: 120,
+        meta: { headerTitle: 'Entity' },
       },
       {
         accessorKey: 'entity_name',
         header: ({ column }) => <DataGridColumnHeader title="Entity Name" column={column} />,
         size: 150,
+        meta: { headerTitle: 'Entity Name' },
       },
       {
         accessorKey: 'actions',
@@ -486,6 +492,71 @@ export default function AttachmentBrowser() {
     columnResizeMode: 'onChange',
   });
 
+  // Bulk actions surface in the toolbar's selection strip; trash vs active
+  // folders expose different sets, mirroring the previous hand-rolled buttons.
+  const bulkActions: ToolbarAction[] = [];
+  if (selectedDeletableIds.length > 0 && isTrashView) {
+    bulkActions.push({
+      key: 'bulk-restore',
+      label: `Restore selected (${selectedDeletableIds.length})`,
+      icon: RotateCcw,
+      disabled: bulkRestoreMutation.isPending,
+      onClick: () =>
+        bulkRestoreMutation.mutate(selectedDeletableIds, {
+          onSuccess: () => setRowSelection({}),
+        }),
+    });
+    bulkActions.push({
+      key: 'bulk-permanent-delete',
+      label: `Permanently delete (${selectedDeletableIds.length})`,
+      icon: Trash2,
+      destructive: true,
+      onClick: () => setBulkDeleteDialogOpen(true),
+    });
+  }
+  if (selectedDeletableIds.length > 0 && !isTrashView) {
+    bulkActions.push({
+      key: 'bulk-attachment-type',
+      label: `Attachment type (${selectedDeletableIds.length})`,
+      icon: Tag,
+      onClick: () => setBulkEditTypeOpen(true),
+    });
+    bulkActions.push({
+      key: 'bulk-resubmit',
+      label: `Resubmit selected (${selectedDeletableIds.length})`,
+      icon: RefreshCw,
+      disabled: isResubmittingBulk,
+      onClick: handleBulkResubmit,
+    });
+    bulkActions.push({
+      key: 'bulk-delete',
+      label: `Delete selected (${selectedDeletableIds.length})`,
+      icon: Trash2,
+      destructive: true,
+      onClick: handleBulkDelete,
+    });
+  }
+
+  // Always-visible toolbar actions (not selection-gated).
+  const secondaryActions: ToolbarAction[] = [];
+  if (!isTrashView) {
+    secondaryActions.push({
+      key: 'bulk-import',
+      label: 'Bulk import (ZIP)',
+      icon: FileArchive,
+      onClick: () => setBulkImportDialogOpen(true),
+    });
+  }
+
+  // The folder/trash selector lives in the filter popover; count it as an active
+  // filter only when narrowed away from "All folders".
+  const totalFilterCount =
+    (directoryId !== null ? 1 : 0) +
+    (attachmentTypeId !== '__all__' ? 1 : 0) +
+    (linkStatus !== '__all__' ? 1 : 0) +
+    (uploadedBy.trim() ? 1 : 0) +
+    (uploadedAtFrom || uploadedAtTo ? 1 : 0);
+
   return (
     <>
       <DataGrid
@@ -497,177 +568,154 @@ export default function AttachmentBrowser() {
             `/resource-management/attachments/${row.id}${detailSearch ? `?${detailSearch}` : ''}`,
           )
         }
-        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       >
         <Card>
-          <CardHeader className="flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search attachments..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="ps-9 w-64"
-                />
-                {searchQuery && (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                    onClick={() => setSearchQuery('')}
-                  >
-                    <X />
-                  </Button>
-                )}
-              </div>
-              <Select
-                value={directoryId ?? '__all__'}
-                onValueChange={(v) =>
-                  setDirectoryId(v === '__all__' ? null : v === '__trash__' ? '__trash__' : v)
-                }
-              >
-                <SelectTrigger className="w-[200px]">
-                  <FolderOpen className="size-4 opacity-70 mr-1" />
-                  <SelectValue placeholder="All folders" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">All folders</SelectItem>
-                  {flattenDirectoryTree(directoryTree).map((d) => (
-                    <SelectItem key={d.id} value={d.id}>
-                      {d.label}
-                    </SelectItem>
-                  ))}
-                  <SelectItem value="__trash__">
-                    <span className="flex items-center gap-2">
-                      <Trash2 className="size-4" />
-                      Trash
-                    </span>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <Select
-                value={attachmentTypeId}
-                onValueChange={(value) => {
-                  setAttachmentTypeId(value);
-                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                }}
-              >
-                <SelectTrigger className="w-[190px]">
-                  <SelectValue placeholder="Attachment type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">All attachment types</SelectItem>
-                  {attachmentTypes.map((type) => (
-                    <SelectItem key={type.id} value={type.id}>
-                      {type.type_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={linkStatus}
-                onValueChange={(value) => {
-                  setLinkStatus(value as '__all__' | 'linked' | 'unlinked');
-                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                }}
-              >
-                <SelectTrigger className="w-[170px]">
-                  <SelectValue placeholder="Link status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">All files</SelectItem>
-                  <SelectItem value="linked">Linked</SelectItem>
-                  <SelectItem value="unlinked">Not linked</SelectItem>
-                </SelectContent>
-              </Select>
-              <Input
-                placeholder="Uploaded by user id"
-                value={uploadedBy}
-                onChange={(event) => {
-                  setUploadedBy(event.target.value);
-                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                }}
-                className="w-44"
-              />
-              <Input
-                type="date"
-                value={uploadedAtFrom}
-                onChange={(event) => {
-                  setUploadedAtFrom(event.target.value);
-                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                }}
-                className="w-36"
-                aria-label="Uploaded from"
-              />
-              <Input
-                type="date"
-                value={uploadedAtTo}
-                onChange={(event) => {
-                  setUploadedAtTo(event.target.value);
-                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-                }}
-                className="w-36"
-                aria-label="Uploaded to"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              {selectedDeletableIds.length > 0 && isTrashView && (
-                <>
-                  <Button
-                    variant="outline"
-                    onClick={() =>
-                      bulkRestoreMutation.mutate(selectedDeletableIds, {
-                        onSuccess: () => setRowSelection({}),
-                      })
-                    }
-                    disabled={bulkRestoreMutation.isPending}
-                  >
-                    <RotateCcw className="size-4 mr-2" />
-                    Restore selected ({selectedDeletableIds.length})
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setBulkDeleteDialogOpen(true)}
-                    className="text-destructive border-destructive/50 hover:bg-destructive/10"
-                  >
-                    <Trash2 className="size-4 mr-2" />
-                    Permanently delete ({selectedDeletableIds.length})
-                  </Button>
-                </>
-              )}
-              {selectedDeletableIds.length > 0 && !isTrashView && (
-                <>
-                  <Button
-                    variant="outline"
-                    onClick={() => setBulkEditTypeOpen(true)}
-                    data-testid="bulk-attachment-type-trigger"
-                  >
-                    <Tag className="size-4 mr-2" />
-                    Attachment type ({selectedDeletableIds.length})
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={handleBulkResubmit}
-                    disabled={isResubmittingBulk}
-                  >
-                    <RefreshCw
-                      className={`size-4 mr-2 ${isResubmittingBulk ? 'animate-spin' : ''}`}
-                    />
-                    Resubmit selected ({selectedDeletableIds.length})
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={handleBulkDelete}
-                    className="text-destructive border-destructive/50 hover:bg-destructive/10"
-                  >
-                    <Trash2 className="size-4 mr-2" />
-                    Delete selected ({selectedDeletableIds.length})
-                  </Button>
-                </>
-              )}
-              {!isTrashView && (
-                <>
+          <CardHeader className="block">
+            <DataGridListToolbar
+              table={table}
+              searchSlot={
+                <div className="relative">
+                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                  <Input
+                    placeholder="Search attachments..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="ps-9 w-64"
+                  />
+                  {searchQuery && (
+                    <Button
+                      mode="icon"
+                      variant="dim"
+                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                      onClick={() => setSearchQuery('')}
+                    >
+                      <X />
+                    </Button>
+                  )}
+                </div>
+              }
+              filters={{
+                kind: 'custom',
+                active: totalFilterCount > 0,
+                activeCount: totalFilterCount,
+                content: (
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium">Folder</p>
+                      <Select
+                        value={directoryId ?? '__all__'}
+                        onValueChange={(v) =>
+                          setDirectoryId(v === '__all__' ? null : v === '__trash__' ? '__trash__' : v)
+                        }
+                      >
+                        <SelectTrigger className="w-full">
+                          <FolderOpen className="size-4 opacity-70 mr-1" />
+                          <SelectValue placeholder="All folders" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">All folders</SelectItem>
+                          {flattenDirectoryTree(directoryTree).map((d) => (
+                            <SelectItem key={d.id} value={d.id}>
+                              {d.label}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value="__trash__">
+                            <span className="flex items-center gap-2">
+                              <Trash2 className="size-4" />
+                              Trash
+                            </span>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium">Attachment type</p>
+                      <Select
+                        value={attachmentTypeId}
+                        onValueChange={(value) => {
+                          setAttachmentTypeId(value);
+                          setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Attachment type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">All attachment types</SelectItem>
+                          {attachmentTypes.map((type) => (
+                            <SelectItem key={type.id} value={type.id}>
+                              {type.type_name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium">Link status</p>
+                      <Select
+                        value={linkStatus}
+                        onValueChange={(value) => {
+                          setLinkStatus(value as '__all__' | 'linked' | 'unlinked');
+                          setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                        }}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Link status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">All files</SelectItem>
+                          <SelectItem value="linked">Linked</SelectItem>
+                          <SelectItem value="unlinked">Not linked</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium">Uploaded by user id</p>
+                      <Input
+                        placeholder="Uploaded by user id"
+                        value={uploadedBy}
+                        onChange={(event) => {
+                          setUploadedBy(event.target.value);
+                          setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                        }}
+                        className="w-full"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium">Uploaded from</p>
+                      <Input
+                        type="date"
+                        value={uploadedAtFrom}
+                        onChange={(event) => {
+                          setUploadedAtFrom(event.target.value);
+                          setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                        }}
+                        className="w-full"
+                        aria-label="Uploaded from"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <p className="text-xs font-medium">Uploaded to</p>
+                      <Input
+                        type="date"
+                        value={uploadedAtTo}
+                        onChange={(event) => {
+                          setUploadedAtTo(event.target.value);
+                          setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                        }}
+                        className="w-full"
+                        aria-label="Uploaded to"
+                      />
+                    </div>
+                  </div>
+                ),
+              }}
+              exportConfig={{ filename: 'attachments_export.xlsx' }}
+              bulkActions={bulkActions}
+              secondaryActions={secondaryActions}
+              primaryAction={
+                !isTrashView ? (
                   <Button
                     onClick={() => setUploadDialogOpen(true)}
                     data-guide-target="resource-management.files.upload-button"
@@ -675,13 +723,9 @@ export default function AttachmentBrowser() {
                     <Plus className="size-4 mr-2" />
                     Create Attachment
                   </Button>
-                  <Button variant="outline" onClick={() => setBulkImportDialogOpen(true)}>
-                    <FileArchive className="size-4 mr-2" />
-                    Bulk import (ZIP)
-                  </Button>
-                </>
-              )}
-            </div>
+                ) : undefined
+              }
+            />
           </CardHeader>
         <CardTable>
           <ScrollArea>

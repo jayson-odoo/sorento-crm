@@ -9,24 +9,18 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Columns3, Link as LinkIcon, Plus, Search, Settings, Trash2, Upload, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, Link as LinkIcon, Plus, Search, Trash2, Upload, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { GroupBySelect } from '@/components/ui/group-by-select';
 import { useSPOAllocations, useSPOAllocationsGroupedBySPONumber } from '../hooks/useSPOAllocations';
 import SPOBulkDeleteDialog from './SPOBulkDeleteDialog';
@@ -209,7 +203,7 @@ export default function SPOAllocationsList() {
           );
         },
         size: 220,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'SPO Number', skeleton: <Skeleton className="h-4 w-32" /> },
       },
     ],
     [expandedGroups],
@@ -248,6 +242,7 @@ export default function SPOAllocationsList() {
           <span className="font-medium text-sm">{row.original.spo_number ?? '—'}</span>
         ),
         size: 140,
+        meta: { headerTitle: 'SPO Number' },
       },
       {
         id: 'product',
@@ -263,6 +258,7 @@ export default function SPOAllocationsList() {
           );
         },
         size: 180,
+        meta: { headerTitle: 'Product' },
       },
       {
         id: 'location',
@@ -270,12 +266,14 @@ export default function SPOAllocationsList() {
         cell: ({ row }) =>
           row.original.warehouse?.warehouse_code ?? row.original.warehouse?.warehouse_name ?? '—',
         size: 100,
+        meta: { headerTitle: 'Location' },
       },
       {
         id: 'shipped',
         header: 'Shipped',
         cell: () => '—',
         size: 70,
+        meta: { headerTitle: 'Shipped' },
       },
       {
         accessorKey: 'allocated_quantity',
@@ -284,6 +282,7 @@ export default function SPOAllocationsList() {
         ),
         cell: ({ row }) => row.original.allocated_quantity,
         size: 70,
+        meta: { headerTitle: 'Allocated' },
       },
       {
         accessorKey: 'quantity_received',
@@ -292,6 +291,7 @@ export default function SPOAllocationsList() {
         ),
         cell: ({ row }) => row.original.quantity_received,
         size: 70,
+        meta: { headerTitle: 'Received' },
       },
       {
         id: 'packing_list',
@@ -314,6 +314,7 @@ export default function SPOAllocationsList() {
           );
         },
         size: 160,
+        meta: { headerTitle: 'Packing List' },
       },
       {
         accessorKey: 'receipt_status',
@@ -329,6 +330,7 @@ export default function SPOAllocationsList() {
           </Badge>
         ),
         size: 110,
+        meta: { headerTitle: 'Status' },
       },
     ],
     [flatData, selectedAllocationIds],
@@ -358,114 +360,101 @@ export default function SPOAllocationsList() {
       table={table}
       recordCount={totalSPOs}
       isLoading={isLoading}
+      standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2 min-w-0 shrink">
-            <div className="relative shrink-0 w-40 sm:w-44">
-              <Search className="size-4 text-muted-foreground absolute start-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <Input
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="ps-8 h-8 text-sm"
-              />
-              {searchQuery && (
-                <Button
-                  mode="icon"
-                  variant="dim"
-                  className="absolute end-1 top-1/2 -translate-y-1/2 h-6 w-6"
-                  onClick={() => setSearchQuery('')}
-                >
-                  <X className="size-3.5" />
-                </Button>
-              )}
-            </div>
-            <GroupBySelect<ViewMode>
-              value={viewMode}
-              options={GROUP_BY_OPTIONS}
-              onValueChange={(v) => setViewMode(v)}
-              allLabel="All allocations"
-              placeholder="View"
-              className="w-[140px] shrink-0"
-            />
-            {isGrouped && (
-              <div className="flex items-center shrink-0">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={expandAll}
-                  disabled={groupedData.length === 0}
-                  title="Expand all"
-                >
-                  <ChevronsUpDown className="size-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={collapseAll}
-                  disabled={expandedGroups.size === 0}
-                  title="Collapse all"
-                >
-                  <ChevronsDownUp className="size-4" />
-                </Button>
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="flex items-center gap-2 min-w-0 shrink">
+                <div className="relative shrink-0 w-40 sm:w-44">
+                  <Search className="size-4 text-muted-foreground absolute start-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <Input
+                    placeholder="Search..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="ps-8 h-8 text-sm"
+                  />
+                  {searchQuery && (
+                    <Button
+                      mode="icon"
+                      variant="dim"
+                      className="absolute end-1 top-1/2 -translate-y-1/2 h-6 w-6"
+                      onClick={() => setSearchQuery('')}
+                    >
+                      <X className="size-3.5" />
+                    </Button>
+                  )}
+                </div>
+                <GroupBySelect<ViewMode>
+                  value={viewMode}
+                  options={GROUP_BY_OPTIONS}
+                  onValueChange={(v) => setViewMode(v)}
+                  allLabel="All allocations"
+                  placeholder="View"
+                  className="w-[140px] shrink-0"
+                />
+                {isGrouped && (
+                  <div className="flex items-center shrink-0">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={expandAll}
+                      disabled={groupedData.length === 0}
+                      title="Expand all"
+                    >
+                      <ChevronsUpDown className="size-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={collapseAll}
+                      disabled={expandedGroups.size === 0}
+                      title="Collapse all"
+                    >
+                      <ChevronsDownUp className="size-4" />
+                    </Button>
+                  </div>
+                )}
+                {/* Selection here is a cross-view (grouped + flat) manual id Set,
+                    not react-table rowSelection, so the bulk-delete control stays
+                    inline rather than in the toolbar's selection-driven bulk strip. */}
+                {selectedAllocationIds.size > 0 && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleBulkDelete}
+                    className="h-8 shrink-0"
+                  >
+                    <Trash2 className="size-4" />
+                    Delete {selectedAllocationIds.size} selected
+                  </Button>
+                )}
               </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1 h-8">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-            {selectedAllocationIds.size > 0 && (
+            }
+            exportConfig={{ filename: 'spo_allocations_export.xlsx' }}
+            secondaryActions={[
+              {
+                key: 'import',
+                label: 'Import SPO',
+                icon: Upload,
+                onClick: () => setImportDialogOpen(true),
+                dataGuideTarget: 'procurement.spo-allocations.import-options-button',
+              },
+            ]}
+            primaryAction={
               <Button
-                variant="destructive"
-                size="sm"
-                onClick={handleBulkDelete}
-                className="h-8"
+                onClick={() => router.push('/procurement-management/spo-allocations/new')}
               >
-                <Trash2 className="size-4" />
-                Delete {selectedAllocationIds.size} selected
+                <Plus className="size-4" />
+                Create SPO Allocation
               </Button>
-            )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  title="Import options"
-                  data-guide-target="procurement.spo-allocations.import-options-button"
-                >
-                  <Settings className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => setImportDialogOpen(true)}>
-                  <Upload className="size-4" />
-                  Import SPO
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Button
-              size="sm"
-              className="h-8"
-              onClick={() =>
-                router.push('/procurement-management/spo-allocations/new')
-              }
-            >
-              <Plus className="size-4" />
-              Create SPO Allocation
-            </Button>
-          </div>
+            }
+          />
         </CardHeader>
         <SPOImportDialog
           open={importDialogOpen}
