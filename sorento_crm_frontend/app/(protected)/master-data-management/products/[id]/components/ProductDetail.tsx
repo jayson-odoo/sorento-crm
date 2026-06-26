@@ -74,10 +74,10 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{product.product_name}</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-bold break-words min-w-0">{product.product_name}</h1>
             <Badge
               variant={product.is_active ? 'success' : 'secondary'}
               appearance="ghost"
@@ -85,11 +85,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
               {product.is_active ? 'Active' : 'Inactive'}
             </Badge>
           </div>
-          <p className="text-sm text-muted-foreground">
+          <p className="text-sm text-muted-foreground break-words">
             Product Code: {product.product_code}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <ProductNavigation productId={productId} />
           <Button
             variant="outline"
@@ -171,7 +171,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
         {/* Main Content - Tabs */}
         <div className="lg:col-span-3">
           <Tabs defaultValue="overview" className="w-full">
-            <TabsList>
+            <TabsList className="w-full justify-start overflow-x-auto">
               <TabsTrigger value="overview">Overview</TabsTrigger>
               <TabsTrigger value="stock">Stock</TabsTrigger>
               <TabsTrigger value="attachments">
