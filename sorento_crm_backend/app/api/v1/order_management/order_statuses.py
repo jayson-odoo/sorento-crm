@@ -7,7 +7,7 @@ from app.dependencies import get_current_user, get_current_user_optional
 from app.models.order import OrderStatus
 from app.services.order_service import OrderStatusService
 from app.schemas.order import OrderStatusCreate, OrderStatusUpdate, OrderStatusResponse
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -26,7 +26,7 @@ def _safe_select_response():
 @router.get("/", response_model=ListResponse[OrderStatusResponse])
 async def get_order_statuses(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):

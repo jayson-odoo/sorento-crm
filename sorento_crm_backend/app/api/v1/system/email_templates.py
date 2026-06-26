@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
-from app.schemas.common import ListResponse, SuccessResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, SuccessResponse
 from app.schemas.email_template import (
     EmailTemplateCreate,
     EmailTemplatePreviewRequest,
@@ -27,7 +27,7 @@ router = APIRouter()
 @router.get("/email-templates", response_model=ListResponse[EmailTemplateResponse])
 async def list_email_templates(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     current_user: dict = Depends(require_permission("email_templates.templates.view")),

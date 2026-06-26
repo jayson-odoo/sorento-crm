@@ -17,7 +17,7 @@ from app.schemas.automation import (
     TriggerCatalog,
     TriggerSpec,
 )
-from app.schemas.common import ListResponse, SuccessResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, SuccessResponse
 from app.services import automation_triggers
 from app.services.automation_service import AutomationService
 
@@ -54,7 +54,7 @@ async def get_trigger_catalog(
 @router.get("/automation/automations", response_model=ListResponse[AutomationResponse])
 async def list_automations(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     enabled: Optional[bool] = Query(None),
     current_user: dict = Depends(require_permission("automation.automations.view")),
@@ -163,7 +163,7 @@ async def run_automation_now(
 async def list_automation_runs(
     automation_id: str,
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(require_permission("automation.automations.view")),
     db: Session = Depends(get_db),
 ):

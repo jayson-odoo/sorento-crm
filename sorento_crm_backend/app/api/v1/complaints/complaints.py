@@ -20,7 +20,7 @@ from app.schemas.complaints import (
 )
 from app.schemas.external.complaints import ComplaintIntegrationCreate
 from app.schemas.integration import IntegrationLogCreate
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.procurement import ViewLinkRequest, ViewLinkResponse
 from app.services.error_handler import handle_internal_error
 from app.config import settings as app_settings
@@ -199,7 +199,7 @@ def _respond_user_id_from_current_user(current_user: dict) -> str:
 @router.get("/", response_model=ListResponse[ComplaintResponse])
 async def get_complaints(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     assigned_to: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
@@ -323,7 +323,7 @@ async def link_attachment_to_complaint(
 @router.get("/{complaint_id}/conversation")
 async def get_complaint_conversation(
     complaint_id: str,
-    limit: int = Query(50, ge=1, le=50),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     cursor: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),

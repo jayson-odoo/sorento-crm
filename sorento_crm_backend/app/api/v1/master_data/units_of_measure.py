@@ -6,7 +6,7 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.services.product_service import UnitOfMeasureService
 from app.schemas.product import UnitOfMeasureCreate, UnitOfMeasureUpdate, UnitOfMeasureResponse
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 from app.services.uuid_list_param import parse_uuid_list
 
@@ -16,7 +16,7 @@ router = APIRouter()
 @router.get("/", response_model=ListResponse[UnitOfMeasureResponse])
 async def get_units_of_measure(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     uom_ids: Optional[List[str]] = Query(
         None,

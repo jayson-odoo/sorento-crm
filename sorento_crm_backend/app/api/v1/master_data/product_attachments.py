@@ -7,7 +7,7 @@ from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.product_service import ProductAttachmentService
 from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.product import ProductAttachmentCreate, ProductAttachmentUpdate, ProductAttachmentResponse
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -16,7 +16,7 @@ router = APIRouter()
 @router.get("/", response_model=ListResponse[ProductAttachmentResponse])
 async def get_product_attachments(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
     entities: Optional[list[str]] = Query(

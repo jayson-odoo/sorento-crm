@@ -11,7 +11,7 @@ from app.schemas.complaint_master_data import (
     ComplaintRootCauseResponse,
     ComplaintRootCauseSimple,
 )
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -20,7 +20,7 @@ router = APIRouter()
 @router.get("/", response_model=ListResponse[ComplaintRootCauseResponse])
 async def get_complaint_root_causes(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     current_user: dict = Depends(require_permission_with_api_key("master_data.complaint_root_causes.view")),

@@ -1,6 +1,21 @@
 # PLAN — Unified List Toolbar (uniform DataGrid toolbar across all lists)
 
-**Status:** Design locked (grill-me 2026-06-26). Phase 0 (pagination investigation) not started.
+**Status:** Design locked (grill-me 2026-06-26). **Phase 0 DONE** (pagination fixed + verified). Phase 1 in progress.
+
+## Phase 0 finding (RESOLVED 2026-06-26)
+
+**Root cause of "per-page 500 → empty grid":** backend per-route `limit` query caps were below the FE page-size options. FE pagination offered up to 5000; ~49 DataGrid list endpoints capped `limit` at `le=50/100/200/500`. Picking a page size above a route's cap → FastAPI **422** → `useQuery` error → grid renders empty. Deterministic, cross-list.
+
+**Stock was a red herring** — `/inventory/stock/balance` is `le=5000`, so 500 worked there (verified: `limit=500` → 200, 500 of 7508 rows rendered). User generalized from the screenshot.
+
+**Fix:**
+- Backend: added `MAX_PAGE_LIMIT = 1000` to `app/schemas/common.py`; raised 54 `ListResponse[...]` list-endpoint caps from `le=<N>` → `le=MAX_PAGE_LIMIT` across 44 files. Excluded `inventory/stock.py:135` (dashboard "top-N" cap) and non-grid select/autocomplete endpoints.
+- Frontend: `data-grid-pagination.tsx` default `sizes` → `[25,50,100,250,500,1000]` (dropped 5/10/5000; ceiling 1000 to match BE).
+- Verified via `X-API-Key`: `brands?limit=1000` → 200 (was 422), `brands?limit=1001` → 422 (boundary intact), `stock-batches?limit=1000` → 200.
+
+Satisfies AC-G1..G4. Note: bulk export (no ceiling) is the escape hatch above 1000; per-page viewing is capped at 1000 by design.
+
+**Known dev-env aside:** Playwright session intermittently bounces to `/signin` (token TTL/refresh race) — unrelated to this change; re-navigation recovers. Watch during FE validation.
 
 ## Problem
 

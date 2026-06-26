@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.lookup import (
     LookupSetCreate, LookupSetUpdate, LookupSetResponse,
     LookupOptionCreate, LookupOptionUpdate, LookupOptionResponse,
@@ -24,7 +24,7 @@ router = APIRouter()
 @router.get("/", response_model=ListResponse[LookupSetResponse])
 async def list_sets(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     current_user=Depends(require_permission_with_api_key("master_data.lookup_sets.view")),
     db: Session = Depends(get_db),
@@ -124,7 +124,7 @@ def _set_to_response(db: Session, s) -> dict:
 async def list_options(
     set_id: str,
     page: int = Query(1, ge=1),
-    limit: int = Query(100, ge=1, le=200),
+    limit: int = Query(100, ge=1, le=MAX_PAGE_LIMIT),
     current_user=Depends(require_permission_with_api_key("master_data.lookup_sets.view")),
     db: Session = Depends(get_db),
 ):

@@ -28,7 +28,7 @@ from app.schemas.sla import (
     ConversationSLATestOverrideRequest,
 )
 from app.schemas.integration import IntegrationLogCreate
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error, handle_validation_error, handle_not_found
 from app.models.sla import ConversationSLATracking, SLAPolicyTier
 from app.models.user import User
@@ -265,7 +265,7 @@ async def get_sla_tracking_dashboard(
 
 @router.get("/my-pending")
 async def get_my_pending_sla_tracking(
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -309,7 +309,7 @@ async def get_team_pending_sla_tracking(
     team: Optional[str] = Query(None),
     query: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -647,7 +647,7 @@ async def extend_sla_tracking(
 @router.get("/", response_model=ListResponse[ConversationSLATrackingResponse])
 async def get_sla_tracking(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     policy_id: Optional[str] = Query(None),
     query: Optional[str] = Query(None),
     tracking_ids: Optional[list[str]] = Query(
@@ -1555,7 +1555,7 @@ async def list_trackers_by_source(
 @router.get("/event-logs", response_model=ListResponse[ConversationSLAEventLogResponse])
 async def get_event_logs(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query("event_at"),
     dir: Optional[str] = Query("desc"),
     tracking_id: Optional[str] = Query(None),
@@ -1590,7 +1590,7 @@ async def get_event_logs(
 @router.get("/{tracking_id}/conversation")
 async def get_sla_tracking_conversation(
     tracking_id: UUID,
-    limit: int = Query(50, ge=1, le=50),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     cursor: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),

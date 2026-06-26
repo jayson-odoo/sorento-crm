@@ -10,7 +10,7 @@ from app.schemas.scheduled_task import (
     ScheduledTaskUpdate,
     ScheduledTaskRunResponse,
 )
-from app.schemas.common import ListResponse, PaginationResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, PaginationResponse
 from app.services.scheduled_task_service import (
     get_task,
     list_tasks,
@@ -86,7 +86,7 @@ async def update_scheduled_task(
 async def list_task_runs(
     task_id: str,
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):

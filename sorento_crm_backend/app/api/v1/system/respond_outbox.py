@@ -19,7 +19,7 @@ from app.database import get_db
 from app.dependencies import require_permission
 from app.models.access import RespondContact
 from app.models.integration import IntegrationLog
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.respond_outbox import RespondOutboxRowResponse
 from app.services.error_handler import handle_internal_error
 
@@ -88,7 +88,7 @@ def _parse_payload(
 @router.get("/respond-outbox", response_model=ListResponse[RespondOutboxRowResponse])
 async def list_respond_outbox(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     status_filter: Optional[str] = Query(None, alias="status"),
     business_table: Optional[str] = Query(None),
     query: Optional[str] = Query(None, description="Search message text or contact"),

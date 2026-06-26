@@ -5,7 +5,7 @@ from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.marketing_service import MarketingCampaignService
 from app.schemas.marketing import MarketingCampaignCreate, MarketingCampaignUpdate, MarketingCampaignResponse
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -14,7 +14,7 @@ router = APIRouter()
 @router.get("/", response_model=ListResponse[MarketingCampaignResponse])
 async def get_campaigns(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):

@@ -10,7 +10,7 @@ from app.dependencies import get_current_user_or_api_key
 from app.services.marketing_service import PromotionProductService, _resolve_promotion_id_for_filter
 from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.marketing import PromotionProductCreate, PromotionProductUpdate, PromotionProductResponse
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -203,7 +203,7 @@ def _comma_separated_promotion_uuids(q: Optional[str]) -> Optional[List[str]]:
 @router.get("/", response_model=ListResponse[PromotionProductResponse])
 async def list_all_promotion_products(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
     query: Optional[str] = Query(

@@ -9,7 +9,7 @@ from app.schemas.sla import (
     SLAPolicyCreate, SLAPolicyUpdate, SLAPolicyResponse,
     SLAPolicyTierCreate, SLAPolicyTierUpdate, SLAPolicyTierResponse
 )
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -18,7 +18,7 @@ router = APIRouter()
 @router.get("/", response_model=ListResponse[SLAPolicyResponse])
 async def get_sla_policies(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),

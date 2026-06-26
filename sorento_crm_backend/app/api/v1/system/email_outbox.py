@@ -7,7 +7,7 @@ from typing import Optional
 from app.database import get_db
 from app.dependencies import require_permission
 from app.models.email_outbox import EmailOutbox
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.email_outbox import EmailOutboxRowResponse
 from app.services.email_outbox_service import cancel as cancel_outbox, retry as retry_outbox
 from app.services.error_handler import handle_internal_error
@@ -43,7 +43,7 @@ def _to_response(row: EmailOutbox) -> EmailOutboxRowResponse:
 @router.get("/email-outbox", response_model=ListResponse[EmailOutboxRowResponse])
 async def list_email_outbox(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     status_filter: Optional[str] = Query(None, alias="status"),
     event_key: Optional[str] = Query(None),
     query: Optional[str] = Query(None, description="Search recipient or subject"),

@@ -15,7 +15,7 @@ from app.schemas.procurement import (
     InboundShipmentListItemResponse,
     InboundShipmentResponse,
 )
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -28,7 +28,7 @@ class BulkDeletePackingListsRequest(BaseModel):
 @router.get("/", response_model=ListResponse[InboundShipmentListItemResponse])
 async def get_packing_lists(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     shipment_status: Optional[str] = Query(None),

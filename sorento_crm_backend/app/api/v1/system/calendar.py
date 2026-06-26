@@ -13,7 +13,7 @@ from app.schemas.calendar import (
     WorkCalendarConfigResponse,
     WorkCalendarConfigUpdate,
 )
-from app.schemas.common import ListResponse, PaginationResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, PaginationResponse
 from app.services.calendar_service import CalendarService
 from app.services.error_handler import handle_internal_error, handle_not_found, handle_conflict
 
@@ -73,7 +73,7 @@ async def update_work_calendar_config(
 @router.get("/public-holidays", response_model=ListResponse[PublicHolidayResponse])
 async def list_public_holidays(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     year: Optional[int] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),

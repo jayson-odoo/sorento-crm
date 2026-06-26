@@ -15,7 +15,7 @@ from app.config import settings as app_settings
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission, require_any_permission
 from app.models.auth import VerificationToken
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.user import UserCreate, UserUpdate, UserResponse, UserSelectResponse, UserRoleResponse
 from app.services.error_handler import handle_internal_error
 from app.services.notification_service import NotificationService
@@ -43,7 +43,7 @@ router = APIRouter()
 @router.get("/", response_model=ListResponse[UserResponse])
 async def get_users(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=500),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     roleId: Optional[str] = Query(None),

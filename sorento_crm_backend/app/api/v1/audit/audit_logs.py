@@ -6,7 +6,7 @@ from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
 from app.services.audit_service import list_audit_logs
 from app.schemas.audit import AuditLogResponse
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.models.user import User
 
 router = APIRouter()
@@ -31,7 +31,7 @@ async def get_audit_logs(
     user_id: Optional[str] = Query(None),
     action: Optional[str] = Query(None, description="INSERT, UPDATE, or DELETE"),
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):

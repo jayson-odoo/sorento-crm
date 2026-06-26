@@ -14,7 +14,7 @@ from app.dependencies import (
     require_permission,
     require_permission_with_api_key,
 )
-from app.schemas.common import ListResponse, PaginationResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, PaginationResponse
 from app.schemas.workflow_forms import (
     WorkflowFormDefinitionCreate,
     WorkflowFormDefinitionOut,
@@ -56,7 +56,7 @@ def _serialize_submission(
 @router.get("/definitions", response_model=ListResponse[WorkflowFormDefinitionOut])
 def list_definitions(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     q: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     db: Session = Depends(get_db),
@@ -231,7 +231,7 @@ def validate_schema_body(
 @router.get("/submissions", response_model=ListResponse[WorkflowSubmissionOut])
 def list_submissions(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     definition_id: Optional[str] = Query(None),
     state_code: Optional[str] = Query(None),
     db: Session = Depends(get_db),

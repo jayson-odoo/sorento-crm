@@ -277,7 +277,7 @@ from app.schemas.order import (
     BulkDeleteOrdersRequest,
     BulkDeleteOrderLinesRequest,
 )
-from app.schemas.common import ListResponse, ValidateImportResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, ValidateImportResponse
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -423,7 +423,7 @@ async def get_orders(
 async def list_distinct_debtors(
     request: Request,
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(
         None,
         description="Free-text partial match on debtor_name or debtor_code (case-insensitive).",

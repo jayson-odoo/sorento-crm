@@ -6,7 +6,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.procurement_service import ProductSupplierService
 from app.schemas.procurement import ProductSupplierCreate, ProductSupplierUpdate, ProductSupplierResponse
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -15,7 +15,7 @@ router = APIRouter()
 @router.get("/", response_model=ListResponse[ProductSupplierResponse])
 async def get_product_suppliers(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
     product_id: Optional[str] = Query(None),

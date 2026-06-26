@@ -23,7 +23,10 @@ function DataGridPagination(props: DataGridPaginationProps) {
   const { table, recordCount, isLoading } = useDataGrid();
 
   const defaultProps: Partial<DataGridPaginationProps> = {
-    sizes: [5, 10, 25, 50, 100, 250, 500, 1000, 5000],
+    // Viewing page sizes. Capped at 1000 to stay in lockstep with the backend
+    // MAX_PAGE_LIMIT (app/schemas/common.py); larger pulls belong to bulk export,
+    // not the in-browser grid. Picking a size above the backend cap 422s the list.
+    sizes: [25, 50, 100, 250, 500, 1000],
     sizesLabel: 'Show',
     sizesDescription: 'per page',
     sizesSkeleton: <Skeleton className="h-8 w-44" />,

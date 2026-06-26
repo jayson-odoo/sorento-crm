@@ -4,6 +4,14 @@ from typing import Any, Dict, Optional, List, Generic, TypeVar
 
 T = TypeVar('T')
 
+# Shared ceiling for DataGrid list endpoints (`page`/`limit` pagination).
+# The frontend pagination selector offers up to 1000 rows per page; every
+# `ListResponse[...]` GET endpoint MUST allow at least this much or the grid
+# 422s and renders empty when a user picks a large page size. Keep this in
+# lockstep with the FE page-size options in `data-grid-pagination.tsx`.
+# Bulk export is NOT bound by this — it streams the full filtered set server-side.
+MAX_PAGE_LIMIT = 1000
+
 
 class PaginationParams(BaseModel):
     """Pagination query parameters."""

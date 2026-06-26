@@ -22,7 +22,7 @@ from app.schemas.procurement import (
     ViewLinkResponse,
     BulkDeletePurchaseRequestsRequest,
 )
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 from app.config import settings
 from app.modules.runtime.guards import require_public_view_links_enabled
@@ -44,7 +44,7 @@ def _respond_user_id_from_current_user(current_user: dict) -> str:
 @router.get("/", response_model=ListResponse[PurchaseRequestHeaderListResponse])
 async def get_purchase_requests(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     request_type: Optional[str] = Query(None, description="purchase_request or sponsorship_form"),
     approval_status: Optional[str] = Query(None, description="draft, pending, approved, rejected"),
@@ -172,7 +172,7 @@ async def get_purchase_request(
 @router.get("/{request_id}/conversation")
 async def get_purchase_request_conversation(
     request_id: str,
-    limit: int = Query(50, ge=1, le=50),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     cursor: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),

@@ -19,7 +19,7 @@ from app.schemas.notification import (
     UnreadCountResponse,
     BulkDeleteNotificationsRequest,
 )
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -224,7 +224,7 @@ async def list_notifications(
     status: Optional[str] = Query(None, description="read | unread"),
     type: Optional[str] = Query(None, description="Filter by notification type"),
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):

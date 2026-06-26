@@ -9,7 +9,7 @@ from app.database import get_db
 from app.dependencies import require_permission
 from app.models.notification import Notification, NotificationDelivery
 from app.models.user import User
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.outgoing_mail import OutgoingMailResponse
 from app.services.error_handler import handle_internal_error
 
@@ -19,7 +19,7 @@ router = APIRouter()
 @router.get("/outgoing-mails", response_model=ListResponse[OutgoingMailResponse])
 async def list_outgoing_mails(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     status: Optional[str] = Query(None, description="pending | sent | failed"),
     query: Optional[str] = Query(None, description="Search by recipient email or subject"),
     current_user: dict = Depends(require_permission("system.outgoing_mails.view")),

@@ -6,7 +6,7 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.services.product_service import BrandService
 from app.schemas.product import BrandCreate, BrandUpdate, BrandResponse
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 from app.services.uuid_list_param import parse_uuid_list
 
@@ -16,7 +16,7 @@ router = APIRouter()
 @router.get("/", response_model=ListResponse[BrandResponse])
 async def get_brands(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
     brand_ids: Optional[List[str]] = Query(
         None,

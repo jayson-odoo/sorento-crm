@@ -9,7 +9,7 @@ from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
 from app.services.integration_service import IntegrationLogService
 from app.schemas.integration import IntegrationLogResponse, IntegrationLogUpdateRequest, IntegrationLogCreate
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 @router.get("/", response_model=ListResponse[IntegrationLogResponse])
 async def get_integration_logs(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     status: Optional[str] = Query(None),
     integration_channel: Optional[str] = Query(None),
     business_table: Optional[str] = Query(None),
