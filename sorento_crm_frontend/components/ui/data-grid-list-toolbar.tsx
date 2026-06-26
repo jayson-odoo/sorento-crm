@@ -81,17 +81,32 @@ export type ListToolbarFilters =
 export type ListToolbarExport<TData extends object> = {
   filename?: string;
   /**
-   * All-records (server) export. When provided AND the user has chosen
-   * "select all N records", export streams the full filtered set server-side
-   * with the chosen columns instead of building from loaded rows. (D4/F)
+   * All-records (server) export. Used when the user has chosen "select all N
+   * records" via the banner (`selectAllMatching.active`): streams the full
+   * filtered set server-side with the chosen columns instead of building from
+   * the loaded page rows. (D4/F)
    */
   allRecords?: {
-    /** True when the user clicked the "select all N records" banner option. */
-    active: boolean;
-    totalCount: number;
     /** Stream the full filtered set with the chosen column ids. Resolves when the download starts. */
     onExport: (selectedColumnIds: string[]) => Promise<void> | void;
   };
+};
+
+/**
+ * Drives the "select all N records" banner (Odoo pattern, D4/F). The page owns
+ * the `active` boolean; when the user selects all rows on the page AND more rows
+ * exist beyond the loaded page, the banner offers to extend the selection to the
+ * entire filtered set. While active, Export uses the server all-records path.
+ */
+export type ListToolbarSelectAllMatching = {
+  /** Total rows matching the current filters (across all pages). */
+  total: number;
+  /** Rows currently loaded into the grid (the current page). */
+  loadedCount: number;
+  /** True when the user has opted into selecting the full filtered set. */
+  active: boolean;
+  onSelectAll: () => void;
+  onClear: () => void;
 };
 
 export type DataGridListToolbarProps<TData extends object> = {
@@ -110,6 +125,8 @@ export type DataGridListToolbarProps<TData extends object> = {
   secondaryActions?: ToolbarAction[];
   /** Bulk actions shown in the bulk strip when rows are selected (H). */
   bulkActions?: ToolbarAction[];
+  /** "Select all N records" banner config (D4/F). Omit to disable cross-page selection. */
+  selectAllMatching?: ListToolbarSelectAllMatching;
 };
 
 function ActionButton({ action }: { action: ToolbarAction }) {
@@ -163,6 +180,7 @@ export function DataGridListToolbar<TData extends object>({
   primaryAction,
   secondaryActions = [],
   bulkActions = [],
+  selectAllMatching,
 }: DataGridListToolbarProps<TData>) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -172,8 +190,9 @@ export function DataGridListToolbar<TData extends object>({
   const selectedCount = selectedRows.length;
   const hasSelection = selectedCount > 0;
 
-  const allRecordsActive = exportConfig && exportConfig !== false && exportConfig.allRecords?.active;
-  const exportEnabled = exportConfig !== false && (hasSelection || Boolean(allRecordsActive));
+  const allRecordsActive = Boolean(selectAllMatching?.active);
+  const canServerExport = exportConfig !== false && Boolean(exportConfig?.allRecords);
+  const exportEnabled = exportConfig !== false && (hasSelection || allRecordsActive);
 
   // Columns eligible for export — exclude the structural select/actions columns.
   const exportableColumns = useMemo(
@@ -206,8 +225,9 @@ export function DataGridListToolbar<TData extends object>({
       return;
     }
     try {
-      // All-records server export path (D4/F).
-      if (exportConfig && exportConfig !== false && exportConfig.allRecords?.active) {
+      // All-records server export path (D4/F): full filtered set, fetched
+      // server-side, never the loaded page rows.
+      if (allRecordsActive && exportConfig !== false && exportConfig?.allRecords) {
         await exportConfig.allRecords.onExport(chosen);
         setExportOpen(false);
         return;
@@ -219,7 +239,7 @@ export function DataGridListToolbar<TData extends object>({
         return out;
       });
       const cols: ColumnOption[] = chosen.map((id) => ({ key: id, label: columnLabel(id), selected: true }));
-      const filename = (exportConfig && exportConfig !== false && exportConfig.filename) || 'export.xlsx';
+      const filename = (exportConfig && exportConfig.filename) || 'export.xlsx';
       await generateExcelFile(data, cols, filename);
       toast.success(`Exported ${selectedRows.length} row(s)`);
       setExportOpen(false);
@@ -228,27 +248,68 @@ export function DataGridListToolbar<TData extends object>({
     }
   };
 
-  const exportCountLabel = allRecordsActive && exportConfig && exportConfig !== false
-    ? exportConfig.allRecords!.totalCount
-    : selectedCount;
+  const exportCountLabel = allRecordsActive && selectAllMatching ? selectAllMatching.total : selectedCount;
+
+  // Banner shows once every loaded row is selected AND more rows exist beyond the page.
+  const allPageRowsSelected = table.getIsAllPageRowsSelected();
+  const showSelectAllBanner =
+    Boolean(selectAllMatching) &&
+    (allRecordsActive || (allPageRowsSelected && hasSelection && selectAllMatching!.total > selectAllMatching!.loadedCount));
+
+  // The left cluster flips to the bulk strip whenever there is a selection
+  // (page rows or the full filtered set). Export lives in BOTH places — gated
+  // off in the normal cluster, enabled inside the bulk strip.
+  const bulkStripActive = hasSelection || allRecordsActive;
+
+  const clearSelection = () => {
+    table.resetRowSelection();
+    selectAllMatching?.onClear();
+  };
+
+  const exportButtonEl =
+    exportConfig === false ? null : exportEnabled ? (
+      <Button variant="outline" size="sm" className="gap-1.5" onClick={openExport}>
+        <Download className="size-4" />
+        Export
+      </Button>
+    ) : (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span tabIndex={0}>
+            <Button variant="outline" size="sm" className="gap-1.5" disabled>
+              <Download className="size-4" />
+              Export
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>Select one or more rows to export</TooltipContent>
+      </Tooltip>
+    );
 
   return (
     <TooltipProvider>
+     <div className="flex w-full flex-col gap-2">
       <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         {/* LEFT cluster — replaced by the bulk strip while rows are selected (D2/H). */}
-        {hasSelection && bulkActions.length > 0 ? (
+        {bulkStripActive ? (
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
-              {selectedCount} selected
+              {allRecordsActive && selectAllMatching
+                ? `All ${selectAllMatching.total} selected`
+                : `${selectedCount} selected`}
             </Badge>
-            {bulkActions.map((action) => (
+            {exportButtonEl}
+            {/* Bulk destructive actions operate on the loaded selection only; hide
+                them once the user opts into the full filtered set to avoid a
+                "delete all matching but only loaded rows go" footgun. */}
+            {!allRecordsActive && bulkActions.map((action) => (
               <ActionButton key={action.key} action={action} />
             ))}
             <Button
               variant="ghost"
               size="sm"
               className="gap-1.5 text-muted-foreground"
-              onClick={() => table.resetRowSelection()}
+              onClick={clearSelection}
             >
               <X className="size-4" />
               Clear
@@ -296,26 +357,7 @@ export function DataGridListToolbar<TData extends object>({
                 }
               />
             ) : null}
-            {exportConfig !== false ? (
-              exportEnabled ? (
-                <Button variant="outline" size="sm" className="gap-1.5" onClick={openExport}>
-                  <Download className="size-4" />
-                  Export
-                </Button>
-              ) : (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span tabIndex={0}>
-                      <Button variant="outline" size="sm" className="gap-1.5" disabled>
-                        <Download className="size-4" />
-                        Export
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>Select one or more rows to export</TooltipContent>
-                </Tooltip>
-              )
-            ) : null}
+            {exportButtonEl}
           </div>
         )}
 
@@ -363,6 +405,32 @@ export function DataGridListToolbar<TData extends object>({
           {primaryAction}
         </div>
       </div>
+
+      {/* "Select all N records" banner (Odoo pattern, D4/F). */}
+      {showSelectAllBanner && selectAllMatching ? (
+        <div className="flex flex-wrap items-center justify-center gap-2 rounded-md border border-dashed bg-muted/40 px-3 py-1.5 text-sm">
+          {allRecordsActive ? (
+            <>
+              <span>
+                All <span className="font-medium">{selectAllMatching.total}</span> records matching the current filters are selected.
+              </span>
+              <Button variant="link" size="sm" className="h-auto p-0" onClick={clearSelection}>
+                Clear selection
+              </Button>
+            </>
+          ) : (
+            <>
+              <span>
+                All <span className="font-medium">{selectAllMatching.loadedCount}</span> on this page selected.
+              </span>
+              <Button variant="link" size="sm" className="h-auto p-0" onClick={selectAllMatching.onSelectAll}>
+                Select all {selectAllMatching.total} records
+              </Button>
+            </>
+          )}
+        </div>
+      ) : null}
+     </div>
 
       {/* Column-selection export modal — pre-ticked to visible columns (D4). */}
       <Dialog open={exportOpen} onOpenChange={setExportOpen}>
