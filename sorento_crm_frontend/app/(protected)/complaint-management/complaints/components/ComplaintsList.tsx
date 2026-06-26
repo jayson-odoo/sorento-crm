@@ -39,6 +39,7 @@ import type { Complaint } from '../types/complaint.types';
 import ComplaintBulkDeleteDialog from './ComplaintBulkDeleteDialog';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 
 export default function ComplaintsList() {
   const router = useRouter();
@@ -81,7 +82,26 @@ export default function ComplaintsList() {
 
   const handleRowClick = (row: Complaint) => {
     const complaintId = row.id;
-    router.push(`/complaint-management/complaints/${complaintId}`);
+    // Carry the active list query into the detail URL so its prev/next pager
+    // walks the same filtered+sorted set (UAC-1..5, UAC-10).
+    const search = buildDetailSearch(
+      {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery,
+      },
+      {
+        assigned_to:
+          assignedToFilter && assignedToFilter !== '__all__'
+            ? assignedToFilter
+            : undefined,
+        status:
+          statusFilter && statusFilter !== '__all__' ? statusFilter : undefined,
+      },
+    );
+    const qs = search ? `?${search}` : '';
+    router.push(`/complaint-management/complaints/${complaintId}${qs}`);
   };
 
   const toggleComplaintSelection = (complaintId: string) => {

@@ -340,10 +340,8 @@ class ComplaintService:
         data["resolution_name"] = getattr(res, "name", None) if res is not None else None
         return data
     
-    def list_complaints(
+    def _build_list_query(
         self,
-        page: int = 1,
-        limit: int = 50,
         query: Optional[str] = None,
         assigned_to: Optional[str] = None,
         status: Optional[str] = None,
@@ -351,11 +349,13 @@ class ComplaintService:
         sort_dir: str = "asc",
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
-        viewer_user_id: Optional[str] = None,
     ):
-        """List complaints. assigned_to filters by respond_user_id (assignee). status filters by complaint status.
+        """Build the filtered + sorted complaints query shared by ``list_complaints``
+        and ``neighbours`` so the two can never drift.
 
-        contact_id/space_id scope the result set to a single Respond.io contact/space (used by external callers).
+        The ORDER BY always appends ``Complaint.id`` as a deterministic tie-breaker
+        so ``row_number``/offset position and prev/next neighbours are unambiguous
+        when the primary sort column has equal values.
         """
         q = self.db.query(Complaint)
 
@@ -399,12 +399,6 @@ class ComplaintService:
         if space_filter:
             q = q.filter(Complaint.space_id == space_filter)
 
-        from sqlalchemy.orm import joinedload
-        q = q.options(
-            joinedload(Complaint.root_cause),
-            joinedload(Complaint.resolution),
-        )
-
         sort_map = {
             "complaint_date": Complaint.complaint_date,
             "created_at": Complaint.created_at,
@@ -417,10 +411,86 @@ class ComplaintService:
         }
         sort_column = sort_map.get(sort_field, Complaint.complaint_date)
         if sort_dir == "desc":
-            q = q.order_by(sort_column.desc())
+            q = q.order_by(sort_column.desc(), Complaint.id.asc())
         else:
-            q = q.order_by(sort_column.asc())
-        
+            q = q.order_by(sort_column.asc(), Complaint.id.asc())
+        return q
+
+    def neighbours(
+        self,
+        complaint_id: str,
+        query: Optional[str] = None,
+        assigned_to: Optional[str] = None,
+        status: Optional[str] = None,
+        sort_field: str = "complaint_date",
+        sort_dir: str = "asc",
+        contact_id: Optional[str] = None,
+        space_id: Optional[str] = None,
+    ) -> dict:
+        """Resolve prev/next neighbours for ``complaint_id`` within the active list
+        query.
+
+        Selects only the ordered ids (not full rows) for efficiency, then defers the
+        position/wrap math to the pure ``compute_neighbours`` helper. If the record is
+        not in the filtered set (deep link, or filtered out after an edit), falls back
+        to the unfiltered, default-sorted set so the pager is never dead (D2).
+        """
+        from app.services.record_navigation import compute_neighbours
+
+        def _ordered_ids(q) -> list[str]:
+            return [str(row[0]) for row in q.with_entities(Complaint.id).all()]
+
+        filtered_q = self._build_list_query(
+            query=query,
+            assigned_to=assigned_to,
+            status=status,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+            contact_id=contact_id,
+            space_id=space_id,
+        )
+        result = compute_neighbours(_ordered_ids(filtered_q), complaint_id)
+        if result["index"] is not None:
+            return result
+
+        # D2: current record not in the filtered set -> fall back to the unfiltered,
+        # default-sorted set so prev/next still works and total reflects all complaints.
+        unfiltered_q = self._build_list_query()
+        return compute_neighbours(_ordered_ids(unfiltered_q), complaint_id)
+
+    def list_complaints(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        assigned_to: Optional[str] = None,
+        status: Optional[str] = None,
+        sort_field: str = "complaint_date",
+        sort_dir: str = "asc",
+        contact_id: Optional[str] = None,
+        space_id: Optional[str] = None,
+        viewer_user_id: Optional[str] = None,
+    ):
+        """List complaints. assigned_to filters by respond_user_id (assignee). status filters by complaint status.
+
+        contact_id/space_id scope the result set to a single Respond.io contact/space (used by external callers).
+        """
+        q = self._build_list_query(
+            query=query,
+            assigned_to=assigned_to,
+            status=status,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+            contact_id=contact_id,
+            space_id=space_id,
+        )
+
+        from sqlalchemy.orm import joinedload
+        q = q.options(
+            joinedload(Complaint.root_cause),
+            joinedload(Complaint.resolution),
+        )
+
         total = q.count()
         offset = (page - 1) * limit
         complaints = q.offset(offset).limit(limit).all()

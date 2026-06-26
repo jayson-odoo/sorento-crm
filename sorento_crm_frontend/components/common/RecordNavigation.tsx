@@ -15,9 +15,12 @@ export interface RecordNavigationIdsProps {
   className?: string;
   /** When provided, called with prevId/nextId instead of router.push (e.g. modal in-place navigation) */
   onSelect?: (id: string) => void;
-  /** Optional: show "current / total" when both provided (no circular when using ids) */
+  /** Optional: show "current / total" when both provided. The backend supplies
+   * already-wrapped prevId/nextId (circular), so this component just renders them. */
   currentIndex?: number;
   totalCount?: number;
+  /** When true, render a neutral "… / total" counter while neighbours resolve. */
+  isLoading?: boolean;
 }
 
 /** Props when using a full list (compute prev/next from currentId + items). */
@@ -55,12 +58,9 @@ export default function RecordNavigation(props: RecordNavigationProps) {
   const router = useRouter();
   const { basePath, ariaLabel = 'record', className, onSelect } = props;
 
-  const { previousId, nextId, currentIndex, totalCount, positionUnknown } = useMemo(() => {
+  const { previousId, nextId, currentIndex, totalCount, positionUnknown, loading } = useMemo(() => {
     if (isIdsProps(props)) {
-      const total =
-        props.totalCount != null && props.currentIndex != null
-          ? props.totalCount
-          : null;
+      const total = props.totalCount != null ? props.totalCount : null;
       const current =
         props.currentIndex != null ? props.currentIndex + 1 : null;
       return {
@@ -68,7 +68,8 @@ export default function RecordNavigation(props: RecordNavigationProps) {
         nextId: props.nextId,
         currentIndex: current,
         totalCount: total,
-        positionUnknown: false,
+        positionUnknown: total != null && current == null,
+        loading: !!props.isLoading,
       };
     }
     const {
@@ -107,11 +108,15 @@ export default function RecordNavigation(props: RecordNavigationProps) {
       currentIndex: currentOneBased,
       totalCount: displayTotal,
       positionUnknown,
+      loading: false,
     };
   }, [props]);
 
-  const counterLabel =
-    totalCount != null && totalCount > 0
+  const counterLabel = loading
+    ? totalCount != null && totalCount > 0
+      ? `… / ${totalCount}`
+      : '…'
+    : totalCount != null && totalCount > 0
       ? positionUnknown
         ? `— / ${totalCount}`
         : currentIndex != null && currentIndex > 0
