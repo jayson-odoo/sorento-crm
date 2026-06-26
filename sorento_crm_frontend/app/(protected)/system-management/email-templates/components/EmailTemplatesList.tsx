@@ -4,14 +4,17 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
+  RowSelectionState,
   getCoreRowModel,
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Plus, Pencil, Trash2, ChevronRight } from 'lucide-react';
+import { Plus, Pencil, Trash2, ChevronRight, Search, X } from 'lucide-react';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -35,6 +38,7 @@ export default function EmailTemplatesList() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<EmailTemplate | null>(null);
   const [deleting, setDeleting] = useState<EmailTemplate | null>(null);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const params = useMemo(
     () => ({
@@ -52,6 +56,7 @@ export default function EmailTemplatesList() {
 
   const columns = useMemo<ColumnDef<EmailTemplate>[]>(
     () => [
+      buildSelectColumn<EmailTemplate>(),
       {
         accessorKey: 'code',
         header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
@@ -61,7 +66,7 @@ export default function EmailTemplatesList() {
           </Badge>
         ),
         size: 200,
-        meta: { skeleton: <Skeleton className="h-6 w-32" /> },
+        meta: { headerTitle: 'Code', skeleton: <Skeleton className="h-6 w-32" /> },
       },
       {
         accessorKey: 'name',
@@ -79,6 +84,7 @@ export default function EmailTemplatesList() {
           </div>
         ),
         size: 280,
+        meta: { headerTitle: 'Name' },
       },
       {
         accessorKey: 'subject',
@@ -89,6 +95,7 @@ export default function EmailTemplatesList() {
           </span>
         ),
         size: 320,
+        meta: { headerTitle: 'Subject' },
       },
       {
         accessorKey: 'is_active',
@@ -99,12 +106,14 @@ export default function EmailTemplatesList() {
           </Badge>
         ),
         size: 90,
+        meta: { headerTitle: 'Active' },
       },
       {
         accessorKey: 'updated_at',
         header: ({ column }) => <DataGridColumnHeader title="Updated" column={column} />,
         cell: ({ row }) => formatDateTimeInMalaysia(row.original.updated_at),
         size: 160,
+        meta: { headerTitle: 'Updated' },
       },
       {
         id: 'actions',
@@ -159,7 +168,10 @@ export default function EmailTemplatesList() {
   const table = useReactTable({
     data: rows,
     columns,
-    state: { pagination },
+    getRowId: (row) => row.id,
+    state: { pagination, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: (updater) => {
       const next = typeof updater === 'function' ? updater(pagination) : updater;
       setPagination(next);
@@ -177,28 +189,49 @@ export default function EmailTemplatesList() {
       isLoading={isLoading}
       onRowClick={(t) => t?.id && router.push(`/system-management/email-templates/${t.id}`)}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <Input
-            placeholder="Search by code, name, subject"
-            value={query}
-            onChange={(e) => {
-              setPagination((p) => ({ ...p, pageIndex: 0 }));
-              setQuery(e.target.value);
-            }}
-            className="max-w-sm"
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search by code, name, subject"
+                  value={query}
+                  onChange={(e) => {
+                    setPagination((p) => ({ ...p, pageIndex: 0 }));
+                    setQuery(e.target.value);
+                  }}
+                  className="ps-9 w-64"
+                />
+                {query && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            exportConfig={{ filename: 'email_templates_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+            primaryAction={
+              <Button
+                onClick={() => {
+                  setEditing(null);
+                  setShowForm(true);
+                }}
+              >
+                <Plus className="mr-1 size-4" /> Add template
+              </Button>
+            }
           />
-          <Button
-            onClick={() => {
-              setEditing(null);
-              setShowForm(true);
-            }}
-          >
-            <Plus className="mr-1 size-4" /> Add template
-          </Button>
         </CardHeader>
         <CardTable>
           <ScrollArea className="w-full">

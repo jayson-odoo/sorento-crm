@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   useReactTable,
   getCoreRowModel,
   getPaginationRowModel,
@@ -11,11 +12,14 @@ import {
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -32,7 +36,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { Eye } from 'lucide-react';
+import { Eye, Search, X } from 'lucide-react';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { useRespondOutbox } from '../hooks/useRespondOutbox';
 import type { RespondOutboxRow } from '../types/respondOutbox.types';
@@ -49,8 +53,9 @@ export default function RespondOutboxList() {
   const [status, setStatus] = useState<string>('__all__');
   const [query, setQuery] = useState<string>('');
   const [detail, setDetail] = useState<RespondOutboxRow | null>(null);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading, isFetching } = useRespondOutbox({
+  const { data, isLoading, isFetching, refetch } = useRespondOutbox({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     status: status === '__all__' ? undefined : status,
@@ -62,12 +67,13 @@ export default function RespondOutboxList() {
 
   const columns = useMemo<ColumnDef<RespondOutboxRow>[]>(
     () => [
+      buildSelectColumn<RespondOutboxRow>(),
       {
         accessorKey: 'created_at',
         header: ({ column }) => <DataGridColumnHeader title="Sent At" column={column} />,
         cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
         size: 160,
-        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'Sent At', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         id: 'contact',
@@ -86,6 +92,7 @@ export default function RespondOutboxList() {
           );
         },
         size: 180,
+        meta: { headerTitle: 'Contact' },
       },
       {
         accessorKey: 'sent_as',
@@ -96,6 +103,7 @@ export default function RespondOutboxList() {
           </Badge>
         ),
         size: 90,
+        meta: { headerTitle: 'Type' },
       },
       {
         id: 'message',
@@ -126,6 +134,7 @@ export default function RespondOutboxList() {
           );
         },
         size: 380,
+        meta: { headerTitle: 'Message / Template' },
       },
       {
         accessorKey: 'business_table',
@@ -135,6 +144,7 @@ export default function RespondOutboxList() {
             ? BUSINESS_LABELS[row.original.business_table] ?? row.original.business_table
             : '—',
         size: 130,
+        meta: { headerTitle: 'Linked' },
       },
       {
         accessorKey: 'status',
@@ -148,6 +158,7 @@ export default function RespondOutboxList() {
           </div>
         ),
         size: 120,
+        meta: { headerTitle: 'Status' },
       },
       {
         id: 'actions',
@@ -158,6 +169,7 @@ export default function RespondOutboxList() {
           </Button>
         ),
         size: 60,
+        enableHiding: false,
       },
     ],
     [],
@@ -167,7 +179,10 @@ export default function RespondOutboxList() {
     data: rows,
     columns,
     pageCount: Math.max(1, Math.ceil(total / pagination.pageSize)),
-    state: { pagination },
+    getRowId: (row) => row.id,
+    state: { pagination, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     manualPagination: true,
     getCoreRowModel: getCoreRowModel(),
@@ -180,38 +195,69 @@ export default function RespondOutboxList() {
         table={table}
         recordCount={total}
         isLoading={isLoading || isFetching}
-        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         tableClassNames={{ edgeCell: 'px-4' }}
       >
         <Card>
-          <CardHeader className="flex flex-wrap items-center gap-2 py-4">
-            <Input
-              placeholder="Search message or contact…"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setPagination((p) => ({ ...p, pageIndex: 0 }));
+          <CardHeader className="block">
+            <DataGridListToolbar
+              table={table}
+              searchSlot={
+                <div className="relative">
+                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                  <Input
+                    placeholder="Search message or contact…"
+                    value={query}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      setPagination((p) => ({ ...p, pageIndex: 0 }));
+                    }}
+                    className="ps-9 w-64"
+                  />
+                  {query && (
+                    <Button
+                      mode="icon"
+                      variant="dim"
+                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                      onClick={() => setQuery('')}
+                    >
+                      <X />
+                    </Button>
+                  )}
+                </div>
+              }
+              filters={{
+                kind: 'custom',
+                active: status !== '__all__',
+                activeCount: status !== '__all__' ? 1 : 0,
+                content: (
+                  <div className="space-y-1.5">
+                    <Label>Status</Label>
+                    <Select
+                      value={status}
+                      onValueChange={(v) => {
+                        setStatus(v);
+                        setPagination((p) => ({ ...p, pageIndex: 0 }));
+                      }}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">All statuses</SelectItem>
+                        <SelectItem value="success">Success</SelectItem>
+                        <SelectItem value="failed">Failed</SelectItem>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="processing">Processing</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ),
               }}
-              className="w-64"
+              exportConfig={{ filename: 'respond_outbox_export.xlsx' }}
+              onRefresh={() => void refetch()}
+              isRefreshing={isFetching && !isLoading}
             />
-            <Select
-              value={status}
-              onValueChange={(v) => {
-                setStatus(v);
-                setPagination((p) => ({ ...p, pageIndex: 0 }));
-              }}
-            >
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">All statuses</SelectItem>
-                <SelectItem value="success">Success</SelectItem>
-                <SelectItem value="failed">Failed</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-                <SelectItem value="processing">Processing</SelectItem>
-              </SelectContent>
-            </Select>
           </CardHeader>
           <CardTable>
             <ScrollArea>

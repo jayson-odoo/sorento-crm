@@ -4,15 +4,18 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
+  RowSelectionState,
   getCoreRowModel,
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { ChevronRight, Pencil, Play, Plus, Trash2 } from 'lucide-react';
+import { ChevronRight, Pencil, Play, Plus, Trash2, Search, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -73,6 +76,7 @@ export default function AutomationsList() {
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Automation | null>(null);
   const [deleting, setDeleting] = useState<Automation | null>(null);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const params = useMemo(
     () => ({
@@ -90,6 +94,7 @@ export default function AutomationsList() {
 
   const columns = useMemo<ColumnDef<Automation>[]>(
     () => [
+      buildSelectColumn<Automation>(),
       {
         accessorKey: 'name',
         header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
@@ -106,7 +111,7 @@ export default function AutomationsList() {
           </div>
         ),
         size: 240,
-        meta: { skeleton: <Skeleton className="h-8 w-32" /> },
+        meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-8 w-32" /> },
       },
       {
         accessorKey: 'trigger_type',
@@ -117,6 +122,7 @@ export default function AutomationsList() {
           </Badge>
         ),
         size: 180,
+        meta: { headerTitle: 'Trigger' },
       },
       {
         accessorKey: 'schedule',
@@ -129,6 +135,7 @@ export default function AutomationsList() {
           return <span className="text-muted-foreground">Manual</span>;
         },
         size: 220,
+        meta: { headerTitle: 'Schedule' },
       },
       {
         accessorKey: 'email_template_name',
@@ -139,24 +146,28 @@ export default function AutomationsList() {
           </span>
         ),
         size: 200,
+        meta: { headerTitle: 'Template' },
       },
       {
         accessorKey: 'enabled',
         header: ({ column }) => <DataGridColumnHeader title="Enabled" column={column} />,
         cell: ToggleCell,
         size: 80,
+        meta: { headerTitle: 'Enabled' },
       },
       {
         accessorKey: 'last_status',
         header: ({ column }) => <DataGridColumnHeader title="Last status" column={column} />,
         cell: ({ row }) => row.original.last_status || '—',
         size: 110,
+        meta: { headerTitle: 'Last status' },
       },
       {
         accessorKey: 'next_run_at',
         header: ({ column }) => <DataGridColumnHeader title="Next run" column={column} />,
         cell: ({ row }) => (row.original.next_run_at ? formatDateTimeInMalaysia(row.original.next_run_at) : '—'),
         size: 160,
+        meta: { headerTitle: 'Next run' },
       },
       {
         id: 'actions',
@@ -204,6 +215,7 @@ export default function AutomationsList() {
           </div>
         ),
         size: 220,
+        enableHiding: false,
       },
     ],
     [router],
@@ -212,7 +224,10 @@ export default function AutomationsList() {
   const table = useReactTable({
     data: rows,
     columns,
-    state: { pagination },
+    getRowId: (row) => row.id,
+    state: { pagination, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: (updater) => {
       const next = typeof updater === 'function' ? updater(pagination) : updater;
       setPagination(next);
@@ -230,28 +245,49 @@ export default function AutomationsList() {
       isLoading={isLoading}
       onRowClick={(t) => t?.id && router.push(`/system-management/automation/${t.id}`)}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <Input
-            placeholder="Search by name"
-            value={query}
-            onChange={(e) => {
-              setPagination((p) => ({ ...p, pageIndex: 0 }));
-              setQuery(e.target.value);
-            }}
-            className="max-w-sm"
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search by name"
+                  value={query}
+                  onChange={(e) => {
+                    setPagination((p) => ({ ...p, pageIndex: 0 }));
+                    setQuery(e.target.value);
+                  }}
+                  className="ps-9 w-64"
+                />
+                {query && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            exportConfig={{ filename: 'automations_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+            primaryAction={
+              <Button
+                onClick={() => {
+                  setEditing(null);
+                  setShowForm(true);
+                }}
+              >
+                <Plus className="mr-1 size-4" /> Add automation
+              </Button>
+            }
           />
-          <Button
-            onClick={() => {
-              setEditing(null);
-              setShowForm(true);
-            }}
-          >
-            <Plus className="mr-1 size-4" /> Add automation
-          </Button>
         </CardHeader>
         <CardTable>
           <ScrollArea className="w-full">

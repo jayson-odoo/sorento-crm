@@ -2,11 +2,16 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
+import {
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+  type RowSelectionState,
+} from '@tanstack/react-table';
 import { Pencil, Plus, Star, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -21,6 +26,8 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import {
   createRespondWorkspace,
@@ -59,6 +66,7 @@ export default function RespondWorkspacesAdmin() {
   const [editing, setEditing] = useState<RespondWorkspace | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const {
     data: workspaces = [],
@@ -165,6 +173,7 @@ export default function RespondWorkspacesAdmin() {
 
   const columns = useMemo<ColumnDef<RespondWorkspace>[]>(
     () => [
+      buildSelectColumn<RespondWorkspace>(),
       {
         id: 'name',
         accessorFn: (row) => row.name ?? '',
@@ -289,31 +298,38 @@ export default function RespondWorkspacesAdmin() {
     columns,
     data: workspaces,
     getRowId: (row) => row.id,
-    state: { pagination: { pageIndex: 0, pageSize: 25 } },
+    state: { pagination: { pageIndex: 0, pageSize: 25 }, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
   });
 
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0">
-          <CardTitle>Workspaces</CardTitle>
-          <Button onClick={openCreate}>
-            <Plus className="size-4 mr-2" />
-            Add workspace
-          </Button>
-        </CardHeader>
-        <CardContent>
-          <DataGrid
-            table={table}
-            recordCount={workspaces.length}
-            isLoading={isLoading}
-            emptyMessage="No Respond.io workspaces configured. Add one to start syncing contacts."
-            tableLayout={{ width: 'fixed', columnsResizable: true }}
-          >
+        <DataGrid
+          table={table}
+          recordCount={workspaces.length}
+          isLoading={isLoading}
+          emptyMessage="No Respond.io workspaces configured. Add one to start syncing contacts."
+          tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+        >
+          <CardHeader className="block">
+            <DataGridListToolbar
+              table={table}
+              exportConfig={{ filename: 'respond_workspaces_export.xlsx' }}
+              primaryAction={
+                <Button onClick={openCreate}>
+                  <Plus className="size-4 mr-2" />
+                  Add workspace
+                </Button>
+              }
+            />
+          </CardHeader>
+          <CardContent>
             <DataGridTable />
-          </DataGrid>
-        </CardContent>
+          </CardContent>
+        </DataGrid>
       </Card>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

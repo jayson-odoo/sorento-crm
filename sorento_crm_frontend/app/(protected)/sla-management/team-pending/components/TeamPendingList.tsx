@@ -4,17 +4,20 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   useReactTable,
   getCoreRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Filter, RefreshCw, Search, UserRoundCog, UserRoundPlus, UserRoundCheck } from 'lucide-react';
+import { Search, UserRoundCog, UserRoundPlus, UserRoundCheck } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import {
@@ -25,7 +28,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
@@ -49,6 +51,7 @@ export default function TeamPendingList() {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [reassignTarget, setReassignTarget] = useState<{ id: string; label: string } | null>(null);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // Debounce the search box so we don't refetch on every keystroke.
   useEffect(() => {
@@ -101,6 +104,7 @@ export default function TeamPendingList() {
 
   const columns = useMemo<ColumnDef<TeamPendingItem>[]>(
     () => [
+      buildSelectColumn<TeamPendingItem>(),
       {
         accessorKey: 'reference',
         header: ({ column }) => <DataGridColumnHeader title="Reference" column={column} />,
@@ -110,7 +114,7 @@ export default function TeamPendingList() {
           return <span className="truncate block" title={ref}>{ref}</span>;
         },
         size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Reference', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'assignee_name',
@@ -121,7 +125,7 @@ export default function TeamPendingList() {
           </span>
         ),
         size: 180,
-        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'Assignee', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'team_label',
@@ -132,7 +136,7 @@ export default function TeamPendingList() {
           </span>
         ),
         size: 180,
-        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'Team', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'policy_name',
@@ -142,7 +146,7 @@ export default function TeamPendingList() {
           return <span className="truncate block" title={p}>{p}</span>;
         },
         size: 160,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Policy', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'due_at',
@@ -159,12 +163,14 @@ export default function TeamPendingList() {
           );
         },
         size: 180,
+        meta: { headerTitle: 'Due at' },
       },
       {
         accessorKey: 'current_tier',
         header: ({ column }) => <DataGridColumnHeader title="Tier" column={column} />,
         cell: ({ row }) => <Badge variant="secondary">Tier {row.original.current_tier}</Badge>,
         size: 100,
+        meta: { headerTitle: 'Tier' },
       },
       {
         accessorKey: 'next_action',
@@ -175,6 +181,7 @@ export default function TeamPendingList() {
           return <span className="truncate block" title={action}>{action}</span>;
         },
         size: 170,
+        meta: { headerTitle: 'Next action' },
       },
       {
         id: 'actions',
@@ -233,6 +240,7 @@ export default function TeamPendingList() {
           );
         },
         size: 130,
+        enableHiding: false,
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -245,7 +253,9 @@ export default function TeamPendingList() {
     data: rows,
     pageCount: Math.ceil(total / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination },
+    state: { pagination, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
@@ -259,86 +269,85 @@ export default function TeamPendingList() {
     <>
       <DataGrid
         table={table}
-        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         recordCount={total}
         isLoading={isLoading}
         emptyMessage="No open tasks across your teams."
       >
         <Card>
-          <CardHeader className="flex flex-row flex-wrap items-center gap-2 py-5">
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button variant="outline" size="icon" disabled={isLoading} title="Filters" className="relative">
-                  <Filter className="size-4" />
-                  {hasActiveFilters && (
-                    <span className="absolute -top-1 -end-1 size-2.5 rounded-full bg-primary" />
-                  )}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-72 space-y-3" align="start">
-                <h4 className="text-sm font-medium">Filters</h4>
-                <div className="space-y-1.5">
-                  <label className="text-xs text-muted-foreground">Assignee</label>
-                  <Select value={assigneeFilter} onValueChange={setAssigneeFilter} disabled={isLoading}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="All assignees" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL}>All assignees</SelectItem>
-                      {visibleUsers.map((u) => (
-                        <SelectItem key={u.id} value={u.id}>
-                          {u.name || u.email}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+          <CardHeader className="block">
+            <DataGridListToolbar
+              table={table}
+              searchSlot={
+                <div className="relative w-full max-w-xs">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    placeholder="Search number, contact, assignee…"
+                    className="pl-9"
+                  />
                 </div>
-                <div className="space-y-1.5">
-                  <label className="text-xs text-muted-foreground">Team</label>
-                  <Select value={teamFilter} onValueChange={setTeamFilter} disabled={isLoading}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="All teams" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={ALL}>All teams</SelectItem>
-                      {teamOptions.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>
-                          {t.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {hasActiveFilters && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    onClick={() => {
-                      setAssigneeFilter(ALL);
-                      setTeamFilter(ALL);
-                    }}
-                  >
-                    Clear filters
-                  </Button>
-                )}
-              </PopoverContent>
-            </Popover>
-            <div className="relative w-full max-w-xs">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={searchInput}
-                onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="Search number, contact, assignee…"
-                className="pl-9"
-              />
-            </div>
-            <div className="ml-auto">
-              <Button variant="outline" onClick={() => void refetch()} disabled={isFetching}>
-                <RefreshCw className={`size-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
-                Refresh
-              </Button>
-            </div>
+              }
+              filters={{
+                kind: 'custom',
+                active: hasActiveFilters,
+                activeCount:
+                  (assigneeFilter !== ALL ? 1 : 0) + (teamFilter !== ALL ? 1 : 0),
+                content: (
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground">Assignee</label>
+                      <Select value={assigneeFilter} onValueChange={setAssigneeFilter} disabled={isLoading}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="All assignees" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={ALL}>All assignees</SelectItem>
+                          {visibleUsers.map((u) => (
+                            <SelectItem key={u.id} value={u.id}>
+                              {u.name || u.email}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-muted-foreground">Team</label>
+                      <Select value={teamFilter} onValueChange={setTeamFilter} disabled={isLoading}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="All teams" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={ALL}>All teams</SelectItem>
+                          {teamOptions.map((t) => (
+                            <SelectItem key={t.id} value={t.id}>
+                              {t.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {hasActiveFilters && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => {
+                          setAssigneeFilter(ALL);
+                          setTeamFilter(ALL);
+                        }}
+                      >
+                        Clear filters
+                      </Button>
+                    )}
+                  </div>
+                ),
+              }}
+              exportConfig={{ filename: 'team_pending_export.xlsx' }}
+              onRefresh={() => void refetch()}
+              isRefreshing={isFetching}
+            />
           </CardHeader>
           <CardTable>
             <ScrollArea>

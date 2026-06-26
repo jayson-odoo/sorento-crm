@@ -67,8 +67,8 @@ describe('TeamPendingList', () => {
   it('loading state', () => {
     useTeamPendingSLA.mockReturnValue({ data: undefined, isLoading: true, isFetching: true, refetch: vi.fn() });
     render(<TeamPendingList />);
-    // DataGrid renders the toolbar even while loading.
-    expect(screen.getByTitle('Filters')).toBeInTheDocument();
+    // DataGrid renders the canonical toolbar even while loading.
+    expect(screen.getByRole('button', { name: /filters/i })).toBeInTheDocument();
   });
 
   it('empty state', () => {

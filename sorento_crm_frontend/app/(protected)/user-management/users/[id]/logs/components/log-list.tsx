@@ -8,14 +8,13 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { format } from 'date-fns';
-import { CalendarIcon, Search, X } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { DateRange } from 'react-day-picker';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Calendar } from '@/components/ui/calendar';
@@ -26,14 +25,11 @@ import {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SystemLog } from '@/app/models/system';
@@ -51,6 +47,8 @@ const LogList = () => {
     { id: 'createdAt', desc: true },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [dateRangeFilter, setDateRangeFilter] = useState<
     DateRange | undefined
   >();
@@ -127,6 +125,7 @@ const LogList = () => {
 
   const columns = useMemo<ColumnDef<SystemLog>[]>(
     () => [
+      buildSelectColumn<SystemLog>(),
       {
         accessorKey: 'entityType',
         id: 'entityType',
@@ -225,8 +224,11 @@ const LogList = () => {
       pagination,
       sorting,
       columnOrder,
+      rowSelection,
     },
     columnResizeMode: 'onChange',
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onColumnOrderChange: setColumnOrder,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
@@ -238,91 +240,9 @@ const LogList = () => {
     manualFiltering: true,
   });
 
-  const DataGridToolbar = () => {
-    const [inputValue, setInputValue] = useState(searchQuery);
-    const [dateRange, setDateRange] = useState<DateRange | undefined>(
-      dateRangeFilter,
-    );
-
-    const handleSearch = () => {
-      setSearchQuery(inputValue);
-      setPagination({ ...pagination, pageIndex: 0 });
-    };
-
-    return (
-      <CardHeader className="py-5">
-        <div className="flex items-center gap-2.5">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search logs"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              disabled={isLoading}
-              className="ps-9 w-64"
-            />
-            {searchQuery.length > 0 && (
-              <Button
-                mode="icon"
-                variant="dim"
-                disabled={isLoading}
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
-              </Button>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Popover>
-            <PopoverTrigger disabled={isLoading} asChild>
-              <Button
-                id="date"
-                variant="outline"
-                className={cn(
-                  'w-60 justify-start text-left font-normal relative',
-                  !dateRange && 'text-muted-foreground',
-                )}
-              >
-                <CalendarIcon className="me-2 h-4 w-4" />
-                {dateRange?.from ? (
-                  dateRange.to ? (
-                    <>
-                      {format(dateRange.from, 'LLL dd, y')} -{' '}
-                      {format(dateRange.to, 'LLL dd, y')}
-                    </>
-                  ) : (
-                    format(dateRange.from, 'LLL dd, y')
-                  )
-                ) : (
-                  <span>Filter logs by date range</span>
-                )}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="end">
-              <Calendar
-                initialFocus
-                mode="range"
-                defaultMonth={dateRange?.from}
-                selected={dateRange}
-                onSelect={setDateRange}
-                numberOfMonths={2}
-              />
-              <div className="flex items-center justify-end gap-1.5 border-t border-border p-3">
-                <Button variant="outline" onClick={handleDateRangeReset}>
-                  Reset
-                </Button>
-                <Button onClick={() => handleDateRangeApply(dateRange)}>
-                  Apply
-                </Button>
-              </div>
-            </PopoverContent>
-          </Popover>
-        </div>
-      </CardHeader>
-    );
+  const applySearch = () => {
+    setSearchQuery(searchInput);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
   };
 
   return (
@@ -341,7 +261,63 @@ const LogList = () => {
       }}
     >
       <Card>
-        <DataGridToolbar />
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search logs"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && applySearch()}
+                  disabled={isLoading}
+                  className="ps-9 w-64"
+                />
+                {searchInput.length > 0 && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    disabled={isLoading}
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => {
+                      setSearchInput('');
+                      setSearchQuery('');
+                    }}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            filters={{
+              kind: 'custom',
+              active: Boolean(dateRangeFilter?.from || dateRangeFilter?.to),
+              activeCount: dateRangeFilter?.from || dateRangeFilter?.to ? 1 : 0,
+              content: (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium">Date range</p>
+                  <Calendar
+                    mode="range"
+                    defaultMonth={dateRangeFilter?.from}
+                    selected={dateRangeFilter}
+                    onSelect={(range) => handleDateRangeApply(range)}
+                    numberOfMonths={1}
+                  />
+                  {(dateRangeFilter?.from || dateRangeFilter?.to) && (
+                    <div className="flex justify-end border-t pt-2">
+                      <Button variant="ghost" size="sm" onClick={handleDateRangeReset}>
+                        Reset
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ),
+            }}
+            exportConfig={{ filename: 'user_logs_export.xlsx' }}
+          />
+        </CardHeader>
         <CardTable>
           <ScrollArea>
             <DataGridTable />

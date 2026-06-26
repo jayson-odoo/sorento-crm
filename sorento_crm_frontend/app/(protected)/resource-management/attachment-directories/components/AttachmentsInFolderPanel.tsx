@@ -27,12 +27,12 @@ import {
   Shield,
   Pencil,
   Tag,
-  Filter,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTableRowSelect, DataGridTableRowSelectAll } from '@/components/ui/data-grid-table';
 import { DraggableAttachmentsTable } from './DraggableAttachmentsTable';
@@ -64,7 +64,6 @@ import type { DateRange } from 'react-day-picker';
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -353,7 +352,7 @@ export default function AttachmentsInFolderPanel({
         accessorFn: (row) => row.stored_filename || row.original_filename,
         cell: ({ row }) => <span>{row.original.stored_filename || row.original.original_filename}</span>,
         size: 250,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         id: 'type',
@@ -369,7 +368,7 @@ export default function AttachmentsInFolderPanel({
           );
         },
         size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'access_levels',
@@ -390,7 +389,7 @@ export default function AttachmentsInFolderPanel({
           );
         },
         size: 220,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Access', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'attachment_type',
@@ -398,7 +397,7 @@ export default function AttachmentsInFolderPanel({
         accessorFn: (row) => row.attachment_type?.type_name,
         cell: ({ row }) => row.original.attachment_type?.type_name ?? '-',
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Attachment Type', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'size',
@@ -407,6 +406,7 @@ export default function AttachmentsInFolderPanel({
         cell: ({ row }) =>
           row.original.file_size_bytes ? formatFileSize(row.original.file_size_bytes) : '-',
         size: 100,
+        meta: { headerTitle: 'Size' },
       },
       {
         id: 'uploaded_by',
@@ -416,6 +416,7 @@ export default function AttachmentsInFolderPanel({
         cell: ({ row }) =>
           row.original.uploaded_by_user?.name ?? row.original.uploaded_by_user?.email ?? '-',
         size: 150,
+        meta: { headerTitle: 'Uploaded By' },
       },
       {
         id: 'uploaded_at',
@@ -423,6 +424,7 @@ export default function AttachmentsInFolderPanel({
         accessorFn: (row) => row.uploaded_at,
         cell: ({ row }) => formatDateTimeInMalaysia(row.original.uploaded_at),
         size: 180,
+        meta: { headerTitle: 'Upload at' },
       },
       {
         id: 'actions',
@@ -561,6 +563,81 @@ export default function AttachmentsInFolderPanel({
     columnResizeMode: 'onChange',
   });
 
+  // Bulk actions surface in the toolbar's selection strip; trash vs active
+  // folders expose different sets, mirroring the previous hand-rolled buttons.
+  const bulkActions: ToolbarAction[] = [];
+  if (selectedDeletableIds.length > 0 && isTrashView) {
+    bulkActions.push({
+      key: 'bulk-restore',
+      label: `Restore selected (${selectedDeletableIds.length})`,
+      icon: RotateCcw,
+      disabled: bulkRestoreMutation.isPending,
+      onClick: () =>
+        bulkRestoreMutation.mutate(selectedDeletableIds, {
+          onSuccess: () => setRowSelection({}),
+        }),
+    });
+    bulkActions.push({
+      key: 'bulk-permanent-delete',
+      label: `Permanently delete (${selectedDeletableIds.length})`,
+      icon: Trash2,
+      destructive: true,
+      onClick: () => setBulkDeleteDialogOpen(true),
+    });
+  }
+  if (selectedDeletableIds.length > 0 && !isTrashView && onBulkAdjustAccessLevels) {
+    bulkActions.push({
+      key: 'bulk-access-levels',
+      label: `Access levels (${selectedDeletableIds.length})`,
+      icon: Shield,
+      onClick: () => onBulkAdjustAccessLevels(selectedDeletableIds),
+    });
+  }
+  if (selectedDeletableIds.length > 0 && !isTrashView) {
+    bulkActions.push({
+      key: 'bulk-attachment-type',
+      label: `Attachment type (${selectedDeletableIds.length})`,
+      icon: Tag,
+      onClick: () => setBulkEditTypeOpen(true),
+    });
+    bulkActions.push({
+      key: 'bulk-resubmit',
+      label: `Resubmit selected (${selectedDeletableIds.length})`,
+      icon: RefreshCw,
+      disabled: isResubmittingBulk,
+      onClick: handleBulkResubmit,
+    });
+    bulkActions.push({
+      key: 'bulk-delete',
+      label: `Delete selected (${selectedDeletableIds.length})`,
+      icon: Trash2,
+      destructive: true,
+      onClick: () => setBulkDeleteDialogOpen(true),
+    });
+  }
+
+  // Always-visible toolbar actions (not selection-gated).
+  const secondaryActions: ToolbarAction[] = [];
+  if (trashFolderId) {
+    secondaryActions.push({
+      key: 'restore-folder',
+      label: 'Restore folder and contents',
+      icon: RotateCcw,
+      disabled: restoreDirectoryMutation.isPending,
+      onClick: () =>
+        restoreDirectoryMutation.mutate(trashFolderId, { onSuccess: onRestoreFolder }),
+    });
+  }
+  if (!isTrashView) {
+    secondaryActions.push({
+      key: 'bulk-import',
+      label: 'Bulk import (ZIP)',
+      icon: FileArchive,
+      onClick: () => setBulkImportDialogOpen(true),
+      dataGuideTarget: 'resource-management.files.bulk-import-button',
+    });
+  }
+
   return (
     <>
       <DataGrid
@@ -571,43 +648,38 @@ export default function AttachmentsInFolderPanel({
           setViewAttachmentId(row.id);
           setViewModalOpen(true);
         }}
-        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       >
         <Card>
-          <CardHeader className="flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search attachments..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="ps-9 w-64"
-                />
-                {searchQuery && (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                    onClick={() => setSearchQuery('')}
-                  >
-                    <X />
-                  </Button>
-                )}
-              </div>
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-1 relative" title="Filters">
-                    <Filter className="size-4" />
-                    Filters
-                    {totalFilterCount > 0 && (
-                      <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
-                        {totalFilterCount}
-                      </Badge>
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-72" align="start">
+          <CardHeader className="block">
+            <DataGridListToolbar
+              table={table}
+              searchSlot={
+                <div className="relative">
+                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                  <Input
+                    placeholder="Search attachments..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="ps-9 w-64"
+                  />
+                  {searchQuery && (
+                    <Button
+                      mode="icon"
+                      variant="dim"
+                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                      onClick={() => setSearchQuery('')}
+                    >
+                      <X />
+                    </Button>
+                  )}
+                </div>
+              }
+              filters={{
+                kind: 'custom',
+                active: totalFilterCount > 0,
+                activeCount: totalFilterCount,
+                content: (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <h4 className="font-medium text-sm">Filters</h4>
@@ -853,91 +925,13 @@ export default function AttachmentsInFolderPanel({
                       </>
                     )}
                   </div>
-                </PopoverContent>
-              </Popover>
-            </div>
-            <div className="flex items-center gap-2">
-              {trashFolderId && (
-                <Button
-                  variant="outline"
-                  onClick={() =>
-                    restoreDirectoryMutation.mutate(trashFolderId, {
-                      onSuccess: onRestoreFolder,
-                    })
-                  }
-                  disabled={restoreDirectoryMutation.isPending}
-                >
-                  <RotateCcw className="size-4 mr-2" />
-                  Restore folder and contents
-                </Button>
-              )}
-              {selectedDeletableIds.length > 0 && isTrashView && (
-                <>
-                  <Button
-                    variant="outline"
-                    onClick={() =>
-                      bulkRestoreMutation.mutate(selectedDeletableIds, {
-                        onSuccess: () => setRowSelection({}),
-                      })
-                    }
-                    disabled={bulkRestoreMutation.isPending}
-                  >
-                    <RotateCcw className="size-4 mr-2" />
-                    Restore selected ({selectedDeletableIds.length})
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setBulkDeleteDialogOpen(true)}
-                    className="text-destructive border-destructive/50 hover:bg-destructive/10"
-                  >
-                    <Trash2 className="size-4 mr-2" />
-                    Permanently delete ({selectedDeletableIds.length})
-                  </Button>
-                </>
-              )}
-              {selectedDeletableIds.length > 0 && !isTrashView && onBulkAdjustAccessLevels && (
-                <Button
-                  variant="outline"
-                  onClick={() => onBulkAdjustAccessLevels(selectedDeletableIds)}
-                >
-                  <Shield className="size-4 mr-2" />
-                  Access levels ({selectedDeletableIds.length})
-                </Button>
-              )}
-              {selectedDeletableIds.length > 0 && !isTrashView && (
-                <Button
-                  variant="outline"
-                  onClick={() => setBulkEditTypeOpen(true)}
-                  data-testid="bulk-attachment-type-trigger"
-                >
-                  <Tag className="size-4 mr-2" />
-                  Attachment type ({selectedDeletableIds.length})
-                </Button>
-              )}
-              {selectedDeletableIds.length > 0 && !isTrashView && (
-                <>
-                  <Button
-                    variant="outline"
-                    onClick={handleBulkResubmit}
-                    disabled={isResubmittingBulk}
-                  >
-                    <RefreshCw
-                      className={`size-4 mr-2 ${isResubmittingBulk ? 'animate-spin' : ''}`}
-                    />
-                    Resubmit selected ({selectedDeletableIds.length})
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setBulkDeleteDialogOpen(true)}
-                    className="text-destructive border-destructive/50 hover:bg-destructive/10"
-                  >
-                    <Trash2 className="size-4 mr-2" />
-                    Delete selected ({selectedDeletableIds.length})
-                  </Button>
-                </>
-              )}
-              {!isTrashView && (
-                <>
+                ),
+              }}
+              exportConfig={{ filename: 'attachments_export.xlsx' }}
+              bulkActions={bulkActions}
+              secondaryActions={secondaryActions}
+              primaryAction={
+                !isTrashView ? (
                   <Button
                     onClick={() => setUploadDialogOpen(true)}
                     data-guide-target="resource-management.files.upload-button"
@@ -945,17 +939,9 @@ export default function AttachmentsInFolderPanel({
                     <Plus className="size-4 mr-2" />
                     Upload
                   </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setBulkImportDialogOpen(true)}
-                    data-guide-target="resource-management.files.bulk-import-button"
-                  >
-                    <FileArchive className="size-4 mr-2" />
-                    Bulk import (ZIP)
-                  </Button>
-                </>
-              )}
-            </div>
+                ) : undefined
+              }
+            />
           </CardHeader>
           {/* LatestImportStatusPanel removed — bulk-ZIP progress + n8n
               integration status now live in the Upload Activity drawer
