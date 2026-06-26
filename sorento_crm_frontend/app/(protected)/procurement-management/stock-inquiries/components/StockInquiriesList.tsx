@@ -26,6 +26,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useStockInquiries } from '../hooks/useStockInquiries';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -57,7 +58,21 @@ export default function StockInquiriesList() {
 
   const handleRowClick = (row: StockInquiry) => {
     const inquiryId = row.id;
-    router.push(`/procurement-management/stock-inquiries/${inquiryId}`);
+    // Carry the active list query into the detail URL so its prev/next pager
+    // walks the same filtered+sorted set.
+    const search = buildDetailSearch(
+      {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery,
+      },
+      {
+        status: statusFilter.length ? statusFilter.join(',') : undefined,
+      },
+    );
+    const qs = search ? `?${search}` : '';
+    router.push(`/procurement-management/stock-inquiries/${inquiryId}${qs}`);
   };
 
   const toggleStatusFilter = (value: string) => {

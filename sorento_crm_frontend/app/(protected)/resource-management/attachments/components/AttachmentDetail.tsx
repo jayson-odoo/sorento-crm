@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Download, Eye, RefreshCw, Trash2, ExternalLink } from 'lucide-react';
@@ -15,9 +15,8 @@ import { LoaderCircleIcon } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { formatDate } from '@/lib/helpers';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import AttachmentNavigation from './AttachmentNavigation';
 import {
-  useAttachments,
   useDeleteAttachment,
   useDownloadAttachment,
   useResubmitAttachmentWebhook,
@@ -195,18 +194,6 @@ export default function AttachmentDetail({
     retry: 1,
   });
 
-  const navigationParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 100,
-      sorting: [{ id: 'uploaded_at', desc: true }],
-      searchQuery: '',
-    }),
-    [],
-  );
-  const { data: navigationData } = useAttachments(navigationParams);
-  const navigationItems = navigationData?.data ?? [];
-
   const formatFileSize = (bytes: number | null | undefined) => {
     if (!bytes) return '-';
     if (bytes < 1024) return `${bytes} B`;
@@ -268,11 +255,7 @@ export default function AttachmentDetail({
           </p>
         </div>
         <div className="flex gap-2">
-          <RecordNavigation
-            currentId={attachmentId}
-            items={navigationItems}
-            basePath={listPath}
-          />
+          <AttachmentNavigation attachmentId={attachmentId} />
           <Button
             variant="outline"
             onClick={() => {

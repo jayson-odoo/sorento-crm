@@ -8,6 +8,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { PaginationState, SortingState } from '@tanstack/react-table';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import { buildDataGridParams } from '@/lib/api-client';
+import {
+  useRecordNeighbours,
+  type RecordNeighboursResult,
+} from '@/hooks/useRecordNeighbours';
 import {
   getProducts,
   getProduct,
@@ -18,6 +23,7 @@ import {
   bulkUpdateProducts,
   bulkDeleteProducts,
   getPriceHistory,
+  PRODUCT_NEIGHBOURS_PATH,
   type GetProductsParams,
 } from '../services/productService';
 import type {
@@ -53,6 +59,34 @@ export function useProducts(params: GetProductsParams) {
     refetchOnReconnect: false,
     retry: 1,
   });
+}
+
+/** List query the products detail nav forwards to the neighbours endpoint. */
+export type ProductNeighboursListParams = DataGridApiFetchParams & {
+  category_id?: string;
+  brand_id?: string;
+  status?: string;
+  discontinued_batch_id?: string;
+};
+
+/**
+ * Prev/next neighbours of a product within the active filtered+sorted list set.
+ * Serializes the list query (search/sort + category/brand/status/discontinued
+ * batch filters) with `buildDataGridParams` — the same serialization the list
+ * page uses — so the backend honours filters identically. `page`/`limit` are
+ * sent but ignored by the neighbours endpoint.
+ */
+export function useProductNeighbours(
+  productId: string | null,
+  listParams: ProductNeighboursListParams,
+): RecordNeighboursResult {
+  const params = buildDataGridParams(listParams, {
+    category_id: listParams.category_id,
+    brand_id: listParams.brand_id,
+    status: listParams.status,
+    discontinued_batch_id: listParams.discontinued_batch_id,
+  });
+  return useRecordNeighbours(PRODUCT_NEIGHBOURS_PATH, productId, params);
 }
 
 /**

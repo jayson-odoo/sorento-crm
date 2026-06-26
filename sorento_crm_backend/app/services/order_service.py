@@ -64,8 +64,16 @@ class OrderService:
         customer_ids: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
         transporter_ids: Optional[list[str]] = None,
+        ids_only: bool = False,
     ):
         """List orders with filtering and pagination.
+
+        When ``ids_only`` is True the method skips counting, pagination, and
+        eager-loading and returns the full ordered list of order ids
+        (``list[str]``) for the active filter+sort. This is the exact same query
+        object the paginated list builds, so the prev/next ``neighbours`` pager
+        and the grid can never drift. Any early-return shortcut (an identifier
+        that resolves to nothing) yields ``[]`` in this mode.
 
         `entities` is the single-bag entity filter for AI/MCP callers: pass a list of
         free-text strings (customer names, product codes, transporter labels, order
@@ -101,6 +109,8 @@ class OrderService:
             # unintentionally list every order. Echo the unresolved inputs so the
             # agent surfaces "no match" to the user.
             if not entity_buckets.has_resolved_filter:
+                if ids_only:
+                    return []
                 return {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
@@ -161,6 +171,8 @@ class OrderService:
         )
         if customer_ids is not None:
             if not customer_ids:
+                if ids_only:
+                    return []
                 return {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
@@ -176,6 +188,8 @@ class OrderService:
         )
         if status_ids is not None:
             if not status_ids:
+                if ids_only:
+                    return []
                 return {
                     "data": [],
                     "pagination": {"total": 0, "page": page, "limit": limit},
@@ -341,26 +355,34 @@ class OrderService:
             "created_at": Order.created_at,
             "updated_at": Order.updated_at,
         }
+        # Order.id is always appended as a deterministic tie-breaker so offset
+        # position and prev/next neighbours are unambiguous when the primary
+        # sort column has equal values (e.g. many rows share a created_at).
         if sort_field == "order_status.status_name":
             q = q.outerjoin(Order.order_status)
             status_col = OrderStatus.status_name
             if sort_dir == "desc":
-                q = q.order_by(status_col.desc().nulls_last())
+                q = q.order_by(status_col.desc().nulls_last(), Order.id.asc())
             else:
-                q = q.order_by(status_col.asc().nulls_last())
+                q = q.order_by(status_col.asc().nulls_last(), Order.id.asc())
         else:
             sort_column = sort_map.get(sort_field, Order.created_at)
             nullable_sort = sort_field in nullable_sort_fields
             if sort_dir == "desc":
                 if nullable_sort:
-                    q = q.order_by(sort_column.desc().nulls_last())
+                    q = q.order_by(sort_column.desc().nulls_last(), Order.id.asc())
                 else:
-                    q = q.order_by(sort_column.desc())
+                    q = q.order_by(sort_column.desc(), Order.id.asc())
             else:
                 if nullable_sort:
-                    q = q.order_by(sort_column.asc().nulls_last())
+                    q = q.order_by(sort_column.asc().nulls_last(), Order.id.asc())
                 else:
-                    q = q.order_by(sort_column.asc())
+                    q = q.order_by(sort_column.asc(), Order.id.asc())
+
+        if ids_only:
+            # Same filter+sort query object as the paginated list, but select only
+            # the ordered ids (no count/offset/eager-load) for the neighbours pager.
+            return [str(row[0]) for row in q.with_entities(Order.id).all()]
 
         offset = (page - 1) * limit
         # Eager-load relations referenced by OrderResponse to avoid N+1 lazy loads
@@ -505,6 +527,72 @@ class OrderService:
         if not order:
             raise handle_not_found("Order", order_id)
         return order
+
+    def order_neighbours(
+        self,
+        order_id: str,
+        query: Optional[str] = None,
+        customer_id: Optional[str] = None,
+        order_status_id: Optional[str] = None,
+        has_order_lines: Optional[str] = None,
+        has_actual_delivery_date: Optional[str] = None,
+        order_date_from: Optional[datetime] = None,
+        order_date_to: Optional[datetime] = None,
+        actual_delivery_date_from: Optional[datetime] = None,
+        actual_delivery_date_to: Optional[datetime] = None,
+        customer_query: Optional[str] = None,
+        product_query: Optional[str] = None,
+        transporter_query: Optional[str] = None,
+        sort_field: str = "created_at",
+        sort_dir: str = "asc",
+    ) -> dict:
+        """Resolve prev/next neighbours for ``order_id`` within the active list query.
+
+        Reuses ``list_orders(ids_only=True)`` — the exact same filter+sort query the
+        paginated grid builds — so the pager and list can never drift. Selects only
+        the ordered ids, then defers the position/wrap math to the pure
+        ``compute_neighbours`` helper. If the record is not in the filtered set (deep
+        link, or filtered out after an edit), falls back to the unfiltered,
+        default-sorted set so the pager is never dead (D2).
+
+        ``order_id`` may be a UUID or an order_number; it is resolved to the canonical
+        UUID first so it matches the ids produced by the list query.
+        """
+        from app.services.record_navigation import compute_neighbours
+
+        resolved_ids = resolve_identifier(
+            self.db,
+            order_id,
+            Order,
+            code_fields=("order_number",),
+        )
+        current_id = resolved_ids[0] if resolved_ids else str(order_id)
+
+        filtered_ids = self.list_orders(
+            query=query,
+            customer_id=customer_id,
+            order_status_id=order_status_id,
+            has_order_lines=has_order_lines,
+            has_actual_delivery_date=has_actual_delivery_date,
+            order_date_from=order_date_from,
+            order_date_to=order_date_to,
+            actual_delivery_date_from=actual_delivery_date_from,
+            actual_delivery_date_to=actual_delivery_date_to,
+            customer_query=customer_query,
+            product_query=product_query,
+            transporter_query=transporter_query,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+            ids_only=True,
+        )
+        result = compute_neighbours(filtered_ids, current_id)
+        if result["index"] is not None:
+            return result
+
+        # D2: current record not in the filtered set -> fall back to the unfiltered,
+        # default-sorted set so prev/next still works and total reflects all orders.
+        unfiltered_ids = self.list_orders(ids_only=True)
+        return compute_neighbours(unfiltered_ids, current_id)
 
     def list_orders_by_product(
         self,
@@ -1917,28 +2005,107 @@ class CustomerService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_customers(self, page: int = 1, limit: int = 50, query: Optional[str] = None):
-        """List customers."""
+    # Whitelisted sort columns for the customers list. Anything else falls back
+    # to created_at so an unknown sort param can't crash the query.
+    _CUSTOMER_SORT_MAP = {
+        "customer_code": Customer.customer_code,
+        "customer_name": Customer.customer_name,
+        "email": Customer.email,
+        "phone_number": Customer.phone_number,
+        "is_active": Customer.is_active,
+        "created_at": Customer.created_at,
+        "updated_at": Customer.updated_at,
+    }
+
+    def _build_customer_list_query(
+        self,
+        query: Optional[str] = None,
+        sort_field: str = "created_at",
+        sort_dir: str = "desc",
+    ):
+        """Build the filtered + sorted customers query shared by ``list_customers``
+        and ``neighbours`` so the two can never drift.
+
+        The ORDER BY always appends ``Customer.id`` as a deterministic tie-breaker
+        so offset position and prev/next neighbours are unambiguous when the
+        primary sort column has equal values.
+        """
         q = self.db.query(Customer)
-        
+
         if query:
             q = q.filter(
                 or_(
                     Customer.customer_code.ilike(f"%{query}%"),
-                    Customer.customer_name.ilike(f"%{query}%")
+                    Customer.customer_name.ilike(f"%{query}%"),
                 )
             )
-        
+
+        sort_column = self._CUSTOMER_SORT_MAP.get(sort_field, Customer.created_at)
+        if sort_dir == "desc":
+            q = q.order_by(sort_column.desc(), Customer.id.asc())
+        else:
+            q = q.order_by(sort_column.asc(), Customer.id.asc())
+        return q
+
+    def list_customers(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        sort_field: str = "created_at",
+        sort_dir: str = "desc",
+    ):
+        """List customers with pagination, search, and sorting."""
+        q = self._build_customer_list_query(
+            query=query,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+        )
+
         total = q.count()
         offset = (page - 1) * limit
         customers = q.offset(offset).limit(limit).all()
-        
+
         return {
             "data": customers,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0
         }
-    
+
+    def neighbours(
+        self,
+        customer_id: str,
+        query: Optional[str] = None,
+        sort_field: str = "created_at",
+        sort_dir: str = "desc",
+    ) -> dict:
+        """Resolve prev/next neighbours for ``customer_id`` within the active list
+        query.
+
+        Selects only the ordered ids (not full rows), then defers the position/wrap
+        math to the pure ``compute_neighbours`` helper. If the record is not in the
+        filtered set (deep link, or filtered out after an edit), falls back to the
+        unfiltered, default-sorted set so the pager is never dead (D2).
+        """
+        from app.services.record_navigation import compute_neighbours
+
+        def _ordered_ids(q) -> list[str]:
+            return [str(row[0]) for row in q.with_entities(Customer.id).all()]
+
+        filtered_q = self._build_customer_list_query(
+            query=query,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+        )
+        result = compute_neighbours(_ordered_ids(filtered_q), customer_id)
+        if result["index"] is not None:
+            return result
+
+        # D2: current record not in the filtered set -> fall back to the unfiltered,
+        # default-sorted set so prev/next still works and total reflects all customers.
+        unfiltered_q = self._build_customer_list_query()
+        return compute_neighbours(_ordered_ids(unfiltered_q), customer_id)
+
     def get_customer(self, customer_id: str):
         """Get a customer by ID."""
         customer = self.db.query(Customer).filter(Customer.id == customer_id).first()

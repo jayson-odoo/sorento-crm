@@ -685,6 +685,48 @@ async def get_sla_tracking(
         raise handle_internal_error(str(e))
 
 
+@router.get("/neighbours")
+async def get_sla_tracking_neighbours(
+    id: str = Query(..., description="Conversation SLA tracking id to resolve neighbours for"),
+    policy_id: Optional[str] = Query(None),
+    query: Optional[str] = Query(None),
+    tracking_ids: Optional[list[str]] = Query(
+        None,
+        description="Filter by canonical SLA tracking UUIDs (repeated / csv / JSON array).",
+    ),
+    sort: Optional[str] = Query(None),
+    dir: Optional[str] = Query(None),
+    assigned_to: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Prev/next neighbours of a conversation SLA tracking row within the active
+    filtered+sorted list set.
+
+    Accepts the same filter/sort/search params as the list GET (page/limit are
+    irrelevant and ignored; ``scope`` is fixed to conversation here — form SLA rows
+    have their own list/detail flow). Returns ``{total, index, prev_id, next_id}``
+    with the 1-based ``index`` and circular wrap-around neighbours. If the record is
+    not in the filtered set, falls back to the unfiltered, default-sorted conversation
+    set (D2).
+    """
+    try:
+        service = ConversationSLATrackingService(db)
+        return service.neighbours(
+            tracking_id=id,
+            policy_id=policy_id,
+            query=query,
+            tracking_ids=parse_uuid_list(tracking_ids, param_name="tracking_ids"),
+            sort_field=sort or "created_at",
+            sort_dir=dir or "desc",
+            assigned_to=assigned_to,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.post("/", response_model=ConversationSLATrackingResponse, status_code=status.HTTP_201_CREATED)
 async def create_sla_tracking(
     tracking_data: ConversationSLATrackingCreate,

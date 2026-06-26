@@ -277,67 +277,35 @@ class PromotionService:
                 out.append(pa)
         return out
 
-    def list_promotions(
+    def _build_promotions_ordered_query(
         self,
-        page: int = 1,
-        limit: int = 50,
+        *,
         user_type: Optional[str] = None,
         contact_access_codes: Optional[list[str]] = None,
         query: Optional[str] = None,
-        status: Optional[str] = None,
         active: Optional[bool] = None,
+        status: Optional[str] = None,
         period_from: Optional[date] = None,
         period_to: Optional[date] = None,
         date_mode: Optional[str] = None,
         sort_field: Optional[str] = None,
         sort_dir: Optional[str] = "desc",
         advanced_filter_clause: Optional[Any] = None,
-        entities: Optional[list[str]] = None,
+        entity_promotion_ids: Optional[list[str]] = None,
         promotion_ids: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
         attachment_state: Optional[str] = None,
     ):
-        """List promotions with active-first fallback semantics.
+        """Build the filtered + sorted promotions query shared by ``list_promotions``
+        and ``neighbours`` so the two can never drift.
 
-        active=None (default): return active rows; if a narrowing filter is
-        present and zero active match, fall back to inactive rows.
-        active=True: same as default — find active first, fall back to inactive
-        when narrowing filter is present and active set is empty.
-        active=False: return only inactive rows (no fallback).
-
-        Active definition: Promotion.is_active is True AND today falls within
-        [start_date, end_date]. Anything outside that window — even if the
-        boolean flag is True — is treated as inactive.
-
-        period_from/period_to: optional date bounds. `date_mode` selects which
-        promotion date the window tests:
-        - "overlap" (default): [start_date, end_date] overlaps the window —
-          "promotions valid/running during X".
-        - "started": start_date falls within the window — "promotions
-          released/launched in X".
-        - "ended": end_date falls within the window — "promotions that
-          ended/expired in X".
-        started/ended skip the active gate by default (the window is the
-        intent; both active and ended rows match) unless active/status is
-        passed explicitly.
+        Returns ``(ordered_query_factory, primary_active_mode, narrowing_filter_present)``
+        where ``ordered_query_factory(active_mode)`` yields the SQLAlchemy query for a
+        given active gate. ``primary_active_mode`` is the first gate the list applies
+        (before the active-first fallback). The ORDER BY always appends
+        ``Promotion.id`` as a deterministic tie-breaker so offset position and
+        prev/next neighbours are unambiguous when the primary sort column ties.
         """
-        # Entity resolution: when caller passes `entities`, filter by the resolved
-        # Promotion.id set (IN clause). Folding promotion UUIDs into `query` would
-        # be wrong — the resolver returns the promotion UUIDs, not free-text terms.
-        from app.services.entity_filter_helpers import resolve_or_empty as _resolve_or_empty
-        entity_buckets = _resolve_or_empty(self.db, entities)
-        if entity_buckets is not None and not entity_buckets.has_resolved_filter:
-            from app.schemas.common import PaginationResponse
-            return {
-                "data": [],
-                "pagination": PaginationResponse(total=0, page=page, limit=limit),
-                "empty": True,
-                "resolved_entities": entity_buckets.as_echo(),
-            }
-        entity_promotion_ids: Optional[list[str]] = None
-        if entity_buckets is not None and entity_buckets.promotion_ids:
-            entity_promotion_ids = list(entity_buckets.promotion_ids)
-
         # Back-compat: legacy `status` query param translates to `active`.
         show_all = status == "all"
         if active is None and status and status != "all":
@@ -347,21 +315,11 @@ class PromotionService:
                 active = False
 
         query_norm = (query or "").strip() or None
-        # Unknown / absent date_mode silently falls back to overlap (same
-        # tolerance as sort_dir) — the route layer validates explicit values.
         date_mode_norm = (date_mode or "overlap").strip().lower()
         if date_mode_norm not in ("overlap", "started", "ended"):
             date_mode_norm = "overlap"
-        # started/ended target a historical window ("released/expired in X") —
-        # the intent spans both currently-active and already-ended rows. With
-        # the default active gate, matching rows in the other state would be
-        # silently dropped (active-first fallback only kicks in at zero
-        # matches). Skip the gate unless the caller explicitly narrowed it.
         if date_mode_norm in ("started", "ended") and active is None and not status:
             show_all = True
-        # attachment_state is a cleanup filter (unlinked / linked-to-trashed):
-        # the delete-candidate set spans both active and inactive promotions, so
-        # skip the active gate unless the caller narrowed it explicitly.
         if attachment_state and active is None and not status:
             show_all = True
         narrowing_filter_present = bool(
@@ -525,17 +483,107 @@ class PromotionService:
                 order_col = func.coalesce(pc_subq.c.pcnt, 0)
             else:
                 order_col = sort_map.get(sort_key, Promotion.created_at)
-            return q.order_by(order_col.asc() if dir_norm == "asc" else order_col.desc())
+            # Deterministic tie-breaker (Promotion.id) so offset position and
+            # prev/next neighbours are stable when ``order_col`` values tie.
+            primary = order_col.asc() if dir_norm == "asc" else order_col.desc()
+            return q.order_by(primary, Promotion.id.asc())
 
         if show_all:
             primary_active_mode: Optional[bool] = None
         else:
             primary_active_mode = True if active is None else active
+        return _ordered_query, primary_active_mode, narrowing_filter_present, (not show_all and active is not False)
+
+    def list_promotions(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        user_type: Optional[str] = None,
+        contact_access_codes: Optional[list[str]] = None,
+        query: Optional[str] = None,
+        status: Optional[str] = None,
+        active: Optional[bool] = None,
+        period_from: Optional[date] = None,
+        period_to: Optional[date] = None,
+        date_mode: Optional[str] = None,
+        sort_field: Optional[str] = None,
+        sort_dir: Optional[str] = "desc",
+        advanced_filter_clause: Optional[Any] = None,
+        entities: Optional[list[str]] = None,
+        promotion_ids: Optional[list[str]] = None,
+        product_ids: Optional[list[str]] = None,
+        attachment_state: Optional[str] = None,
+    ):
+        """List promotions with active-first fallback semantics.
+
+        active=None (default): return active rows; if a narrowing filter is
+        present and zero active match, fall back to inactive rows.
+        active=True: same as default — find active first, fall back to inactive
+        when narrowing filter is present and active set is empty.
+        active=False: return only inactive rows (no fallback).
+
+        Active definition: Promotion.is_active is True AND today falls within
+        [start_date, end_date]. Anything outside that window — even if the
+        boolean flag is True — is treated as inactive.
+
+        period_from/period_to: optional date bounds. `date_mode` selects which
+        promotion date the window tests:
+        - "overlap" (default): [start_date, end_date] overlaps the window —
+          "promotions valid/running during X".
+        - "started": start_date falls within the window — "promotions
+          released/launched in X".
+        - "ended": end_date falls within the window — "promotions that
+          ended/expired in X".
+        started/ended skip the active gate by default (the window is the
+        intent; both active and ended rows match) unless active/status is
+        passed explicitly.
+        """
+        # Entity resolution: when caller passes `entities`, filter by the resolved
+        # Promotion.id set (IN clause). Folding promotion UUIDs into `query` would
+        # be wrong — the resolver returns the promotion UUIDs, not free-text terms.
+        from app.services.entity_filter_helpers import resolve_or_empty as _resolve_or_empty
+        entity_buckets = _resolve_or_empty(self.db, entities)
+        if entity_buckets is not None and not entity_buckets.has_resolved_filter:
+            from app.schemas.common import PaginationResponse
+            return {
+                "data": [],
+                "pagination": PaginationResponse(total=0, page=page, limit=limit),
+                "empty": True,
+                "resolved_entities": entity_buckets.as_echo(),
+            }
+        entity_promotion_ids: Optional[list[str]] = None
+        if entity_buckets is not None and entity_buckets.promotion_ids:
+            entity_promotion_ids = list(entity_buckets.promotion_ids)
+
+        (
+            _ordered_query,
+            primary_active_mode,
+            narrowing_filter_present,
+            fallback_allowed,
+        ) = self._build_promotions_ordered_query(
+            user_type=user_type,
+            contact_access_codes=contact_access_codes,
+            query=query,
+            active=active,
+            status=status,
+            period_from=period_from,
+            period_to=period_to,
+            date_mode=date_mode,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+            advanced_filter_clause=advanced_filter_clause,
+            entity_promotion_ids=entity_promotion_ids,
+            promotion_ids=promotion_ids,
+            product_ids=product_ids,
+            attachment_state=attachment_state,
+        )
+
+        today = datetime.utcnow().date()
         q = _ordered_query(primary_active_mode)
         total = q.count()
         fallback_used = False
 
-        if not show_all and total == 0 and narrowing_filter_present and active is not False:
+        if fallback_allowed and total == 0 and narrowing_filter_present:
             q = _ordered_query(False)
             total = q.count()
             fallback_used = total > 0
@@ -567,6 +615,94 @@ class PromotionService:
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
         return payload
+
+    def neighbours(
+        self,
+        promotion_id: str,
+        user_type: Optional[str] = None,
+        contact_access_codes: Optional[list[str]] = None,
+        query: Optional[str] = None,
+        status: Optional[str] = None,
+        active: Optional[bool] = None,
+        period_from: Optional[date] = None,
+        period_to: Optional[date] = None,
+        date_mode: Optional[str] = None,
+        sort_field: Optional[str] = None,
+        sort_dir: Optional[str] = "desc",
+        entities: Optional[list[str]] = None,
+        promotion_ids: Optional[list[str]] = None,
+        product_ids: Optional[list[str]] = None,
+        attachment_state: Optional[str] = None,
+    ) -> dict:
+        """Resolve prev/next neighbours for ``promotion_id`` within the active list
+        query.
+
+        Reuses :meth:`_build_promotions_ordered_query` (the same filter+sort builder
+        ``list_promotions`` uses) so the pager order can never drift from the grid.
+        Selects only ordered ids (not full rows), mirrors the active-first fallback so
+        the resolved set matches what the list rendered, then defers position/wrap math
+        to the pure ``compute_neighbours`` helper. If the record is not in the filtered
+        set (deep link, or filtered out after an edit), falls back to the unfiltered,
+        default-sorted set so the pager is never dead (D2).
+        """
+        from app.services.record_navigation import compute_neighbours
+        from app.services.entity_filter_helpers import resolve_or_empty as _resolve_or_empty
+
+        # Resolve the canonical UUID — the detail page may navigate via a promotion
+        # number / external id rather than the raw UUID.
+        resolved_id = _resolve_promotion_id_for_filter(self.db, promotion_id) or promotion_id
+
+        entity_promotion_ids: Optional[list[str]] = None
+        entity_buckets = _resolve_or_empty(self.db, entities)
+        if entity_buckets is not None and entity_buckets.promotion_ids:
+            entity_promotion_ids = list(entity_buckets.promotion_ids)
+
+        # Build the shared filter+sort query factory once (same one list_promotions
+        # uses) and mirror its primary gate + active-first fallback so the neighbour
+        # set matches the rendered grid exactly.
+        (
+            ordered_query,
+            primary_active_mode,
+            narrowing_filter_present,
+            fallback_allowed,
+        ) = self._build_promotions_ordered_query(
+            user_type=user_type,
+            contact_access_codes=contact_access_codes,
+            query=query,
+            active=active,
+            status=status,
+            period_from=period_from,
+            period_to=period_to,
+            date_mode=date_mode,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+            entity_promotion_ids=entity_promotion_ids,
+            promotion_ids=promotion_ids,
+            product_ids=product_ids,
+            attachment_state=attachment_state,
+        )
+
+        def _ordered_ids(active_mode: Optional[bool]) -> list[str]:
+            q = ordered_query(active_mode)
+            return [str(row[0]) for row in q.with_entities(Promotion.id).all()]
+
+        ordered_ids = _ordered_ids(primary_active_mode)
+        if not ordered_ids and fallback_allowed and narrowing_filter_present:
+            ordered_ids = _ordered_ids(False)
+
+        result = compute_neighbours(ordered_ids, resolved_id)
+        if result["index"] is not None:
+            return result
+
+        # D2: current record not in the filtered set -> fall back to the
+        # unfiltered, default-sorted set (active gate dropped) so the pager
+        # still works and total reflects all promotions.
+        unfiltered_query, _p, _n, _f = self._build_promotions_ordered_query()
+        unfiltered_ids = [
+            str(row[0])
+            for row in unfiltered_query(None).with_entities(Promotion.id).all()
+        ]
+        return compute_neighbours(unfiltered_ids, resolved_id)
 
     def get_promotion(
         self,

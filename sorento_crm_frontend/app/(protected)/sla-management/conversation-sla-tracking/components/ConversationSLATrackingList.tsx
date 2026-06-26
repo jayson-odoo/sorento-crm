@@ -39,6 +39,7 @@ import { useConversationSLATracking, useSyncAssigneeFromRespond } from '../hooks
 import type { ConversationSLATracking } from '../types/conversationSLATracking.types';
 import { formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import { apiFetch } from '@/lib/api';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 
 export default function ConversationSLATrackingList() {
   const router = useRouter();
@@ -88,7 +89,25 @@ export default function ConversationSLATrackingList() {
 
   const handleRowClick = (row: ConversationSLATracking) => {
     const trackingId = row.id;
-    router.push(`/sla-management/conversation-sla-tracking/${trackingId}`);
+    // Carry the active list query (search/sort/filters) into the detail URL so the
+    // detail pager walks the exact same filtered+sorted set the user is viewing.
+    const search = buildDetailSearch(
+      {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery,
+      },
+      {
+        assigned_to:
+          assignedToFilter && assignedToFilter !== '__all__'
+            ? assignedToFilter
+            : undefined,
+      },
+    );
+    router.push(
+      `/sla-management/conversation-sla-tracking/${trackingId}${search ? `?${search}` : ''}`,
+    );
   };
 
   const getTimeRemaining = (dueAt: string | Date, backendSeconds?: number | null) => {

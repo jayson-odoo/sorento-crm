@@ -18,10 +18,8 @@ class FormService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_forms(
+    def _build_list_query(
         self,
-        page: int = 1,
-        limit: int = 50,
         query: Optional[str] = None,
         language: Optional[str] = None,
         status: Optional[str] = None,
@@ -31,14 +29,24 @@ class FormService:
         sort_dir: str = "desc",
         entity_form_codes: Optional[list[str]] = None,
         form_ids: Optional[list[str]] = None,
+        with_options: bool = True,
     ):
-        """List forms."""
+        """Build the filtered + sorted forms query shared by ``list_forms`` and
+        ``neighbours`` so the two can never drift.
+
+        The ORDER BY always appends ``Form.id`` as a deterministic tie-breaker so
+        offset position and prev/next neighbours are unambiguous when the primary
+        sort column has equal values. ``with_options`` controls whether the
+        attachment eager-load is applied (skipped for the ids-only neighbours scan).
+        """
         from sqlalchemy import or_, and_, cast, String, text, func
         from sqlalchemy.dialects.postgresql import ARRAY
         from sqlalchemy.orm import joinedload
-        q = self.db.query(Form).options(
-            joinedload(Form.attachment).joinedload(Attachment.attachment_type)
-        )
+        q = self.db.query(Form)
+        if with_options:
+            q = q.options(
+                joinedload(Form.attachment).joinedload(Attachment.attachment_type)
+            )
 
         filters = []
         if form_type and str(form_type).strip().lower() not in ("", "all"):
@@ -82,21 +90,21 @@ class FormService:
                         cast(contact_access_codes, ARRAY(String))
                     )
                 )
-        
+
         if filters:
             q = q.filter(and_(*filters))
-        
+
         # Normalize sort parameters
         if sort_field and isinstance(sort_field, str):
             sort_field = sort_field.strip().lower() or "updated_at"
         else:
             sort_field = "updated_at"
-        
+
         if sort_dir and isinstance(sort_dir, str):
             sort_dir = sort_dir.strip().lower() or "desc"
         else:
             sort_dir = "desc"
-        
+
         sort_map = {
             "id": Form.id,
             "code": Form.code,
@@ -107,16 +115,92 @@ class FormService:
             "version": Form.version,
         }
         sort_column = sort_map.get(sort_field, Form.updated_at)
-        
+
         # Ensure sort_dir is either "asc" or "desc"
         if sort_dir not in ["asc", "desc"]:
             sort_dir = "desc"
-        
+
+        # Append Form.id as a deterministic tie-breaker so neighbour ordering is
+        # stable when the primary sort column has equal values.
         if sort_dir == "desc":
-            q = q.order_by(sort_column.desc())
+            q = q.order_by(sort_column.desc(), Form.id.asc())
         else:
-            q = q.order_by(sort_column.asc())
-        
+            q = q.order_by(sort_column.asc(), Form.id.asc())
+        return q
+
+    def neighbours(
+        self,
+        form_id: str,
+        query: Optional[str] = None,
+        language: Optional[str] = None,
+        status: Optional[str] = None,
+        form_type: Optional[str] = None,
+        contact_access_codes: Optional[list[str]] = None,
+        sort_field: str = "updated_at",
+        sort_dir: str = "desc",
+        entity_form_codes: Optional[list[str]] = None,
+        form_ids: Optional[list[str]] = None,
+    ) -> dict:
+        """Resolve prev/next neighbours for ``form_id`` within the active list query.
+
+        Selects only the ordered ids (not full rows) for efficiency, then defers the
+        position/wrap math to the pure ``compute_neighbours`` helper. If the record is
+        not in the filtered set (deep link, or filtered out after an edit), falls back
+        to the unfiltered, default-sorted set so the pager is never dead (D2).
+        """
+        from app.services.record_navigation import compute_neighbours
+
+        def _ordered_ids(q) -> list[str]:
+            return [str(row[0]) for row in q.with_entities(Form.id).all()]
+
+        filtered_q = self._build_list_query(
+            query=query,
+            language=language,
+            status=status,
+            form_type=form_type,
+            contact_access_codes=contact_access_codes,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+            entity_form_codes=entity_form_codes,
+            form_ids=form_ids,
+            with_options=False,
+        )
+        result = compute_neighbours(_ordered_ids(filtered_q), form_id)
+        if result["index"] is not None:
+            return result
+
+        # D2: current record not in the filtered set -> fall back to the unfiltered,
+        # default-sorted set so prev/next still works and total reflects all forms.
+        unfiltered_q = self._build_list_query(with_options=False)
+        return compute_neighbours(_ordered_ids(unfiltered_q), form_id)
+
+    def list_forms(
+        self,
+        page: int = 1,
+        limit: int = 50,
+        query: Optional[str] = None,
+        language: Optional[str] = None,
+        status: Optional[str] = None,
+        form_type: Optional[str] = None,
+        contact_access_codes: Optional[list[str]] = None,
+        sort_field: str = "updated_at",
+        sort_dir: str = "desc",
+        entity_form_codes: Optional[list[str]] = None,
+        form_ids: Optional[list[str]] = None,
+    ):
+        """List forms."""
+        q = self._build_list_query(
+            query=query,
+            language=language,
+            status=status,
+            form_type=form_type,
+            contact_access_codes=contact_access_codes,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+            entity_form_codes=entity_form_codes,
+            form_ids=form_ids,
+        )
+
         total = q.count()
         offset = (page - 1) * limit
         forms = q.offset(offset).limit(limit).all()

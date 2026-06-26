@@ -19,11 +19,11 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from 'sonner';
-import { useAccessAgent, useAccessAgents, useAgentTeams, useTeams, useAgentMcpTools } from '../hooks/useAccessAgents';
+import { useAccessAgent, useAgentTeams, useTeams, useAgentMcpTools } from '../hooks/useAccessAgents';
 import { formatDate } from '@/lib/helpers';
 import AccessAgentDeleteDialog from './access-agent-delete-dialog';
 import ContactAccessAgentsTable from './ContactAccessAgentsTable';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import AccessAgentNavigation from './AccessAgentNavigation';
 import type { AgentTeamMemberInfo, AgentTeamAssignment } from '../services/accessAgentService';
 
 interface AccessAgentDetailProps {
@@ -111,18 +111,6 @@ function TeamMemberRespondIoButton({ member }: { member: AgentTeamMemberInfo }) 
 export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailProps) {
   const router = useRouter();
   const { data: accessAgent, isLoading } = useAccessAgent(accessAgentId);
-  const navigationParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 100,
-      sorting: [{ id: 'created_at', desc: true }],
-      searchQuery: '',
-      status: undefined,
-    }),
-    [],
-  );
-  const { data: navigationData } = useAccessAgents(navigationParams);
-  const navigationItems = navigationData?.data ?? [];
   const {
     data: agentTeamsData,
     refetch: refetchAgentTeams,
@@ -208,11 +196,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
           </p>
         </div>
         <div className="flex gap-2">
-          <RecordNavigation
-            currentId={accessAgentId}
-            items={navigationItems}
-            basePath="/user-management/access-agents"
-          />
+          <AccessAgentNavigation accessAgentId={accessAgentId} />
           <Button variant="outline" onClick={() => setEditModalOpen(true)}>
             <Edit className="size-4" />
             Edit

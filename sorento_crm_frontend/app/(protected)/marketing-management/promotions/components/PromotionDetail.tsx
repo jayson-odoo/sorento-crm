@@ -32,7 +32,6 @@ import {
   useAddPromotionProduct,
   useRemovePromotionProduct,
   useUpdatePromotionProductPrice,
-  usePromotions,
   useCreatePromotionGroup,
   useUpdatePromotionGroup,
   useDeletePromotionGroup,
@@ -43,7 +42,7 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { toast } from 'sonner';
 import { LoaderCircleIcon } from 'lucide-react';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import PromotionNavigation from './PromotionNavigation';
 import type { PromotionProduct, PromotionGroup } from '../types/promotion.types';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
@@ -90,17 +89,6 @@ interface PromotionDetailProps {
 export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   const router = useRouter();
   const { data: promotion, isLoading } = usePromotion(promotionId);
-  const navigationParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 100,
-      sorting: [{ id: 'created_at', desc: true }],
-      searchQuery: '',
-    }),
-    [],
-  );
-  const { data: navigationData } = usePromotions(navigationParams);
-  const navigationItems = navigationData?.data ?? [];
   const deleteMutation = useDeletePromotion();
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const accessLevelNameMap = useMemo(() => {
@@ -533,11 +521,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           </div>
         </div>
         <div className="flex gap-2">
-          <RecordNavigation
-            currentId={promotionId}
-            items={navigationItems}
-            basePath="/marketing-management/promotions"
-          />
+          <PromotionNavigation promotionId={promotionId} />
           <Button variant="outline" onClick={() => router.push(`/marketing-management/promotions/${promotionId}/edit`)}>
             <Edit className="size-4" />
             Edit

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
@@ -18,7 +18,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { useConversationSLATrackingDetail, useConversationSLATracking, useDeleteConversationSLATracking, useSyncAssigneeFromRespond, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
+import { useConversationSLATrackingDetail, useDeleteConversationSLATracking, useSyncAssigneeFromRespond, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
+import ConversationSLATrackingNavigation from './ConversationSLATrackingNavigation';
 import { escalateConversationSLATracking } from '../services/conversationSLATrackingService';
 import { formatDate, formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
@@ -57,7 +58,6 @@ import { cn } from '@/lib/utils';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { getUsersSelect } from '@/services/userSelectService';
 import { toast } from 'sonner';
-import RecordNavigation from '@/components/common/RecordNavigation';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import SlaTrackingConversationPanel from './SlaTrackingConversationPanel';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';
@@ -98,20 +98,11 @@ export default function ConversationSLATrackingDetail({
   const queryClient = useQueryClient();
   const canSlaTestOverride = useHasPermission(SLA_TEST_OVERRIDE_PERMISSION);
   const { data: tracking, isLoading } = useConversationSLATrackingDetail(trackingId);
-  const navigationParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 100,
-      sorting: [{ id: 'created_at', desc: true }],
-      searchQuery: '',
-      assigned_to: undefined,
-      policy_id: undefined,
-      status: undefined,
-    }),
-    [],
-  );
-  const { data: navigationData } = useConversationSLATracking(navigationParams);
-  const navigationItems = navigationData?.data ?? [];
+  // Conversation-context detail renders the IDs-mode pager (neighbours endpoint,
+  // conversation scope). The form SLA tracking page reuses this component with its
+  // own backHref; its records live in the form scope, so it gets no conversation pager.
+  const isConversationContext =
+    backHref === '/sla-management/conversation-sla-tracking';
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [trackingOpen, setTrackingOpen] = useState(false);
@@ -346,11 +337,9 @@ export default function ConversationSLATrackingDetail({
           </p>
         </div>
         <div className="flex gap-2">
-          <RecordNavigation
-            currentId={trackingId}
-            items={navigationItems}
-            basePath="/sla-management/conversation-sla-tracking"
-          />
+          {isConversationContext && (
+            <ConversationSLATrackingNavigation trackingId={trackingId} />
+          )}
           {respondInboxUrl && (
             <Button
               variant="outline"

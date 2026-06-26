@@ -1,6 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import { buildDataGridParams } from '@/lib/api-client';
+import {
+  useRecordNeighbours,
+  type RecordNeighboursResult,
+} from '@/hooks/useRecordNeighbours';
 import {
   getPackingLists,
   getPackingList,
@@ -8,15 +12,29 @@ import {
   updatePackingList,
   deletePackingList,
   bulkDeletePackingLists,
+  PACKING_LIST_NEIGHBOURS_PATH,
+  type PackingListsListParams,
 } from '../services/packingListService';
 import type { PackingListFormData } from '../types/packingList.types';
 
-export function usePackingLists(
-  params: DataGridApiFetchParams & {
-    supplier_id?: string;
-    shipment_status?: string;
-  },
-) {
+/**
+ * Prev/next neighbours of a packing list within the active filtered+sorted list set.
+ * Serializes the list query (search/sort/supplier/status) with `buildDataGridParams`
+ * — the same serialization the list page uses — so the backend honours filters
+ * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
+ */
+export function usePackingListNeighbours(
+  packingListId: string | null,
+  listParams: PackingListsListParams,
+): RecordNeighboursResult {
+  const params = buildDataGridParams(listParams, {
+    supplier_id: listParams.supplier_id,
+    shipment_status: listParams.shipment_status,
+  });
+  return useRecordNeighbours(PACKING_LIST_NEIGHBOURS_PATH, packingListId, params);
+}
+
+export function usePackingLists(params: PackingListsListParams) {
   return useQuery({
     queryKey: [
       'packing-lists',

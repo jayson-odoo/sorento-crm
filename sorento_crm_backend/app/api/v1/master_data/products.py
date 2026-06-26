@@ -159,6 +159,69 @@ def get_products(
         raise handle_internal_error(str(e))
 
 
+@router.get("/neighbours")
+def get_product_neighbours(
+    id: str = Query(..., description="Product id (or SKU) to resolve neighbours for"),
+    query: Optional[str] = Query(None),
+    category_id: Optional[str] = Query(None),
+    brand_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    discontinued_batch_id: Optional[str] = Query(None),
+    price_min: Optional[float] = Query(None),
+    price_max: Optional[float] = Query(None),
+    item_type: Optional[str] = Query(None),
+    length_min: Optional[float] = Query(None),
+    length_max: Optional[float] = Query(None),
+    width_min: Optional[float] = Query(None),
+    width_max: Optional[float] = Query(None),
+    height_min: Optional[float] = Query(None),
+    height_max: Optional[float] = Query(None),
+    any_dimension_min: Optional[float] = Query(None),
+    any_dimension_max: Optional[float] = Query(None),
+    sort: Optional[str] = Query("created_at"),
+    dir: Optional[str] = Query("asc"),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Prev/next neighbours of a product within the active filtered+sorted list set.
+
+    Accepts the same filter/sort/search params as the list GET (page/limit are
+    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
+    1-based ``index`` and circular wrap-around neighbours. If the record is not in
+    the filtered set, falls back to the unfiltered, default-sorted set (D2).
+
+    Declared BEFORE ``/{product_id}`` so the literal path is not captured as a
+    product id by the parametric route.
+    """
+    try:
+        service = ProductService(db)
+        return service.neighbours(
+            product_id=id,
+            query=query,
+            category_id=category_id,
+            brand_id=brand_id,
+            status=status,
+            discontinued_batch_id=discontinued_batch_id,
+            price_min=price_min,
+            price_max=price_max,
+            item_type=item_type,
+            length_min=length_min,
+            length_max=length_max,
+            width_min=width_min,
+            width_max=width_max,
+            height_min=height_min,
+            height_max=height_max,
+            any_dimension_min=any_dimension_min,
+            any_dimension_max=any_dimension_max,
+            sort_field=sort or "created_at",
+            sort_dir=dir or "asc",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{product_id}", response_model=ProductResponse)
 def get_product(
     product_id: str,

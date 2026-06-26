@@ -119,6 +119,68 @@ async def get_forms(
         raise handle_internal_error(str(e))
 
 
+@router.get("/neighbours")
+async def get_form_neighbours(
+    id: str = Query(..., description="Form id to resolve neighbours for"),
+    entities: Optional[list[str]] = Query(
+        None,
+        description="DEPRECATED — free-text entity bag. Prefer `form_ids`.",
+    ),
+    form_ids: Optional[list[str]] = Query(
+        None,
+        description="Canonical form UUIDs (csv/JSON/repeated).",
+    ),
+    query: Optional[str] = Query(None),
+    language: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    form_type: Optional[str] = Query(None, description="Filter by form type (e.g. marketing)"),
+    sort: Optional[str] = Query(None),
+    dir: Optional[str] = Query(None),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Prev/next neighbours of a form within the active filtered+sorted list set.
+
+    Accepts the same filter/sort/search params as the list GET (page/limit are
+    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
+    1-based ``index`` and circular wrap-around neighbours. If the record is not in
+    the filtered set, falls back to the unfiltered, default-sorted set (D2).
+    """
+    try:
+        from app.services.entity_filter_helpers import (
+            normalize_entities_query_param,
+            resolve_or_empty,
+        )
+        service = FormService(db)
+        sort_field = (sort and sort.strip()) or "updated_at"
+        sort_dir = (dir and dir.strip()) or "desc"
+
+        parsed_form_ids = parse_uuid_list(form_ids, param_name="form_ids")
+        norm = normalize_entities_query_param(entities)
+        entity_form_codes: Optional[list[str]] = None
+        if norm:
+            buckets = resolve_or_empty(db, norm)
+            if buckets is not None and buckets.form_codes:
+                entity_form_codes = list(buckets.form_codes)
+
+        return service.neighbours(
+            form_id=id,
+            query=query,
+            language=language,
+            status=status,
+            form_type=form_type,
+            contact_access_codes=None,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+            entity_form_codes=entity_form_codes,
+            form_ids=parsed_form_ids,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{form_id}", response_model=FormResponse)
 async def get_form(
     form_id: str,

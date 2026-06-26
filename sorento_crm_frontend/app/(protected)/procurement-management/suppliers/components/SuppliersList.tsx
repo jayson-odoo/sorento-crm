@@ -15,7 +15,7 @@ import { ChevronRight, Columns3, Download, Plus, Search, SlidersHorizontal, X } 
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
@@ -28,6 +28,7 @@ import type { Supplier } from '../types/supplier.types';
 import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
 import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 
 export default function SuppliersList() {
   const router = useRouter();
@@ -52,7 +53,17 @@ export default function SuppliersList() {
 
   const handleRowClick = (row: Supplier) => {
     const supplierId = row.id;
-    router.push(`/procurement-management/suppliers/${supplierId}`);
+    // Carry the active list query (search/sort) into the detail URL so the detail
+    // page's prev/next pager walks the same filtered+sorted set.
+    const search = buildDetailSearch({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+    });
+    router.push(
+      `/procurement-management/suppliers/${supplierId}${search ? `?${search}` : ''}`,
+    );
   };
 
   const columns = useMemo<ColumnDef<Supplier>[]>(

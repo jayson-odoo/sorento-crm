@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -14,40 +14,25 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useOrder, useDeleteOrder, useOrders, useUpdateOrder } from '../hooks/useOrders';
+import { useOrder, useUpdateOrder } from '../hooks/useOrders';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
 import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import OrderDeleteDialog from './order-delete-dialog';
 import OrderLinesCard from './OrderLinesCard';
-import RecordNavigation from '@/components/common/RecordNavigation';
-import { buildOrderDetailSearch, type OrderListNavState } from '../utils/orderListNavQuery';
+import OrderNavigation from './OrderNavigation';
 
 interface OrderDetailProps {
   orderId: string;
-  /** Same filters/sort/page as the orders list so prev/next hits the same API query. */
-  listNav: OrderListNavState;
+  /** Raw list query string (search/sort/filters) carried from the list page, so
+   *  Back/Edit links preserve it. The prev/next pager reads it from the URL. */
+  listSearch: string;
 }
 
-export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
+export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
   const router = useRouter();
   const { data: order, isLoading } = useOrder(orderId);
-  const navigationParams = useMemo(
-    () => ({
-      pageIndex: listNav.pageIndex,
-      pageSize: listNav.pageSize,
-      sorting: listNav.sorting,
-      searchQuery: listNav.searchQuery,
-      order_status_id: listNav.orderStatusId,
-      has_order_lines: listNav.hasOrderLines,
-      advancedFilter: listNav.advancedFilter ?? undefined,
-    }),
-    [listNav],
-  );
-  const { data: navigationData } = useOrders(navigationParams);
-  const navigationItems = navigationData?.data ?? [];
-  /** Counter matches list pagination: position on this page / page size (not full filtered total). */
-  const navPageSize = listNav.pageSize;
+  const listQs = listSearch ? `?${listSearch}` : '';
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const updateMutation = useUpdateOrder();
   const { data: orderStatuses = [] } = useOrderStatusSelectQuery();
@@ -81,7 +66,7 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
         <p className="text-muted-foreground">Delivery order not found</p>
         <Button
           variant="outline"
-          onClick={() => router.push(`/order-management/orders${buildOrderDetailSearch(listNav)}`)}
+          onClick={() => router.push(`/order-management/orders${listQs}`)}
           className="mt-4"
         >
           Back to delivery orders
@@ -108,16 +93,7 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
           </p>
         </div>
         <div className="flex gap-2">
-          <RecordNavigation
-            currentId={orderId}
-            items={navigationItems}
-            basePath="/order-management/orders"
-            totalCount={navPageSize}
-            circular={false}
-            onSelect={(id) => {
-              router.push(`/order-management/orders/${id}${buildOrderDetailSearch(listNav)}`);
-            }}
-          />
+          <OrderNavigation orderId={orderId} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button type="button" variant="outline" size="icon" aria-label="Change delivery order status">
@@ -142,7 +118,7 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
           <Button
             variant="outline"
             onClick={() =>
-              router.push(`/order-management/orders/${orderId}/edit${buildOrderDetailSearch(listNav)}`)
+              router.push(`/order-management/orders/${orderId}/edit${listQs}`)
             }
           >
             <Edit className="size-4" />
@@ -161,7 +137,7 @@ export default function OrderDetail({ orderId, listNav }: OrderDetailProps) {
           closeDialog={() => setDeleteDialogOpen(false)}
           order={order}
           onSuccess={() => {
-            router.push(`/order-management/orders${buildOrderDetailSearch(listNav)}`);
+            router.push(`/order-management/orders${listQs}`);
           }}
         />
       )}

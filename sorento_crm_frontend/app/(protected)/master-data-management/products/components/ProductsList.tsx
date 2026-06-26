@@ -76,6 +76,7 @@ import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
 import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
 import { postListQuerySearch } from '@/lib/list-query/listQueryService';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { generateExcelFile } from '@/lib/excel-utils';
@@ -144,14 +145,16 @@ const ProductsList = () => {
       }
       return;
     }
-    const search = searchParams.get('search') ?? '';
-    const category = searchParams.get('category') ?? null;
-    const brand = searchParams.get('brand') ?? null;
+    // Param names match the list GET (written by buildDetailSearch on row-click):
+    // query / category_id / brand_id / status / sort+dir / page (1-based) + limit.
+    const search = searchParams.get('query') ?? '';
+    const category = searchParams.get('category_id') ?? null;
+    const brand = searchParams.get('brand_id') ?? null;
     const status = searchParams.get('status') ?? 'all';
     const sortField = searchParams.get('sort');
-    const sortDir = searchParams.get('sortDir');
+    const sortDir = searchParams.get('dir');
     const pageParam = searchParams.get('page');
-    const pageSizeParam = searchParams.get('pageSize');
+    const pageSizeParam = searchParams.get('limit');
     if (search) {
       setSearchQuery(search);
       setSearch(search);
@@ -172,10 +175,11 @@ const ProductsList = () => {
       setSorting([{ id: sortField, desc: sortDir === 'desc' }]);
     }
     if (pageParam != null || pageSizeParam != null) {
-      const page = parseInt(pageParam ?? '0', 10);
+      // buildDetailSearch writes page as 1-based; convert back to 0-based pageIndex.
+      const page = parseInt(pageParam ?? '1', 10);
       const pageSize = parseInt(pageSizeParam ?? '50', 10);
       setPagination({
-        pageIndex: Number.isNaN(page) ? 0 : Math.max(0, page),
+        pageIndex: Number.isNaN(page) ? 0 : Math.max(0, page - 1),
         pageSize: Number.isNaN(pageSize) || pageSize < 1 ? 50 : Math.min(pageSize, 500),
       });
     }
@@ -316,21 +320,26 @@ const ProductsList = () => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [advancedFilter]);
 
+  // Carry the active list query (search/sort + category/brand/status/discontinued
+  // batch filters) into the detail URL so the detail page's prev/next pager walks
+  // the same filtered+sorted set. Uses the SAME param names as the list GET
+  // (via buildDataGridParams) so the neighbours hook forwards them verbatim.
   const buildProductDetailUrl = (productId: string) => {
-    const params = new URLSearchParams();
-    if (searchQuery) params.set('search', searchQuery);
-    if (selectedCategory && selectedCategory !== 'all') params.set('category', selectedCategory);
-    if (selectedBrand && selectedBrand !== 'all') params.set('brand', selectedBrand);
-    if (selectedStatus && selectedStatus !== 'all') params.set('status', selectedStatus);
-    const sortField = sorting?.[0]?.id;
-    const sortDir = sorting?.[0]?.desc ? 'desc' : 'asc';
-    if (sortField) {
-      params.set('sort', sortField);
-      params.set('sortDir', sortDir);
-    }
-    params.set('page', String(pagination.pageIndex));
-    params.set('pageSize', String(pagination.pageSize));
-    const qs = params.toString();
+    const qs = buildDetailSearch(
+      {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery,
+      },
+      {
+        category_id:
+          selectedCategory && selectedCategory !== 'all' ? selectedCategory : undefined,
+        brand_id: selectedBrand && selectedBrand !== 'all' ? selectedBrand : undefined,
+        status: selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
+        discontinued_batch_id: discontinuedBatchId,
+      },
+    );
     return `/master-data-management/products/${productId}${qs ? `?${qs}` : ''}`;
   };
 

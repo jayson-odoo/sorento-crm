@@ -32,6 +32,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useGRNs } from '../hooks/useGRN';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import type { GRN } from '../types/grn.types';
 import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
@@ -77,7 +78,22 @@ export default function GRNList() {
 
   const handleRowClick = (row: GRN) => {
     const grnId = row.id;
-    router.push(`/procurement-management/grn/${grnId}`);
+    // Carry the active list query (search/sort/status filters) into the detail
+    // URL so the detail pager walks the exact same filtered+sorted set.
+    const search = buildDetailSearch(
+      {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery,
+      },
+      {
+        picking_status: statusFilter === 'all' ? undefined : statusFilter,
+      },
+    );
+    router.push(
+      `/procurement-management/grn/${grnId}${search ? `?${search}` : ''}`,
+    );
   };
 
   const toggleGrnSelection = (grnId: string) => {

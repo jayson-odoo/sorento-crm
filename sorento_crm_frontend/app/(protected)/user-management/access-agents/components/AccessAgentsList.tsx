@@ -24,6 +24,7 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useAccessAgents } from '../hooks/useAccessAgents';
 import type { AccessAgent } from '../types/accessAgent.types';
 
@@ -42,8 +43,17 @@ export default function AccessAgentsList() {
   });
 
   const handleRowClick = (row: AccessAgent) => {
-    const agentId = row.id;
-    router.push(`/user-management/access-agents/${agentId}`);
+    // Carry the active list query into the detail URL so the prev/next pager
+    // walks the exact same filtered+sorted set the user navigated from.
+    const search = buildDetailSearch({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+    });
+    router.push(
+      `/user-management/access-agents/${row.id}${search ? `?${search}` : ''}`,
+    );
   };
 
   const columns = useMemo<ColumnDef<AccessAgent>[]>(

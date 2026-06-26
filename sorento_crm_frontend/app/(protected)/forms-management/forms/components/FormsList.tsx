@@ -17,7 +17,7 @@ import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
@@ -28,6 +28,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useForms } from '../hooks/useForms';
 import type { Form } from '../types/form.types';
 import { formatDate } from '@/lib/helpers';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import FormBulkDeleteDialog from './FormBulkDeleteDialog';
 
 export default function FormsList() {
@@ -47,7 +48,16 @@ export default function FormsList() {
 
   const handleRowClick = (row: Form) => {
     const formId = row.id;
-    router.push(`/forms-management/forms/${formId}`);
+    // Carry the active list query into the detail URL so its prev/next pager
+    // walks the same filtered+sorted set.
+    const search = buildDetailSearch({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+    });
+    const qs = search ? `?${search}` : '';
+    router.push(`/forms-management/forms/${formId}${qs}`);
   };
 
   const toggleFormSelection = (formId: string) => {

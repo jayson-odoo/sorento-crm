@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useCustomers } from '../hooks/useCustomers';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import type { Customer } from '../types/customer.types';
 
 export default function CustomersList() {
@@ -41,7 +42,16 @@ export default function CustomersList() {
 
   const handleRowClick = (row: Customer) => {
     const customerId = row.id;
-    router.push(`/order-management/customers/${customerId}`);
+    // Carry the active list query into the detail URL so its prev/next pager
+    // walks the same filtered+sorted set.
+    const search = buildDetailSearch({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+    });
+    const qs = search ? `?${search}` : '';
+    router.push(`/order-management/customers/${customerId}${qs}`);
   };
 
   const columns = useMemo<ColumnDef<Customer>[]>(

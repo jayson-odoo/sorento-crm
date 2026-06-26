@@ -42,6 +42,7 @@ import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
 import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
 import { useTenantModules } from '@/hooks/useTenantModules';
 import AttachmentDetailModal from '@/app/(protected)/resource-management/attachments/components/AttachmentDetailModal';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import { getPromotions } from '../services/promotionService';
 import type { Promotion } from '../types/promotion.types';
 import { formatPromotionBoundaryInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -303,7 +304,27 @@ export default function PromotionsList() {
 
   const handleRowClick = (row: Promotion) => {
     const promotionId = row.id;
-    router.push(`/marketing-management/promotions/${promotionId}`);
+    // Carry the active list query (search/sort/filters) into the detail URL so the
+    // detail page's prev/next pager walks the same filtered+sorted set. Advanced
+    // (list-query) filters are not threaded — the neighbours endpoint mirrors the
+    // standard list GET params only.
+    const search = buildDetailSearch(
+      {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery,
+      },
+      {
+        status: filterStatus !== 'all' ? filterStatus : undefined,
+        user_type: filterAccessLevel !== 'all' ? filterAccessLevel : undefined,
+        attachment_state:
+          filterAttachmentState !== 'all' ? filterAttachmentState : undefined,
+      },
+    );
+    router.push(
+      `/marketing-management/promotions/${promotionId}${search ? `?${search}` : ''}`,
+    );
   };
 
   const table = useReactTable({

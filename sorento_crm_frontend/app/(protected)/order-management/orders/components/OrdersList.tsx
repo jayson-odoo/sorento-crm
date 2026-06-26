@@ -67,13 +67,38 @@ import { OrderTrackingUploadDialog } from './OrderTrackingUploadDialog';
 import { OrderLinesImportDialog } from './OrderLinesImportDialog';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import {
-  buildOrderDetailSearch,
-  parseOrderListNavFromSearchParams,
-  type OrderListNavState,
-} from '../utils/orderListNavQuery';
+import { buildDetailSearch, parseDetailSearch } from '@/lib/listNavQuery';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { useImportJobDrawer } from '@/components/upload-activity';
+
+/** Encode the advanced (POST list-query) filter for the detail URL round-trip. */
+function encodeAdvancedFilter(filter: ListQueryFilterGroup | null): string | undefined {
+  if (filter == null) return undefined;
+  try {
+    return encodeURIComponent(JSON.stringify(filter));
+  } catch {
+    return undefined;
+  }
+}
+
+/** Decode the advanced filter carried back from a detail URL (invalid -> null). */
+function decodeAdvancedFilter(raw: string | undefined): ListQueryFilterGroup | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(decodeURIComponent(raw)) as ListQueryFilterGroup;
+    if (
+      parsed &&
+      typeof parsed === 'object' &&
+      (parsed.op === 'and' || parsed.op === 'or') &&
+      Array.isArray(parsed.children)
+    ) {
+      return parsed;
+    }
+  } catch {
+    /* ignore malformed / oversized */
+  }
+  return null;
+}
 
 export default function OrdersList() {
   const router = useRouter();
@@ -99,13 +124,14 @@ export default function OrdersList() {
   /** Restore list state when returning from order detail/edit (same query string as detail URLs). */
   const listNavSearchKey = useMemo(() => searchParams.toString(), [searchParams]);
   useEffect(() => {
-    const nav = parseOrderListNavFromSearchParams(new URLSearchParams(listNavSearchKey));
-    setPagination({ pageIndex: nav.pageIndex, pageSize: nav.pageSize });
-    setSorting(nav.sorting);
-    setSearchQuery(nav.searchQuery);
-    setStatusFilter(nav.orderStatusId ?? 'all');
-    setLinesFilter(nav.hasOrderLines);
-    setAdvancedFilter(nav.advancedFilter ?? null);
+    const parsed = parseDetailSearch(new URLSearchParams(listNavSearchKey));
+    setPagination({ pageIndex: parsed.pageIndex, pageSize: parsed.pageSize });
+    setSorting(parsed.sorting);
+    setSearchQuery(parsed.searchQuery);
+    setStatusFilter(parsed.filters.order_status_id ?? 'all');
+    const hol = parsed.filters.has_order_lines;
+    setLinesFilter(hol === 'yes' || hol === 'no' ? hol : 'all');
+    setAdvancedFilter(decodeAdvancedFilter(parsed.filters.advFilter));
   }, [listNavSearchKey]);
 
   const { data, isLoading, isError, error, refetch, isFetching } = useOrders({
@@ -142,16 +168,25 @@ export default function OrdersList() {
 
   const handleRowClick = (row: Order) => {
     const orderId = row.id;
-    const listNav: OrderListNavState = {
-      pageIndex: pagination.pageIndex,
-      pageSize: pagination.pageSize,
-      orderStatusId: statusFilter === 'all' ? undefined : statusFilter,
-      hasOrderLines: linesFilter,
-      searchQuery,
-      sorting,
-      advancedFilter,
-    };
-    router.push(`/order-management/orders/${orderId}${buildOrderDetailSearch(listNav)}`);
+    // Carry the active list query into the detail URL so its prev/next pager
+    // walks the same filtered+sorted set (same param names as the list GET).
+    const search = buildDetailSearch(
+      {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery,
+      },
+      {
+        order_status_id: statusFilter === 'all' ? undefined : statusFilter,
+        has_order_lines: linesFilter !== 'all' ? linesFilter : undefined,
+        // advFilter is restored on return but ignored by the GET neighbours
+        // endpoint (which mirrors the list GET, not the POST list-query).
+        advFilter: encodeAdvancedFilter(advancedFilter),
+      },
+    );
+    const qs = search ? `?${search}` : '';
+    router.push(`/order-management/orders/${orderId}${qs}`);
   };
 
   const toggleOrderSelection = (orderId: string) => {

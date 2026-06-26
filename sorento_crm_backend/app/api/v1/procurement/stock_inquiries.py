@@ -83,6 +83,41 @@ async def get_stock_inquiries(
         raise handle_internal_error(str(e))
 
 
+@router.get("/neighbours")
+async def get_stock_inquiry_neighbours(
+    id: str = Query(..., description="Stock inquiry id to resolve neighbours for"),
+    query: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, description="Comma-separated status values to filter by"),
+    sort: Optional[str] = Query("created_at"),
+    dir: Optional[str] = Query("desc"),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Prev/next neighbours of a stock inquiry within the active filtered+sorted list set.
+
+    Accepts the same filter/sort/search params as the list GET (page/limit are
+    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
+    1-based ``index`` and circular wrap-around neighbours. If the record is not in
+    the filtered set, falls back to the unfiltered, default-sorted set.
+    """
+    try:
+        service = StockInquiryService(db)
+        sort_field = (sort and sort.strip()) or "created_at"
+        sort_dir = (dir and dir.strip()) or "desc"
+        statuses = [s.strip() for s in status.split(",") if s and s.strip()] if status else None
+        return service.neighbours(
+            inquiry_id=id,
+            query=query,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+            statuses=statuses,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{inquiry_id}", response_model=StockInquiryResponse)
 async def get_stock_inquiry(
     inquiry_id: str,

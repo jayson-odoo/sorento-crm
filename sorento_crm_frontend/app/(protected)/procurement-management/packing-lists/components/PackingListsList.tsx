@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
   ColumnDef,
   PaginationState,
@@ -55,7 +56,16 @@ export default function PackingListsList() {
 
   const handleRowClick = (row: PackingList) => {
     const packingListId = row.id;
-    router.push(`/procurement-management/packing-lists/${packingListId}`);
+    // Carry the active list query into the detail URL so its prev/next pager
+    // walks the same filtered+sorted set.
+    const search = buildDetailSearch({
+      pageIndex: pagination.pageIndex,
+      pageSize: pagination.pageSize,
+      sorting,
+      searchQuery,
+    });
+    const qs = search ? `?${search}` : '';
+    router.push(`/procurement-management/packing-lists/${packingListId}${qs}`);
   };
 
   const pagePackingLists = data?.data ?? [];

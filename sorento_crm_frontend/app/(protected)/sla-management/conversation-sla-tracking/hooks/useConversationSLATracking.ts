@@ -1,6 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import { buildDataGridParams } from '@/lib/api-client';
+import {
+  useRecordNeighbours,
+  type RecordNeighboursResult,
+} from '@/hooks/useRecordNeighbours';
 import type { ConversationSLATrackingDetail } from '../types/conversationSLATracking.types';
 import {
   getConversationSLATracking,
@@ -13,9 +18,33 @@ import {
   postConversationSLATestOverrides,
   getSlaTrackingConversation,
   postSlaTrackingConversationReply,
+  CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH,
   type ConversationSLATestOverridesBody,
+  type ConversationSLATrackingListParams,
 } from '../services/conversationSLATrackingService';
 import type { ConversationSLAEventLogsParams } from '../services/conversationSLATrackingService';
+
+/**
+ * Prev/next neighbours of a conversation SLA tracking row within the active
+ * filtered+sorted list set. Serializes the list query (search/sort/policy/assignee)
+ * with `buildDataGridParams` — the same serialization the list page uses — so the
+ * backend honours filters identically. `page`/`limit` are sent but ignored by the
+ * neighbours endpoint; `scope` is fixed to conversation server-side.
+ */
+export function useConversationSLATrackingNeighbours(
+  trackingId: string | null,
+  listParams: ConversationSLATrackingListParams,
+): RecordNeighboursResult {
+  const params = buildDataGridParams(listParams, {
+    policy_id: listParams.policy_id,
+    assigned_to: listParams.assigned_to,
+  });
+  return useRecordNeighbours(
+    CONVERSATION_SLA_TRACKING_NEIGHBOURS_PATH,
+    trackingId,
+    params,
+  );
+}
 
 export function useConversationSLATracking(params: DataGridApiFetchParams & { policy_id?: string; status?: string; assigned_to?: string }) {
   return useQuery({

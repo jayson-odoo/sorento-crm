@@ -561,6 +561,112 @@ class ConversationSLATrackingService:
         )
         return str(getattr(user, "id")) if user else None
     
+    def _build_conversation_list_query(
+        self,
+        base_query,
+        policy_id: Optional[str] = None,
+        query: Optional[str] = None,
+        sort_field: str = "created_at",
+        sort_dir: str = "desc",
+        assigned_to: Optional[str] = None,
+        tracking_ids: Optional[list[str]] = None,
+    ):
+        """Apply the conversation-scope filters + sort shared by ``list_tracking``
+        (scope="conversation") and ``neighbours`` so the two can never drift.
+
+        ``base_query`` is a ``ConversationSLATracking`` query (the list path adds
+        joinedload options for serialization; the neighbours path selects ids only).
+        The conversation scope filter (``conversation_tracking_scope``) is applied here
+        so neighbours can never bleed into form SLA rows. The ORDER BY always appends
+        ``ConversationSLATracking.id`` as a deterministic tie-breaker so offset position
+        and prev/next neighbours are unambiguous when the sort column has equal values.
+        """
+        from sqlalchemy import asc, desc
+        from app.models.user import User
+
+        q = base_query.filter(conversation_tracking_scope())
+
+        if policy_id:
+            q = q.filter(ConversationSLATracking.policy_id == policy_id)
+
+        if tracking_ids is not None:
+            q = q.filter(ConversationSLATracking.id.in_(tracking_ids))
+
+        if query and query.strip():
+            term = f"%{query.strip()}%"
+            q = q.join(
+                RespondContact, ConversationSLATracking.respond_contact_id == RespondContact.id
+            ).filter(
+                or_(
+                    RespondContact.phone_number.ilike(term),
+                    RespondContact.name.ilike(term),
+                )
+            )
+
+        if assigned_to and assigned_to.strip():
+            assignee_val = assigned_to.strip()
+            # Only show trackings that have an assignee and that assignee matches (exclude unassigned)
+            q = q.filter(ConversationSLATracking.assigned_to_id.isnot(None)).join(
+                User, ConversationSLATracking.assigned_to_id == User.id
+            ).filter(
+                or_(
+                    User.respond_user_id == assignee_val,
+                    User.id == assignee_val,
+                )
+            )
+
+        order_col = getattr(ConversationSLATracking, sort_field, None)
+        if order_col is not None and hasattr(order_col, "desc"):
+            primary = desc(order_col) if sort_dir == "desc" else asc(order_col)
+        else:
+            primary = ConversationSLATracking.created_at.desc()
+        return q.order_by(primary, ConversationSLATracking.id.asc())
+
+    def neighbours(
+        self,
+        tracking_id: str,
+        policy_id: Optional[str] = None,
+        query: Optional[str] = None,
+        sort_field: str = "created_at",
+        sort_dir: str = "desc",
+        assigned_to: Optional[str] = None,
+        tracking_ids: Optional[list[str]] = None,
+    ) -> dict:
+        """Resolve prev/next neighbours for ``tracking_id`` within the active
+        conversation-SLA list query.
+
+        Selects only the ordered ids (not full rows) for efficiency, then defers the
+        position/wrap math to the pure ``compute_neighbours`` helper. Stays in the
+        conversation scope (never form SLA rows). If the record is not in the filtered
+        set (deep link, or filtered out after an edit), falls back to the unfiltered,
+        default-sorted conversation set so the pager is never dead (D2).
+        """
+        from app.services.record_navigation import compute_neighbours
+
+        def _ordered_ids(q) -> list[str]:
+            ids_q = q.with_entities(ConversationSLATracking.id)
+            return [str(row[0]) for row in ids_q.all()]
+
+        filtered_q = self._build_conversation_list_query(
+            self.db.query(ConversationSLATracking),
+            policy_id=policy_id,
+            query=query,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+            assigned_to=assigned_to,
+            tracking_ids=tracking_ids,
+        )
+        result = compute_neighbours(_ordered_ids(filtered_q), tracking_id)
+        if result["index"] is not None:
+            return result
+
+        # D2: current record not in the filtered conversation set -> fall back to the
+        # unfiltered, default-sorted conversation set so prev/next still works.
+        unfiltered_q = self._build_conversation_list_query(
+            self.db.query(ConversationSLATracking)
+        )
+        return compute_neighbours(_ordered_ids(unfiltered_q), tracking_id)
+
     def list_tracking(
         self,
         page: int = 1,
@@ -585,8 +691,7 @@ class ConversationSLATrackingService:
         from app.models.sla import ConversationSLAEventLog
         from app.models.user import User
 
-        from app.models.access import AccessAgent
-        q = self.db.query(ConversationSLATracking).options(
+        base_q = self.db.query(ConversationSLATracking).options(
             joinedload(ConversationSLATracking.policy),
             joinedload(ConversationSLATracking.contact),
             joinedload(ConversationSLATracking.assigned_user),
@@ -599,45 +704,43 @@ class ConversationSLATrackingService:
         # detail flow; surfacing them in this list inflates contact-keyed rows and breaks
         # back-navigation to the originating form. The form scope is the inverse.
         if scope == "form":
-            q = q.filter(ConversationSLATracking.source_entity_type.in_(FORM_SLA_TYPES))
-        else:
-            q = q.filter(conversation_tracking_scope())
+            q = base_q.filter(ConversationSLATracking.source_entity_type.in_(FORM_SLA_TYPES))
 
-        if policy_id:
-            q = q.filter(ConversationSLATracking.policy_id == policy_id)
+            if policy_id:
+                q = q.filter(ConversationSLATracking.policy_id == policy_id)
 
-        if tracking_ids is not None:
-            q = q.filter(ConversationSLATracking.id.in_(tracking_ids))
+            if tracking_ids is not None:
+                q = q.filter(ConversationSLATracking.id.in_(tracking_ids))
 
-        # Conversation search filters by contact phone/name (form rows have no
-        # contact); the form search is applied in-memory against resolved entity
-        # references / next-actions below.
-        if scope != "form" and query and query.strip():
-            term = f"%{query.strip()}%"
-            q = q.join(RespondContact, ConversationSLATracking.respond_contact_id == RespondContact.id).filter(
-                or_(
-                    RespondContact.phone_number.ilike(term),
-                    RespondContact.name.ilike(term),
+            if assigned_to and assigned_to.strip():
+                assignee_val = assigned_to.strip()
+                # Only show trackings that have an assignee and that assignee matches (exclude unassigned)
+                q = q.filter(ConversationSLATracking.assigned_to_id.isnot(None)).join(
+                    User, ConversationSLATracking.assigned_to_id == User.id
+                ).filter(
+                    or_(
+                        User.respond_user_id == assignee_val,
+                        User.id == assignee_val,
+                    )
                 )
-            )
 
-        if assigned_to and assigned_to.strip():
-            assignee_val = assigned_to.strip()
-            # Only show trackings that have an assignee and that assignee matches (exclude unassigned)
-            q = q.filter(ConversationSLATracking.assigned_to_id.isnot(None)).join(
-                User, ConversationSLATracking.assigned_to_id == User.id
-            ).filter(
-                or_(
-                    User.respond_user_id == assignee_val,
-                    User.id == assignee_val,
-                )
-            )
-
-        order_col = getattr(ConversationSLATracking, sort_field, None)
-        if order_col is not None and hasattr(order_col, "desc"):
-            q = q.order_by(desc(order_col) if sort_dir == "desc" else asc(order_col))
+            order_col = getattr(ConversationSLATracking, sort_field, None)
+            if order_col is not None and hasattr(order_col, "desc"):
+                q = q.order_by(desc(order_col) if sort_dir == "desc" else asc(order_col))
+            else:
+                q = q.order_by(ConversationSLATracking.created_at.desc())
         else:
-            q = q.order_by(ConversationSLATracking.created_at.desc())
+            # Conversation scope: reuse the shared builder so list + neighbours can't
+            # drift (filters, search, sort, deterministic id tie-breaker).
+            q = self._build_conversation_list_query(
+                base_q,
+                policy_id=policy_id,
+                query=query,
+                sort_field=sort_field,
+                sort_dir=sort_dir,
+                assigned_to=assigned_to,
+                tracking_ids=tracking_ids,
+            )
 
         ref_map: dict = {}
         action_map: dict = {}

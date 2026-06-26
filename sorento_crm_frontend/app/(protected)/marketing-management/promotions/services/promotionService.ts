@@ -10,8 +10,34 @@ import type {
 } from '../types/promotion.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
+export type PromotionsListParams = DataGridApiFetchParams & {
+  status?: string;
+  date_from?: string;
+  date_to?: string;
+  user_type?: string;
+  attachment_state?: 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed';
+};
+
+/**
+ * Path of the promotions neighbours endpoint. Consumed by `usePromotionNeighbours`
+ * via the generic `useRecordNeighbours` hook.
+ *
+ * Contract:
+ *   GET /api/v1/marketing/promotions/neighbours
+ *   Query params: id=<uuid> + the SAME params the list GET accepts
+ *                 (query, status, user_type, attachment_state, sort, dir).
+ *                 page/limit are ignored.
+ *   Auth: same dependency + module guard as the list GET.
+ *   200:  { total: number, index: number|null, prev_id: string|null, next_id: string|null }
+ *         - index is 1-based; null when the record is not in the filtered set
+ *           (the backend then falls back to the unfiltered, default-sorted set).
+ *         - prev_id/next_id wrap circularly; null only when total <= 1.
+ */
+export const PROMOTION_NEIGHBOURS_PATH =
+  '/api/v1/marketing/promotions/neighbours';
+
 export async function getPromotions(
-  params: DataGridApiFetchParams & { status?: string; date_from?: string; date_to?: string; user_type?: string; attachment_state?: 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed' },
+  params: PromotionsListParams,
 ): Promise<DataGridApiResponse<Promotion>> {
   const { pageIndex, pageSize, sorting, searchQuery, status, date_from, date_to, user_type, attachment_state } = params;
   const sortField = sorting?.[0]?.id || '';

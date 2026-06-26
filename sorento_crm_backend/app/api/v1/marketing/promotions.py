@@ -178,6 +178,74 @@ async def get_promotions(
         raise handle_internal_error(str(e))
 
 
+@router.get("/neighbours")
+async def get_promotion_neighbours(
+    id: str = Query(..., description="Promotion id to resolve neighbours for"),
+    query: Optional[str] = Query(None),
+    entities: Optional[list[str]] = Query(None),
+    promotion_ids: Optional[list[str]] = Query(None),
+    product_ids: Optional[list[str]] = Query(None),
+    user_type: Optional[str] = Query(None),
+    access_levels: Optional[list[str]] = Query(None),
+    status: Optional[str] = Query(None),
+    active: Optional[bool] = Query(None),
+    period_from: Optional[date] = Query(None),
+    period_to: Optional[date] = Query(None),
+    date_mode: Optional[str] = Query(None, pattern="^(overlap|started|ended)$"),
+    attachment_state: Optional[str] = Query(
+        None, pattern="^(unlinked|linked_to_trashed|unlinked_or_trashed)$"
+    ),
+    sort: Optional[str] = Query(None),
+    dir: Optional[str] = Query("desc"),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Prev/next neighbours of a promotion within the active filtered+sorted list set.
+
+    Accepts the same filter/sort/search params as the list GET (page/limit are
+    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
+    1-based ``index`` and circular wrap-around neighbours. If the record is not in
+    the filtered set, falls back to the unfiltered, default-sorted set (D2).
+    """
+    try:
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        from app.services.entity_filter_helpers import (
+            normalize_list_query_param,
+            normalize_entities_query_param,
+        )
+
+        access_levels = normalize_list_query_param(access_levels)
+        contact_codes = ContactAccessTypeService(db).translate_names_to_codes(access_levels)
+        service = PromotionService(db)
+        # Mirror the list GET's query normalization so the neighbour set matches the grid.
+        query = strip_domain_stopwords(query, "promotion")
+        parsed_promotion_ids = parse_uuid_list(promotion_ids, param_name="promotion_ids")
+        parsed_product_ids = parse_uuid_list(product_ids, param_name="product_ids")
+        norm_entities = normalize_entities_query_param(entities)
+
+        return service.neighbours(
+            promotion_id=id,
+            user_type=user_type,
+            contact_access_codes=contact_codes,
+            query=query,
+            status=status,
+            active=active,
+            period_from=period_from,
+            period_to=period_to,
+            date_mode=date_mode,
+            sort_field=sort,
+            sort_dir=dir,
+            entities=norm_entities,
+            promotion_ids=parsed_promotion_ids,
+            product_ids=parsed_product_ids,
+            attachment_state=attachment_state,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{promotion_id}", response_model=PromotionResponse)
 async def get_promotion(
     promotion_id: str,

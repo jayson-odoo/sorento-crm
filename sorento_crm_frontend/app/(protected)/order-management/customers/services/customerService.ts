@@ -2,6 +2,23 @@ import { apiFetch } from '@/lib/api';
 import type { Customer, CustomerFormData, CustomerDetail } from '../types/customer.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
+/**
+ * Path of the customers neighbours endpoint. Consumed by `useCustomerNeighbours`
+ * via the generic `useRecordNeighbours` hook.
+ *
+ * Contract (see docs/plans/PLAN-record-navigation-standardization.md):
+ *   GET /api/v1/order-management/customers/neighbours
+ *   Query params: id=<uuid> + the SAME params the list GET accepts
+ *                 (query, sort, dir). page/limit are ignored.
+ *   Auth: same dependency + module guard as the list GET.
+ *   200:  { total: number, index: number|null, prev_id: string|null, next_id: string|null }
+ *         - index is 1-based; null when the record is not in the filtered set
+ *           (the backend then falls back to the unfiltered, default-sorted set).
+ *         - prev_id/next_id wrap circularly; null only when total <= 1.
+ */
+export const CUSTOMER_NEIGHBOURS_PATH =
+  '/api/v1/order-management/customers/neighbours';
+
 export async function getCustomers(params: DataGridApiFetchParams & { status?: string }): Promise<DataGridApiResponse<Customer>> {
   const { pageIndex, pageSize, sorting, searchQuery, status } = params;
   const sortField = sorting?.[0]?.id || '';

@@ -9,11 +9,30 @@ import type {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 
+export type PackingListsListParams = DataGridApiFetchParams & {
+  supplier_id?: string;
+  shipment_status?: string;
+};
+
+/**
+ * Path of the packing-lists neighbours endpoint. Consumed by `usePackingListNeighbours`
+ * via the generic `useRecordNeighbours` hook.
+ *
+ * Contract (see docs/plans/PLAN-record-navigation-standardization.md):
+ *   GET /api/v1/procurement/packing-lists/neighbours
+ *   Query params: id=<uuid> + the SAME params the list GET accepts
+ *                 (query, supplier_id, shipment_status, sort, dir). page/limit ignored.
+ *   Auth: same dependency + module guard as the list GET.
+ *   200:  { total: number, index: number|null, prev_id: string|null, next_id: string|null }
+ *         - index is 1-based; null when the record is not in the filtered set
+ *           (the backend then falls back to the unfiltered, default-sorted set).
+ *         - prev_id/next_id wrap circularly; null only when total <= 1.
+ */
+export const PACKING_LIST_NEIGHBOURS_PATH =
+  '/api/v1/procurement/packing-lists/neighbours';
+
 export async function getPackingLists(
-  params: DataGridApiFetchParams & {
-    supplier_id?: string;
-    shipment_status?: string;
-  },
+  params: PackingListsListParams,
 ): Promise<DataGridApiResponse<PackingList>> {
   const {
     pageIndex,

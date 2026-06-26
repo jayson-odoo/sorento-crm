@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Edit, Trash2, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useProduct, useProducts } from '../../hooks/useProducts';
+import { useProduct } from '../../hooks/useProducts';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useQuery } from '@tanstack/react-query';
 import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
@@ -18,7 +18,7 @@ import ProductPromotionsTab from './ProductPromotionsTab';
 import { useProductAttachmentsByProduct } from '../../../product-attachments/hooks/useProductAttachments';
 import { getPromotionsByProductId } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
 import ProductDeleteDialog from '../../components/product-delete-dialog';
-import RecordNavigation from '../../../../../../components/common/RecordNavigation';
+import ProductNavigation from './ProductNavigation';
 import AuditTrail from '@/components/audit/AuditTrail';
 import FieldAttachmentTooltip from './FieldAttachmentTooltip';
 
@@ -31,31 +31,6 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
   const searchParams = useSearchParams();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const { data: product, isLoading } = useProduct(productId);
-
-  const navigationParams = useMemo(() => {
-    const search = searchParams.get('search') ?? '';
-    const category = searchParams.get('category') ?? undefined;
-    const brand = searchParams.get('brand') ?? undefined;
-    const statusParam = searchParams.get('status') ?? 'all';
-    const sortField = searchParams.get('sort') ?? 'created_at';
-    const sortDir = searchParams.get('sortDir') ?? 'desc';
-    const page = parseInt(searchParams.get('page') ?? '0', 10);
-    const pageSize = parseInt(searchParams.get('pageSize') ?? '50', 10);
-    return {
-      pageIndex: Number.isNaN(page) ? 0 : Math.max(0, page),
-      pageSize: Number.isNaN(pageSize) || pageSize < 1 ? 50 : Math.min(pageSize, 500),
-      sorting: [{ id: sortField, desc: sortDir === 'desc' }],
-      searchQuery: search,
-      category_id: category || undefined,
-      brand_id: brand || undefined,
-      status: (statusParam === 'active' || statusParam === 'inactive'
-        ? statusParam
-        : 'all') as 'active' | 'inactive' | 'all',
-    };
-  }, [searchParams]);
-
-  const { data: navigationData } = useProducts(navigationParams);
-  const navigationItems = navigationData?.data ?? [];
 
   // Tab badge counts — same hooks the tab content components use, so React
   // Query dedupes the request when the user opens the tab.
@@ -70,11 +45,6 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
 
   const navigationBasePath = '/master-data-management/products';
   const navigationQueryString = searchParams.toString();
-  const handleNavigate = (id: string) => {
-    router.push(
-      `${navigationBasePath}/${id}${navigationQueryString ? `?${navigationQueryString}` : ''}`,
-    );
-  };
 
   if (isLoading) {
     return (
@@ -120,12 +90,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
           </p>
         </div>
         <div className="flex gap-2">
-          <RecordNavigation
-            currentId={productId}
-            items={navigationItems}
-            basePath={navigationBasePath}
-            onSelect={handleNavigate}
-          />
+          <ProductNavigation productId={productId} />
           <Button
             variant="outline"
             onClick={() =>

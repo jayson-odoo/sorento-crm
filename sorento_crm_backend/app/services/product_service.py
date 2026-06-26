@@ -126,6 +126,271 @@ class ProductService:
     def __init__(self, db: Session):
         self.db = db
     
+    # Sentinel: a filter resolved to a definitively-empty set (e.g. an unknown
+    # category/brand identifier, or `entities` that matched no product codes).
+    # `_build_list_query` returns this instead of a Query so callers short-circuit
+    # to an empty result without hitting the DB.
+    _EMPTY_RESULT = object()
+
+    def _build_list_query(
+        self,
+        query: Optional[str] = None,
+        category_id: Optional[str] = None,
+        brand_id: Optional[str] = None,
+        status: Optional[str] = None,
+        price_min: Optional[float] = None,
+        price_max: Optional[float] = None,
+        item_type: Optional[str] = None,
+        length_min: Optional[float] = None,
+        length_max: Optional[float] = None,
+        width_min: Optional[float] = None,
+        width_max: Optional[float] = None,
+        height_min: Optional[float] = None,
+        height_max: Optional[float] = None,
+        any_dimension_min: Optional[float] = None,
+        any_dimension_max: Optional[float] = None,
+        sort_field: str = "created_at",
+        sort_dir: str = "asc",
+        advanced_filter_clause: Optional[Any] = None,
+        entity_buckets: Optional[Any] = None,
+        product_ids: Optional[list[str]] = None,
+        discontinued_batch_id: Optional[str] = None,
+    ):
+        """Build the filtered + sorted products query shared by ``list_products``
+        and ``neighbours`` so the two can never drift.
+
+        Returns the SQLAlchemy ``Query`` (already filtered + ordered), or
+        :data:`_EMPTY_RESULT` when a filter resolves to a definitively empty set
+        (unknown category/brand id, or `entity_buckets` with no product codes).
+
+        The ORDER BY always appends ``Product.id`` as a deterministic tie-breaker
+        so offset position and prev/next neighbours are unambiguous when the
+        primary sort column (or its NULLS) has equal values.
+        """
+        q = self.db.query(Product)
+
+        filters = []
+        if product_ids:
+            filters.append(Product.id.in_(product_ids))
+        if entity_buckets is not None:
+            if not getattr(entity_buckets, "product_codes", None):
+                return self._EMPTY_RESULT
+            from sqlalchemy import func as _func
+            lowered = [c.lower() for c in entity_buckets.product_codes]
+            filters.append(_func.lower(Product.product_code).in_(lowered))
+
+        category_ids = resolve_identifier(
+            self.db,
+            category_id,
+            ProductCategory,
+            code_fields=("category_code", "category_name"),
+        )
+        if category_ids is not None:
+            if not category_ids:
+                return self._EMPTY_RESULT
+            filters.append(Product.category_id.in_(category_ids))
+
+        brand_ids = resolve_identifier(
+            self.db,
+            brand_id,
+            Brand,
+            code_fields=("brand_code", "brand_name"),
+        )
+        if brand_ids is not None:
+            if not brand_ids:
+                return self._EMPTY_RESULT
+            filters.append(Product.brand_id.in_(brand_ids))
+
+        if status and status != "all":
+            filters.append(Product.is_active == (status == "active"))
+
+        if item_type:
+            filters.append(Product.item_type == item_type)
+
+        # Deep link from a "products discontinued" notification: show exactly the
+        # products reported in that batch (see product_discontinued_notify_service).
+        if discontinued_batch_id:
+            filters.append(Product.discontinued_notify_batch_id == discontinued_batch_id)
+
+        if price_min or price_max:
+            price_filters = []
+            if price_min:
+                price_filters.append(Product.list_price >= Decimal(str(price_min)))
+            if price_max:
+                price_filters.append(Product.list_price <= Decimal(str(price_max)))
+            filters.append(and_(*price_filters))
+
+        # Per-axis dimension filters (mm). Length/width/height map to dimensions_length/width/height.
+        if length_min is not None:
+            filters.append(Product.dimensions_length >= Decimal(str(length_min)))
+        if length_max is not None:
+            filters.append(Product.dimensions_length <= Decimal(str(length_max)))
+        if width_min is not None:
+            filters.append(Product.dimensions_width >= Decimal(str(width_min)))
+        if width_max is not None:
+            filters.append(Product.dimensions_width <= Decimal(str(width_max)))
+        if height_min is not None:
+            filters.append(Product.dimensions_height >= Decimal(str(height_min)))
+        if height_max is not None:
+            filters.append(Product.dimensions_height <= Decimal(str(height_max)))
+
+        # Generic "any dimension" filter: matches when ANY of L/W/H is in the range.
+        # Use this when the user does not care which axis (e.g. 'dimensions > 300mm').
+        if any_dimension_min is not None:
+            v = Decimal(str(any_dimension_min))
+            filters.append(
+                or_(
+                    Product.dimensions_length >= v,
+                    Product.dimensions_width >= v,
+                    Product.dimensions_height >= v,
+                )
+            )
+        if any_dimension_max is not None:
+            v = Decimal(str(any_dimension_max))
+            filters.append(
+                or_(
+                    Product.dimensions_length <= v,
+                    Product.dimensions_width <= v,
+                    Product.dimensions_height <= v,
+                )
+            )
+
+        if query:
+            term = f"%{query.strip()}%"
+            filters.append(
+                or_(
+                    Product.product_code.ilike(term),
+                    Product.product_name.ilike(term),
+                    Product.description.ilike(term),
+                )
+            )
+
+        if advanced_filter_clause is not None:
+            filters.append(advanced_filter_clause)
+
+        if filters:
+            q = q.filter(and_(*filters))
+
+        # Apply sorting
+        # GREATEST / LEAST give us a virtual "max axis" / "min axis" per row so the LLM can ask
+        # for the biggest or smallest product in one call (sort=largest_dimension dir=desc).
+        # NULL dimensions sort to the bottom on desc and top on asc — handled with NULLS LAST/FIRST.
+        largest_dim = func.greatest(
+            Product.dimensions_length,
+            Product.dimensions_width,
+            Product.dimensions_height,
+        )
+        smallest_dim = func.least(
+            Product.dimensions_length,
+            Product.dimensions_width,
+            Product.dimensions_height,
+        )
+        sort_map = {
+            "created_at": Product.created_at,
+            "updated_at": Product.updated_at,
+            "product_code": Product.product_code,
+            "product_name": Product.product_name,
+            "list_price": Product.list_price,
+            "price": Product.list_price,
+            "cost_price": Product.cost_price,
+            "invoice_price": Product.invoice_price,
+            "is_active": Product.is_active,
+            "dimensions_length": Product.dimensions_length,
+            "length": Product.dimensions_length,
+            "dimensions_width": Product.dimensions_width,
+            "width": Product.dimensions_width,
+            "dimensions_height": Product.dimensions_height,
+            "height": Product.dimensions_height,
+            "largest_dimension": largest_dim,
+            "smallest_dimension": smallest_dim,
+        }
+        sort_column = sort_map.get(sort_field, Product.created_at)
+        if sort_dir == "desc":
+            q = q.order_by(sort_column.desc().nulls_last(), Product.id.asc())
+        else:
+            q = q.order_by(sort_column.asc().nulls_last(), Product.id.asc())
+        return q
+
+    def neighbours(
+        self,
+        product_id: str,
+        query: Optional[str] = None,
+        category_id: Optional[str] = None,
+        brand_id: Optional[str] = None,
+        status: Optional[str] = None,
+        price_min: Optional[float] = None,
+        price_max: Optional[float] = None,
+        item_type: Optional[str] = None,
+        length_min: Optional[float] = None,
+        length_max: Optional[float] = None,
+        width_min: Optional[float] = None,
+        width_max: Optional[float] = None,
+        height_min: Optional[float] = None,
+        height_max: Optional[float] = None,
+        any_dimension_min: Optional[float] = None,
+        any_dimension_max: Optional[float] = None,
+        sort_field: str = "created_at",
+        sort_dir: str = "asc",
+        discontinued_batch_id: Optional[str] = None,
+    ) -> dict:
+        """Resolve prev/next neighbours for ``product_id`` within the active list
+        query.
+
+        Reuses :meth:`_build_list_query` (the exact filter+sort path the product
+        list GET uses) so list and neighbours can never drift. Selects only the
+        ordered ids, then defers position/wrap math to the pure
+        ``compute_neighbours`` helper. If the record is not in the filtered set
+        (deep link, edited out of the filter, or a filter that resolved to an
+        empty set), falls back to the unfiltered, default-sorted set so the pager
+        is never dead (D2).
+
+        Accepts a product UUID or product_code (SKU); resolved to the canonical
+        UUID first so the neighbour math matches the ids ``_build_list_query``
+        emits.
+        """
+        from app.services.record_navigation import compute_neighbours
+
+        # Resolve SKU -> canonical UUID (the list query yields Product.id values).
+        resolved_ids = resolve_identifier(
+            self.db, product_id, Product, code_fields=("product_code",)
+        )
+        resolved_id = resolved_ids[0] if resolved_ids else product_id
+
+        def _ordered_ids(q) -> list[str]:
+            if q is self._EMPTY_RESULT:
+                return []
+            return [str(row[0]) for row in q.with_entities(Product.id).all()]
+
+        filtered_q = self._build_list_query(
+            query=query,
+            category_id=category_id,
+            brand_id=brand_id,
+            status=status,
+            price_min=price_min,
+            price_max=price_max,
+            item_type=item_type,
+            length_min=length_min,
+            length_max=length_max,
+            width_min=width_min,
+            width_max=width_max,
+            height_min=height_min,
+            height_max=height_max,
+            any_dimension_min=any_dimension_min,
+            any_dimension_max=any_dimension_max,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+            discontinued_batch_id=discontinued_batch_id,
+        )
+        result = compute_neighbours(_ordered_ids(filtered_q), resolved_id)
+        if result["index"] is not None:
+            return result
+
+        # D2: current record not in the filtered set -> fall back to the
+        # unfiltered, default-sorted set so prev/next still works and total
+        # reflects all products.
+        unfiltered_q = self._build_list_query()
+        return compute_neighbours(_ordered_ids(unfiltered_q), resolved_id)
+
     def list_products(
         self,
         page: int = 1,
@@ -182,160 +447,42 @@ class ProductService:
                     "resolved_entities": entity_buckets.as_echo(),
                 }
 
-        # Build query
-        q = self.db.query(Product)
-
-        # Apply filters
-        filters = []
-        if product_ids:
-            filters.append(Product.id.in_(product_ids))
-        if entity_buckets is not None and entity_buckets.product_codes:
-            from sqlalchemy import func as _func
-            lowered = [c.lower() for c in entity_buckets.product_codes]
-            filters.append(_func.lower(Product.product_code).in_(lowered))
-
-        category_ids = resolve_identifier(
-            self.db,
-            category_id,
-            ProductCategory,
-            code_fields=("category_code", "category_name"),
+        q = self._build_list_query(
+            query=query,
+            category_id=category_id,
+            brand_id=brand_id,
+            status=status,
+            price_min=price_min,
+            price_max=price_max,
+            item_type=item_type,
+            length_min=length_min,
+            length_max=length_max,
+            width_min=width_min,
+            width_max=width_max,
+            height_min=height_min,
+            height_max=height_max,
+            any_dimension_min=any_dimension_min,
+            any_dimension_max=any_dimension_max,
+            sort_field=sort_field,
+            sort_dir=sort_dir,
+            advanced_filter_clause=advanced_filter_clause,
+            entity_buckets=entity_buckets,
+            product_ids=product_ids,
+            discontinued_batch_id=discontinued_batch_id,
         )
-        if category_ids is not None:
-            if not category_ids:
-                return {
-                    "data": [],
-                    "pagination": {"total": 0, "page": page, "limit": limit},
-                    "empty": True,
-                }
-            filters.append(Product.category_id.in_(category_ids))
+        if q is self._EMPTY_RESULT:
+            payload = {
+                "data": [],
+                "pagination": {"total": 0, "page": page, "limit": limit},
+                "empty": True,
+            }
+            if entity_buckets is not None:
+                payload["resolved_entities"] = entity_buckets.as_echo()
+            return payload
 
-        brand_ids = resolve_identifier(
-            self.db,
-            brand_id,
-            Brand,
-            code_fields=("brand_code", "brand_name"),
-        )
-        if brand_ids is not None:
-            if not brand_ids:
-                return {
-                    "data": [],
-                    "pagination": {"total": 0, "page": page, "limit": limit},
-                    "empty": True,
-                }
-            filters.append(Product.brand_id.in_(brand_ids))
-        
-        if status and status != "all":
-            filters.append(Product.is_active == (status == "active"))
-        
-        if item_type:
-            filters.append(Product.item_type == item_type)
-
-        # Deep link from a "products discontinued" notification: show exactly the
-        # products reported in that batch (see product_discontinued_notify_service).
-        if discontinued_batch_id:
-            filters.append(Product.discontinued_notify_batch_id == discontinued_batch_id)
-
-        if price_min or price_max:
-            price_filters = []
-            if price_min:
-                price_filters.append(Product.list_price >= Decimal(str(price_min)))
-            if price_max:
-                price_filters.append(Product.list_price <= Decimal(str(price_max)))
-            filters.append(and_(*price_filters))
-
-        # Per-axis dimension filters (mm). Length/width/height map to dimensions_length/width/height.
-        if length_min is not None:
-            filters.append(Product.dimensions_length >= Decimal(str(length_min)))
-        if length_max is not None:
-            filters.append(Product.dimensions_length <= Decimal(str(length_max)))
-        if width_min is not None:
-            filters.append(Product.dimensions_width >= Decimal(str(width_min)))
-        if width_max is not None:
-            filters.append(Product.dimensions_width <= Decimal(str(width_max)))
-        if height_min is not None:
-            filters.append(Product.dimensions_height >= Decimal(str(height_min)))
-        if height_max is not None:
-            filters.append(Product.dimensions_height <= Decimal(str(height_max)))
-
-        # Generic "any dimension" filter: matches when ANY of L/W/H is in the range.
-        # Use this when the user does not care which axis (e.g. 'dimensions > 300mm').
-        if any_dimension_min is not None:
-            v = Decimal(str(any_dimension_min))
-            filters.append(
-                or_(
-                    Product.dimensions_length >= v,
-                    Product.dimensions_width >= v,
-                    Product.dimensions_height >= v,
-                )
-            )
-        if any_dimension_max is not None:
-            v = Decimal(str(any_dimension_max))
-            filters.append(
-                or_(
-                    Product.dimensions_length <= v,
-                    Product.dimensions_width <= v,
-                    Product.dimensions_height <= v,
-                )
-            )
-        
-        if query:
-            term = f"%{query.strip()}%"
-            filters.append(
-                or_(
-                    Product.product_code.ilike(term),
-                    Product.product_name.ilike(term),
-                    Product.description.ilike(term),
-                )
-            )
-
-        if advanced_filter_clause is not None:
-            filters.append(advanced_filter_clause)
-
-        if filters:
-            q = q.filter(and_(*filters))
-        
         # Get total count
         total = q.count()
-        
-        # Apply sorting
-        # GREATEST / LEAST give us a virtual "max axis" / "min axis" per row so the LLM can ask
-        # for the biggest or smallest product in one call (sort=largest_dimension dir=desc).
-        # NULL dimensions sort to the bottom on desc and top on asc — handled with NULLS LAST/FIRST.
-        largest_dim = func.greatest(
-            Product.dimensions_length,
-            Product.dimensions_width,
-            Product.dimensions_height,
-        )
-        smallest_dim = func.least(
-            Product.dimensions_length,
-            Product.dimensions_width,
-            Product.dimensions_height,
-        )
-        sort_map = {
-            "created_at": Product.created_at,
-            "updated_at": Product.updated_at,
-            "product_code": Product.product_code,
-            "product_name": Product.product_name,
-            "list_price": Product.list_price,
-            "price": Product.list_price,
-            "cost_price": Product.cost_price,
-            "invoice_price": Product.invoice_price,
-            "is_active": Product.is_active,
-            "dimensions_length": Product.dimensions_length,
-            "length": Product.dimensions_length,
-            "dimensions_width": Product.dimensions_width,
-            "width": Product.dimensions_width,
-            "dimensions_height": Product.dimensions_height,
-            "height": Product.dimensions_height,
-            "largest_dimension": largest_dim,
-            "smallest_dimension": smallest_dim,
-        }
-        sort_column = sort_map.get(sort_field, Product.created_at)
-        if sort_dir == "desc":
-            q = q.order_by(sort_column.desc().nulls_last())
-        else:
-            q = q.order_by(sort_column.asc().nulls_last())
-        
+
         # Apply pagination
         offset = (page - 1) * limit
         # Eager-load relations referenced by ProductResponse to avoid N+1 lazy loads

@@ -447,24 +447,99 @@ class AttachmentService:
         - ``all``: row's access_levels contain every selected code (extras allowed).
         - ``exact``: row's access_levels equal the selected set.
         """
-        from sqlalchemy.orm import joinedload
-        from sqlalchemy import cast, String
-        from sqlalchemy.dialects.postgresql import JSONB, ARRAY
         from app.services.entity_filter_helpers import (
             attach_echo,
             empty_payload,
-            resolve_or_empty,
         )
+        from app.schemas.common import PaginationResponse
+
+        q, entity_buckets = self._build_list_query(
+            query=query,
+            sort=sort,
+            dir=dir,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            directory_id=directory_id,
+            is_deleted=is_deleted,
+            attachment_type_id=attachment_type_id,
+            attachment_type_code=attachment_type_code,
+            uploaded_by=uploaded_by,
+            uploaded_at_from=uploaded_at_from,
+            uploaded_at_to=uploaded_at_to,
+            access_levels=access_levels,
+            access_levels_match=access_levels_match,
+            link_status=link_status,
+            storage_status=storage_status,
+            entities=entities,
+            attachment_ids=attachment_ids,
+            direct_access_only=direct_access_only,
+            with_joinedload=True,
+        )
+        if q is None:
+            # entities filter resolved to an impossible set: short-circuit to an
+            # empty payload (mirrors the original early-return contract).
+            return empty_payload(entity_buckets, page=page, limit=limit)
+
+        total = q.count()
+        offset = (page - 1) * limit
+        attachments = q.offset(offset).limit(limit).all()
+
+        return attach_echo(
+            {
+                "data": attachments,
+                "pagination": PaginationResponse(total=total, page=page, limit=limit),
+                "empty": total == 0,
+            },
+            entity_buckets,
+        )
+
+    def _build_list_query(
+        self,
+        query: Optional[str] = None,
+        sort: Optional[str] = None,
+        dir: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        directory_id: Optional[str] = None,
+        is_deleted: Optional[bool] = None,
+        attachment_type_id: Optional[str] = None,
+        attachment_type_code: Optional[str] = None,
+        uploaded_by: Optional[str] = None,
+        uploaded_at_from: Optional[Any] = None,
+        uploaded_at_to: Optional[Any] = None,
+        access_levels: Optional[List[str]] = None,
+        access_levels_match: Optional[str] = "any",
+        link_status: Optional[str] = None,
+        storage_status: Optional[str] = None,
+        entities: Optional[list[str]] = None,
+        attachment_ids: Optional[list[str]] = None,
+        direct_access_only: Optional[bool] = None,
+        with_joinedload: bool = False,
+    ):
+        """Build the filtered + sorted attachments query shared by ``list_attachments``
+        and ``neighbours`` so the two can never drift.
+
+        Returns ``(query, entity_buckets)``. ``query`` is ``None`` when the
+        ``entities`` free-text filter resolves to a definitely-empty set (the
+        caller short-circuits to an empty payload). The ORDER BY always appends
+        ``Attachment.id`` as a deterministic tie-breaker so offset position and
+        prev/next neighbours are unambiguous when the primary sort column has
+        equal values.
+        """
+        from sqlalchemy.orm import joinedload
+        from sqlalchemy import cast, String
+        from sqlalchemy.dialects.postgresql import JSONB, ARRAY
+        from app.services.entity_filter_helpers import resolve_or_empty
 
         entity_buckets = resolve_or_empty(self.db, entities)
         if entity_buckets is not None and not (
             entity_buckets.attachment_filenames or entity_buckets.product_codes
         ):
-            return empty_payload(entity_buckets, page=page, limit=limit)
+            return None, entity_buckets
 
-        q = self.db.query(Attachment).options(
-            joinedload(Attachment.attachment_type)
-        )
+        q = self.db.query(Attachment)
+        if with_joinedload:
+            q = q.options(joinedload(Attachment.attachment_type))
         if attachment_ids:
             q = q.filter(Attachment.id.in_(attachment_ids))
         if entity_buckets is not None and entity_buckets.attachment_filenames:
@@ -595,43 +670,108 @@ class AttachmentService:
             "type": "mime_type",
             "size": "file_size_bytes",
         }
+        # Every ORDER BY appends ``Attachment.id`` as a deterministic tie-breaker
+        # so offset position and prev/next neighbours are stable when the primary
+        # sort column has equal values.
         if sort == "attachment_type":
             # AttachmentType already imported at module top; redundant local
             # import here shadowed the name and caused UnboundLocalError when
             # any earlier branch (e.g. attachment_type_code resolver) touched it.
             q = q.outerjoin(AttachmentType, Attachment.attachment_type_id == AttachmentType.id)
             order_col = AttachmentType.type_name
-            q = q.order_by(order_col.desc() if sort_desc else order_col.asc())
+            q = q.order_by(
+                order_col.desc() if sort_desc else order_col.asc(),
+                Attachment.id.asc(),
+            )
         elif sort:
             sort_key = sort_alias.get(sort, sort)
             sort_col = getattr(Attachment, sort_key, None)
             if sort_col is not None:
-                q = q.order_by(sort_col.desc() if sort_desc else sort_col.asc())
+                q = q.order_by(
+                    sort_col.desc() if sort_desc else sort_col.asc(),
+                    Attachment.id.asc(),
+                )
             else:
                 q = q.order_by(
                     Attachment.sort_order.asc().nulls_last(),
                     Attachment.uploaded_at.desc(),
+                    Attachment.id.asc(),
                 )
         else:
             q = q.order_by(
                 Attachment.sort_order.asc().nulls_last(),
                 Attachment.uploaded_at.desc(),
+                Attachment.id.asc(),
             )
-        
-        total = q.count()
-        offset = (page - 1) * limit
-        attachments = q.offset(offset).limit(limit).all()
-        
-        from app.schemas.common import PaginationResponse
 
-        return attach_echo(
-            {
-                "data": attachments,
-                "pagination": PaginationResponse(total=total, page=page, limit=limit),
-                "empty": total == 0,
-            },
-            entity_buckets,
+        return q, entity_buckets
+
+    def neighbours(
+        self,
+        attachment_id: str,
+        query: Optional[str] = None,
+        sort: Optional[str] = None,
+        dir: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        directory_id: Optional[str] = None,
+        is_deleted: Optional[bool] = None,
+        attachment_type_id: Optional[str] = None,
+        attachment_type_code: Optional[str] = None,
+        uploaded_by: Optional[str] = None,
+        uploaded_at_from: Optional[Any] = None,
+        uploaded_at_to: Optional[Any] = None,
+        access_levels: Optional[List[str]] = None,
+        access_levels_match: Optional[str] = "any",
+        link_status: Optional[str] = None,
+        storage_status: Optional[str] = None,
+        entities: Optional[list[str]] = None,
+        attachment_ids: Optional[list[str]] = None,
+        direct_access_only: Optional[bool] = None,
+    ) -> dict:
+        """Resolve prev/next neighbours for ``attachment_id`` within the active list
+        query.
+
+        Selects only the ordered ids (not full rows), then defers the position/wrap
+        math to the pure ``compute_neighbours`` helper. If the record is not in the
+        filtered set (deep link, or filtered out after an edit), falls back to the
+        unfiltered, default-sorted set so the pager is never dead (D2).
+        """
+        from app.services.record_navigation import compute_neighbours
+
+        def _ordered_ids(q) -> list[str]:
+            return [str(row[0]) for row in q.with_entities(Attachment.id).all()]
+
+        filtered_q, _ = self._build_list_query(
+            query=query,
+            sort=sort,
+            dir=dir,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            directory_id=directory_id,
+            is_deleted=is_deleted,
+            attachment_type_id=attachment_type_id,
+            attachment_type_code=attachment_type_code,
+            uploaded_by=uploaded_by,
+            uploaded_at_from=uploaded_at_from,
+            uploaded_at_to=uploaded_at_to,
+            access_levels=access_levels,
+            access_levels_match=access_levels_match,
+            link_status=link_status,
+            storage_status=storage_status,
+            entities=entities,
+            attachment_ids=attachment_ids,
+            direct_access_only=direct_access_only,
         )
+        if filtered_q is not None:
+            result = compute_neighbours(_ordered_ids(filtered_q), attachment_id)
+            if result["index"] is not None:
+                return result
+
+        # D2: current record not in the filtered set -> fall back to the unfiltered,
+        # default-sorted set so prev/next still works and total reflects all rows.
+        unfiltered_q, _ = self._build_list_query()
+        return compute_neighbours(_ordered_ids(unfiltered_q), attachment_id)
 
     def _get_attachment_any(self, attachment_id: str):
         """Get attachment by ID (active or archived)."""

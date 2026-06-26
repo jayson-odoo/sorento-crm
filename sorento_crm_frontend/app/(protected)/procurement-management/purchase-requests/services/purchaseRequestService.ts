@@ -24,6 +24,37 @@ import type {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 
+/**
+ * List query shape for purchase requests / sponsorship forms. The snake_case
+ * filter keys (`request_type`, `approval_status`, `assigned_to`) match the
+ * backend list GET params exactly, so the neighbours hook can forward them.
+ */
+export type PurchaseRequestsListParams = DataGridApiFetchParams & {
+  request_type?: string;
+  approval_status?: string;
+  assigned_to?: string;
+};
+
+/**
+ * Path of the purchase-requests / sponsorship-forms neighbours endpoint.
+ * Consumed by `usePurchaseRequestNeighbours` via the generic `useRecordNeighbours`
+ * hook.
+ *
+ * Contract:
+ *   GET /api/v1/procurement/purchase-requests/neighbours
+ *   Query params: id=<uuid> + the SAME params the list GET accepts
+ *                 (query, request_type, approval_status, assigned_to, sort, dir).
+ *                 page/limit are ignored.
+ *   Auth: same dependency + module guard ("procurement") as the list GET.
+ *   200:  { total, index, prev_id, next_id }
+ *         - index is 1-based; null when the record is not in the filtered set
+ *           (the backend then falls back to the default-sorted set, still scoped
+ *           to request_type so PR nav never wraps into SF and vice-versa).
+ *         - prev_id/next_id wrap circularly; null only when total <= 1.
+ */
+export const PURCHASE_REQUEST_NEIGHBOURS_PATH =
+  '/api/v1/procurement/purchase-requests/neighbours';
+
 export async function getPurchaseRequests(
   params: DataGridApiFetchParams & {
     requestType?: string;

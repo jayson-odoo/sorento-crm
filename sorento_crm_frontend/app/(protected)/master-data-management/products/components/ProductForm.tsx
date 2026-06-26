@@ -61,16 +61,19 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
   const updateMutation = useUpdateProduct();
 
   const navigationParams = useMemo(() => {
-    const search = searchParams.get('search') ?? '';
-    const category = searchParams.get('category') ?? undefined;
-    const brand = searchParams.get('brand') ?? undefined;
+    // Param names match the list GET (carried into the detail/edit URL by
+    // buildDetailSearch): query / category_id / brand_id / status / sort+dir /
+    // page (1-based) + limit.
+    const search = searchParams.get('query') ?? '';
+    const category = searchParams.get('category_id') ?? undefined;
+    const brand = searchParams.get('brand_id') ?? undefined;
     const statusParam = searchParams.get('status') ?? 'all';
     const sortField = searchParams.get('sort') ?? 'created_at';
-    const sortDir = searchParams.get('sortDir') ?? 'desc';
-    const page = parseInt(searchParams.get('page') ?? '0', 10);
-    const pageSize = parseInt(searchParams.get('pageSize') ?? '50', 10);
+    const sortDir = searchParams.get('dir') ?? 'desc';
+    const page = parseInt(searchParams.get('page') ?? '1', 10);
+    const pageSize = parseInt(searchParams.get('limit') ?? '50', 10);
     return {
-      pageIndex: Number.isNaN(page) ? 0 : Math.max(0, page),
+      pageIndex: Number.isNaN(page) ? 0 : Math.max(0, page - 1),
       pageSize: Number.isNaN(pageSize) || pageSize < 1 ? 50 : Math.min(pageSize, 500),
       sorting: [{ id: sortField, desc: sortDir === 'desc' }],
       searchQuery: search,

@@ -1,12 +1,46 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { buildDataGridParams } from '@/lib/api-client';
+import {
+  useRecordNeighbours,
+  type RecordNeighboursResult,
+} from '@/hooks/useRecordNeighbours';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, archiveAttachment, bulkArchiveAttachments, restoreAttachment, bulkRestoreAttachments, downloadAttachment, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments, bulkMoveAttachments } from '../services/attachmentService';
+import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, archiveAttachment, bulkArchiveAttachments, restoreAttachment, bulkRestoreAttachments, downloadAttachment, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments, bulkMoveAttachments, ATTACHMENT_NEIGHBOURS_PATH, type AttachmentsListParams } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
 import { getDirectoryTree, createDirectory, updateDirectory, moveDirectory, deleteDirectory, restoreDirectory, permanentDeleteDirectory } from '../services/directoryService';
 import { apiFetch } from '@/lib/api';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
+
+/**
+ * Prev/next neighbours of an attachment within the active filtered+sorted list set.
+ * Serializes the list query (search/sort + folder/linkage/type/uploader/date filters)
+ * with `buildDataGridParams` — the same serialization the list page uses — so the
+ * backend honours filters identically. `page`/`limit` are sent but ignored by the
+ * neighbours endpoint.
+ */
+export function useAttachmentNeighbours(
+  attachmentId: string | null,
+  listParams: AttachmentsListParams,
+): RecordNeighboursResult {
+  const params = buildDataGridParams(listParams, {
+    entity_type: listParams.entity_type,
+    attachment_type_id: listParams.attachment_type_id ?? listParams.file_type,
+    directory_id:
+      listParams.directory_id != null && listParams.directory_id !== ''
+        ? listParams.directory_id
+        : undefined,
+    is_deleted:
+      listParams.is_deleted !== undefined ? String(listParams.is_deleted) : undefined,
+    link_status: listParams.link_status,
+    storage_status: listParams.storage_status,
+    uploaded_by: listParams.uploaded_by?.trim() || undefined,
+    uploaded_at_from: listParams.uploaded_at_from || listParams.upload_date_from,
+    uploaded_at_to: listParams.uploaded_at_to || listParams.upload_date_to,
+  });
+  return useRecordNeighbours(ATTACHMENT_NEIGHBOURS_PATH, attachmentId, params);
+}
 
 export function useAttachments(params: DataGridApiFetchParams & { entity_type?: string; file_type?: string; attachment_type_id?: string; upload_date_from?: string; upload_date_to?: string; uploaded_at_from?: string; uploaded_at_to?: string; uploaded_by?: string; is_deleted?: boolean; virus_status?: string; directory_id?: string | null; link_status?: 'linked' | 'unlinked'; storage_status?: 'accessible' | 'missing' | 'unchecked'; resolve_signed_urls?: boolean; access_levels?: string[]; access_levels_match?: 'any' | 'all' | 'exact' }) {
   const accessLevelsKey = (params.access_levels ?? []).slice().sort().join(',');

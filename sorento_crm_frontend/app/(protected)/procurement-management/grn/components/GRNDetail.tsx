@@ -23,11 +23,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { useGRN, useGRNs, useUpdateGRN } from '../hooks/useGRN';
+import { useGRN, useUpdateGRN } from '../hooks/useGRN';
 import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import GRNDeleteDialog from './grn-delete-dialog';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import GRNNavigation from './GRNNavigation';
 
 interface GRNDetailProps {
   grnId: string;
@@ -64,18 +64,6 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
       return haystack.includes(q);
     });
   }, [allLines, lineSearch]);
-  const navParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 50,
-      sorting: [{ id: 'picking_date', desc: true }],
-      searchQuery: '',
-    }),
-    [],
-  );
-  const { data: grnListData } = useGRNs(navParams);
-  const grnListItems = grnListData?.data ?? [];
-
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -122,12 +110,7 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
           </p>
         </div>
         <div className="flex gap-2">
-          <RecordNavigation
-            basePath="/procurement-management/grn"
-            currentId={grnId}
-            items={grnListItems}
-            ariaLabel="GRN"
-          />
+          <GRNNavigation grnId={grnId} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="icon" title="Change status">

@@ -45,6 +45,7 @@ import { usePurchaseRequests } from '../hooks/usePurchaseRequests';
 import { getUsersForApproverSelect } from '../services/purchaseRequestService';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import PurchaseRequestBulkDeleteDialog from './PurchaseRequestBulkDeleteDialog';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { purchaseRequestNumberFieldLabel } from '../lib/purchase-request-field-labels';
@@ -189,7 +190,27 @@ export default function PurchaseRequestsList({
   }, [statusFilter, assignedToFilter]);
 
   const handleRowClick = (row: PurchaseRequest) => {
-    router.push(`${basePath}/${row.id}`);
+    // Carry the active list query into the detail URL so its prev/next pager walks
+    // the same filtered+sorted set. request_type is included so PR nav stays in PRs
+    // and SF nav in SFs.
+    const search = buildDetailSearch(
+      {
+        pageIndex: pagination.pageIndex,
+        pageSize: pagination.pageSize,
+        sorting,
+        searchQuery,
+      },
+      {
+        request_type: effectiveRequestType,
+        approval_status: effectiveStatusFilter,
+        assigned_to:
+          assignedToFilter && assignedToFilter !== '__all__'
+            ? assignedToFilter
+            : undefined,
+      },
+    );
+    const qs = search ? `?${search}` : '';
+    router.push(`${basePath}/${row.id}${qs}`);
   };
 
   const toggleSelection = (id: string) => {

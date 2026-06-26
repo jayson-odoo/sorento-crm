@@ -41,11 +41,11 @@ import {
 } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { usePurchaseRequest, usePurchaseRequests } from '../hooks/usePurchaseRequests';
+import { usePurchaseRequest } from '../hooks/usePurchaseRequests';
 import { formatDate } from '@/lib/helpers';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import PurchaseRequestNavigation from './PurchaseRequestNavigation';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   DropdownMenuItem,
@@ -125,19 +125,6 @@ export default function PurchaseRequestDetail({
   const requestTypeForNav = basePath.includes('sponsorship-forms')
     ? 'sponsorship_form'
     : 'purchase_request';
-  const navParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 50,
-      sorting: [{ id: 'created_at', desc: true }],
-      searchQuery: '',
-      requestType: requestTypeForNav,
-      approvalStatus: undefined,
-    }),
-    [requestTypeForNav],
-  );
-  const { data: requestListData } = usePurchaseRequests(navParams);
-  const requestListItems = requestListData?.data ?? [];
   // Active form-SLA stage tracker for this form — enables the in-form Escalate button.
   const { data: slaTrackers } = useQuery({
     // Key on the request's updated_at so the active tracker (and the escalation
@@ -369,7 +356,6 @@ export default function PurchaseRequestDetail({
                 try {
                   await setPendingApproval(requestId);
                   queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-                  queryClient.invalidateQueries({ queryKey: ['purchase-request-neighbours'] });
                   toast.success('Status set to Pending approval');
                 } catch (e) {
                   toast.error(e instanceof Error ? e.message : 'Failed to set pending approval');
@@ -413,7 +399,6 @@ export default function PurchaseRequestDetail({
                   try {
                     await submitApprovalDecision(requestId, 'approved');
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-                    queryClient.invalidateQueries({ queryKey: ['purchase-request-neighbours'] });
                     queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', requestTypeForNav, requestId] });
                     toast.success('Request approved');
                   } catch (e) {
@@ -592,10 +577,9 @@ export default function PurchaseRequestDetail({
               </>
             )}
           </DetailActionsMenu>
-          <RecordNavigation
+          <PurchaseRequestNavigation
             basePath={basePath}
-            currentId={requestId}
-            items={requestListItems}
+            requestId={requestId}
             ariaLabel={requestTypeLabelLower(request.request_type)}
           />
           <Button
@@ -1223,9 +1207,6 @@ export default function PurchaseRequestDetail({
                     queryClient.invalidateQueries({
                       queryKey: ['purchase-request', requestId],
                     });
-                    queryClient.invalidateQueries({
-                      queryKey: ['purchase-request-neighbours'],
-                    });
                     toast.success('Submission rejected; contact has been notified.');
                     setRejectDialogOpen(false);
                   } catch (err) {
@@ -1279,7 +1260,6 @@ export default function PurchaseRequestDetail({
                   try {
                     await submitApprovalDecision(requestId, 'rejected', decisionRejectReason.trim());
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-                    queryClient.invalidateQueries({ queryKey: ['purchase-request-neighbours'] });
                     queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', requestTypeForNav, requestId] });
                     toast.success('Request rejected; requester and contact notified.');
                     setDecisionRejectOpen(false);
@@ -1373,7 +1353,6 @@ export default function PurchaseRequestDetail({
                   try {
                     await processPurchaseRequestByCs(requestId, finalizeNote);
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-                    queryClient.invalidateQueries({ queryKey: ['purchase-request-neighbours'] });
                     toast.success('Marked as processed by CS.');
                     setProcessDialogOpen(false);
                   } catch (err) {
@@ -1419,7 +1398,6 @@ export default function PurchaseRequestDetail({
                   try {
                     await closePurchaseRequestByCs(requestId, finalizeNote);
                     queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-                    queryClient.invalidateQueries({ queryKey: ['purchase-request-neighbours'] });
                     toast.success('Marked as closed.');
                     setCloseCsDialogOpen(false);
                   } catch (err) {

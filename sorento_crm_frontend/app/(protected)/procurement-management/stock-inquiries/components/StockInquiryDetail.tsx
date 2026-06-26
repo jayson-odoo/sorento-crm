@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle } from 'lucide-react';
@@ -29,7 +29,6 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   useStockInquiry,
-  useStockInquiries,
   useUpdateStockInquiry,
   useUpdateStockInquiryAndReply,
   useSubmitStockInquiryForProjectSales,
@@ -44,7 +43,7 @@ import { formatDate } from '@/lib/helpers';
 import { useHasPermission } from '@/hooks/usePermissions';
 import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import StockInquiryNavigation from './StockInquiryNavigation';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
 import StockInquiryConversationPanel from './StockInquiryConversationPanel';
@@ -64,17 +63,6 @@ export default function StockInquiryDetail({
   const { data: inquiry, isLoading } = useStockInquiry(
     isValidId ? inquiryId : null,
   );
-  const navParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 50,
-      sorting: [{ id: 'created_at', desc: true }],
-      searchQuery: '',
-    }),
-    [],
-  );
-  const { data: inquiryListData } = useStockInquiries(navParams);
-  const inquiryListItems = inquiryListData?.data ?? [];
   const updateInquiryMutation = useUpdateStockInquiry();
   const updateAndReplyMutation = useUpdateStockInquiryAndReply();
   const submitForProjectSalesMutation = useSubmitStockInquiryForProjectSales();
@@ -446,12 +434,7 @@ export default function StockInquiryDetail({
               Delete
             </DropdownMenuItem>
           </DetailActionsMenu>
-          <RecordNavigation
-            basePath="/procurement-management/stock-inquiries"
-            currentId={inquiryId}
-            items={inquiryListItems}
-            ariaLabel="stock inquiry"
-          />
+          <StockInquiryNavigation inquiryId={inquiryId} />
         </div>
       </div>
 

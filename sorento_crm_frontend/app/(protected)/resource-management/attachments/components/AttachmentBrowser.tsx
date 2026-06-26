@@ -42,6 +42,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { getAttachmentPreviewUrl, resubmitAttachmentWebhook } from '../services/attachmentService';
+import { buildDetailSearch } from '@/lib/listNavQuery';
 import type { Attachment } from '../types/attachment.types';
 import type { AttachmentDirectoryTreeNode } from '../services/directoryService';
 
@@ -99,6 +100,44 @@ export default function AttachmentBrowser() {
     uploaded_at_from: uploadedAtFrom || undefined,
     uploaded_at_to: uploadedAtTo || undefined,
   });
+
+  // Carry the active list query (search/sort + folder/linkage/type/uploader/date
+  // filters) into the detail URL so the detail pager walks the SAME filtered set.
+  // Mirrors the exact filter mapping the list fetch above sends.
+  const detailSearch = useMemo(
+    () =>
+      buildDetailSearch(
+        {
+          pageIndex: pagination.pageIndex,
+          pageSize: pagination.pageSize,
+          sorting,
+          searchQuery,
+        },
+        {
+          directory_id: isTrashView ? undefined : directoryId ?? undefined,
+          is_deleted: isTrashView ? 'true' : undefined,
+          attachment_type_id:
+            attachmentTypeId !== '__all__' ? attachmentTypeId : undefined,
+          link_status: linkStatus !== '__all__' ? linkStatus : undefined,
+          uploaded_by: uploadedBy.trim() || undefined,
+          uploaded_at_from: uploadedAtFrom || undefined,
+          uploaded_at_to: uploadedAtTo || undefined,
+        },
+      ),
+    [
+      pagination.pageIndex,
+      pagination.pageSize,
+      sorting,
+      searchQuery,
+      isTrashView,
+      directoryId,
+      attachmentTypeId,
+      linkStatus,
+      uploadedBy,
+      uploadedAtFrom,
+      uploadedAtTo,
+    ],
+  );
 
   const deleteMutation = useDeleteAttachment();
   const restoreMutation = useRestoreAttachment();
@@ -453,7 +492,11 @@ export default function AttachmentBrowser() {
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
-        onRowClick={(row) => router.push(`/resource-management/attachments/${row.id}`)}
+        onRowClick={(row) =>
+          router.push(
+            `/resource-management/attachments/${row.id}${detailSearch ? `?${detailSearch}` : ''}`,
+          )
+        }
         tableLayout={{ width: 'fixed', columnsResizable: true }}
       >
         <Card>

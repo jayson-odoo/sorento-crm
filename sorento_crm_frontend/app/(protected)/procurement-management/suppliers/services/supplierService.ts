@@ -2,7 +2,30 @@ import { apiFetch } from '@/lib/api';
 import type { Supplier, SupplierFormData, SupplierDetail } from '../types/supplier.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
-export async function getSuppliers(params: DataGridApiFetchParams & { country?: string; city?: string; payment_terms_days?: number; status?: string }): Promise<DataGridApiResponse<Supplier>> {
+export type SuppliersListParams = DataGridApiFetchParams & {
+  country?: string;
+  city?: string;
+  payment_terms_days?: number;
+  status?: string;
+};
+
+/**
+ * Path of the suppliers neighbours endpoint. Consumed by `useSupplierNeighbours`
+ * via the generic `useRecordNeighbours` hook.
+ *
+ * Contract (see docs/plans/PLAN-record-navigation-standardization.md):
+ *   GET /api/v1/procurement/suppliers/neighbours
+ *   Query params: id=<uuid> + the SAME params the list GET accepts
+ *                 (query, sort, dir). page/limit are ignored.
+ *   Auth: same dependency + module guard as the list GET.
+ *   200:  { total: number, index: number|null, prev_id: string|null, next_id: string|null }
+ *         - index is 1-based; null when the record is not in the filtered set
+ *           (the backend then falls back to the unfiltered, default-sorted set).
+ *         - prev_id/next_id wrap circularly; null only when total <= 1.
+ */
+export const SUPPLIER_NEIGHBOURS_PATH = '/api/v1/procurement/suppliers/neighbours';
+
+export async function getSuppliers(params: SuppliersListParams): Promise<DataGridApiResponse<Supplier>> {
   const { pageIndex, pageSize, sorting, searchQuery, country, city, payment_terms_days, status } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';

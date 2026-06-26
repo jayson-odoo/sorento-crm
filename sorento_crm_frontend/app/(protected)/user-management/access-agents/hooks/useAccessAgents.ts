@@ -1,8 +1,27 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { buildDataGridParams } from '@/lib/api-client';
+import {
+  useRecordNeighbours,
+  type RecordNeighboursResult,
+} from '@/hooks/useRecordNeighbours';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams, getAgentMcpTools, getMcpToolsForPicker, setAgentMcpTools, getAgentMcpToolBindings, setAgentMcpToolBindings, type McpToolBindingInput } from '../services/accessAgentService';
+import { ACCESS_AGENT_NEIGHBOURS_PATH, getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams, getAgentMcpTools, getMcpToolsForPicker, setAgentMcpTools, getAgentMcpToolBindings, setAgentMcpToolBindings, type McpToolBindingInput } from '../services/accessAgentService';
 import type { AccessAgentFormData, ContactAgentAccessFormData } from '../types/accessAgent.types';
+
+/**
+ * Prev/next neighbours of an access agent within the active filtered+sorted list set.
+ * Serializes the list query (search) with `buildDataGridParams` — the same
+ * serialization the list page uses — so the backend honours filters identically.
+ * `page`/`limit` are sent but ignored by the neighbours endpoint.
+ */
+export function useAccessAgentNeighbours(
+  agentId: string | null,
+  listParams: DataGridApiFetchParams,
+): RecordNeighboursResult {
+  const params = buildDataGridParams(listParams);
+  return useRecordNeighbours(ACCESS_AGENT_NEIGHBOURS_PATH, agentId, params);
+}
 
 export function useAccessAgents(params: DataGridApiFetchParams & { status?: string }) {
   return useQuery({

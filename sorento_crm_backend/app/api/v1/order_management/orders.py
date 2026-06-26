@@ -639,6 +639,58 @@ async def get_orders_by_product(
         raise handle_internal_error(str(e))
 
 
+@router.get("/neighbours")
+async def get_order_neighbours(
+    id: str = Query(..., description="Order id (UUID or order_number) to resolve neighbours for"),
+    query: Optional[str] = Query(None),
+    customer_id: Optional[str] = Query(None),
+    order_status_id: Optional[str] = Query(None),
+    has_order_lines: Optional[str] = Query(None),
+    has_actual_delivery_date: Optional[str] = Query(None),
+    order_date_from: Optional[str] = Query(None),
+    order_date_to: Optional[str] = Query(None),
+    actual_delivery_date_from: Optional[str] = Query(None),
+    actual_delivery_date_to: Optional[str] = Query(None),
+    customer_query: Optional[str] = Query(None),
+    product_query: Optional[str] = Query(None),
+    transporter_query: Optional[str] = Query(None),
+    sort: Optional[str] = Query("created_at"),
+    dir: Optional[str] = Query("asc"),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Prev/next neighbours of an order within the active filtered+sorted list set.
+
+    Accepts the same filter/sort/search params as the list GET (page/limit are
+    irrelevant and ignored). Returns ``{total, index, prev_id, next_id}`` with the
+    1-based ``index`` and circular wrap-around neighbours. If the record is not in
+    the filtered set, falls back to the unfiltered, default-sorted set (D2).
+    """
+    try:
+        service = OrderService(db)
+        return service.order_neighbours(
+            order_id=id,
+            query=query,
+            customer_id=customer_id,
+            order_status_id=order_status_id,
+            has_order_lines=has_order_lines,
+            has_actual_delivery_date=has_actual_delivery_date,
+            order_date_from=_parse_flex_date(order_date_from),
+            order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
+            actual_delivery_date_from=_parse_flex_date(actual_delivery_date_from),
+            actual_delivery_date_to=_parse_flex_date(actual_delivery_date_to, end_of_day=True),
+            customer_query=customer_query,
+            product_query=product_query,
+            transporter_query=transporter_query,
+            sort_field=sort or "created_at",
+            sort_dir=dir or "asc",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{order_id}", response_model=OrderResponse)
 async def get_order(
     order_id: str,

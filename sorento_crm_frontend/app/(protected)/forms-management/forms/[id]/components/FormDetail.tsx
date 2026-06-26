@@ -15,9 +15,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import RecordNavigation from '@/components/common/RecordNavigation';
+import FormNavigation from './FormNavigation';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
-import { useForm, useForms, useDeleteForm } from '../../hooks/useForms';
+import { useForm, useDeleteForm } from '../../hooks/useForms';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { formatDate } from '@/lib/helpers';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
@@ -32,17 +32,6 @@ interface FormDetailProps {
 export default function FormDetail({ formId }: FormDetailProps) {
   const router = useRouter();
   const { data: form, isLoading } = useForm(formId);
-  const navigationParams = useMemo(
-    () => ({
-      pageIndex: 0,
-      pageSize: 100,
-      sorting: [{ id: 'created_at', desc: true }],
-      searchQuery: '',
-    }),
-    [],
-  );
-  const { data: navigationData } = useForms(navigationParams);
-  const navigationItems = navigationData?.data ?? [];
   const downloadMutation = useDownloadAttachment();
   const deleteMutation = useDeleteForm();
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
@@ -82,7 +71,7 @@ export default function FormDetail({ formId }: FormDetailProps) {
       document.body.removeChild(a);
       
       toast.success('Attachment downloaded successfully');
-    } catch (error) {
+    } catch {
       toast.error('Failed to download attachment');
     } finally {
       setIsDownloading(false);
@@ -152,13 +141,7 @@ export default function FormDetail({ formId }: FormDetailProps) {
           </p>
         </div>
         <div className="flex gap-2">
-          <RecordNavigation
-            currentId={formId}
-            items={navigationItems}
-            basePath="/forms-management/forms"
-            totalCount={navigationData?.pagination?.total}
-            ariaLabel="form"
-          />
+          <FormNavigation formId={formId} />
           <Button variant="outline" onClick={() => router.push(`/forms-management/forms/${formId}/edit`)}>
             <Edit className="size-4 mr-2" />
             Edit
