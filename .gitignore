@@ -28,3 +28,4 @@ sorento_crm_backend/.next/*
 __pycache__/
 
 docker-compose.yml
+/*.png
