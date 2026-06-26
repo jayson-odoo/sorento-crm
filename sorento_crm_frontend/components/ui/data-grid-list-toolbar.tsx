@@ -3,7 +3,7 @@
 import { Fragment, ReactNode, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Table } from '@tanstack/react-table';
-import { Columns3, Download, Filter, MoreHorizontal, X, type LucideIcon } from 'lucide-react';
+import { Columns3, Download, Filter, MoreHorizontal, RefreshCw, X, type LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -119,6 +119,9 @@ export type DataGridListToolbarProps<TData extends object> = {
   exportConfig?: ListToolbarExport<TData> | false;
   /** Show the Columns personalization button. Default true. */
   showColumns?: boolean;
+  /** Optional manual refresh (wire to React Query refetch). Renders after Columns. */
+  onRefresh?: () => void | Promise<void>;
+  isRefreshing?: boolean;
   /** Primary call-to-action (e.g. the "Add" button). Anchored to the right edge. */
   primaryAction?: ReactNode;
   /** Secondary actions (Import, attachment links, templates). Overflow `▾` at >=2 (D7). */
@@ -181,6 +184,8 @@ export function DataGridListToolbar<TData extends object>({
   secondaryActions = [],
   bulkActions = [],
   selectAllMatching,
+  onRefresh,
+  isRefreshing = false,
 }: DataGridListToolbarProps<TData>) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -358,6 +363,20 @@ export function DataGridListToolbar<TData extends object>({
               />
             ) : null}
             {exportButtonEl}
+            {onRefresh ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                title="Refresh list"
+                onClick={() => void onRefresh()}
+                disabled={isRefreshing}
+              >
+                <RefreshCw className={`size-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            ) : null}
           </div>
         )}
 
