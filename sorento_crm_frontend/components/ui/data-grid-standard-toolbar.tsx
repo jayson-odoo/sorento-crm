@@ -147,55 +147,42 @@ export function DataGridStandardToolbar<TData extends object>({
 
   return (
     <>
+      {/* Controls-left layout (D2): search + grid controls (Filters/Columns/Export)
+          cluster on the left; secondary actions + primary CTA anchor the right. */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           {searchSlot}
           {quickFiltersSlot}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {secondaryActionsSlot}
-          {showAdvancedFilters &&
-            (listQueryConfig ? (
-              <Button variant="outline" size="sm" className="gap-1" onClick={() => setAdvancedFilterOpen(true)}>
-                <Filter className="size-4" />
-                Filters
-                {listQueryConfig.advancedFilter ? (
-                  <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
-                    On
-                  </Badge>
-                ) : null}
-              </Button>
-            ) : (
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-1">
-                    <Filter className="size-4" />
-                    Filters
-                    {advancedFilters?.active ? (
-                      <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
-                        On
-                      </Badge>
-                    ) : null}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-80" align="end">
-                  {advancedFilters?.content ?? (
-                    <p className="text-sm text-muted-foreground">No advanced filters configured for this table.</p>
-                  )}
-                </PopoverContent>
-              </Popover>
-            ))}
-          {showExport && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1"
-              onClick={listQueryConfig ? () => setExportOpen(true) : openExport}
-            >
-              <Download className="size-4" />
-              Export
+          {/* Filters renders ONLY when actually wired (D3) — no dead
+              "no filters configured" popover. */}
+          {showAdvancedFilters && listQueryConfig ? (
+            <Button variant="outline" size="sm" className="gap-1" onClick={() => setAdvancedFilterOpen(true)}>
+              <Filter className="size-4" />
+              Filters
+              {listQueryConfig.advancedFilter ? (
+                <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
+                  On
+                </Badge>
+              ) : null}
             </Button>
-          )}
+          ) : showAdvancedFilters && advancedFilters?.content ? (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-1">
+                  <Filter className="size-4" />
+                  Filters
+                  {advancedFilters?.active ? (
+                    <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
+                      On
+                    </Badge>
+                  ) : null}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80" align="start">
+                {advancedFilters.content}
+              </PopoverContent>
+            </Popover>
+          ) : null}
           {showColumnVisibility && (
             <DataGridColumnVisibility
               table={table}
@@ -207,6 +194,20 @@ export function DataGridStandardToolbar<TData extends object>({
               }
             />
           )}
+          {showExport && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1"
+              onClick={listQueryConfig ? () => setExportOpen(true) : openExport}
+            >
+              <Download className="size-4" />
+              Export
+            </Button>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {secondaryActionsSlot}
           {onRefresh ? (
             <Button
               type="button"
