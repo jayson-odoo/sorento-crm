@@ -27,7 +27,13 @@ Plus 3 parent config lists via table-lift (LookupSetsList, ComplaintResolutionsL
 
 Final state: full-tree tsc clean, prod build clean, vitest 323 pass / 3 fail (3 = pre-existing `notification-channels-preference`, unrelated). Browser-validated ~15 pages across every module (incl. table-lift Lookup Sets + Conversation SLA). 
 
-Pending (user): manual last-round check across lists.
+### D8 enforcement closure (2026-06-27)
+- Migrated EventLogTable (last user of the legacy `DataGridStandardToolbar`).
+- Removed DataGrid's auto-render escape hatch + deleted `data-grid-standard-toolbar.tsx`. A list can no longer render a duplicate toolbar **by construction** — there is no auto toolbar to duplicate. `standardToolbar`/`onRefresh`/`isRefreshing` DataGrid props kept as deprecated no-ops (avoids churning 25 `={false}` call-sites).
+- Fixed the toolbar doc comment that cited a non-existent eslint rule.
+- Validated: Stock single toolbar intact, EventLogTable canonical toolbar renders, tsc + prod build clean, 0 console errors.
+
+**STATUS: implementation + validation complete.** All substantive work done. Remaining = user's manual last-round check.
 
 ## Phase 2+3 validation (Stock reference, 2026-06-26)
 
