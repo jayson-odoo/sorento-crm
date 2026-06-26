@@ -14,7 +14,8 @@ import { Card, CardContent, CardFooter, CardHeader, CardTable, CardTitle } from 
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { DataGridStandardToolbar } from '@/components/ui/data-grid-standard-toolbar';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -79,6 +80,7 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
   const [assignedToFilter, setAssignedToFilter] = useState('__all__');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [logToDelete, setLogToDelete] = useState<ConversationSLAEventLog | null>(null);
+  const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
   const deleteMutation = useDeleteConversationSLAEventLog();
 
   const { data: eventLogsResponse, isLoading } = useConversationSLAEventLogs(trackingId, {
@@ -160,6 +162,7 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
 
   const columns = useMemo<ColumnDef<ConversationSLAEventLog>[]>(
     () => [
+      buildSelectColumn<ConversationSLAEventLog>(),
       {
         accessorKey: 'event_type',
         header: ({ column }) => <DataGridColumnHeader title="Event Type" column={column} />,
@@ -278,7 +281,10 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
     getPaginationRowModel: getPaginationRowModel(),
     manualPagination: true,
     pageCount: Math.ceil(totalCount / pagination.pageSize) || 0,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
+    getRowId: (row, index) => (row as { id?: string }).id ?? String(index),
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     manualSorting: true,
@@ -302,11 +308,12 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
       <DataGrid table={table} recordCount={totalCount} isLoading={isLoading} tableLayout={{ columnsVisibility: true }}
       standardToolbar={false}>
         <Card>
-          <CardHeader className="py-5">
-            <DataGridStandardToolbar
+          <CardHeader className="block space-y-3 py-5">
+            <CardTitle>Event Log</CardTitle>
+            <DataGridListToolbar
               table={table}
-              quickFiltersSlot={<CardTitle>Event Log</CardTitle>}
-              advancedFilters={{
+              filters={{
+                kind: 'custom',
                 active: hasActiveFilters,
                 content: (
                   <div className="space-y-4">

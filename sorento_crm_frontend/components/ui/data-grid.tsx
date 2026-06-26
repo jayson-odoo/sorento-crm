@@ -5,7 +5,6 @@ import { cn } from '@/lib/utils';
 import { ColumnFiltersState, RowData, SortingState, Table } from '@tanstack/react-table';
 import { useListingColumnPreferences } from '@/lib/listing-column-preferences/useListingColumnPreferences';
 import { usePathname } from 'next/navigation';
-import { DataGridStandardToolbar, type DataGridStandardToolbarProps } from '@/components/ui/data-grid-standard-toolbar';
 
 declare module '@tanstack/react-table' {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -96,13 +95,14 @@ export interface DataGridProps<TData extends object> {
     edgeCell?: string;
   };
   /**
-   * Render global standard controls (Export, Advanced filters, Columns) above table content.
-   * Set false when page provides a custom toolbar.
+   * @deprecated No-op. The auto-rendered standard toolbar was removed — every list
+   * owns its toolbar via `DataGridListToolbar` in `CardHeader`. Kept only so existing
+   * `standardToolbar={false}` call-sites keep type-checking; safe to delete on touch.
    */
   standardToolbar?: boolean;
-  standardToolbarProps?: Omit<DataGridStandardToolbarProps<TData>, 'table'>;
-  /** Shorthand: passed into the standard toolbar as `onRefresh` / `isRefreshing` (merged with `standardToolbarProps`). */
+  /** @deprecated No longer wired — pass `onRefresh` to `DataGridListToolbar` instead. */
   onRefresh?: () => void | Promise<void>;
+  /** @deprecated See `onRefresh`. */
   isRefreshing?: boolean;
 }
 
@@ -222,16 +222,6 @@ function DataGrid<TData extends object>({ children, table, listingKey, ...props 
       isColumnPreferencesLoading={isPrefsLoading}
       {...mergedProps}
     >
-      {mergedProps.standardToolbar !== false && (
-        <div className="mb-3">
-          <DataGridStandardToolbar
-            table={table}
-            {...(mergedProps.standardToolbarProps || {})}
-            onRefresh={mergedProps.onRefresh ?? mergedProps.standardToolbarProps?.onRefresh}
-            isRefreshing={mergedProps.isRefreshing ?? mergedProps.standardToolbarProps?.isRefreshing}
-          />
-        </div>
-      )}
       {children}
     </DataGridProvider>
   );

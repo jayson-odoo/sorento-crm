@@ -44,8 +44,11 @@ import type { ListQueryFilterGroup, ListQueryResourceKey } from '@/lib/list-quer
  *  - Secondary actions collapse into a `▾` overflow when there are >=2. (D7)
  *  - Selection is read from react-table's rowSelection (use `buildSelectColumn`).
  *
- * Place inside `<CardHeader>`. Do NOT hand-roll a separate button row in a list
- * CardHeader — the ESLint rule `no-list-card-toolbar` forbids it.
+ * Place inside `<CardHeader>`. This is the ONLY sanctioned list toolbar: the
+ * legacy auto-rendered `DataGridStandardToolbar` and DataGrid's `standardToolbar`
+ * escape hatch were removed, so a list cannot accidentally render a second/duplicate
+ * toolbar. Do NOT hand-roll a separate button row in a list CardHeader — feed slots
+ * here instead.
  */
 
 export type ToolbarAction = {
