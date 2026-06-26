@@ -108,6 +108,16 @@ Title + breadcrumb live **above** the card (page owns). Card = toolbar + grid + 
 3. Phase 2: prove on **Stock** (worst offender — has every button type: search/filters/export/import/attachment/bulk).
 4. Phase 3+: sweep remaining ~20 lists in module batches. Each page: delete custom CardHeader toolbar, wire slots, verify via Playwright.
 
+## Phase 1 progress (in progress 2026-06-26)
+
+Built the keystones:
+- `components/ui/data-grid-select-column.tsx` — `buildSelectColumn<T>()` + `selectedRowIds(table)`. Standardizes selection on react-table `rowSelection` (replaces per-page `useState<Set>`). Requires `enableRowSelection: true` + stable `getRowId`.
+- `components/ui/data-grid-list-toolbar.tsx` — `DataGridListToolbar`, the canonical toolbar. Controls-left layout; conditional Filters (listQuery or custom, omit = no button); Columns; selection-gated Export (disabled until ≥1 selected, modal pre-ticked to visible columns, page-scope client xlsx of selected rows + `allRecords` hook for Phase 2 server stream); secondary overflow at ≥2; primary CTA; bulk strip replacing the left cluster on selection. Placed inside `<CardHeader>` by the page.
+
+**Architecture note:** chose a CardHeader-placed canonical component (honors D6 in-card + D1 single-owner) over DataGrid auto-rendering. Per-page `standardToolbar={false}` during migration kills the legacy above-card duplicate; the auto-render escape hatch + ESLint `no-list-card-toolbar` rule land in Phase 4 cleanup once all pages are migrated (can't lint-enforce before then without breaking un-migrated pages).
+
+Deferred to Phase 2 (folded into Stock migration): all-records "select all N" banner + server sync-stream export wiring.
+
 ## Key files (from codebase survey)
 
 - `components/ui/data-grid.tsx` — DataGrid, defaults `standardToolbar: true`.
