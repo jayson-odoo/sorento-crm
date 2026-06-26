@@ -1,6 +1,20 @@
 # PLAN — Unified List Toolbar (uniform DataGrid toolbar across all lists)
 
-**Status:** Design locked (grill-me 2026-06-26). **Phase 0 DONE** (pagination fixed + verified). Phase 1 in progress.
+**Status:** Phases 0–3 DONE + Playwright-validated. Phase 4 (sweep) in progress.
+
+## Phase 2+3 validation (Stock reference, 2026-06-26)
+
+Stock migrated (`StockBalanceGrid.tsx`) and validated end-to-end in a real browser (prod build, signed in as the e2e admin):
+- Single toolbar, no duplicate Filters/Export/Columns (the above-card standard toolbar removed via `standardToolbar={false}`). AC-A1/A2 ✓
+- Export disabled at 0 selection; enabled on selection. AC-D1 ✓
+- Column modal pre-ticked to visible columns; "Exporting N row(s)" count. AC-D2/D3 ✓
+- Page-scope: select 2 rows → export → **3-row xlsx (header+2)**, NO `/balance/export` server call. AC-E1/E2 ✓
+- All-records: select-all-page → banner "Select all 7508 records" → server `GET /inventory/stock/balance/export` 200 → **7509-row xlsx (header+7508)** to Downloads. AC-F1/F2/F3 ✓
+- Bulk strip `[n selected][Export][Delete][Clear]`; Delete hidden in all-records mode (footgun guard). AC-H1 ✓
+- Secondary actions Import + Stock List collapse into `··· Actions` overflow (≥2). AC-I2/I3 ✓
+- Selection migrated from custom `selectedStockIds` Set → react-table `rowSelection` via `buildSelectColumn`.
+
+**Auth note for validators:** the dev (`npm run dev`) session secret differs from prod (`npm start` copies `.env.staging`), so a prod-minted session cookie 401s on dev (flaps to /signin). Also the JWT TTL expires after ~30 min. Use prod build + sign in fresh with `REQUEST_BATCH_E2E_EMAIL`/`PASSWORD` from BE `.env`. Validation runs on prod `npm run build && npm start`.
 
 ## Phase 0 finding (RESOLVED 2026-06-26)
 
