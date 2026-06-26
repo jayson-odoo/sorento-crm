@@ -11,6 +11,18 @@
 - **Browser-validated across modules:** Stock, Products, Brands, Orders, Complaints, GRN, Promotions, Users (dynamic bulk actions), Files page (complex filters + bulk + restored Columns/Export). 0 console errors.
 - **Tests:** vitest `data-grid-list-toolbar.test.tsx` (6, pass); pytest `test_list_pagination_limit.py` (2, pass); fixed `TeamPendingList.test.tsx` for the new toolbar. Full vitest 323 pass / 3 fail (the 3 are pre-existing in `notification-channels-preference.test.tsx`, unrelated — unchanged file, no toolbar imports).
 
+### Comprehensive coverage wave (2026-06-27, after user re-ran /loop for "all lists")
+Migrated 25 more real lists: system-management ×8, sla ×3, integration ×2 (incl. TemplatesGrid), user-access ×3, resource ×3 (SmartLinkage, AttachmentTypes, AttachmentBrowser), sub-resource ×6 (product/promotion attachments, product-suppliers, picking-lines, promotion-products, spo-allocations). Full-tree tsc clean; no tests broken (2 failing files pre-existing/flaky: notification-channels-preference, AccessAgentForm-passes-in-isolation).
+- 3 parent config lists (LookupSetsList, ComplaintResolutionsList, ComplaintRootCausesList) — toolbar lives in parent, grid in child *Table → table-lift migration in progress.
+
+**Intentionally NOT migrated (documented):**
+- Metronic shell demos: `network/user-table/*`, most `account/*` template pages (billing, devices, ip-addresses, members, invites) — not real CRM lists.
+- Dashboards: SLAKpiDashboardContent.
+- Embedded sub-tables/tabs (toolbar belongs to their parent page, not the sub-table): RunLogsTable, AutomationRunsTable, EventLogTable, SLAPolicyTiersTable, FormSLATrackingTab, ContactAccessAgentsTable (×2), stock detail-page ledger.
+- CategoryTree (a recursive tree, not a DataGrid).
+
+Total migrated to canonical toolbar: ~59 real lists.
+
 Pending (user): manual last-round check across lists.
 
 ## Phase 2+3 validation (Stock reference, 2026-06-26)
