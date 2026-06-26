@@ -6,6 +6,19 @@ const quantitySchema = z
   .optional()
   .nullable();
 
+/** Total Project Value: strict numeric, must fit Numeric(15,2) (abs < 10^13).
+ *  Mirrors the backend validators.validate_project_value guard rail. */
+const projectValueSchema = z
+  .union([z.number(), z.string()])
+  .optional()
+  .nullable()
+  .refine((v) => v == null || v === '' || !Number.isNaN(Number(v)), {
+    message: 'Total project value must be a number.',
+  })
+  .refine((v) => v == null || v === '' || Number.isNaN(Number(v)) || Math.abs(Number(v)) < 1e13, {
+    message: 'Total project value is too large (max 9,999,999,999,999.99).',
+  });
+
 const lineSchema = z.object({
   item_code: z.string().max(500).optional().nullable(),
   quantity: quantitySchema,
@@ -22,7 +35,7 @@ export const PurchaseRequestSchema = z.object({
   project_title: z.string().max(500).optional().nullable(),
   purpose: z.string().max(500).optional().nullable(),
   delivery_address: z.string().max(2000).optional().nullable(),
-  total_project_value: quantitySchema,
+  total_project_value: projectValueSchema,
   total_project_value_text: z.string().max(2000).optional().nullable(),
   sponsor_subject: z.string().max(500).optional().nullable(),
   sponsor_subject_other: z.string().max(2000).optional().nullable(),

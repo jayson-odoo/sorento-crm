@@ -37,6 +37,7 @@ from app.schemas.procurement import (
     PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate, PurchaseRequestUpdateAndReply,
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
+from app.services.validators import validate_project_value
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -4537,25 +4538,12 @@ class PurchaseRequestService:
         if expected_delivery_date is None:
             expected_delivery_date = self._parse_date(getattr(payload, "date_of_delivery", None))
 
-        # total_project_value: numeric -> column; descriptive text -> total_project_value_text
-        raw_tpv = getattr(payload, "total_project_value", None)
-        total_project_value = None
+        # Strict numeric (shared guard rail with portal): non-numeric / too-large
+        # are rejected. Descriptive text is deprecated; new rows store numeric only.
+        total_project_value = validate_project_value(
+            getattr(payload, "total_project_value", None)
+        )
         total_project_value_text = None
-        if raw_tpv is not None:
-            if isinstance(raw_tpv, Decimal):
-                total_project_value = raw_tpv
-            elif isinstance(raw_tpv, str):
-                s = raw_tpv.strip()
-                if s:
-                    try:
-                        total_project_value = Decimal(s)
-                    except (InvalidOperation, ValueError):
-                        total_project_value_text = s
-        # Numeric(15,2): abs value must be < 10^13 or the DB raises a raw 500.
-        if total_project_value is not None and abs(total_project_value) >= Decimal(10) ** 13:
-            raise handle_validation_error(
-                "Total project value is too large (max 9,999,999,999,999.99)."
-            )
 
         contact_id = getattr(payload, "contact_id", None) or None
         space_id = getattr(payload, "space_id", None) or None
@@ -4692,24 +4680,11 @@ class PurchaseRequestService:
         if expected_delivery_date is None:
             expected_delivery_date = self._parse_date(getattr(payload, "date_of_delivery", None))
 
-        raw_tpv = getattr(payload, "total_project_value", None)
-        total_project_value = None
-        total_project_value_text = None
-        if raw_tpv is not None:
-            if isinstance(raw_tpv, Decimal):
-                total_project_value = raw_tpv
-            elif isinstance(raw_tpv, str):
-                s = raw_tpv.strip()
-                if s:
-                    try:
-                        total_project_value = Decimal(s)
-                    except (InvalidOperation, ValueError):
-                        total_project_value_text = s
-        # Numeric(15,2): abs value must be < 10^13 or the DB raises a raw 500.
-        if total_project_value is not None and abs(total_project_value) >= Decimal(10) ** 13:
-            raise handle_validation_error(
-                "Total project value is too large (max 9,999,999,999,999.99)."
-            )
+        # Strict numeric (shared guard rail with portal). Legacy total_project_value_text
+        # on existing rows is preserved (not written from this strict-numeric path).
+        total_project_value = validate_project_value(
+            getattr(payload, "total_project_value", None)
+        )
 
         contact_id = getattr(payload, "contact_id", None) or None
         space_id = getattr(payload, "space_id", None) or None
@@ -4722,7 +4697,6 @@ class PurchaseRequestService:
         row.purpose = payload.purpose
         row.delivery_address = getattr(payload, "delivery_address", None)
         row.total_project_value = total_project_value
-        row.total_project_value_text = total_project_value_text
         ext_sponsor_subject, ext_sponsor_subject_other = self._normalize_sponsor_subject(
             getattr(payload, "request_type", None),
             getattr(payload, "sponsor_subject", None),

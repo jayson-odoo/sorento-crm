@@ -42,6 +42,7 @@ from app.services.error_handler import (
     handle_validation_error,
 )
 from app.services.integration_service import RespondClient
+from app.services.validators import validate_project_value
 
 logger = logging.getLogger(__name__)
 
@@ -1111,21 +1112,9 @@ class PortalService:
                 if field in self._date_fields(kind):
                     value = self._coerce_date(value)
                 if field in self._decimal_fields(kind):
-                    coerced = self._coerce_decimal(value)
-                    # Reject non-numeric input instead of silently saving NULL.
-                    # Empty already became None above (allowed); a non-empty value
-                    # that won't parse is a user error, not a discard.
-                    if coerced is None and value not in (None, ""):
-                        raise handle_validation_error(
-                            "Total project value must be a number."
-                        )
-                    # Numeric(15,2): absolute value must be < 10^13, else the DB
-                    # raises NumericValueOutOfRange (an ugly 500). Reject up front.
-                    if coerced is not None and abs(coerced) >= Decimal(10) ** 13:
-                        raise handle_validation_error(
-                            "Total project value is too large (max 9,999,999,999,999.99)."
-                        )
-                    value = coerced
+                    # Shared guard rail: portal save enforces the same numeric +
+                    # range rules as system save (validators.validate_project_value).
+                    value = validate_project_value(value)
                 if (
                     kind == "stock_inquiry"
                     and field == "quantity"

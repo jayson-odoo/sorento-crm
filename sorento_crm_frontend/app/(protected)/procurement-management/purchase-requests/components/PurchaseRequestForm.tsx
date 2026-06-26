@@ -446,15 +446,21 @@ export default function PurchaseRequestForm({
                   <>
                     <FormField
                       control={form.control}
-                      name="total_project_value_text"
+                      name="total_project_value"
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Total Project Value</FormLabel>
                           <FormControl>
                             <Input
-                              placeholder="e.g. 800K"
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              placeholder="e.g. 1234.00"
                               {...field}
                               value={field.value ?? ''}
+                              onChange={(e) =>
+                                field.onChange(e.target.value === '' ? null : e.target.value)
+                              }
                             />
                           </FormControl>
                           <FormMessage />
