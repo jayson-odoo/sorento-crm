@@ -21,7 +21,7 @@ export interface ToolbarHeadingProps {
 
 export const Toolbar = ({ children }: ToolbarProps) => {
   return (
-    <div className="flex items-center justify-between grow gap-2.5 pb-5">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between grow pb-5">
       {children}
     </div>
   );

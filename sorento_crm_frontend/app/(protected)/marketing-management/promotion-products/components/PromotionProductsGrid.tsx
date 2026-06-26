@@ -83,7 +83,7 @@ export default function PromotionProductsGrid({ promotionId }: PromotionProducts
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between">
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <CardTitle>Products in Promotion</CardTitle>
         <DataGridColumnVisibility
           table={table}

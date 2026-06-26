@@ -168,7 +168,7 @@ export default function SupplierForm({ supplierId, onSuccess }: SupplierFormProp
             {/* Basic Information */}
             <div className="space-y-4">
               <h3 className="text-lg font-semibold">Basic Information</h3>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
                   name="supplier_code"
@@ -205,7 +205,7 @@ export default function SupplierForm({ supplierId, onSuccess }: SupplierFormProp
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
                   name="contact_name"
@@ -235,7 +235,7 @@ export default function SupplierForm({ supplierId, onSuccess }: SupplierFormProp
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
                   name="phone_number"
@@ -297,7 +297,7 @@ export default function SupplierForm({ supplierId, onSuccess }: SupplierFormProp
                 )}
               />
 
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 <FormField
                   control={form.control}
                   name="city"
@@ -359,7 +359,7 @@ export default function SupplierForm({ supplierId, onSuccess }: SupplierFormProp
             {/* Payment Terms */}
             <div className="space-y-4">
               <h3 className="text-lg font-semibold">Payment Terms</h3>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
                   name="payment_terms_days"

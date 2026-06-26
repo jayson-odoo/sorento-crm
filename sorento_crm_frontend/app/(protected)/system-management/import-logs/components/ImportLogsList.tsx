@@ -194,7 +194,7 @@ export default function ImportLogsList() {
       isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between gap-3">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative">
             <Input
               placeholder="Filter by entity type..."

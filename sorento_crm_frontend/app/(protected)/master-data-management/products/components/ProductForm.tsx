@@ -347,7 +347,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                   )}
                 />
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
                     name="category_id"
@@ -389,7 +389,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
                     name="item_type"
@@ -596,7 +596,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                   )}
                 />
 
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                   <FormField
                     control={form.control}
                     name="dimensions_length"
@@ -681,7 +681,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                   )}
                 />
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
                     name="has_serial_tracking"
@@ -725,7 +725,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
                     name="reorder_level"

@@ -116,7 +116,7 @@ export default function EmailTemplateForm({ open, onOpenChange, template, onSave
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <div className="md:col-span-2 space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label htmlFor="et-code">Code</Label>
                 <Input

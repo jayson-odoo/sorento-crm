@@ -250,7 +250,7 @@ export default function ProductSuppliersSection({
       <CardContent className="space-y-4">
         {/* Add Supplier Section */}
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label>Supplier *</Label>
               <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>

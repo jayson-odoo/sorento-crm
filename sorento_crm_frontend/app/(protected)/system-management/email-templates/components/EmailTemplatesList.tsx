@@ -181,7 +181,7 @@ export default function EmailTemplatesList() {
       isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex items-center justify-between gap-2">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <Input
             placeholder="Search by code, name, subject"
             value={query}

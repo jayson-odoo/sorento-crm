@@ -579,7 +579,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
 
       {/* Products Section */}
       <Card>
-        <CardHeader className="flex-row items-center justify-between gap-4">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div className="space-y-1 min-w-0">
             <CardTitle>Products in Promotion</CardTitle>
           </div>
@@ -936,7 +936,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                         </Button>
                       ) : null}
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-0.5">
                         <Label className="text-xs">Purchase qty</Label>
                         <Input

@@ -361,7 +361,7 @@ export default function SPOAllocationsList() {
       tableLayout={{ columnsVisibility: true }}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between gap-2 flex-nowrap">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2 min-w-0 shrink">
             <div className="relative shrink-0 w-40 sm:w-44">
               <Search className="size-4 text-muted-foreground absolute start-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />

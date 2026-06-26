@@ -148,7 +148,7 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
   return (
     <>
       <Card>
-        <CardHeader className="flex-row items-center justify-between gap-4 flex-wrap">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between gap-4">
           <CardTitle>Delivery Order Lines</CardTitle>
           <div className="flex gap-2">
             <Button
@@ -267,7 +267,7 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
               <Label>Warehouse ID</Label>
               <Input value={formWarehouseId} onChange={(e) => setFormWarehouseId(e.target.value)} placeholder="UUID" />
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div className="grid gap-2">
                 <Label>Quantity</Label>
                 <Input type="number" value={formQuantity} onChange={(e) => setFormQuantity(e.target.value)} />
@@ -277,7 +277,7 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
                 <Input type="number" value={formUnitPrice} onChange={(e) => setFormUnitPrice(e.target.value)} />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div className="grid gap-2">
                 <Label>Discount</Label>
                 <Input type="number" value={formDiscount} onChange={(e) => setFormDiscount(e.target.value)} />
@@ -287,7 +287,7 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
                 <Input type="number" value={formTotal} onChange={(e) => setFormTotal(e.target.value)} />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
               <div className="grid gap-2">
                 <Label>Tax</Label>
                 <Input type="number" value={formTax} onChange={(e) => setFormTax(e.target.value)} />

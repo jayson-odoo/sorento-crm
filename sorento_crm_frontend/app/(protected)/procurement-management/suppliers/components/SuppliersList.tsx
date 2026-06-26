@@ -150,7 +150,7 @@ export default function SuppliersList() {
       tableLayout={{ columnsVisibility: true }}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between flex-wrap gap-2">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <div className="relative">
               <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />

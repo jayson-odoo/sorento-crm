@@ -348,7 +348,7 @@ export default function ComplaintsList() {
       isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between gap-4 flex-wrap">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2 flex-wrap">
             <div className="relative">
               <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />

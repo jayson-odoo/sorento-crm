@@ -774,7 +774,7 @@ const ProductsList = () => {
             </div>
           </PopoverContent>
         </Popover>
-        <div className="flex items-center gap-2 ml-auto">
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
           {selectedRowIds.length > 0 && (
             <Button
               variant="outline"

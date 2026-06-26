@@ -290,7 +290,7 @@ export default function ImportJobsList() {
       isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between gap-3">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex gap-2 items-center">
             <Input
               placeholder="Filter by type..."

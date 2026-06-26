@@ -45,7 +45,7 @@ export default function ComplaintRootCausesList() {
   return (
     <>
       <Card>
-        <CardHeader className="flex-row items-center justify-between flex-wrap gap-2.5">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative">
             <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
             <Input

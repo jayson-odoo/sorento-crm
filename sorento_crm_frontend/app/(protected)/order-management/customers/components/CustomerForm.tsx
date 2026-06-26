@@ -138,7 +138,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
             {/* Basic Information */}
             <div className="space-y-4">
               <h3 className="text-lg font-semibold">Basic Information</h3>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
                   name="customer_code"
@@ -175,7 +175,7 @@ export default function CustomerForm({ customerId, onSuccess }: CustomerFormProp
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
                   name="email"

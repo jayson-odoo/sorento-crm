@@ -200,7 +200,7 @@ export default function FormDetail({ formId }: FormDetailProps) {
               <p className="text-sm text-muted-foreground">Purpose</p>
               <p className="font-medium">{form.purpose || '-'}</p>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <p className="text-sm text-muted-foreground">Language</p>
                 <p className="font-medium">{form.language.toUpperCase()}</p>
@@ -210,7 +210,7 @@ export default function FormDetail({ formId }: FormDetailProps) {
                 <p className="font-medium">{form.version}</p>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <p className="text-sm text-muted-foreground">Created At</p>
                 <p className="font-medium">{formatDate(new Date(form.created_at))}</p>

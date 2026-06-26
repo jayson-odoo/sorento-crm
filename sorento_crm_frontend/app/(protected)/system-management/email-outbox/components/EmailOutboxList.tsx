@@ -227,7 +227,7 @@ export default function EmailOutboxList() {
       isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between gap-3">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-3">
             <div className="w-48">
               <Select value={status} onValueChange={setStatus}>
@@ -279,7 +279,7 @@ export default function EmailOutboxList() {
           </DialogHeader>
           {detail ? (
             <div className="flex-1 overflow-auto space-y-4">
-              <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                 <div>
                   <div className="text-muted-foreground">Event</div>
                   <div className="font-mono">{detail.event_key}</div>

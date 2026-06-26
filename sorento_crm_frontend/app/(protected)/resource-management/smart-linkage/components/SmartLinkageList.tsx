@@ -173,7 +173,7 @@ export default function SmartLinkageList() {
       }}
     >
       <Card>
-        <CardHeader className="flex-row items-center justify-between gap-4">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div className="flex items-center gap-2 flex-1">
             <div className="relative flex-1 max-w-xs">
               <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />

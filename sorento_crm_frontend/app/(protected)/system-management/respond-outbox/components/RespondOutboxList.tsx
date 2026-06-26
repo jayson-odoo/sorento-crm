@@ -232,7 +232,7 @@ export default function RespondOutboxList() {
           </DialogHeader>
           {detail && (
             <div className="space-y-3 text-sm">
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <Field label="Sent at" value={formatDateTimeInMalaysia(detail.created_at)} />
                 <Field label="Status" value={`${detail.status}${detail.status_code ? ` (${detail.status_code})` : ''}`} />
                 <Field label="Contact" value={detail.contact_name ?? detail.contact_phone ?? detail.contact_identifier ?? '—'} />
