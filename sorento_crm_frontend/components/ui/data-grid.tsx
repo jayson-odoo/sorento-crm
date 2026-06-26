@@ -182,7 +182,12 @@ function DataGrid<TData extends object>({ children, table, listingKey, ...props 
       footer: '',
       edgeCell: '',
     },
-    standardToolbar: true,
+    // Default OFF: every list owns its toolbar (DataGridListToolbar in CardHeader,
+    // or a legacy per-page toolbar). The auto standard toolbar was almost always a
+    // DUPLICATE of the page's own toolbar. Pages that genuinely want the built-in
+    // toolbar opt in with standardToolbar set true + standardToolbarProps.
+    // (Migration: docs/plans/PLAN-unified-list-toolbar.md)
+    standardToolbar: false,
   };
 
   const mergedProps: DataGridProps<TData> = {
