@@ -21,7 +21,11 @@ Migrated 25 more real lists: system-management ×8, sla ×3, integration ×2 (in
 - Embedded sub-tables/tabs (toolbar belongs to their parent page, not the sub-table): RunLogsTable, AutomationRunsTable, EventLogTable, SLAPolicyTiersTable, FormSLATrackingTab, ContactAccessAgentsTable (×2), stock detail-page ledger.
 - CategoryTree (a recursive tree, not a DataGrid).
 
-Total migrated to canonical toolbar: ~59 real lists.
+Plus 3 parent config lists via table-lift (LookupSetsList, ComplaintResolutionsList, ComplaintRootCausesList) — child `*Table` made presentational.
+
+**Total: ~62 real standalone lists migrated to the canonical toolbar.** Every real CRM list in the app is now covered; remaining DataGrids are Metronic demos, dashboards, or embedded sub-tables (documented above).
+
+Final state: full-tree tsc clean, prod build clean, vitest 323 pass / 3 fail (3 = pre-existing `notification-channels-preference`, unrelated). Browser-validated ~15 pages across every module (incl. table-lift Lookup Sets + Conversation SLA). 
 
 Pending (user): manual last-round check across lists.
 
