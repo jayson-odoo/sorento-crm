@@ -14,6 +14,7 @@ import {
 } from '../services/purchaseRequestService';
 import type { PurchaseRequestUpdateAndReplyData } from '../services/purchaseRequestService';
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
+import { requestTypeLabel, requestTypeLabelLower } from '../lib/purchase-request-field-labels';
 
 export function usePurchaseRequests(
   params: DataGridApiFetchParams & {
@@ -57,12 +58,12 @@ export function useCreatePurchaseRequest() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: PurchaseRequestFormData) => createPurchaseRequest(data),
-    onSuccess: () => {
+    onSuccess: (_, data) => {
       queryClient.invalidateQueries({ queryKey: ['purchase-requests'] });
-      toast.success('Purchase request created successfully');
+      toast.success(`${requestTypeLabel(data?.request_type)} created successfully`);
     },
-    onError: (error: Error) =>
-      toast.error(error.message || 'Failed to create purchase request'),
+    onError: (error: Error, data) =>
+      toast.error(error.message || `Failed to create ${requestTypeLabelLower(data?.request_type)}`),
   });
 }
 
@@ -76,26 +77,26 @@ export function useUpdatePurchaseRequest() {
       id: string;
       data: Partial<PurchaseRequestFormData>;
     }) => updatePurchaseRequest(id, data),
-    onSuccess: () => {
+    onSuccess: (_, { data }) => {
       queryClient.invalidateQueries({ queryKey: ['purchase-requests'] });
       queryClient.invalidateQueries({ queryKey: ['purchase-request'] });
-      toast.success('Purchase request updated successfully');
+      toast.success(`${requestTypeLabel(data?.request_type)} updated successfully`);
     },
-    onError: (error: Error) =>
-      toast.error(error.message || 'Failed to update purchase request'),
+    onError: (error: Error, { data }) =>
+      toast.error(error.message || `Failed to update ${requestTypeLabelLower(data?.request_type)}`),
   });
 }
 
 export function useDeletePurchaseRequest() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => deletePurchaseRequest(id),
-    onSuccess: () => {
+    mutationFn: ({ id }: { id: string; requestType?: string }) => deletePurchaseRequest(id),
+    onSuccess: (_, { requestType }) => {
       queryClient.invalidateQueries({ queryKey: ['purchase-requests'] });
-      toast.success('Purchase request deleted successfully');
+      toast.success(`${requestTypeLabel(requestType)} deleted successfully`);
     },
-    onError: (error: Error) =>
-      toast.error(error.message || 'Failed to delete purchase request'),
+    onError: (error: Error, { requestType }) =>
+      toast.error(error.message || `Failed to delete ${requestTypeLabelLower(requestType)}`),
   });
 }
 

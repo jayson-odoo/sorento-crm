@@ -4667,7 +4667,7 @@ class PurchaseRequestService:
             .first()
         )
         if row is None:
-            raise handle_not_found("Purchase Request", str(header.id))
+            raise handle_not_found("Request", str(header.id))
 
         old_line_blob = self._snapshot_pr_lines_json(list(row.lines or []))
         new_line_blob = self._snapshot_pr_lines_json_from_products(getattr(payload, "products", None) or [])
@@ -5331,7 +5331,7 @@ class PurchaseRequestService:
             q = q.filter(PurchaseRequestHeader.space_id == str(space_id).strip())
         header = q.first()
         if not header:
-            raise handle_not_found("Purchase request", request_id)
+            raise handle_not_found("Request", request_id)
         return header
 
     def get_neighbour_ids(

@@ -75,12 +75,11 @@ import PurchaseRequestConversationPanel from './PurchaseRequestConversationPanel
 import { PurchaseRequestSignoffFooter } from './PurchaseRequestSignoffFooter';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
-import { purchaseRequestNumberReplyPhrase } from '../lib/purchase-request-field-labels';
-
-const REQUEST_TYPE_LABELS: Record<string, string> = {
-  purchase_request: 'Purchase Request',
-  sponsorship_form: 'Sponsorship Form',
-};
+import {
+  purchaseRequestNumberReplyPhrase,
+  requestTypeLabel,
+  requestTypeLabelLower,
+} from '../lib/purchase-request-field-labels';
 
 const DEFAULT_BASE_PATH = '/procurement-management/purchase-requests';
 const SPONSORSHIP_FORMS_PATH = '/procurement-management/sponsorship-forms';
@@ -193,7 +192,7 @@ export default function PurchaseRequestDetail({
         toast.error('Could not generate view link. You can still edit the message in chat.');
       }
     }
-    const typeLabelVal = REQUEST_TYPE_LABELS[request.request_type] ?? request.request_type;
+    const typeLabelVal = requestTypeLabel(request.request_type);
     const idPhrase = purchaseRequestNumberReplyPhrase(
       request.request_type,
       request.request_number,
@@ -291,7 +290,7 @@ export default function PurchaseRequestDetail({
   }
 
   const typeLabel =
-    REQUEST_TYPE_LABELS[request.request_type] ?? request.request_type;
+    requestTypeLabel(request.request_type);
   const isPurchaseRequest = request.request_type === 'purchase_request';
   const expectedPoDisplay =
     request.expected_po_date_text?.trim() ||
@@ -597,7 +596,7 @@ export default function PurchaseRequestDetail({
             basePath={basePath}
             currentId={requestId}
             items={requestListItems}
-            ariaLabel="purchase request"
+            ariaLabel={requestTypeLabelLower(request.request_type)}
           />
           <Button
             variant="outline"

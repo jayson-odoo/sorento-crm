@@ -48,13 +48,13 @@ export async function getPurchaseRequests(
   const response = await apiFetch(
     `/api/v1/procurement/purchase-requests?${queryParams.toString()}`,
   );
-  if (!response.ok) throw new Error('Failed to fetch purchase requests');
+  if (!response.ok) throw new Error('Failed to load records');
   return response.json();
 }
 
 export async function getPurchaseRequest(id: string): Promise<PurchaseRequestDetail> {
   const response = await apiFetch(`/api/v1/procurement/purchase-requests/${id}`);
-  if (!response.ok) throw new Error('Failed to fetch purchase request');
+  if (!response.ok) throw new Error('Failed to load record');
   return response.json();
 }
 
@@ -127,7 +127,7 @@ export async function createPurchaseRequest(
   if (!response.ok) {
     const error = await response
       .json()
-      .catch(() => ({ message: 'Failed to create purchase request' }));
+      .catch(() => ({ message: 'Failed to create request' }));
     throw new Error(error.detail || error.message);
   }
   return response.json();
@@ -146,7 +146,7 @@ export async function updatePurchaseRequest(
   if (!response.ok) {
     const error = await response
       .json()
-      .catch(() => ({ message: 'Failed to update purchase request' }));
+      .catch(() => ({ message: 'Failed to update request' }));
     throw new Error(error.detail || error.message);
   }
   return response.json();
@@ -159,7 +159,7 @@ export async function deletePurchaseRequest(id: string): Promise<void> {
   if (!response.ok) {
     const error = await response
       .json()
-      .catch(() => ({ message: 'Failed to delete purchase request' }));
+      .catch(() => ({ message: 'Failed to delete request' }));
     throw new Error(error.detail || error.message);
   }
 }

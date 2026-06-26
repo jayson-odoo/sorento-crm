@@ -36,7 +36,7 @@ export default function PurchaseRequestDeleteDialog({
   const handleDelete = async () => {
     setIsDeleting(true);
     try {
-      await deleteRequest.mutateAsync(request.id);
+      await deleteRequest.mutateAsync({ id: request.id, requestType: request.request_type });
       closeDialog();
       onSuccess?.();
     } catch {
