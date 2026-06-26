@@ -93,6 +93,21 @@ export type ListToolbarExport<TData extends object> = {
 };
 
 /**
+ * Server-side ListQuery export (orders/products/suppliers/promotions/workflows).
+ * Opens `ListQueryExportDialog` which exports the full FILTERED set server-side
+ * with column selection — this already satisfies "export reflects columns / full
+ * set", so it is intentionally NOT selection-gated (deviation from D4, documented
+ * in the plan). If rows ARE selected they are passed as `selectedRecordIds`.
+ */
+export type ListToolbarListQueryExport = {
+  kind: 'listQuery';
+  resourceKey: ListQueryResourceKey;
+  getPayload: () => Record<string, unknown>;
+  filename?: string;
+  workflowDefinitionId?: string | null;
+};
+
+/**
  * Drives the "select all N records" banner (Odoo pattern, D4/F). The page owns
  * the `active` boolean; when the user selects all rows on the page AND more rows
  * exist beyond the loaded page, the banner offers to extend the selection to the
@@ -115,8 +130,9 @@ export type DataGridListToolbarProps<TData extends object> = {
   searchSlot?: ReactNode;
   /** Omit to hide the Filters button entirely (D3). */
   filters?: ListToolbarFilters;
-  /** Export config, or `false` to hide Export. Default: client export of selected rows. */
-  exportConfig?: ListToolbarExport<TData> | false;
+  /** Export config, or `false` to hide Export. Default: selection-gated client export;
+   *  pass a `{kind:'listQuery'}` config for server-side filtered-set export. */
+  exportConfig?: ListToolbarExport<TData> | ListToolbarListQueryExport | false;
   /** Show the Columns personalization button. Default true. */
   showColumns?: boolean;
   /** Optional manual refresh (wire to React Query refetch). Renders after Columns. */
@@ -195,9 +211,17 @@ export function DataGridListToolbar<TData extends object>({
   const selectedCount = selectedRows.length;
   const hasSelection = selectedCount > 0;
 
+  const isListQueryExport =
+    exportConfig !== false && exportConfig != null && 'kind' in exportConfig && exportConfig.kind === 'listQuery';
+  // The selection-gated client export config (null when export is off or listQuery).
+  const selectionExport =
+    exportConfig !== false && exportConfig != null && !('kind' in exportConfig) ? exportConfig : null;
+  const listQueryExport =
+    exportConfig !== false && exportConfig != null && 'kind' in exportConfig ? exportConfig : null;
   const allRecordsActive = Boolean(selectAllMatching?.active);
-  const canServerExport = exportConfig !== false && Boolean(exportConfig?.allRecords);
-  const exportEnabled = exportConfig !== false && (hasSelection || allRecordsActive);
+  // ListQuery export is always available (filtered-set, server-side). Selection
+  // export is gated on having a selection (or the all-records banner). (D4)
+  const exportEnabled = exportConfig !== false && (isListQueryExport || hasSelection || allRecordsActive);
 
   // Columns eligible for export — exclude the structural select/actions columns.
   const exportableColumns = useMemo(
@@ -232,8 +256,8 @@ export function DataGridListToolbar<TData extends object>({
     try {
       // All-records server export path (D4/F): full filtered set, fetched
       // server-side, never the loaded page rows.
-      if (allRecordsActive && exportConfig !== false && exportConfig?.allRecords) {
-        await exportConfig.allRecords.onExport(chosen);
+      if (allRecordsActive && selectionExport?.allRecords) {
+        await selectionExport.allRecords.onExport(chosen);
         setExportOpen(false);
         return;
       }
@@ -244,7 +268,7 @@ export function DataGridListToolbar<TData extends object>({
         return out;
       });
       const cols: ColumnOption[] = chosen.map((id) => ({ key: id, label: columnLabel(id), selected: true }));
-      const filename = (exportConfig && exportConfig.filename) || 'export.xlsx';
+      const filename = selectionExport?.filename || 'export.xlsx';
       await generateExcelFile(data, cols, filename);
       toast.success(`Exported ${selectedRows.length} row(s)`);
       setExportOpen(false);
@@ -273,7 +297,12 @@ export function DataGridListToolbar<TData extends object>({
 
   const exportButtonEl =
     exportConfig === false ? null : exportEnabled ? (
-      <Button variant="outline" size="sm" className="gap-1.5" onClick={openExport}>
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-1.5"
+        onClick={isListQueryExport ? () => setExportOpen(true) : openExport}
+      >
         <Download className="size-4" />
         Export
       </Button>
@@ -451,7 +480,9 @@ export function DataGridListToolbar<TData extends object>({
       ) : null}
      </div>
 
-      {/* Column-selection export modal — pre-ticked to visible columns (D4). */}
+      {/* Column-selection export modal — pre-ticked to visible columns (D4).
+          Only for selection (client) export; listQuery uses its own dialog below. */}
+      {!isListQueryExport && (
       <Dialog open={exportOpen} onOpenChange={setExportOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -492,6 +523,20 @@ export function DataGridListToolbar<TData extends object>({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      )}
+
+      {/* ListQuery server export dialog (filtered set, column selection). */}
+      {listQueryExport ? (
+        <ListQueryExportDialog
+          resourceKey={listQueryExport.resourceKey}
+          open={exportOpen}
+          onOpenChange={setExportOpen}
+          filename={listQueryExport.filename}
+          getPayload={listQueryExport.getPayload}
+          selectedRecordIds={hasSelection ? selectedRows.map((r) => r.id) : undefined}
+          workflowDefinitionId={listQueryExport.workflowDefinitionId}
+        />
+      ) : null}
 
       {/* ListQuery advanced filter dialog (server-side, canonical). */}
       {filters?.kind === 'listQuery' ? (
