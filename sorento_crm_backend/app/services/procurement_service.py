@@ -4551,6 +4551,11 @@ class PurchaseRequestService:
                         total_project_value = Decimal(s)
                     except (InvalidOperation, ValueError):
                         total_project_value_text = s
+        # Numeric(15,2): abs value must be < 10^13 or the DB raises a raw 500.
+        if total_project_value is not None and abs(total_project_value) >= Decimal(10) ** 13:
+            raise handle_validation_error(
+                "Total project value is too large (max 9,999,999,999,999.99)."
+            )
 
         contact_id = getattr(payload, "contact_id", None) or None
         space_id = getattr(payload, "space_id", None) or None
@@ -4700,6 +4705,11 @@ class PurchaseRequestService:
                         total_project_value = Decimal(s)
                     except (InvalidOperation, ValueError):
                         total_project_value_text = s
+        # Numeric(15,2): abs value must be < 10^13 or the DB raises a raw 500.
+        if total_project_value is not None and abs(total_project_value) >= Decimal(10) ** 13:
+            raise handle_validation_error(
+                "Total project value is too large (max 9,999,999,999,999.99)."
+            )
 
         contact_id = getattr(payload, "contact_id", None) or None
         space_id = getattr(payload, "space_id", None) or None
