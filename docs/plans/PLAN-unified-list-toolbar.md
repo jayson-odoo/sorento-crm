@@ -153,6 +153,17 @@ order-management: OrdersList*, CustomersList, OrderStatusesList · master-data: 
 ### TODO before listQuery pages
 Add a `listQuery` export variant to `DataGridListToolbar.exportConfig` (reuse `ListQueryExportDialog`, non-selection-gated — exports the filtered set server-side, which already satisfies "reflects columns / full set"). Deviation from D4 selection-gating is intentional for listQuery resources and documented here.
 
+## Phase 4 — sweep PROGRESS (2026-06-26)
+
+- Default `standardToolbar=false` (global dup kill) — done, validated.
+- Toolbar superset: refresh, select-all banner, hybrid client/all-records export, listQuery server-export — done.
+- **24 key entity lists migrated** (master-data ×3, order ×3, procurement ×5, marketing ×2, complaint, sla, forms, user-management ×6, inventory ×3, workflow ×2). Full-tree tsc clean. Committed.
+- Cross-module browser validation PASSED: Stock, Products, Brands, Orders, Complaints, GRN, Promotions, Users — single canonical toolbar, controls-left, selection-gated export, bulk strip (Users dynamic bulk actions verified), no duplication.
+- Restore-gaps batch (in progress): ~9 long-tail lists that lost Columns/Export (email-templates, respond-workspaces, respond-outbox, automations, team-pending, log-list, attachment panels/Files page). Skipped: demos (store-admin/*, demo1/*), dashboards (SLAKpiDashboard), nested sub-tables (RunLogsTable, AutomationRunsTable, stock-detail ledger).
+- Tests landed: vitest `data-grid-list-toolbar.test.tsx` (6), pytest `test_list_pagination_limit.py` (2).
+
+Agent deviations (no invented functionality): Import/bulk-delete only where a service exists; warehouses active-filter dropped (hook doesn't thread it); some status filters client-side where GET lacks the param.
+
 ## Key files (from codebase survey)
 
 - `components/ui/data-grid.tsx` — DataGrid, defaults `standardToolbar: true`.
