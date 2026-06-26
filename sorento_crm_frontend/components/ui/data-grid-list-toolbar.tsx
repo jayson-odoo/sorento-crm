@@ -59,6 +59,8 @@ export type ToolbarAction = {
   /** Tooltip shown when disabled. */
   disabledReason?: string;
   destructive?: boolean;
+  /** Optional `data-guide-target` for user-guide deep-link spotlighting. */
+  dataGuideTarget?: string;
 };
 
 export type ListToolbarFilters =
@@ -162,7 +164,9 @@ function ActionButton({ action }: { action: ToolbarAction }) {
   if (action.href && !action.disabled) {
     return (
       <Button variant="outline" size="sm" className={className} asChild>
-        <Link href={action.href}>{inner}</Link>
+        <Link href={action.href} data-guide-target={action.dataGuideTarget}>
+          {inner}
+        </Link>
       </Button>
     );
   }
@@ -173,6 +177,7 @@ function ActionButton({ action }: { action: ToolbarAction }) {
       className={className}
       onClick={action.onClick}
       disabled={action.disabled}
+      data-guide-target={action.dataGuideTarget}
     >
       {inner}
     </Button>
@@ -431,9 +436,10 @@ export function DataGridListToolbar<TData extends object>({
                       onClick={action.onClick}
                       className={action.destructive ? 'text-destructive' : undefined}
                       asChild={Boolean(action.href && !action.disabled)}
+                      data-guide-target={action.href && !action.disabled ? undefined : action.dataGuideTarget}
                     >
                       {action.href && !action.disabled ? (
-                        <Link href={action.href}>
+                        <Link href={action.href} data-guide-target={action.dataGuideTarget}>
                           {Icon ? <Icon className="size-4" /> : null}
                           {action.label}
                         </Link>

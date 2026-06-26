@@ -23,10 +23,7 @@ import {
   Copy,
   Upload,
   Download,
-  Filter,
-  Settings,
   SlidersHorizontal,
-  Columns3,
 } from 'lucide-react';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -38,13 +35,10 @@ import {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import {
-  DataGridTable,
-  DataGridTableRowSelect,
-  DataGridTableRowSelectAll,
-} from '@/components/ui/data-grid-table';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import {
@@ -55,14 +49,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { useProducts } from '../hooks/useProducts';
 import { useProductFilters } from '../hooks/useProductFilters';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
 import { useBrandSelectQuery } from '../../shared/hooks/use-brand-select-query';
@@ -73,7 +59,6 @@ import ProductBulkDeleteDialog from './ProductBulkDeleteDialog';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { useImportJobDrawer } from '@/components/upload-activity';
 import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
-import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
 import { postListQuerySearch } from '@/lib/list-query/listQueryService';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -118,6 +103,7 @@ const ProductsList = () => {
     { id: 'created_at', desc: true },
   ]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchInput, setSearchInput] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string | null>('all');
@@ -157,6 +143,7 @@ const ProductsList = () => {
     const pageSizeParam = searchParams.get('limit');
     if (search) {
       setSearchQuery(search);
+      setSearchInput(search);
       setSearch(search);
     }
     if (category) {
@@ -192,9 +179,6 @@ const ProductsList = () => {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [advancedFilterDialogOpen, setAdvancedFilterDialogOpen] = useState(false);
-  const [exportDialogOpen, setExportDialogOpen] = useState(false);
-
-  const selectedRowIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
 
   const { data: categories } = useProductCategorySelectQuery();
   const { data: brands } = useBrandSelectQuery();
@@ -367,15 +351,7 @@ const ProductsList = () => {
 
   const columns = useMemo<ColumnDef<ProductListItem>[]>(
     () => [
-      {
-        id: 'select',
-        header: () => <DataGridTableRowSelectAll />,
-        cell: ({ row }) => <DataGridTableRowSelect row={row} />,
-        size: 40,
-        enableSorting: false,
-        meta: { skeleton: <Skeleton className="size-5" /> },
-        enableResizing: false,
-      },
+      buildSelectColumn<ProductListItem>(),
       {
         accessorKey: 'product_code',
         id: 'product_code',
@@ -655,209 +631,24 @@ const ProductsList = () => {
     enableRowSelection: true,
   });
 
-  const DataGridToolbar = () => {
-    const [inputValue, setInputValue] = useState(searchQuery);
-    useEffect(() => {
-      setInputValue(searchQuery);
-    }, [searchQuery]);
-
-    const handleSearch = () => {
-      setSearchQuery(inputValue);
-      setSearch(inputValue || undefined);
-      setPagination({ ...pagination, pageIndex: 0 });
-    };
-
-    return (
-      <CardHeader className="flex flex-row flex-wrap items-center gap-2 py-5">
-        {discontinuedBatchId && (
-          <div className="basis-full flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
-            <span>Showing only the products from a recent “products discontinued” notification.</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => router.replace(pathname)}
-            >
-              Clear filter
-            </Button>
-          </div>
-        )}
-        <div className="relative flex-1 min-w-[140px] max-w-[280px]">
-          <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-          <Input
-            placeholder="Search products..."
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-            disabled={isLoading}
-            className="ps-9 w-full"
-          />
-          {searchQuery.length > 0 && (
-            <Button
-              mode="icon"
-              variant="dim"
-              className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-              onClick={() => {
-                setSearchQuery('');
-                setInputValue('');
-                setSearch(undefined);
-              }}
-            >
-              <X />
-            </Button>
-          )}
-        </div>
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="icon" disabled={isLoading} title="Filters" className="relative">
-              <Filter className="size-4" />
-              {hasActiveFilters && (
-                <span className="absolute -top-1 -end-1 size-2.5 rounded-full bg-primary" />
-              )}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-72" align="start">
-            <div className="space-y-3">
-              <h4 className="font-medium text-sm">Filters</h4>
-              <Select
-                onValueChange={handleCategorySelection}
-                value={selectedCategory || 'all'}
-                disabled={isLoading}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All categories</SelectItem>
-                  {(categories ?? []).map((cat) => (
-                    <SelectItem key={cat.id} value={cat.id}>
-                      {cat.category_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                onValueChange={handleBrandSelection}
-                value={selectedBrand || 'all'}
-                disabled={isLoading}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Brand" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All brands</SelectItem>
-                  {(brands ?? []).map((brand) => (
-                    <SelectItem key={brand.id} value={brand.id}>
-                      {brand.brand_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                onValueChange={handleStatusSelection}
-                value={selectedStatus || 'all'}
-                disabled={isLoading}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All status</SelectItem>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="inactive">Inactive</SelectItem>
-                </SelectContent>
-              </Select>
-              {hasActiveFilters && (
-                <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">
-                  Clear Filters
-                </Button>
-              )}
-            </div>
-          </PopoverContent>
-        </Popover>
-        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          {selectedRowIds.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setBulkDeleteDialogOpen(true)}
-              className="text-destructive border-destructive/50 hover:bg-destructive/10"
-            >
-              <Trash2 className="size-4 mr-2" />
-              Delete selected ({selectedRowIds.length})
-            </Button>
-          )}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" disabled={isLoading} title="Import options">
-                <Settings className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                disabled={isLoading}
-                onClick={() =>
-                  generateExcelFile(
-                    [{}],
-                    PRODUCT_IMPORT_COLUMNS,
-                    'products_import_template.xlsx',
-                  )
-                }
-              >
-                <Download className="size-4" />
-                Download template
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={isLoading}
-                onClick={() => setUploadDialogOpen(true)}
-                data-guide-target="master-data.products.upload-button"
-              >
-                <Upload className="size-4" />
-                Upload
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button
-            variant="outline"
-            size="icon"
-            disabled={isLoading}
-            title="Advanced filters"
-            className="relative"
-            onClick={() => setAdvancedFilterDialogOpen(true)}
-          >
-            <SlidersHorizontal className="size-4" />
-            {advancedFilter ? (
-              <span className="absolute -top-1 -end-1 size-2.5 rounded-full bg-primary" />
-            ) : null}
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            disabled={isLoading}
-            title="Export"
-            onClick={() => setExportDialogOpen(true)}
-          >
-            <Download className="size-4" />
-          </Button>
-          <DataGridColumnVisibility
-            table={table}
-            trigger={
-              <Button variant="outline" size="sm" className="gap-1">
-                <Columns3 className="size-4" />
-                Columns
-              </Button>
-            }
-          />
-          <Button
-            disabled={isLoading}
-            onClick={() => router.push('/master-data-management/products/new')}
-          >
-            <Plus className="size-4" />
-            Create Product
-          </Button>
-        </div>
-        </CardHeader>
-    );
+  const handleSearch = () => {
+    setSearchQuery(searchInput);
+    setSearch(searchInput || undefined);
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   };
+
+  const simpleFiltersActiveCount =
+    (selectedCategory && selectedCategory !== 'all' ? 1 : 0) +
+    (selectedBrand && selectedBrand !== 'all' ? 1 : 0) +
+    (selectedStatus && selectedStatus !== 'all' ? 1 : 0);
+
+  const getExportPayload = () => ({
+    filter: advancedFilter ?? undefined,
+    quick_search: searchQuery || undefined,
+    category_id: selectedCategory && selectedCategory !== 'all' ? selectedCategory : undefined,
+    brand_id: selectedBrand && selectedBrand !== 'all' ? selectedBrand : undefined,
+    product_status: selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
+  });
 
   return (
     <DataGrid
@@ -876,7 +667,154 @@ const ProductsList = () => {
       }}
     >
       <Card>
-        <DataGridToolbar />
+        <CardHeader className="block">
+          {discontinuedBatchId && (
+            <div className="mb-3 flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+              <span>Showing only the products from a recent “products discontinued” notification.</span>
+              <Button variant="ghost" size="sm" onClick={() => router.replace(pathname)}>
+                Clear filter
+              </Button>
+            </div>
+          )}
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search products..."
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                  disabled={isLoading}
+                  className="ps-9 w-64"
+                />
+                {searchInput.length > 0 && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setSearchInput('');
+                      setSearch(undefined);
+                    }}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            filters={{
+              kind: 'custom',
+              active: simpleFiltersActiveCount > 0,
+              activeCount: simpleFiltersActiveCount,
+              content: (
+                <div className="space-y-3">
+                  <Select
+                    onValueChange={handleCategorySelection}
+                    value={selectedCategory || 'all'}
+                    disabled={isLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All categories</SelectItem>
+                      {(categories ?? []).map((cat) => (
+                        <SelectItem key={cat.id} value={cat.id}>
+                          {cat.category_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    onValueChange={handleBrandSelection}
+                    value={selectedBrand || 'all'}
+                    disabled={isLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Brand" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All brands</SelectItem>
+                      {(brands ?? []).map((brand) => (
+                        <SelectItem key={brand.id} value={brand.id}>
+                          {brand.brand_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select
+                    onValueChange={handleStatusSelection}
+                    value={selectedStatus || 'all'}
+                    disabled={isLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All status</SelectItem>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {hasActiveFilters && (
+                    <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">
+                      Clear Filters
+                    </Button>
+                  )}
+                </div>
+              ),
+            }}
+            exportConfig={{
+              kind: 'listQuery',
+              resourceKey: 'products',
+              filename: 'products_export.xlsx',
+              getPayload: getExportPayload,
+            }}
+            primaryAction={
+              <Button
+                disabled={isLoading}
+                onClick={() => router.push('/master-data-management/products/new')}
+              >
+                <Plus className="size-4" />
+                Create Product
+              </Button>
+            }
+            secondaryActions={[
+              {
+                key: 'advanced-filter',
+                label: 'Advanced filters',
+                icon: SlidersHorizontal,
+                onClick: () => setAdvancedFilterDialogOpen(true),
+              },
+              {
+                key: 'template',
+                label: 'Download template',
+                icon: Download,
+                onClick: () =>
+                  generateExcelFile([{}], PRODUCT_IMPORT_COLUMNS, 'products_import_template.xlsx'),
+              },
+              {
+                key: 'import',
+                label: 'Import',
+                icon: Upload,
+                onClick: () => setUploadDialogOpen(true),
+                dataGuideTarget: 'master-data.products.upload-button',
+              },
+            ]}
+            bulkActions={[
+              {
+                key: 'delete',
+                label: 'Delete',
+                icon: Trash2,
+                destructive: true,
+                onClick: () => setBulkDeleteDialogOpen(true),
+              },
+            ]}
+          />
+        </CardHeader>
         {isError ? (
           <div className="px-5 pb-2 text-sm text-destructive">
             {error instanceof Error ? error.message : 'Failed to load products'}
@@ -931,24 +869,10 @@ const ProductsList = () => {
         initialFilter={advancedFilter}
         onApply={setAdvancedFilter}
       />
-      <ListQueryExportDialog
-        resourceKey="products"
-        open={exportDialogOpen}
-        onOpenChange={setExportDialogOpen}
-        filename="products_export.xlsx"
-        selectedRecordIds={selectedRowIds.length > 0 ? selectedRowIds : undefined}
-        getPayload={() => ({
-          filter: advancedFilter ?? undefined,
-          quick_search: searchQuery || undefined,
-          category_id: selectedCategory && selectedCategory !== 'all' ? selectedCategory : undefined,
-          brand_id: selectedBrand && selectedBrand !== 'all' ? selectedBrand : undefined,
-          product_status: selectedStatus && selectedStatus !== 'all' ? selectedStatus : undefined,
-        })}
-      />
       <ProductBulkDeleteDialog
         open={bulkDeleteDialogOpen}
         onOpenChange={setBulkDeleteDialogOpen}
-        productIds={selectedRowIds}
+        productIds={selectedRowIds(table)}
         onSuccess={() => {
           setRowSelection({});
           queryClient.invalidateQueries({ queryKey: ['products'] });
