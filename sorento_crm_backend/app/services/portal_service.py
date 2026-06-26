@@ -1119,6 +1119,12 @@ class PortalService:
                         raise handle_validation_error(
                             "Total project value must be a number."
                         )
+                    # Numeric(15,2): absolute value must be < 10^13, else the DB
+                    # raises NumericValueOutOfRange (an ugly 500). Reject up front.
+                    if coerced is not None and abs(coerced) >= Decimal(10) ** 13:
+                        raise handle_validation_error(
+                            "Total project value is too large (max 9,999,999,999,999.99)."
+                        )
                     value = coerced
                 if (
                     kind == "stock_inquiry"
