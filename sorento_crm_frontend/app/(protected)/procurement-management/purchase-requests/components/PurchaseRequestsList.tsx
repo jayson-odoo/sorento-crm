@@ -7,29 +7,25 @@ import {
   type ColumnDef,
   type Row,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Columns3, Filter, Plus, Search, Trash2, X } from 'lucide-react';
+import { ChevronRight, Plus, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -158,7 +154,7 @@ export default function PurchaseRequestsList({
   );
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [assignedToFilter, setAssignedToFilter] = useState<string>('__all__');
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data: assigneeOptions = [] } = useQuery({
     queryKey: ['pr-assignee-options'],
@@ -181,9 +177,6 @@ export default function PurchaseRequestsList({
     approvalStatus: effectiveStatusFilter,
     assignedTo: assignedToFilter !== '__all__' ? assignedToFilter : undefined,
   });
-
-  const statusFilterLabel =
-    STATUS_FILTER_OPTIONS.find((o) => o.value === statusFilter)?.label ?? 'Status';
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
@@ -213,25 +206,6 @@ export default function PurchaseRequestsList({
     router.push(`${basePath}/${row.id}${qs}`);
   };
 
-  const toggleSelection = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const pageData = data?.data ?? [];
-  const selectAllOnPage = () => {
-    if (selectedIds.size === pageData.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(pageData.map((r) => r.id)));
-    }
-  };
-  const isAllSelected = pageData.length > 0 && selectedIds.size === pageData.length;
-
   const bulkDeleteEntityLabel =
     requestType === 'purchase_request'
       ? 'Purchase Request'
@@ -243,26 +217,7 @@ export default function PurchaseRequestsList({
 
   const columns = useMemo<ColumnDef<PurchaseRequest>[]>(
     () => [
-      {
-        id: 'select',
-        header: () => (
-          <Checkbox
-            checked={isAllSelected}
-            onCheckedChange={selectAllOnPage}
-            aria-label="Select all on page"
-          />
-        ),
-        cell: ({ row }) => (
-          <Checkbox
-            checked={selectedIds.has(row.original.id)}
-            onCheckedChange={() => toggleSelection(row.original.id)}
-            aria-label={`Select ${row.original.request_number || row.original.id}`}
-            onClick={(e) => e.stopPropagation()}
-          />
-        ),
-        size: 44,
-        enableResizing: false,
-      },
+      buildSelectColumn<PurchaseRequest>(),
       ...(!requestType
         ? [
             {
@@ -280,7 +235,7 @@ export default function PurchaseRequestsList({
                   </Badge>
                 );
               },
-              meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+              meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-24" /> },
             },
           ]
         : []),
@@ -295,7 +250,7 @@ export default function PurchaseRequestsList({
           </span>
         ),
         size: 140,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: requestNumberColumnTitle, skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'request_date',
@@ -307,7 +262,7 @@ export default function PurchaseRequestsList({
             ? formatDate(new Date(row.original.request_date))
             : '-',
         size: 120,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Date', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'created_at',
@@ -319,7 +274,7 @@ export default function PurchaseRequestsList({
             ? formatDateTimeInMalaysia(row.original.created_at)
             : '-',
         size: 160,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Created At', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'approval_status',
@@ -336,7 +291,7 @@ export default function PurchaseRequestsList({
             </span>
           );
         },
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'customer_name',
@@ -345,7 +300,7 @@ export default function PurchaseRequestsList({
         ),
         size: 160,
         cell: ({ row }) => row.original.customer_name || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'project_title',
@@ -354,7 +309,7 @@ export default function PurchaseRequestsList({
         ),
         size: 200,
         cell: ({ row }) => row.original.project_title || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Project Title', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       purposeOrSponsorSubjectColumn(requestType),
       {
@@ -364,7 +319,7 @@ export default function PurchaseRequestsList({
         ),
         size: 120,
         cell: ({ row }) => row.original.requested_by || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Requested By', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'assigned_to_name',
@@ -378,7 +333,7 @@ export default function PurchaseRequestsList({
             {row.original.assigned_to_name ?? '-'}
           </span>
         ),
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Assigned To', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'actions',
@@ -387,9 +342,10 @@ export default function PurchaseRequestsList({
           <ChevronRight className="text-muted-foreground/70 size-3.5" />
         ),
         size: 40,
+        enableHiding: false,
       },
     ],
-    [requestType, requestNumberColumnTitle, selectedIds, isAllSelected],
+    [requestType, requestNumberColumnTitle],
   );
 
   const table = useReactTable({
@@ -397,7 +353,9 @@ export default function PurchaseRequestsList({
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination?.total ?? 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -408,112 +366,136 @@ export default function PurchaseRequestsList({
     manualFiltering: true,
   });
 
+  const filtersActiveCount =
+    (statusFilter !== 'all' ? 1 : 0) + (assignedToFilter !== '__all__' ? 1 : 0);
+
   return (
     <DataGrid
       table={table}
       recordCount={data?.pagination?.total ?? 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
+      standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative">
-              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-              <Input
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="ps-9 w-64"
-              />
-              {searchQuery && (
-                <Button
-                  mode="icon"
-                  variant="dim"
-                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                  onClick={() => setSearchQuery('')}
-                >
-                  <X />
-                </Button>
-              )}
-            </div>
-            {!requestType && (
-              <Select
-                value={requestTypeFilter}
-                onValueChange={setRequestTypeFilter}
-              >
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="Type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All types</SelectItem>
-                  <SelectItem value="purchase_request">Purchase Request</SelectItem>
-                  <SelectItem value="sponsorship_form">Sponsorship Form</SelectItem>
-                </SelectContent>
-              </Select>
-            )}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="gap-2">
-                  <Filter className="size-4" />
-                  {statusFilter !== 'all' ? statusFilterLabel : 'Filter by status'}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-48">
-                {STATUS_FILTER_OPTIONS.map((opt) => (
-                  <DropdownMenuItem
-                    key={opt.value}
-                    onClick={() => setStatusFilter(opt.value)}
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="ps-9 w-64"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setSearchQuery('')}
                   >
-                    {opt.label}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Select value={assignedToFilter} onValueChange={setAssignedToFilter}>
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Assigned to" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">All assignees</SelectItem>
-                <SelectItem value="__unassigned__">Unassigned</SelectItem>
-                {assigneeOptions.map((u) => (
-                  <SelectItem key={u.id} value={u.id}>
-                    {u.name?.trim() || u.email}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-2">
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-            {selectedIds.size > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setBulkDeleteOpen(true)}
-                className="text-destructive hover:text-destructive"
-              >
-                <Trash2 className="size-4" />
-                Delete ({selectedIds.size})
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            filters={{
+              kind: 'custom',
+              active: filtersActiveCount > 0,
+              activeCount: filtersActiveCount,
+              content: (
+                <div className="space-y-4">
+                  {!requestType && (
+                    <div>
+                      <Label>Type</Label>
+                      <Select
+                        value={requestTypeFilter}
+                        onValueChange={setRequestTypeFilter}
+                      >
+                        <SelectTrigger className="mt-1 w-full">
+                          <SelectValue placeholder="Type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All types</SelectItem>
+                          <SelectItem value="purchase_request">Purchase Request</SelectItem>
+                          <SelectItem value="sponsorship_form">Sponsorship Form</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div>
+                    <Label>Status</Label>
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                      <SelectTrigger className="mt-1 w-full">
+                        <SelectValue placeholder="Status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {STATUS_FILTER_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Assigned to</Label>
+                    <Select value={assignedToFilter} onValueChange={setAssignedToFilter}>
+                      <SelectTrigger className="mt-1 w-full">
+                        <SelectValue placeholder="Assigned to" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">All assignees</SelectItem>
+                        <SelectItem value="__unassigned__">Unassigned</SelectItem>
+                        {assigneeOptions.map((u) => (
+                          <SelectItem key={u.id} value={u.id}>
+                            {u.name?.trim() || u.email}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {filtersActiveCount > 0 && (
+                    <div className="flex justify-end">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setStatusFilter('all');
+                          setAssignedToFilter('__all__');
+                          if (!requestType) setRequestTypeFilter('all');
+                        }}
+                      >
+                        Clear filters
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ),
+            }}
+            exportConfig={{ filename: 'purchase_requests_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+            primaryAction={
+              <Button onClick={() => router.push(`${basePath}/new`)}>
+                <Plus />
+                Create
               </Button>
-            )}
-            <Button onClick={() => router.push(`${basePath}/new`)}>
-              <Plus />
-              Create
-            </Button>
-          </div>
+            }
+            bulkActions={[
+              {
+                key: 'delete',
+                label: 'Delete',
+                icon: Trash2,
+                destructive: true,
+                onClick: () => setBulkDeleteOpen(true),
+              },
+            ]}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>
@@ -529,11 +511,11 @@ export default function PurchaseRequestsList({
         open={bulkDeleteOpen}
         onOpenChange={(open) => {
           setBulkDeleteOpen(open);
-          if (!open) setSelectedIds(new Set());
+          if (!open) setRowSelection({});
         }}
-        ids={Array.from(selectedIds)}
+        ids={selectedRowIds(table)}
         entityLabel={bulkDeleteEntityLabel}
-        onSuccess={() => setSelectedIds(new Set())}
+        onSuccess={() => setRowSelection({})}
       />
     </DataGrid>
   );

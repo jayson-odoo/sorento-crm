@@ -12,7 +12,7 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { Columns3, Ellipsis, Plus, Search, X } from 'lucide-react';
+import { Ellipsis, Plus, Search, Trash2, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { formatDateTimeSafe } from '@/lib/helpers';
 import { Badge } from '@/components/ui/badge';
@@ -22,7 +22,6 @@ import {
   CardFooter,
   CardHeader,
   CardTable,
-  CardToolbar,
 } from '@/components/ui/card';
 import {
   DataGrid,
@@ -30,13 +29,10 @@ import {
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import {
-  DataGridTable,
-  DataGridTableRowSelect,
-  DataGridTableRowSelectAll,
-} from '@/components/ui/data-grid-table';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -44,6 +40,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import {
   Select,
@@ -165,18 +162,7 @@ const PermissionList = () => {
   // Column definitions
   const columns = useMemo<ColumnDef<UserPermission>[]>(
     () => [
-      {
-        id: 'id',
-        accessorKey: 'id',
-        header: () => <DataGridTableRowSelectAll />,
-        cell: ({ row }) => <DataGridTableRowSelect row={row} />,
-        size: 27,
-        enableSorting: false,
-        meta: {
-          skeleton: <Skeleton className="size-5" />,
-        },
-        enableResizing: false,
-      },
+      buildSelectColumn<UserPermission>(),
       {
         id: 'name',
         accessorKey: 'name',
@@ -207,7 +193,7 @@ const PermissionList = () => {
         enableSorting: true,
         enableHiding: false,
         meta: {
-          headerTitle: 'min-w-[200px]',
+          headerTitle: 'Slug',
           skeleton: <Skeleton className="w-14 h-8" />,
         },
       },
@@ -283,6 +269,7 @@ const PermissionList = () => {
         enableHiding: false,
         enableResizing: false,
         meta: {
+          headerTitle: 'Actions',
           skeleton: <Skeleton className="size-5" />,
         },
       },
@@ -318,90 +305,11 @@ const PermissionList = () => {
     manualFiltering: true,
   });
 
-  const DataGridToolbar = () => {
-    const [inputValue, setInputValue] = useState(searchQuery);
+  const [searchInput, setSearchInput] = useState(searchQuery);
 
-    const handleSearch = () => {
-      setSearchQuery(inputValue);
-      setPagination({ ...pagination, pageIndex: 0 });
-    };
-
-    return (
-      <CardHeader className="flex-col flex-wrap sm:flex-row items-end items-stretch sm:items-center py-5">
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search permissions"
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              disabled={isLoading && true}
-              className="ps-9 w-full sm:w-64"
-            />
-            {searchQuery.length > 0 && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
-              </Button>
-            )}
-          </div>
-          <Select
-            disabled={isLoading && true}
-            onValueChange={handleRoleSelection}
-            value={selectedRole || 'all'}
-            defaultValue="all"
-          >
-            <SelectTrigger className="w-full sm:w-36">
-              <SelectValue placeholder="Filter by role" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All roles</SelectItem>
-              {roleList?.map((role: UserRole) => (
-                <SelectItem key={role.id} value={role.id}>
-                  {role.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <CardToolbar>
-          <DataGridColumnVisibility
-            table={table}
-            trigger={
-              <Button variant="outline" size="sm" className="gap-1" disabled={isLoading}>
-                <Columns3 className="size-4" />
-                Columns
-              </Button>
-            }
-          />
-          {deletePermissionIds.length > 0 && (
-            <Button
-              variant="destructive"
-              onClick={() => {
-                setGroupDeleteDialogOpen(true);
-              }}
-            >
-              Delete {deletePermissionIds.length} permissions
-            </Button>
-          )}
-          <Button
-            disabled={isLoading && true}
-            onClick={() => {
-              setEditPermission(null);
-              setEditDialogOpen(true);
-            }}
-          >
-            <Plus />
-            Add Permission
-          </Button>
-        </CardToolbar>
-      </CardHeader>
-    );
+  const handleSearch = () => {
+    setSearchQuery(searchInput);
+    setPagination({ ...pagination, pageIndex: 0 });
   };
 
   return (
@@ -421,7 +329,97 @@ const PermissionList = () => {
         }}
       >
         <Card>
-          <DataGridToolbar />
+          <CardHeader className="block">
+            <DataGridListToolbar
+              table={table}
+              searchSlot={
+                <div className="relative">
+                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                  <Input
+                    placeholder="Search permissions"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                    disabled={isLoading}
+                    className="ps-9 w-64"
+                  />
+                  {searchInput.length > 0 && (
+                    <Button
+                      mode="icon"
+                      variant="dim"
+                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                      onClick={() => {
+                        setSearchInput('');
+                        setSearchQuery('');
+                      }}
+                    >
+                      <X />
+                    </Button>
+                  )}
+                </div>
+              }
+              filters={{
+                kind: 'custom',
+                active: Boolean(selectedRole && selectedRole !== 'all'),
+                activeCount: selectedRole && selectedRole !== 'all' ? 1 : 0,
+                content: (
+                  <div className="space-y-2">
+                    <Label>Role</Label>
+                    <Select
+                      disabled={isLoading}
+                      onValueChange={handleRoleSelection}
+                      value={selectedRole || 'all'}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Filter by role" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All roles</SelectItem>
+                        {roleList?.map((role: UserRole) => (
+                          <SelectItem key={role.id} value={role.id}>
+                            {role.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {selectedRole && selectedRole !== 'all' && (
+                      <div className="flex justify-end">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleRoleSelection('all')}
+                        >
+                          Clear filter
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ),
+              }}
+              exportConfig={{ filename: 'permissions_export.xlsx' }}
+              primaryAction={
+                <Button
+                  disabled={isLoading}
+                  onClick={() => {
+                    setEditPermission(null);
+                    setEditDialogOpen(true);
+                  }}
+                >
+                  <Plus />
+                  Add Permission
+                </Button>
+              }
+              bulkActions={[
+                {
+                  key: 'delete',
+                  label: `Delete ${deletePermissionIds.length} permission${deletePermissionIds.length !== 1 ? 's' : ''}`,
+                  icon: Trash2,
+                  destructive: true,
+                  onClick: () => setGroupDeleteDialogOpen(true),
+                },
+              ]}
+            />
+          </CardHeader>
           <CardTable>
             <ScrollArea>
               <DataGridTable />

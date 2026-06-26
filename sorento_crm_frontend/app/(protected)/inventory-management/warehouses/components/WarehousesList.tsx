@@ -5,22 +5,23 @@ import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Columns3, Upload, Trash2 } from 'lucide-react';
+import { Plus, Search, X, ChevronRight, Upload, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -42,7 +43,7 @@ export default function WarehousesList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const handleImportUpload = async (rows: Record<string, unknown>[]) => {
     await bulkImportWarehouses(rows);
@@ -67,73 +68,34 @@ export default function WarehousesList() {
     searchQuery,
   });
 
-  const toggleSelection = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const pageRowIds = (data?.data || []).map((r) => r.id);
-  const isAllSelected = pageRowIds.length > 0 && pageRowIds.every((id) => selectedIds.has(id));
-  const selectAllOnPage = () => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (isAllSelected) pageRowIds.forEach((id) => next.delete(id));
-      else pageRowIds.forEach((id) => next.add(id));
-      return next;
-    });
-  };
-
   const columns = useMemo<ColumnDef<Warehouse>[]>(
     () => [
-      {
-        id: 'select',
-        header: () => (
-          <Checkbox
-            checked={isAllSelected}
-            onCheckedChange={selectAllOnPage}
-            aria-label="Select all"
-          />
-        ),
-        cell: ({ row }) => (
-          <Checkbox
-            checked={selectedIds.has(row.original.id)}
-            onCheckedChange={() => toggleSelection(row.original.id)}
-            aria-label={`Select ${row.original.warehouse_code}`}
-            onClick={(e: React.MouseEvent) => e.stopPropagation()}
-          />
-        ),
-        size: 44,
-        enableResizing: false,
-        enableSorting: false,
-      },
+      buildSelectColumn<Warehouse>(),
       {
         accessorKey: 'warehouse_code',
         header: ({ column }) => <DataGridColumnHeader title="System Location" column={column} />,
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'System Location', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'warehouse_name',
         header: ({ column }) => <DataGridColumnHeader title="System Location Description" column={column} />,
         size: 240,
         cell: ({ row }) => row.original.warehouse_name || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'System Location Description', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'location',
         header: ({ column }) => <DataGridColumnHeader title="Warehouse" column={column} />,
         size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Warehouse', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'zones_count',
         header: ({ column }) => <DataGridColumnHeader title="Zones" column={column} />,
         size: 100,
         cell: ({ row }) => row.original.zones_count || 0,
+        meta: { headerTitle: 'Zones' },
       },
       {
         accessorKey: 'is_active',
@@ -144,6 +106,7 @@ export default function WarehousesList() {
           </Badge>
         ),
         size: 100,
+        meta: { headerTitle: 'Status' },
       },
       {
         accessorKey: 'actions',
@@ -158,9 +121,10 @@ export default function WarehousesList() {
           </Button>
         ),
         size: 40,
+        enableHiding: false,
       },
     ],
-    [isAllSelected, selectedIds, router],
+    [router],
   );
 
   const table = useReactTable({
@@ -168,7 +132,9 @@ export default function WarehousesList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -182,59 +148,60 @@ export default function WarehousesList() {
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
       tableLayout={{ columnsVisibility: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
+      standardToolbar={false}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search warehouses..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-64"
-            />
-            {searchQuery && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search warehouses..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="ps-9 w-64"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            exportConfig={{ filename: 'warehouses_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+            primaryAction={
+              <Button onClick={() => router.push('/inventory-management/warehouses/new')}>
+                <Plus />
+                Create Warehouse
               </Button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {selectedIds.size > 0 && (
-              <Button
-                variant="outline"
-                className="text-destructive"
-                onClick={() => setBulkDeleteDialogOpen(true)}
-              >
-                <Trash2 />
-                Delete ({selectedIds.size})
-              </Button>
-            )}
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-            <Button variant="outline" onClick={() => setUploadDialogOpen(true)}>
-              <Upload />
-              Import
-            </Button>
-            <Button onClick={() => router.push('/inventory-management/warehouses/new')}>
-              <Plus />
-              Create Warehouse
-            </Button>
-          </div>
+            }
+            secondaryActions={[
+              {
+                key: 'import',
+                label: 'Import',
+                icon: Upload,
+                onClick: () => setUploadDialogOpen(true),
+              },
+            ]}
+            bulkActions={[
+              {
+                key: 'delete',
+                label: 'Delete',
+                icon: Trash2,
+                destructive: true,
+                onClick: () => setBulkDeleteDialogOpen(true),
+              },
+            ]}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>
@@ -266,8 +233,8 @@ export default function WarehousesList() {
       <WarehouseBulkDeleteDialog
         open={bulkDeleteDialogOpen}
         onOpenChange={setBulkDeleteDialogOpen}
-        warehouseIds={Array.from(selectedIds)}
-        onSuccess={() => setSelectedIds(new Set())}
+        warehouseIds={selectedRowIds(table)}
+        onSuccess={() => setRowSelection({})}
       />
     </DataGrid>
   );

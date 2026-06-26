@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
@@ -14,13 +15,14 @@ import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { DataGridStandardToolbar } from '@/components/ui/data-grid-standard-toolbar';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Input } from '@/components/ui/input';
-import { Search } from 'lucide-react';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useStockLedger } from '../hooks/useStockLedger';
 import type { StockLedgerEntry } from '../types/stockLedger.types';
@@ -31,8 +33,9 @@ export default function StockLedgerList() {
   const [productId, setProductId] = useState('');
   const [warehouseId, setWarehouseId] = useState('');
   const [transactionType, setTransactionType] = useState('');
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading } = useStockLedger({
+  const { data, isLoading, refetch, isFetching } = useStockLedger({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -47,6 +50,7 @@ export default function StockLedgerList() {
 
   const columns = useMemo<ColumnDef<StockLedgerEntry>[]>(
     () => [
+      buildSelectColumn<StockLedgerEntry>(),
       {
         accessorKey: 'product.product_code',
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
@@ -57,14 +61,14 @@ export default function StockLedgerList() {
           </div>
         ),
         size: 220,
-        meta: { skeleton: <Skeleton className="h-4 w-40" /> },
+        meta: { headerTitle: 'Product', skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
         accessorKey: 'warehouse.warehouse_name',
         header: ({ column }) => <DataGridColumnHeader title="Warehouse" column={column} />,
         cell: ({ row }) => row.original.warehouse?.warehouse_name || row.original.warehouse_id,
         size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-40" /> },
+        meta: { headerTitle: 'Warehouse', skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
         accessorKey: 'transaction_type',
@@ -73,6 +77,7 @@ export default function StockLedgerList() {
         cell: ({ row }) => (
           <span className="text-xs font-medium text-muted-foreground">{row.original.transaction_type}</span>
         ),
+        meta: { headerTitle: 'Type' },
       },
       {
         accessorKey: 'quantity_change',
@@ -87,28 +92,33 @@ export default function StockLedgerList() {
           );
         },
         size: 120,
+        meta: { headerTitle: 'Change' },
       },
       {
         accessorKey: 'previous_quantity',
         header: ({ column }) => <DataGridColumnHeader title="Previous" column={column} />,
         size: 120,
+        meta: { headerTitle: 'Previous' },
       },
       {
         accessorKey: 'new_quantity',
         header: ({ column }) => <DataGridColumnHeader title="New" column={column} />,
         size: 120,
+        meta: { headerTitle: 'New' },
       },
       {
         accessorKey: 'created_at',
         header: ({ column }) => <DataGridColumnHeader title="Created At" column={column} />,
         cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
         size: 200,
+        meta: { headerTitle: 'Created At' },
       },
       {
         accessorKey: 'created_by_name',
         header: ({ column }) => <DataGridColumnHeader title="Created By" column={column} />,
         cell: ({ row }) => row.original.created_by_name || row.original.created_by || '-',
         size: 180,
+        meta: { headerTitle: 'Created By' },
       },
     ],
     [],
@@ -119,7 +129,9 @@ export default function StockLedgerList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -136,52 +148,60 @@ export default function StockLedgerList() {
       standardToolbar={false}
     >
       <Card>
-        <CardHeader>
-          <DataGridStandardToolbar
+        <CardHeader className="block">
+          <DataGridListToolbar
             table={table}
-            searchSlot={
-              <div className="relative">
-                <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Filter by product ID..."
-                  value={productId}
-                  onChange={(e) => setProductId(e.target.value)}
-                  className="w-64 ps-9"
-                />
-              </div>
-            }
-            advancedFilters={{
-              active: Boolean(warehouseId || transactionType),
+            filters={{
+              kind: 'custom',
+              active: Boolean(productId || warehouseId || transactionType),
+              activeCount:
+                (productId ? 1 : 0) + (warehouseId ? 1 : 0) + (transactionType ? 1 : 0),
               content: (
                 <div className="space-y-3">
-                  <p className="text-sm font-medium">Advanced filters</p>
-                  <div className="space-y-2">
+                  <div className="space-y-1">
+                    <Label>Product ID</Label>
+                    <Input
+                      placeholder="Product ID"
+                      value={productId}
+                      onChange={(e) => setProductId(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Warehouse ID</Label>
                     <Input
                       placeholder="Warehouse ID"
                       value={warehouseId}
                       onChange={(e) => setWarehouseId(e.target.value)}
                     />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Transaction type</Label>
                     <Input
                       placeholder="Transaction type"
                       value={transactionType}
                       onChange={(e) => setTransactionType(e.target.value)}
                     />
+                  </div>
+                  {(productId || warehouseId || transactionType) && (
                     <Button
                       variant="outline"
                       size="sm"
                       className="w-full"
                       onClick={() => {
+                        setProductId('');
                         setWarehouseId('');
                         setTransactionType('');
                       }}
                     >
-                      Clear advanced filters
+                      Clear filters
                     </Button>
-                  </div>
+                  )}
                 </div>
               ),
             }}
             exportConfig={{ filename: 'stock_ledger_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
           />
         </CardHeader>
         <CardTable>

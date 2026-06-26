@@ -6,22 +6,23 @@ import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Columns3, Download, Eye, Filter, Plus, Search, SlidersHorizontal, Trash2, Users, X } from 'lucide-react';
+import { ChevronRight, Eye, Filter, Plus, Search, Trash2, Users, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import {
   Popover,
@@ -38,8 +39,6 @@ import {
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
-import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
 import { useTenantModules } from '@/hooks/useTenantModules';
 import AttachmentDetailModal from '@/app/(protected)/resource-management/attachments/components/AttachmentDetailModal';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -66,18 +65,16 @@ export default function PromotionsList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedPromotionIds, setSelectedPromotionIds] = useState<Set<string>>(new Set());
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkAccessLevelsDialogOpen, setBulkAccessLevelsDialogOpen] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterAccessLevel, setFilterAccessLevel] = useState<string>('all');
   const [filterAttachmentState, setFilterAttachmentState] = useState<'all' | 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed'>('all');
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
-  const [filterDialogOpen, setFilterDialogOpen] = useState(false);
-  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [viewerAttachmentId, setViewerAttachmentId] = useState<string | null>(null);
 
-  const hasActiveFilters = filterStatus !== 'all' || filterAccessLevel !== 'all' || filterAttachmentState !== 'all';
+  const hasActiveQuickFilters = filterStatus !== 'all' || filterAccessLevel !== 'all' || filterAttachmentState !== 'all';
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: [
@@ -127,46 +124,9 @@ export default function PromotionsList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [advancedFilter, filterStatus, filterAccessLevel, filterAttachmentState]);
 
-  const pagePromotions = data?.data ?? [];
-  const togglePromotionSelection = (promotionId: string) => {
-    setSelectedPromotionIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(promotionId)) next.delete(promotionId);
-      else next.add(promotionId);
-      return next;
-    });
-  };
-  const selectAllPromotions = () => {
-    if (selectedPromotionIds.size === pagePromotions.length) {
-      setSelectedPromotionIds(new Set());
-    } else {
-      setSelectedPromotionIds(new Set(pagePromotions.map((p) => p.id)));
-    }
-  };
-  const isAllSelected = pagePromotions.length > 0 && selectedPromotionIds.size === pagePromotions.length;
-
   const columns = useMemo<ColumnDef<Promotion>[]>(
     () => [
-      {
-        id: 'select',
-        header: () => (
-          <Checkbox
-            checked={isAllSelected}
-            onCheckedChange={selectAllPromotions}
-            aria-label="Select all"
-          />
-        ),
-        cell: ({ row }) => (
-          <Checkbox
-            checked={selectedPromotionIds.has(row.original.id)}
-            onCheckedChange={() => togglePromotionSelection(row.original.id)}
-            aria-label={`Select promotion ${row.original.id}`}
-            onClick={(e) => e.stopPropagation()}
-          />
-        ),
-        size: 44,
-        enableResizing: false,
-      },
+      buildSelectColumn<Promotion>(),
       {
         accessorKey: 'description',
         header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
@@ -182,7 +142,7 @@ export default function PromotionsList() {
         size: 260,
         minSize: 160,
         enableSorting: false,
-        meta: { skeleton: <Skeleton className="h-4 w-40" /> },
+        meta: { headerTitle: 'Description', skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
         accessorKey: 'attachments',
@@ -225,7 +185,7 @@ export default function PromotionsList() {
         size: 260,
         minSize: 180,
         enableSorting: false,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Attachments', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'access_levels',
@@ -245,18 +205,21 @@ export default function PromotionsList() {
         },
         size: 160,
         minSize: 120,
+        meta: { headerTitle: 'Access' },
       },
       {
         accessorKey: 'start_date',
         header: ({ column }) => <DataGridColumnHeader title="Start Date" column={column} />,
         cell: ({ row }) => row.original.start_date ? formatPromotionBoundaryInMalaysia(row.original.start_date) : '-',
         size: 120,
+        meta: { headerTitle: 'Start Date' },
       },
       {
         accessorKey: 'end_date',
         header: ({ column }) => <DataGridColumnHeader title="End Date" column={column} />,
         cell: ({ row }) => row.original.end_date ? formatPromotionBoundaryInMalaysia(row.original.end_date) : '-',
         size: 120,
+        meta: { headerTitle: 'End Date' },
       },
       {
         accessorKey: 'is_active',
@@ -268,6 +231,7 @@ export default function PromotionsList() {
           </Badge>
         ),
         size: 100,
+        meta: { headerTitle: 'Status' },
       },
       {
         accessorKey: 'products_count',
@@ -276,6 +240,7 @@ export default function PromotionsList() {
           <span className="tabular-nums">{row.original.products_count ?? 0}</span>
         ),
         size: 100,
+        meta: { headerTitle: 'Products' },
       },
       {
         accessorKey: 'created_at',
@@ -291,15 +256,17 @@ export default function PromotionsList() {
         },
         size: 160,
         minSize: 140,
+        meta: { headerTitle: 'Created At' },
       },
       {
         accessorKey: 'actions',
         header: '',
         cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
         size: 40,
+        enableHiding: false,
       },
     ],
-    [selectedPromotionIds, isAllSelected, pagePromotions.length, accessLevelNameMap],
+    [accessLevelNameMap],
   );
 
   const handleRowClick = (row: Promotion) => {
@@ -332,7 +299,9 @@ export default function PromotionsList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -350,171 +319,172 @@ export default function PromotionsList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
+      standardToolbar={false}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-              <Input
-                placeholder="Search promotions..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="ps-9 w-64"
-              />
-              {searchQuery && (
-                <Button
-                  mode="icon"
-                  variant="dim"
-                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                  onClick={() => setSearchQuery('')}
-                >
-                  <X />
-                </Button>
-              )}
-            </div>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className={hasActiveFilters ? 'border-primary' : ''}
-                  title="Quick filters"
-                >
-                  <Filter className="size-4" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-72" align="start">
-                <div className="space-y-4">
-                  <h4 className="font-medium">Filters</h4>
-                  <div className="space-y-2">
-                    <Label>Status</Label>
-                    <Select value={filterStatus} onValueChange={setFilterStatus}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="All" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All</SelectItem>
-                        <SelectItem value="active">Active</SelectItem>
-                        <SelectItem value="inactive">Inactive</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Access level</Label>
-                    <Select value={filterAccessLevel} onValueChange={setFilterAccessLevel}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="All" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All</SelectItem>
-                        {accessTypeOptions.map((opt) => (
-                          <SelectItem key={opt.code} value={opt.code}>
-                            {opt.name || opt.code}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Attachment state</Label>
-                    <Select
-                      value={filterAttachmentState}
-                      onValueChange={(v) =>
-                        setFilterAttachmentState(v as 'all' | 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed')
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="All" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All</SelectItem>
-                        <SelectItem value="unlinked">No attachments</SelectItem>
-                        <SelectItem value="linked_to_trashed">Linked to trashed</SelectItem>
-                        <SelectItem value="unlinked_or_trashed">No attachments or trashed</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {hasActiveFilters && (
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                  <Input
+                    placeholder="Search promotions..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="ps-9 w-64"
+                  />
+                  {searchQuery && (
                     <Button
-                      variant="ghost"
-                      size="sm"
-                      className="w-full"
-                      onClick={() => {
-                        setFilterStatus('all');
-                        setFilterAccessLevel('all');
-                        setFilterAttachmentState('all');
-                      }}
+                      mode="icon"
+                      variant="dim"
+                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                      onClick={() => setSearchQuery('')}
                     >
-                      Clear quick filters
+                      <X />
                     </Button>
                   )}
                 </div>
-              </PopoverContent>
-            </Popover>
-          </div>
-          <div className="flex items-center gap-2">
-            {selectedPromotionIds.size > 0 && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setBulkAccessLevelsDialogOpen(true)}
-                >
-                  <Users className="size-4" />
-                  Set Access Levels ({selectedPromotionIds.size})
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setBulkDeleteDialogOpen(true)}
-                  className="text-destructive hover:text-destructive"
-                >
-                  <Trash2 className="size-4" />
-                  Bulk Delete ({selectedPromotionIds.size})
-                </Button>
-              </>
-            )}
-            {listQueryToolsEnabled ? (
-              <>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  title="Advanced filters"
-                  className="relative"
-                  onClick={() => setFilterDialogOpen(true)}
-                >
-                  <SlidersHorizontal className="size-4" />
-                  {advancedFilter ? (
-                    <span className="absolute -top-1 -end-1 size-2.5 rounded-full bg-primary" />
-                  ) : null}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  title="Export"
-                  onClick={() => setExportDialogOpen(true)}
-                >
-                  <Download className="size-4" />
-                </Button>
-              </>
-            ) : null}
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-            <Button onClick={() => router.push('/marketing-management/promotions/new')}>
-              <Plus />
-              Create Promotion
-            </Button>
-          </div>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className={`gap-1.5 ${hasActiveQuickFilters ? 'border-primary' : ''}`}
+                      title="Quick filters"
+                    >
+                      <Filter className="size-4" />
+                      Quick filters
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-72" align="start">
+                    <div className="space-y-4">
+                      <h4 className="font-medium">Filters</h4>
+                      <div className="space-y-2">
+                        <Label>Status</Label>
+                        <Select value={filterStatus} onValueChange={setFilterStatus}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="All" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All</SelectItem>
+                            <SelectItem value="active">Active</SelectItem>
+                            <SelectItem value="inactive">Inactive</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Access level</Label>
+                        <Select value={filterAccessLevel} onValueChange={setFilterAccessLevel}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="All" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All</SelectItem>
+                            {accessTypeOptions.map((opt) => (
+                              <SelectItem key={opt.code} value={opt.code}>
+                                {opt.name || opt.code}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Attachment state</Label>
+                        <Select
+                          value={filterAttachmentState}
+                          onValueChange={(v) =>
+                            setFilterAttachmentState(v as 'all' | 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed')
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="All" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">All</SelectItem>
+                            <SelectItem value="unlinked">No attachments</SelectItem>
+                            <SelectItem value="linked_to_trashed">Linked to trashed</SelectItem>
+                            <SelectItem value="unlinked_or_trashed">No attachments or trashed</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {hasActiveQuickFilters && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="w-full"
+                          onClick={() => {
+                            setFilterStatus('all');
+                            setFilterAccessLevel('all');
+                            setFilterAttachmentState('all');
+                          }}
+                        >
+                          Clear quick filters
+                        </Button>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
+            }
+            filters={
+              listQueryToolsEnabled
+                ? {
+                    kind: 'listQuery',
+                    resourceKey: 'promotions',
+                    advancedFilter,
+                    onApply: setAdvancedFilter,
+                    getPayload: () => ({
+                      filter: advancedFilter ?? undefined,
+                      quick_search: searchQuery || undefined,
+                      promotion_status: filterStatus,
+                      promotion_access_level:
+                        filterAccessLevel === 'all' ? undefined : filterAccessLevel,
+                    }),
+                  }
+                : undefined
+            }
+            exportConfig={
+              listQueryToolsEnabled
+                ? {
+                    kind: 'listQuery',
+                    resourceKey: 'promotions',
+                    filename: 'promotions-export',
+                    getPayload: () => ({
+                      filter: advancedFilter ?? undefined,
+                      quick_search: searchQuery || undefined,
+                      promotion_status: filterStatus,
+                      promotion_access_level:
+                        filterAccessLevel === 'all' ? undefined : filterAccessLevel,
+                    }),
+                  }
+                : false
+            }
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+            primaryAction={
+              <Button onClick={() => router.push('/marketing-management/promotions/new')}>
+                <Plus />
+                Create Promotion
+              </Button>
+            }
+            bulkActions={[
+              {
+                key: 'access-levels',
+                label: 'Set Access Levels',
+                icon: Users,
+                onClick: () => setBulkAccessLevelsDialogOpen(true),
+              },
+              {
+                key: 'delete',
+                label: 'Delete',
+                icon: Trash2,
+                destructive: true,
+                onClick: () => setBulkDeleteDialogOpen(true),
+              },
+            ]}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>
@@ -530,19 +500,19 @@ export default function PromotionsList() {
         open={bulkAccessLevelsDialogOpen}
         onOpenChange={(open) => {
           setBulkAccessLevelsDialogOpen(open);
-          if (!open) setSelectedPromotionIds(new Set());
+          if (!open) setRowSelection({});
         }}
-        promotionIds={Array.from(selectedPromotionIds)}
-        onSuccess={() => setSelectedPromotionIds(new Set())}
+        promotionIds={selectedRowIds(table)}
+        onSuccess={() => setRowSelection({})}
       />
       <PromotionBulkDeleteDialog
         open={bulkDeleteDialogOpen}
         onOpenChange={(open) => {
           setBulkDeleteDialogOpen(open);
-          if (!open) setSelectedPromotionIds(new Set());
+          if (!open) setRowSelection({});
         }}
-        promotionIds={Array.from(selectedPromotionIds)}
-        onSuccess={() => setSelectedPromotionIds(new Set())}
+        promotionIds={selectedRowIds(table)}
+        onSuccess={() => setRowSelection({})}
       />
       <AttachmentDetailModal
         open={viewerAttachmentId !== null}
@@ -551,32 +521,6 @@ export default function PromotionsList() {
         }}
         attachmentId={viewerAttachmentId}
       />
-      {listQueryToolsEnabled ? (
-        <>
-          <ListQueryFilterDialog
-            resourceKey="promotions"
-            open={filterDialogOpen}
-            onOpenChange={setFilterDialogOpen}
-            initialFilter={advancedFilter}
-            onApply={setAdvancedFilter}
-          />
-          <ListQueryExportDialog
-            resourceKey="promotions"
-            filename="promotions-export"
-            open={exportDialogOpen}
-            onOpenChange={setExportDialogOpen}
-            getPayload={() => ({
-              filter: advancedFilter ?? undefined,
-              quick_search: searchQuery || undefined,
-              promotion_status: filterStatus,
-              promotion_access_level: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
-            })}
-            selectedRecordIds={
-              selectedPromotionIds.size > 0 ? Array.from(selectedPromotionIds) : undefined
-            }
-          />
-        </>
-      ) : null}
     </DataGrid>
   );
 }

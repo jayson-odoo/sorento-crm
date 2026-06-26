@@ -6,20 +6,21 @@ import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Columns3, Plus, Search, Trash2, X } from 'lucide-react';
+import { ChevronRight, Plus, Search, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -27,7 +28,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { usePackingLists } from '../hooks/usePackingLists';
 import type { PackingList } from '../types/packingList.types';
-import { formatDate, formatDateTime, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { formatStatusLabel, getStatusBadgeVariant } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
 import PackingListBulkDeleteDialog from './PackingListBulkDeleteDialog';
@@ -44,7 +45,7 @@ export default function PackingListsList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [packingListToDelete, setPackingListToDelete] =
     useState<PackingList | null>(null);
-  const [selectedPackingListIds, setSelectedPackingListIds] = useState<Set<string>>(new Set());
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
   const { data, isLoading, refetch, isFetching } = usePackingLists({
@@ -68,48 +69,9 @@ export default function PackingListsList() {
     router.push(`/procurement-management/packing-lists/${packingListId}${qs}`);
   };
 
-  const pagePackingLists = data?.data ?? [];
-  const isAllSelected = pagePackingLists.length > 0 && selectedPackingListIds.size === pagePackingLists.length;
-
-  const toggleSelection = (id: string) => {
-    setSelectedPackingListIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const selectAll = () => {
-    if (isAllSelected) {
-      setSelectedPackingListIds(new Set());
-    } else {
-      setSelectedPackingListIds(new Set(pagePackingLists.map((p) => p.id)));
-    }
-  };
-
   const columns = useMemo<ColumnDef<PackingList>[]>(
     () => [
-      {
-        id: 'select',
-        header: () => (
-          <Checkbox
-            checked={isAllSelected}
-            onCheckedChange={selectAll}
-            aria-label="Select all"
-          />
-        ),
-        cell: ({ row }) => (
-          <Checkbox
-            checked={selectedPackingListIds.has(row.original.id)}
-            onCheckedChange={() => toggleSelection(row.original.id)}
-            aria-label={`Select ${row.original.shipment_number ?? row.original.id}`}
-            onClick={(e) => e.stopPropagation()}
-          />
-        ),
-        size: 44,
-        enableResizing: false,
-      },
+      buildSelectColumn<PackingList>(),
       {
         accessorKey: 'shipment_number',
         header: ({ column }) => (
@@ -117,7 +79,7 @@ export default function PackingListsList() {
         ),
         cell: ({ row }) => row.original.shipment_number || '-',
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Shipment Number', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'shipping_container_number',
@@ -127,7 +89,7 @@ export default function PackingListsList() {
         cell: ({ row }) =>
           row.original.shipping_container_number || '-',
         size: 160,
-        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'Container Number', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'supplier.supplier_name',
@@ -136,7 +98,7 @@ export default function PackingListsList() {
         ),
         cell: ({ row }) => row.original.supplier?.supplier_name || '-',
         size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Supplier', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'shipment_date',
@@ -148,7 +110,7 @@ export default function PackingListsList() {
             ? formatDate(new Date(row.original.shipment_date))
             : '-',
         size: 120,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Shipment Date', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'estimated_arrival_date',
@@ -160,7 +122,7 @@ export default function PackingListsList() {
             ? formatDate(new Date(row.original.estimated_arrival_date))
             : '-',
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Expected Arrival', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'shipment_status',
@@ -176,7 +138,7 @@ export default function PackingListsList() {
           );
         },
         size: 130,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'total_items_shipped',
@@ -188,7 +150,7 @@ export default function PackingListsList() {
           row.original.total_items_shipped ??
           0,
         size: 100,
-        meta: { skeleton: <Skeleton className="h-4 w-16" /> },
+        meta: { headerTitle: 'Items', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         accessorKey: 'created_at',
@@ -197,7 +159,7 @@ export default function PackingListsList() {
         ),
         cell: ({ row }) => formatDateTimeInMalaysia(row.original.created_at),
         size: 120,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Created At', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'actions',
@@ -221,9 +183,10 @@ export default function PackingListsList() {
           </div>
         ),
         size: 80,
+        enableHiding: false,
       },
     ],
-    [isAllSelected, selectedPackingListIds],
+    [],
   );
 
   const table = useReactTable({
@@ -231,7 +194,9 @@ export default function PackingListsList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -248,61 +213,57 @@ export default function PackingListsList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
+      standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search by shipment or container number..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-64"
-            />
-            {searchQuery && (
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search by shipment or container number..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="ps-9 w-64"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            exportConfig={{ filename: 'packing_lists_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+            primaryAction={
               <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
+                onClick={() =>
+                  router.push('/procurement-management/packing-lists/new')
+                }
               >
-                <X />
+                <Plus />
+                Create Packing List
               </Button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-            {selectedPackingListIds.size > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setBulkDeleteDialogOpen(true)}
-                className="text-destructive hover:text-destructive"
-              >
-                <Trash2 className="size-4" />
-                Bulk Delete ({selectedPackingListIds.size})
-              </Button>
-            )}
-            <Button
-              onClick={() =>
-                router.push('/procurement-management/packing-lists/new')
-              }
-            >
-              <Plus />
-              Create Packing List
-            </Button>
-          </div>
+            }
+            bulkActions={[
+              {
+                key: 'delete',
+                label: 'Delete',
+                icon: Trash2,
+                destructive: true,
+                onClick: () => setBulkDeleteDialogOpen(true),
+              },
+            ]}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>
@@ -326,11 +287,11 @@ export default function PackingListsList() {
         open={bulkDeleteDialogOpen}
         onOpenChange={(open) => {
           setBulkDeleteDialogOpen(open);
-          if (!open) setSelectedPackingListIds(new Set());
+          if (!open) setRowSelection({});
         }}
-        packingListIds={Array.from(selectedPackingListIds)}
+        packingListIds={selectedRowIds(table)}
         onSuccess={() => {
-          setSelectedPackingListIds(new Set());
+          setRowSelection({});
           refetch();
         }}
       />

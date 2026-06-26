@@ -8,26 +8,29 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
 import {
   Ellipsis,
-  Columns3,
   Plus,
+  Search,
   UserRound,
+  X,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardFooter, CardTable } from '@/components/ui/card';
+import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import {
   DataGrid,
   DataGridApiFetchParams,
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import {
@@ -37,7 +40,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ListPageToolbar } from '@/components/common/ListPageToolbar';
+import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserRole } from '@/app/models/user';
@@ -54,6 +57,7 @@ const RoleList = () => {
   const [sorting, setSorting] = useState<SortingState>([
     { id: 'createdAt', desc: true },
   ]);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // Form state management
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -121,6 +125,7 @@ const RoleList = () => {
   // Table settings
   const columns = useMemo<ColumnDef<UserRole>[]>(
     () => [
+      buildSelectColumn<UserRole>(),
       {
         accessorKey: 'name',
         id: 'name',
@@ -249,6 +254,7 @@ const RoleList = () => {
         ),
         size: 75,
         enableSorting: false,
+        enableHiding: false,
         enableResizing: false,
         meta: {
           skeleton: <Skeleton className="size-5" />,
@@ -266,7 +272,10 @@ const RoleList = () => {
     state: {
       pagination,
       sorting,
+      rowSelection,
     },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -299,21 +308,33 @@ const RoleList = () => {
         }}
       >
         <Card>
-          <ListPageToolbar
-            searchPlaceholder="Search roles"
-            searchValue={searchQuery}
-            onSearchChange={handleSearchChange}
-            createButton={
-              <>
-                <DataGridColumnVisibility
-                  table={table}
-                  trigger={
-                    <Button variant="outline" size="sm" className="gap-1" disabled={isLoading}>
-                      <Columns3 className="size-4" />
-                      Columns
+          <CardHeader className="block">
+            <DataGridListToolbar
+              table={table}
+              searchSlot={
+                <div className="relative">
+                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                  <Input
+                    placeholder="Search roles"
+                    value={searchQuery}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    disabled={isLoading}
+                    className="ps-9 w-64"
+                  />
+                  {searchQuery && (
+                    <Button
+                      mode="icon"
+                      variant="dim"
+                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                      onClick={() => handleSearchChange('')}
+                    >
+                      <X />
                     </Button>
-                  }
-                />
+                  )}
+                </div>
+              }
+              exportConfig={{ filename: 'roles_export.xlsx' }}
+              primaryAction={
                 <Button
                   disabled={isLoading}
                   onClick={() => {
@@ -324,10 +345,9 @@ const RoleList = () => {
                   <Plus />
                   Add Role
                 </Button>
-              </>
-            }
-            isLoading={isLoading}
-          />
+              }
+            />
+          </CardHeader>
           <CardTable>
             <ScrollArea>
               <DataGridTable />

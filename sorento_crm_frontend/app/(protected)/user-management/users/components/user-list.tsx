@@ -13,7 +13,7 @@ import {
   SortingState,
   useReactTable,
 } from '@tanstack/react-table';
-import { ChevronRight, LoaderCircleIcon, Mail, Plus, Search, Settings, Trash2, UserCheck, UserCog, UserX, X } from 'lucide-react';
+import { ChevronRight, LoaderCircleIcon, Mail, Plus, Search, Trash2, UserCheck, UserCog, UserX, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { useSession } from 'next-auth/react';
 import { useImpersonation } from '@/hooks/useImpersonation';
@@ -33,24 +33,15 @@ import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import {
   DataGrid,
   DataGridApiFetchParams,
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
-import { DataGridStandardToolbar } from '@/components/ui/data-grid-standard-toolbar';
-import {
-  DataGridTable,
-  DataGridTableRowSelect,
-  DataGridTableRowSelectAll,
-} from '@/components/ui/data-grid-table';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
@@ -293,15 +284,7 @@ const UserList = () => {
 
   const columns = useMemo<ColumnDef<User>[]>(
     () => [
-      {
-        id: 'select',
-        header: () => <DataGridTableRowSelectAll />,
-        cell: ({ row }) => <DataGridTableRowSelect row={row} />,
-        size: 40,
-        enableSorting: false,
-        meta: { skeleton: <Skeleton className="size-5" /> },
-        enableResizing: false,
-      },
+      buildSelectColumn<User>({ size: 40 }),
       {
         accessorKey: 'name',
         id: 'name',
@@ -627,9 +610,58 @@ const UserList = () => {
       setPagination({ ...pagination, pageIndex: 0 });
     };
 
+    const filtersActiveCount =
+      ((selectedRole || 'all') !== 'all' ? 1 : 0) +
+      ((selectedStatus || 'all') !== 'all' ? 1 : 0) +
+      (selectedTrashed !== 'exclude' ? 1 : 0);
+
+    const bulkActions: ToolbarAction[] = [
+      {
+        key: 'activate',
+        label: 'Bulk activate',
+        icon: UserCheck,
+        disabled: bulkActionPending || selectedTrashed === 'only',
+        onClick: () => runBulkAction('activate'),
+      },
+      {
+        key: 'deactivate',
+        label: 'Bulk deactivate',
+        icon: UserX,
+        disabled: bulkActionPending || selectedTrashed === 'only',
+        onClick: () => runBulkAction('deactivate'),
+      },
+      {
+        key: 'resend_invite',
+        label: 'Bulk send invitation',
+        icon: Mail,
+        disabled: bulkActionPending || selectedTrashed === 'only',
+        onClick: () => runBulkAction('resend_invite'),
+      },
+      {
+        key: 'delete',
+        label: 'Trash',
+        icon: Trash2,
+        destructive: true,
+        disabled: bulkActionPending || selectedTrashed === 'only',
+        onClick: () => runBulkAction('delete'),
+      },
+      ...(selectedTrashed === 'only'
+        ? [
+            {
+              key: 'permanent_delete',
+              label: 'Permanently delete',
+              icon: Trash2,
+              destructive: true,
+              disabled: bulkActionPending,
+              onClick: () => runBulkAction('permanent_delete'),
+            } as ToolbarAction,
+          ]
+        : []),
+    ];
+
     return (
-        <CardHeader className="py-5">
-        <DataGridStandardToolbar
+        <CardHeader className="block py-5">
+        <DataGridListToolbar
           table={table}
           searchSlot={
             <div className="relative">
@@ -654,11 +686,10 @@ const UserList = () => {
               )}
             </div>
           }
-          advancedFilters={{
-            active:
-              (selectedRole || 'all') !== 'all' ||
-              (selectedStatus || 'all') !== 'all' ||
-              selectedTrashed !== 'exclude',
+          filters={{
+            kind: 'custom',
+            active: filtersActiveCount > 0,
+            activeCount: filtersActiveCount,
             content: (
               <div className="space-y-3">
                 <p className="text-sm font-medium">Advanced filters</p>
@@ -768,65 +799,8 @@ const UserList = () => {
             ),
           }}
           exportConfig={{ filename: 'users_export.xlsx' }}
-          secondaryActionsSlot={
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={isLoading || bulkActionPending || selectedRowIds.length === 0}
-                  title={selectedRowIds.length === 0 ? 'Select users to perform bulk actions' : 'Bulk actions'}
-                >
-                  <Settings className="size-4" />
-                  {selectedRowIds.length > 0 && (
-                    <span className="ml-1.5">({selectedRowIds.length})</span>
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onClick={() => runBulkAction('activate')}
-                  disabled={bulkActionPending || selectedTrashed === 'only'}
-                >
-                  <UserCheck className="size-4" />
-                  Bulk activate
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => runBulkAction('deactivate')}
-                  disabled={bulkActionPending || selectedTrashed === 'only'}
-                >
-                  <UserX className="size-4" />
-                  Bulk deactivate
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => runBulkAction('resend_invite')}
-                  disabled={bulkActionPending || selectedTrashed === 'only'}
-                >
-                  <Mail className="size-4" />
-                  Bulk send invitation
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => runBulkAction('delete')}
-                  disabled={bulkActionPending || selectedTrashed === 'only'}
-                  className="text-destructive focus:text-destructive"
-                >
-                  <Trash2 className="size-4" />
-                  Trash
-                </DropdownMenuItem>
-                {selectedTrashed === 'only' && (
-                  <DropdownMenuItem
-                    onClick={() => runBulkAction('permanent_delete')}
-                    disabled={bulkActionPending}
-                    className="text-destructive focus:text-destructive"
-                  >
-                    <Trash2 className="size-4" />
-                    Permanently delete
-                  </DropdownMenuItem>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          }
-          primaryActionsSlot={
+          bulkActions={bulkActions}
+          primaryAction={
             <Button
               disabled={isLoading && true}
               onClick={() => {

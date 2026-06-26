@@ -10,14 +10,14 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Columns3, Copy, LoaderCircleIcon, Plus, RefreshCw, Search, Trash2, UserCog, X } from 'lucide-react';
+import { ChevronRight, Copy, LoaderCircleIcon, Plus, RefreshCw, Search, Trash2, UserCog, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -168,33 +168,12 @@ export default function ContactsList() {
 
   const columns = useMemo<ColumnDef<RespondContact>[]>(
     () => [
-      {
-        id: 'select',
-        header: ({ table }) => (
-          <Checkbox
-            checked={
-              table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && 'indeterminate')
-            }
-            onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-            aria-label="Select all"
-            onClick={(e) => e.stopPropagation()}
-          />
-        ),
-        cell: ({ row }) => (
-          <Checkbox
-            checked={row.getIsSelected()}
-            onCheckedChange={(value) => row.toggleSelected(!!value)}
-            aria-label={`Select ${row.original.phone_number}`}
-            onClick={(e) => e.stopPropagation()}
-          />
-        ),
-        size: 44,
-        enableSorting: false,
-      },
+      buildSelectColumn<RespondContact>(),
       {
         accessorKey: 'phone_number',
         header: ({ column }) => <DataGridColumnHeader title="Phone Number" column={column} />,
         size: 200,
+        meta: { headerTitle: 'Phone Number', skeleton: <Skeleton className="h-4 w-32" /> },
         cell: ({ row }) => (
           <div className="flex items-center gap-2">
             <span className="font-medium font-mono">{row.original.phone_number}</span>
@@ -218,7 +197,6 @@ export default function ContactsList() {
             </Button>
           </div>
         ),
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'first_name',
@@ -226,7 +204,7 @@ export default function ContactsList() {
         size: 160,
         cell: ({ row }) =>
           row.original.first_name || <span className="text-muted-foreground">—</span>,
-        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'First name', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'last_name',
@@ -234,7 +212,7 @@ export default function ContactsList() {
         size: 160,
         cell: ({ row }) =>
           row.original.last_name || <span className="text-muted-foreground">—</span>,
-        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'Last name', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         id: 'access_types',
@@ -257,23 +235,26 @@ export default function ContactsList() {
             </div>
           );
         },
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Access types', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'created_at',
         header: ({ column }) => <DataGridColumnHeader title="Created At" column={column} />,
         cell: ({ row }) => formatDate(new Date(row.original.created_at)),
         size: 150,
+        meta: { headerTitle: 'Created At' },
       },
       {
         accessorKey: 'updated_at',
         header: ({ column }) => <DataGridColumnHeader title="Updated At" column={column} />,
         cell: ({ row }) => formatDate(new Date(row.original.updated_at)),
         size: 150,
+        meta: { headerTitle: 'Updated At' },
       },
       {
         id: 'actions',
         header: '',
+        enableHiding: false,
         cell: ({ row }) => (
           <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
             <PortalLinkButton
@@ -346,77 +327,64 @@ export default function ContactsList() {
       tableLayout={{ columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search contacts..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-64"
-            />
-            {searchQuery && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search contacts..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="ps-9 w-64"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            exportConfig={{ filename: 'contacts_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+            primaryAction={
+              <Button onClick={() => setCreateDialogOpen(true)}>
+                <Plus className="size-4 mr-2" />
+                Create Contact
               </Button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-            {selectedContactIds.length > 0 && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleBulkSync}
-                  disabled={bulkSyncMutation.isPending || syncContactMutation.isPending}
-                >
-                  <RefreshCw
-                    className={`size-4 mr-2 ${bulkSyncMutation.isPending ? 'animate-spin' : ''}`}
-                  />
-                  Sync from Respond ({selectedContactIds.length})
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setBulkCopyDialogOpen(true)}
-                >
-                  <Copy className="size-4 mr-2" />
-                  Copy settings to {selectedContactIds.length} user{selectedContactIds.length !== 1 ? 's' : ''}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => setBulkDeleteDialogOpen(true)}
-                >
-                  <Trash2 className="size-4 mr-2" />
-                  Delete ({selectedContactIds.length})
-                </Button>
-              </>
-            )}
-            <Button onClick={() => setCreateDialogOpen(true)}>
-              <Plus className="size-4 mr-2" />
-              Create Contact
-            </Button>
-          </div>
+            }
+            bulkActions={[
+              {
+                key: 'sync',
+                label: `Sync from Respond (${selectedContactIds.length})`,
+                icon: RefreshCw,
+                disabled: bulkSyncMutation.isPending || syncContactMutation.isPending,
+                onClick: handleBulkSync,
+              },
+              {
+                key: 'copy-settings',
+                label: `Copy settings to ${selectedContactIds.length} user${selectedContactIds.length !== 1 ? 's' : ''}`,
+                icon: Copy,
+                onClick: () => setBulkCopyDialogOpen(true),
+              },
+              {
+                key: 'delete',
+                label: `Delete (${selectedContactIds.length})`,
+                icon: Trash2,
+                destructive: true,
+                onClick: () => setBulkDeleteDialogOpen(true),
+              },
+            ]}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>

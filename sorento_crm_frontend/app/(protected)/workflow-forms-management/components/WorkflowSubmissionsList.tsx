@@ -13,13 +13,13 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Download, Filter, Plus, Search, SlidersHorizontal, X, Columns3 } from 'lucide-react';
+import { Plus, Search, SlidersHorizontal, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -34,8 +34,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
-import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useTenantModules } from '@/hooks/useTenantModules';
 import { fetchListQueryFields } from '@/lib/list-query/listQueryService';
@@ -62,13 +60,11 @@ export default function WorkflowSubmissionsList({
   const [sorting, setSorting] = useState<SortingState>([{ id: 'updated_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
-  const [filterDialogOpen, setFilterDialogOpen] = useState(false);
-  const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [scopeDefinitionId, setScopeDefinitionId] = useState<string>(fixedDefinitionId ?? '__all');
   const [quickStateCode, setQuickStateCode] = useState('');
 
   const { data: pubDefs } = usePublishedWorkflowDefinitionsForSubmissionQuery();
-  const { data, isLoading, isError, error } = useWorkflowSubmissionsGridQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useWorkflowSubmissionsGridQuery({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -144,7 +140,7 @@ export default function WorkflowSubmissionsList({
         },
         size: 220,
         enableSorting: false,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Form', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'current_state_code',
@@ -193,6 +189,7 @@ export default function WorkflowSubmissionsList({
         ),
         size: 100,
         enableSorting: false,
+        enableHiding: false,
       },
     ],
     [defOptions, dynamicHeaderFields],
@@ -220,6 +217,13 @@ export default function WorkflowSubmissionsList({
     }
   }, [fixedDefinitionId, scopeDefinitionId]);
 
+  const exportPayload = () => ({
+    filter: advancedFilter ?? undefined,
+    quick_search: searchQuery || undefined,
+    workflow_form_definition_id: wfDefForPayload,
+    workflow_submission_state_code: quickStateCode.trim() || undefined,
+  });
+
   return (
     <div className="space-y-3">
       {formTitle ? (
@@ -234,130 +238,131 @@ export default function WorkflowSubmissionsList({
         listingKey={wfDefForPayload ? `${pathname}::${wfDefForPayload}` : pathname}
         onRowClick={(row) => router.push(`/workflow-forms-management/submissions/${row.id}`)}
         tableLayout={{ columnsVisibility: true }}
+        standardToolbar={false}
       >
         <Card>
-          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-2">
-              {fixedDefinitionId ? null : (
-                <Select
-                  value={scopeDefinitionId || '__all'}
-                  onValueChange={(v) => setScopeDefinitionId(v === '__all' ? '__all' : v)}
-                >
-                  <SelectTrigger className="w-[220px]">
-                    <SelectValue placeholder="All forms" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all">All forms</SelectItem>
-                    {defOptions.map((d) => (
-                      <SelectItem key={d.id} value={d.id}>
-                        {d.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )}
-              <div className="relative">
-                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                <Input
-                  placeholder="Search form, code, state…"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="ps-9 w-56 max-w-full"
-                />
-                {searchQuery ? (
-                  <Button
-                    mode="icon"
-                    variant="dim"
-                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                    onClick={() => setSearchQuery('')}
-                  >
-                    <X />
-                  </Button>
-                ) : null}
-              </div>
-              {listQueryToolsEnabled ? (
-                <>
-                  <Popover>
-                    <PopoverTrigger asChild>
+          <CardHeader className="block">
+            <DataGridListToolbar
+              table={table}
+              searchSlot={
+                <div className="flex flex-wrap items-center gap-2">
+                  {fixedDefinitionId ? null : (
+                    <Select
+                      value={scopeDefinitionId || '__all'}
+                      onValueChange={(v) => setScopeDefinitionId(v === '__all' ? '__all' : v)}
+                    >
+                      <SelectTrigger className="w-[220px]">
+                        <SelectValue placeholder="All forms" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all">All forms</SelectItem>
+                        {defOptions.map((d) => (
+                          <SelectItem key={d.id} value={d.id}>
+                            {d.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  <div className="relative">
+                    <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                    <Input
+                      placeholder="Search form, code, state…"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="ps-9 w-56 max-w-full"
+                    />
+                    {searchQuery ? (
                       <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="relative shrink-0"
-                        title="Quick filter — state code"
-                        aria-label="Quick filters"
+                        mode="icon"
+                        variant="dim"
+                        className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                        onClick={() => setSearchQuery('')}
                       >
-                        <SlidersHorizontal className="size-4" />
-                        {quickFilterActive ? (
-                          <span className="absolute end-1 top-1 size-2 rounded-full bg-primary" aria-hidden />
-                        ) : null}
+                        <X />
                       </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-72" align="start">
-                      <div className="space-y-3">
-                        <h4 className="text-sm font-semibold">Quick filters</h4>
-                        <div className="space-y-2">
-                          <Label htmlFor="wf-sub-state" className="text-xs">
-                            State code (exact)
-                          </Label>
-                          <Input
-                            id="wf-sub-state"
-                            placeholder="e.g. submitted"
-                            value={quickStateCode}
-                            onChange={(e) => setQuickStateCode(e.target.value)}
-                          />
-                        </div>
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                </>
-              ) : null}
-            </div>
-            <div className="flex items-center gap-2">
-              {listQueryToolsEnabled ? (
-                <>
-                  <Button variant="outline" size="sm" className="gap-1" onClick={() => setFilterDialogOpen(true)}>
-                    <Filter className="size-4" />
-                    Filters
-                    {advancedFilter ? (
-                      <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
-                        On
-                      </Badge>
                     ) : null}
-                  </Button>
-                  {canExport ? (
-                    <Button variant="outline" size="sm" className="gap-1" onClick={() => setExportDialogOpen(true)}>
-                      <Download className="size-4" />
-                      Export
-                    </Button>
+                  </div>
+                  {listQueryToolsEnabled ? (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="relative shrink-0"
+                          title="Quick filter — state code"
+                          aria-label="Quick filters"
+                        >
+                          <SlidersHorizontal className="size-4" />
+                          {quickFilterActive ? (
+                            <span className="absolute end-1 top-1 size-2 rounded-full bg-primary" aria-hidden />
+                          ) : null}
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-72" align="start">
+                        <div className="space-y-3">
+                          <h4 className="text-sm font-semibold">Quick filters</h4>
+                          <div className="space-y-2">
+                            <Label htmlFor="wf-sub-state" className="text-xs">
+                              State code (exact)
+                            </Label>
+                            <Input
+                              id="wf-sub-state"
+                              placeholder="e.g. submitted"
+                              value={quickStateCode}
+                              onChange={(e) => setQuickStateCode(e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
                   ) : null}
-                </>
-              ) : null}
-              <DataGridColumnVisibility
-                table={table}
-                trigger={
-                  <Button variant="outline" size="sm" className="gap-1">
-                    <Columns3 className="size-4" />
-                    Columns
-                  </Button>
-                }
-              />
-              {canAdd ? (
-                <Button size="sm" asChild>
-                  <Link
-                    href={
-                      fixedDefinitionId
-                        ? `/workflow-forms-management/forms/${fixedDefinitionId}/new`
-                        : '/workflow-forms-management/submissions/new'
+                </div>
+              }
+              filters={
+                listQueryToolsEnabled
+                  ? {
+                      kind: 'listQuery',
+                      resourceKey: 'workflow_form_submissions',
+                      advancedFilter,
+                      onApply: setAdvancedFilter,
+                      getPayload: exportPayload,
+                      workflowDefinitionId: definitionIdForFilters,
                     }
-                  >
-                    <Plus className="size-4 mr-1" />
-                    New submission
-                  </Link>
-                </Button>
-              ) : null}
-            </div>
-        </CardHeader>
+                  : undefined
+              }
+              exportConfig={
+                listQueryToolsEnabled && canExport
+                  ? {
+                      kind: 'listQuery',
+                      resourceKey: 'workflow_form_submissions',
+                      filename: 'workflow_form_submissions.xlsx',
+                      getPayload: exportPayload,
+                      workflowDefinitionId: definitionIdForFilters,
+                    }
+                  : false
+              }
+              onRefresh={() => void refetch()}
+              isRefreshing={isFetching && !isLoading}
+              primaryAction={
+                canAdd ? (
+                  <Button size="sm" asChild>
+                    <Link
+                      href={
+                        fixedDefinitionId
+                          ? `/workflow-forms-management/forms/${fixedDefinitionId}/new`
+                          : '/workflow-forms-management/submissions/new'
+                      }
+                    >
+                      <Plus className="size-4 mr-1" />
+                      New submission
+                    </Link>
+                  </Button>
+                ) : undefined
+              }
+            />
+          </CardHeader>
           {!listQueryToolsEnabled ? (
             <div className="px-5 pb-2 text-sm text-muted-foreground">
               Install the Workflow Forms module to enable advanced filters and export.
@@ -378,31 +383,6 @@ export default function WorkflowSubmissionsList({
             <DataGridPagination />
           </CardFooter>
         </Card>
-        {listQueryToolsEnabled ? (
-          <>
-            <ListQueryFilterDialog
-              resourceKey="workflow_form_submissions"
-              open={filterDialogOpen}
-              onOpenChange={setFilterDialogOpen}
-              initialFilter={advancedFilter}
-              onApply={setAdvancedFilter}
-              workflowDefinitionId={definitionIdForFilters}
-            />
-            <ListQueryExportDialog
-              resourceKey="workflow_form_submissions"
-              open={exportDialogOpen}
-              onOpenChange={setExportDialogOpen}
-              filename="workflow_form_submissions.xlsx"
-              workflowDefinitionId={definitionIdForFilters}
-              getPayload={() => ({
-                filter: advancedFilter ?? undefined,
-                quick_search: searchQuery || undefined,
-                workflow_form_definition_id: wfDefForPayload,
-                workflow_submission_state_code: quickStateCode.trim() || undefined,
-              })}
-            />
-          </>
-        ) : null}
       </DataGrid>
     </div>
   );

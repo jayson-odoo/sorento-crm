@@ -5,19 +5,21 @@ import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Columns3, Download, Plus, Search, SlidersHorizontal, X } from 'lucide-react';
+import { ChevronRight, Plus, Search, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
@@ -25,8 +27,6 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useSuppliers } from '../hooks/useSuppliers';
 import type { Supplier } from '../types/supplier.types';
-import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
-import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 
@@ -36,8 +36,7 @@ export default function SuppliersList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
-  const [filterDialogOpen, setFilterDialogOpen] = useState(false);
-  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -68,35 +67,36 @@ export default function SuppliersList() {
 
   const columns = useMemo<ColumnDef<Supplier>[]>(
     () => [
+      buildSelectColumn<Supplier>(),
       {
         accessorKey: 'supplier_code',
         header: ({ column }) => <DataGridColumnHeader title="Supplier Code" column={column} />,
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Supplier Code', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'supplier_name',
         header: ({ column }) => <DataGridColumnHeader title="Supplier Name" column={column} />,
         size: 250,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Supplier Name', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'contact_name',
         header: ({ column }) => <DataGridColumnHeader title="Contact Person" column={column} />,
         size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'Contact Person', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'phone_number',
         header: ({ column }) => <DataGridColumnHeader title="Phone" column={column} />,
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Phone', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'email',
         header: ({ column }) => <DataGridColumnHeader title="Email" column={column} />,
         size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Email', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'is_active',
@@ -114,12 +114,14 @@ export default function SuppliersList() {
           );
         },
         size: 100,
+        meta: { headerTitle: 'Status' },
       },
       {
         accessorKey: 'actions',
         header: '',
         cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
         size: 40,
+        enableHiding: false,
       },
     ],
     [],
@@ -130,7 +132,9 @@ export default function SuppliersList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -147,59 +151,60 @@ export default function SuppliersList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
+      standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-              <Input
-                placeholder="Search suppliers..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="ps-9 w-64"
-              />
-              {searchQuery && (
-                <Button
-                  mode="icon"
-                  variant="dim"
-                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                  onClick={() => setSearchQuery('')}
-                >
-                  <X />
-                </Button>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-1" onClick={() => setFilterDialogOpen(true)}>
-              <SlidersHorizontal className="size-4" />
-              Filters
-              {advancedFilter ? (
-                <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
-                  On
-                </Badge>
-              ) : null}
-            </Button>
-            <Button variant="outline" size="sm" className="gap-1" onClick={() => setExportDialogOpen(true)}>
-              <Download className="size-4" />
-              Export
-            </Button>
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-            <Button onClick={() => router.push('/procurement-management/suppliers/new')}>
-              <Plus />
-              Create Supplier
-            </Button>
-          </div>
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search suppliers..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="ps-9 w-64"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            filters={{
+              kind: 'listQuery',
+              resourceKey: 'suppliers',
+              getPayload: () => ({
+                filter: advancedFilter ?? undefined,
+                quick_search: searchQuery || undefined,
+              }),
+              advancedFilter,
+              onApply: setAdvancedFilter,
+            }}
+            exportConfig={{
+              kind: 'listQuery',
+              resourceKey: 'suppliers',
+              filename: 'suppliers_export.xlsx',
+              getPayload: () => ({
+                filter: advancedFilter ?? undefined,
+                quick_search: searchQuery || undefined,
+              }),
+            }}
+            primaryAction={
+              <Button onClick={() => router.push('/procurement-management/suppliers/new')}>
+                <Plus />
+                Create Supplier
+              </Button>
+            }
+          />
         </CardHeader>
         {isError ? (
           <div className="px-5 pb-2 text-sm text-destructive">
@@ -216,23 +221,6 @@ export default function SuppliersList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
-      <ListQueryFilterDialog
-        resourceKey="suppliers"
-        open={filterDialogOpen}
-        onOpenChange={setFilterDialogOpen}
-        initialFilter={advancedFilter}
-        onApply={setAdvancedFilter}
-      />
-      <ListQueryExportDialog
-        resourceKey="suppliers"
-        open={exportDialogOpen}
-        onOpenChange={setExportDialogOpen}
-        filename="suppliers_export.xlsx"
-        getPayload={() => ({
-          filter: advancedFilter ?? undefined,
-          quick_search: searchQuery || undefined,
-        })}
-      />
     </DataGrid>
   );
 }

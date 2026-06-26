@@ -6,22 +6,24 @@ import AccessAgentFormModal from './AccessAgentFormModal';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, ChevronRight, Columns3 } from 'lucide-react';
+import { Plus, ChevronRight, Search, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ListPageToolbar } from '@/components/common/ListPageToolbar';
-import { Card, CardFooter, CardTable } from '@/components/ui/card';
+import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -34,6 +36,7 @@ export default function AccessAgentsList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
   const [formModalOpen, setFormModalOpen] = useState(false);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data, isLoading, refetch, isFetching } = useAccessAgents({
     pageIndex: pagination.pageIndex,
@@ -58,17 +61,18 @@ export default function AccessAgentsList() {
 
   const columns = useMemo<ColumnDef<AccessAgent>[]>(
     () => [
+      buildSelectColumn<AccessAgent>(),
       {
         accessorKey: 'code',
         header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Code', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'name',
         header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
         size: 250,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'description',
@@ -79,7 +83,7 @@ export default function AccessAgentsList() {
           </div>
         ),
         size: 300,
-        meta: { skeleton: <Skeleton className="h-4 w-40" /> },
+        meta: { headerTitle: 'Description', skeleton: <Skeleton className="h-4 w-40" /> },
       },
       {
         accessorKey: 'is_active',
@@ -91,12 +95,14 @@ export default function AccessAgentsList() {
           </Badge>
         ),
         size: 100,
+        meta: { headerTitle: 'Status' },
       },
       {
         accessorKey: 'actions',
         header: '',
         cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
         size: 40,
+        enableHiding: false,
       },
     ],
     [],
@@ -107,7 +113,9 @@ export default function AccessAgentsList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -125,36 +133,49 @@ export default function AccessAgentsList() {
       isLoading={isLoading}
       onRowClick={handleRowClick}
       tableLayout={{ columnsVisibility: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <ListPageToolbar
-          searchPlaceholder="Search access agents..."
-          searchValue={searchQuery}
-          onSearchChange={(v) => {
-            setSearchQuery(v);
-            setPagination((p) => ({ ...p, pageIndex: 0 }));
-          }}
-          createButton={
-            <>
-              <DataGridColumnVisibility
-                table={table}
-                trigger={
-                  <Button variant="outline" size="sm" className="gap-1">
-                    <Columns3 className="size-4" />
-                    Columns
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search access agents..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setPagination((p) => ({ ...p, pageIndex: 0 }));
+                  }}
+                  className="ps-9 w-64"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setPagination((p) => ({ ...p, pageIndex: 0 }));
+                    }}
+                  >
+                    <X />
                   </Button>
-                }
-              />
+                )}
+              </div>
+            }
+            exportConfig={{ filename: 'access_agents_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+            primaryAction={
               <Button onClick={() => setFormModalOpen(true)}>
                 <Plus />
                 Create Access Agent
               </Button>
-            </>
-          }
-          isLoading={isLoading}
-        />
+            }
+          />
+        </CardHeader>
         <CardTable>
           <ScrollArea>
             <DataGridTable />

@@ -5,25 +5,25 @@ import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Plus, Search, X, ChevronRight, Trash2, Filter, Check } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { Plus, Search, X, ChevronRight, Trash2, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -45,7 +45,7 @@ export default function StockInquiriesList() {
   ]);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
-  const [selectedInquiryIds, setSelectedInquiryIds] = useState<Set<string>>(new Set());
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
   const { data, isLoading, refetch, isFetching } = useStockInquiries({
@@ -82,29 +82,9 @@ export default function StockInquiriesList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   };
 
-  const toggleInquirySelection = (inquiryId: string) => {
-    setSelectedInquiryIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(inquiryId)) next.delete(inquiryId);
-      else next.add(inquiryId);
-      return next;
-    });
-  };
-
-  const selectAllInquiries = () => {
-    const pageInquiries = data?.data ?? [];
-    if (selectedInquiryIds.size === pageInquiries.length) {
-      setSelectedInquiryIds(new Set());
-    } else {
-      setSelectedInquiryIds(new Set(pageInquiries.map((i) => i.id)));
-    }
-  };
-
-  const pageInquiries = data?.data ?? [];
-  const isAllSelected = pageInquiries.length > 0 && selectedInquiryIds.size === pageInquiries.length;
-
   const columns = useMemo<ColumnDef<StockInquiry>[]>(
     () => [
+      buildSelectColumn<StockInquiry>(),
       {
         accessorKey: 'inquiry_number',
         header: ({ column }) => (
@@ -112,27 +92,7 @@ export default function StockInquiriesList() {
         ),
         size: 130,
         cell: ({ row }) => row.original.inquiry_number || '—',
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
-      },
-      {
-        id: 'select',
-        header: () => (
-          <Checkbox
-            checked={isAllSelected}
-            onCheckedChange={selectAllInquiries}
-            aria-label="Select all"
-          />
-        ),
-        cell: ({ row }) => (
-          <Checkbox
-            checked={selectedInquiryIds.has(row.original.id)}
-            onCheckedChange={() => toggleInquirySelection(row.original.id)}
-            aria-label={`Select ${row.original.inquiry_number ?? row.original.product_code ?? row.original.id}`}
-            onClick={(e) => e.stopPropagation()}
-          />
-        ),
-        size: 44,
-        enableResizing: false,
+        meta: { headerTitle: 'Stock inquiry number', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'product_code',
@@ -141,7 +101,7 @@ export default function StockInquiriesList() {
         ),
         size: 150,
         cell: ({ row }) => row.original.product_code || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Product Code', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'item_description',
@@ -150,7 +110,7 @@ export default function StockInquiriesList() {
         ),
         size: 200,
         cell: ({ row }) => row.original.item_description || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Item Description', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'project_customer',
@@ -159,7 +119,7 @@ export default function StockInquiriesList() {
         ),
         size: 150,
         cell: ({ row }) => row.original.project_customer || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Project Customer', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'project_name',
@@ -168,7 +128,7 @@ export default function StockInquiriesList() {
         ),
         size: 150,
         cell: ({ row }) => row.original.project_name || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Project Name', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'quantity',
@@ -177,7 +137,7 @@ export default function StockInquiriesList() {
         ),
         size: 100,
         cell: ({ row }) => row.original.quantity || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-16" /> },
+        meta: { headerTitle: 'Quantity', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         accessorKey: 'delivery_date',
@@ -186,7 +146,7 @@ export default function StockInquiriesList() {
         ),
         cell: ({ row }) => row.original.delivery_date ?? '-',
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Delivery Date', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'remark',
@@ -202,7 +162,7 @@ export default function StockInquiriesList() {
           );
         },
         size: 180,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Remark', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'created_at',
@@ -216,7 +176,7 @@ export default function StockInquiriesList() {
           const formatted = formatDateTimeInMalaysia(raw);
           return formatted || '-';
         },
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Created', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'salesperson',
@@ -225,7 +185,7 @@ export default function StockInquiriesList() {
         ),
         size: 150,
         cell: ({ row }) => row.original.salesperson || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Salesperson', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'status',
@@ -242,7 +202,7 @@ export default function StockInquiriesList() {
             </span>
           );
         },
-        meta: { skeleton: <Skeleton className="h-4 w-16" /> },
+        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         accessorKey: 'actions',
@@ -251,9 +211,10 @@ export default function StockInquiriesList() {
           <ChevronRight className="text-muted-foreground/70 size-3.5" />
         ),
         size: 40,
+        enableHiding: false,
       },
     ],
-    [selectedInquiryIds, isAllSelected],
+    [],
   );
 
   const table = useReactTable({
@@ -261,7 +222,9 @@ export default function StockInquiriesList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -278,118 +241,112 @@ export default function StockInquiriesList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
+      standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-              <Input
-                placeholder="Search stock inquiries..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="ps-9 w-64"
-              />
-              {searchQuery && (
-                <Button
-                  mode="icon"
-                  variant="dim"
-                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                  onClick={() => setSearchQuery('')}
-                >
-                  <X />
-                </Button>
-              )}
-            </div>
-            <Popover>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  mode="icon"
-                  aria-label="Filter by status"
-                  className="relative w-7 px-0"
-                >
-                  <Filter className="size-4" />
-                  {statusFilter.length > 0 && (
-                    <span className="absolute -top-1 -end-1 inline-flex size-4 items-center justify-center rounded-full bg-primary text-[10px] font-medium text-primary-foreground">
-                      {statusFilter.length}
-                    </span>
-                  )}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-56 p-0" align="start">
-                <div className="px-3 py-2 text-xs font-medium text-muted-foreground">
-                  Filter by status
-                </div>
-                <Separator />
-                <div className="py-1">
-                  {Object.entries(STOCK_INQUIRY_STATUS_LABELS).map(([value, label]) => {
-                    const checked = statusFilter.includes(value);
-                    return (
-                      <button
-                        key={value}
-                        type="button"
-                        onClick={() => toggleStatusFilter(value)}
-                        className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent"
-                      >
-                        <span
-                          className={cn(
-                            'flex size-4 items-center justify-center rounded-sm border border-primary',
-                            checked
-                              ? 'bg-primary text-primary-foreground'
-                              : 'opacity-50 [&_svg]:invisible',
-                          )}
-                        >
-                          <Check className="size-3.5" />
-                        </span>
-                        <span>{label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {statusFilter.length > 0 && (
-                  <>
-                    <Separator />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setStatusFilter([]);
-                        setPagination((p) => ({ ...p, pageIndex: 0 }));
-                      }}
-                      className="w-full px-3 py-2 text-sm text-center hover:bg-accent"
-                    >
-                      Clear filters
-                    </button>
-                  </>
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search stock inquiries..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="ps-9 w-64"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X />
+                  </Button>
                 )}
-              </PopoverContent>
-            </Popover>
-          </div>
-          <div className="flex items-center gap-2">
-            {selectedInquiryIds.size > 0 && (
+              </div>
+            }
+            filters={{
+              kind: 'custom',
+              active: statusFilter.length > 0,
+              activeCount: statusFilter.length,
+              content: (
+                <div className="space-y-1">
+                  <div className="px-1 py-1 text-xs font-medium text-muted-foreground">
+                    Filter by status
+                  </div>
+                  <Separator />
+                  <div className="py-1">
+                    {Object.entries(STOCK_INQUIRY_STATUS_LABELS).map(([value, label]) => {
+                      const checked = statusFilter.includes(value);
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => toggleStatusFilter(value)}
+                          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                        >
+                          <span
+                            className={cn(
+                              'flex size-4 items-center justify-center rounded-sm border border-primary',
+                              checked
+                                ? 'bg-primary text-primary-foreground'
+                                : 'opacity-50 [&_svg]:invisible',
+                            )}
+                          >
+                            <Check className="size-3.5" />
+                          </span>
+                          <span>{label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {statusFilter.length > 0 && (
+                    <>
+                      <Separator />
+                      <div className="flex justify-end pt-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setStatusFilter([]);
+                            setPagination((p) => ({ ...p, pageIndex: 0 }));
+                          }}
+                        >
+                          Clear filters
+                        </Button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ),
+            }}
+            exportConfig={{ filename: 'stock_inquiries_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+            primaryAction={
               <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setBulkDeleteDialogOpen(true)}
-                className="text-destructive hover:text-destructive"
+                onClick={() =>
+                  router.push('/procurement-management/stock-inquiries/new')
+                }
               >
-                <Trash2 className="size-4" />
-                Bulk Delete ({selectedInquiryIds.size})
+                <Plus />
+                Create Stock Inquiry
               </Button>
-            )}
-            <Button
-              onClick={() =>
-                router.push('/procurement-management/stock-inquiries/new')
-              }
-            >
-              <Plus />
-              Create Stock Inquiry
-            </Button>
-          </div>
+            }
+            bulkActions={[
+              {
+                key: 'delete',
+                label: 'Delete',
+                icon: Trash2,
+                destructive: true,
+                onClick: () => setBulkDeleteDialogOpen(true),
+              },
+            ]}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>
@@ -405,10 +362,10 @@ export default function StockInquiriesList() {
         open={bulkDeleteDialogOpen}
         onOpenChange={(open) => {
           setBulkDeleteDialogOpen(open);
-          if (!open) setSelectedInquiryIds(new Set());
+          if (!open) setRowSelection({});
         }}
-        inquiryIds={Array.from(selectedInquiryIds)}
-        onSuccess={() => setSelectedInquiryIds(new Set())}
+        inquiryIds={selectedRowIds(table)}
+        onSuccess={() => setRowSelection({})}
       />
     </DataGrid>
   );

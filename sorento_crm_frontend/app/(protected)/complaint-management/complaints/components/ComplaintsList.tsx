@@ -6,23 +6,25 @@ import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Columns3, Paperclip, Plus, Search, Trash2, X } from 'lucide-react';
+import { ChevronRight, Paperclip, Plus, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -53,7 +55,7 @@ export default function ComplaintsList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [assignedToFilter, setAssignedToFilter] = useState<string>('__all__');
   const [statusFilter, setStatusFilter] = useState<string>('__all__');
-  const [selectedComplaintIds, setSelectedComplaintIds] = useState<Set<string>>(new Set());
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -80,6 +82,9 @@ export default function ComplaintsList() {
   });
   const assigneeOptions = respondSyncedUsers.filter((u) => u.respond_user_id);
 
+  const filtersActiveCount =
+    (assignedToFilter !== '__all__' ? 1 : 0) + (statusFilter !== '__all__' ? 1 : 0);
+
   const handleRowClick = (row: Complaint) => {
     const complaintId = row.id;
     // Carry the active list query into the detail URL so its prev/next pager
@@ -104,49 +109,9 @@ export default function ComplaintsList() {
     router.push(`/complaint-management/complaints/${complaintId}${qs}`);
   };
 
-  const toggleComplaintSelection = (complaintId: string) => {
-    setSelectedComplaintIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(complaintId)) next.delete(complaintId);
-      else next.add(complaintId);
-      return next;
-    });
-  };
-
-  const selectAllComplaints = () => {
-    const pageComplaints = data?.data ?? [];
-    if (selectedComplaintIds.size === pageComplaints.length) {
-      setSelectedComplaintIds(new Set());
-    } else {
-      setSelectedComplaintIds(new Set(pageComplaints.map((c) => c.id)));
-    }
-  };
-
-  const pageComplaints = data?.data ?? [];
-  const isAllSelected = pageComplaints.length > 0 && selectedComplaintIds.size === pageComplaints.length;
-
   const columns = useMemo<ColumnDef<Complaint>[]>(
     () => [
-      {
-        id: 'select',
-        header: () => (
-          <Checkbox
-            checked={isAllSelected}
-            onCheckedChange={selectAllComplaints}
-            aria-label="Select all"
-          />
-        ),
-        cell: ({ row }) => (
-          <Checkbox
-            checked={selectedComplaintIds.has(row.original.id)}
-            onCheckedChange={() => toggleComplaintSelection(row.original.id)}
-            aria-label={`Select complaint ${row.original.delivery_order_number || row.original.id}`}
-            onClick={(e) => e.stopPropagation()}
-          />
-        ),
-        size: 44,
-        enableResizing: false,
-      },
+      buildSelectColumn<Complaint>(),
       {
         accessorKey: 'delivery_order_number',
         header: ({ column }) => (
@@ -154,7 +119,7 @@ export default function ComplaintsList() {
         ),
         size: 150,
         cell: ({ row }) => row.original.delivery_order_number || '-',
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'DO Number', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'complaint_number',
@@ -167,7 +132,7 @@ export default function ComplaintsList() {
             {row.original.complaint_number || '-'}
           </span>
         ),
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Complaint Number', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'complaint_date',
@@ -179,7 +144,7 @@ export default function ComplaintsList() {
             ? formatDate(new Date(row.original.complaint_date))
             : '-',
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Complaint Date', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'created_at',
@@ -191,7 +156,7 @@ export default function ComplaintsList() {
             ? formatDateTimeInMalaysia(row.original.created_at)
             : '-',
         size: 160,
-        meta: { skeleton: <Skeleton className="h-4 w-28" /> },
+        meta: { headerTitle: 'Created at', skeleton: <Skeleton className="h-4 w-28" /> },
       },
       {
         accessorKey: 'customer_name',
@@ -200,7 +165,7 @@ export default function ComplaintsList() {
         ),
         cell: ({ row }) => row.original.customer_name || '-',
         size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Customer Name', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'product_code',
@@ -209,7 +174,7 @@ export default function ComplaintsList() {
         ),
         cell: ({ row }) => row.original.product_code || '-',
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Product Code', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'complaint_type',
@@ -225,7 +190,7 @@ export default function ComplaintsList() {
           );
         },
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Complaint Type', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         accessorKey: 'project_title',
@@ -234,7 +199,7 @@ export default function ComplaintsList() {
         ),
         cell: ({ row }) => row.original.project_title || '-',
         size: 200,
-        meta: { skeleton: <Skeleton className="h-4 w-32" /> },
+        meta: { headerTitle: 'Project Title', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
         accessorKey: 'salesperson',
@@ -243,7 +208,7 @@ export default function ComplaintsList() {
         ),
         cell: ({ row }) => row.original.salesperson || '-',
         size: 160,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Salesperson', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'status',
@@ -262,7 +227,7 @@ export default function ComplaintsList() {
             </span>
           );
         },
-        meta: { skeleton: <Skeleton className="h-4 w-16" /> },
+        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         accessorKey: 'assigned_to',
@@ -272,7 +237,7 @@ export default function ComplaintsList() {
         cell: ({ row }) =>
           row.original.assigned_to_name ?? row.original.assigned_to ?? '-',
         size: 160,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Assigned To', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'attachments',
@@ -291,7 +256,7 @@ export default function ComplaintsList() {
           );
         },
         size: 100,
-        meta: { skeleton: <Skeleton className="h-4 w-16" /> },
+        meta: { headerTitle: 'Attachments', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
         accessorKey: 'print_count',
@@ -307,7 +272,7 @@ export default function ComplaintsList() {
           />
         ),
         size: 110,
-        meta: { skeleton: <Skeleton className="h-4 w-12" /> },
+        meta: { headerTitle: 'Print Count', skeleton: <Skeleton className="h-4 w-12" /> },
       },
       {
         accessorKey: 'actions',
@@ -316,9 +281,10 @@ export default function ComplaintsList() {
           <ChevronRight className="text-muted-foreground/70 size-3.5" />
         ),
         size: 40,
+        enableHiding: false,
       },
     ],
-    [selectedComplaintIds, isAllSelected],
+    [],
   );
 
   const table = useReactTable({
@@ -326,7 +292,9 @@ export default function ComplaintsList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -343,93 +311,113 @@ export default function ComplaintsList() {
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
       onRowClick={handleRowClick}
+      standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative">
-              <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-              <Input
-                placeholder="Search complaints..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="ps-9 w-64"
-              />
-              {searchQuery && (
-                <Button
-                  mode="icon"
-                  variant="dim"
-                  className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                  onClick={() => setSearchQuery('')}
-                >
-                  <X />
-                </Button>
-              )}
-            </div>
-            <Select
-              value={assignedToFilter}
-              onValueChange={setAssignedToFilter}
-            >
-              <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Assigned to" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">All assignees</SelectItem>
-                <SelectItem value="__unassigned__">Unassigned</SelectItem>
-                {assigneeOptions.map((u) => (
-                  <SelectItem key={u.id} value={u.respond_user_id!}>
-                    {u.name || u.email}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-[160px]">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">All statuses</SelectItem>
-                <SelectItem value="new">New</SelectItem>
-                <SelectItem value="updated">Updated</SelectItem>
-                <SelectItem value="responded">Responded</SelectItem>
-                <SelectItem value="approved">Approved</SelectItem>
-                <SelectItem value="rejected">Rejected</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-2">
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-            {selectedComplaintIds.size > 0 && (
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search complaints..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="ps-9 w-64"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            filters={{
+              kind: 'custom',
+              active: filtersActiveCount > 0,
+              activeCount: filtersActiveCount,
+              content: (
+                <div className="space-y-4">
+                  <div>
+                    <Label>Assigned to</Label>
+                    <Select value={assignedToFilter} onValueChange={setAssignedToFilter}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="All assignees" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">All assignees</SelectItem>
+                        <SelectItem value="__unassigned__">Unassigned</SelectItem>
+                        {assigneeOptions.map((u) => (
+                          <SelectItem key={u.id} value={u.respond_user_id!}>
+                            {u.name || u.email}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label>Status</Label>
+                    <Select value={statusFilter} onValueChange={setStatusFilter}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="All statuses" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">All statuses</SelectItem>
+                        <SelectItem value="new">New</SelectItem>
+                        <SelectItem value="updated">Updated</SelectItem>
+                        <SelectItem value="responded">Responded</SelectItem>
+                        <SelectItem value="approved">Approved</SelectItem>
+                        <SelectItem value="rejected">Rejected</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {filtersActiveCount > 0 && (
+                    <div className="flex justify-end">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setAssignedToFilter('__all__');
+                          setStatusFilter('__all__');
+                        }}
+                      >
+                        Clear filters
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ),
+            }}
+            exportConfig={{ filename: 'complaints_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+            primaryAction={
               <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setBulkDeleteDialogOpen(true)}
-                className="text-destructive hover:text-destructive"
+                onClick={() =>
+                  router.push('/complaint-management/complaints/new')
+                }
               >
-                <Trash2 className="size-4" />
-                Bulk Delete ({selectedComplaintIds.size})
+                <Plus />
+                Create Complaint
               </Button>
-            )}
-            <Button
-              onClick={() =>
-                router.push('/complaint-management/complaints/new')
-              }
-            >
-              <Plus />
-              Create Complaint
-            </Button>
-          </div>
+            }
+            bulkActions={[
+              {
+                key: 'delete',
+                label: 'Delete',
+                icon: Trash2,
+                destructive: true,
+                onClick: () => setBulkDeleteDialogOpen(true),
+              },
+            ]}
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>
@@ -443,12 +431,9 @@ export default function ComplaintsList() {
       </Card>
       <ComplaintBulkDeleteDialog
         open={bulkDeleteDialogOpen}
-        onOpenChange={(open) => {
-          setBulkDeleteDialogOpen(open);
-          if (!open) setSelectedComplaintIds(new Set());
-        }}
-        complaintIds={Array.from(selectedComplaintIds)}
-        onSuccess={() => setSelectedComplaintIds(new Set())}
+        onOpenChange={setBulkDeleteDialogOpen}
+        complaintIds={selectedRowIds(table)}
+        onSuccess={() => setRowSelection({})}
       />
     </DataGrid>
   );

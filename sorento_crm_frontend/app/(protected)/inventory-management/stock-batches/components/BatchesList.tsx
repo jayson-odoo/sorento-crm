@@ -1,71 +1,93 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
+  RowSelectionState,
   SortingState,
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Columns3, Plus, Search, X } from 'lucide-react';
+import { ChevronRight, Plus, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import { DataGrid, DataGridApiResponse } from '@/components/ui/data-grid';
+import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStockBatches } from '../hooks/useStockBatches';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import type { StockBatch } from '../types/batch.types';
 import { formatDate } from '@/lib/helpers';
 
+const BATCH_STATUSES: { value: string; label: string }[] = [
+  { value: 'available', label: 'Available' },
+  { value: 'reserved', label: 'Reserved' },
+  { value: 'damaged', label: 'Damaged' },
+  { value: 'expired', label: 'Expired' },
+  { value: 'returned', label: 'Returned' },
+];
+
 export default function BatchesList() {
   const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data, isLoading, refetch, isFetching } = useStockBatches({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
+    status: statusFilter || undefined,
   });
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  }, [statusFilter]);
 
   const columns = useMemo<ColumnDef<StockBatch>[]>(
     () => [
+      buildSelectColumn<StockBatch>(),
       {
         accessorKey: 'product.product_code',
         header: ({ column }) => <DataGridColumnHeader title="Product Code" column={column} />,
         cell: ({ row }) => row.original.product?.product_code || '-',
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Product Code', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'batch_code',
         header: ({ column }) => <DataGridColumnHeader title="Batch Code" column={column} />,
         size: 150,
-        meta: { skeleton: <Skeleton className="h-4 w-24" /> },
+        meta: { headerTitle: 'Batch Code', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'quantity',
         header: ({ column }) => <DataGridColumnHeader title="Quantity" column={column} />,
         size: 100,
+        meta: { headerTitle: 'Quantity' },
       },
       {
         accessorKey: 'manufactured_date',
         header: ({ column }) => <DataGridColumnHeader title="Manufactured Date" column={column} />,
         cell: ({ row }) => row.original.manufactured_date ? formatDate(new Date(row.original.manufactured_date)) : '-',
         size: 150,
+        meta: { headerTitle: 'Manufactured Date' },
       },
       {
         accessorKey: 'expiry_date',
@@ -85,12 +107,14 @@ export default function BatchesList() {
           );
         },
         size: 200,
+        meta: { headerTitle: 'Expiry Date' },
       },
       {
         accessorKey: 'warehouse.warehouse_name',
         header: ({ column }) => <DataGridColumnHeader title="Warehouse" column={column} />,
         cell: ({ row }) => row.original.warehouse?.warehouse_name || '-',
         size: 150,
+        meta: { headerTitle: 'Warehouse' },
       },
       {
         accessorKey: 'status',
@@ -104,12 +128,14 @@ export default function BatchesList() {
           );
         },
         size: 120,
+        meta: { headerTitle: 'Status' },
       },
       {
         accessorKey: 'actions',
         header: '',
         cell: () => <ChevronRight className="text-muted-foreground/70 size-3.5" />,
         size: 40,
+        enableHiding: false,
       },
     ],
     [],
@@ -120,7 +146,9 @@ export default function BatchesList() {
     data: data?.data || [],
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
-    state: { pagination, sorting },
+    state: { pagination, sorting, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
@@ -137,45 +165,75 @@ export default function BatchesList() {
       tableLayout={{ columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
-      onRefresh={() => void refetch()}
-      isRefreshing={isFetching && !isLoading}
+      standardToolbar={false}
     >
       <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative">
-            <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-            <Input
-              placeholder="Search batches..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="ps-9 w-64"
-            />
-            {searchQuery && (
-              <Button
-                mode="icon"
-                variant="dim"
-                className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                onClick={() => setSearchQuery('')}
-              >
-                <X />
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative">
+                <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                <Input
+                  placeholder="Search batches..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="ps-9 w-64"
+                />
+                {searchQuery && (
+                  <Button
+                    mode="icon"
+                    variant="dim"
+                    className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    <X />
+                  </Button>
+                )}
+              </div>
+            }
+            filters={{
+              kind: 'custom',
+              active: Boolean(statusFilter),
+              activeCount: statusFilter ? 1 : 0,
+              content: (
+                <div className="space-y-4">
+                  <div>
+                    <Label>Status</Label>
+                    <Select value={statusFilter || 'all'} onValueChange={(v) => setStatusFilter(v === 'all' ? '' : v)}>
+                      <SelectTrigger className="mt-1">
+                        <SelectValue placeholder="All statuses" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        {BATCH_STATUSES.map((s) => (
+                          <SelectItem key={s.value} value={s.value}>
+                            {s.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {statusFilter && (
+                    <div className="flex justify-end">
+                      <Button variant="ghost" size="sm" onClick={() => setStatusFilter('')}>
+                        Clear filters
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ),
+            }}
+            exportConfig={{ filename: 'stock_batches_export.xlsx' }}
+            onRefresh={() => void refetch()}
+            isRefreshing={isFetching && !isLoading}
+            primaryAction={
+              <Button onClick={() => router.push('/inventory-management/stock-batches/new')}>
+                <Plus />
+                Create Batch
               </Button>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" size="sm" className="gap-1">
-                  <Columns3 className="size-4" />
-                  Columns
-                </Button>
-              }
-            />
-            <Button onClick={() => router.push('/inventory-management/stock-batches/new')}>
-            <Plus />
-            Create Batch
-            </Button>
-          </div>
+            }
+          />
         </CardHeader>
         <CardTable>
           <ScrollArea>

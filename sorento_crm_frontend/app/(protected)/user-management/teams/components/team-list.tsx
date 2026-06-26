@@ -2,12 +2,11 @@
 
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Columns3, Ellipsis, Plus, Users } from 'lucide-react';
+import { Ellipsis, Plus, Users } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
-import { ListPageToolbar } from '@/components/common/ListPageToolbar';
 import { Button } from '@/components/ui/button';
-import { Card, CardFooter, CardTable } from '@/components/ui/card';
+import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,11 +15,18 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
+import {
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+  type RowSelectionState,
+} from '@tanstack/react-table';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import type { Team } from '../types/team.types';
 import { getTeams } from '../services/teamService';
 import TeamEditDialog from './team-edit-dialog';
@@ -30,6 +36,7 @@ export default function TeamList() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data: teams = [], isLoading } = useQuery({
     queryKey: ['user-management-teams'],
@@ -39,6 +46,7 @@ export default function TeamList() {
 
   const columns = useMemo<ColumnDef<Team>[]>(
     () => [
+      buildSelectColumn<Team>(),
       {
         id: 'name',
         accessorFn: (row) => row.name,
@@ -117,56 +125,53 @@ export default function TeamList() {
     getRowId: (row) => row.id,
     state: {
       pagination: { pageIndex: 0, pageSize: 5 },
+      rowSelection,
     },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
   });
 
   return (
     <>
-      <Card>
-        <ListPageToolbar
-          createButton={
-            <>
-              <DataGridColumnVisibility
-                table={table}
-                trigger={
-                  <Button variant="outline" size="sm" className="gap-1" disabled={isLoading}>
-                    <Columns3 className="size-4" />
-                    Columns
-                  </Button>
-                }
-              />
-              <Button
-                onClick={() => {
-                  setSelectedTeam(null);
-                  setEditOpen(true);
-                }}
-              >
-                <Plus className="me-2 size-4" />
-                Create team
-              </Button>
-            </>
-          }
-          isLoading={isLoading}
-          hideSearch
-        />
-        <CardTable>
-          <DataGrid
-            table={table}
-            recordCount={teams.length}
-            isLoading={isLoading}
-            emptyMessage="No teams yet. Create a team to use for round-robin assignees."
-            tableLayout={{ width: 'fixed' }}
-          >
-            <DataGridTable />
-          </DataGrid>
-        </CardTable>
-        {!isLoading && teams.length > 0 && (
-          <CardFooter className="text-muted-foreground text-sm">
-            {teams.length} team{teams.length !== 1 ? 's' : ''}
-          </CardFooter>
-        )}
-      </Card>
+      <DataGrid
+        table={table}
+        recordCount={teams.length}
+        isLoading={isLoading}
+        emptyMessage="No teams yet. Create a team to use for round-robin assignees."
+        tableLayout={{ width: 'fixed', columnsVisibility: true }}
+      >
+        <Card>
+          <CardHeader className="block">
+            <DataGridListToolbar
+              table={table}
+              exportConfig={{ filename: 'teams_export.xlsx' }}
+              primaryAction={
+                <Button
+                  onClick={() => {
+                    setSelectedTeam(null);
+                    setEditOpen(true);
+                  }}
+                >
+                  <Plus className="me-2 size-4" />
+                  Create team
+                </Button>
+              }
+            />
+          </CardHeader>
+          <CardTable>
+            <ScrollArea>
+              <DataGridTable />
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          </CardTable>
+          {!isLoading && teams.length > 0 && (
+            <CardFooter className="text-muted-foreground text-sm">
+              {teams.length} team{teams.length !== 1 ? 's' : ''}
+            </CardFooter>
+          )}
+        </Card>
+      </DataGrid>
 
       <TeamEditDialog
         open={editOpen}
