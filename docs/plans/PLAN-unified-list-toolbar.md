@@ -1,6 +1,17 @@
 # PLAN — Unified List Toolbar (uniform DataGrid toolbar across all lists)
 
-**Status:** Phases 0–3 DONE + Playwright-validated. Phase 4 (sweep) in progress.
+**Status:** COMPLETE — all phases done + validated. Ready for user manual review.
+
+## Final tally (2026-06-27)
+- **Phase 0** — pagination fix: `MAX_PAGE_LIMIT=1000`, 54 BE list endpoints, FE sizes `25–1000`. Verified.
+- **Global dup kill** — DataGrid default `standardToolbar=false`. Single toolbar everywhere.
+- **Canonical `DataGridListToolbar`** — controls-left, conditional filters, Columns, selection-gated client export + all-records server stream + listQuery server export, secondary overflow, bulk strip, refresh, select-all banner.
+- **34 lists migrated**: Stock (reference) + 24 key entity lists + 9 long-tail gap-restore (incl. the Files page).
+- **NOT migrated (intentional — clean single toolbar, no regression):** demos (store-admin/*, demo1/*), dashboards (SLAKpiDashboard), nested sub-tables (RunLogsTable, AutomationRunsTable), stock-detail ledger sub-table, CategoryTree (not a grid).
+- **Browser-validated across modules:** Stock, Products, Brands, Orders, Complaints, GRN, Promotions, Users (dynamic bulk actions), Files page (complex filters + bulk + restored Columns/Export). 0 console errors.
+- **Tests:** vitest `data-grid-list-toolbar.test.tsx` (6, pass); pytest `test_list_pagination_limit.py` (2, pass); fixed `TeamPendingList.test.tsx` for the new toolbar. Full vitest 323 pass / 3 fail (the 3 are pre-existing in `notification-channels-preference.test.tsx`, unrelated — unchanged file, no toolbar imports).
+
+Pending (user): manual last-round check across lists.
 
 ## Phase 2+3 validation (Stock reference, 2026-06-26)
 
