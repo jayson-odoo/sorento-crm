@@ -115,8 +115,8 @@ export default function SendTemplateDialog({
 
   return (
     <Dialog open={open} onOpenChange={resetAndClose}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-xl overflow-y-hidden">
+        <DialogHeader className="shrink-0">
           <DialogTitle>Send WhatsApp template</DialogTitle>
           <DialogDescription>
             Templates are pre-approved by WhatsApp and can be sent even when the
@@ -124,7 +124,7 @@ export default function SendTemplateDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
           {!selected && (
             <>
               <div className="relative">
@@ -147,8 +147,8 @@ export default function SendTemplateDialog({
                   WhatsApp Templates page first.
                 </p>
               ) : (
-                <div className="max-h-72 space-y-2 overflow-y-auto pe-1">
-                  <div className="space-y-2 pe-2">
+                <div className="space-y-2">
+                  <div className="space-y-2">
                     {filtered.map((t) => (
                       <button
                         key={t.id}
@@ -213,7 +213,7 @@ export default function SendTemplateDialog({
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0">
           <Button variant="outline" onClick={() => resetAndClose(false)} disabled={isSending}>
             Cancel
           </Button>
