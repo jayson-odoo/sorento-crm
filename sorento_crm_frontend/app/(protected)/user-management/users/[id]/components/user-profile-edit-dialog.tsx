@@ -430,7 +430,7 @@ const UserProfileEditDialog = ({
                 <FormItem>
                   <FormLabel>Roles</FormLabel>
                   <FormControl>
-                    <div className="flex flex-col gap-2 rounded-md border p-3">
+                    <div className="flex max-h-48 flex-col gap-2 overflow-y-auto rounded-md border p-3">
                       {(roleList ?? []).map((role: UserRole) => (
                         <div
                           key={role.id}

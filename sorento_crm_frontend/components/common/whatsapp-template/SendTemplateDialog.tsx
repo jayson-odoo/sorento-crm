@@ -15,7 +15,6 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import {
@@ -148,8 +147,8 @@ export default function SendTemplateDialog({
                   WhatsApp Templates page first.
                 </p>
               ) : (
-                <ScrollArea className="max-h-72">
-                  <div className="space-y-2 pe-3">
+                <div className="max-h-72 space-y-2 overflow-y-auto pe-1">
+                  <div className="space-y-2 pe-2">
                     {filtered.map((t) => (
                       <button
                         key={t.id}
@@ -172,7 +171,7 @@ export default function SendTemplateDialog({
                       </button>
                     ))}
                   </div>
-                </ScrollArea>
+                </div>
               )}
             </>
           )}
