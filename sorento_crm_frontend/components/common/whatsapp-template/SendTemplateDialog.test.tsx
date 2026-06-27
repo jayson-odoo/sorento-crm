@@ -60,6 +60,22 @@ describe('SendTemplateDialog', () => {
     expect(await screen.findByTestId('template-option-update')).toBeInTheDocument();
   });
 
+  it('matches snake_case names from a separator-free / spaced query', async () => {
+    (listApprovedTemplates as any).mockResolvedValue([
+      { ...TEMPLATE, id: 'tpl-cfu', name: 'conversation_follow_up' },
+      { ...TEMPLATE, id: 'tpl-upd', name: 'order_update' },
+    ]);
+    renderDialog();
+    const search = await screen.findByPlaceholderText('Search templates...');
+
+    fireEvent.change(search, { target: { value: 'conversation follow up' } });
+    expect(screen.getByTestId('template-option-conversation_follow_up')).toBeInTheDocument();
+    expect(screen.queryByTestId('template-option-order_update')).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: 'conversationfollowup' } });
+    expect(screen.getByTestId('template-option-conversation_follow_up')).toBeInTheDocument();
+  });
+
   it('shows empty state when no approved templates exist', async () => {
     (listApprovedTemplates as any).mockResolvedValue([]);
     renderDialog();

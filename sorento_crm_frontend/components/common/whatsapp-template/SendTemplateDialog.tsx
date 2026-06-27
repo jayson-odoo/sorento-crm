@@ -58,12 +58,22 @@ export default function SendTemplateDialog({
   });
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
     const rows = templates ?? [];
+    // Separator-insensitive search: template names use snake_case
+    // (conversation_follow_up) but users type spaces. Normalize underscores /
+    // hyphens / runs of whitespace to single spaces, then require every typed
+    // token to appear — word order doesn't matter. Also match the fully-collapsed
+    // form so "conversationfollowup" (no separators) still hits.
+    const norm = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+    const q = norm(search);
     if (!q) return rows;
-    return rows.filter(
-      (t) => t.name.toLowerCase().includes(q) || t.body_text.toLowerCase().includes(q),
-    );
+    const tokens = q.split(' ');
+    const qCollapsed = q.replace(/ /g, '');
+    return rows.filter((t) => {
+      const hay = norm(`${t.name} ${t.body_text}`);
+      const hayCollapsed = hay.replace(/ /g, '');
+      return tokens.every((tok) => hay.includes(tok)) || hayCollapsed.includes(qCollapsed);
+    });
   }, [templates, search]);
 
   const selected: WhatsAppTemplate | null = useMemo(
@@ -114,7 +124,13 @@ export default function SendTemplateDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={resetAndClose}>
+    // `modal` is required: this dialog stacks ON TOP of the chat Sheet (itself a
+    // modal Radix dialog whose react-remove-scroll lock blocks wheel/touch
+    // everywhere except its own subtree). A non-modal dialog here is a portaled
+    // sibling outside that lock — its inner scroll region scrolls programmatically
+    // but eats every wheel/touch event. modal makes THIS dialog own the topmost
+    // lock so its content becomes the scroll-allowed shard.
+    <Dialog open={open} onOpenChange={resetAndClose} modal>
       <DialogContent className="sm:max-w-xl overflow-y-hidden">
         <DialogHeader className="shrink-0">
           <DialogTitle>Send WhatsApp template</DialogTitle>
