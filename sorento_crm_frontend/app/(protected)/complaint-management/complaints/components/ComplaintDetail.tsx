@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
+import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { complaintStatusPillClass, complaintStatusLabel } from '@/lib/complaint-status';
@@ -767,6 +768,10 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {complaint.status === 'rejected' && (
+        <RejectionReasonBanner reason={complaint.rejection_reason} />
+      )}
 
       <SlaActiveTrackerControls
         activeTracker={activeTracker}

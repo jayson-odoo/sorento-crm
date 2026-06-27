@@ -53,6 +53,7 @@ import {
 import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs, submitApprovalDecision } from '../services/purchaseRequestService';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
+import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { ArrowUpCircle, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -800,6 +801,13 @@ export default function PurchaseRequestDetail({
         entityLabel={typeLabel}
         onSuccess={() => router.push(basePath)}
       />
+
+      {request.approval_status === 'rejected' && (
+        // PR/SF store the rejection reason in approval_comments (both CS-reject
+        // before approval and approver-reject write it there), not a dedicated
+        // rejection_reason column.
+        <RejectionReasonBanner reason={request.approval_comments} />
+      )}
 
       <SlaActiveTrackerControls
         activeTracker={activeTracker}

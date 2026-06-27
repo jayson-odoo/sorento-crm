@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
+import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { Button } from '@/components/ui/button';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -665,6 +666,10 @@ export default function StockInquiryDetail({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {inquiry.status === 'rejected' && (
+        <RejectionReasonBanner reason={inquiry.rejection_reason} />
+      )}
 
       <SlaActiveTrackerControls
         activeTracker={activeTracker}
