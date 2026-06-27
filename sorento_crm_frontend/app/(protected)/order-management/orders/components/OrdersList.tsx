@@ -20,6 +20,7 @@ import {
   Upload,
   AlertTriangle,
   Trash2,
+  RefreshCw,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -331,7 +332,7 @@ export default function OrdersList() {
                   placeholder="Search delivery orders..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="ps-9 w-64 max-w-full"
+                  className="ps-9 w-56 max-w-full"
                 />
                 {searchQuery && (
                   <Button
@@ -371,8 +372,6 @@ export default function OrdersList() {
                 has_order_lines: linesFilter === 'all' ? undefined : linesFilter,
               }),
             }}
-            onRefresh={() => void refetch()}
-            isRefreshing={isFetching && !isLoading}
             primaryAction={
               <Button onClick={() => router.push('/order-management/orders/new')}>
                 <Plus />
@@ -380,6 +379,12 @@ export default function OrdersList() {
               </Button>
             }
             secondaryActions={[
+              {
+                key: 'refresh',
+                label: 'Refresh',
+                icon: RefreshCw,
+                onClick: () => void refetch(),
+              },
               {
                 key: 'import-tracking',
                 label: 'Import tracking',

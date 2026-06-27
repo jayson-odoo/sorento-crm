@@ -405,13 +405,12 @@ export function DataGridListToolbar<TData extends object>({
                 type="button"
                 variant="outline"
                 size="sm"
-                className="gap-1.5"
+                mode="icon"
                 title="Refresh list"
                 onClick={() => void onRefresh()}
                 disabled={isRefreshing}
               >
                 <RefreshCw className={`size-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-                Refresh
               </Button>
             ) : null}
           </div>
