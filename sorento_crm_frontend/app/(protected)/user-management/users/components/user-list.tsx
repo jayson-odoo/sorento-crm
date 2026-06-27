@@ -660,7 +660,7 @@ const UserList = () => {
     ];
 
     return (
-        <CardHeader className="block py-5">
+        <CardHeader className="block">
         <DataGridListToolbar
           table={table}
           searchSlot={

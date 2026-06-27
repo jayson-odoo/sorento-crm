@@ -308,7 +308,7 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
       <DataGrid table={table} recordCount={totalCount} isLoading={isLoading} tableLayout={{ columnsVisibility: true }}
       standardToolbar={false}>
         <Card>
-          <CardHeader className="block space-y-3 py-5">
+          <CardHeader className="block space-y-3">
             <CardTitle>Event Log</CardTitle>
             <DataGridListToolbar
               table={table}

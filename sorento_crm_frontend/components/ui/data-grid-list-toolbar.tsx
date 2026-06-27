@@ -330,7 +330,7 @@ export function DataGridListToolbar<TData extends object>({
 
   return (
     <TooltipProvider>
-     <div className="flex w-full flex-col gap-2">
+     <div className="flex w-full flex-col gap-2 py-5">
       <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         {/* LEFT cluster — replaced by the bulk strip while rows are selected (D2/H). */}
         {bulkStripActive ? (
