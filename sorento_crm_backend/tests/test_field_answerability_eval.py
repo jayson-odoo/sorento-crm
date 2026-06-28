@@ -128,6 +128,25 @@ def test_visible_text_answers_without_assembler():
         assert _grounded(m.content or "", expect), f"{q!r} -> {(m.content or '')[:80]!r}"
 
 
+def test_sponsorship_form_field_sla_audit_answerable():
+    from app.models.procurement import PurchaseRequestHeader as P
+
+    db, uid, chat = _chat_and_user()
+    row = db.query(P).filter(P.request_type == "sponsorship_form").first()
+    if row is None:
+        pytest.skip("no sponsorship_form")
+    vt = _vt([("Sponsorship form number", row.request_number), ("Customer Name", row.customer_name),
+              ("Project Title", row.project_title), ("Sponsor Subject", row.sponsor_subject),
+              ("Total Project Value", row.total_project_value_text)])
+    base = "/procurement-management/sponsorship-forms/"
+    if row.customer_name:
+        assert _grounded(_ask(chat, uid, "sponsorship_form", row.id, base, vt, "who is the customer"), row.customer_name)
+    if row.sponsor_subject:
+        assert _grounded(_ask(chat, uid, "sponsorship_form", row.id, base, vt, "what is the sponsor subject"), row.sponsor_subject)
+    sla = _ask(chat, uid, "sponsorship_form", row.id, base, vt, "what's the SLA status")
+    assert any(k in sla.lower() for k in ("sla", "tier", "due", "respond", "not", "no "))
+
+
 def test_complaint_field_sla_audit_answerable():
     from app.models.complaints import Complaint
 

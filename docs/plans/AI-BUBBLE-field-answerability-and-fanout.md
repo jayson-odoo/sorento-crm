@@ -49,6 +49,17 @@ Anti-overfit: these are **categories of intent**, validated by paraphrase robust
 
 **Conclusion:** the fan-out needs **no new per-entity backend code**. `visible_text` (shipped) makes every detail page's fields answerable; existing MCP catalog tools cover list/cross-record questions. Optional polish (not required): register `RecordEntityRegistrar` on the non-form detail pages only if we later add off-screen data worth an assembler — otherwise it just costs a wasted assemble attempt per turn.
 
+## Generic audit assembler — investigated, NOT justified
+
+Considered a generic audit-trail assembler keyed by `audit_logs.(entity_type, entity_id)` so "who changed this / show history" works for ANY auditable entity, not just the 4 forms. Checked the real data:
+
+- Auditable entities (`__audit_entity_type__`): complaint, stock_inquiry, purchase_request, product, ticket.
+- `audit_logs` row counts: product **47,164**, complaint 2,668, purchase_request 1,931, stock_inquiry 1,726 — others (promotion, GRN, SPO, stock, forms) are **not audited at all**.
+- BUT product audit rows are **bulk-import noise**: mostly duplicated `CREATE` actions, empty `description`, null actor. Not workflow-meaningful (unlike the forms' real status transitions with users).
+
+**Decision: do not build it.** It would surface low-quality CREATE noise for products and nothing for the rest. Audit is meaningful only for the 4 forms (already covered by the assembler). For products, the on-page Audit tab + `visible_text` covers it on demand. Revisit only if product audit gains real field-change descriptions + actors.
+
 ## Open
-- `delivery_orders` entity identity — confirm what the user means.
+- `delivery_orders` entity identity — confirm what the user means (Orders? incoming shipments? not an entity today).
 - Optional: if the agent loop ever mis-routes a clearly on-page question to a catalog tool, add a nudge to prefer `visible_text` for "this record" questions. Not observed for plain field questions.
+- Optional FE polish: register `RecordEntityRegistrar` on the non-form detail pages — adds nothing today (no assembler), so deferred; one-liner per page if/when an assembler is added.
