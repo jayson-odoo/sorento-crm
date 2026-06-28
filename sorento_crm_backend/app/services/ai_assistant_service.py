@@ -1415,6 +1415,24 @@ class AIAssistantChatService:
             f"--- Record facts ---\n{facts_block}\n--- End record facts ---"
         )
 
+        # Inject the on-screen page content too. The structured facts above are
+        # authoritative for status / decision / SLA / audit / lead-time (often
+        # off-screen, e.g. another tab). The visible text carries every other
+        # field the user can SEE on the current screen (purpose, dates, line
+        # items, addresses, …) so questions about ANY visible field are
+        # answerable — without enumerating fields per entity. Facts win on
+        # conflict; the page fills the gaps.
+        page_text = (getattr(page_snapshot, "visible_text", "") or "").strip()
+        if page_text:
+            system = (
+                system
+                + "\n\nThe user is also looking at this screen right now. Use it to "
+                "answer questions about any field they can see that is not in the "
+                "structured facts above. If the two disagree, trust the structured "
+                "facts.\n"
+                f"--- Visible screen ---\n{page_text[:6000]}\n--- End visible screen ---"
+            )
+
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
         for msg in history[-6:]:
             if msg.role in {"user", "assistant"} and (msg.content or "").strip():
