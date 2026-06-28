@@ -192,20 +192,31 @@ class ConversationSLATrackingUpdate(BaseModel):
 
 
 class ConversationSLATestOverrideRequest(BaseModel):
-    """Gated by sla_management.conversation_sla_tracking.test_override. At least one field required in the request body."""
+    """Gated by sla_management.conversation_sla_tracking.test_override. At least one field required in the request body.
+
+    Set ``is_resolved``/``is_responded`` to False to reopen a resolved row for retesting;
+    due_at is recomputed from the (possibly overridden) current_tier_started_at + tier hours.
+    ``agent_code`` resolves to the agent_id FK; ``team_set_code`` is stored verbatim (pass
+    null/empty on either to clear)."""
     assigned_to_id: Optional[str] = None
     current_tier_started_at: Optional[datetime] = None
     initiated_at: Optional[datetime] = None
     is_responded: Optional[bool] = None
     is_resolved: Optional[bool] = None
+    agent_code: Optional[str] = None
+    team_set_code: Optional[str] = None
 
     @model_validator(mode='after')
     def at_least_one_field(self):
-        updatable = {"assigned_to_id", "current_tier_started_at", "initiated_at", "is_responded", "is_resolved"}
+        updatable = {
+            "assigned_to_id", "current_tier_started_at", "initiated_at",
+            "is_responded", "is_resolved", "agent_code", "team_set_code",
+        }
         if not (self.model_fields_set & updatable):
             raise ValueError(
                 "Provide at least one of: assigned_to_id (including null to unassign), "
-                "current_tier_started_at, initiated_at, is_responded, or is_resolved."
+                "current_tier_started_at, initiated_at, is_responded, is_resolved, "
+                "agent_code, or team_set_code."
             )
         return self
 

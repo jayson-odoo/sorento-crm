@@ -297,6 +297,8 @@ export interface ConversationSLATestOverridesBody {
   initiated_at?: string;
   is_responded?: boolean;
   is_resolved?: boolean;
+  agent_code?: string | null;
+  team_set_code?: string | null;
 }
 
 export async function postConversationSLATestOverrides(

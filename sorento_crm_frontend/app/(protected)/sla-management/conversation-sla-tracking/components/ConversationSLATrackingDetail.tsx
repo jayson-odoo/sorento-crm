@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useConversationSLATrackingDetail, useDeleteConversationSLATracking, useSyncAssigneeFromRespond, useConversationSLATestOverrides } from '../hooks/useConversationSLATracking';
 import ConversationSLATrackingNavigation from './ConversationSLATrackingNavigation';
-import { escalateConversationSLATracking } from '../services/conversationSLATrackingService';
+import { escalateConversationSLATracking, type ConversationSLATestOverridesBody } from '../services/conversationSLATrackingService';
 import { formatDate, formatDateTime, formatDuration, formatDurationWithSeconds, parseDateTimeAsUTC } from '@/lib/helpers';
 import EventLogTable from './EventLogTable';
 import { CheckCircle, Clock, AlertCircle, RefreshCw, Trash2, ChevronDown, ChevronRight, UserRound, Info, Settings, ExternalLink, CalendarClock, UserCog, MessageSquare, TrendingUp } from 'lucide-react';
@@ -141,6 +141,12 @@ export default function ConversationSLATrackingDetail({
   const [selectedAssigneeId, setSelectedAssigneeId] = useState('');
   const [tierStartedLocal, setTierStartedLocal] = useState('');
   const [initiatedLocal, setInitiatedLocal] = useState('');
+  const [reopenDialogOpen, setReopenDialogOpen] = useState(false);
+  const [reopenAgentCode, setReopenAgentCode] = useState('');
+  const [reopenTeamSetCode, setReopenTeamSetCode] = useState('');
+  const [reopenTierStarted, setReopenTierStarted] = useState('');
+  const [reopenInitiated, setReopenInitiated] = useState('');
+  const [reopenResetResponded, setReopenResetResponded] = useState(true);
 
   const { data: usersSelect = [] } = useQuery({
     queryKey: ['users-select', 'sla-test-override'],
@@ -167,6 +173,16 @@ export default function ConversationSLATrackingDetail({
       setInitiatedLocal(toDatetimeLocalInputValue(tracking.initiated_at));
     }
   }, [initiatedDialogOpen, tracking]);
+
+  useEffect(() => {
+    if (reopenDialogOpen && tracking) {
+      setReopenAgentCode(tracking.agent_code ?? '');
+      setReopenTeamSetCode(tracking.team_set_code ?? '');
+      setReopenTierStarted(toDatetimeLocalInputValue(tracking.current_tier_started_at));
+      setReopenInitiated(toDatetimeLocalInputValue(tracking.initiated_at));
+      setReopenResetResponded(true);
+    }
+  }, [reopenDialogOpen, tracking]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -425,6 +441,11 @@ export default function ConversationSLATrackingDetail({
                       Mark as resolved
                     </DropdownMenuItem>
                   )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => setReopenDialogOpen(true)}>
+                    <RefreshCw className="size-4 mr-2" />
+                    Reopen for retest
+                  </DropdownMenuItem>
                 </>
               )}
             </DropdownMenuContent>
@@ -592,6 +613,94 @@ export default function ConversationSLATrackingDetail({
               }}
             >
               Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={reopenDialogOpen} onOpenChange={setReopenDialogOpen}>
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Reopen for retest</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-1">
+            <p className="text-xs text-muted-foreground">
+              Clears the resolved state, applies the routing fields below, and recomputes the
+              response/resolution due dates from the tier start + policy hours.
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="reopen-agent-code">Agent code</Label>
+              <Input
+                id="reopen-agent-code"
+                placeholder="e.g. TECH"
+                value={reopenAgentCode}
+                onChange={(e) => setReopenAgentCode(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reopen-team-set-code">Team set code</Label>
+              <Input
+                id="reopen-team-set-code"
+                placeholder="e.g. TECH_TEAM"
+                value={reopenTeamSetCode}
+                onChange={(e) => setReopenTeamSetCode(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reopen-initiated">Initiated at</Label>
+              <Input
+                id="reopen-initiated"
+                type="datetime-local"
+                value={reopenInitiated}
+                onChange={(e) => setReopenInitiated(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reopen-tier-started">Current tier started at</Label>
+              <Input
+                id="reopen-tier-started"
+                type="datetime-local"
+                value={reopenTierStarted}
+                onChange={(e) => setReopenTierStarted(e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">Due dates are derived from this.</p>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-4"
+                checked={reopenResetResponded}
+                onChange={(e) => setReopenResetResponded(e.target.checked)}
+              />
+              Also reset responded state
+            </label>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setReopenDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={testOverrideMutation.isPending}
+              onClick={() => {
+                try {
+                  const body: ConversationSLATestOverridesBody = { is_resolved: false };
+                  if (reopenResetResponded) body.is_responded = false;
+                  body.agent_code = reopenAgentCode.trim() === '' ? null : reopenAgentCode.trim();
+                  body.team_set_code =
+                    reopenTeamSetCode.trim() === '' ? null : reopenTeamSetCode.trim();
+                  if (reopenInitiated) body.initiated_at = datetimeLocalToISO(reopenInitiated);
+                  if (reopenTierStarted)
+                    body.current_tier_started_at = datetimeLocalToISO(reopenTierStarted);
+                  testOverrideMutation.mutate(body, {
+                    onSuccess: () => setReopenDialogOpen(false),
+                  });
+                } catch {
+                  toast.error('Invalid date and time.');
+                }
+              }}
+            >
+              {testOverrideMutation.isPending ? 'Reopening…' : 'Reopen'}
             </Button>
           </DialogFooter>
         </DialogContent>

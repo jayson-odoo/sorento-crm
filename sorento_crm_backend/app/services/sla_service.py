@@ -3916,12 +3916,58 @@ class ConversationSLATrackingService:
                 != initiated
             )
 
-        # Delegate is_responded / is_resolved to the smart update logic (handles auto-calc, validation).
+        # agent_code → agent_id FK. Null / blank clears it.
+        routing_changed = False
+        if "agent_code" in updates:
+            raw_code = updates["agent_code"]
+            if raw_code is None or (isinstance(raw_code, str) and not str(raw_code).strip()):
+                routing_changed = routing_changed or tracking.agent_id is not None
+                setattr(tracking, "agent_id", None)
+            else:
+                from app.models.access import AccessAgent as _AccessAgent
+                _agent = self.db.query(_AccessAgent).filter(
+                    _AccessAgent.code == str(raw_code).strip()
+                ).first()
+                if not _agent:
+                    raise handle_validation_error(
+                        f"No access agent found with code '{raw_code}'. Create the Access Agent first."
+                    )
+                routing_changed = routing_changed or str(tracking.agent_id or "") != str(_agent.id)
+                setattr(tracking, "agent_id", str(_agent.id))
+
+        # team_set_code stored verbatim. Null / blank clears it.
+        if "team_set_code" in updates:
+            raw_tsc = updates["team_set_code"]
+            new_tsc = str(raw_tsc).strip() if isinstance(raw_tsc, str) and str(raw_tsc).strip() else None
+            routing_changed = routing_changed or (getattr(tracking, "team_set_code", None) or None) != new_tsc
+            setattr(tracking, "team_set_code", new_tsc)
+
+        # Reopen (is_resolved explicitly False): recompute due dates from the (possibly just
+        # overridden) current_tier_started_at so a previously-overdue row gets a clean clock.
+        # Skip when current_tier_started_at was supplied in this same request — its branch
+        # above already recomputed due_at / due_at_resolution.
+        if updates.get("is_resolved") is False and "current_tier_started_at" not in updates:
+            started = _to_aware_utc(
+                tracking.current_tier_started_at
+                if isinstance(tracking.current_tier_started_at, datetime)
+                else None
+            )
+            tier = self._resolve_tier_with_clamp(tracking.policy_id, tracking.current_tier)
+            if started and tier:
+                response_hours_raw = getattr(tier, "response_hours", None)
+                response_hours = float(response_hours_raw) if response_hours_raw is not None else 24.0
+                resolution_hours_raw = getattr(tier, "resolution_hours", None)
+                resolution_hours = float(resolution_hours_raw) if resolution_hours_raw is not None else 24.0
+                setattr(tracking, "due_at", _working_due(self.db, started, response_hours))
+                setattr(tracking, "due_at_resolution", _working_due(self.db, started, resolution_hours))
+
+        # Delegate is_responded / is_resolved to the smart update logic (handles auto-calc,
+        # field clearing on reopen, validation). Pass False through too so reopen works.
         status_updates = {}
-        if "is_responded" in updates and updates["is_responded"] is True:
-            status_updates["is_responded"] = True
-        if "is_resolved" in updates and updates["is_resolved"] is True:
-            status_updates["is_resolved"] = True
+        if "is_responded" in updates and updates["is_responded"] is not None:
+            status_updates["is_responded"] = bool(updates["is_responded"])
+        if "is_resolved" in updates and updates["is_resolved"] is not None:
+            status_updates["is_resolved"] = bool(updates["is_resolved"])
 
         self.db.commit()
         self.db.refresh(tracking)
@@ -3999,6 +4045,33 @@ class ConversationSLATrackingService:
                     to_tier=int(getattr(tracking, "current_tier", 0)),
                     event_at=now_utc,
                     reason="Adjusted initiated at for testing.",
+                    assigned_to=(
+                        str(getattr(tracking, "assigned_to"))
+                        if getattr(tracking, "assigned_to", None) is not None
+                        else None
+                    ),
+                    assigned_to_id=(
+                        str(getattr(tracking, "assigned_to_id"))
+                        if getattr(tracking, "assigned_to_id", None) is not None
+                        else None
+                    ),
+                    due_at=(
+                        getattr(tracking, "due_at")
+                        if isinstance(getattr(tracking, "due_at", None), datetime)
+                        else None
+                    ),
+                )
+            )
+
+        if routing_changed:
+            self.create_event_log(
+                ConversationSLAEventLogCreate(
+                    sla_tracking_id=str(getattr(tracking, "id")),
+                    event_type="adjust",
+                    from_tier=int(getattr(tracking, "current_tier", 0)),
+                    to_tier=int(getattr(tracking, "current_tier", 0)),
+                    event_at=now_utc,
+                    reason="Adjusted agent / team set code for testing.",
                     assigned_to=(
                         str(getattr(tracking, "assigned_to"))
                         if getattr(tracking, "assigned_to", None) is not None
