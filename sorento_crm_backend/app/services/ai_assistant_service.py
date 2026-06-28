@@ -786,6 +786,23 @@ class AIAssistantChatService:
             },
         }
 
+    # Cheap gate for "should I deterministically pre-fetch a user guide?".
+    # Targets how-to / explain phrasings. False positives are harmless — the
+    # guide lookup just returns no match and nothing is injected. This is a
+    # retrieval trigger, NOT answer-tuning (the LLM still does the semantic work).
+    _GUIDE_QUESTION_TRIGGERS = (
+        "how do i", "how to", "how can i", "how does", "how should i", "how would i",
+        "what does", "what do the", "what is this", "what is the purpose", "what are the",
+        "what if i", "what happens when i", "explain", "steps to", "steps for",
+        "guide me", "walk me through", "which button", "what button", " for?",
+    )
+
+    def _is_guide_question(self, message: str) -> bool:
+        m = (message or "").strip().lower()
+        if not m:
+            return False
+        return any(t in m for t in self._GUIDE_QUESTION_TRIGGERS)
+
     def _run_agent_loop(
         self,
         *,
@@ -836,6 +853,16 @@ class AIAssistantChatService:
                 continue
             openai_tools.append(self._mcp_schema_to_openai_tool(name, tool_catalog[name]))
             bound_tool_names.append(name)
+        # Always make the user guide reader available — the USER GUIDE PROTOCOL
+        # requires calling it for any "how do I / how to" question, but RAG does
+        # not reliably rank it into the selected set, which left how-to answers
+        # without the guide's steps + clickable button deep-links (and risked the
+        # agent reaching for an unrelated tool). Bind it unconditionally.
+        if "user_guides_read" in available and "user_guides_read" not in bound_tool_names:
+            openai_tools.append(
+                self._mcp_schema_to_openai_tool("user_guides_read", tool_catalog["user_guides_read"])
+            )
+            bound_tool_names.append("user_guides_read")
         logger.info(
             "AI assistant agent tools bound count=%s names=%s",
             len(bound_tool_names),
@@ -870,11 +897,19 @@ class AIAssistantChatService:
                 "is from the page title and path (e.g. a goods-received note, stock balance, "
                 "promotion, product, form, attachment) and refer to it accurately — do not "
                 "assume it is an order or sales document.\n"
-                "IMPORTANT: if the user's question is about the record/page they are viewing "
-                "and the answer is present in the page content below, answer DIRECTLY from it "
-                "and do NOT call any tool. Only use tools for things not shown on this page "
-                "(e.g. data about other records). A field like status, quantity, a name or a "
-                "date that is visible below must be read from the page, not looked up.\n\n"
+                "IMPORTANT: for a question about the VALUE of a field shown below (a status, "
+                "quantity, name, date, amount), answer DIRECTLY from the page — do NOT call a "
+                "data/catalog tool to look it up. BUT if the user asks how to do something OR "
+                "what a button / control / feature does or is for (e.g. 'how do I…', 'how "
+                "to…', 'what does the Extend button do', 'what is this for', 'explain …'), you "
+                "MUST call `user_guides_read` to ground the answer in the guide and include "
+                "its clickable button links — do NOT answer such questions from general "
+                "knowledge, even if the button is visible here. For the `query`, use a SHORT "
+                "keyword phrase naming the button/feature plus its area (e.g. 'takeover task', "
+                "'extend deadline task', 'reassign task', 'download complaint pdf') — NOT a "
+                "full sentence; short keyword queries match the guides far better. If the "
+                "first lookup returns no match, retry ONCE with just the key noun (e.g. "
+                "'takeover').\n\n"
                 f"--- Page: {page_snapshot.title} ({page_snapshot.path}{page_snapshot.search}) ---\n"
                 f"{page_snapshot.visible_text}\n"
                 "--- End page ---"
@@ -897,6 +932,48 @@ class AIAssistantChatService:
                     ),
                 }
             )
+        # Deterministic guide pre-fetch. The LLM is unreliable about calling
+        # user_guides_read for how-to / explain questions — it may skip it, or
+        # expand the query into a verbose sentence Outline doesn't match — which
+        # left such questions ungrounded and missing the clickable button links.
+        # The user's RAW message matches the guides well, so fetch HERE and inject
+        # it; the result is added to tool_calls_log so the deep links get
+        # re-injected. A miss / error simply injects nothing (harmless).
+        if self._is_guide_question(user_message):
+            try:
+                pf = MCPRuntimeClient(
+                    settings.ai_assistant_mcp_url,
+                    timeout_seconds=settings.ai_assistant_mcp_timeout_seconds,
+                )
+                pf_out = pf.call_tool(
+                    "user_guides_read",
+                    args={"query": user_message, "contact_id": "", "space_id": ""},
+                )
+                # Only inject a REAL guide hit. NO_MATCH / OUTLINE_ERROR are not
+                # flagged by _tool_output_is_error, and injecting them would tell
+                # the model "no guide available" — the opposite of the goal.
+                pf_hit = False
+                try:
+                    pf_payload = json.loads(pf_out)
+                    pf_hit = bool(pf_payload.get("id") and pf_payload.get("text")) and not pf_payload.get("code")
+                except Exception:
+                    pf_hit = False
+                if pf_hit:
+                    tool_calls_log.append(MCPToolCallResult("user_guides_read", True, pf_out))
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "The user is asking how to do something or what a control "
+                                "does. Answer from this guide and KEEP its inline markdown "
+                                "links EXACTLY as written (they let the user click straight to "
+                                "the button). Do NOT say no guide is available.\n"
+                                f"--- Guide ---\n{pf_out[:6000]}\n--- End guide ---"
+                            ),
+                        }
+                    )
+            except Exception:
+                logger.warning("guide pre-fetch failed; agent may still call the tool")
         for msg in history[-6:]:
             if msg.role in {"user", "assistant"} and (msg.content or "").strip():
                 messages.append({"role": msg.role, "content": msg.content})

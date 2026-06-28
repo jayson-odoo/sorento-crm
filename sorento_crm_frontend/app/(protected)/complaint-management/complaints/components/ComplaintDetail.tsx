@@ -278,6 +278,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           <Button
             variant="outline"
             size="sm"
+            data-guide-target="complaint-management.complaints.download-pdf"
             disabled={exportPdfMutation.isPending}
             onClick={() => exportPdfMutation.mutate(complaintId)}
           >

@@ -75,6 +75,7 @@ export default function ExtendDueButton({
         size={size === 'sm' ? 'sm' : 'md'}
         variant={variant}
         className={className ?? (size === 'sm' ? 'h-7' : undefined)}
+        data-guide-target="dashboard.sla-tasks.extend"
         onClick={(e) => {
           e.stopPropagation();
           setOpen(true);
