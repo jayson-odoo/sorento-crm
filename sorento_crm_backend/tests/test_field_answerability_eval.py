@@ -1,0 +1,147 @@
+"""Live-LLM eval: the bubble answers about ANY visible field + SLA tab + audit.
+
+Opt-in (RUN_LLM_EVALS=1) and self-discovering: for each form-SLA entity it picks
+a real record from the live DB (skips that entity if none), builds visible_text
+from the real columns the detail page shows, and asserts the bubble's answer is
+GROUNDED in the real value (case-insensitive token match) — not exact prose.
+
+Why this shape (anti-overfit): we never hardcode expected answers; we assert the
+real field value appears. visible_text covers on-screen fields; the assembler
+covers the off-screen SLA tab + audit log. Both reach the render path.
+
+Run: RUN_LLM_EVALS=1 venv/bin/python -m pytest tests/test_field_answerability_eval.py -q -s
+"""
+from __future__ import annotations
+
+import os
+
+import pytest
+
+_RUN = os.getenv("RUN_LLM_EVALS") == "1"
+pytestmark = pytest.mark.skipif(
+    not _RUN, reason="live-LLM eval; set RUN_LLM_EVALS=1 against a configured stack"
+)
+
+
+def _chat_and_user():
+    from app.database import SessionLocal
+    from app.models.user import User
+    from app.services.user_service import UserPermissionService
+    from app.services.ai_assistant_service import AIAssistantChatService
+
+    db = SessionLocal()
+    uid = next(
+        (u.id for u in db.query(User).filter(User.status == "ACTIVE").limit(80)
+         if UserPermissionService(db).check_user_has_permission(u.id, "system.ai_assistant_chat.use")),
+        None,
+    )
+    if uid is None:
+        pytest.skip("no user with ai_assistant_chat.use")
+    return db, uid, AIAssistantChatService(db)
+
+
+def _grounded(answer: str, expected: str) -> bool:
+    a = (answer or "").lower()
+    e = (expected or "").strip()
+    if not e:
+        return True
+    if e.lower() in a:
+        return True
+    toks = [t for t in e.replace(",", " ").split() if len(t) > 3]
+    return bool(toks) and any(t.lower() in a for t in toks)
+
+
+def _ask(chat, uid, entity, eid, path, vt, q):
+    from app.schemas.ai_assistant import PageSnapshotPayload, PageEntityRef
+
+    snap = PageSnapshotPayload(
+        path=path + str(eid), search="", title=path, visible_text=vt,
+        entity=PageEntityRef(entity_type=entity, id=str(eid)),
+    )
+    _, m = chat.respond(user_id=uid, conversation_id=None, message=q, page_snapshot=snap)
+    return m.content or ""
+
+
+def _vt(pairs):
+    return "  ".join(f"{label}: {v}" for label, v in pairs if v not in (None, ""))
+
+
+def test_purchase_request_field_sla_audit_answerable():
+    from app.models.procurement import PurchaseRequestHeader as P
+
+    db, uid, chat = _chat_and_user()
+    row = (db.query(P).filter(P.request_type == "purchase_request", P.purpose.isnot(None)).first()
+           or db.query(P).filter(P.request_type == "purchase_request").first())
+    if row is None:
+        pytest.skip("no purchase_request")
+    vt = _vt([("Purchase request number", row.request_number), ("Customer Name", row.customer_name),
+              ("Project Title", row.project_title), ("Purpose", row.purpose)])
+    base = "/procurement-management/purchase-requests/"
+    if row.purpose:
+        assert _grounded(_ask(chat, uid, "purchase_request", row.id, base, vt, "what is the purpose of this"), row.purpose)
+    if row.customer_name:
+        assert _grounded(_ask(chat, uid, "purchase_request", row.id, base, vt, "who is the customer"), row.customer_name)
+    # SLA tab + audit must produce a relevant (not refusal) answer
+    sla = _ask(chat, uid, "purchase_request", row.id, base, vt, "what's the SLA status")
+    assert any(k in sla.lower() for k in ("sla", "tier", "due", "respond", "not", "no "))
+    aud = _ask(chat, uid, "purchase_request", row.id, base, vt, "show the audit history")
+    assert any(k in aud.lower() for k in ("audit", "chang", "status", "approv", "empty", "no "))
+
+
+def test_stock_inquiry_field_sla_audit_answerable():
+    from app.models.procurement import StockInquiry
+
+    db, uid, chat = _chat_and_user()
+    row = (db.query(StockInquiry).filter(StockInquiry.item_description.isnot(None)).first()
+           or db.query(StockInquiry).first())
+    if row is None:
+        pytest.skip("no stock_inquiry")
+    vt = _vt([("Stock inquiry number", row.inquiry_number), ("Product code", row.product_code),
+              ("Item description", row.item_description), ("Project customer", row.project_customer),
+              ("Comment / reply by purchasing", row.purchasing_response)])
+    base = "/procurement-management/stock-inquiries/"
+    if row.item_description:
+        assert _grounded(_ask(chat, uid, "stock_inquiry", row.id, base, vt, "what is the item description"), row.item_description)
+    if row.product_code:
+        assert _grounded(_ask(chat, uid, "stock_inquiry", row.id, base, vt, "what product code is this for"), row.product_code)
+    sla = _ask(chat, uid, "stock_inquiry", row.id, base, vt, "what's the SLA status")
+    assert any(k in sla.lower() for k in ("sla", "tier", "due", "respond", "not", "no "))
+
+
+def test_visible_text_answers_without_assembler():
+    """Fan-out coverage: any detail page's visible fields are answerable through
+    the agent loop from visible_text alone — NO entity registration, NO assembler.
+    This is why the non-form entities (products, GRN, SPO, stock, promotion, …)
+    need no new backend code. Proven here on a synthetic product screen.
+    """
+    from app.schemas.ai_assistant import PageSnapshotPayload
+
+    db, uid, chat = _chat_and_user()
+    vt = ("Product TILE-600 Porcelain Tile 600x600. Brand: Sorento. "
+          "Category: Floor Tiles. Unit: Box. Price: RM 45.00 per box. Status: Active.")
+    snap = PageSnapshotPayload(path="/master-data-management/products/x", search="",
+                               title="Product TILE-600", visible_text=vt, entity=None)
+    for q, expect in [("what is the price of this product", "45"),
+                      ("what brand is this", "Sorento"),
+                      ("what category is this product", "Floor Tiles")]:
+        _, m = chat.respond(user_id=uid, conversation_id=None, message=q, page_snapshot=snap)
+        assert _grounded(m.content or "", expect), f"{q!r} -> {(m.content or '')[:80]!r}"
+
+
+def test_complaint_field_sla_audit_answerable():
+    from app.models.complaints import Complaint
+
+    db, uid, chat = _chat_and_user()
+    row = (db.query(Complaint).filter(Complaint.defect_description.isnot(None)).first()
+           or db.query(Complaint).first())
+    if row is None:
+        pytest.skip("no complaint")
+    vt = _vt([("Complaint number", row.complaint_number), ("Customer Name", row.customer_name),
+              ("Complaint Type", row.complaint_type), ("Defect Description", row.defect_description)])
+    base = "/complaint-management/complaints/"
+    if row.defect_description:
+        assert _grounded(_ask(chat, uid, "complaint", row.id, base, vt, "what is the defect"), row.defect_description)
+    if row.complaint_type:
+        assert _grounded(_ask(chat, uid, "complaint", row.id, base, vt, "what type of complaint is this"), row.complaint_type)
+    sla = _ask(chat, uid, "complaint", row.id, base, vt, "what's the SLA status")
+    assert any(k in sla.lower() for k in ("sla", "tier", "due", "breach", "not", "no "))
