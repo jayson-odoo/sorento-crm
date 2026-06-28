@@ -866,8 +866,15 @@ class AIAssistantChatService:
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
         if page_snapshot is not None:
             page_block = (
-                "The user is currently viewing this page. Use it as context only when their "
-                "question relates to it; otherwise ignore.\n\n"
+                "The user is currently viewing this page. Identify what KIND of record this "
+                "is from the page title and path (e.g. a goods-received note, stock balance, "
+                "promotion, product, form, attachment) and refer to it accurately — do not "
+                "assume it is an order or sales document.\n"
+                "IMPORTANT: if the user's question is about the record/page they are viewing "
+                "and the answer is present in the page content below, answer DIRECTLY from it "
+                "and do NOT call any tool. Only use tools for things not shown on this page "
+                "(e.g. data about other records). A field like status, quantity, a name or a "
+                "date that is visible below must be read from the page, not looked up.\n\n"
                 f"--- Page: {page_snapshot.title} ({page_snapshot.path}{page_snapshot.search}) ---\n"
                 f"{page_snapshot.visible_text}\n"
                 "--- End page ---"
