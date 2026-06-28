@@ -1,9 +1,16 @@
+export interface TeamMemberPreview {
+  user_id: string;
+  name: string;
+}
+
 export interface Team {
   id: string;
   name: string;
   description?: string | null;
   parent_team_id?: string | null;
   created_at: string;
+  member_count?: number;
+  members?: TeamMemberPreview[];
 }
 
 export interface TeamMember {

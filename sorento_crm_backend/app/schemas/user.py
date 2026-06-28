@@ -329,9 +329,17 @@ class TeamUpdate(BaseModel):
     parent_team_id: Optional[str] = None
 
 
+class TeamMemberPreview(BaseModel):
+    """Lightweight member identity for the teams list (human-readable, no UUID leak)."""
+    user_id: str
+    name: str
+
+
 class TeamResponse(TeamBase):
     id: str
     created_at: datetime
+    member_count: int = 0
+    members: list[TeamMemberPreview] = []
     class Config:
         from_attributes = True
 

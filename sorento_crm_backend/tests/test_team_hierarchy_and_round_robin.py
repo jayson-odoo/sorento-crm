@@ -97,7 +97,43 @@ def test_descendant_team_ids_recursive_any_depth(db):
 def test_create_team_with_parent_persists(db):
     mgr = _team(db, "Manager")
     t = TeamService(db).create_team(TeamCreate(name="Product", parent_team_id=mgr))
-    assert t.parent_team_id == mgr
+    # create_team returns the TeamResponse dict shape (not the ORM row).
+    assert t["parent_team_id"] == mgr
+    assert t["member_count"] == 0 and t["members"] == []
+
+
+def test_list_teams_includes_member_preview(db):
+    """List payload carries member count + human-readable names (no UUID leak)."""
+    svc = TeamService(db)
+    tid = _team(db, "Complaint")
+    u1 = _user(db, "Magen")
+    u2 = _user(db, "Ziv")
+    svc.add_team_member(tid, u1)
+    svc.add_team_member(tid, u2)
+
+    row = next(t for t in svc.list_teams() if t["id"] == tid)
+    assert row["member_count"] == 2
+    names = {m["name"] for m in row["members"]}
+    assert names == {"Magen", "Ziv"}
+    # names are display names, never the raw user UUID
+    assert all(m["name"] != m["user_id"] for m in row["members"])
+
+
+def test_team_responses_validate_no_relationship_collision(db):
+    """Regression: TeamResponse.members must not coerce the ORM Team.members
+    relationship (List[TeamMember], no `name`) — that 500'd create/update/get."""
+    from app.schemas.user import TeamResponse
+
+    svc = TeamService(db)
+    tid = _team(db, "Marketing")
+    svc.add_team_member(tid, _user(db, "Li Hua"))
+
+    # All three single-team paths must round-trip through TeamResponse cleanly.
+    TeamResponse(**svc.get_team_view(tid))
+    TeamResponse(**svc.create_team(TeamCreate(name="Forms", parent_team_id=tid)))
+    moved = svc.update_team(tid, TeamUpdate(description="x"))
+    TeamResponse(**moved)
+    assert moved["member_count"] == 1 and moved["members"][0]["name"] == "Li Hua"
 
 
 def test_cycle_guard_self_parent(db):

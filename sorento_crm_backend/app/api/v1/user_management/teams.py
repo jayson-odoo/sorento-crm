@@ -32,7 +32,7 @@ async def get_team(
     """Get a team by ID."""
     try:
         service = TeamService(db)
-        return service.get_team(team_id)
+        return service.get_team_view(team_id)
     except HTTPException:
         raise
     except Exception as e:

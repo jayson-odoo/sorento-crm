@@ -2093,19 +2093,68 @@ class TeamService:
                     "Cannot set that parent: it is a descendant of this team (cannot create a cycle)."
                 )
 
+    def _member_previews_for(self, team_ids) -> dict:
+        """Grouped member preview ({user_id, name}) per team id. One query, no N+1.
+
+        Names resolve to ``User.name or User.email`` so the UI never renders a UUID.
+        """
+        ids = [str(t) for t in (team_ids or []) if t]
+        out: dict = {}
+        if not ids:
+            return out
+        rows = (
+            self.db.query(TeamMember.team_id, TeamMember.user_id, User.name, User.email)
+            .join(User, User.id == TeamMember.user_id)
+            .filter(TeamMember.team_id.in_(ids))
+            .order_by(TeamMember.sort_order.asc().nullslast(), User.name.asc())
+            .all()
+        )
+        for team_id, user_id, name, email in rows:
+            out.setdefault(str(team_id), []).append(
+                {"user_id": str(user_id), "name": name or email or str(user_id)}
+            )
+        return out
+
+    def _serialize_team(self, team: Team, members: Optional[list] = None) -> dict:
+        """Shape a Team ORM row to the ``TeamResponse`` dict.
+
+        Always return a dict (never the ORM object) so Pydantic's ``from_attributes``
+        does not coerce the ``Team.members`` relationship (List[TeamMember], no
+        ``name``) into ``TeamMemberPreview`` and 500.
+        """
+        if members is None:
+            members = self._member_previews_for([team.id]).get(str(team.id), [])
+        return {
+            "id": str(team.id),
+            "name": team.name,
+            "description": team.description,
+            "parent_team_id": str(team.parent_team_id) if team.parent_team_id else None,
+            "created_at": team.created_at,
+            "member_count": len(members),
+            "members": members,
+        }
+
     def list_teams(self):
-        """List all teams."""
-        return self.db.query(Team).order_by(Team.name.asc()).all()
+        """List all teams with a member preview (count + human-readable names)."""
+        teams = self.db.query(Team).order_by(Team.name.asc()).all()
+        members_by_team = self._member_previews_for([t.id for t in teams])
+        return [
+            self._serialize_team(t, members_by_team.get(str(t.id), [])) for t in teams
+        ]
 
     def get_team(self, team_id: str) -> Team:
-        """Get team by ID."""
+        """Get team ORM row by ID (raw; callers that serialize use ``get_team_view``)."""
         t = self.db.query(Team).filter(Team.id == team_id).first()
         if not t:
             raise handle_not_found("Team", team_id)
         return t
 
-    def create_team(self, data: TeamCreate) -> Team:
-        """Create a team."""
+    def get_team_view(self, team_id: str) -> dict:
+        """Get a single team shaped to ``TeamResponse`` (with member preview)."""
+        return self._serialize_team(self.get_team(team_id))
+
+    def create_team(self, data: TeamCreate) -> dict:
+        """Create a team. Returns the ``TeamResponse`` dict shape."""
         payload = data.model_dump()
         # New team has no id yet, so only the self-parent case is possible here;
         # descendant cycles are impossible until children exist.
@@ -2114,10 +2163,10 @@ class TeamService:
         self.db.add(t)
         self.db.commit()
         self.db.refresh(t)
-        return t
+        return self._serialize_team(t)
 
-    def update_team(self, team_id: str, data: TeamUpdate) -> Team:
-        """Update a team."""
+    def update_team(self, team_id: str, data: TeamUpdate) -> dict:
+        """Update a team. Returns the ``TeamResponse`` dict shape."""
         t = self.get_team(team_id)
         payload = data.model_dump(exclude_unset=True)
         if "parent_team_id" in payload:
@@ -2126,7 +2175,7 @@ class TeamService:
             setattr(t, k, v)
         self.db.commit()
         self.db.refresh(t)
-        return t
+        return self._serialize_team(t)
 
     def delete_team(self, team_id: str) -> None:
         """Delete a team (cascades to members and agent_teams)."""

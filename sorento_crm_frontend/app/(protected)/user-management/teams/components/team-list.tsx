@@ -1,42 +1,23 @@
 'use client';
 
-import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Ellipsis, Plus, Users } from 'lucide-react';
-import Link from 'next/link';
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Plus, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { Card, CardFooter, CardHeader } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  getCoreRowModel,
-  useReactTable,
-  type ColumnDef,
-  type RowSelectionState,
-} from '@tanstack/react-table';
-import { DataGrid } from '@/components/ui/data-grid';
-import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
-import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
-import { DataGridTable } from '@/components/ui/data-grid-table';
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import type { Team } from '../types/team.types';
 import { getTeams } from '../services/teamService';
 import TeamEditDialog from './team-edit-dialog';
 import TeamDeleteDialog from './team-delete-dialog';
+import TeamTree from './team-tree';
 
 export default function TeamList() {
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
-  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [query, setQuery] = useState('');
 
   const { data: teams = [], isLoading } = useQuery({
     queryKey: ['user-management-teams'],
@@ -44,140 +25,74 @@ export default function TeamList() {
     staleTime: 60 * 1000,
   });
 
-  const columns = useMemo<ColumnDef<Team>[]>(
-    () => [
-      buildSelectColumn<Team>(),
-      {
-        id: 'name',
-        accessorFn: (row) => row.name,
-        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
-        size: 280,
-        enableSorting: false,
-        meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-4 w-28" /> },
-        cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
-      },
-      {
-        id: 'description',
-        accessorFn: (row) => row.description,
-        header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
-        size: 520,
-        enableSorting: false,
-        meta: { headerTitle: 'Description', skeleton: <Skeleton className="h-4 w-44" /> },
-        cell: ({ row }) => (
-          <span className="text-muted-foreground max-w-md truncate">
-            {row.original.description ?? '—'}
-          </span>
-        ),
-      },
-      {
-        id: 'actions',
-        header: '',
-        size: 220,
-        enableSorting: false,
-        enableHiding: false,
-        enableResizing: false,
-        meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-8 w-8" /> },
-        cell: ({ row }) => (
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" asChild>
-              <Link href={`/user-management/teams/${row.original.id}`}>
-                <Users className="me-1 size-4" />
-                Members
-              </Link>
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button className="h-8 w-8" mode="icon" variant="ghost" size="icon">
-                  <Ellipsis />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onClick={() => {
-                    setSelectedTeam(row.original);
-                    setEditOpen(true);
-                  }}
-                >
-                  Edit team
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  variant="destructive"
-                  onClick={() => {
-                    setSelectedTeam(row.original);
-                    setDeleteOpen(true);
-                  }}
-                >
-                  Delete team
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        ),
-      },
-    ],
-    [setDeleteOpen, setEditOpen, setSelectedTeam],
-  );
-
-  const table = useReactTable({
-    columns,
-    data: teams,
-    getRowId: (row) => row.id,
-    state: {
-      pagination: { pageIndex: 0, pageSize: 5 },
-      rowSelection,
-    },
-    enableRowSelection: true,
-    onRowSelectionChange: setRowSelection,
-    getCoreRowModel: getCoreRowModel(),
-  });
-
   return (
     <>
-      <DataGrid
-        table={table}
-        recordCount={teams.length}
-        isLoading={isLoading}
-        emptyMessage="No teams yet. Create a team to use for round-robin assignees."
-        tableLayout={{ width: 'fixed', columnsVisibility: true }}
-      >
-        <Card>
-          <CardHeader className="block">
-            <DataGridListToolbar
-              table={table}
-              exportConfig={{ filename: 'teams_export.xlsx' }}
-              primaryAction={
-                <Button
-                  onClick={() => {
-                    setSelectedTeam(null);
-                    setEditOpen(true);
-                  }}
-                >
-                  <Plus className="me-2 size-4" />
-                  Create team
-                </Button>
-              }
+      <Card>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative w-full sm:max-w-xs">
+            <Search className="text-muted-foreground absolute start-2.5 top-1/2 size-4 -translate-y-1/2" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search teams…"
+              className="ps-8 pe-8"
             />
-          </CardHeader>
-          <CardTable>
-            <ScrollArea>
-              <DataGridTable />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
-          </CardTable>
-          {!isLoading && teams.length > 0 && (
-            <CardFooter className="text-muted-foreground text-sm">
-              {teams.length} team{teams.length !== 1 ? 's' : ''}
-            </CardFooter>
-          )}
-        </Card>
-      </DataGrid>
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                className="text-muted-foreground hover:text-foreground absolute end-2 top-1/2 -translate-y-1/2"
+                aria-label="Clear search"
+              >
+                <X className="size-4" />
+              </button>
+            )}
+          </div>
+          <Button
+            onClick={() => {
+              setSelectedTeam(null);
+              setEditOpen(true);
+            }}
+          >
+            <Plus className="me-2 size-4" />
+            Create team
+          </Button>
+        </CardHeader>
 
-      <TeamEditDialog
-        open={editOpen}
-        closeDialog={() => setEditOpen(false)}
-        team={selectedTeam}
-      />
+        <div className="border-t">
+          <p className="text-muted-foreground border-b px-4 py-2 text-xs">
+            Drag a row by its handle onto another team to nest it; drop on the top zone to detach.
+          </p>
+          {isLoading ? (
+            <div className="space-y-2 p-4">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 w-full" />
+              ))}
+            </div>
+          ) : (
+            <TeamTree
+              teams={teams}
+              query={query}
+              onEdit={(t) => {
+                setSelectedTeam(t);
+                setEditOpen(true);
+              }}
+              onDelete={(t) => {
+                setSelectedTeam(t);
+                setDeleteOpen(true);
+              }}
+            />
+          )}
+        </div>
+
+        {!isLoading && teams.length > 0 && (
+          <CardFooter className="text-muted-foreground text-sm">
+            {teams.length} team{teams.length !== 1 ? 's' : ''}
+          </CardFooter>
+        )}
+      </Card>
+
+      <TeamEditDialog open={editOpen} closeDialog={() => setEditOpen(false)} team={selectedTeam} />
       <TeamDeleteDialog
         open={deleteOpen}
         closeDialog={() => setDeleteOpen(false)}
