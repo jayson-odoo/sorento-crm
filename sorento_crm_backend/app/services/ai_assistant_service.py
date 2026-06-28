@@ -373,12 +373,18 @@ class AIAssistantChatService:
         # later debugging / replay.
         user_meta: dict[str, Any] = {}
         if page_snapshot is not None:
-            user_meta["page_snapshot"] = {
+            snapshot_meta: dict[str, Any] = {
                 "path": (page_snapshot.path or "")[:500],
                 "search": (page_snapshot.search or "")[:500],
                 "title": (page_snapshot.title or "")[:255],
                 "visible_text": (page_snapshot.visible_text or "")[:1000],
             }
+            if page_snapshot.entity is not None:
+                snapshot_meta["entity"] = {
+                    "entity_type": page_snapshot.entity.entity_type,
+                    "id": page_snapshot.entity.id,
+                }
+            user_meta["page_snapshot"] = snapshot_meta
 
         user_msg = self.append_message(conv.id, "user", message, metadata_json=user_meta or None)
         logger.info("AI assistant user message appended conversation_id=%s", conv.id)
@@ -451,20 +457,80 @@ class AIAssistantChatService:
             rag_ms,
         )
 
+        # Deterministic pre-route (PLAN Q6): when the user is viewing a specific
+        # record AND the question is record-class, bypass the agent loop and
+        # answer from the deterministic assembler. RBAC parity with the HTTP
+        # route is enforced inline (§3.5) since this is an internal service call
+        # without the FastAPI dependency. Any failure degrades to the agent loop.
+        # Assemble the record context whenever the user is viewing a permitted
+        # record — REGARDLESS of the classifier. The classifier only decides
+        # whether to short-circuit (render) or fall through to the agent loop;
+        # either way the facts are injected, so transient classifier noise can
+        # never produce an ungrounded hallucination for a record-ish question.
+        record_ctx = None
+        is_record_class = False
+        if page_snapshot is not None and page_snapshot.entity is not None:
+            from app.services.record_context_service import (
+                RecordContextService,
+                record_context_view_permission,
+            )
+
+            try:
+                # Per-entity RBAC parity with the HTTP route: when the entity
+                # type requires a view permission, enforce it; None => any
+                # authenticated bubble user may read the record context.
+                required_slug = record_context_view_permission(
+                    page_snapshot.entity.entity_type
+                )
+                permitted = required_slug is None or UserPermissionService(
+                    self.db
+                ).check_user_has_permission(user_id, required_slug)
+                if permitted:
+                    record_ctx = RecordContextService(self.db).assemble(
+                        page_snapshot.entity.entity_type,
+                        page_snapshot.entity.id,
+                    )
+            except HTTPException:
+                # 400 (unsupported) / 404 (not found) → degrade gracefully.
+                record_ctx = None
+            except Exception:
+                logger.exception(
+                    "Record-context assembly failed; falling back to agent loop"
+                )
+                record_ctx = None
+            if record_ctx is not None:
+                # Classify on the ORIGINAL message, not the reformulated
+                # standalone_query: reformulation can hallucinate unrelated
+                # context (e.g. expanding "this" into "the delivery order") which
+                # would mis-route a record question into the agent loop. The
+                # user's own words carry the intent; the render path resolves
+                # specifics from the injected facts.
+                is_record_class = self.intent_is_record_class(message)
+
         agent_started = time.perf_counter()
-        response_text, tool_calls, token_usage = self._run_agent_loop(
-            config=config,
-            history=history_rows,
-            user_message=message,
-            standalone_query=standalone_query,
-            selected_tools=selected_tools,
-            sources=sources,
-            resolution=resolution,
-            page_snapshot=page_snapshot,
-            user_id=user_id,
-            conversation_id=str(conv.id),
-            user_message_id=str(user_msg.id),
-        )
+        if record_ctx is not None and is_record_class:
+            response_text, tool_calls, token_usage = self._render_record_answer(
+                config=config,
+                history=history_rows,
+                user_message=message,
+                record_ctx=record_ctx,
+                page_snapshot=page_snapshot,
+            )
+        else:
+            response_text, tool_calls, token_usage = self._run_agent_loop(
+                config=config,
+                history=history_rows,
+                user_message=message,
+                standalone_query=standalone_query,
+                selected_tools=selected_tools,
+                sources=sources,
+                resolution=resolution,
+                page_snapshot=page_snapshot,
+                user_id=user_id,
+                conversation_id=str(conv.id),
+                user_message_id=str(user_msg.id),
+                record_ctx=record_ctx,
+            )
         agent_ms = (time.perf_counter() - agent_started) * 1000
         logger.info(
             "AI assistant agent phase finished conversation_id=%s response_len=%s tool_calls=%s elapsed_ms=%.1f",
@@ -505,11 +571,17 @@ class AIAssistantChatService:
             "suggestions": suggestions,
         }
         if page_snapshot is not None:
-            meta["page_snapshot"] = {
+            assistant_snapshot_meta: dict[str, Any] = {
                 "path": (page_snapshot.path or "")[:500],
                 "title": (page_snapshot.title or "")[:255],
                 "visible_text": (page_snapshot.visible_text or "")[:1000],
             }
+            if page_snapshot.entity is not None:
+                assistant_snapshot_meta["entity"] = {
+                    "entity_type": page_snapshot.entity.entity_type,
+                    "id": page_snapshot.entity.id,
+                }
+            meta["page_snapshot"] = assistant_snapshot_meta
         assistant_msg = self.append_message(conv.id, "assistant", response_text, metadata_json=meta)
         total_ms = (time.perf_counter() - request_started) * 1000
 
@@ -728,6 +800,7 @@ class AIAssistantChatService:
         user_id: str | None = None,
         conversation_id: str | None = None,
         user_message_id: str | None = None,
+        record_ctx: dict[str, Any] | None = None,
     ) -> tuple[str, list[MCPToolCallResult], dict[str, int]]:
         """Orchestrator loop: LLM chooses/invokes MCP tools via function-calling, then answers.
 
@@ -800,6 +873,23 @@ class AIAssistantChatService:
                 "--- End page ---"
             )
             messages.append({"role": "system", "content": page_block})
+        if record_ctx is not None:
+            # The user is on a specific record. Inject its authoritative facts so
+            # that even when this fallback path runs (e.g. the question wasn't
+            # classified record-class), the model answers from real record data
+            # instead of guessing or calling unrelated catalog tools.
+            facts = json.dumps(record_ctx, ensure_ascii=False, indent=2)
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Authoritative facts for the record the user is viewing. "
+                        "Prefer these over any tool when the question is about this "
+                        "record; quote `display_ref`, never a UUID.\n"
+                        f"--- Record facts ---\n{facts}\n--- End record facts ---"
+                    ),
+                }
+            )
         for msg in history[-6:]:
             if msg.role in {"user", "assistant"} and (msg.content or "").strip():
                 messages.append({"role": msg.role, "content": msg.content})
@@ -1186,6 +1276,250 @@ class AIAssistantChatService:
             "5) Never invent UI labels, button names, dialog titles, or routes that aren't in "
             "the guide body. If the guide doesn't cover a step the user asked about, say so.\n"
         )
+
+    def intent_is_record_class(self, message: str) -> bool:
+        """Semantic classifier: is this a question about the record on screen?
+
+        record-class = a question about the SPECIFIC record/case currently on
+        screen — its state, who acted on it, when, why, how long, its SLA, or
+        what to do next on it.  NOT record-class = general catalog/data lookups
+        (products, promotions, orders, stock), definitions, or how-the-feature-
+        works-in-general.
+
+        Implemented as a single cheap LLM call (general NLP judgment, NOT
+        keyword matching — per the PLAN anti-overfit rule). Returns ``False`` on
+        any provider error / missing key so we never wrongly hijack the agent
+        loop (safe default = fall through).
+        """
+        raw = (message or "").strip()
+        if not raw:
+            return False
+        config = self.cfg.get()
+        api_key = config.api_key_ciphertext or settings.openai_api_key
+        if not api_key:
+            return False
+        system = (
+            "You classify a single user message from an in-app assistant. The user is "
+            "viewing ONE specific record (a case/form) on screen, and most of their "
+            "questions are about THAT open record.\n"
+            "Answer YES when the message asks about the specific record in front of them — "
+            "its subject/summary/details, its current state, who acted on it, when, why it "
+            "is in this state, how long something took, its SLA, or what to do next on it. "
+            "Words like 'this', 'it', 'now', or naming the record's type ('this complaint') "
+            "signal the open record. A question about who approved/handled/decided 'this' "
+            "record, or what its reason/status/next step is, is YES.\n"
+            "Answer NO only when the message is clearly NOT about the one open record: a "
+            "catalog/data lookup across many records (products, promotions, orders, stock, "
+            "customers, shipments), a definition of a term, or how a feature works in "
+            "general (a how-to / process-in-general question).\n"
+            "A procedural question SCOPED TO THE OPEN RECORD is YES — its process flow, how "
+            "it works, its stages, or what to do next, when phrased about 'this' or 'here'. "
+            "The SAME question asked generally or about a named type WITHOUT 'this' (e.g. "
+            "'for a complaint', 'in general') is NO.\n"
+            "Tie-breaker: if it could plausibly be about the open record, answer YES.\n"
+            "Examples — YES: 'who handled this?' / 'what stage is it at?' / 'give me the "
+            "gist of this case' / 'what do I do next here?' / 'what is the process flow for "
+            "this?' / 'how does this work?'. "
+            "NO: 'list all open complaints' / 'how does the approval step work in general?' "
+            "/ 'what is the process flow for a complaint?' / 'what does resolved mean?' / "
+            "'which products are on promotion?'.\n"
+            "Respond with exactly one word: YES or NO."
+        )
+        # Retry transient provider errors: a swallowed error here flips the route
+        # to the agent loop and produces a wrong answer for a real record question
+        # (observed in end-to-end). Only a persistent failure defaults to False.
+        last_exc: Exception | None = None
+        for _attempt in range(2):
+            try:
+                provider = get_provider(config.provider, api_key, config.model)
+                result = provider.chat(
+                    [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": raw[:1000]},
+                    ],
+                    temperature=0.0,
+                    model=config.model,
+                    max_tokens=4,
+                )
+                verdict = (result.content or "").strip().upper()
+                return verdict.startswith("YES")
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+        logger.warning(
+            "intent_is_record_class classifier failed after retries; defaulting "
+            "to False (%s)",
+            last_exc,
+        )
+        return False
+
+    def _render_record_answer(
+        self,
+        *,
+        config: AIAssistantConfig,
+        history: list[AIAssistantMessage],
+        user_message: str,
+        record_ctx: dict[str, Any],
+        page_snapshot: PageSnapshotPayload | None = None,
+    ) -> tuple[str, list[MCPToolCallResult], dict[str, int]]:
+        """Render a grounded answer from the deterministic record-context facts.
+
+        For pure fact questions the model answers with NO tool call → returns
+        ``tool_calls=[]`` (satisfies UAC §3.1). For procedural / next-step intent
+        (UAC A6 fusion) the model is allowed exactly ONE ``user_guides_read``
+        call to fetch the per-state procedure, grounded by the record's current
+        status. Same return shape as ``_run_agent_loop``.
+        """
+        token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        tool_calls_log: list[MCPToolCallResult] = []
+
+        api_key = config.api_key_ciphertext or settings.openai_api_key
+        if not api_key:
+            return self._deterministic_fallback(tool_calls_log), tool_calls_log, token_usage
+        try:
+            provider: LLMProvider = get_provider(config.provider, api_key, config.model)
+        except Exception:
+            logger.exception("record-answer provider instantiation failed")
+            return self._deterministic_fallback(tool_calls_log), tool_calls_log, token_usage
+
+        facts_block = json.dumps(record_ctx, ensure_ascii=False, indent=2)
+        # Human label for guide queries — snake_case entity_type ("sponsorship_form")
+        # matches Outline poorly; the spelled-out form ("sponsorship form") hits.
+        _ENTITY_LABELS = {
+            "complaint": "complaint",
+            "stock_inquiry": "stock inquiry",
+            "purchase_request": "purchase request",
+            "sponsorship_form": "sponsorship form",
+        }
+        entity_label = _ENTITY_LABELS.get(
+            record_ctx.get("entity_type", ""), record_ctx.get("entity_type", "record")
+        )
+        cur_status = (record_ctx.get("current_state") or {}).get("status", "current")
+        system = _html_to_text(config.system_prompt or "").strip() or self._default_system_prompt()
+        if "USER GUIDE PROTOCOL" not in system:
+            system = system.rstrip() + "\n\n" + self._user_guide_protocol_addendum()
+        system = (
+            system.rstrip()
+            + "\n\nRECORD CONTEXT (deterministic, authoritative)\n"
+            "Answer the user's question using ONLY these record facts. Be concise. Quote "
+            "the human-readable `display_ref`, never a UUID. Times are already "
+            "Asia/Kuala_Lumpur — present them as-is, do not re-convert. If a fact is null, "
+            "say it is not set rather than inventing one.\n"
+            "If the user is asking what to do next / which button / how to proceed, OR how "
+            "this record's process / lifecycle / stages work, you MAY call "
+            "`user_guides_read` EXACTLY ONCE to get the procedure, then ground your answer "
+            "in `current_state.status` above. When you do, set `query` to the spelled-out "
+            f"record type plus lifecycle/stage so the right guide is found — e.g. "
+            f"\"{entity_label} lifecycle what to do at {cur_status} stage\" — NOT the "
+            "user's bare words and NOT the snake_case type. For pure fact questions, answer "
+            "directly with no tool call.\n\n"
+            f"--- Record facts ---\n{facts_block}\n--- End record facts ---"
+        )
+
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+        for msg in history[-6:]:
+            if msg.role in {"user", "assistant"} and (msg.content or "").strip():
+                messages.append({"role": msg.role, "content": msg.content})
+        messages.append({"role": "user", "content": user_message})
+
+        # Bind ONLY user_guides_read (fusion path); pure-fact answers ignore it.
+        mcp = MCPRuntimeClient(
+            settings.ai_assistant_mcp_url,
+            timeout_seconds=settings.ai_assistant_mcp_timeout_seconds,
+        )
+        openai_tools: list[dict[str, Any]] = []
+        guide_tool_name = "user_guides_read"
+        try:
+            tool_catalog = mcp.list_tools_with_schema()
+            if guide_tool_name in tool_catalog:
+                openai_tools.append(
+                    self._mcp_schema_to_openai_tool(
+                        guide_tool_name, tool_catalog[guide_tool_name]
+                    )
+                )
+        except Exception:
+            # Guide tool unavailable → fact-only answering still works.
+            logger.warning("record-answer could not list MCP tools; fact-only mode")
+
+        try:
+            result: ChatResult = provider.chat(
+                messages,
+                tools=openai_tools or None,
+                temperature=0.0,
+                model=config.model,
+                max_tokens=2048,
+            )
+        except Exception:
+            logger.exception("record-answer initial provider call failed")
+            return self._deterministic_fallback(tool_calls_log), tool_calls_log, token_usage
+        token_usage["prompt_tokens"] += int(result.prompt_tokens or 0)
+        token_usage["completion_tokens"] += int(result.completion_tokens or 0)
+        token_usage["total_tokens"] += int(result.total_tokens or 0)
+
+        # At most ONE user_guides_read call (A6 fusion). Pure-fact answers come
+        # back with no tool_calls → tool_calls_log stays empty (UAC §3.1).
+        requested_tool_calls = result.tool_calls or []
+        if requested_tool_calls and openai_tools:
+            assistant_tool_calls = [
+                {
+                    "id": call.get("id") or f"call_{uuid.uuid4().hex[:8]}",
+                    "type": "function",
+                    "function": {
+                        "name": call.get("name") or "",
+                        "arguments": json.dumps(call.get("arguments") or {}),
+                    },
+                }
+                for call in requested_tool_calls
+            ]
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": result.content or "",
+                    "tool_calls": assistant_tool_calls,
+                }
+            )
+            for call_idx, call in enumerate(requested_tool_calls[:1]):
+                call_id = assistant_tool_calls[call_idx]["id"]
+                name = str(call.get("name") or "")
+                parsed_args = call.get("arguments") or {}
+                if not isinstance(parsed_args, dict):
+                    parsed_args = {}
+                str_args = {
+                    k: (v if isinstance(v, str) else json.dumps(v))
+                    for k, v in parsed_args.items()
+                    if v is not None
+                }
+                str_args["contact_id"] = ""
+                str_args["space_id"] = ""
+                if name != guide_tool_name:
+                    output = json.dumps({"error": "tool_not_allowed", "tool_name": name})
+                    tool_calls_log.append(MCPToolCallResult(name or "unknown", False, output))
+                    messages.append({"role": "tool", "tool_call_id": call_id, "content": output})
+                    continue
+                try:
+                    output = mcp.call_tool(name, args=str_args)
+                    is_error, _ = self._tool_output_is_error(output)
+                    tool_calls_log.append(MCPToolCallResult(name, not is_error, output))
+                except Exception as exc:
+                    output = json.dumps({"error": "tool_call_failed", "detail": str(exc)})
+                    tool_calls_log.append(MCPToolCallResult(name, False, output))
+                messages.append({"role": "tool", "tool_call_id": call_id, "content": output})
+            try:
+                final = provider.chat(
+                    messages, temperature=0.0, model=config.model, max_tokens=2048
+                )
+                token_usage["prompt_tokens"] += int(final.prompt_tokens or 0)
+                token_usage["completion_tokens"] += int(final.completion_tokens or 0)
+                token_usage["total_tokens"] += int(final.total_tokens or 0)
+                answer = (final.content or "").strip()
+            except Exception:
+                logger.exception("record-answer follow-up provider call failed")
+                answer = (result.content or "").strip()
+        else:
+            answer = (result.content or "").strip()
+
+        if not answer:
+            answer = self._deterministic_fallback(tool_calls_log)
+        return answer, tool_calls_log, token_usage
 
     def _deterministic_fallback(self, tool_calls: list[MCPToolCallResult]) -> str:
         if not tool_calls:

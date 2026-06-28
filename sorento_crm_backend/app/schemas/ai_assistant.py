@@ -34,6 +34,15 @@ class AIAssistantConfigResponse(BaseModel):
     updated_at: datetime
 
 
+class PageEntityRef(BaseModel):
+    """The specific record the user is viewing, registered by the FE per-screen
+    context provider. Covers detail pages AND modals (URL-parse alone can't see
+    modals). Additive/optional on the snapshot — old clients omit it."""
+
+    entity_type: str
+    id: str
+
+
 class PageSnapshotPayload(BaseModel):
     """Comet-style page context shipped with each chat turn (optional)."""
 
@@ -41,6 +50,7 @@ class PageSnapshotPayload(BaseModel):
     search: str = ""
     title: str = ""
     visible_text: str = ""
+    entity: PageEntityRef | None = None
 
 
 class AIAssistantMessageCreate(BaseModel):

@@ -22,6 +22,7 @@ from app.models.ai_assistant import (
     AIAssistantUsageLog,
     AIAssistantWishlistCluster,
 )
+from app.models.lookup import LookupBinding
 from app.models.user import User
 from app.schemas.ai_assistant import AIAssistantAuthContext, PageSnapshotPayload
 from app.services.ai_assistant_service import AIAssistantChatService, MCPToolCallResult
@@ -47,6 +48,10 @@ def db_session() -> Session:
         AIAssistantUsageLog.__table__,
         AIAssistantWishlistCluster.__table__,
         AIAssistantUnansweredQuery.__table__,
+        # When the full suite runs, the globally-registered lookup-write listener
+        # fires on these inserts and queries lookup_bindings (CLAUDE.md sqlite
+        # gotcha). Create the table so insert order across modules is robust.
+        LookupBinding.__table__,
     ]
     Base.metadata.create_all(engine, tables=tables)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

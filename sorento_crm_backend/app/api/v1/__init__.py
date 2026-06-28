@@ -28,6 +28,7 @@ from app.api.v1 import (
     downloads,
 )
 from app.api.v1.system import modules_runtime
+from app.api.v1.assistant import record_context as assistant_record_context
 from app.api.v1.user_management.access_agent_mcp_tools import router as _agent_mcp_tools_router
 from app.modules.runtime.guards import require_module_enabled, require_module_enabled_with_api_key
 
@@ -148,6 +149,11 @@ api_router.include_router(
     dependencies=[Depends(require_module_enabled_with_api_key("base"))],
 )
 api_router.include_router(system.router, prefix="/system", tags=["system"])
+# Bubble record-context assembler (JWT+RBAC only; never exposed to EXTERNAL_API_KEY).
+api_router.include_router(
+    assistant_record_context.router,
+    tags=["assistant-record-context"],
+)
 api_router.include_router(test_auth.router, tags=["test"])
 api_router.include_router(external.router, prefix="/external", tags=["external"])
 api_router.include_router(public.router, prefix="/public", tags=["public"])

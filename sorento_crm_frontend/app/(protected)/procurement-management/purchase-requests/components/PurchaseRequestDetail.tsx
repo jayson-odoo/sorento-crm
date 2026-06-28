@@ -393,6 +393,7 @@ export default function PurchaseRequestDetail({
           {isPendingApproval && canSendForApproval && (
             <>
               <Button
+                data-guide-target="procurement.purchase-requests.approve-button"
                 className="bg-emerald-600 text-white hover:bg-emerald-700"
                 disabled={approving}
                 onClick={async () => {
@@ -413,6 +414,7 @@ export default function PurchaseRequestDetail({
                 {approving ? 'Approving…' : 'Approve'}
               </Button>
               <Button
+                data-guide-target="procurement.purchase-requests.reject-button"
                 variant="outline"
                 className="border-destructive text-destructive hover:bg-destructive/10"
                 disabled={decisionRejecting}

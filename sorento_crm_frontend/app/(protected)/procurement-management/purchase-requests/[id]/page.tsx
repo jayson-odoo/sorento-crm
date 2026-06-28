@@ -10,6 +10,7 @@ import {
 import { Container } from '@/components/common/container';
 import PurchaseRequestDetail from '../components/PurchaseRequestDetail';
 import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
+import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
 
 export const metadata: Metadata = {
   title: 'Purchase Request Details',
@@ -59,6 +60,7 @@ async function PurchaseRequestDetailWrapper({
   const { id } = await params;
   return (
     <FormDetailWithSLATabs sourceEntityType="purchase_request" sourceEntityId={id}>
+      <RecordEntityRegistrar entityType="purchase_request" id={id} />
       <PurchaseRequestDetail requestId={id} />
     </FormDetailWithSLATabs>
   );

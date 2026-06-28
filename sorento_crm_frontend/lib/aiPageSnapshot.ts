@@ -1,8 +1,11 @@
+import { getCurrentEntity } from '@/lib/aiEntityContext';
+
 export interface AIPageSnapshot {
   path: string;
   search: string;
   title: string;
   visible_text: string;
+  entity?: { entity_type: string; id: string } | null;
 }
 
 export function getPageSnapshot(): AIPageSnapshot | null {
@@ -24,5 +27,6 @@ export function getPageSnapshot(): AIPageSnapshot | null {
     search: window.location.search,
     title: document.title,
     visible_text,
+    entity: getCurrentEntity(),
   };
 }
