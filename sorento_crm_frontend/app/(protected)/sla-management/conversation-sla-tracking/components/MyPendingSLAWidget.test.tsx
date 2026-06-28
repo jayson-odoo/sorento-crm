@@ -51,6 +51,23 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
+// Per-action RBAC: by default the user holds every SLA slug (existing button tests
+// assume the buttons render). Individual gating tests flip a slug to false via
+// `deniedSlugs`. The mock reads the full slug, e.g.
+// `sla_management.conversation_sla_tracking.resolve`.
+let deniedSlugs = new Set<string>();
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => !deniedSlugs.has(slug),
+}));
+
+// The Coverage tab embeds the (heavy) CoverageManager; stub it to a marker that echoes
+// the canManageTeam prop so the widget test stays focused on tab switching + wiring.
+vi.mock('@/app/(protected)/account/notifications/components', () => ({
+  CoverageManager: ({ canManageTeam }: { canManageTeam: boolean }) => (
+    <div data-testid="coverage-manager" data-can-manage={String(canManageTeam)} />
+  ),
+}));
+
 function renderWidget() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -160,6 +177,7 @@ describe('MyPendingSLAWidget clickable rows', () => {
     replace.mockReset();
     searchParam = null;
     extraParams = {};
+    deniedSlugs = new Set();
     getTeamPendingSLA.mockResolvedValue({ data: [], total: 0, page: 1, limit: 50, empty: true });
     getVisibleUsers.mockResolvedValue([]);
     getTakeoverState.mockResolvedValue({});
@@ -411,6 +429,94 @@ describe('MyPendingSLAWidget clickable rows', () => {
     // confirm); the confirm is the last and is disabled until a colleague is chosen.
     const confirm = actionButtons(/^Reassign$/i).at(-1)!;
     expect(confirm).toBeDisabled();
+  });
+
+  // ---- per-action RBAC gating (UAC A2–A7) --------------------------------
+
+  const SLUG = 'sla_management.conversation_sla_tracking';
+
+  it('A4: Escalate hidden without the escalate slug', async () => {
+    deniedSlugs = new Set([`${SLUG}.escalate`]);
+    getMyPendingSLA.mockResolvedValue([convoItem]);
+    renderWidget();
+    await waitFor(() => expect(screen.getByText('Enquiry')).toBeInTheDocument());
+    expect(hasActionButton(/Escalate/i)).toBe(false);
+    // Resolve still shows (independent slug).
+    expect(getActionButton(/Resolve/i)).toBeInTheDocument();
+  });
+
+  it('A3: Resolve hidden without the resolve slug', async () => {
+    deniedSlugs = new Set([`${SLUG}.resolve`]);
+    getMyPendingSLA.mockResolvedValue([convoItem]);
+    renderWidget();
+    await waitFor(() => expect(screen.getByText('Enquiry')).toBeInTheDocument());
+    expect(hasActionButton(/Resolve/i)).toBe(false);
+    expect(getActionButton(/Escalate/i)).toBeInTheDocument();
+  });
+
+  it('A5: Reassign hidden without the reassign slug', async () => {
+    deniedSlugs = new Set([`${SLUG}.reassign`]);
+    getMyPendingSLA.mockResolvedValue([convoItem]);
+    renderWidget();
+    await waitFor(() => expect(screen.getByText('Enquiry')).toBeInTheDocument());
+    expect(hasActionButton(/Reassign/i)).toBe(false);
+  });
+
+  it('A2: Extend hidden without the extend slug (conversation row with resolution due)', async () => {
+    deniedSlugs = new Set([`${SLUG}.extend`]);
+    getMyPendingSLA.mockResolvedValue([
+      { ...convoItem, due_at_resolution: new Date(Date.now() + 7200_000).toISOString() },
+    ]);
+    renderWidget();
+    await waitFor(() => expect(screen.getByText('Enquiry')).toBeInTheDocument());
+    expect(hasActionButton(/Extend/i)).toBe(false);
+  });
+
+  it('A6: Takeover (+ no Cancel/Reject) hidden without the takeover slug on My Team', async () => {
+    deniedSlugs = new Set([`${SLUG}.takeover`]);
+    getMyPendingSLA.mockResolvedValue([]);
+    getTeamPendingSLA.mockResolvedValue({
+      data: [teamItem], total: 1, page: 1, limit: 50, empty: false,
+    });
+    renderWidget();
+    fireEvent.click(screen.getByRole('button', { name: /My Team/i }));
+    await waitFor(() => expect(screen.getByText(/Charissa/)).toBeInTheDocument());
+    expect(hasActionButton(/Takeover/i)).toBe(false);
+    // Reassign uses a different slug and still shows.
+    expect(getActionButton(/Reassign/i)).toBeInTheDocument();
+  });
+
+  // ---- Coverage tab (B1/B3) ----------------------------------------------
+
+  it('B1: Coverage tab renders the manager and hides the task search', async () => {
+    getMyPendingSLA.mockResolvedValue([]);
+    renderWidget();
+    await waitFor(() => expect(screen.getByText(/you're all caught up/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /^Coverage$/i }));
+    await waitFor(() => expect(screen.getByTestId('coverage-manager')).toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: /^Coverage$/i })).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/Search by number/i)).not.toBeInTheDocument();
+  });
+
+  it('B3: passes canManageTeam=true to the manager when the user holds manage_team', async () => {
+    getMyPendingSLA.mockResolvedValue([]);
+    renderWidget();
+    await waitFor(() => expect(screen.getByText(/you're all caught up/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /^Coverage$/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId('coverage-manager')).toHaveAttribute('data-can-manage', 'true'),
+    );
+  });
+
+  it('B3: passes canManageTeam=false without manage_team', async () => {
+    deniedSlugs = new Set(['notifications.coverage.manage_team']);
+    getMyPendingSLA.mockResolvedValue([]);
+    renderWidget();
+    await waitFor(() => expect(screen.getByText(/you're all caught up/i)).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /^Coverage$/i }));
+    await waitFor(() =>
+      expect(screen.getByTestId('coverage-manager')).toHaveAttribute('data-can-manage', 'false'),
+    );
   });
 
   // ---- coverage deep link ?team_task= ------------------------------------

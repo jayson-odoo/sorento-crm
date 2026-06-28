@@ -88,11 +88,30 @@ PERMISSION_REGISTRY.append(
         "description": "Override assignee and SLA timestamps on a tracking record for testing (non-production use).",
     }
 )
+# Per-action gates for the My Pending / My Team task widget buttons. Each one is
+# granted independently so a role can, e.g., resolve but not escalate. Enforced on
+# both the FE (show/hide) and the matching routes (require_permission).
+PERMISSION_REGISTRY.extend([
+    {"slug": "sla_management.conversation_sla_tracking.extend", "name": "Extend SLA deadline", "description": "Extend the resolution deadline on a conversation/form SLA task (assignee action)."},
+    {"slug": "sla_management.conversation_sla_tracking.reassign", "name": "Reassign SLA task", "description": "Reassign a conversation SLA task to another user within the actor's visible scope."},
+    {"slug": "sla_management.conversation_sla_tracking.resolve", "name": "Resolve SLA task", "description": "Mark a conversation SLA task as resolved (stops the clock, closes the conversation in Respond)."},
+    {"slug": "sla_management.conversation_sla_tracking.escalate", "name": "Escalate SLA task", "description": "Manually escalate a conversation SLA task to the next tier with a reason."},
+    {"slug": "sla_management.conversation_sla_tracking.takeover", "name": "Takeover SLA task", "description": "Take over a teammate's conversation SLA task (and cancel/reject pending takeovers)."},
+])
 PERMISSION_REGISTRY.extend(_crud("sla_management", "escalation_logs", "SLA Event Logs"))
 PERMISSION_REGISTRY.extend([
     {"slug": "sla_management.form_sla_config.view", "name": "View Form SLA Configurations", "description": "View per-form SLA stage configurations (start / respond / resolve trigger transitions, agent + chain)."},
     {"slug": "sla_management.form_sla_config.manage", "name": "Manage Form SLA Configurations", "description": "Create, update, delete per-form SLA stage configurations."},
 ])
+
+# Coverage (SLA task coverage / delegation). Self-service coverage ("I cover for X")
+# is ungated (scope-B membership is the grant). This slug gates a HoD assigning
+# coverage ON BEHALF of team members (assign A to cover B). superadmin/admin bypass.
+PERMISSION_REGISTRY.append({
+    "slug": "notifications.coverage.manage_team",
+    "name": "Manage team coverage",
+    "description": "Assign or revoke SLA task coverage on behalf of team members (HoD): pick the coverer and the covered user within the manager's visible team scope.",
+})
 
 # Master Data (Products)
 PERMISSION_REGISTRY.extend(_crud("master_data", "products", "Products"))

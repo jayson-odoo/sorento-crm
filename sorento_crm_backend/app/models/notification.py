@@ -86,6 +86,12 @@ class NotificationSubscription(Base):
         Boolean, default=False, nullable=False, server_default=text("false")
     )
     expires_at = Column(DateTime(timezone=False), nullable=True)
+    # Audit: who created this coverage. NULL / == subscriber_id → self-service. A
+    # different user → a HoD assigned it on behalf of the coverer (manage_team).
+    # SET NULL on delete so removing the HoD doesn't cascade-drop the coverage.
+    created_by_id = Column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (

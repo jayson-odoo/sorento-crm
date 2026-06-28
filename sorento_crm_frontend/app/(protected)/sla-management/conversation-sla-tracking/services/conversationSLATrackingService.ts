@@ -163,10 +163,11 @@ export async function getMyPendingSLA(limit = 50): Promise<MyPendingSLAItem[]> {
  * the backend also best-effort closes the matching Respond.io conversation.
  */
 export async function resolveConversationSLATracking(id: string): Promise<void> {
-  const response = await apiFetch(`/api/v1/sla-management/conversation-sla-tracking/${id}`, {
-    method: 'PUT',
+  // Dedicated, permission + actor-scope gated route (sla…resolve). The legacy
+  // PUT /{id} stays for the n8n integration path only.
+  const response = await apiFetch(`/api/v1/sla-management/conversation-sla-tracking/${id}/resolve`, {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ is_resolved: true }),
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to resolve conversation SLA'));

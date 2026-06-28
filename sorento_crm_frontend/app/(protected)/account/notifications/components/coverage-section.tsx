@@ -265,6 +265,11 @@ export function CoverageSection() {
                       ) : (
                         <Badge variant="secondary" appearance="ghost">Notify only</Badge>
                       )}
+                      {c.assigned_by_hod && (
+                        <Badge variant="warning" appearance="ghost">
+                          Assigned by {c.assigned_by_name ?? 'manager'}
+                        </Badge>
+                      )}
                       {editing ? (
                         <span className="flex items-center gap-2">
                           <span>Until</span>

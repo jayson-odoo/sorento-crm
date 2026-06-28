@@ -13,6 +13,23 @@ export interface CoverageSub {
   redirect_assignments: boolean;
   expires_at: string | null;
   created_at: string;
+  /** True when a HoD assigned this coverage to me (vs my own self-service). */
+  assigned_by_hod?: boolean;
+  assigned_by_name?: string | null;
+}
+
+/** A team coverage row in the HoD management view (coverer covers target). */
+export interface TeamCoverageSub {
+  id: string;
+  subscriber_id: string;
+  subscriber_name: string | null;
+  target_user_id: string;
+  target_user_name: string | null;
+  redirect_assignments: boolean;
+  expires_at: string | null;
+  created_by_id: string | null;
+  created_by_name: string | null;
+  assigned_by_hod: boolean;
 }
 
 export interface CoverageSubCreateResult {
@@ -63,5 +80,48 @@ export async function unsubscribeCoverage(targetUserId: string): Promise<void> {
   const response = await apiFetch(`${BASE}/${targetUserId}`, { method: 'DELETE' });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to remove coverage'));
+  }
+}
+
+// --- HoD team coverage (requires notifications.coverage.manage_team) ---------
+
+/** List active coverage across my team scope (coverer OR covered in scope). */
+export async function getTeamCoverage(): Promise<TeamCoverageSub[]> {
+  const response = await apiFetch(`${BASE}/team`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load team coverage'));
+  }
+  const body = await response.json();
+  return Array.isArray(body?.data) ? (body.data as TeamCoverageSub[]) : [];
+}
+
+/** HoD: assign `covererId` to cover `targetUserId` (both in my scope). */
+export async function assignCoverage(
+  covererId: string,
+  targetUserId: string,
+  expiresAt?: string,
+  redirectAssignments = false,
+): Promise<{ id: string }> {
+  const response = await apiFetch(`${BASE}/assign`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      coverer_id: covererId,
+      target_user_id: targetUserId,
+      redirect_assignments: redirectAssignments,
+      ...(expiresAt ? { expires_at: expiresAt } : {}),
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to assign coverage'));
+  }
+  return response.json();
+}
+
+/** Revoke a specific coverage row by id (coverer or HoD in scope). */
+export async function revokeCoverageById(subscriptionId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/manage/${subscriptionId}`, { method: 'DELETE' });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to revoke coverage'));
   }
 }

@@ -23,6 +23,8 @@ export default function Page() {
   return (
     // Fluid so the dashboard fills the screen width instead of capping at 1320px.
     <Container width="fluid">
+      {/* MyPendingSLAWidget carries the My Pending / My Team / Coverage tabs so the
+          dashboard stays a single compact surface. */}
       <div className="mb-5">
         <MyPendingSLAWidget />
       </div>

@@ -69,31 +69,45 @@ class CoverageSubscriptionService:
             .filter(NotificationSubscription.subscriber_id == str(subscriber_id))
             .all()
         )
-        target_ids = {str(r.target_user_id) for r in rows}
+        lookup_ids = {str(r.target_user_id) for r in rows}
+        for r in rows:
+            if getattr(r, "created_by_id", None):
+                lookup_ids.add(str(r.created_by_id))
         name_by_id: dict = {}
-        if target_ids:
-            for u in self.db.query(User).filter(User.id.in_(target_ids)).all():
+        if lookup_ids:
+            for u in self.db.query(User).filter(User.id.in_(lookup_ids)).all():
                 name_by_id[str(u.id)] = (u.name or u.email or "").strip() or None
-        return [
-            {
-                "id": str(r.id),
-                "target_user_id": str(r.target_user_id),
-                "target_user_name": name_by_id.get(str(r.target_user_id)),
-                "is_active": bool(r.is_active),
-                "redirect_assignments": bool(getattr(r, "redirect_assignments", False)),
-                "expires_at": (
-                    getattr(r, "expires_at").isoformat()
-                    if getattr(r, "expires_at", None)
-                    else None
-                ),
-                "created_at": (
-                    getattr(r, "created_at").isoformat()
-                    if getattr(r, "created_at", None)
-                    else None
-                ),
-            }
-            for r in rows
-        ]
+        out = []
+        for r in rows:
+            created_by = str(r.created_by_id) if getattr(r, "created_by_id", None) else None
+            out.append(
+                {
+                    "id": str(r.id),
+                    "target_user_id": str(r.target_user_id),
+                    "target_user_name": name_by_id.get(str(r.target_user_id)),
+                    "is_active": bool(r.is_active),
+                    "redirect_assignments": bool(getattr(r, "redirect_assignments", False)),
+                    "expires_at": (
+                        getattr(r, "expires_at").isoformat()
+                        if getattr(r, "expires_at", None)
+                        else None
+                    ),
+                    "created_at": (
+                        getattr(r, "created_at").isoformat()
+                        if getattr(r, "created_at", None)
+                        else None
+                    ),
+                    "assigned_by_hod": bool(
+                        created_by and created_by != str(subscriber_id)
+                    ),
+                    "assigned_by_name": (
+                        name_by_id.get(created_by)
+                        if created_by and created_by != str(subscriber_id)
+                        else None
+                    ),
+                }
+            )
+        return out
 
     def subscribe(
         self,
@@ -101,8 +115,9 @@ class CoverageSubscriptionService:
         target_user_id: str,
         expires_at: Optional[datetime] = None,
         redirect_assignments: bool = False,
+        created_by_id: Optional[str] = None,
     ) -> NotificationSubscription:
-        """Create/reactivate an active subscription (subscriber → target).
+        """Self-service: create/reactivate a subscription where I am the coverer.
 
         ``redirect_assignments`` picks the mode:
         - True  = auto-assign: the target's future SLA tasks route to the subscriber
@@ -112,7 +127,80 @@ class CoverageSubscriptionService:
           coverers per target are allowed.
 
         Same subscriber re-subscribing the same target is an upsert (updates the mode
-        + expiry), never a conflict.
+        + expiry), never a conflict. Scope is the SUBSCRIBER's scope-B.
+        """
+        subscriber_id = str(subscriber_id)
+        target_user_id = str(target_user_id)
+        # Target must exist and be in the subscriber's scope-B.
+        target = self.db.query(User).filter(User.id == target_user_id).first()
+        if not target:
+            raise handle_not_found("User", target_user_id)
+        if target_user_id not in self._visible_member_ids(subscriber_id):
+            raise handle_validation_error(
+                "You can only subscribe to users in your teams or their child teams."
+            )
+        return self._upsert(
+            subscriber_id,
+            target_user_id,
+            expires_at=expires_at,
+            redirect_assignments=redirect_assignments,
+            created_by_id=created_by_id,
+        )
+
+    def assign_coverage(
+        self,
+        actor_id: str,
+        coverer_id: str,
+        target_user_id: str,
+        expires_at: Optional[datetime] = None,
+        redirect_assignments: bool = False,
+    ) -> NotificationSubscription:
+        """HoD action: assign ``coverer_id`` to cover ``target_user_id`` on their behalf.
+
+        Both the coverer and the covered user must be within the ACTOR's scope-B
+        (members of the actor's teams ∪ descendant teams). The caller must already
+        have passed the ``notifications.coverage.manage_team`` permission gate. The
+        created row records ``created_by_id = actor_id`` for audit, and the coverer is
+        notified best-effort. Takes effect immediately (no accept step).
+        """
+        actor_id = str(actor_id)
+        coverer_id = str(coverer_id)
+        target_user_id = str(target_user_id)
+        coverer = self.db.query(User).filter(User.id == coverer_id).first()
+        if not coverer:
+            raise handle_not_found("User", coverer_id)
+        target = self.db.query(User).filter(User.id == target_user_id).first()
+        if not target:
+            raise handle_not_found("User", target_user_id)
+        scope = self._visible_member_ids(actor_id)
+        if coverer_id not in scope or target_user_id not in scope:
+            raise handle_validation_error(
+                "You can only assign coverage between users in your teams or their child teams."
+            )
+        sub = self._upsert(
+            coverer_id,
+            target_user_id,
+            expires_at=expires_at,
+            redirect_assignments=redirect_assignments,
+            created_by_id=actor_id,
+        )
+        self._notify_coverer_assigned(coverer, target, expires_at, actor_id)
+        return sub
+
+    def _upsert(
+        self,
+        subscriber_id: str,
+        target_user_id: str,
+        *,
+        expires_at: Optional[datetime] = None,
+        redirect_assignments: bool = False,
+        created_by_id: Optional[str] = None,
+    ) -> NotificationSubscription:
+        """Mode-aware exclusivity check + upsert of one (subscriber, target) row.
+
+        Scope validation is the CALLER's responsibility (self-service uses the
+        subscriber's scope; HoD assign uses the actor's). Self-coverage is rejected
+        here so both entry points are covered.
         """
         subscriber_id = str(subscriber_id)
         target_user_id = str(target_user_id)
@@ -121,17 +209,12 @@ class CoverageSubscriptionService:
             # Self-coverage is meaningless and would create a redirect loop.
             raise AppException(
                 status_code=422,
-                message="You cannot cover for yourself.",
+                message="A user cannot cover for themselves.",
                 code="VALIDATION_ERROR",
             )
-        # Target must exist and be in scope-B.
         target = self.db.query(User).filter(User.id == target_user_id).first()
         if not target:
             raise handle_not_found("User", target_user_id)
-        if target_user_id not in self._visible_member_ids(subscriber_id):
-            raise handle_validation_error(
-                "You can only subscribe to users in your teams or their child teams."
-            )
 
         # Mode-aware exclusivity (other subscribers only; same-subscriber is an upsert):
         #  - redirect=ON  → reject if ANY active non-expired coverage exists for the
@@ -190,6 +273,7 @@ class CoverageSubscriptionService:
             setattr(existing, "is_active", True)
             setattr(existing, "expires_at", expires_at)
             setattr(existing, "redirect_assignments", redirect_assignments)
+            setattr(existing, "created_by_id", created_by_id)
             self.db.commit()
             self.db.refresh(existing)
             return existing
@@ -199,11 +283,128 @@ class CoverageSubscriptionService:
             is_active=True,
             expires_at=expires_at,
             redirect_assignments=redirect_assignments,
+            created_by_id=created_by_id,
         )
         self.db.add(sub)
         self.db.commit()
         self.db.refresh(sub)
         return sub
+
+    def _notify_coverer_assigned(
+        self,
+        coverer: User,
+        target: User,
+        expires_at: Optional[datetime],
+        actor_id: str,
+    ) -> None:
+        """Best-effort in-app notice to the coverer that a HoD assigned them coverage."""
+        try:
+            from app.services.notification_service import NotificationService
+
+            covered_name = (target.name or target.email or "a colleague").strip()
+            until = (
+                f" until {expires_at.date().isoformat()}"
+                if expires_at is not None
+                else ""
+            )
+            NotificationService(self.db).create_with_channel_preferences(
+                user_id=str(coverer.id),
+                type="coverage_assigned",
+                title="You've been assigned coverage",
+                body=f"You're now covering for {covered_name}{until}. Their SLA tasks may route to you.",
+                data={"covered_user_id": str(target.id), "assigned_by": str(actor_id)},
+                source_entity_type="coverage_assignment",
+                source_entity_id=str(target.id),
+                event_type="coverage_assigned",
+                send_in_app=True,
+                send_email=False,
+                send_whatsapp=False,
+                email_pref_attr="notify_email_on_assignment",
+                whatsapp_pref_attr="notify_whatsapp_on_assignment",
+            )
+        except Exception as e:  # noqa: BLE001 — notification is best-effort
+            logger.warning(
+                "coverage-assigned notify to %s failed: %s", getattr(coverer, "id", "?"), e
+            )
+
+    def list_team_subscriptions(self, actor_id: str) -> list[dict]:
+        """HoD view: active subscriptions where the coverer OR the covered user is in
+        the actor's scope-B. Returns human-readable names (no UUIDs in the UI)."""
+        actor_id = str(actor_id)
+        scope = self._visible_member_ids(actor_id)
+        if not scope:
+            return []
+        from sqlalchemy import or_
+
+        rows = (
+            self.db.query(NotificationSubscription)
+            .filter(
+                NotificationSubscription.is_active.is_(True),
+                or_(
+                    NotificationSubscription.subscriber_id.in_(scope),
+                    NotificationSubscription.target_user_id.in_(scope),
+                ),
+            )
+            .order_by(NotificationSubscription.created_at.desc())
+            .all()
+        )
+        ids = set()
+        for r in rows:
+            ids.add(str(r.subscriber_id))
+            ids.add(str(r.target_user_id))
+            if getattr(r, "created_by_id", None):
+                ids.add(str(r.created_by_id))
+        name_by_id: dict = {}
+        if ids:
+            for u in self.db.query(User).filter(User.id.in_(ids)).all():
+                name_by_id[str(u.id)] = (u.name or u.email or "").strip() or None
+        out = []
+        for r in rows:
+            created_by = str(r.created_by_id) if getattr(r, "created_by_id", None) else None
+            out.append(
+                {
+                    "id": str(r.id),
+                    "subscriber_id": str(r.subscriber_id),
+                    "subscriber_name": name_by_id.get(str(r.subscriber_id)),
+                    "target_user_id": str(r.target_user_id),
+                    "target_user_name": name_by_id.get(str(r.target_user_id)),
+                    "redirect_assignments": bool(getattr(r, "redirect_assignments", False)),
+                    "expires_at": (
+                        r.expires_at.isoformat() if getattr(r, "expires_at", None) else None
+                    ),
+                    "created_by_id": created_by,
+                    "created_by_name": name_by_id.get(created_by) if created_by else None,
+                    "assigned_by_hod": bool(created_by and created_by != str(r.subscriber_id)),
+                }
+            )
+        return out
+
+    def deactivate_by_id(
+        self, subscription_id: str, actor_id: str, can_manage: bool
+    ) -> None:
+        """Hard-delete a specific subscription (ADR: DELETE = hard delete).
+
+        Allowed when the actor is the coverer (owns it), OR ``can_manage`` and both
+        endpoints are within the actor's scope-B (HoD revoking team coverage)."""
+        actor_id = str(actor_id)
+        sub = (
+            self.db.query(NotificationSubscription)
+            .filter(NotificationSubscription.id == str(subscription_id))
+            .first()
+        )
+        if not sub:
+            raise handle_not_found("Coverage subscription", str(subscription_id))
+        is_owner = str(sub.subscriber_id) == actor_id
+        if not is_owner:
+            scope = self._visible_member_ids(actor_id) if can_manage else set()
+            if not (
+                can_manage
+                and str(sub.subscriber_id) in scope
+                and str(sub.target_user_id) in scope
+            ):
+                raise handle_not_found("Coverage subscription", str(subscription_id))
+        self.db.delete(sub)
+        self.db.commit()
 
     def unsubscribe(self, subscriber_id: str, target_user_id: str) -> None:
         """Hard-delete the (subscriber, target) subscription (ADR: DELETE = hard delete).

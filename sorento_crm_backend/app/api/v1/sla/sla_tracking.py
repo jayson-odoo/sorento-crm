@@ -366,6 +366,7 @@ async def takeover_sla_tracking(
     payload: _TakeoverRequest,
     response: Response,
     current_user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.takeover")),
     db: Session = Depends(get_db),
 ):
     """Initiate a takeover of a visible team task. With a cooldown configured this
@@ -391,6 +392,7 @@ async def takeover_sla_tracking(
 async def cancel_takeover_request(
     request_id: str,
     current_user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.takeover")),
     db: Session = Depends(get_db),
 ):
     """Initiator (or admin) withdraws a pending takeover."""
@@ -408,6 +410,7 @@ async def cancel_takeover_request(
 async def reject_takeover_request(
     request_id: str,
     current_user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.takeover")),
     db: Session = Depends(get_db),
 ):
     """Contested assignee (or admin) vetoes a pending takeover."""
@@ -430,6 +433,7 @@ async def reassign_sla_tracking(
     tracking_id: str,
     payload: _ReassignRequest,
     current_user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.reassign")),
     db: Session = Depends(get_db),
 ):
     """Reassign a task to a chosen person (keeps team + clocks). Target must be in
@@ -616,6 +620,7 @@ async def extend_sla_tracking(
     tracking_id: UUID,
     payload: _ExtendRequest,
     current_user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.extend")),
     db: Session = Depends(get_db),
 ):
     """Extend the resolution deadline (current assignee only). Recomputes the new due
@@ -1020,6 +1025,7 @@ async def escalate_conversation_sla_tracking(
     tracking_id: str,
     payload: _ConversationEscalateRequest,
     current_user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.escalate")),
     db: Session = Depends(get_db),
 ):
     """Manually escalate a CONVERSATION SLA tracker to the next tier (with reason).
@@ -1038,6 +1044,10 @@ async def escalate_conversation_sla_tracking(
     service = ConversationSLATrackingService(db)
     tracking = service.get_tracking(tracking_id, load_event_logs=False)
     if not tracking:
+        raise handle_not_found("Conversation SLA tracking", tracking_id)
+    # Permission == visibility: actor may only escalate tasks they own or that are
+    # assigned within their visible teams (mirrors reassign / takeover scope).
+    if not service.can_user_act_on_tracking(current_user["id"], tracking):
         raise handle_not_found("Conversation SLA tracking", tracking_id)
     if getattr(tracking, "source_entity_type", None) in FORM_SLA_TYPES:
         raise handle_validation_error(
@@ -1087,6 +1097,29 @@ async def escalate_conversation_sla_tracking(
     # escalate posts its own notification (avoids double-notify).
     _notify_conversation_sla_escalation(db, tracking, assignee, reason)
     return build_conversation_sla_tracking_response(db, tracking)
+
+
+@router.post("/{tracking_id}/resolve", response_model=ConversationSLATrackingResponse)
+async def resolve_sla_tracking(
+    tracking_id: UUID,
+    current_user: dict = Depends(get_current_user),
+    _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.resolve")),
+    db: Session = Depends(get_db),
+):
+    """Mark a conversation SLA task as resolved (stops the clock, closes the Respond
+    conversation). UI counterpart of the My Pending "Resolve" button — permission +
+    actor-scope gated. The legacy ``PUT /{id}`` remains for the n8n integration path
+    (API key) and is NOT used by the widget."""
+    service = ConversationSLATrackingService(db)
+    tracking = service.get_tracking(str(tracking_id))
+    if not tracking:
+        raise handle_not_found("Conversation SLA tracking", str(tracking_id))
+    if not service.can_user_act_on_tracking(current_user["id"], tracking):
+        raise handle_not_found("Conversation SLA tracking", str(tracking_id))
+    updated = service.update_tracking(
+        str(tracking_id), ConversationSLATrackingUpdate(is_resolved=True)
+    )
+    return build_conversation_sla_tracking_response(db, updated)
 
 
 @router.post("/integration", status_code=status.HTTP_200_OK)
@@ -1159,9 +1192,28 @@ async def update_sla_tracking(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
-    """Update an SLA tracking record."""
+    """Update an SLA tracking record.
+
+    Dual principal: the n8n integration calls this with an API key (bypasses the
+    per-action gate — it owns the SLA lifecycle). A human principal flipping
+    ``is_resolved`` here must hold the resolve slug, mirroring POST /{id}/resolve
+    (defense-in-depth so the PUT path can't bypass the widget's Resolve gate).
+    """
     tracking_id_str = str(tracking_id)
     log_service = IntegrationLogService(db)
+    if (
+        current_user.get("auth_method") != "api_key"
+        and bool(getattr(tracking_data, "is_resolved", None))
+    ):
+        from app.services.user_service import UserPermissionService
+
+        if not UserPermissionService(db).check_user_has_permission(
+            current_user["id"], "sla_management.conversation_sla_tracking.resolve"
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Permission required: sla_management.conversation_sla_tracking.resolve",
+            )
     try:
         service = ConversationSLATrackingService(db)
         tracking = service.update_tracking(tracking_id_str, tracking_data)

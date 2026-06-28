@@ -18,6 +18,7 @@ import {
   X,
 } from 'lucide-react';
 
+import { useHasPermission } from '@/hooks/usePermissions';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -62,6 +63,7 @@ import {
 import ReassignDialog from './ReassignDialog';
 import { TakeoverCountdown } from './TakeoverCountdown';
 import ExtendDueButton from './ExtendDueButton';
+import { CoverageManager } from '@/app/(protected)/account/notifications/components';
 
 // Same inbox base used by the SLA detail page; conversation rows deep-link here
 // because the CRM cannot send files in-app yet — staff reply from Respond.
@@ -136,10 +138,20 @@ function matchesQuery(item: AnyTask, typeLabel: string, q: string): boolean {
   return hay.includes(q);
 }
 
-type Mode = 'mine' | 'team';
+type Mode = 'mine' | 'team' | 'coverage';
+
+const SLA_PERM = 'sla_management.conversation_sla_tracking';
 
 export default function MyPendingSLAWidget() {
   const router = useRouter();
+  // Per-action RBAC: each task button is independently granted. superadmin/admin
+  // hold all. Buttons hide when the slug is absent; the matching routes also 403.
+  const canExtend = useHasPermission(`${SLA_PERM}.extend`);
+  const canReassign = useHasPermission(`${SLA_PERM}.reassign`);
+  const canResolve = useHasPermission(`${SLA_PERM}.resolve`);
+  const canEscalate = useHasPermission(`${SLA_PERM}.escalate`);
+  const canTakeover = useHasPermission(`${SLA_PERM}.takeover`);
+  const canManageTeamCoverage = useHasPermission('notifications.coverage.manage_team');
   const [mode, setMode] = useState<Mode>('mine');
   const [items, setItems] = useState<MyPendingSLAItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -497,7 +509,7 @@ export default function MyPendingSLAWidget() {
                   }}
                 />
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {tk.can_cancel && (
+                  {canTakeover && tk.can_cancel && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -510,7 +522,7 @@ export default function MyPendingSLAWidget() {
                       Cancel takeover
                     </Button>
                   )}
-                  {tk.can_reject && (
+                  {canTakeover && tk.can_reject && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -529,11 +541,12 @@ export default function MyPendingSLAWidget() {
 
             <div className="flex flex-wrap items-center gap-2">
               {isTeam ? (
-                !tk && (
+                !tk && canTakeover && (
                   <Button
                     size="sm"
                     variant="outline"
                     className="h-7"
+                    data-guide-target="dashboard.sla-tasks.takeover"
                     disabled={rowBusy}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -547,33 +560,39 @@ export default function MyPendingSLAWidget() {
               ) : (
                 !form && (
                   <>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-7"
-                      disabled={atMaxTier}
-                      title={atMaxTier ? 'Already at the maximum tier' : 'Escalate to the next tier'}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEscalateReason('');
-                        setEscalateTarget(mineItem);
-                      }}
-                    >
-                      <TrendingUp className="size-3.5" />
-                      Escalate
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setResolveTarget(mineItem);
-                      }}
-                    >
-                      <CheckCircle2 className="size-3.5" />
-                      Resolve
-                    </Button>
+                    {canEscalate && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7"
+                        data-guide-target="dashboard.sla-tasks.escalate"
+                        disabled={atMaxTier}
+                        title={atMaxTier ? 'Already at the maximum tier' : 'Escalate to the next tier'}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEscalateReason('');
+                          setEscalateTarget(mineItem);
+                        }}
+                      >
+                        <TrendingUp className="size-3.5" />
+                        Escalate
+                      </Button>
+                    )}
+                    {canResolve && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7"
+                        data-guide-target="dashboard.sla-tasks.resolve"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setResolveTarget(mineItem);
+                        }}
+                      >
+                        <CheckCircle2 className="size-3.5" />
+                        Resolve
+                      </Button>
+                    )}
                   </>
                 )
               )}
@@ -581,7 +600,7 @@ export default function MyPendingSLAWidget() {
                   viewer owns them → assignee gate satisfied). /my-pending now emits
                   due_at_resolution, so gate strictly: hidden when there is no
                   resolution deadline. The dialog shows it as "Current due". */}
-              {!isTeam && (
+              {!isTeam && canExtend && (
                 <ExtendDueButton
                   trackingId={item.id}
                   isResolved={false}
@@ -594,11 +613,12 @@ export default function MyPendingSLAWidget() {
                 />
               )}
               {/* Reassign is locked while a takeover is pending (soft lock). */}
-              {!tk && (
+              {!tk && canReassign && (
                 <Button
                   size="sm"
                   variant="ghost"
                   className="h-7"
+                  data-guide-target="dashboard.sla-tasks.reassign"
                   disabled={rowBusy}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -660,7 +680,7 @@ export default function MyPendingSLAWidget() {
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Clock className="size-4 text-muted-foreground" />
         <h2 className="text-sm font-semibold">
-          {mode === 'mine' ? 'My pending tasks' : 'My team tasks'}
+          {mode === 'mine' ? 'My pending tasks' : mode === 'team' ? 'My team tasks' : 'Coverage'}
         </h2>
         {mode === 'mine' && items !== null && (
           <Badge variant="secondary" className="ml-1">
@@ -691,10 +711,19 @@ export default function MyPendingSLAWidget() {
           >
             My Team
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={mode === 'coverage' ? 'primary' : 'ghost'}
+            className="h-7 px-2.5"
+            onClick={() => setMode('coverage')}
+          >
+            Coverage
+          </Button>
         </div>
       </div>
 
-      {activeLoaded && (
+      {mode !== 'coverage' && activeLoaded && (
         <div className="relative mb-3">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -766,7 +795,12 @@ export default function MyPendingSLAWidget() {
         </div>
       )}
 
-      {mode === 'team' ? (
+      {mode === 'coverage' ? (
+        // Coverage management lives as a third tab so the dashboard stays one compact
+        // surface. One unified form: coverer (defaults to "You"; managers can change it)
+        // → covered. Self-vs-team is hidden behind a single mental model.
+        <CoverageManager canManageTeam={canManageTeamCoverage} />
+      ) : mode === 'team' ? (
         teamError ? (
           <p className="flex items-center gap-2 text-sm text-destructive">
             <AlertCircle className="size-4" /> {teamError}
