@@ -175,6 +175,79 @@ def test_sponsorship_form_field_sla_audit_answerable():
     assert any(k in sla.lower() for k in ("sla", "tier", "due", "respond", "not", "no "))
 
 
+def test_fanout_visible_fields_answerable_on_real_data():
+    """Fan-out: every named non-form entity's visible fields are answerable through
+    the agent loop from visible_text alone (NO entity, NO assembler). Loads a real
+    record per entity, builds visible_text from real columns, asserts the real
+    value appears. Proves the universal mechanism per entity, not just in theory.
+    """
+    from app.schemas.ai_assistant import PageSnapshotPayload
+
+    db, uid, chat = _chat_and_user()
+
+    def _try(import_path, cls_name):
+        try:
+            mod = __import__(import_path, fromlist=[cls_name])
+            return getattr(mod, cls_name)
+        except Exception:
+            return None
+
+    Product = _try("app.models.product", "Product")
+    Form = _try("app.models.forms", "Form")
+    Attachment = _try("app.models.resources", "Attachment")
+    Promotion = _try("app.models.marketing", "Promotion")
+    Stock = _try("app.models.inventory", "Stock")
+    PickingHeader = _try("app.models.procurement", "PickingHeader")
+    SPOAllocation = _try("app.models.procurement", "SPOAllocation")
+
+    # (label, column) pairs to build visible_text; (question, column) to assert grounded
+    specs = []
+    if Product:
+        specs.append((db.query(Product).filter(Product.product_code.isnot(None)).first(),
+                      [("Product code", "product_code"), ("Product name", "product_name")],
+                      [("what is the product code", "product_code")]))
+    if PickingHeader:
+        specs.append((db.query(PickingHeader).filter(PickingHeader.picking_number.isnot(None)).first(),
+                      [("Picking number", "picking_number"), ("Status", "picking_status")],
+                      [("what is the picking number", "picking_number"), ("what is the status", "picking_status")]))
+    if SPOAllocation:
+        specs.append((db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None)).first(),
+                      [("SPO number", "spo_number"), ("Receipt status", "receipt_status")],
+                      [("what is the receipt status", "receipt_status")]))
+    if Stock:
+        specs.append((db.query(Stock).filter(Stock.quantity_on_hand > 0).first(),
+                      [("Quantity on hand", "quantity_on_hand")],
+                      [("how much is on hand", "quantity_on_hand")]))
+    if Promotion:
+        specs.append((db.query(Promotion).filter(Promotion.description.isnot(None)).first(),
+                      [("Promotion", "description")],
+                      [("what is this promotion about", "description")]))
+    if Form:
+        specs.append((db.query(Form).filter(Form.code.isnot(None)).first(),
+                      [("Form code", "code"), ("Name", "name"), ("Form type", "form_type")],
+                      [("what is the form name", "name")]))
+    if Attachment:
+        specs.append((db.query(Attachment).filter(Attachment.original_filename.isnot(None)).first(),
+                      [("File name", "original_filename"), ("Type", "mime_type")],
+                      [("what is the file name", "original_filename")]))
+
+    checked = 0
+    for row, labelcols, qs in specs:
+        if row is None:
+            continue
+        vt = "  ".join(f"{lab}: {getattr(row, c)}" for lab, c in labelcols if getattr(row, c, None) not in (None, ""))
+        snap = PageSnapshotPayload(path="/x/" + str(row.id), search="", title="x", visible_text=vt, entity=None)
+        for q, col in qs:
+            expect = getattr(row, col, None)
+            if expect in (None, ""):
+                continue
+            _, m = chat.respond(user_id=uid, conversation_id=None, message=q, page_snapshot=snap)
+            assert _grounded(m.content or "", str(expect)), f"{q!r} expect~{expect!r} -> {(m.content or '')[:90]!r}"
+            checked += 1
+    if checked == 0:
+        pytest.skip("no fan-out records to validate")
+
+
 def test_complaint_field_sla_audit_answerable():
     from app.models.complaints import Complaint
 

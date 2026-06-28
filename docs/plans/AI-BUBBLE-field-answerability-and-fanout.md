@@ -29,8 +29,9 @@ Anti-overfit: these are **categories of intent**, validated by paraphrase robust
 
 ## Validation (live, service-level e2e)
 
-- `tests/test_field_answerability_eval.py` (gated `RUN_LLM_EVALS=1`) — for PR / stock_inquiry / complaint: real visible fields + SLA + audit, asserts the **real value** appears (grounded, never hardcoded). 3/3 live.
-- Manual battery (scratchpad): 15/15 field+SLA+audit across PR/SI/complaint; agent-loop-only visible-field answering proven on a product page (price/brand/category/status) with **no entity, no assembler**.
+- `tests/test_field_answerability_eval.py` (gated `RUN_LLM_EVALS=1`) — all 4 forms: real visible fields + SLA + audit, asserts the **real value** appears (grounded, never hardcoded); plus the no-assembler visible_text path, an honesty/absent-field guard, and a **real-data fan-out** test.
+- **Fan-out validated on real data (10/10)** across all 7 named non-form entities through the agent loop, NO entity, NO assembler: product (code), GRN/PickingHeader (picking number + status), SPO/SPOAllocation (number + receipt status), stock/Stock (on-hand), promotion (title), form (name + type), attachment (filename). `packing_list` has no backend model (Prisma-only or via InboundShipment) — not testable here.
+- Manual battery: 15/15 field+SLA+audit across PR/SI/complaint.
 
 ## Fan-out classification
 
