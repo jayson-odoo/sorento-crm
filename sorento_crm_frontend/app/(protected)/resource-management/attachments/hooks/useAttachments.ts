@@ -10,6 +10,7 @@ import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getAttachments, uploadAttachment, updateAttachment, deleteAttachment, bulkDeleteAttachments, archiveAttachment, bulkArchiveAttachments, restoreAttachment, bulkRestoreAttachments, downloadAttachment, resubmitAttachmentWebhook, reorderAttachments, bulkImportAttachments, bulkMoveAttachments, ATTACHMENT_NEIGHBOURS_PATH, type AttachmentsListParams } from '../services/attachmentService';
 import type { Attachment } from '../types/attachment.types';
 import { getDirectoryTree, createDirectory, updateDirectory, moveDirectory, deleteDirectory, restoreDirectory, permanentDeleteDirectory } from '../services/directoryService';
+import { getDriveContents, type DriveListParams } from '../services/driveService';
 import { apiFetch } from '@/lib/api';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 
@@ -54,6 +55,46 @@ export function useAttachments(params: DataGridApiFetchParams & { entity_type?: 
   });
 }
 
+/**
+ * Unified Drive listing (folders + files) for Resource Management → Files.
+ * Browse (empty query, no filter) = immediate children incl. folders; a non-empty
+ * query or `recursive` switches the backend to a recursive subtree scan (folders
+ * excluded). Keyed off every param so the cache never serves a stale scope.
+ */
+export function useDriveContents(params: DriveListParams) {
+  const accessLevelsKey = (params.access_levels ?? []).slice().sort().join(',');
+  const sortKey = params.sorting?.[0]
+    ? `${params.sorting[0].id}:${params.sorting[0].desc ? 'desc' : 'asc'}`
+    : '';
+  return useQuery({
+    queryKey: [
+      'drive-contents',
+      params.directory_id ?? '__root__',
+      params.pageIndex,
+      params.pageSize,
+      sortKey,
+      params.searchQuery ?? '',
+      params.recursive ?? false,
+      params.is_deleted ?? false,
+      params.attachment_type_id ?? '',
+      params.attachment_type_code ?? '',
+      params.uploaded_by ?? '',
+      params.uploaded_at_from ?? '',
+      params.uploaded_at_to ?? '',
+      accessLevelsKey,
+      params.access_levels_match ?? 'any',
+      params.link_status ?? '',
+      params.storage_status ?? '',
+      params.direct_access_only ?? false,
+    ],
+    queryFn: () => getDriveContents(params),
+    staleTime: 30 * 1000,
+    gcTime: 1000 * 60 * 10,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
 export function useUploadAttachment() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -93,6 +134,7 @@ export function useUploadAttachment() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       // Toast will be shown by the dialog component for multiple files
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to upload file'),
@@ -120,6 +162,9 @@ export function useUpdateAttachment() {
       updateAttachment(attachmentId, data),
     onSuccess: (_, { attachmentId }) => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      // The Unified Drive listing is keyed on 'drive-contents'; refresh it too so
+      // a drag-move (or any field edit) leaves the source and lands in the target.
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       queryClient.invalidateQueries({ queryKey: ['attachment-metadata', attachmentId] });
       queryClient.invalidateQueries({ queryKey: ['product-attachments-by-product'] });
       queryClient.invalidateQueries({ queryKey: ['promotion-attachments-by-promotion'] });
@@ -135,6 +180,9 @@ export function useBulkMoveAttachments() {
       bulkMoveAttachments(attachmentIds, directoryId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      // Unified Drive listing key (see useUpdateAttachment) — refresh after a
+      // multi-select drag-move so all moved rows leave the source folder.
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to move attachments'),
@@ -188,6 +236,7 @@ export function useDeleteAttachment() {
     mutationFn: (id: string) => deleteAttachment(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       toast.success('Attachment permanently deleted');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete attachment'),
@@ -200,6 +249,7 @@ export function useArchiveAttachment() {
     mutationFn: (id: string) => archiveAttachment(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       toast.success('Attachment moved to trash');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to archive attachment'),
@@ -212,6 +262,7 @@ export function useBulkArchiveAttachments() {
     mutationFn: (ids: string[]) => bulkArchiveAttachments(ids),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       const count = data?.archived_count ?? 0;
       toast.success(count === 1 ? '1 attachment moved to trash' : `${count} attachments moved to trash`);
     },
@@ -225,6 +276,7 @@ export function useBulkDeleteAttachments() {
     mutationFn: (ids: string[]) => bulkDeleteAttachments(ids),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       const count = data?.deleted_count ?? 0;
       toast.success(count === 1 ? '1 attachment deleted' : `${count} attachments deleted`);
     },
@@ -238,6 +290,7 @@ export function useRestoreAttachment() {
     mutationFn: (id: string) => restoreAttachment(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       toast.success('Attachment restored successfully');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to restore attachment'),
@@ -250,6 +303,7 @@ export function useBulkRestoreAttachments() {
     mutationFn: (ids: string[]) => bulkRestoreAttachments(ids),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       const count = data?.restored_count ?? 0;
       toast.success(count === 1 ? '1 attachment restored' : `${count} attachments restored`);
     },
@@ -320,6 +374,7 @@ export function useRestoreDirectory() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       const dirs = data?.directories_restored ?? 0;
       const atts = data?.attachments_restored ?? 0;
       toast.success(`Restored ${dirs} folder(s) and ${atts} attachment(s)`);
@@ -335,6 +390,7 @@ export function usePermanentDeleteDirectory() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       const dirs = data?.directories_deleted ?? 0;
       const atts = data?.attachments_deleted ?? 0;
       toast.success(`Permanently deleted ${dirs} folder(s) and ${atts} attachment(s)`);
@@ -351,6 +407,7 @@ export function useCreateDirectory() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       toast.success('Folder created');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to create folder'),
@@ -365,6 +422,7 @@ export function useUpdateDirectory() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       toast.success('Folder updated');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to update folder'),
@@ -379,6 +437,7 @@ export function useMoveDirectory() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to move folder'),
   });
@@ -391,6 +450,7 @@ export function useDeleteDirectory() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['attachment-directories-tree'] });
       queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       toast.success('Folder deleted');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete folder'),

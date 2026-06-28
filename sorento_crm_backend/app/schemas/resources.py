@@ -378,3 +378,55 @@ class BulkAttachmentTypeRequest(BaseModel):
 class BulkAttachmentTypeResponse(BaseModel):
     updated_attachments: int
     attachment_type_id: str
+
+
+# ---------------------------------------------------------------------------
+# Unified Drive (folders + files in one server-sorted, server-paginated stream)
+# See docs/plans/PLAN-unified-drive-files.md (D11) + UAC D1/D2.
+# ---------------------------------------------------------------------------
+
+
+class DriveFolderItem(BaseModel):
+    """A folder row in the unified Drive listing (kind='folder')."""
+    model_config = ConfigDict(from_attributes=True)
+
+    kind: Literal["folder"] = "folder"
+    id: str
+    name: str
+    parent_id: Optional[str] = None
+    sort_order: Optional[int] = None
+    created_at: Optional[datetime] = None
+    # Human-readable path to THIS folder's parent (shown as Location during search).
+    directory_path: Optional[str] = None
+
+    @field_validator("id", "parent_id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, v):
+        if v is None:
+            return None
+        return str(v)
+
+
+class DriveFileItem(AttachmentResponse):
+    """A file row in the unified Drive listing (kind='file').
+
+    Inherits the full AttachmentResponse contract so file rows behave exactly
+    like the existing Files list, plus a discriminator and a resolved
+    human-readable ``directory_path`` (Location column) computed in-query —
+    no N+1 (UAC D2).
+    """
+    kind: Literal["file"] = "file"
+    directory_path: Optional[str] = None
+
+
+class DriveListResponse(BaseModel):
+    """Discriminated, server-sorted, server-paginated Drive page (UAC D1)."""
+    data: list[dict]  # serialized DriveFolderItem | DriveFileItem dicts
+    pagination: "PaginationResponse"
+    empty: bool = False
+    recursive: bool = False
+
+
+from app.schemas.common import PaginationResponse  # noqa: E402
+
+DriveListResponse.model_rebuild()

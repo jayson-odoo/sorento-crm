@@ -12,21 +12,23 @@ import {
   useReactTable,
   getCoreRowModel,
   getFilteredRowModel,
-  getPaginationRowModel,
 } from '@tanstack/react-table';
 import {
   Search,
   X,
   Download,
-  Eye,
   Trash2,
   Plus,
   RefreshCw,
   FileArchive,
   RotateCcw,
   Shield,
-  Pencil,
   Tag,
+  FolderInput,
+  FolderOpen,
+  ChevronDown,
+  List,
+  LayoutGrid,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -35,23 +37,39 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTableRowSelect, DataGridTableRowSelectAll } from '@/components/ui/data-grid-table';
-import { DraggableAttachmentsTable } from './DraggableAttachmentsTable';
+import DriveListView from './DriveListView';
+import DriveGridView from './DriveGridView';
+import DriveBreadcrumb from './DriveBreadcrumb';
+import DriveRowActions from './DriveRowActions';
+import AccessLevelsCell from './AccessLevelsCell';
+import MoveToDialog, { type MoveSelection } from './MoveToDialog';
+import { buildDriveBulkActions } from './driveBulkActions';
+import { buildBreadcrumb } from './drivePath';
+import { useDriveViewMode } from './useDriveViewMode';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  useAttachments,
-  useDeleteAttachment,
+  useDriveContents,
   useDownloadAttachment,
   useRestoreAttachment,
   useBulkRestoreAttachments,
   useRestoreDirectory,
   useUpdateAttachment,
+  useDirectoryTree,
+  useCreateDirectory,
+  useUpdateDirectory,
+  useDeleteDirectory,
 } from '../../attachments/hooks/useAttachments';
 import { useAttachmentTypes } from '../../attachment-types/hooks/useAttachmentTypes';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -70,8 +88,15 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { getAttachmentPreviewUrl, resubmitAttachmentWebhook } from '../../attachments/services/attachmentService';
+import {
+  isFileItem,
+  isFolderItem,
+  type DriveItem,
+  type DriveFileItem,
+} from '../../attachments/services/driveService';
 import type { Attachment } from '../../attachments/types/attachment.types';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { useIsMobile } from '@/hooks/use-mobile';
 import AttachmentUploadDialog from '../../attachments/components/AttachmentUploadDialog';
 import AttachmentBulkImportDialog from '../../attachments/components/AttachmentBulkImportDialog';
 import AttachmentDeleteDialog from '../../attachments/components/attachment-delete-dialog';
@@ -83,22 +108,35 @@ import { TRASH_VIEW_ID, TRASH_FOLDER_PREFIX, FOLDER_ALL_ID } from '../constants'
 interface AttachmentsInFolderPanelProps {
   directoryId: string | null;
   directoryName?: string | null;
-  /** Called when user restores a folder from trash; parent can switch view (e.g. to TRASH_VIEW_ID) */
+  /** Called when user restores a folder from trash; parent can switch view. */
   onRestoreFolder?: () => void;
-  /** @deprecated Folders are only shown in the left pane; kept for parent compatibility */
-  onSelectFolder?: (id: string) => void;
-  /** Bulk adjust access levels for the selected attachment rows */
+  /** Drill into / navigate to a folder (drives both panes). null = root. */
+  onSelectFolder?: (id: string | null) => void;
+  /** Bulk adjust access levels for the selected attachment rows. */
   onBulkAdjustAccessLevels?: (attachmentIds: string[]) => void;
+  /** Toggle the left tree drawer (mobile). */
+  onToggleTreeDrawer?: () => void;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
 export default function AttachmentsInFolderPanel({
   directoryId,
   onRestoreFolder,
+  onSelectFolder,
   onBulkAdjustAccessLevels,
+  onToggleTreeDrawer,
 }: AttachmentsInFolderPanelProps) {
+  const isMobile = useIsMobile();
+  const [viewMode, setViewMode] = useDriveViewMode();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'uploaded_at', desc: true }]);
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'name', desc: false }]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [thisFolderOnly, setThisFolderOnly] = useState(false);
   const [accessLevelFilters, setAccessLevelFilters] = useState<string[]>([]);
   const [accessLevelsMatch, setAccessLevelsMatch] = useState<'any' | 'all' | 'exact'>('any');
   const [attachmentTypeId, setAttachmentTypeId] = useState<string>('__all__');
@@ -108,6 +146,7 @@ export default function AttachmentsInFolderPanel({
   const [uploadedRange, setUploadedRange] = useState<DateRange | undefined>();
   const uploadedAtFrom = uploadedRange?.from ? format(uploadedRange.from, 'yyyy-MM-dd') : '';
   const uploadedAtTo = uploadedRange?.to ? format(uploadedRange.to, 'yyyy-MM-dd') : '';
+
   const { data: usersSelect = [] as UserSelectItem[] } = useQuery({
     queryKey: ['users-select', 'attachment-filter'],
     queryFn: () => getUsersSelect({ status: 'ACTIVE' }),
@@ -120,6 +159,9 @@ export default function AttachmentsInFolderPanel({
     searchQuery: '',
   });
   const attachmentTypes = attachmentTypesData?.data ?? [];
+  const { data: accessTypes = [] } = useContactAccessTypes();
+  const { data: tree = [] } = useDirectoryTree();
+
   const extraFilterCount =
     (attachmentTypeId !== '__all__' ? 1 : 0) +
     (linkStatus !== '__all__' ? 1 : 0) +
@@ -127,29 +169,29 @@ export default function AttachmentsInFolderPanel({
     (uploadedBy !== '__all__' ? 1 : 0) +
     (uploadedAtFrom || uploadedAtTo ? 1 : 0);
   const totalFilterCount = accessLevelFilters.length + extraFilterCount;
-  const { data: accessTypes = [] } = useContactAccessTypes();
+
   const accessTypeNameByCode = useMemo(() => {
     const m = new Map<string, string>();
     for (const t of accessTypes) m.set(t.code, t.name);
     return m;
   }, [accessTypes]);
+
   const toggleAccessLevel = (code: string) => {
     setAccessLevelFilters((prev) =>
       prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]
     );
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   };
+
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [bulkImportDialogOpen, setBulkImportDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkEditTypeOpen, setBulkEditTypeOpen] = useState(false);
+  const [moveDialogOpen, setMoveDialogOpen] = useState(false);
   const [viewModalOpen, setViewModalOpen] = useState(false);
   const [viewAttachmentId, setViewAttachmentId] = useState<string | null>(null);
 
-  // Deep-link from Upload Activity drawer: `?attachment_id=<uuid>` opens the
-  // detail modal for that row. We strip the param after handling so back-nav
-  // doesn't keep re-opening the modal.
   const _router = useRouter();
   const _pathname = usePathname();
   const _searchParams = useSearchParams();
@@ -165,6 +207,7 @@ export default function AttachmentsInFolderPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [_searchParams]);
+
   const [selectedAttachment, setSelectedAttachment] = useState<Attachment | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [pendingResubmitIds, setPendingResubmitIds] = useState<Set<string>>(new Set());
@@ -175,16 +218,27 @@ export default function AttachmentsInFolderPanel({
   const trashFolderId =
     directoryId?.startsWith(TRASH_FOLDER_PREFIX) ? directoryId.slice(TRASH_FOLDER_PREFIX.length) : null;
 
-  // When "All attachments" is selected (directoryId null or FOLDER_ALL_ID), omit directory_id so the API
-  // returns all attachments including those with no folder (e.g. stock list uploads).
+  // "All attachments"/root: omit directory_id so the drive returns root contents.
+  // Trash sentinels (__trash__, trash:<id>) never leak as a real folder id —
+  // they resolve to null here; the drive call below applies is_deleted instead.
   const effectiveDirectoryId =
-    directoryId === null || directoryId === FOLDER_ALL_ID ? undefined : directoryId;
-  const { data, isLoading } = useAttachments({
+    directoryId === null || directoryId === FOLDER_ALL_ID || isTrashView
+      ? null
+      : directoryId;
+
+  // Search non-empty OR an active file filter -> recursive scope (backend hides
+  // folders). "This folder only" narrows a search back to non-recursive.
+  const hasActiveFilter = totalFilterCount > 0;
+  const isSearching = searchQuery.trim().length > 0;
+  const recursive = (isSearching || hasActiveFilter) && !thisFolderOnly;
+
+  const { data, isLoading } = useDriveContents({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    directory_id: trashFolderId ?? (isTrashView ? undefined : effectiveDirectoryId),
+    directory_id: trashFolderId ?? (isTrashView ? null : effectiveDirectoryId),
+    recursive: recursive || undefined,
     is_deleted: isTrashView ? true : undefined,
     access_levels: accessLevelFilters.length > 0 ? accessLevelFilters : undefined,
     access_levels_match: accessLevelFilters.length > 0 ? accessLevelsMatch : undefined,
@@ -196,21 +250,42 @@ export default function AttachmentsInFolderPanel({
     uploaded_at_to: uploadedAtTo || undefined,
   });
 
-  const deleteMutation = useDeleteAttachment();
+  const items: DriveItem[] = useMemo(() => data?.data ?? [], [data?.data]);
+  const fileItems = useMemo(() => items.filter(isFileItem), [items]);
+
+  // Show the Location column only during a recursive/search scope.
+  const showLocation = recursive;
+
   const restoreMutation = useRestoreAttachment();
   const bulkRestoreMutation = useBulkRestoreAttachments();
   const restoreDirectoryMutation = useRestoreDirectory();
   const downloadMutation = useDownloadAttachment();
   const updateMutation = useUpdateAttachment();
+  const createDirectoryMutation = useCreateDirectory();
+  const updateDirectoryMutation = useUpdateDirectory();
+  const deleteDirectoryMutation = useDeleteDirectory();
+
+  // ---- Folder-row dialogs (context menu on folder rows) --------------------
+  const [folderRenameOpen, setFolderRenameOpen] = useState(false);
+  const [folderRenameTarget, setFolderRenameTarget] = useState<{ id: string; name: string } | null>(
+    null
+  );
+  const [folderRenameValue, setFolderRenameValue] = useState('');
+  const [subfolderOpen, setSubfolderOpen] = useState(false);
+  const [subfolderParent, setSubfolderParent] = useState<{ id: string; name: string } | null>(null);
+  const [subfolderValue, setSubfolderValue] = useState('');
+  const [folderDeleteOpen, setFolderDeleteOpen] = useState(false);
+  const [folderDeleteTarget, setFolderDeleteTarget] = useState<{ id: string; name: string } | null>(
+    null
+  );
 
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
-  const [renameTarget, setRenameTarget] = useState<Attachment | null>(null);
+  const [renameTarget, setRenameTarget] = useState<DriveFileItem | null>(null);
   const [renameValue, setRenameValue] = useState('');
 
-  const openRename = useCallback((attachment: Attachment) => {
-    setRenameTarget(attachment);
-    // stored_filename is the user-facing, editable name (original_filename is immutable).
-    setRenameValue(attachment.stored_filename || attachment.original_filename || '');
+  const openRename = useCallback((file: DriveFileItem) => {
+    setRenameTarget(file);
+    setRenameValue(file.stored_filename || file.original_filename || '');
     setRenameDialogOpen(true);
   }, []);
 
@@ -230,7 +305,7 @@ export default function AttachmentsInFolderPanel({
       toast.success('Renamed.');
       setRenameDialogOpen(false);
       setRenameTarget(null);
-      queryClient.invalidateQueries({ queryKey: ['attachments'] });
+      queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Rename failed.');
     }
@@ -239,65 +314,120 @@ export default function AttachmentsInFolderPanel({
   const [isResubmittingBulk, setIsResubmittingBulk] = useState(false);
 
   const handleResubmit = useCallback(
-    async (attachment: Attachment) => {
-      const { id } = attachment;
+    async (id: string) => {
       setPendingResubmitIds((prev) => new Set(prev).add(id));
       try {
         await resubmitAttachmentWebhook(id);
         toast.success('Resubmitted successfully');
-        queryClient.invalidateQueries({ queryKey: ['attachments'] });
+        queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Failed to resubmit');
       } finally {
         setPendingResubmitIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
+          const nextSet = new Set(prev);
+          nextSet.delete(id);
+          return nextSet;
         });
       }
     },
     [queryClient]
   );
 
-  const handleDownload = async (attachment: Attachment) => {
-    try {
-      const blob = await downloadMutation.mutateAsync(attachment.id);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = attachment.stored_filename || attachment.original_filename || 'download';
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch {
-      // Error handled by mutation toast
-    }
-  };
+  const handleDownloadFile = useCallback(
+    async (file: DriveFileItem) => {
+      try {
+        const blob = await downloadMutation.mutateAsync(file.id);
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = file.stored_filename || file.original_filename || 'download';
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      } catch {
+        // toast handled by mutation
+      }
+    },
+    [downloadMutation]
+  );
 
-  const handlePreview = async (attachmentId: string) => {
+  const handlePreview = useCallback(async (attachmentId: string) => {
     try {
       const previewUrl = await getAttachmentPreviewUrl(attachmentId);
-      if (previewUrl) {
-        window.open(previewUrl, '_blank');
-      }
+      if (previewUrl) window.open(previewUrl, '_blank');
     } catch {
       toast.error('Failed to open attachment preview');
     }
-  };
+  }, []);
 
-  const selectedRowIds = useMemo(() => Object.keys(rowSelection), [rowSelection]);
-  const selectedDeletableIds = useMemo(() => {
-    const rows = data?.data ?? [];
-    if (isTrashView) return selectedRowIds;
-    return selectedRowIds.filter((id) => {
-      const row = rows.find((r) => r.id === id);
-      return row && !row.is_deleted;
-    });
-  }, [selectedRowIds, data?.data, isTrashView]);
+  // ---- Selection helpers (mixed folder + file) -----------------------------
+  // react-table row ids are `${kind}-${id}`; selection state mirrors that.
+  const selectedItems = useMemo(
+    () => items.filter((it) => rowSelection[`${it.kind}-${it.id}`]),
+    [items, rowSelection]
+  );
+  const selectedFileIds = useMemo(
+    () => selectedItems.filter(isFileItem).map((it) => it.id),
+    [selectedItems]
+  );
+  const selectedFolderIds = useMemo(
+    () => selectedItems.filter(isFolderItem).map((it) => it.id),
+    [selectedItems]
+  );
+  const selectionHasFolder = selectedFolderIds.length > 0;
+  const selectionCount = selectedItems.length;
+  // File-only deletable ids for trash-aware bulk delete/restore.
+  const selectedDeletableFileIds = useMemo(() => {
+    if (isTrashView) return selectedFileIds;
+    return selectedItems
+      .filter(isFileItem)
+      .filter((it) => !it.is_deleted)
+      .map((it) => it.id);
+  }, [selectedItems, selectedFileIds, isTrashView]);
+  // Folder ids for the bulk-delete dialog. Folder soft-delete cascades the
+  // subtree; in trash view they're permanently deleted. Folder rows only ever
+  // appear in the non-recursive (browse) scope, where they're never deleted, so
+  // selectedFolderIds is already the deletable set.
+  const selectedDeletableFolderIds = selectedFolderIds;
 
+  const clearSelection = useCallback(() => setRowSelection({}), []);
+
+  // ---- Drill / open --------------------------------------------------------
+  const navigateToFolder = useCallback(
+    (folderId: string | null) => {
+      // Drilling into a folder clears the active search (B7) and resets paging.
+      setSearchQuery('');
+      setThisFolderOnly(false);
+      setPagination((p) => ({ ...p, pageIndex: 0 }));
+      clearSelection();
+      onSelectFolder?.(folderId);
+    },
+    [onSelectFolder, clearSelection]
+  );
+
+  const openItem = useCallback(
+    (item: DriveItem) => {
+      if (isFolderItem(item)) {
+        navigateToFolder(item.id);
+      } else {
+        setViewAttachmentId(item.id);
+        setViewModalOpen(true);
+      }
+    },
+    [navigateToFolder]
+  );
+
+  const revealInFolder = useCallback(
+    (file: DriveFileItem) => {
+      navigateToFolder(file.directory_id ?? null);
+    },
+    [navigateToFolder]
+  );
+
+  // ---- Bulk: resubmit / move ----------------------------------------------
   const handleBulkResubmit = useCallback(async () => {
-    const ids = selectedDeletableIds;
+    const ids = selectedDeletableFileIds;
     if (ids.length === 0) return;
     setIsResubmittingBulk(true);
     setPendingResubmitIds((prev) => new Set(Array.from(prev).concat(ids)));
@@ -311,32 +441,27 @@ export default function AttachmentsInFolderPanel({
         failCount += 1;
       } finally {
         setPendingResubmitIds((prev) => {
-          const next = new Set(Array.from(prev));
-          next.delete(id);
-          return next;
+          const nextSet = new Set(Array.from(prev));
+          nextSet.delete(id);
+          return nextSet;
         });
       }
     }
     setIsResubmittingBulk(false);
-    queryClient.invalidateQueries({ queryKey: ['attachments'] });
+    queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
     if (failCount === 0) {
       toast.success('Resubmitted successfully');
-      setRowSelection({});
+      clearSelection();
     } else if (successCount === 0) {
       toast.error(`Failed to resubmit for ${failCount} attachment(s)`);
     } else {
       toast.warning(`Resubmitted ${successCount}, failed ${failCount}`);
     }
-  }, [selectedDeletableIds, queryClient]);
+  }, [selectedDeletableFileIds, queryClient, clearSelection]);
 
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
-    return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
-  };
-
-  const columns = useMemo<ColumnDef<Attachment>[]>(
-    () => [
+  // ---- Columns (unified folder + file rows) --------------------------------
+  const columns = useMemo<ColumnDef<DriveItem>[]>(() => {
+    const cols: ColumnDef<DriveItem>[] = [
       {
         id: 'select',
         header: () => <DataGridTableRowSelectAll />,
@@ -349,17 +474,65 @@ export default function AttachmentsInFolderPanel({
       {
         id: 'name',
         header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
-        accessorFn: (row) => row.stored_filename || row.original_filename,
-        cell: ({ row }) => <span>{row.original.stored_filename || row.original.original_filename}</span>,
-        size: 250,
+        accessorFn: (row) =>
+          isFolderItem(row) ? row.name : row.stored_filename || row.original_filename,
+        cell: ({ row }) => {
+          const item = row.original;
+          const label = isFolderItem(item)
+            ? item.name
+            : item.stored_filename || item.original_filename;
+          return (
+            <span className="flex items-center gap-2 min-w-0">
+              {isFolderItem(item) ? (
+                <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
+              ) : (
+                <Download className="size-4 shrink-0 text-transparent" aria-hidden />
+              )}
+              <span className="truncate" title={label}>
+                {label}
+              </span>
+            </span>
+          );
+        },
+        size: 260,
         meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-4 w-32" /> },
       },
+    ];
+
+    if (showLocation) {
+      cols.push({
+        id: 'location',
+        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+        accessorFn: (row) => row.directory_path ?? '',
+        enableSorting: false,
+        cell: ({ row }) => {
+          const loc = row.original.directory_path;
+          return loc ? (
+            <span className="block truncate text-muted-foreground" title={loc}>
+              {loc}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">All files</span>
+          );
+        },
+        // Larger default so "Marketing / Sorento …" paths aren't clipped early;
+        // resizable (the grid's columnsResizable flag), truncate + title for
+        // overflow (review item B).
+        size: 320,
+        minSize: 160,
+        meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-28" /> },
+      });
+    }
+
+    cols.push(
       {
         id: 'type',
         header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
-        accessorFn: (row) => row.mime_type,
+        accessorFn: (row) => (isFileItem(row) ? row.mime_type : null),
         cell: ({ row }) => {
-          const mimeType = row.original.mime_type || '-';
+          const item = row.original;
+          if (isFolderItem(item)) return <span className="text-muted-foreground">Folder</span>;
+          const mimeType = item.mime_type || '-';
           const displayType = mimeType.length > 30 ? mimeType.substring(0, 30) + '...' : mimeType;
           return (
             <span title={mimeType} className="block truncate">
@@ -367,44 +540,54 @@ export default function AttachmentsInFolderPanel({
             </span>
           );
         },
-        size: 200,
+        size: 180,
         meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'access_levels',
         header: ({ column }) => <DataGridColumnHeader title="Access" column={column} />,
-        accessorFn: (row) => (row.access_levels ?? []).join(','),
+        accessorFn: (row) => (isFileItem(row) ? (row.access_levels ?? []).join(',') : ''),
         enableSorting: false,
         cell: ({ row }) => {
-          const levels = Array.from(new Set(row.original.access_levels ?? []));
-          if (levels.length === 0) return <span className="text-muted-foreground">-</span>;
-          return (
-            <div className="flex flex-wrap gap-1">
-              {levels.map((code) => (
-                <Badge key={code} variant="secondary" className="text-[10px]">
-                  {accessTypeNameByCode.get(code) ?? code}
-                </Badge>
-              ))}
-            </div>
-          );
+          const item = row.original;
+          // Folders have no access levels -> render nothing (review item A).
+          if (isFolderItem(item)) return null;
+          const levels = Array.from(new Set(item.access_levels ?? []));
+          return <AccessLevelsCell levels={levels} nameByCode={accessTypeNameByCode} />;
         },
-        size: 220,
-        meta: { headerTitle: 'Access', skeleton: <Skeleton className="h-4 w-24" /> },
+        size: 200,
+        minSize: 140,
+        maxSize: 200,
+        enableResizing: false,
+        meta: {
+          headerTitle: 'Access',
+          skeleton: <Skeleton className="h-4 w-24" />,
+          // Keep access on a single line; the "+N" popover holds the overflow so
+          // the column never grows the row height.
+          cellClassName: 'overflow-hidden',
+        },
       },
       {
         id: 'attachment_type',
         header: ({ column }) => <DataGridColumnHeader title="Attachment Type" column={column} />,
-        accessorFn: (row) => row.attachment_type?.type_name,
-        cell: ({ row }) => row.original.attachment_type?.type_name ?? '-',
+        accessorFn: (row) => (isFileItem(row) ? row.attachment_type?.type_name : null),
+        cell: ({ row }) => {
+          const item = row.original;
+          if (isFolderItem(item)) return <span className="text-muted-foreground">—</span>;
+          return item.attachment_type?.type_name ?? '-';
+        },
         size: 150,
         meta: { headerTitle: 'Attachment Type', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         id: 'size',
         header: ({ column }) => <DataGridColumnHeader title="Size" column={column} />,
-        accessorFn: (row) => row.file_size_bytes,
-        cell: ({ row }) =>
-          row.original.file_size_bytes ? formatFileSize(row.original.file_size_bytes) : '-',
+        accessorFn: (row) => (isFileItem(row) ? row.file_size_bytes : null),
+        cell: ({ row }) => {
+          const item = row.original;
+          if (isFolderItem(item)) return <span className="text-muted-foreground">—</span>;
+          return item.file_size_bytes ? formatFileSize(item.file_size_bytes) : '-';
+        },
         size: 100,
         meta: { headerTitle: 'Size' },
       },
@@ -412,211 +595,87 @@ export default function AttachmentsInFolderPanel({
         id: 'uploaded_by',
         header: ({ column }) => <DataGridColumnHeader title="Uploaded By" column={column} />,
         accessorFn: (row) =>
-          row.uploaded_by_user?.name ?? row.uploaded_by_user?.email,
-        cell: ({ row }) =>
-          row.original.uploaded_by_user?.name ?? row.original.uploaded_by_user?.email ?? '-',
+          isFileItem(row) ? row.uploaded_by_user?.name ?? row.uploaded_by_user?.email : null,
+        cell: ({ row }) => {
+          const item = row.original;
+          if (isFolderItem(item)) return <span className="text-muted-foreground">—</span>;
+          return item.uploaded_by_user?.name ?? item.uploaded_by_user?.email ?? '-';
+        },
         size: 150,
         meta: { headerTitle: 'Uploaded By' },
       },
       {
-        id: 'uploaded_at',
-        header: ({ column }) => <DataGridColumnHeader title="Upload at" column={column} />,
-        accessorFn: (row) => row.uploaded_at,
-        cell: ({ row }) => formatDateTimeInMalaysia(row.original.uploaded_at),
+        id: 'modified',
+        header: ({ column }) => <DataGridColumnHeader title="Modified" column={column} />,
+        accessorFn: (row) => (isFileItem(row) ? row.uploaded_at : row.created_at),
+        cell: ({ row }) => {
+          const item = row.original;
+          const ts = isFileItem(item) ? item.uploaded_at : item.created_at;
+          return ts ? formatDateTimeInMalaysia(ts as string) : '—';
+        },
         size: 180,
-        meta: { headerTitle: 'Upload at' },
-      },
-      {
-        id: 'actions',
-        header: 'Actions',
-        cell: ({ row }) => (
-          <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-            <Button
-              variant="ghost"
-              size="sm"
-              title="Preview"
-              onClick={(e) => {
-                e.stopPropagation();
-                handlePreview(row.original.id);
-              }}
-            >
-              <Eye className="size-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              title="Download"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleDownload(row.original);
-              }}
-              disabled={downloadMutation.isPending}
-            >
-              <Download className="size-4" />
-            </Button>
-            {isTrashView ? (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  title="Restore"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    restoreMutation.mutate(row.original.id);
-                  }}
-                  disabled={restoreMutation.isPending}
-                >
-                  <RotateCcw className="size-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  title="Permanently delete"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedAttachment(row.original);
-                    setDeleteDialogOpen(true);
-                  }}
-                  disabled={deleteMutation.isPending}
-                >
-                  <Trash2 className="size-4 text-destructive" />
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  title="Rename"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openRename(row.original);
-                  }}
-                  disabled={row.original.is_deleted}
-                >
-                  <Pencil className="size-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  title="Resubmit to n8n"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleResubmit(row.original);
-                  }}
-                  disabled={pendingResubmitIds.has(row.original.id) || row.original.is_deleted}
-                >
-                  <RefreshCw
-                    className={`size-4 ${pendingResubmitIds.has(row.original.id) ? 'animate-spin' : ''}`}
-                  />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  title="Move to trash"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedAttachment(row.original);
-                    setDeleteDialogOpen(true);
-                  }}
-                  disabled={deleteMutation.isPending || row.original.is_deleted}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </>
-            )}
-          </div>
-        ),
-        size: 220,
-        enableHiding: false,
-      },
-    ],
-    [
-      directoryId,
-      isTrashView,
-      deleteMutation.isPending,
-      downloadMutation.isPending,
-      handleResubmit,
-      pendingResubmitIds,
-      restoreMutation.isPending,
-      accessTypeNameByCode,
-      selectedDeletableIds,
-    ]
-  );
+        meta: { headerTitle: 'Modified' },
+      }
+    );
+
+    return cols;
+  }, [showLocation, accessTypeNameByCode]);
 
   const table = useReactTable({
     columns,
-    data: data?.data || [],
+    data: items,
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
-    getRowId: (row) => row.id,
+    getRowId: (row) => `${row.kind}-${row.id}`,
     state: { pagination, sorting, rowSelection },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
     manualPagination: true,
     manualSorting: true,
     manualFiltering: true,
-    enableRowSelection: (row) => isTrashView || !row.original.is_deleted,
+    enableRowSelection: (row) => isTrashView || !(isFileItem(row.original) && row.original.is_deleted),
     columnResizeMode: 'onChange',
   });
 
-  // Bulk actions surface in the toolbar's selection strip; trash vs active
-  // folders expose different sets, mirroring the previous hand-rolled buttons.
-  const bulkActions: ToolbarAction[] = [];
-  if (selectedDeletableIds.length > 0 && isTrashView) {
-    bulkActions.push({
-      key: 'bulk-restore',
-      label: `Restore selected (${selectedDeletableIds.length})`,
-      icon: RotateCcw,
-      disabled: bulkRestoreMutation.isPending,
-      onClick: () =>
-        bulkRestoreMutation.mutate(selectedDeletableIds, {
-          onSuccess: () => setRowSelection({}),
-        }),
-    });
-    bulkActions.push({
-      key: 'bulk-permanent-delete',
-      label: `Permanently delete (${selectedDeletableIds.length})`,
-      icon: Trash2,
-      destructive: true,
-      onClick: () => setBulkDeleteDialogOpen(true),
-    });
-  }
-  if (selectedDeletableIds.length > 0 && !isTrashView && onBulkAdjustAccessLevels) {
-    bulkActions.push({
-      key: 'bulk-access-levels',
-      label: `Access levels (${selectedDeletableIds.length})`,
-      icon: Shield,
-      onClick: () => onBulkAdjustAccessLevels(selectedDeletableIds),
-    });
-  }
-  if (selectedDeletableIds.length > 0 && !isTrashView) {
-    bulkActions.push({
-      key: 'bulk-attachment-type',
-      label: `Attachment type (${selectedDeletableIds.length})`,
-      icon: Tag,
-      onClick: () => setBulkEditTypeOpen(true),
-    });
-    bulkActions.push({
-      key: 'bulk-resubmit',
-      label: `Resubmit selected (${selectedDeletableIds.length})`,
-      icon: RefreshCw,
-      disabled: isResubmittingBulk,
-      onClick: handleBulkResubmit,
-    });
-    bulkActions.push({
-      key: 'bulk-delete',
-      label: `Delete selected (${selectedDeletableIds.length})`,
-      icon: Trash2,
-      destructive: true,
-      onClick: () => setBulkDeleteDialogOpen(true),
-    });
-  }
+  // ---- Bulk "Action" dropdown (single button, gated by selection) ----------
+  // Gating lives in the pure helper (UAC F2/F3/F6); icons are merged in here.
+  const BULK_ACTION_ICONS: Record<string, typeof Trash2> = {
+    'bulk-restore': RotateCcw,
+    'bulk-permanent-delete': Trash2,
+    'bulk-move': FolderInput,
+    'bulk-export': Download,
+    'bulk-access-levels': Shield,
+    'bulk-attachment-type': Tag,
+    'bulk-resubmit': RefreshCw,
+    'bulk-delete': Trash2,
+  };
+  // `openExport` is supplied by the toolbar so "Export selected" reuses its
+  // existing export dialog (selected rows -> xlsx); the standalone Export button
+  // only appears in the no-selection state.
+  const buildBulkActionsWith = (openExport: () => void): ToolbarAction[] =>
+    buildDriveBulkActions(
+      {
+        selectionCount,
+        selectionHasFolder,
+        isTrashView,
+        isResubmitting: isResubmittingBulk,
+        canRestore: !bulkRestoreMutation.isPending && selectedDeletableFileIds.length > 0,
+      },
+      {
+        onMove: () => setMoveDialogOpen(true),
+        onExport: openExport,
+        onSetAccessLevels: () => onBulkAdjustAccessLevels?.(selectedDeletableFileIds),
+        onSetAttachmentType: () => setBulkEditTypeOpen(true),
+        onResubmit: handleBulkResubmit,
+        onDelete: () => setBulkDeleteDialogOpen(true),
+        onRestore: () =>
+          bulkRestoreMutation.mutate(selectedDeletableFileIds, { onSuccess: clearSelection }),
+      }
+    ).map((a) => ({ ...a, icon: BULK_ACTION_ICONS[a.key] }));
 
-  // Always-visible toolbar actions (not selection-gated).
+  // Secondary (always-visible) actions.
   const secondaryActions: ToolbarAction[] = [];
   if (trashFolderId) {
     secondaryActions.push({
@@ -624,8 +683,7 @@ export default function AttachmentsInFolderPanel({
       label: 'Restore folder and contents',
       icon: RotateCcw,
       disabled: restoreDirectoryMutation.isPending,
-      onClick: () =>
-        restoreDirectoryMutation.mutate(trashFolderId, { onSuccess: onRestoreFolder }),
+      onClick: () => restoreDirectoryMutation.mutate(trashFolderId, { onSuccess: onRestoreFolder }),
     });
   }
   if (!isTrashView) {
@@ -638,40 +696,312 @@ export default function AttachmentsInFolderPanel({
     });
   }
 
+  // Single "Action" dropdown for the bulk strip (UAC F2): EVERY bulk action lives
+  // here — Export selected, Set access levels, Set attachment type, Resubmit,
+  // Delete, Move. File-only actions are disabled when a folder is selected (F3).
+  // Rendered as a function so it can reuse the toolbar's selected-rows export.
+  const renderBulkActionsSlot = ({ openExport }: { openExport: () => void }) => {
+    if (selectionCount === 0) return null;
+    const actions = buildBulkActionsWith(openExport);
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="outline" size="sm" className="gap-1.5">
+            Action
+            <ChevronDown className="size-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {actions.map((action) => {
+            const Icon = action.icon;
+            const isDestructive = action.destructive;
+            return (
+              <DropdownMenuItem
+                key={action.key}
+                disabled={action.disabled}
+                onClick={action.onClick}
+                className={
+                  isDestructive ? 'text-destructive focus:text-destructive' : undefined
+                }
+                title={action.disabled ? action.disabledReason : undefined}
+              >
+                {Icon ? <Icon className="size-4 mr-2" /> : null}
+                {action.label}
+              </DropdownMenuItem>
+            );
+          })}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
+
+  const crumbs = useMemo(
+    () => buildBreadcrumb(tree, isTrashView ? null : effectiveDirectoryId),
+    [tree, effectiveDirectoryId, isTrashView]
+  );
+
+  const draggable = !isTrashView && !isMobile;
+
+  // The Move dialog serves both the bulk strip (multi-select) and the per-row
+  // context menu (a single item). `moveContextItem` set => single-item move.
+  const [moveContextItem, setMoveContextItem] = useState<DriveItem | null>(null);
+  const moveSelection: MoveSelection = moveContextItem
+    ? {
+        fileIds: isFileItem(moveContextItem) ? [moveContextItem.id] : [],
+        folderIds: isFolderItem(moveContextItem) ? [moveContextItem.id] : [],
+      }
+    : { fileIds: selectedFileIds, folderIds: selectedFolderIds };
+
+  const openMoveForItem = useCallback((item: DriveItem) => {
+    setMoveContextItem(item);
+    setMoveDialogOpen(true);
+  }, []);
+
+  const performMove = useCallback(
+    (destinationId: string | null) => {
+      const fileIds = moveContextItem
+        ? isFileItem(moveContextItem)
+          ? [moveContextItem.id]
+          : []
+        : selectedFileIds;
+      const folderIds = moveContextItem
+        ? isFolderItem(moveContextItem)
+          ? [moveContextItem.id]
+          : []
+        : selectedFolderIds;
+
+      Promise.allSettled([
+        ...fileIds.map((id) =>
+          updateMutation.mutateAsync({ attachmentId: id, data: { directory_id: destinationId } })
+        ),
+        ...folderIds.map((id) =>
+          updateDirectoryMutation.mutateAsync({ id, data: { parent_id: destinationId } })
+        ),
+      ]).then((results) => {
+        const ok = results.filter((r) => r.status === 'fulfilled').length;
+        if (ok > 0) toast.success(`Moved ${ok} item(s).`);
+        const failed = results.length - ok;
+        if (failed > 0) toast.error(`${failed} move(s) failed.`);
+        queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
+        setMoveDialogOpen(false);
+        setMoveContextItem(null);
+        if (!moveContextItem) clearSelection();
+      });
+    },
+    [
+      moveContextItem,
+      selectedFileIds,
+      selectedFolderIds,
+      updateMutation,
+      updateDirectoryMutation,
+      queryClient,
+      clearSelection,
+    ]
+  );
+
+  // ---- Folder context-menu handlers ---------------------------------------
+  const openFolderRename = useCallback((item: DriveItem) => {
+    if (!isFolderItem(item)) return;
+    setFolderRenameTarget({ id: item.id, name: item.name });
+    setFolderRenameValue(item.name);
+    setFolderRenameOpen(true);
+  }, []);
+
+  const submitFolderRename = useCallback(() => {
+    if (!folderRenameTarget || !folderRenameValue.trim()) return;
+    updateDirectoryMutation.mutate(
+      { id: folderRenameTarget.id, data: { name: folderRenameValue.trim() } },
+      {
+        onSuccess: () => {
+          setFolderRenameOpen(false);
+          setFolderRenameTarget(null);
+          queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
+        },
+      }
+    );
+  }, [folderRenameTarget, folderRenameValue, updateDirectoryMutation, queryClient]);
+
+  const openNewSubfolder = useCallback((item: DriveItem) => {
+    if (!isFolderItem(item)) return;
+    setSubfolderParent({ id: item.id, name: item.name });
+    setSubfolderValue('');
+    setSubfolderOpen(true);
+  }, []);
+
+  const submitNewSubfolder = useCallback(() => {
+    if (!subfolderParent || !subfolderValue.trim()) return;
+    createDirectoryMutation.mutate(
+      { name: subfolderValue.trim(), parentId: subfolderParent.id },
+      {
+        onSuccess: () => {
+          setSubfolderOpen(false);
+          queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
+        },
+      }
+    );
+  }, [subfolderParent, subfolderValue, createDirectoryMutation, queryClient]);
+
+  const openFolderDelete = useCallback((item: DriveItem) => {
+    if (!isFolderItem(item)) return;
+    setFolderDeleteTarget({ id: item.id, name: item.name });
+    setFolderDeleteOpen(true);
+  }, []);
+
+  const submitFolderDelete = useCallback(() => {
+    if (!folderDeleteTarget) return;
+    deleteDirectoryMutation.mutate(folderDeleteTarget.id, {
+      onSuccess: () => {
+        setFolderDeleteOpen(false);
+        setFolderDeleteTarget(null);
+        queryClient.invalidateQueries({ queryKey: ['drive-contents'] });
+      },
+    });
+  }, [folderDeleteTarget, deleteDirectoryMutation, queryClient]);
+
+  // Per-row context menu (right-click / long-press) — replaces the actions
+  // column. Reuses the exact handlers the old "..." menu wired up (review C).
+  const renderRowContextMenu = useCallback(
+    (item: DriveItem) => (
+      <DriveRowActions
+        item={item}
+        isTrashView={isTrashView}
+        recursive={recursive}
+        resubmitting={isFileItem(item) && pendingResubmitIds.has(item.id)}
+        handlers={{
+          onOpen: openItem,
+          onPreview: handlePreview,
+          onDownload: (it) => {
+            if (isFileItem(it)) handleDownloadFile(it);
+          },
+          onRevealInFolder: (it) => {
+            if (isFileItem(it)) revealInFolder(it);
+          },
+          onRename: (it) => {
+            if (isFileItem(it)) openRename(it);
+          },
+          onMove: openMoveForItem,
+          onResubmit: handleResubmit,
+          onRestore: (id) => restoreMutation.mutate(id),
+          onDelete: (it) => {
+            if (isFileItem(it)) {
+              setSelectedAttachment(it as unknown as Attachment);
+              setDeleteDialogOpen(true);
+            }
+          },
+          onRenameFolder: openFolderRename,
+          onNewSubfolder: openNewSubfolder,
+          onDeleteFolder: openFolderDelete,
+        }}
+      />
+    ),
+    [
+      isTrashView,
+      recursive,
+      pendingResubmitIds,
+      openItem,
+      handlePreview,
+      handleDownloadFile,
+      revealInFolder,
+      openRename,
+      openMoveForItem,
+      handleResubmit,
+      restoreMutation,
+      openFolderRename,
+      openNewSubfolder,
+      openFolderDelete,
+    ]
+  );
+
   return (
     <>
       <DataGrid
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
-        onRowClick={(row) => {
-          setViewAttachmentId(row.id);
-          setViewModalOpen(true);
+        onRowClick={(row) => openItem(row)}
+        listingKey="resource-management.files.view::unified-drive"
+        tableLayout={{
+          width: 'fixed',
+          columnsResizable: true,
+          columnsVisibility: true,
         }}
-        tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       >
         <Card>
           <CardHeader className="block">
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              {isMobile && onToggleTreeDrawer && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onToggleTreeDrawer}
+                  aria-label="Show folders"
+                >
+                  <FolderOpen className="size-4" />
+                </Button>
+              )}
+              <div className="min-w-0 flex-1">
+                <DriveBreadcrumb crumbs={crumbs} onNavigate={navigateToFolder} droppable={draggable} />
+              </div>
+              <div className="flex items-center rounded-md border p-0.5">
+                <Button
+                  variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="size-7 p-0"
+                  onClick={() => setViewMode('list')}
+                  aria-label="List view"
+                  aria-pressed={viewMode === 'list'}
+                >
+                  <List className="size-4" />
+                </Button>
+                <Button
+                  variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
+                  size="sm"
+                  className="size-7 p-0"
+                  onClick={() => setViewMode('grid')}
+                  aria-label="Grid view"
+                  aria-pressed={viewMode === 'grid'}
+                >
+                  <LayoutGrid className="size-4" />
+                </Button>
+              </div>
+            </div>
             <DataGridListToolbar
               table={table}
               searchSlot={
-                <div className="relative">
-                  <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
-                  <Input
-                    placeholder="Search attachments..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="ps-9 w-64"
-                  />
-                  {searchQuery && (
-                    <Button
-                      mode="icon"
-                      variant="dim"
-                      className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
-                      onClick={() => setSearchQuery('')}
-                    >
-                      <X />
-                    </Button>
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
+                    <Input
+                      placeholder="Search files & folders..."
+                      value={searchQuery}
+                      onChange={(e) => {
+                        setSearchQuery(e.target.value);
+                        setPagination((p) => ({ ...p, pageIndex: 0 }));
+                      }}
+                      className="ps-9 w-64"
+                    />
+                    {searchQuery && (
+                      <Button
+                        mode="icon"
+                        variant="dim"
+                        className="absolute end-1.5 top-1/2 -translate-y-1/2 h-6 w-6"
+                        onClick={() => setSearchQuery('')}
+                      >
+                        <X />
+                      </Button>
+                    )}
+                  </div>
+                  {isSearching && (
+                    <label className="flex items-center gap-1.5 text-xs text-muted-foreground whitespace-nowrap">
+                      <Checkbox
+                        checked={thisFolderOnly}
+                        onCheckedChange={(v) => {
+                          setThisFolderOnly(v === true);
+                          setPagination((p) => ({ ...p, pageIndex: 0 }));
+                        }}
+                      />
+                      This folder only
+                    </label>
                   )}
                 </div>
               }
@@ -790,10 +1120,7 @@ export default function AttachmentsInFolderPanel({
                       <p className="text-xs font-medium">Uploaded date range</p>
                       <Popover>
                         <PopoverTrigger asChild>
-                          <Button
-                            variant="outline"
-                            className="w-full justify-start font-normal"
-                          >
+                          <Button variant="outline" className="w-full justify-start font-normal">
                             <CalendarDays className="size-4 me-2 opacity-70" />
                             {uploadedRange?.from ? (
                               uploadedRange.to ? (
@@ -841,9 +1168,7 @@ export default function AttachmentsInFolderPanel({
                       <h4 className="font-medium text-sm mb-1.5">Access levels</h4>
                     </div>
                     {accessTypes.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">
-                        No access types configured.
-                      </p>
+                      <p className="text-xs text-muted-foreground">No access types configured.</p>
                     ) : (
                       <>
                         <label
@@ -860,9 +1185,7 @@ export default function AttachmentsInFolderPanel({
                                   : false
                             }
                             onCheckedChange={(v) => {
-                              setAccessLevelFilters(
-                                v === true ? accessTypes.map((t) => t.code) : []
-                              );
+                              setAccessLevelFilters(v === true ? accessTypes.map((t) => t.code) : []);
                               setPagination((p) => ({ ...p, pageIndex: 0 }));
                             }}
                           />
@@ -917,7 +1240,7 @@ export default function AttachmentsInFolderPanel({
                               <RadioGroupItem id="access-match-exact" value="exact" className="mt-0.5" />
                               <span>
                                 <span className="font-medium">Exactly these</span>
-                                <span className="block text-muted-foreground">File's levels must match the selection exactly.</span>
+                                <span className="block text-muted-foreground">File&apos;s levels must match the selection exactly.</span>
                               </span>
                             </label>
                           </RadioGroup>
@@ -928,7 +1251,7 @@ export default function AttachmentsInFolderPanel({
                 ),
               }}
               exportConfig={{ filename: 'attachments_export.xlsx' }}
-              bulkActions={bulkActions}
+              bulkActionsSlot={renderBulkActionsSlot}
               secondaryActions={secondaryActions}
               primaryAction={
                 !isTrashView ? (
@@ -943,18 +1266,41 @@ export default function AttachmentsInFolderPanel({
               }
             />
           </CardHeader>
-          {/* LatestImportStatusPanel removed — bulk-ZIP progress + n8n
-              integration status now live in the Upload Activity drawer
-              (top-nav icon). See docs/plans/PLAN-upload-activity-drawer.md. */}
           <CardTable>
-            <ScrollArea>
-              <DraggableAttachmentsTable
-                currentDirectoryId={directoryId}
-                selectedIds={selectedDeletableIds}
-                draggable={!isTrashView}
-              />
-              <ScrollBar orientation="horizontal" />
-            </ScrollArea>
+            {viewMode === 'grid' ? (
+              <div className="p-3">
+                {isLoading ? (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+                    {Array.from({ length: 12 }).map((_, i) => (
+                      <Skeleton key={i} className="aspect-[3/4] w-full rounded-lg" />
+                    ))}
+                  </div>
+                ) : (
+                  <DriveGridView
+                    items={items}
+                    selectedIds={selectedItems.map((it) => it.id)}
+                    draggable={draggable}
+                    currentDirectoryId={effectiveDirectoryId}
+                    onOpen={openItem}
+                    onToggleSelect={(id, next) => {
+                      const item = items.find((it) => it.id === id);
+                      if (!item) return;
+                      setRowSelection((prev) => ({ ...prev, [`${item.kind}-${id}`]: next }));
+                    }}
+                  />
+                )}
+              </div>
+            ) : (
+              <ScrollArea>
+                <DriveListView
+                  draggable={draggable}
+                  currentDirectoryId={effectiveDirectoryId}
+                  selectedIds={selectedItems.map((it) => it.id)}
+                  renderRowContextMenu={renderRowContextMenu}
+                />
+                <ScrollBar orientation="horizontal" />
+              </ScrollArea>
+            )}
           </CardTable>
           <CardFooter>
             <DataGridPagination />
@@ -984,16 +1330,28 @@ export default function AttachmentsInFolderPanel({
       <AttachmentBulkDeleteDialog
         open={bulkDeleteDialogOpen}
         onOpenChange={setBulkDeleteDialogOpen}
-        attachmentIds={selectedDeletableIds}
+        attachmentIds={selectedDeletableFileIds}
+        folderIds={selectedDeletableFolderIds}
         permanent={isTrashView}
-        onSuccess={() => setRowSelection({})}
+        onSuccess={clearSelection}
       />
 
       <EditAttachmentTypeDialog
         open={bulkEditTypeOpen}
         onOpenChange={setBulkEditTypeOpen}
-        attachmentIds={selectedDeletableIds}
-        onSaved={() => setRowSelection({})}
+        attachmentIds={selectedDeletableFileIds}
+        onSaved={clearSelection}
+      />
+
+      <MoveToDialog
+        open={moveDialogOpen}
+        onOpenChange={(open) => {
+          setMoveDialogOpen(open);
+          if (!open) setMoveContextItem(null);
+        }}
+        selection={moveSelection}
+        onMove={performMove}
+        isMoving={updateMutation.isPending || updateDirectoryMutation.isPending}
       />
 
       <AttachmentDetailModal
@@ -1003,7 +1361,7 @@ export default function AttachmentsInFolderPanel({
           if (!open) setViewAttachmentId(null);
         }}
         attachmentId={viewAttachmentId}
-        neighbourItems={(data?.data ?? []).map((a) => ({ id: a.id }))}
+        neighbourItems={fileItems.map((a) => ({ id: a.id }))}
         onAttachmentChange={setViewAttachmentId}
       />
 
@@ -1036,6 +1394,122 @@ export default function AttachmentsInFolderPanel({
             </Button>
             <Button onClick={submitRename} disabled={updateMutation.isPending || !renameValue.trim()}>
               {updateMutation.isPending ? 'Saving…' : 'Rename'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Folder context-menu: rename */}
+      <Dialog open={folderRenameOpen} onOpenChange={setFolderRenameOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Rename folder</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="folder-rename-input">Name</Label>
+            <Input
+              id="folder-rename-input"
+              value={folderRenameValue}
+              onChange={(e) => setFolderRenameValue(e.target.value)}
+              placeholder="Folder name"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !updateDirectoryMutation.isPending) {
+                  e.preventDefault();
+                  submitFolderRename();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setFolderRenameOpen(false)}
+              disabled={updateDirectoryMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={submitFolderRename}
+              disabled={updateDirectoryMutation.isPending || !folderRenameValue.trim()}
+            >
+              {updateDirectoryMutation.isPending ? 'Saving…' : 'Rename'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Folder context-menu: new subfolder */}
+      <Dialog open={subfolderOpen} onOpenChange={setSubfolderOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>New subfolder{subfolderParent ? ` in ${subfolderParent.name}` : ''}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="folder-subfolder-input">Name</Label>
+            <Input
+              id="folder-subfolder-input"
+              value={subfolderValue}
+              onChange={(e) => setSubfolderValue(e.target.value)}
+              placeholder="Folder name"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !createDirectoryMutation.isPending) {
+                  e.preventDefault();
+                  submitNewSubfolder();
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setSubfolderOpen(false)}
+              disabled={createDirectoryMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={submitNewSubfolder}
+              disabled={createDirectoryMutation.isPending || !subfolderValue.trim()}
+            >
+              {createDirectoryMutation.isPending ? 'Creating…' : 'Create'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Folder context-menu: delete (mirrors the tree sidebar copy) */}
+      <Dialog
+        open={folderDeleteOpen}
+        onOpenChange={(open) => {
+          setFolderDeleteOpen(open);
+          if (!open) setFolderDeleteTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete folder</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Move &quot;{folderDeleteTarget?.name}&quot; to Trash? This folder and all subfolders will be
+            moved to Trash. All attachments in this folder and its subfolders will be archived. You can
+            restore them from the Trash page.
+          </p>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setFolderDeleteOpen(false)}
+              disabled={deleteDirectoryMutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={submitFolderDelete}
+              disabled={deleteDirectoryMutation.isPending}
+            >
+              Move to Trash
             </Button>
           </DialogFooter>
         </DialogContent>

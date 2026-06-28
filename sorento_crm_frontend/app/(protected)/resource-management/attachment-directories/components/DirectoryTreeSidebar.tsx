@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo, useCallback } from 'react';
-import { useDroppable, useDraggable } from '@dnd-kit/core';
+import { useDroppable, useDraggable, useDndContext } from '@dnd-kit/core';
 import {
   ChevronRight,
   ChevronDown,
@@ -63,16 +63,25 @@ function encodeBetweenId(parentId: string | null, index: number): string {
 }
 
 function BetweenDropZone({ parentId, index, depth }: { parentId: string | null; index: number; depth: number }) {
+  // Between-zones are for REORDERING folders only. When the active drag is a
+  // file/attachment (move-into intent), they must be DISABLED — otherwise the
+  // 2px zone (z-10, negative margins) sitting under a collapsed folder's name
+  // steals the `over` from the folder row, showing a blue reorder bar and
+  // dropping nothing. Disabling lets the folder-row droppable win (highlight +
+  // move-into), regardless of collapse state.
+  const { active } = useDndContext();
+  const reorderActive = active?.data?.current?.type === 'folder';
   const { setNodeRef, isOver } = useDroppable({
     id: encodeBetweenId(parentId, index),
     data: { type: 'folder-between', parentId, index },
+    disabled: !reorderActive,
   });
   return (
     <div
       ref={setNodeRef}
       className={cn(
         '-my-1 h-2 rounded transition-colors relative z-10',
-        isOver && 'bg-primary'
+        isOver && reorderActive && 'bg-primary'
       )}
       style={{ marginLeft: 8 + depth * 16, marginRight: 8 }}
     />
@@ -129,7 +138,7 @@ function AllAttachmentsDropTarget({
       className={cn(
         'w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-left',
         isSelected && 'bg-primary text-primary-foreground font-medium',
-        isOver && 'ring-2 ring-primary ring-inset'
+        isOver && 'ring-2 ring-primary ring-inset bg-primary/15'
       )}
       onClick={onSelect}
     >
@@ -251,7 +260,7 @@ function DirectoryRow({
         className={cn(
           'group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm min-w-0 touch-none cursor-grab active:cursor-grabbing',
           isSelected && 'bg-primary text-primary-foreground font-medium',
-          isOver && 'ring-2 ring-primary ring-inset',
+          isOver && 'ring-2 ring-primary ring-inset bg-primary/15',
           isDragging && 'opacity-50'
         )}
         style={{ paddingLeft: 8 + depth * 16 }}

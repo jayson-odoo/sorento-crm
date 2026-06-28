@@ -149,6 +149,17 @@ export type DataGridListToolbarProps<TData extends object> = {
   secondaryActions?: ToolbarAction[];
   /** Bulk actions shown in the bulk strip when rows are selected (H). */
   bulkActions?: ToolbarAction[];
+  /**
+   * Custom bulk strip content (overrides `bulkActions` AND the auto Export button)
+   * — for pages that consolidate all bulk actions into a single "Action" dropdown
+   * with selection-dependent gating (e.g. the Unified Drive, UAC F2). The slot is
+   * rendered between the "N selected" badge and the Clear button.
+   *
+   * May be a render function receiving `{ openExport }` so the page's own "Action"
+   * menu can reuse the toolbar's selected-rows Export dialog instead of a separate
+   * Export button.
+   */
+  bulkActionsSlot?: ReactNode | ((api: { openExport: () => void }) => ReactNode);
   /** "Select all N records" banner config (D4/F). Omit to disable cross-page selection. */
   selectAllMatching?: ListToolbarSelectAllMatching;
 };
@@ -207,6 +218,7 @@ export function DataGridListToolbar<TData extends object>({
   primaryAction,
   secondaryActions = [],
   bulkActions = [],
+  bulkActionsSlot,
   selectAllMatching,
   onRefresh,
   isRefreshing = false,
@@ -340,13 +352,16 @@ export function DataGridListToolbar<TData extends object>({
                 ? `All ${selectAllMatching.total} selected`
                 : `${selectedCount} selected`}
             </Badge>
-            {exportButtonEl}
+            {bulkActionsSlot == null && exportButtonEl}
             {/* Bulk destructive actions operate on the loaded selection only; hide
                 them once the user opts into the full filtered set to avoid a
                 "delete all matching but only loaded rows go" footgun. */}
-            {!allRecordsActive && bulkActions.map((action) => (
-              <ActionButton key={action.key} action={action} />
-            ))}
+            {bulkActionsSlot != null
+              ? typeof bulkActionsSlot === 'function'
+                ? bulkActionsSlot({ openExport: isListQueryExport ? () => setExportOpen(true) : openExport })
+                : bulkActionsSlot
+              : !allRecordsActive &&
+                bulkActions.map((action) => <ActionButton key={action.key} action={action} />)}
             <Button
               variant="ghost"
               size="sm"

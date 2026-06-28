@@ -41,6 +41,11 @@ from app.schemas.resources import (
     BulkAttachmentTypeRequest,
     BulkAttachmentTypeResponse,
 )
+from app.schemas.resources import (
+    DriveFolderItem,
+    DriveFileItem,
+    DriveListResponse,
+)
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
 
@@ -369,6 +374,112 @@ async def collision_check(
         "existing_attachment_id": str(existing.id),
         "existing_file_name": existing.stored_filename or existing.original_filename,
     }
+
+
+@router.get("/drive", response_model=DriveListResponse)
+async def get_drive_contents(
+    directory_id: Optional[str] = Query(
+        None, description="Folder to list (omit/null = drive root)."
+    ),
+    recursive: bool = Query(
+        False,
+        description="When true (or any non-empty query), list the current folder + ALL descendant subfolders. Otherwise immediate children only.",
+    ),
+    query: Optional[str] = Query(
+        None, description="Search term — matches both file names and folder names; forces recursive scope."
+    ),
+    sort: Optional[str] = Query(
+        None, description="name (default, interleaves folders+files) | type | size | modified | uploaded_by | attachment_type (non-name sorts push folders to the end)."
+    ),
+    dir: Optional[str] = Query("asc"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=5000),
+    is_deleted: Optional[bool] = Query(
+        None, description="True = Trash (deleted folders + archived files)."
+    ),
+    attachment_type_id: Optional[str] = Query(None),
+    attachment_type_code: Optional[str] = Query(None),
+    uploaded_by: Optional[str] = Query(None),
+    uploaded_at_from: Optional[datetime] = Query(None),
+    uploaded_at_to: Optional[datetime] = Query(None),
+    access_levels: Optional[List[str]] = Query(None),
+    access_levels_match: Optional[str] = Query("any"),
+    link_status: Optional[str] = Query(None),
+    storage_status: Optional[str] = Query(None),
+    direct_access_only: bool = Query(False),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Unified Drive listing — folders + files as ONE server-sorted, server-paginated
+    stream of discriminated rows (`{kind: 'folder'|'file', ...}`).
+
+    Browse (empty query, no filter) = immediate children only and folders are
+    shown. Search (non-empty query) or any file-attribute filter switches to a
+    recursive subtree scan and hides folders. File rows carry a resolved
+    `directory_path` (Location). See PLAN-unified-drive-files.md / its UAC.
+    """
+    try:
+        service = AttachmentService(db)
+        result = service.list_drive_contents(
+            directory_id=directory_id,
+            recursive=recursive,
+            query=query,
+            sort=sort,
+            dir=dir or "asc",
+            page=page,
+            limit=limit,
+            is_deleted=is_deleted,
+            attachment_type_id=attachment_type_id,
+            attachment_type_code=attachment_type_code,
+            uploaded_by=uploaded_by,
+            uploaded_at_from=uploaded_at_from,
+            uploaded_at_to=uploaded_at_to,
+            access_levels=access_levels,
+            access_levels_match=access_levels_match,
+            link_status=link_status,
+            storage_status=storage_status,
+            direct_access_only=direct_access_only,
+        )
+
+        # Hydrate uploaded_by_user for the file rows on this page in one IN query.
+        file_attachments = [
+            it["attachment"] for it in result["items"] if it["kind"] == "file"
+        ]
+        user_map = _build_uploaded_by_user_map(db, file_attachments)
+
+        data: list[dict] = []
+        for it in result["items"]:
+            if it["kind"] == "folder":
+                data.append(
+                    DriveFolderItem(
+                        id=it["id"],
+                        name=it["name"],
+                        parent_id=it.get("parent_id"),
+                        sort_order=it.get("sort_order"),
+                        created_at=it.get("created_at"),
+                        directory_path=it.get("directory_path"),
+                    ).model_dump()
+                )
+            else:
+                att = it["attachment"]
+                row = DriveFileItem.model_validate(att).model_dump()
+                row["directory_path"] = it.get("directory_path")
+                uid = getattr(att, "uploaded_by", None)
+                user_info = user_map.get(str(uid)) if uid else None
+                if user_info:
+                    row["uploaded_by_user"] = user_info
+                data.append(row)
+
+        return {
+            "data": data,
+            "pagination": result["pagination"],
+            "empty": result["empty"],
+            "recursive": result["recursive"],
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
 
 
 # Match attachment type by display name "Stock List" (UI) or legacy "Stock_List"

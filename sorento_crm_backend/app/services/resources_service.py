@@ -184,33 +184,90 @@ class AttachmentDirectoryService:
         return " --> ".join(parts) if parts else None
 
     def get_descendant_directory_ids(self, directory_id: str, include_deleted: bool = True) -> List[str]:
-        """Return all directory IDs in the subtree rooted at directory_id (including the directory itself). Uses recursive CTE for speed."""
-        from sqlalchemy import text
+        """Return all directory IDs in the subtree rooted at directory_id
+        (including the directory itself).
 
-        if include_deleted:
-            stmt = text("""
-                WITH RECURSIVE descendants AS (
-                    SELECT id FROM attachment_directories WHERE id = :root_id
-                    UNION ALL
-                    SELECT d.id FROM attachment_directories d
-                    INNER JOIN descendants p ON d.parent_id = p.id
-                )
-                SELECT id::text FROM descendants
-            """)
-        else:
-            stmt = text("""
-                WITH RECURSIVE descendants AS (
-                    SELECT id FROM attachment_directories WHERE id = :root_id AND is_deleted = false
-                    UNION ALL
-                    SELECT d.id FROM attachment_directories d
-                    INNER JOIN descendants p ON d.parent_id = p.id
-                    WHERE d.is_deleted = false
-                )
-                SELECT id::text FROM descendants
-            """)
+        Delegates to the portable ORM walker so the same code path runs on
+        Postgres (prod) and sqlite (the pytest harness) — the previous raw
+        ``id::text`` recursive CTE was Postgres-only and broke the unified-Drive
+        tests that exercise folder delete/restore + move cycle-guard on sqlite.
+        ``include_deleted`` default stays ``True`` to preserve prior behaviour for
+        restore/permanent-delete callers that must see already-soft-deleted rows.
+        """
+        return self.get_descendant_directory_ids_portable(
+            directory_id, include_deleted=include_deleted
+        )
 
-        result = self.db.execute(stmt, {"root_id": directory_id})
-        return [row[0] for row in result]
+    def get_descendant_directory_ids_portable(self, directory_id: str, include_deleted: bool = False) -> List[str]:
+        """Portable descendant resolver (subtree rooted at directory_id, inclusive).
+
+        Mirrors ``get_descendant_directory_ids`` but walks the tree with plain
+        ORM queries instead of a Postgres-only ``id::text`` recursive CTE, so it
+        runs unchanged on the sqlite test harness. Use this on any path shared by
+        the unified Drive endpoint (which is exercised by pytest on sqlite).
+        """
+        root = str(directory_id)
+        result: List[str] = []
+        seen: set[str] = set()
+        frontier = [root]
+        while frontier:
+            batch = [fid for fid in frontier if fid not in seen]
+            if not batch:
+                break
+            seen.update(batch)
+            q = self.db.query(AttachmentDirectory.id).filter(
+                AttachmentDirectory.id.in_(batch)
+            )
+            if not include_deleted:
+                q = q.filter(AttachmentDirectory.is_deleted == False)
+            present = [str(r[0]) for r in q.all()]
+            result.extend(present)
+            child_q = self.db.query(AttachmentDirectory.id).filter(
+                AttachmentDirectory.parent_id.in_(present) if present else False
+            )
+            if not include_deleted:
+                child_q = child_q.filter(AttachmentDirectory.is_deleted == False)
+            frontier = [str(r[0]) for r in child_q.all()] if present else []
+        return result
+
+    def build_directory_path_map(
+        self, directory_ids: Optional[List[str]] = None, sep: str = " / "
+    ) -> dict[str, str]:
+        """Return ``{directory_id: 'Root / Child / Leaf'}`` for the given folders
+        (or every non-deleted folder when ``directory_ids`` is None).
+
+        Resolves the whole closure in ONE pass over a single fetch of all
+        directories — O(folders), never per-row (UAC D2: no N+1). The path of a
+        folder is its OWN chain root→self.
+        """
+        all_dirs = self.db.query(
+            AttachmentDirectory.id,
+            AttachmentDirectory.parent_id,
+            AttachmentDirectory.name,
+        ).all()
+        by_id = {
+            str(d.id): (str(d.parent_id) if d.parent_id else None, d.name or "")
+            for d in all_dirs
+        }
+        cache: dict[str, str] = {}
+
+        def _path(did: Optional[str]) -> str:
+            if not did:
+                return ""
+            if did in cache:
+                return cache[did]
+            entry = by_id.get(did)
+            if not entry:
+                cache[did] = ""
+                return ""
+            parent_id, name = entry
+            parent_path = _path(parent_id) if parent_id else ""
+            full = f"{parent_path}{sep}{name}" if parent_path else name
+            cache[did] = full
+            return full
+
+        targets = directory_ids if directory_ids is not None else list(by_id.keys())
+        return {str(did): _path(str(did)) for did in targets if did}
 
     def get_deleted_tree(self) -> list:
         """Return tree of deleted directories only (for trash view). Roots are deleted dirs whose parent is not deleted (or has no parent)."""
@@ -772,6 +829,325 @@ class AttachmentService:
         # default-sorted set so prev/next still works and total reflects all rows.
         unfiltered_q, _ = self._build_list_query()
         return compute_neighbours(_ordered_ids(unfiltered_q), attachment_id)
+
+    # ------------------------------------------------------------------
+    # Unified Drive (folders + files, one server-sorted/paginated stream).
+    # docs/plans/PLAN-unified-drive-files.md (D6/D7/D10/D11) + UAC A8/B/C/D.
+    # ------------------------------------------------------------------
+
+    # Non-Name sorts have no folder-comparable value → folders are grouped FIRST
+    # (Finder/macOS behavior): all folders at the top, name-asc among themselves,
+    # then the files sorted by the requested column+direction.
+    _DRIVE_FILE_ONLY_SORTS = {
+        "type", "mime_type", "size", "file_size_bytes",
+        "modified", "uploaded_at", "created_at",
+        "uploaded_by", "attachment_type",
+    }
+
+    def _drive_filters_active(
+        self,
+        *,
+        attachment_type_id: Optional[str],
+        attachment_type_code: Optional[str],
+        uploaded_by: Optional[str],
+        uploaded_at_from: Optional[Any],
+        uploaded_at_to: Optional[Any],
+        access_levels: Optional[List[str]],
+        link_status: Optional[str],
+        storage_status: Optional[str],
+    ) -> bool:
+        """True when any FILE-ATTRIBUTE filter is set.
+
+        Folders carry none of these attributes, so any such filter hides folders
+        from the Drive listing (UAC C3 — "they can't match"). A plain text
+        ``query`` is NOT a hide-folders trigger: folder NAMES are matched against
+        it, so matching folders still appear in recursive search results (UAC B4 /
+        plan D5). Plain browse (no filter) shows folders (UAC C4).
+        """
+        if attachment_type_id or (attachment_type_code and attachment_type_code.strip()):
+            return True
+        if uploaded_by:
+            return True
+        if uploaded_at_from is not None or uploaded_at_to is not None:
+            return True
+        if access_levels and any((lvl or "").strip() for lvl in access_levels):
+            return True
+        if link_status in ("linked", "unlinked"):
+            return True
+        if storage_status and str(storage_status).strip():
+            return True
+        return False
+
+    def list_drive_contents(
+        self,
+        *,
+        directory_id: Optional[str] = None,
+        recursive: bool = False,
+        query: Optional[str] = None,
+        sort: Optional[str] = None,
+        dir: Optional[str] = None,
+        page: int = 1,
+        limit: int = 50,
+        is_deleted: Optional[bool] = None,
+        attachment_type_id: Optional[str] = None,
+        attachment_type_code: Optional[str] = None,
+        uploaded_by: Optional[str] = None,
+        uploaded_at_from: Optional[Any] = None,
+        uploaded_at_to: Optional[Any] = None,
+        access_levels: Optional[List[str]] = None,
+        access_levels_match: Optional[str] = "any",
+        link_status: Optional[str] = None,
+        storage_status: Optional[str] = None,
+        direct_access_only: Optional[bool] = None,
+    ) -> dict:
+        """Unified Drive listing: discriminated folder + file rows in ONE
+        server-sorted, server-paginated stream.
+
+        Scope:
+          * ``recursive`` (or a non-empty ``query``) → current folder + ALL
+            descendant subfolders (UAC B2/B3). Root recursive = whole drive.
+          * otherwise → immediate children only: subfolders WHERE
+            ``parent_id == directory_id`` + files WHERE
+            ``directory_id == directory_id`` (root = ``parent_id IS NULL`` +
+            ``directory_id IS NULL``) (UAC B1/A8/D10).
+
+        Folders are HIDDEN when any file-attribute filter is set or a query is
+        present (UAC C3); shown on plain browse (UAC C4). Sort: Name interleaves
+        folders+files as one set (UAC C1); any non-Name sort groups folders FIRST
+        (Finder/macOS), name-asc among themselves, then files sorted by the chosen
+        column/direction (UAC C2). Pagination is computed over the combined (UNION) count
+        so it is correct at any folder size with no duplicate/missing rows across
+        pages (UAC C6).
+        """
+        from sqlalchemy import literal, func as _sa_func
+        from app.schemas.common import PaginationResponse
+
+        dir_service = AttachmentDirectoryService(self.db)
+        trash = is_deleted is True
+        recursive = bool(recursive) or bool(query and query.strip())
+        normalized_dir = (str(directory_id).strip() or None) if directory_id else None
+
+        filters_active = self._drive_filters_active(
+            attachment_type_id=attachment_type_id,
+            attachment_type_code=attachment_type_code,
+            uploaded_by=uploaded_by,
+            uploaded_at_from=uploaded_at_from,
+            uploaded_at_to=uploaded_at_to,
+            access_levels=access_levels,
+            link_status=link_status,
+            storage_status=storage_status,
+        )
+        # Folders are shown only on a plain browse (no filters, no query). C3/C4.
+        include_folders = not filters_active
+
+        # ---- Resolve the file directory scope --------------------------------
+        descendant_ids: Optional[List[str]] = None
+        if recursive and normalized_dir:
+            descendant_ids = dir_service.get_descendant_directory_ids_portable(
+                normalized_dir, include_deleted=trash
+            )
+            if normalized_dir not in descendant_ids:
+                descendant_ids.append(normalized_dir)
+
+        # ---- File side -------------------------------------------------------
+        file_q, _ = self._build_list_query(
+            query=query,
+            sort=None,  # ordering applied on the UNION below
+            dir=dir,
+            directory_id=None,  # scoped manually for recursive/exact below
+            is_deleted=is_deleted,
+            attachment_type_id=attachment_type_id,
+            attachment_type_code=attachment_type_code,
+            uploaded_by=uploaded_by,
+            uploaded_at_from=uploaded_at_from,
+            uploaded_at_to=uploaded_at_to,
+            access_levels=access_levels,
+            access_levels_match=access_levels_match,
+            link_status=link_status,
+            storage_status=storage_status,
+            direct_access_only=direct_access_only,
+        )
+        if recursive:
+            if normalized_dir:
+                if descendant_ids:
+                    file_q = file_q.filter(Attachment.directory_id.in_(descendant_ids))
+                else:
+                    file_q = file_q.filter(literal(False))
+            # recursive at root => whole drive: no directory filter
+        else:
+            if normalized_dir:
+                file_q = file_q.filter(Attachment.directory_id == normalized_dir)
+            else:
+                file_q = file_q.filter(Attachment.directory_id.is_(None))
+
+        # ---- Folder side -----------------------------------------------------
+        folder_ids: List[str] = []
+        if include_folders:
+            folder_q = self.db.query(AttachmentDirectory).filter(
+                AttachmentDirectory.is_deleted == (True if trash else False)
+            )
+            if recursive:
+                if normalized_dir:
+                    # Descendants of the current folder (exclude the folder itself).
+                    sub_ids = [d for d in (descendant_ids or []) if d != normalized_dir]
+                    if sub_ids:
+                        folder_q = folder_q.filter(AttachmentDirectory.id.in_(sub_ids))
+                    else:
+                        folder_q = folder_q.filter(literal(False))
+                # recursive at root => all folders
+            else:
+                if normalized_dir:
+                    folder_q = folder_q.filter(AttachmentDirectory.parent_id == normalized_dir)
+                else:
+                    folder_q = folder_q.filter(AttachmentDirectory.parent_id.is_(None))
+            if query and query.strip():
+                folder_q = folder_q.filter(
+                    AttachmentDirectory.name.ilike(f"%{query.strip()}%")
+                )
+            folders = folder_q.all()
+            folder_ids = [str(f.id) for f in folders]
+            folder_rows = {str(f.id): f for f in folders}
+        else:
+            folders = []
+            folder_rows = {}
+
+        # ---- Combined ordering key (interleave vs folders-first) --------------
+        sort_key = (sort or "").strip().lower()
+        sort_desc = (dir or "asc").lower() == "desc"
+        folders_first = bool(sort_key) and sort_key in self._DRIVE_FILE_ONLY_SORTS
+
+        # Pull lightweight (id, sort_value, name) tuples for both kinds, order in
+        # Python over the small combined keyset, THEN page. The keyset is the
+        # union of folder ids + file ids — pagination is over the true combined
+        # set so no row is duplicated or dropped across pages (UAC C6). Full rows
+        # are fetched only for the requested page.
+        file_sort_attr = {
+            "name": Attachment.original_filename,
+            "type": Attachment.mime_type,
+            "mime_type": Attachment.mime_type,
+            "size": Attachment.file_size_bytes,
+            "file_size_bytes": Attachment.file_size_bytes,
+            "modified": Attachment.uploaded_at,
+            "uploaded_at": Attachment.uploaded_at,
+            "created_at": Attachment.created_at,
+            "uploaded_by": Attachment.uploaded_by,
+        }.get(sort_key, Attachment.original_filename)
+
+        file_keys = file_q.with_entities(
+            Attachment.id,
+            file_sort_attr,
+            Attachment.original_filename,
+        ).all()
+
+        # Numeric/date sorts need a type-consistent key; string sorts lower-case.
+        numeric_sort = sort_key in {"size", "file_size_bytes"}
+
+        def _norm(v):
+            if isinstance(v, str):
+                return v.lower()
+            return v
+
+        def _file_primary(v):
+            # Coerce None to a type-consistent floor so files with a missing value
+            # sort first (asc) without raising on mixed None/number/str compares.
+            if v is None:
+                return float("-inf") if numeric_sort else ""
+            if isinstance(v, str):
+                return v.lower()
+            return v
+
+        # Build a homogeneous sortable list of (kind, id, primary, name).
+        # For Name sort the primary is the lower-cased name (folders interleave);
+        # for non-Name sorts folders are split out and ordered by name alone, so
+        # their primary is unused.
+        combined: list[tuple[str, str, Any, str]] = []
+        for fid in folder_ids:
+            fr = folder_rows[fid]
+            name = (fr.name or "")
+            combined.append(("folder", fid, name.lower(), name.lower()))
+        for row in file_keys:
+            name = (row[2] or "")
+            primary = name.lower() if not folders_first else _file_primary(row[1])
+            combined.append(("file", str(row[0]), primary, name.lower()))
+
+        total = len(combined)
+
+        if folders_first:
+            # Finder/macOS behavior: all folders grouped at the TOP (name-asc among
+            # themselves, regardless of direction), then files ordered by the
+            # chosen non-Name key + direction. Folders fill the first page(s)
+            # before any file, so the grouping holds across pagination (C2/C6).
+            files_part = [c for c in combined if c[0] == "file"]
+            folders_part = [c for c in combined if c[0] == "folder"]
+            files_part.sort(key=lambda c: (c[2], c[3]), reverse=sort_desc)
+            folders_part.sort(key=lambda c: c[3])
+            ordered = folders_part + files_part
+        else:
+            # Name sort: fully interleaved across folders+files (C1). Folder-
+            # before-file on exact-name ties for determinism.
+            ordered = sorted(
+                combined,
+                key=lambda c: (c[2], c[3], 0 if c[0] == "folder" else 1),
+                reverse=sort_desc,
+            )
+
+        offset = (page - 1) * limit
+        page_slice = ordered[offset: offset + limit]
+
+        # ---- Hydrate the requested page only ---------------------------------
+        page_file_ids = [c[1] for c in page_slice if c[0] == "file"]
+        page_folder_ids = [c[1] for c in page_slice if c[0] == "folder"]
+
+        file_map: dict[str, Attachment] = {}
+        if page_file_ids:
+            from sqlalchemy.orm import joinedload
+            rows = (
+                self.db.query(Attachment)
+                .options(joinedload(Attachment.attachment_type))
+                .filter(Attachment.id.in_(page_file_ids))
+                .all()
+            )
+            file_map = {str(r.id): r for r in rows}
+
+        # Path map: resolve folder paths for the file rows' directories AND for
+        # folder rows themselves (folder Location = its parent's path). One pass.
+        path_map = dir_service.build_directory_path_map()
+
+        items: list[dict] = []
+        for kind, item_id, _primary, _name in page_slice:
+            if kind == "folder":
+                fr = folder_rows.get(item_id)
+                if fr is None:
+                    continue
+                parent_id = str(fr.parent_id) if fr.parent_id else None
+                items.append({
+                    "kind": "folder",
+                    "id": str(fr.id),
+                    "name": fr.name,
+                    "parent_id": parent_id,
+                    "sort_order": fr.sort_order,
+                    "created_at": fr.created_at,
+                    "directory_path": path_map.get(parent_id) if parent_id else None,
+                })
+            else:
+                att = file_map.get(item_id)
+                if att is None:
+                    continue
+                items.append({
+                    "kind": "file",
+                    "attachment": att,
+                    "directory_path": (
+                        path_map.get(str(att.directory_id)) if att.directory_id else None
+                    ),
+                })
+
+        return {
+            "items": items,
+            "total": total,
+            "pagination": PaginationResponse(total=total, page=page, limit=limit),
+            "empty": total == 0,
+            "recursive": recursive,
+        }
 
     def _get_attachment_any(self, attachment_id: str):
         """Get attachment by ID (active or archived)."""
