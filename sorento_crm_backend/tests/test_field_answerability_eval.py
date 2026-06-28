@@ -108,6 +108,34 @@ def test_stock_inquiry_field_sla_audit_answerable():
     assert any(k in sla.lower() for k in ("sla", "tier", "due", "respond", "not", "no "))
 
 
+def test_absent_field_is_not_fabricated():
+    """Honesty: asking about a field that is NOT on screen / not set must yield an
+    acknowledgement of absence, not an invented value. Guards against the bubble
+    fabricating data the user can't see (anti-overfit / grounding requirement).
+    """
+    from app.models.procurement import PurchaseRequestHeader as P
+    from app.schemas.ai_assistant import PageSnapshotPayload, PageEntityRef
+
+    db, uid, chat = _chat_and_user()
+    row = db.query(P).filter(P.request_type == "purchase_request").first()
+    if row is None:
+        pytest.skip("no purchase_request")
+    # Build a screen that deliberately OMITS the delivery address.
+    vt = _vt([("Purchase request number", row.request_number), ("Customer Name", row.customer_name)])
+    snap = PageSnapshotPayload(path="/procurement-management/purchase-requests/" + str(row.id),
+                               search="", title="PR", visible_text=vt,
+                               entity=PageEntityRef(entity_type="purchase_request", id=str(row.id)))
+    _, m = chat.respond(user_id=uid, conversation_id=None,
+                        message="what is the delivery address on this", page_snapshot=snap)
+    ans = (m.content or "").lower()
+    # Must acknowledge it's not available; must NOT invent a street/postcode.
+    acknowledges = any(k in ans for k in (
+        "not", "no ", "isn't", "doesn't", "unavailable", "not set", "not provided",
+        "not specified", "not listed", "couldn't find", "can't find", "don't have",
+    ))
+    assert acknowledges, f"did not acknowledge absent field -> {ans[:140]!r}"
+
+
 def test_visible_text_answers_without_assembler():
     """Fan-out coverage: any detail page's visible fields are answerable through
     the agent loop from visible_text alone — NO entity registration, NO assembler.
