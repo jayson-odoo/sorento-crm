@@ -13,6 +13,7 @@ from app.api.v1.external import (
     entity_attachments,
     purchase_requests,
     next_assignee,
+    team_members,
     work_calendar,
     conversation_assignee,
     conversation_sla_tracking,
@@ -43,6 +44,7 @@ router.include_router(stock_inquiry_attachments.router, prefix="/stock-inquiry-a
 router.include_router(entity_attachments.router, prefix="/entity-attachments", tags=["external"])
 router.include_router(purchase_requests.router, prefix="/purchase-requests", tags=["external"])
 router.include_router(next_assignee.router, prefix="/next-assignee", tags=["external"])
+router.include_router(team_members.router, prefix="/team-members", tags=["external"])
 router.include_router(work_calendar.router, prefix="/work-calendar", tags=["external"])
 router.include_router(conversation_assignee.router, prefix="/conversation-assignee", tags=["external"])
 router.include_router(conversation_sla_tracking.router, prefix="/conversation-sla-tracking", tags=["external"])

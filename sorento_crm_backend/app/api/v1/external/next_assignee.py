@@ -275,6 +275,9 @@ async def post_next_assignee(
       Tiers are independent; use conversation_assignee_* in the response for CRM state only.
     Body (optional): policy_code (or sla_policy_code) and tier (or tier_level) together —
       response includes policy_id, tier_response_hours, tier_resolution_hours from that SLA tier.
+    Body (optional): preferred_assignee_id — when set to a valid member (user_id) of the resolved
+      team, that member is returned directly and the round-robin cursor is NOT advanced. Discover
+      valid ids via GET /external/team-members. 404 if not a member of the team.
 
     Example:
       { "contact_phone_number": "+60123456789", "agent_code": "general_enquiries", "team_code": "marketing" }
@@ -323,7 +326,19 @@ async def post_next_assignee(
 
     team_id = _resolve_round_robin_team_id(service, str(agent_id).strip(), body)
 
-    result = service.get_next_assignee(agent_id, team_id)
+    # Preferred-assignee override: skip round-robin, go straight to the named member.
+    # n8n discovers valid ids via GET /external/team-members. Cursor is NOT advanced.
+    preferred_id = body.get("preferred_assignee_id")
+    if preferred_id is not None and str(preferred_id).strip():
+        preferred_id = str(preferred_id).strip()
+        result = service.get_member_assignee(team_id, preferred_id)
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"preferred_assignee_id={preferred_id!r} is not a member of the resolved team.",
+            )
+    else:
+        result = service.get_next_assignee(agent_id, team_id)
     if result is None:
         raise HTTPException(
             status_code=404,

@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.dependencies import get_db, get_external_api_user
 from app.main import app
+from app.dependencies import get_db, get_external_api_user
 
 
 @pytest.fixture
@@ -312,6 +312,96 @@ def test_sla_policy_tier_fields_when_requested(
     assert data["tier_response_hours"] == 2
     assert data["tier_resolution_hours"] == 48
     mock_sla_resolve.assert_called_once()
+
+
+PREFERRED = {
+    "id": "user-2",
+    "email": "b@test.com",
+    "name": "Agent B",
+    "respond_user_id": "555",
+}
+
+
+@patch("app.api.v1.external.next_assignee.AccessAgentService")
+@patch("app.api.v1.external.next_assignee.ConversationSLATrackingService")
+@patch("app.api.v1.external.next_assignee.CalendarService")
+def test_preferred_assignee_skips_round_robin(mock_cal, mock_sla, mock_access, client: TestClient):
+    """preferred_assignee_id returns that member directly; cursor NOT advanced."""
+    mock_cal.return_value.is_within_working_time.return_value = True
+    mock_sla.return_value.get_tracking_by_contact_phone.return_value = None
+    mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
+    mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
+    mock_access.return_value.get_team_id_by_tier.return_value = None
+    mock_access.return_value.get_member_assignee.return_value = PREFERRED
+
+    r = client.post(
+        "/api/v1/external/next-assignee",
+        json={
+            "contact_phone": "+60120000010",
+            "agent_code": "general_enquiries",
+            "team_code": "marketing",
+            "preferred_assignee_id": "user-2",
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["assignee_id"] == "user-2"
+    assert data["assignee_respond_user_id"] == "555"
+    mock_access.return_value.get_member_assignee.assert_called_once_with("team-1", "user-2")
+    mock_access.return_value.get_next_assignee.assert_not_called()
+
+
+@patch("app.api.v1.external.next_assignee.AccessAgentService")
+@patch("app.api.v1.external.next_assignee.ConversationSLATrackingService")
+@patch("app.api.v1.external.next_assignee.CalendarService")
+def test_preferred_assignee_not_member_returns_404(mock_cal, mock_sla, mock_access, client: TestClient):
+    mock_cal.return_value.is_within_working_time.return_value = True
+    mock_sla.return_value.get_tracking_by_contact_phone.return_value = None
+    mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
+    mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
+    mock_access.return_value.get_team_id_by_tier.return_value = None
+    mock_access.return_value.get_member_assignee.return_value = None
+
+    r = client.post(
+        "/api/v1/external/next-assignee",
+        json={
+            "contact_phone": "+60120000011",
+            "agent_code": "general_enquiries",
+            "team_code": "marketing",
+            "preferred_assignee_id": "ghost",
+        },
+    )
+    assert r.status_code == 404
+    assert "not a member" in r.json()["detail"].lower()
+    mock_access.return_value.get_next_assignee.assert_not_called()
+
+
+@patch("app.api.v1.external.next_assignee.AccessAgentService")
+@patch("app.api.v1.external.next_assignee.ConversationSLATrackingService")
+@patch("app.api.v1.external.next_assignee.CalendarService")
+def test_blank_preferred_assignee_falls_back_to_round_robin(
+    mock_cal, mock_sla, mock_access, client: TestClient
+):
+    mock_cal.return_value.is_within_working_time.return_value = True
+    mock_sla.return_value.get_tracking_by_contact_phone.return_value = None
+    mock_access.return_value.get_agent_id_by_code.return_value = "agent-1"
+    mock_access.return_value.list_team_ids_for_agent_code.return_value = ["team-1"]
+    mock_access.return_value.get_team_id_by_tier.return_value = None
+    mock_access.return_value.get_next_assignee.return_value = ASSIGNEE
+
+    r = client.post(
+        "/api/v1/external/next-assignee",
+        json={
+            "contact_phone": "+60120000012",
+            "agent_code": "general_enquiries",
+            "team_code": "marketing",
+            "preferred_assignee_id": "  ",
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["assignee_id"] == "user-1"
+    mock_access.return_value.get_next_assignee.assert_called_once_with("agent-1", "team-1")
+    mock_access.return_value.get_member_assignee.assert_not_called()
 
 
 @patch("app.api.v1.external.next_assignee.AccessAgentService")

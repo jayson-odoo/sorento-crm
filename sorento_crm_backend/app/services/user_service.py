@@ -9,6 +9,7 @@ from typing import Optional
 from datetime import datetime
 from app.models.user import (
     User,
+    UserStatus,
     UserRole,
     UserRoleAssignment,
     UserPermission,
@@ -1480,6 +1481,56 @@ class AccessAgentService:
         user = self.db.query(User).filter(User.id == next_user_id).first()
         if not user:
             return {"id": next_user_id, "email": None, "name": None}
+        return {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name or user.email,
+            "respond_user_id": user.respond_user_id,
+        }
+
+    def list_active_team_members_detail(self, team_id: str) -> list[dict]:
+        """
+        Active members of a team joined to User, ordered by sort_order, user_id.
+        Returns [{user_id, name, respond_user_id, email, sort_order}] for n8n (so it can
+        store ids/names and later pass a preferred_assignee_id to next-assignee).
+        """
+        rows = (
+            self.db.query(TeamMember, User)
+            .join(User, User.id == TeamMember.user_id)
+            .filter(
+                TeamMember.team_id == team_id,
+                User.status == UserStatus.ACTIVE.value,
+            )
+            .order_by(TeamMember.sort_order.asc().nullslast(), TeamMember.user_id.asc())
+            .all()
+        )
+        return [
+            {
+                "user_id": user.id,
+                "name": user.name or user.email,
+                "respond_user_id": user.respond_user_id,
+                "email": user.email,
+                "sort_order": member.sort_order,
+            }
+            for member, user in rows
+        ]
+
+    def get_member_assignee(self, team_id: str, user_id: str) -> Optional[dict]:
+        """
+        Return a specific team member as an assignee dict (same shape as get_next_assignee),
+        WITHOUT advancing the round-robin cursor. None if the user is not a member of the team.
+        Used by the preferred_assignee_id override path.
+        """
+        member = (
+            self.db.query(TeamMember)
+            .filter(TeamMember.team_id == team_id, TeamMember.user_id == user_id)
+            .first()
+        )
+        if not member:
+            return None
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return {"id": user_id, "email": None, "name": None, "respond_user_id": None}
         return {
             "id": user.id,
             "email": user.email,
