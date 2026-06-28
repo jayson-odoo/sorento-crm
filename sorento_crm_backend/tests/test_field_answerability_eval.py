@@ -41,14 +41,16 @@ def _chat_and_user():
 
 
 def _grounded(answer: str, expected: str) -> bool:
-    a = (answer or "").lower()
-    e = (expected or "").strip()
+    # Normalize underscores<->spaces so snake_case values (e.g. "in_transit")
+    # match how the LLM naturally renders them ("in transit").
+    a = (answer or "").lower().replace("_", " ")
+    e = (expected or "").strip().lower().replace("_", " ")
     if not e:
         return True
-    if e.lower() in a:
+    if e in a:
         return True
     toks = [t for t in e.replace(",", " ").split() if len(t) > 3]
-    return bool(toks) and any(t.lower() in a for t in toks)
+    return bool(toks) and any(t in a for t in toks)
 
 
 def _ask(chat, uid, entity, eid, path, vt, q):
@@ -199,6 +201,8 @@ def test_fanout_visible_fields_answerable_on_real_data():
     Stock = _try("app.models.inventory", "Stock")
     PickingHeader = _try("app.models.procurement", "PickingHeader")
     SPOAllocation = _try("app.models.procurement", "SPOAllocation")
+    Order = _try("app.models.order", "Order")  # "delivery orders"
+    InboundShipment = _try("app.models.procurement", "InboundShipment")  # "packing list"
 
     # (label, column) pairs to build visible_text; (question, column) to assert grounded
     specs = []
@@ -230,6 +234,17 @@ def test_fanout_visible_fields_answerable_on_real_data():
         specs.append((db.query(Attachment).filter(Attachment.original_filename.isnot(None)).first(),
                       [("File name", "original_filename"), ("Type", "mime_type")],
                       [("what is the file name", "original_filename")]))
+    if Order:  # "delivery orders" — has a catalog MCP tool; verifies prefer-visible nudge
+        specs.append((db.query(Order).filter(Order.order_number.isnot(None)).first(),
+                      [("Order number", "order_number"), ("Debtor", "debtor_name"),
+                       ("Order type", "order_type")],
+                      [("what is the order number", "order_number"),
+                       ("who is the debtor customer", "debtor_name")]))
+    if InboundShipment:  # "packing list"
+        specs.append((db.query(InboundShipment).filter(InboundShipment.shipment_number.isnot(None)).first(),
+                      [("Shipment number", "shipment_number"), ("Status", "shipment_status")],
+                      [("what is the shipment number", "shipment_number"),
+                       ("what is the shipment status", "shipment_status")]))
 
     checked = 0
     for row, labelcols, qs in specs:
