@@ -85,6 +85,12 @@ class Settings(BaseSettings):
     # Reformulator: include the last N history messages (user+assistant) as context.
     ai_assistant_reformulator_history_turns: int = 6
 
+    # Outline (user-guide knowledge base) base URL. INTERNAL Foundryx asset —
+    # its URL must never be surfaced to end users by the AI assistant. Used
+    # here only to derive the host to STRIP from guide tool-results and from
+    # the assistant's final answer (see ai_assistant_service redaction).
+    outline_base_url: str = "https://doc.foundryx.my"
+
     # Frontend app URL (for password reset and other links in emails)
     frontend_base_url: str | None = None
     # Fallback business WhatsApp number (E.164 digits, no '+') for the portal

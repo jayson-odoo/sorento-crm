@@ -10,6 +10,7 @@ import logging
 import re
 import time
 import uuid
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import HTTPException, status
@@ -573,6 +574,11 @@ class AIAssistantChatService:
         # that the guide author wrote inline.
         guide_link_map = self._extract_guide_link_map(tool_calls)
         response_text = self._inject_route_links(response_text, guide_link_map)
+        # Belt-and-suspenders: strip any internal Outline URL the model still
+        # managed to emit (the guide tool-result is already redacted upstream,
+        # but the model could regurgitate one from history). In-app route /
+        # `?guide_target` links are untouched.
+        response_text = self._strip_outline_urls(response_text)
         links = self._extract_links_from_text(response_text)
 
         # Smart suggestions: best-effort follow-up question generation. Always
@@ -990,7 +996,10 @@ class AIAssistantChatService:
                 except Exception:
                     pf_hit = False
                 if pf_hit:
-                    tool_calls_log.append(MCPToolCallResult("user_guides_read", True, pf_out))
+                    # Redact the internal Outline URL before the guide body ever
+                    # reaches the model context, so it cannot be echoed back.
+                    pf_clean = self._redact_guide_tool_output(pf_out)
+                    tool_calls_log.append(MCPToolCallResult("user_guides_read", True, pf_clean))
                     messages.append(
                         {
                             "role": "system",
@@ -998,8 +1007,9 @@ class AIAssistantChatService:
                                 "The user is asking how to do something or what a control "
                                 "does. Answer from this guide and KEEP its inline markdown "
                                 "links EXACTLY as written (they let the user click straight to "
-                                "the button). Do NOT say no guide is available.\n"
-                                f"--- Guide ---\n{pf_out[:6000]}\n--- End guide ---"
+                                "the button). Do NOT say no guide is available. Never mention "
+                                "or link to any external documentation URL.\n"
+                                f"--- Guide ---\n{pf_clean[:6000]}\n--- End guide ---"
                             ),
                         }
                     )
@@ -1184,6 +1194,10 @@ class AIAssistantChatService:
                 call_started = time.perf_counter()
                 try:
                     output = mcp.call_tool(tool_name, args=str_args)
+                    if tool_name == "user_guides_read":
+                        # Redact the internal Outline URL before the result is
+                        # logged or fed back to the model.
+                        output = self._redact_guide_tool_output(output)
                     call_ms = (time.perf_counter() - call_started) * 1000
                     is_error, error_summary = self._tool_output_is_error(output)
                     if is_error:
@@ -1631,6 +1645,10 @@ class AIAssistantChatService:
                     continue
                 try:
                     output = mcp.call_tool(name, args=str_args)
+                    if name == guide_tool_name:
+                        # Redact the internal Outline URL before it reaches the
+                        # model context.
+                        output = self._redact_guide_tool_output(output)
                     is_error, _ = self._tool_output_is_error(output)
                     tool_calls_log.append(MCPToolCallResult(name, not is_error, output))
                 except Exception as exc:
@@ -1922,3 +1940,91 @@ class AIAssistantChatService:
             seen.add(link)
             out.append(link)
         return out
+
+    def _outline_host(self) -> str:
+        """Host of the INTERNAL Outline knowledge base (e.g.
+        ``doc.foundryx.my``), derived from ``settings.outline_base_url`` — never
+        hardcoded. Empty string if it cannot be resolved (redaction then no-ops).
+        """
+        raw = (getattr(settings, "outline_base_url", "") or "").strip()
+        if not raw:
+            return ""
+        try:
+            netloc = urlparse(raw).netloc
+        except Exception:
+            netloc = ""
+        if netloc:
+            return netloc
+        # Fallback for a host-only value (no scheme).
+        return raw.replace("https://", "").replace("http://", "").split("/")[0]
+
+    def _strip_outline_urls(self, text: str) -> str:
+        """Remove every reference to the internal Outline base URL from a piece
+        of text BEFORE it is returned to / persisted for the user.
+
+        - A markdown link pointing at Outline (``[Guide](https://doc.foundryx.my/...)``,
+          bold-wrapped or not) collapses to just its (de-bolded) label so the
+          sentence still reads.
+        - A bare Outline URL (optionally angle-bracketed) is removed outright.
+
+        In-app links (``/resource-management/...``, ``?guide_target=...``) do NOT
+        point at the Outline host, so they are left untouched.
+        """
+        if not text:
+            return text
+        host = self._outline_host()
+        if not host:
+            return text
+        esc = re.escape(host)
+        result = text
+        # 1) Markdown link to Outline -> keep the de-bolded label only.
+        md_link = re.compile(
+            r"\[([^\]]+)\]\(\s*<?https?://" + esc + r"[^)>\s]*>?\s*\)"
+        )
+        result = md_link.sub(
+            lambda m: m.group(1).strip().strip("*").strip(), result
+        )
+        # 2) Bare Outline URL -> drop it.
+        bare = re.compile(r"<?https?://" + esc + r"[^\s)\]>]*>?")
+        result = bare.sub("", result)
+        # Tidy up residue ("see  ." double spaces, an emptied paren).
+        result = re.sub(r"\(\s*\)", "", result)
+        result = re.sub(r"[ \t]{2,}", " ", result)
+        result = re.sub(r" +([.,;:])", r"\1", result)
+        return result.rstrip()
+
+    def _redact_guide_tool_output(self, output: str) -> str:
+        """Strip the external Outline URL from a ``user_guides_read`` JSON result
+        BEFORE it enters the LLM context, so the model can never echo it
+        (the authoritative half of the belt-and-suspenders fix; the final
+        answer is also post-filtered via ``_strip_outline_urls``).
+
+        Removes the top-level ``url`` field and any ``alternative_titles[].url``,
+        and scrubs the host out of string values (the markdown body, snippets).
+        Internal ``?guide_target`` / route links inside the body survive (they
+        don't point at the Outline host), so ``_extract_guide_link_map`` still
+        re-injects them. ``url_id`` (an internal anchor, not a clickable URL) is
+        kept.
+        """
+        if not output:
+            return output
+        try:
+            payload = json.loads(output)
+        except Exception:
+            # Not JSON (shouldn't happen for this tool) — plain host strip.
+            return self._strip_outline_urls(output)
+        if isinstance(payload, dict):
+            payload.pop("url", None)
+            alts = payload.get("alternative_titles")
+            if isinstance(alts, list):
+                for alt in alts:
+                    if isinstance(alt, dict):
+                        alt.pop("url", None)
+                        for k, v in list(alt.items()):
+                            if isinstance(v, str):
+                                alt[k] = self._strip_outline_urls(v)
+            for k, v in list(payload.items()):
+                if isinstance(v, str):
+                    payload[k] = self._strip_outline_urls(v)
+            return json.dumps(payload)
+        return self._strip_outline_urls(output)
