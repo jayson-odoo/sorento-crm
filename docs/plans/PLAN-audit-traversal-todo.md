@@ -180,7 +180,12 @@ Pages to sweep (from `config/menu.config.tsx`). Desktop 1400px + mobile ~375px. 
 
 **Sweep pattern note:** list pages (complaints, SLA policies) share a consistent, clean, responsive DataGrid; no per-page sus UI found beyond the fixed template leaks (Item 1) + the Files data-quality items. Remaining: Marketing, Forms, System Mgmt, and detail/create-modal flows.
 
-_still to pass: Marketing, Forms, System Mgmt, + a detail page + a create modal at mobile width._
+**Header breadcrumb — REMOVED** ✅ (commit `56b2b48fe`, user-approved). The lone "Dashboards" / duplicate header breadcrumb (leftover from demo mega-nav removal) is gone; each page keeps its own title + breadcrumb below the header; utilities right-aligned (`ms-auto`). Browser-verified clean. Resolves user's "2 breadcrumbs confusing".
+- [ ] **Minor: Permissions in-page breadcrumb mislabeled** — `user-management/permissions/page.tsx:38` hardcodes "Home › Users"; pattern is "Home › {Module}" so it should read "User Management" (title is "Permissions"). Odd-one-out copy-paste; low severity. (The other "title≠crumb" hits are the normal Home›Module pattern, NOT bugs.)
+
+**Guides → Outline: PUSHED** ✅ (user-authorized). inventory/delivery-orders/product/sla data-analysis+how-to + `getting-started-for-new-users` now live in Outline; commercial held by forbid-list. Assistant can now serve them.
+
+_still to pass: Forms, System Mgmt list pages + a working create flow at mobile width._
 
 ---
 
