@@ -15,7 +15,19 @@ This file is the living TODO. Findings get appended under each section with seve
 
 ## ☀️ MORNING TRIAGE — prioritized digest (read this first, 2026-06-30 overnight)
 
-**Already SHIPPED to live** (deploy succeeded): windowed-KPI loading fix · security batch (CloudFront key untracked, const-time API-key, CORS, error-leak, log redaction) · SLA −8h timezone fix · commercial module restore · AI assistant (Outline-leak fix, turn-cache, capability answer, classifier-skip) · UI/footer/header cleanup. Guides pushed to Outline.
+### ✅ STATUS RECONCILED vs `main` (2026-06-30) — what's MERGED+DEPLOYED
+
+These are IN MAIN (origin/main `c68969b11`, deployed) — DONE, do not re-do:
+- Security: CloudFront key `git rm --cached` + gitignore (`6cbd5e4bc`) · const-time API-key compare (`6cbd5e4bc`) · CORS `expose_headers` scoped (`6cbd5e4bc`) · 500-handler hides `str(exc)` unless debug (`6cbd5e4bc`) · stop logging headers/token (`6fb5654d7`).
+- SLA −8h timezone fix, 6 sites + test (`f108b8961`).
+- Windowed-KPI loading fix + cache (`9f22bdffe`).
+- Commercial module code restored → fresh-DB alembic works (`d80a18fd3`).
+- AI assistant: Outline-URL leak fix (`fe9417a57`) · turn-scoped keyed cache (`f37f4652b`) · classifier-skip (`40792e6b0`) · deterministic capability answer (`8d11f34fc`) · routing eval harness (`6a28ab562`).
+- Lookup distinct-values SQL hardened to Core (`f82175983`) — NOTE: this is the SQL cleanup, NOT the lookup-403 RBAC fix (still open).
+- UI: demo mega-nav + dead footer links removed (`1602d2a20`) · redundant header breadcrumb removed (`56b2b48fe`).
+- Guides-sync forbid-list safeguard (`7f5d9f67b`). Inventory/delivery/product/sla + getting-started guides PUSHED to Outline.
+
+⬜ STILL OPEN (NOT in main — documented/planned only): everything in the 🔴/🟠/🟡 lists below + the AWS key ROTATION (untrack shipped, rotation pending) + the 12 NEW module guides (on branch `docs/user-guides-data-analysis-uncovered-modules`, not pushed). Audit docs + 2 fix plans also live on that branch, not main.
 
 **🔴 YOUR ACTION (can't be done by me):**
 1. **Rotate the AWS CloudFront key** + purge `private_key.pem` from git history (`RUNBOOK-purge-private-key-from-git-history.md`). The committed key is live until rotated.
@@ -44,8 +56,8 @@ Ranked findings (verify each before fixing):
 
 **CRITICAL**
 - [x] ~~Secrets committed in `.env`~~ — **VERIFIED FALSE**: `sorento_crm_backend/.env` is gitignored and `git log --all` shows it was NEVER committed. Secrets are on-disk only, not in VCS. (Agent over-claimed.) No action beyond normal hygiene. loadtest `.env.example` is a template (empty/`changeme`).
-- [ ] **CONFIRMED CRITICAL (grill-verified): `sorento_crm_backend/private_key.pem` IS tracked in git** (real PKCS8). NOT a sample — actively loaded by `app/services/cloudfront_signer.py:80-85` (`CloudFrontSigner`), `.env` has `CLOUDFRONT_PRIVATE_KEY_PATH=private_key.pem` + key-pair-id `K1NX8MQAUJBE7N` + domain `d1k6bbzmejl1no.cloudfront.net`. Anyone with repo access can forge signed CloudFront URLs → bypass file-access controls. Action: `git rm --cached`, gitignore, **purge history** (git-filter-repo/BFG), **rotate the CloudFront key pair**. Listed-co #1 item.
-- [ ] **`app/dependencies.py:212`** logs full request headers (incl Authorization / X-API-Key) on auth-fail: `logger.warning(f"No token found. Headers: {dict(request.headers)}")`. Redact.
+- [~] **`private_key.pem`** — `git rm --cached` + gitignore ✅ DONE IN MAIN (`6cbd5e4bc`). ⬜ STILL PENDING (USER): **purge from git history** (git-filter-repo/BFG) + **rotate the CloudFront key pair** (`K1NX8MQAUJBE7N`). The key in history stays compromised until rotated — RUNBOOK written.
+- [x] ✅ DONE IN MAIN (`6fb5654d7`) **`dependencies.py`** no longer logs request headers / token bytes on auth-fail.
 
 **HIGH**
 - [x] ✅ DONE (branch `security/audit-hardening-20260629`, commit `6cbd5e4bc`) **`dependencies.py`** API-key compare → `hmac.compare_digest`. Tests: 21 external API-key route tests pass.
@@ -81,14 +93,14 @@ COMMERCIAL DECISION REVISED (user): migrations 151/152 IMPORT the deleted module
 - [ ] **`guards.py:22-24`** `_tenant_id_for_request()` always returns DEFAULT_TENANT_ID — must add tenant filter at ORM layer BEFORE real multi-tenant onboarding or cross-tenant leak. (Listed-co blocker for multi-tenant.)
 
 **LOW**
-- [ ] **`app/main.py:34`** `app.dependencies` forced to DEBUG (logs token length + first 50 chars at dependencies.py:204-209). Guard with `settings.debug`.
+- [x] ✅ DONE IN MAIN (`6fb5654d7`) **`app/main.py:34`** forced-DEBUG now gated behind `settings.debug`.
 - [ ] No HTTP rate limiting (SlowAPI). Add esp. to login / password-reset / portal-OTP.
 - [ ] CORS origins: fail startup if `*` in prod.
 
 ### 1b. Backend bugs / reliability  ✅ AGENT DONE
 
 **CRITICAL**
-- [ ] **Timezone shift in SLA event logs** — `sla_service.py:2184, 3094-97, 3957-60, 3984-87, 4011-14, 4038-41` pass naive-UTC tracking datetimes (`due_at` etc.) straight into `create_event_log`, which treats naive as MYT(+8) → logs shift −8h. Wrap with `_to_aware_utc()`. Corrupts SLA audit/KPI. (Matches known CLAUDE.md gotcha — more sites found.)
+- [x] ✅ DONE IN MAIN (`f108b8961`) **Timezone shift in SLA event logs** — all 6 sites wrapped with `_to_aware_utc()` + regression test. (was: naive-UTC → MYT(+8) → −8h log shift.)
 - [ ] **Race in idempotent conversation-SLA create** — `sla_service.py:3345-3387` / `sla/sla_tracking.py:735-785`: gap between active-row query and commit; concurrent insert → IntegrityError caught as generic 500 instead of idempotent 200. Catch `IntegrityError`, re-query, return existing.
 
 **HIGH**
