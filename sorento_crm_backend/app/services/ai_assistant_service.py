@@ -3,8 +3,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo
+import hashlib
 import json
 import logging
 import re
@@ -117,6 +118,74 @@ class MCPToolCallResult:
     tool_name: str
     ok: bool
     output: str
+
+
+class _TurnToolCache:
+    """Turn-scoped, strictly-keyed memo for live tool / guide-content calls.
+
+    A fresh instance is created per ``respond()`` invocation (one assistant
+    turn): there is NO cross-turn, global, or module-level state. Within a turn,
+    the SAME tool invoked with identical args is served from cache so the agent
+    loop (and the deterministic guide pre-fetch) never repeat the same live MCP
+    call. Volatile data (e.g. stock levels) can change between turns, so the
+    cache deliberately dies at the end of the turn.
+
+    SECURITY (UAC3b.2): the cache key is
+    ``sha256(user_id ∥ conversation_id ∥ turn_id ∥ tool_name ∥ sha256(canonical_sorted_args))``.
+    Because the principal (``user_id``), thread (``conversation_id``) and turn
+    (``turn_id``) are baked into every key, two different users / contacts /
+    turns can NEVER collide on a cache entry even if they call the identical
+    tool with identical args — cross-principal sharing is structurally
+    impossible, not merely avoided by convention.
+    """
+
+    _SEP = "\x1f"  # unit separator — cannot appear in JSON / identifiers
+
+    def __init__(self, *, user_id: str | None, conversation_id: str | None, turn_id: str | None):
+        self.user_id = str(user_id or "")
+        self.conversation_id = str(conversation_id or "")
+        self.turn_id = str(turn_id or "")
+        self._store: dict[str, str] = {}
+        # Observability (UAC3b.4): live_calls counts loader invocations (real
+        # tool calls), hits counts cache-served calls.
+        self.live_calls = 0
+        self.hits = 0
+
+    @staticmethod
+    def _args_hash(args: dict[str, Any] | None) -> str:
+        canonical = json.dumps(
+            args or {}, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def key(self, tool_name: str, args: dict[str, Any] | None) -> str:
+        raw = self._SEP.join(
+            [
+                self.user_id,
+                self.conversation_id,
+                self.turn_id,
+                str(tool_name or ""),
+                self._args_hash(args),
+            ]
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def get_or_call(
+        self,
+        tool_name: str,
+        args: dict[str, Any] | None,
+        loader: Callable[[], str],
+    ) -> str:
+        """Return the cached result for ``(tool_name, args)`` within this turn,
+        invoking ``loader`` (the live call) exactly once on the first miss."""
+        k = self.key(tool_name, args)
+        if k in self._store:
+            self.hits += 1
+            return self._store[k]
+        out = loader()
+        self.live_calls += 1
+        self._store[k] = out
+        return out
 
 
 class MCPRuntimeClient:
@@ -415,6 +484,16 @@ class AIAssistantChatService:
 
         user_msg = self.append_message(conv.id, "user", message, metadata_json=user_meta or None)
         logger.info("AI assistant user message appended conversation_id=%s", conv.id)
+
+        # Item 3b: turn-scoped, strictly-keyed tool/guide result cache. Created
+        # fresh per respond() so it can never outlive the turn or leak across
+        # users/threads (key includes user_id + conversation_id + turn_id). The
+        # turn id is this user message's id — unique per turn.
+        turn_cache = _TurnToolCache(
+            user_id=user_id,
+            conversation_id=str(conv.id),
+            turn_id=str(user_msg.id),
+        )
         history_rows = (
             self.db.query(AIAssistantMessage)
             .filter(AIAssistantMessage.conversation_id == conv.id)
@@ -549,6 +628,7 @@ class AIAssistantChatService:
                 user_message=message,
                 record_ctx=record_ctx,
                 page_snapshot=page_snapshot,
+                turn_cache=turn_cache,
             )
         else:
             response_text, tool_calls, token_usage = self._run_agent_loop(
@@ -564,14 +644,18 @@ class AIAssistantChatService:
                 conversation_id=str(conv.id),
                 user_message_id=str(user_msg.id),
                 record_ctx=record_ctx,
+                turn_cache=turn_cache,
             )
         agent_ms = (time.perf_counter() - agent_started) * 1000
         logger.info(
-            "AI assistant agent phase finished conversation_id=%s response_len=%s tool_calls=%s elapsed_ms=%.1f",
+            "AI assistant agent phase finished conversation_id=%s response_len=%s tool_calls=%s "
+            "elapsed_ms=%.1f tool_cache_live=%s tool_cache_hits=%s",
             conv.id,
             len(response_text or ""),
             len(tool_calls),
             agent_ms,
+            turn_cache.live_calls,
+            turn_cache.hits,
         )
         # Post-process: when the agent rephrased a how-to answer and dropped
         # inline markdown links from the guide, re-wrap any bold menu paths
@@ -846,6 +930,27 @@ class AIAssistantChatService:
             return False
         return any(t in m for t in self._GUIDE_QUESTION_TRIGGERS)
 
+    def _cached_tool_call(
+        self,
+        turn_cache: _TurnToolCache | None,
+        client: MCPRuntimeClient,
+        tool_name: str,
+        args: dict[str, Any],
+    ) -> str:
+        """Invoke an MCP tool, deduplicated within the turn via ``turn_cache``.
+
+        When ``turn_cache`` is None (e.g. a direct caller that passes no cache),
+        the call is made directly — behavior is identical to calling
+        ``client.call_tool()``. The cache stores the RAW tool output so any
+        downstream transform (e.g. Outline-URL redaction) runs identically on a
+        cached or freshly-fetched result.
+        """
+        if turn_cache is None:
+            return client.call_tool(tool_name, args=args)
+        return turn_cache.get_or_call(
+            tool_name, args, lambda: client.call_tool(tool_name, args=args)
+        )
+
     def _run_agent_loop(
         self,
         *,
@@ -861,6 +966,7 @@ class AIAssistantChatService:
         conversation_id: str | None = None,
         user_message_id: str | None = None,
         record_ctx: dict[str, Any] | None = None,
+        turn_cache: _TurnToolCache | None = None,
     ) -> tuple[str, list[MCPToolCallResult], dict[str, int]]:
         """Orchestrator loop: LLM chooses/invokes MCP tools via function-calling, then answers.
 
@@ -989,9 +1095,11 @@ class AIAssistantChatService:
                     settings.ai_assistant_mcp_url,
                     timeout_seconds=settings.ai_assistant_mcp_timeout_seconds,
                 )
-                pf_out = pf.call_tool(
+                pf_out = self._cached_tool_call(
+                    turn_cache,
+                    pf,
                     "user_guides_read",
-                    args={"query": user_message, "contact_id": "", "space_id": ""},
+                    {"query": user_message, "contact_id": "", "space_id": ""},
                 )
                 # Only inject a REAL guide hit. NO_MATCH / OUTLINE_ERROR are not
                 # flagged by _tool_output_is_error, and injecting them would tell
@@ -1200,7 +1308,7 @@ class AIAssistantChatService:
                 )
                 call_started = time.perf_counter()
                 try:
-                    output = mcp.call_tool(tool_name, args=str_args)
+                    output = self._cached_tool_call(turn_cache, mcp, tool_name, str_args)
                     if tool_name == "user_guides_read":
                         # Redact the internal Outline URL before the result is
                         # logged or fed back to the model.
@@ -1509,6 +1617,7 @@ class AIAssistantChatService:
         user_message: str,
         record_ctx: dict[str, Any],
         page_snapshot: PageSnapshotPayload | None = None,
+        turn_cache: _TurnToolCache | None = None,
     ) -> tuple[str, list[MCPToolCallResult], dict[str, int]]:
         """Render a grounded answer from the deterministic record-context facts.
 
@@ -1664,7 +1773,7 @@ class AIAssistantChatService:
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": output})
                     continue
                 try:
-                    output = mcp.call_tool(name, args=str_args)
+                    output = self._cached_tool_call(turn_cache, mcp, name, str_args)
                     if name == guide_tool_name:
                         # Redact the internal Outline URL before it reaches the
                         # model context.
