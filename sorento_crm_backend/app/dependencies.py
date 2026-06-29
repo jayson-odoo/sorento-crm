@@ -210,7 +210,8 @@ async def get_current_user(
         logger.debug(f"Token length: {len(token)}, first 20 chars: {token[:20]}...")
     
     if not token:
-        logger.warning(f"No token found. Headers: {dict(request.headers)}")
+        # Do NOT log request headers — they carry Authorization / X-API-Key / cookies.
+        logger.warning("No authentication token found in request")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
@@ -232,7 +233,8 @@ async def get_current_user(
         import logging
         logger = logging.getLogger(__name__)
         logger.error(f"JWT validation failed: {str(e)}")
-        logger.error(f"Token (first 50 chars): {token[:50] if token else 'None'}...")
+        # Never log token bytes (even a prefix) — log only length for debugging.
+        logger.error(f"Token length: {len(token) if token else 0}")
         logger.error(f"JWT Secret configured: {bool(settings.jwt_secret)}")
         logger.error(f"JWT Secret length: {len(settings.jwt_secret) if settings.jwt_secret else 0}")
         raise HTTPException(

@@ -30,8 +30,10 @@ logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-# Enable debug logging for dependencies module
-logging.getLogger('app.dependencies').setLevel(logging.DEBUG)
+# Verbose auth-dependency logging only in debug — at DEBUG it logs token length +
+# first chars, which must never run in production (security audit 2026-06-29).
+if settings.debug:
+    logging.getLogger('app.dependencies').setLevel(logging.DEBUG)
 
 # Create FastAPI app
 app = FastAPI(
