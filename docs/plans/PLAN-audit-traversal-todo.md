@@ -27,7 +27,7 @@ This file is the living TODO. Findings get appended under each section with seve
 
 **🟠 SECURITY phase-2 (VERIFY each first — phase-1 had a false alarm):**
 5. **✅CONFIRMED** no rate-limit on `/auth/reset-password` (auth.py:212) + `/auth/signup` (auth.py:143) — `login` HAS `login_throttle` (auth.py:44-97), these two don't. Signup 409s on existing email → enumeration. Portal OTP (enum+DOS) still to confirm. Bundle into one "rate-limiting" plan (reuse `login_throttle`).
-6. Presigned-URL endpoint has no object-level authz (IDOR) — check if CloudFront/R2 keys are global vs per-tenant. + inbound webhook signature verification not found (confirm if inbound exists). Bundle into "object-level authz" plan.
+6. **✅CONFIRMED** Presigned-URL IDOR (`external/presigned_url.py:88`): X-API-Key gate only, NO attachment-ownership check; CloudFront signer uses a **single global key_pair_id** (not per-tenant) → any key holder presigns any file. **✅CONFIRMED** portal OTP has only per-contact cooldown(60s)/cap(10/day), **no per-IP global limit**. **REFUTED**: no unsigned inbound webhook — inbound integration uses X-API-Key-gated `/external/*` routes (shared-key IS the auth). NOTE: shared-key model = key compromise grants broad access (presigned-any-file + act-as-user); consider scoping/rotating EXTERNAL_API_KEY + object-level authz. Bundle into "object-level authz" plan.
 
 **🟡 SMALLER / CLEANUP:** dead filters (Email-Outbox "Deferred", Stock-Inquiry "Updated") · Campaign status casing FE/BE mismatch · OTP plain-SHA256 · Permissions in-page breadcrumb "Users"→"User Management" · Files junk test folders + raw UUID filenames + clipped Access pills + "[DONT USE THIS]" attachment type · complaint create exposes raw Respond.io IDs · attachment-create permission gap.
 
