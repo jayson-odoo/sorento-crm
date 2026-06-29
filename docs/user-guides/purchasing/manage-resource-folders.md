@@ -25,12 +25,27 @@ To **create a top-level folder**, click **[Add](/resource-management/attachment-
 
 Type into the **Search folders…** box at the top of the sidebar to filter the tree.
 
-## Rename a file
+## File actions (right-click menu)
 
+File rows in the attachments table no longer have a pencil / **Actions** column on the right. Instead, **right-click the file row** (or **long-press** on a touch device) to open its action menu. The menu items are:
 
-1. Find the file row in the attachments table (right pane).
-2. Click the pencil icon in the actions column.
-3. Edit the name in the **Rename file** dialog and confirm.
+| Action | Menu item |
+|----|----|
+| Open the file | **Open** |
+| Preview in-app | **Preview** |
+| Download | **Download** |
+| Rename the file | **Rename** |
+| Move to another folder | **Move to…** |
+| Re-run the n8n parser on this file | **Resubmit to n8n** |
+| Send the file to Trash | **Move to trash** |
+
+(In **Trash**, the menu shows **Restore** and **Permanently delete** instead.)
+
+### Rename a file
+
+1. **Right-click** the file row in the attachments table (right pane) — or long-press on touch.
+2. Choose **Rename** from the context menu.
+3. Edit the name in the rename dialog and confirm.
 
 ## Quick Access
 

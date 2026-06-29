@@ -44,7 +44,10 @@ ROUTE_MAP: list[tuple[str, str]] = [
     ("Delivery Order Management → Delivery Orders", "/order-management/orders"),
     # Inventory
     ("Inventory Management → Warehouses", "/inventory-management/warehouses"),
+    ("Inventory Management → Storage Zones", "/inventory-management/storage-zones"),
     ("Inventory Management → Stock", "/inventory-management/stock"),
+    ("Inventory Management → Stock Batches", "/inventory-management/stock-batches"),
+    ("Inventory Management → Stock Ledger", "/inventory-management/stock-ledger"),
     # Marketing
     ("Marketing Management → Promotion Products", "/marketing-management/promotion-products"),
     ("Marketing Management → Promotions", "/marketing-management/promotions"),
