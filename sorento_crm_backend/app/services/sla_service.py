@@ -1255,24 +1255,22 @@ class ConversationSLATrackingService:
     def _push_respond_assignee(
         self, tracking: ConversationSLATracking, new_respond_user_id: Optional[str]
     ) -> None:
-        """Best-effort Respond.io conversation-assignee push (conversation rows only).
+        """Enqueue a Respond.io conversation-assignee push (conversation rows only).
 
-        Writes an integration_log on success AND failure (business_id = tracking.id).
-        Form-SLA rows have no Respond conversation -> skipped. A missing assignee
-        respond_user_id -> skipped + warning. Never raises (post-commit side effect).
-        """
+        Used by reassign, takeover, and escalate so the Respond conversation owner
+        follows the CRM assignee. The actual Respond call + its outbox row (success
+        AND failure, with the Respond HTTP status/body on 4xx/5xx) run on the
+        ``respond_io`` worker queue — decoupled from the request. Form-SLA rows have
+        no Respond conversation -> skipped; a missing assignee respond_user_id ->
+        skipped. Enqueue is best-effort: never raises (post-commit side effect)."""
         import logging
-        import json as _json
         from app.services.form_sla_service import FORM_SLA_TYPES
-        from app.services.integration_service import RespondClient, IntegrationLogService
-        from app.schemas.integration import IntegrationLogCreate
 
         log = logging.getLogger(__name__)
         s_type = getattr(tracking, "source_entity_type", None)
         if s_type in FORM_SLA_TYPES:
             return  # form SLA -> no Respond conversation
-        contact_id = getattr(tracking, "respond_contact_id", None)
-        if not contact_id:
+        if not getattr(tracking, "respond_contact_id", None):
             log.warning(
                 "Respond assignee push skipped for %s: no linked contact.",
                 getattr(tracking, "id", "?"),
@@ -1284,67 +1282,23 @@ class ConversationSLATrackingService:
                 getattr(tracking, "id", "?"),
             )
             return
-        # Resolve the contact's Respond identifier (respond_io_id), per the
-        # contact_id != respond_io_id rule.
-        contact = (
-            self.db.query(RespondContact)
-            .filter(RespondContact.id == str(contact_id))
-            .first()
-        )
-        identifier = getattr(contact, "respond_io_id", None) if contact else None
-        if not identifier:
-            log.warning(
-                "Respond assignee push skipped for %s: contact has no respond_io_id.",
-                getattr(tracking, "id", "?"),
-            )
-            return
-        identifier = str(identifier)
-        assignee_id = str(new_respond_user_id).strip()
-        endpoint = f"/v2/contact/id:{identifier}/conversation/assignee"
-        payload = {"assigneeId": assignee_id}
         try:
-            client = RespondClient.for_identifier(self.db, identifier)
-            client.set_conversation_assignee(identifier, assignee_id)
-            try:
-                IntegrationLogService(self.db).create_integration_log(
-                    IntegrationLogCreate(
-                        integration_channel="respond_io",
-                        business_table="conversation_sla_tracking",
-                        business_id=str(tracking.id),
-                        direction="outbound",
-                        endpoint=endpoint,
-                        http_method="POST",
-                        request_payload=_json.dumps(payload),
-                        status="success",
-                        status_code=200,
-                    )
-                )
-            except Exception as le:  # noqa: BLE001
-                self.db.rollback()
-                log.warning("integration_log (success) write failed: %s", le)
-        except Exception as e:  # noqa: BLE001 — best-effort; log the failure
-            log.warning(
-                "Respond assignee push failed for %s: %s",
-                getattr(tracking, "id", "?"),
-                e,
+            from app.services.queue_service import enqueue_job
+            from app.tasks.respond_io_tasks import set_respond_conversation_assignee
+
+            enqueue_job(
+                set_respond_conversation_assignee,
+                str(tracking.id),
+                str(new_respond_user_id).strip(),
+                queue_name="respond_io",
+                job_timeout=60,
             )
-            try:
-                IntegrationLogService(self.db).create_integration_log(
-                    IntegrationLogCreate(
-                        integration_channel="respond_io",
-                        business_table="conversation_sla_tracking",
-                        business_id=str(tracking.id),
-                        direction="outbound",
-                        endpoint=endpoint,
-                        http_method="POST",
-                        request_payload=_json.dumps(payload),
-                        status="failed",
-                        error_message=str(e),
-                    )
-                )
-            except Exception as le:  # noqa: BLE001
-                self.db.rollback()
-                log.warning("integration_log (failure) write failed: %s", le)
+        except Exception as exc:  # noqa: BLE001 — enqueue is best-effort
+            log.warning(
+                "Respond assignee push enqueue failed for %s: %s",
+                getattr(tracking, "id", "?"),
+                exc,
+            )
 
     def _notify_reassignment(
         self,
@@ -2336,8 +2290,8 @@ class ConversationSLATrackingService:
         return warnings
 
     def _assert_can_extend(self, tracking: ConversationSLATracking, actor_user_id: str) -> None:
-        """Gating for extend (UAC-2/3/4): assignee-only, unresolved, has a
-        resolution deadline. 403 for non-assignee, 422 otherwise."""
+        """Gating for extend: assignee-only (conversation AND form SLA — consistent),
+        unresolved, has a resolution deadline. 403 for non-assignee, 422 otherwise."""
         from app.services.error_handler import AppException
 
         assignee = getattr(tracking, "assigned_to_id", None)
@@ -2460,59 +2414,45 @@ class ConversationSLATrackingService:
     def _notify_next_tier_deadline_extended(
         self, tracking: ConversationSLATracking, *, reason: str
     ) -> None:
-        """Notify the next escalation tier's assignee that the deadline was extended.
-        Next-tier resolution uses the SAME path as escalation per system:
-          - form SLA: (source_entity_type, team_set_code) + tier via
-            resolve_team_with_tier_fallback (current tier + 1).
-          - conversation SLA: get_escalation_assignee_for_tier (current tier + 1,
-            capped at 3) under the row's agent_id / team_set_code.
-        No next tier (top tier / unresolvable) -> skip silently. Never raises.
+        """Notify the higher tiers that the deadline was extended.
+
+        Fans UP every tier above the current one (current+1 .. 3, capped at tier 3)
+        whose ``AgentTeam`` row has ``notify_on_extension = true`` — so the parent AND
+        the grandparent tier are reached when both opt in, while an admin can untick a
+        tier to silence it. The tier chain is the agent team config
+        (``AgentTeam(agent_id, tier, team_set_code, team_id)``), not parent_team_id.
+
+        Per-tier recipient = that tier team's next round-robin assignee, resolved by
+        PEEKING the cursor (never advancing it — no tier/clock/RR mutation on extend).
+        Recipients are deduped so a shared member isn't double-sent. No higher tier
+        configured / opted-in -> skip silently. Never raises.
         """
         import logging
 
         log = logging.getLogger(__name__)
         try:
             from app.services.form_sla_service import FORM_SLA_TYPES
+            from app.services.user_service import AccessAgentService
 
             from_tier = int(getattr(tracking, "current_tier", 0) or 0)
             if from_tier < 1:
                 return
             target_tier = from_tier + 1
             if target_tier > 3:
-                return  # already top tier -> no next tier (UAC-24)
+                return  # already top tier -> no tier above
 
             s_type = getattr(tracking, "source_entity_type", None)
-            assignee_id: Optional[str] = None
-
-            # Notify-only: resolve the next-tier recipient by PEEKING the round-robin
-            # cursor (never advancing it). Advancing here would steal a turn from the
-            # next real escalation to that tier (PLAN decision 11: no tier/clock/RR
-            # mutation on extend). Both paths resolve (agent_id, team_id) then peek.
-            from app.services.user_service import AccessAgentService
-
             agent_svc = AccessAgentService(self.db)
-            team_id: Optional[str] = None
-            agent_id: Optional[str] = None
 
+            # Resolve the agent that owns this row's tier chain. Form: the row's agent.
+            # Conversation: the row's agent override, else the entity-type's agent.
             if s_type in FORM_SLA_TYPES:
                 agent_id = (
                     str(getattr(tracking, "agent_id"))
                     if getattr(tracking, "agent_id", None) is not None
                     else None
                 )
-                if not agent_id:
-                    return
-                resolved = agent_svc.resolve_team_with_tier_fallback(
-                    agent_id,
-                    target_tier,
-                    team_set_code=getattr(tracking, "team_set_code", None),
-                )
-                if not resolved:
-                    return  # no higher-tier team configured
-                team_id, _actual_tier = resolved
             else:
-                # Conversation SLA — mirror get_escalation_assignee_for_tier's TEAM
-                # resolution (agent id + tier team) but stop short of get_next_assignee.
                 agent_id_override = getattr(tracking, "agent_id", None) or None
                 if agent_id_override:
                     agent_id = str(agent_id_override)
@@ -2521,33 +2461,27 @@ class ConversationSLATrackingService:
                         (s_type or "").strip().lower()
                     ) or "complaint"
                     agent_id = agent_svc.get_agent_id_by_code(agent_code)
-                if not agent_id:
-                    return
-                team_id = agent_svc.get_team_id_by_tier(
-                    agent_id,
-                    target_tier,
-                    team_set_code=getattr(tracking, "team_set_code", None) or None,
-                )
-                if not team_id:
-                    return  # no tier team configured
-
-            _last_id, next_id = agent_svc._peek_next_assignee(agent_id, team_id)
-            assignee_id = str(next_id) if next_id else None
-
-            if not assignee_id:
+            if not agent_id:
                 return
-            # Do not self-notify the actor's own row owner if they happen to also be
-            # the next-tier assignee resolution target — the recipient is the next
-            # tier, distinct from the current assignee by construction; still guard
-            # against an identical id.
-            if str(assignee_id) == str(getattr(tracking, "assigned_to_id", "")):
-                # Next tier resolves to the same person (single-member chain) — still
-                # notify them: they own the next tier too. No suppression.
-                pass
+            team_set_code = getattr(tracking, "team_set_code", None) or None
 
-            self._notify_user_deadline_extended(
-                tracking, recipient_user_id=assignee_id, reason=reason
-            )
+            notified: set[str] = set()
+            for tier in range(target_tier, 4):
+                res = agent_svc.get_tier_team_and_notify(
+                    agent_id, tier, team_set_code=team_set_code
+                )
+                if not res:
+                    continue  # no team configured at this tier
+                tier_team_id, notify_flag = res
+                if not notify_flag:
+                    continue  # this tier opted out of extension notifications
+                _last_id, next_id = agent_svc._peek_next_assignee(agent_id, tier_team_id)
+                if not next_id or str(next_id) in notified:
+                    continue
+                notified.add(str(next_id))
+                self._notify_user_deadline_extended(
+                    tracking, recipient_user_id=str(next_id), reason=reason
+                )
         except Exception as e:  # noqa: BLE001 — best-effort, extend already committed
             log.warning(
                 "deadline-extended notify failed for %s: %s",
@@ -3788,43 +3722,29 @@ class ConversationSLATrackingService:
     def _close_respond_conversation_best_effort(
         self, tracking: ConversationSLATracking
     ) -> None:
-        """Close the contact's Respond.io conversation when a conversation SLA is
-        resolved. Resolves the contact's ``respond_io_id`` (never the internal
-        ``respond_contact_id``, per the inbox-URL rule) and calls Respond. Any
-        failure is logged and swallowed."""
+        """Enqueue the Respond.io conversation close for a resolved conversation SLA.
+
+        The actual close + its Respond outbox row (success AND failure, with the
+        Respond HTTP status/body on 4xx/5xx) run on the ``respond_io`` worker queue
+        — decoupled from the request so a Respond failure never blocks the resolve,
+        and so a prod failure is diagnosable via ``integration_logs``. Enqueue itself
+        is best-effort (never raises; the resolve already committed)."""
         import logging
 
         logger = logging.getLogger(__name__)
         try:
-            from app.services.integration_service import RespondClient
+            from app.services.queue_service import enqueue_job
+            from app.tasks.respond_io_tasks import close_respond_conversation
 
-            respond_io_id = None
-            contact = getattr(tracking, "contact", None)
-            if contact is not None:
-                respond_io_id = getattr(contact, "respond_io_id", None)
-            if not respond_io_id and getattr(tracking, "respond_contact_id", None):
-                row = (
-                    self.db.query(RespondContact.respond_io_id)
-                    .filter(RespondContact.id == str(tracking.respond_contact_id))
-                    .first()
-                )
-                respond_io_id = row[0] if row else None
-            if not respond_io_id:
-                logger.warning(
-                    "Resolve: no respond_io_id for tracking %s; skipping Respond close.",
-                    getattr(tracking, "id", None),
-                )
-                return
-            RespondClient.for_contact_id(
-                self.db, str(tracking.respond_contact_id)
-            ).close_conversation(
-                str(respond_io_id),
-                category="Resolved",
-                summary="Resolved from Sorento CRM SLA tracking.",
+            enqueue_job(
+                close_respond_conversation,
+                str(tracking.id),
+                queue_name="respond_io",
+                job_timeout=60,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — enqueue is best-effort
             logger.warning(
-                "Resolve: Respond.io close failed for tracking %s: %s",
+                "Resolve: failed to enqueue Respond.io close for tracking %s: %s",
                 getattr(tracking, "id", None),
                 exc,
             )

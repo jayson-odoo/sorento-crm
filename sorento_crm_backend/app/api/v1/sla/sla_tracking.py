@@ -1096,6 +1096,11 @@ async def escalate_conversation_sla_tracking(
     # already committed. NOT placed in escalate_tracking, since n8n's integration
     # escalate posts its own notification (avoids double-notify).
     _notify_conversation_sla_escalation(db, tracking, assignee, reason)
+    # Escalation is a reassignment: push the new-tier owner to the Respond.io
+    # conversation too (async + outbox-logged via the respond_io worker), mirroring
+    # reassign. Best-effort — the escalation already committed. (The n8n integration
+    # escalate owns its own Respond routing, so this lives in the UI route only.)
+    service._push_respond_assignee(tracking, assignee.get("respond_user_id"))
     return build_conversation_sla_tracking_response(db, tracking)
 
 

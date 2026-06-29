@@ -120,6 +120,8 @@ export interface AgentTeamAssignment {
   tier?: number | null;
   /** SLA policy bound to this team set; shared across every tier row of the same code. */
   policy_id?: string | null;
+  /** Tier 2/3: notify this team's next assignee when a lower-tier deadline is extended. */
+  notify_on_extension?: boolean;
   team_name?: string;
   members?: AgentTeamMemberInfo[];
   last_assigned?: AgentTeamMemberInfo | null;

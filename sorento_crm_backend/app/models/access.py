@@ -331,6 +331,13 @@ class AgentTeam(Base):
     # cast to every tier row of the set by set_agent_teams. RESTRICT so a policy in
     # use can't be deleted (mirrors the SLA-policy delete guard).
     policy_id = Column(UUID(as_uuid=False), ForeignKey("sla_policies.id", ondelete="RESTRICT"), nullable=True)
+    # Whether THIS tier's team is notified when a LOWER-tier SLA deadline is extended.
+    # On extend, every higher tier (current+1..3) with this flag set gets a
+    # "deadline extended" notice. Default true preserves+extends the old "+1 only"
+    # behaviour (now the grandparent is reached too); admins untick to silence a tier.
+    notify_on_extension = Column(
+        Boolean, default=True, nullable=False, server_default=text("true")
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     agent = relationship("AccessAgent", back_populates="agent_teams")

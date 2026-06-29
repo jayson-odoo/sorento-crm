@@ -1,9 +1,9 @@
-"""Resolve closes the Respond.io conversation (best-effort).
+"""Resolve enqueues the Respond.io conversation close (async + outbox-logged).
 
-These exercise the helper directly with a mocked DB/client so they don't need a
-full SLA tracking DB fixture: resolving a conversation SLA must call
-RespondClient.close_conversation with the contact's respond_io_id, and any
-Respond failure must be swallowed (the resolve already committed).
+The actual Respond call + its integration_log now run on the ``respond_io`` worker
+queue (see PLAN-respond-sla-actions-async-logged.md). The service helper just
+enqueues; the task behaviour (close call + success/failure outbox row) is covered in
+test_respond_conversation_tasks.py.
 """
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -17,49 +17,21 @@ def _service() -> ConversationSLATrackingService:
     return svc
 
 
-def test_close_uses_contact_respond_io_id():
+def test_resolve_enqueues_close_with_tracking_id():
     svc = _service()
-    tracking = SimpleNamespace(
-        id="t1",
-        respond_contact_id="internal-uuid",
-        contact=SimpleNamespace(respond_io_id="888"),
-    )
-    fake_client = MagicMock()
-    with patch(
-        "app.services.integration_service.RespondClient.for_contact_id",
-        return_value=fake_client,
-    ) as for_contact:
+    tracking = SimpleNamespace(id="t1", respond_contact_id="internal-uuid")
+    with patch("app.services.queue_service.enqueue_job") as enqueue:
         svc._close_respond_conversation_best_effort(tracking)
+    enqueue.assert_called_once()
+    # task fn + the tracking id, on the respond_io queue.
+    assert enqueue.call_args.args[0].__name__ == "close_respond_conversation"
+    assert enqueue.call_args.args[1] == "t1"
+    assert enqueue.call_args.kwargs["queue_name"] == "respond_io"
 
-    for_contact.assert_called_once_with(svc.db, "internal-uuid")
-    fake_client.close_conversation.assert_called_once()
-    # respond_io_id (not the internal respond_contact_id) is what is sent.
-    assert fake_client.close_conversation.call_args.args[0] == "888"
 
-
-def test_close_failure_is_swallowed():
+def test_resolve_enqueue_failure_is_swallowed():
     svc = _service()
-    tracking = SimpleNamespace(
-        id="t2",
-        respond_contact_id="internal-uuid",
-        contact=SimpleNamespace(respond_io_id="888"),
-    )
-    fake_client = MagicMock()
-    fake_client.close_conversation.side_effect = RuntimeError("respond 4xx")
-    with patch(
-        "app.services.integration_service.RespondClient.for_contact_id",
-        return_value=fake_client,
-    ):
-        # Must not raise.
+    tracking = SimpleNamespace(id="t2", respond_contact_id="internal-uuid")
+    with patch("app.services.queue_service.enqueue_job", side_effect=RuntimeError("redis down")):
+        # Must not raise — the resolve already committed.
         svc._close_respond_conversation_best_effort(tracking)
-
-
-def test_close_skips_when_no_respond_io_id():
-    svc = _service()
-    svc.db.query.return_value.filter.return_value.first.return_value = None
-    tracking = SimpleNamespace(id="t3", respond_contact_id=None, contact=None)
-    with patch(
-        "app.services.integration_service.RespondClient.for_contact_id",
-    ) as for_contact:
-        svc._close_respond_conversation_best_effort(tracking)
-    for_contact.assert_not_called()

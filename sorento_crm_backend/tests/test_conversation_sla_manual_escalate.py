@@ -105,3 +105,7 @@ def test_happy_path_escalates_to_next_tier_with_manual_reason():
     assert kwargs["escalation_reason"] == "manual: Customer angry"
     assert kwargs["assigned_to_id"] == "user-2"
     assert kwargs["assigned_to_respond_user_id"] == "r-2"
+    # Escalation is a reassignment: the new-tier owner is pushed to Respond too
+    # (async via _push_respond_assignee), mirroring reassign.
+    svc._push_respond_assignee.assert_called_once()
+    assert svc._push_respond_assignee.call_args.args[1] == "r-2"

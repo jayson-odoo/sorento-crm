@@ -55,7 +55,7 @@ interface AccessAgentFormModalProps {
   onSuccess?: () => void;
 }
 
-type AssignmentRow = { id: string; tier: number | null; team_id: string };
+type AssignmentRow = { id: string; tier: number | null; team_id: string; notify_on_extension: boolean };
 type AssignmentGroup = { id: string; code: string; policy_id: string | null; rows: AssignmentRow[] };
 
 // Sentinel for the "no policy bound" Select option (empty string isn't a valid Radix value).
@@ -155,6 +155,7 @@ export default function AccessAgentFormModal({
             ? Number(assignment.tier)
             : null,
         team_id: String(assignment.team_id ?? ''),
+        notify_on_extension: assignment.notify_on_extension ?? true,
       });
     }
     setAssignmentGroups(Array.from(grouped.values()));
@@ -184,6 +185,7 @@ export default function AccessAgentFormModal({
               tier: row.tier != null && row.tier >= 1 && row.tier <= 3 ? row.tier : undefined,
               // Stamp the group's policy onto every row; backend casts one policy per code.
               policy_id: group.policy_id || undefined,
+              notify_on_extension: row.notify_on_extension ?? true,
             })),
           )
           .filter((a) => a.code && a.team_id);
@@ -433,6 +435,31 @@ export default function AccessAgentFormModal({
                                         </SelectContent>
                                       </Select>
                                     </div>
+                                    {/* Escalation tiers (2/3) only: notify this tier's
+                                        team when a lower-tier deadline is extended. */}
+                                    {row.tier != null && row.tier >= 2 && (
+                                      <div className="flex items-center gap-2 pb-1.5">
+                                        <Switch
+                                          id={`notify-ext-${row.id}`}
+                                          checked={row.notify_on_extension ?? true}
+                                          disabled={isLoading}
+                                          onCheckedChange={(checked) => {
+                                            const next = [...assignmentGroups];
+                                            next[groupIdx].rows[rowIdx] = {
+                                              ...next[groupIdx].rows[rowIdx],
+                                              notify_on_extension: checked,
+                                            };
+                                            setAssignmentGroups(next);
+                                          }}
+                                        />
+                                        <label
+                                          htmlFor={`notify-ext-${row.id}`}
+                                          className="text-xs text-muted-foreground"
+                                        >
+                                          Notify on extension
+                                        </label>
+                                      </div>
+                                    )}
                                     <Button
                                       type="button"
                                       variant="ghost"
@@ -461,6 +488,7 @@ export default function AccessAgentFormModal({
                                     id: crypto.randomUUID(),
                                     tier: null,
                                     team_id: teamsList[0]?.id ?? '',
+                                    notify_on_extension: true,
                                   });
                                   setAssignmentGroups(next);
                                 }}
@@ -483,7 +511,7 @@ export default function AccessAgentFormModal({
                               id: crypto.randomUUID(),
                               code: '',
                               policy_id: null,
-                              rows: [{ id: crypto.randomUUID(), tier: null, team_id: teamsList[0]?.id ?? '' }],
+                              rows: [{ id: crypto.randomUUID(), tier: null, team_id: teamsList[0]?.id ?? '', notify_on_extension: true }],
                             },
                           ])
                         }

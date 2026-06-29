@@ -328,6 +328,22 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                                 <span className="font-medium">
                                   {a.team_name ?? teamNameMap.get(a.team_id) ?? a.team_id}
                                 </span>
+                                {typeof (a as AgentTeamAssignment).tier === 'number' &&
+                                  (a as AgentTeamAssignment).tier! >= 2 && (
+                                  <Badge
+                                    variant={
+                                      (a as AgentTeamAssignment).notify_on_extension === false
+                                        ? 'secondary'
+                                        : 'primary'
+                                    }
+                                    appearance="ghost"
+                                    className="text-xs font-normal"
+                                  >
+                                    {(a as AgentTeamAssignment).notify_on_extension === false
+                                      ? 'No extension notice'
+                                      : 'Notify on extension'}
+                                  </Badge>
+                                )}
                               </div>
                               <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
                                 <span>{members.length} member{members.length !== 1 ? 's' : ''}</span>

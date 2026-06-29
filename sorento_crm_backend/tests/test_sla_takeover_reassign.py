@@ -240,8 +240,13 @@ def test_takeover_uses_takers_own_tier_in_agent_chain(notify, db):
     assert cur is not None and cur.last_assigned_user_id == me
 
 
+# The Respond assignee push is now async: takeover/reassign ENQUEUE a
+# set_respond_conversation_assignee job on the respond_io queue (the actual Respond
+# call + outbox log run on the worker — see test_respond_conversation_tasks.py).
+
+
 @patch("app.services.sla_service.ConversationSLATrackingService._notify_reassignment")
-def test_takeover_conversation_pushes_respond_and_logs_success(notify, db):
+def test_takeover_conversation_enqueues_respond_assignee(notify, db):
     pid = _policy(db)
     me = _user(db, "me", respond_user_id="r-me")
     peer = _user(db, "peer")
@@ -257,20 +262,17 @@ def test_takeover_conversation_pushes_respond_and_logs_success(notify, db):
     db.commit()
     tid = _track(db, pid, assignee=peer, src=None, contact_id=contact.id)
 
-    with patch("app.services.integration_service.RespondClient.for_identifier") as fi:
-        client = MagicMock()
-        fi.return_value = client
+    with patch("app.services.queue_service.enqueue_job") as enqueue:
         ConversationSLATrackingService(db).takeover(tid, me, team)
-        client.set_conversation_assignee.assert_called_once_with("rio-1", "r-me")
-
-    log = db.query(IntegrationLog).filter(IntegrationLog.business_id == tid).first()
-    assert log is not None
-    assert log.status == "success"
-    assert log.integration_channel == "respond_io"
+    enqueue.assert_called_once()
+    assert enqueue.call_args.args[0].__name__ == "set_respond_conversation_assignee"
+    assert enqueue.call_args.args[1] == tid
+    assert enqueue.call_args.args[2] == "r-me"  # the taker's respond_user_id
+    assert enqueue.call_args.kwargs["queue_name"] == "respond_io"
 
 
 @patch("app.services.sla_service.ConversationSLATrackingService._notify_reassignment")
-def test_takeover_conversation_respond_failure_still_succeeds_logs_failure(notify, db):
+def test_takeover_succeeds_even_if_enqueue_fails(notify, db):
     pid = _policy(db)
     me = _user(db, "me", respond_user_id="r-me")
     peer = _user(db, "peer")
@@ -286,16 +288,9 @@ def test_takeover_conversation_respond_failure_still_succeeds_logs_failure(notif
     db.commit()
     tid = _track(db, pid, assignee=peer, src=None, contact_id=contact.id)
 
-    with patch("app.services.integration_service.RespondClient.for_identifier") as fi:
-        client = MagicMock()
-        client.set_conversation_assignee.side_effect = RuntimeError("401 unauthorized")
-        fi.return_value = client
+    with patch("app.services.queue_service.enqueue_job", side_effect=RuntimeError("redis down")):
         tracking = ConversationSLATrackingService(db).takeover(tid, me, team)
-        assert tracking.assigned_to_id == me  # no 500; takeover applied
-
-    log = db.query(IntegrationLog).filter(IntegrationLog.business_id == tid).first()
-    assert log is not None and log.status == "failed"
-    assert "401" in (log.error_message or "")
+        assert tracking.assigned_to_id == me  # no 500; takeover applied despite enqueue failure
 
 
 @patch("app.services.sla_service.ConversationSLATrackingService._notify_reassignment")
@@ -310,10 +305,9 @@ def test_takeover_form_skips_respond_push(notify, db):
     _agent_team(db, agent_id, team)
     tid = _track(db, pid, assignee=peer, src="purchase_request")
 
-    with patch("app.services.integration_service.RespondClient.for_identifier") as fi:
+    with patch("app.services.queue_service.enqueue_job") as enqueue:
         ConversationSLATrackingService(db).takeover(tid, me, team)
-        fi.assert_not_called()
-    assert db.query(IntegrationLog).filter(IntegrationLog.business_id == tid).count() == 0
+        enqueue.assert_not_called()  # form SLA -> no Respond conversation
 
 
 @patch("app.services.sla_service.ConversationSLATrackingService._notify_reassignment")
@@ -333,11 +327,10 @@ def test_takeover_taker_without_respond_id_skips_push(notify, db):
     db.commit()
     tid = _track(db, pid, assignee=peer, src=None, contact_id=contact.id)
 
-    with patch("app.services.integration_service.RespondClient.for_identifier") as fi:
+    with patch("app.services.queue_service.enqueue_job") as enqueue:
         tracking = ConversationSLATrackingService(db).takeover(tid, me, team)
-        fi.assert_not_called()  # skipped: no respond_user_id
+        enqueue.assert_not_called()  # skipped: no respond_user_id
         assert tracking.assigned_to_id == me
-    assert db.query(IntegrationLog).filter(IntegrationLog.business_id == tid).count() == 0
 
 
 def test_takeover_blocked_when_not_visible(db):

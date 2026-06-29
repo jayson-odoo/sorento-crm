@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
+import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -102,6 +103,9 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   // Escalate the active form-SLA stage from the gear menu.
   const queryClient = useQueryClient();
   const [escalateOpen, setEscalateOpen] = useState(false);
+  // Extend the active form-SLA deadline (with reason) from the gear menu — same
+  // flow as conversation SLA (notifies the next/parent tier).
+  const [extendOpen, setExtendOpen] = useState(false);
   const [escalateReason, setEscalateReason] = useState('');
   const [escalating, setEscalating] = useState(false);
   const { data: slaTrackers } = useQuery({
@@ -304,6 +308,10 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 Escalate SLA
               </DropdownMenuItem>
             )}
+            <SlaExtendMenuItem
+              activeTracker={activeTracker}
+              onSelect={() => setExtendOpen(true)}
+            />
             {complaint.status === 'approved' && canClose && (
               <DropdownMenuItem
                 disabled={closeComplaintMutation.isPending}
@@ -642,6 +650,16 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SlaExtendDialog
+        activeTracker={activeTracker}
+        label={`Complaint${complaint.complaint_number ? ` · ${complaint.complaint_number}` : ''}`}
+        open={extendOpen}
+        onOpenChange={setExtendOpen}
+        onExtended={() =>
+          queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'complaint', complaintId] })
+        }
+      />
 
       <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
         <DialogContent className="sm:max-w-md">

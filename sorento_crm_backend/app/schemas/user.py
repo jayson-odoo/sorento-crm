@@ -362,6 +362,9 @@ class AgentTeamAssignment(BaseModel):
     # Conversation SLA policy for this team set. One policy per (agent, code); the
     # service casts it onto every tier row of the set. None = unbound.
     policy_id: Optional[str] = None
+    # Whether this tier's team is notified when a lower-tier SLA deadline is extended.
+    # Default true (the grandparent tier is reached out of the box). Per-tier control.
+    notify_on_extension: bool = True
 
 
 class AgentTeamsUpdate(BaseModel):

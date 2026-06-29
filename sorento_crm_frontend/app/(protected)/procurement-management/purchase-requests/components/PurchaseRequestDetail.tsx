@@ -53,6 +53,7 @@ import {
 import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrCreateViewLink, rejectSubmittedPurchaseRequest, processPurchaseRequestByCs, closePurchaseRequestByCs, submitApprovalDecision } from '../services/purchaseRequestService';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
+import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { ArrowUpCircle, ThumbsUp, ThumbsDown } from 'lucide-react';
@@ -114,6 +115,7 @@ export default function PurchaseRequestDetail({
   const [decisionRejecting, setDecisionRejecting] = useState(false);
   // Escalate the active form-SLA stage straight from the form.
   const [escalateOpen, setEscalateOpen] = useState(false);
+  const [extendOpen, setExtendOpen] = useState(false);
   const [escalateReason, setEscalateReason] = useState('');
   const [escalating, setEscalating] = useState(false);
   const [processDialogOpen, setProcessDialogOpen] = useState(false);
@@ -454,6 +456,7 @@ export default function PurchaseRequestDetail({
                 Escalate SLA
               </DropdownMenuItem>
             )}
+            <SlaExtendMenuItem activeTracker={activeTracker} onSelect={() => setExtendOpen(true)} />
             {showCsActions && canClose && (
               <DropdownMenuItem
                 disabled={finalizing}
@@ -1331,6 +1334,18 @@ export default function PurchaseRequestDetail({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        <SlaExtendDialog
+          activeTracker={activeTracker}
+          label={`${typeLabel}${request.request_number ? ` · ${request.request_number}` : ''}`}
+          open={extendOpen}
+          onOpenChange={setExtendOpen}
+          onExtended={() =>
+            void queryClient.invalidateQueries({
+              queryKey: ['form-sla-trackers', requestTypeForNav, requestId],
+            })
+          }
+        />
 
         <AlertDialog open={processDialogOpen} onOpenChange={setProcessDialogOpen}>
           <AlertDialogContent>

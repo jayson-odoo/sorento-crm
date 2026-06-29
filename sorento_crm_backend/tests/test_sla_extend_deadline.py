@@ -389,6 +389,19 @@ def test_extend_works_for_form_sla_row(db):
 
 
 # ---------------------------------------------------------------------------
+# Form-SLA extend is ASSIGNEE-ONLY too — consistent with conversation (F-block).
+# ---------------------------------------------------------------------------
+def test_form_extend_non_assignee_403(db):
+    """A non-assignee cannot extend a form SLA (assignee-only, same as conversation)."""
+    _seed_user(db)
+    pid = _seed_policy(db)
+    tid = _seed_tracking(db, pid, source_entity_type="complaint")
+    with pytest.raises(AppException) as ei:
+        _svc(db).extend_tracking(tid, "someone-else", days=1, reason="nope")
+    assert ei.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
 # UAC-20: exactly one 'extend' event log, correct fields, no -8h shift
 # ---------------------------------------------------------------------------
 def test_extend_writes_single_extend_event_log_no_tz_shift(db):
@@ -689,10 +702,24 @@ def _svc_for_notify():
     return svc
 
 
+def _tier_map(mapping):
+    """side_effect for get_tier_team_and_notify: {tier: (team_id, notify) or None}."""
+    def _fn(agent_id, tier, team_set_code=None):
+        return mapping.get(tier)
+    return _fn
+
+
+def _peek_map(mapping):
+    """side_effect for _peek_next_assignee: {team_id: next_user_id}."""
+    def _fn(agent_id, team_id):
+        return (None, mapping.get(team_id))
+    return _fn
+
+
 def test_notify_next_tier_conversation_row():
-    """UAC-23: conversation row -> notifies the next-tier user resolved by PEEKING
-    the round-robin cursor (agent_id by code -> team by tier -> _peek_next_assignee),
-    never advancing it."""
+    """Conversation row -> notifies the next-tier user resolved by PEEKING the
+    round-robin cursor (agent by code -> tier team via get_tier_team_and_notify ->
+    _peek_next_assignee), never advancing it."""
     svc = _svc_for_notify()
     tracking = SimpleNamespace(
         id="t1", current_tier=1, source_entity_type=None, assigned_to_id="me",
@@ -700,9 +727,8 @@ def test_notify_next_tier_conversation_row():
     )
     agent_svc = MagicMock()
     agent_svc.get_agent_id_by_code.return_value = "agent-conv"
-    agent_svc.get_team_id_by_tier.return_value = "team-2"
-    # PEEK returns (last_assigned, next_in_line); recipient = next_in_line.
-    agent_svc._peek_next_assignee.return_value = (None, "next-tier-user")
+    agent_svc.get_tier_team_and_notify.side_effect = _tier_map({2: ("team-2", True)})
+    agent_svc._peek_next_assignee.side_effect = _peek_map({"team-2": "next-tier-user"})
     captured = {}
 
     def fake_notify(tr, *, recipient_user_id, reason):
@@ -715,24 +741,22 @@ def test_notify_next_tier_conversation_row():
 
     assert captured["recipient"] == "next-tier-user"
     assert captured["reason"] == "more time"
-    # Team resolved for current tier + 1.
-    assert agent_svc.get_team_id_by_tier.call_args.args[1] == 2
-    # Notify-only: must PEEK, never advance the round-robin via get_next_assignee.
     agent_svc._peek_next_assignee.assert_called_once_with("agent-conv", "team-2")
+    # Notify-only: must PEEK, never advance the round-robin.
     agent_svc.get_next_assignee.assert_not_called()
 
 
 def test_notify_next_tier_form_row():
-    """UAC-23: form row -> resolves team via resolve_team_with_tier_fallback then
-    PEEKS the cursor for the recipient (no cursor advance)."""
+    """Form row -> resolves the tier team via get_tier_team_and_notify then PEEKS the
+    cursor for the recipient (no cursor advance)."""
     svc = _svc_for_notify()
     tracking = SimpleNamespace(
         id="t1", current_tier=1, source_entity_type="complaint", assigned_to_id="me",
         agent_id="agent-1", team_set_code="cs_team", due_at_resolution=datetime(2026, 7, 6, 9, 0),
     )
     agent_svc = MagicMock()
-    agent_svc.resolve_team_with_tier_fallback.return_value = ("team-2", 2)
-    agent_svc._peek_next_assignee.return_value = (None, "form-next-user")
+    agent_svc.get_tier_team_and_notify.side_effect = _tier_map({2: ("team-2", True)})
+    agent_svc._peek_next_assignee.side_effect = _peek_map({"team-2": "form-next-user"})
     captured = {}
     svc._notify_user_deadline_extended = lambda tr, *, recipient_user_id, reason: captured.update(
         recipient=recipient_user_id
@@ -742,6 +766,75 @@ def test_notify_next_tier_form_row():
     assert captured["recipient"] == "form-next-user"
     agent_svc._peek_next_assignee.assert_called_once_with("agent-1", "team-2")
     agent_svc.get_next_assignee.assert_not_called()
+
+
+def test_notify_fans_up_to_grandparent(db=None):
+    """N2: tier-1 extend with tier2 + tier3 both opted-in -> BOTH notified."""
+    svc = _svc_for_notify()
+    tracking = SimpleNamespace(
+        id="t1", current_tier=1, source_entity_type="complaint", assigned_to_id="me",
+        agent_id="agent-1", team_set_code="cs", due_at_resolution=datetime(2026, 7, 6, 9, 0),
+    )
+    agent_svc = MagicMock()
+    agent_svc.get_tier_team_and_notify.side_effect = _tier_map(
+        {2: ("team-2", True), 3: ("team-3", True)}
+    )
+    agent_svc._peek_next_assignee.side_effect = _peek_map(
+        {"team-2": "mgr-user", "team-3": "director-user"}
+    )
+    recipients = []
+    svc._notify_user_deadline_extended = lambda tr, *, recipient_user_id, reason: recipients.append(
+        recipient_user_id
+    )
+    with patch("app.services.user_service.AccessAgentService", return_value=agent_svc):
+        svc._notify_next_tier_deadline_extended(tracking, reason="r")
+    assert recipients == ["mgr-user", "director-user"]  # parent + grandparent
+
+
+def test_notify_per_tier_optout():
+    """N3: tier3 notify_on_extension=false -> only tier2 notified, not tier3."""
+    svc = _svc_for_notify()
+    tracking = SimpleNamespace(
+        id="t1", current_tier=1, source_entity_type="complaint", assigned_to_id="me",
+        agent_id="agent-1", team_set_code="cs", due_at_resolution=datetime(2026, 7, 6, 9, 0),
+    )
+    agent_svc = MagicMock()
+    agent_svc.get_tier_team_and_notify.side_effect = _tier_map(
+        {2: ("team-2", True), 3: ("team-3", False)}  # tier3 opted out
+    )
+    agent_svc._peek_next_assignee.side_effect = _peek_map(
+        {"team-2": "mgr-user", "team-3": "director-user"}
+    )
+    recipients = []
+    svc._notify_user_deadline_extended = lambda tr, *, recipient_user_id, reason: recipients.append(
+        recipient_user_id
+    )
+    with patch("app.services.user_service.AccessAgentService", return_value=agent_svc):
+        svc._notify_next_tier_deadline_extended(tracking, reason="r")
+    assert recipients == ["mgr-user"]
+
+
+def test_notify_dedups_shared_member():
+    """N6: same user is next-in-line for tier2 and tier3 -> notified once."""
+    svc = _svc_for_notify()
+    tracking = SimpleNamespace(
+        id="t1", current_tier=1, source_entity_type="complaint", assigned_to_id="me",
+        agent_id="agent-1", team_set_code="cs", due_at_resolution=datetime(2026, 7, 6, 9, 0),
+    )
+    agent_svc = MagicMock()
+    agent_svc.get_tier_team_and_notify.side_effect = _tier_map(
+        {2: ("team-2", True), 3: ("team-3", True)}
+    )
+    agent_svc._peek_next_assignee.side_effect = _peek_map(
+        {"team-2": "same-user", "team-3": "same-user"}
+    )
+    recipients = []
+    svc._notify_user_deadline_extended = lambda tr, *, recipient_user_id, reason: recipients.append(
+        recipient_user_id
+    )
+    with patch("app.services.user_service.AccessAgentService", return_value=agent_svc):
+        svc._notify_next_tier_deadline_extended(tracking, reason="r")
+    assert recipients == ["same-user"]  # deduped, not twice
 
 
 def test_notify_skipped_at_top_tier():

@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
+import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { Button } from '@/components/ui/button';
@@ -85,6 +86,7 @@ export default function StockInquiryDetail({
   // Escalate the active form-SLA stage straight from the form (gear menu).
   const queryClient = useQueryClient();
   const [escalateOpen, setEscalateOpen] = useState(false);
+  const [extendOpen, setExtendOpen] = useState(false);
   const [escalateReason, setEscalateReason] = useState('');
   const [escalating, setEscalating] = useState(false);
   const { data: slaTrackers } = useQuery({
@@ -357,6 +359,7 @@ export default function StockInquiryDetail({
                 Escalate SLA
               </DropdownMenuItem>
             )}
+            <SlaExtendMenuItem activeTracker={activeTracker} onSelect={() => setExtendOpen(true)} />
             {inquiry.respond_inbox_url && (
               <DropdownMenuItem onClick={() => setConversationSheetOpen(true)}>
                 <MessageSquare className="size-4" />
@@ -582,6 +585,16 @@ export default function StockInquiryDetail({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SlaExtendDialog
+        activeTracker={activeTracker}
+        label={`Stock Inquiry${inquiry.inquiry_number ? ` · ${inquiry.inquiry_number}` : ''}`}
+        open={extendOpen}
+        onOpenChange={setExtendOpen}
+        onExtended={() =>
+          void queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'stock_inquiry', inquiryId] })
+        }
+      />
 
       {inquiry && (
         <StockInquiryDeleteDialog

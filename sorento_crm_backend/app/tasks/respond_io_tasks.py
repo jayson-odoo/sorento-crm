@@ -246,3 +246,182 @@ def send_stock_inquiry_respond_message(
         sla_entity_type="stock_inquiry",
         extra_context_vars=extra_context_vars,
     )
+
+
+# ---------------------------------------------------------------------------
+# Conversation lifecycle ops (close / reassign) for conversation-SLA actions.
+# Unlike the message sends above these are NOT 24h-window-aware — they act on the
+# conversation object itself. Each writes a Respond outbox row (integration_logs)
+# on success AND failure and re-raises so RQ records the job FAILED. business_table
+# = "conversation_sla_tracking", business_id = the tracking id.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_respond_io_id(db, tracking) -> Optional[str]:
+    """The contact's Respond.io id (respond_io_id), never the internal
+    respond_contact_id. None when the tracking has no resolvable contact."""
+    from app.models.access import RespondContact
+
+    contact_id = getattr(tracking, "respond_contact_id", None)
+    if not contact_id:
+        return None
+    row = (
+        db.query(RespondContact.respond_io_id)
+        .filter(RespondContact.id == str(contact_id))
+        .first()
+    )
+    return str(row[0]) if row and row[0] else None
+
+
+def _log_respond_conversation_op(
+    db,
+    *,
+    tracking_id: str,
+    identifier: str,
+    endpoint: str,
+    request_payload: dict,
+    status: str,
+    response=None,
+    error: Optional[Exception] = None,
+) -> None:
+    """Write one Respond outbox row for a conversation op. Mirrors _send_and_log:
+    captures the Respond HTTP status_code + body from the exception on failure so a
+    4xx/5xx (WAF block, 'category required', bad workspace key) is diagnosable."""
+    import json as _json
+
+    from app.schemas.integration import IntegrationLogCreate
+    from app.services.integration_service import IntegrationLogService
+
+    resp_code = None
+    resp_body = None
+    if error is not None:
+        resp = getattr(error, "response", None)
+        if resp is not None:
+            try:
+                resp_code = resp.status_code
+            except Exception:  # noqa: BLE001
+                resp_code = None
+            try:
+                resp_body = (resp.text or "")[:50000]
+            except Exception:  # noqa: BLE001
+                resp_body = None
+    elif response is not None:
+        resp_code = 200
+        resp_body = str(response)[:50000]
+    try:
+        IntegrationLogService(db).create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="respond_io",
+                business_table="conversation_sla_tracking",
+                business_id=str(tracking_id),
+                external_reference=identifier or "",
+                direction="outbound",
+                endpoint=endpoint,
+                http_method="POST",
+                status=status,
+                status_code=resp_code,
+                response_payload=resp_body,
+                error_message=str(error) if error is not None else None,
+            ),
+            request_payload_dict=request_payload,
+        )
+    except Exception as le:  # noqa: BLE001 — never let logging mask the real outcome
+        db.rollback()
+        logger.warning("Respond conversation-op outbox write failed: %s", le)
+
+
+def close_respond_conversation(tracking_id: str) -> dict:
+    """Worker-side: close (resolve) the Respond.io conversation for a resolved
+    conversation-SLA tracking. Logged in the Respond outbox; re-raises on failure."""
+    from app.database import SessionLocal
+    from app.models.sla import ConversationSLATracking
+    from app.services.integration_service import RespondClient
+
+    db = SessionLocal()
+    try:
+        tracking = (
+            db.query(ConversationSLATracking)
+            .filter(ConversationSLATracking.id == str(tracking_id))
+            .first()
+        )
+        if tracking is None:
+            logger.warning("close_respond_conversation: tracking %s not found", tracking_id)
+            return {"tracking_id": tracking_id, "status": "skipped_no_tracking"}
+        identifier = _resolve_respond_io_id(db, tracking)
+        if not identifier:
+            logger.warning(
+                "close_respond_conversation: no respond_io_id for %s; skipping", tracking_id
+            )
+            return {"tracking_id": tracking_id, "status": "skipped_no_respond_id"}
+        endpoint = f"https://api.respond.io/v2/contact/id:{identifier}/conversation/close"
+        payload = {"category": "Resolved", "summary": "Resolved from Sorento CRM SLA tracking."}
+        try:
+            response = RespondClient.for_contact_id(
+                db, str(tracking.respond_contact_id)
+            ).close_conversation(identifier, category="Resolved", summary=payload["summary"])
+            _log_respond_conversation_op(
+                db, tracking_id=tracking_id, identifier=identifier, endpoint=endpoint,
+                request_payload=payload, status="success", response=response,
+            )
+            return {"tracking_id": tracking_id, "status": "success"}
+        except Exception as e:  # noqa: BLE001
+            logger.exception("close_respond_conversation failed for %s", tracking_id)
+            _log_respond_conversation_op(
+                db, tracking_id=tracking_id, identifier=identifier, endpoint=endpoint,
+                request_payload=payload, status="failed", error=e,
+            )
+            raise
+    finally:
+        db.close()
+
+
+def set_respond_conversation_assignee(tracking_id: str, respond_user_id: str) -> dict:
+    """Worker-side: set the Respond.io conversation assignee (owner) for a
+    conversation-SLA tracking — used by reassign, takeover, and escalate. Logged in
+    the Respond outbox; re-raises on failure."""
+    from app.database import SessionLocal
+    from app.models.sla import ConversationSLATracking
+    from app.services.integration_service import RespondClient
+
+    db = SessionLocal()
+    try:
+        assignee_id = str(respond_user_id or "").strip()
+        tracking = (
+            db.query(ConversationSLATracking)
+            .filter(ConversationSLATracking.id == str(tracking_id))
+            .first()
+        )
+        if tracking is None:
+            logger.warning("set_respond_conversation_assignee: tracking %s not found", tracking_id)
+            return {"tracking_id": tracking_id, "status": "skipped_no_tracking"}
+        if not assignee_id:
+            logger.warning(
+                "set_respond_conversation_assignee: no respond_user_id for %s; skipping", tracking_id
+            )
+            return {"tracking_id": tracking_id, "status": "skipped_no_assignee"}
+        identifier = _resolve_respond_io_id(db, tracking)
+        if not identifier:
+            logger.warning(
+                "set_respond_conversation_assignee: no respond_io_id for %s; skipping", tracking_id
+            )
+            return {"tracking_id": tracking_id, "status": "skipped_no_respond_id"}
+        endpoint = f"https://api.respond.io/v2/contact/id:{identifier}/conversation/assignee"
+        payload = {"assigneeId": assignee_id}
+        try:
+            response = RespondClient.for_identifier(db, identifier).set_conversation_assignee(
+                identifier, assignee_id
+            )
+            _log_respond_conversation_op(
+                db, tracking_id=tracking_id, identifier=identifier, endpoint=endpoint,
+                request_payload=payload, status="success", response=response,
+            )
+            return {"tracking_id": tracking_id, "status": "success"}
+        except Exception as e:  # noqa: BLE001
+            logger.exception("set_respond_conversation_assignee failed for %s", tracking_id)
+            _log_respond_conversation_op(
+                db, tracking_id=tracking_id, identifier=identifier, endpoint=endpoint,
+                request_payload=payload, status="failed", error=e,
+            )
+            raise
+    finally:
+        db.close()

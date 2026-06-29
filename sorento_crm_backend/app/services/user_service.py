@@ -1679,12 +1679,18 @@ class AccessAgentService:
     def list_agent_teams_with_round_robin_state(self, agent_id: str) -> list[dict]:
         """Return assignments with team name, tier, members (ordered), last_assigned, next_in_line (read-only peek)."""
         rows = (
-            self.db.query(AgentTeam.code, AgentTeam.team_id, AgentTeam.tier, AgentTeam.policy_id)
+            self.db.query(
+                AgentTeam.code,
+                AgentTeam.team_id,
+                AgentTeam.tier,
+                AgentTeam.policy_id,
+                AgentTeam.notify_on_extension,
+            )
             .filter(AgentTeam.agent_id == agent_id)
             .all()
         )
         result = []
-        for code, team_id, tier, policy_id in rows:
+        for code, team_id, tier, policy_id, notify_on_extension in rows:
             team_id_str = str(team_id)
             team = self.db.query(Team).filter(Team.id == team_id).first()
             team_name = team.name if team else team_id_str
@@ -1716,6 +1722,7 @@ class AccessAgentService:
                 "team_id": team_id_str,
                 "tier": tier,
                 "policy_id": str(policy_id) if policy_id else None,
+                "notify_on_extension": bool(notify_on_extension),
                 "team_name": team_name,
                 "members": member_infos,
                 "last_assigned": self._user_info(last_user) if last_id else None,
@@ -1877,6 +1884,7 @@ class AccessAgentService:
                     team_id=team_id,
                     tier=tier,
                     policy_id=policy_by_code.get(code),
+                    notify_on_extension=bool(a.get("notify_on_extension", True)),
                 ))
         try:
             self.db.commit()
@@ -1931,6 +1939,29 @@ class AccessAgentService:
                 f"Multiple team sets found for tier {tier}. Provide team_set_code to resolve escalation target."
             )
         return str(rows[0][0])
+
+    def get_tier_team_and_notify(
+        self, agent_id: str, tier: int, team_set_code: Optional[str] = None
+    ) -> Optional[tuple[str, bool]]:
+        """``(team_id, notify_on_extension)`` for agent+tier (constrained to a team set),
+        or None when no team is configured at that exact tier. Used by the extension
+        notify fan-up to decide, per tier, whether that tier's team is notified."""
+        if tier is None or tier < 1 or tier > 3:
+            return None
+        query = self.db.query(AgentTeam.team_id, AgentTeam.notify_on_extension).filter(
+            AgentTeam.agent_id == agent_id,
+            AgentTeam.tier == tier,
+        )
+        if team_set_code:
+            query = query.filter(AgentTeam.code == team_set_code)
+        rows = query.all()
+        if not rows:
+            return None
+        if len(rows) > 1 and not team_set_code:
+            raise handle_conflict(
+                f"Multiple team sets found for tier {tier}. Provide team_set_code to resolve the notify target."
+            )
+        return str(rows[0][0]), bool(rows[0][1])
 
     def get_agent_id_by_code(self, code: str) -> str | None:
         """Resolve agent_id from access agent code. Returns None if not found."""
