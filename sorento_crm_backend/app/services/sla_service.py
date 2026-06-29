@@ -2181,7 +2181,7 @@ class ConversationSLATrackingService:
                     else None
                 ),
                 due_at=(
-                    getattr(tracking, "due_at")
+                    _to_aware_utc(getattr(tracking, "due_at"))
                     if isinstance(getattr(tracking, "due_at", None), datetime)
                     else None
                 ),
@@ -3091,7 +3091,7 @@ class ConversationSLATrackingService:
                 reason="; ".join(reason_parts),
                 assigned_to_id=str(user_id),
                 due_at=(
-                    getattr(tracking, "due_at")
+                    _to_aware_utc(getattr(tracking, "due_at"))
                     if isinstance(getattr(tracking, "due_at", None), datetime)
                     else None
                 ),
@@ -3954,7 +3954,7 @@ class ConversationSLATrackingService:
                         else None
                     ),
                     due_at=(
-                        getattr(tracking, "due_at")
+                        _to_aware_utc(getattr(tracking, "due_at"))
                         if isinstance(getattr(tracking, "due_at", None), datetime)
                         else None
                     ),
@@ -3981,7 +3981,7 @@ class ConversationSLATrackingService:
                         else None
                     ),
                     due_at=(
-                        getattr(tracking, "due_at")
+                        _to_aware_utc(getattr(tracking, "due_at"))
                         if isinstance(getattr(tracking, "due_at", None), datetime)
                         else None
                     ),
@@ -4008,7 +4008,7 @@ class ConversationSLATrackingService:
                         else None
                     ),
                     due_at=(
-                        getattr(tracking, "due_at")
+                        _to_aware_utc(getattr(tracking, "due_at"))
                         if isinstance(getattr(tracking, "due_at", None), datetime)
                         else None
                     ),
@@ -4035,7 +4035,7 @@ class ConversationSLATrackingService:
                         else None
                     ),
                     due_at=(
-                        getattr(tracking, "due_at")
+                        _to_aware_utc(getattr(tracking, "due_at"))
                         if isinstance(getattr(tracking, "due_at", None), datetime)
                         else None
                     ),
