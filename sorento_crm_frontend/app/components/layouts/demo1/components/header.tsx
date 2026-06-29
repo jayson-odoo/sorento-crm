@@ -27,7 +27,6 @@ import {
 } from '@/components/ui/sheet';
 import { Container } from '@/components/common/container';
 import { StoreClientTopbar } from '@/app/(protected)/store-client/components/common/topbar';
-import { Breadcrumb } from './breadcrumb';
 import { SidebarMenu } from './sidebar-menu';
 
 /** Compact shortcut label for search: ⌘⇧K on Mac, Ctrl+⇧K on Windows/Linux. */
@@ -103,11 +102,12 @@ export function Header() {
           </div>
         </div>
 
-        {/* Main Content (Breadcrumb — replaces the removed demo mega-menu) */}
-        <Breadcrumb />
+        {/* Header center intentionally empty — each page renders its own title +
+            breadcrumb below the header, so a second header breadcrumb was redundant
+            and confusing (removed 2026-06-30). ms-auto keeps utilities right-aligned. */}
 
         {/* HeaderTopbar */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 ms-auto">
           {pathname.startsWith('/store-client') ? (
             <StoreClientTopbar />
           ) : (
