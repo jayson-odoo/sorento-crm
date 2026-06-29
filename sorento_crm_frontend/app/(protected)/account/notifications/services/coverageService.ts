@@ -16,6 +16,11 @@ export interface CoverageSub {
   /** True when a HoD assigned this coverage to me (vs my own self-service). */
   assigned_by_hod?: boolean;
   assigned_by_name?: string | null;
+  /** Role-explicit projection + canonical one-line summary (shared backend helper). */
+  coverer_name?: string | null;
+  covers_for_name?: string | null;
+  coverage_mode?: string | null;
+  summary?: string | null;
 }
 
 /** A team coverage row in the HoD management view (coverer covers target). */
@@ -30,6 +35,12 @@ export interface TeamCoverageSub {
   created_by_id: string | null;
   created_by_name: string | null;
   assigned_by_hod: boolean;
+  /** Role-explicit projection + canonical one-line summary (shared backend helper). */
+  coverer_name?: string | null;
+  covers_for_name?: string | null;
+  assigned_by_name?: string | null;
+  coverage_mode?: string | null;
+  summary?: string | null;
 }
 
 export interface CoverageSubCreateResult {

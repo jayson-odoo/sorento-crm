@@ -68,6 +68,7 @@ const teamSub: TeamCoverageSub = {
   created_by_id: 'u-hod',
   created_by_name: 'HoD',
   assigned_by_hod: true,
+  summary: 'Alice covers for Bob, who is away. Assigned by HoD. No end date (auto-assign).',
 };
 
 beforeEach(() => {
@@ -132,7 +133,13 @@ describe('CoverageManager — manager', () => {
     render(<CoverageManager canManageTeam />);
     expect(screen.getByText('Alice')).toBeInTheDocument();
     expect(screen.getByText('Bob')).toBeInTheDocument();
-    expect(screen.getByText(/Assigned by HoD/i)).toBeInTheDocument();
+    // "Assigned by HoD" appears in both the visible badge and the sr-only summary;
+    // assert the visible badge specifically.
+    expect(
+      screen
+        .getAllByText(/Assigned by HoD/i)
+        .some((el) => el.closest('[data-slot="badge"]')),
+    ).toBe(true);
     fireEvent.click(screen.getByRole('button', { name: /Remove Alice covering Bob/i }));
     const dialog = await screen.findByRole('alertdialog');
     fireEvent.click(within(dialog).getByRole('button', { name: /^Remove$/i }));
@@ -143,5 +150,17 @@ describe('CoverageManager — manager', () => {
   it('empty state renders', () => {
     render(<CoverageManager canManageTeam />);
     expect(screen.getByText(/No active coverage yet/i)).toBeInTheDocument();
+  });
+
+  it('renders the backend role-explicit summary in the DOM (sr-only) for the AI snapshot', () => {
+    useTeamCoverage.mockReturnValue({ data: [teamSub], isLoading: false, error: null });
+    render(<CoverageManager canManageTeam />);
+    // The canonical sentence — unambiguous about coverer vs covers-for vs assigned-by —
+    // is present in the DOM (sr-only is captured by innerText / read by AT).
+    expect(
+      screen.getByText(
+        /Alice covers for Bob, who is away\. Assigned by HoD\. No end date \(auto-assign\)\./i,
+      ),
+    ).toBeInTheDocument();
   });
 });

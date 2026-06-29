@@ -30,6 +30,50 @@ def _now_naive() -> datetime:
     return datetime.utcnow()
 
 
+def coverage_role_view(
+    *,
+    coverer_name: Optional[str],
+    covers_for_name: Optional[str],
+    assigned_by_name: Optional[str],
+    expires_at: Optional[datetime],
+    redirect_assignments: bool,
+) -> dict:
+    """Role-explicit projection of a coverage row, shared by every list serializer.
+
+    Coverage has THREE distinct people and the raw columns name them after the
+    table (subscriber / target / created_by), not the role — which lets an LLM (or
+    any reader) swap "covers for" with "assigned by". This returns role-named keys
+    PLUS a single natural-language ``summary`` sentence built from the same facts,
+    so a consumer answers any phrasing from one authoritative line instead of
+    guessing which name is which. The discrete fields and the summary are generated
+    together here, so they can never drift.
+
+    Roles:
+      - coverer       — handles the covered colleague's tasks while they're away
+      - covers_for    — the colleague being covered (the away person)
+      - assigned_by   — who set the coverage up (a HoD); None when self-subscribed
+    """
+    mode = "auto-assign" if redirect_assignments else "notify-only"
+    coverer = coverer_name or "Someone"
+    covered = covers_for_name or "a colleague"
+    parts = [f"{coverer} covers for {covered}, who is away."]
+    if assigned_by_name:
+        parts.append(f"Assigned by {assigned_by_name}.")
+    else:
+        parts.append("Self-subscribed.")
+    if expires_at is not None:
+        parts.append(f"Active until {expires_at.strftime('%d %b %Y')} ({mode}).")
+    else:
+        parts.append(f"No end date ({mode}).")
+    return {
+        "coverer_name": coverer_name,
+        "covers_for_name": covers_for_name,
+        "assigned_by_name": assigned_by_name,
+        "coverage_mode": mode,
+        "summary": " ".join(parts),
+    }
+
+
 class CoverageSubscriptionService:
     """CRUD + fan-out for notification (coverage) subscriptions."""
 
@@ -69,7 +113,10 @@ class CoverageSubscriptionService:
             .filter(NotificationSubscription.subscriber_id == str(subscriber_id))
             .all()
         )
+        # The subscriber IS the coverer here ("targets I cover"); look its name up too
+        # so the role-named projection / summary can name the coverer explicitly.
         lookup_ids = {str(r.target_user_id) for r in rows}
+        lookup_ids.add(str(subscriber_id))
         for r in rows:
             if getattr(r, "created_by_id", None):
                 lookup_ids.add(str(r.created_by_id))
@@ -77,9 +124,15 @@ class CoverageSubscriptionService:
         if lookup_ids:
             for u in self.db.query(User).filter(User.id.in_(lookup_ids)).all():
                 name_by_id[str(u.id)] = (u.name or u.email or "").strip() or None
+        coverer_name = name_by_id.get(str(subscriber_id))
         out = []
         for r in rows:
             created_by = str(r.created_by_id) if getattr(r, "created_by_id", None) else None
+            assigned_by_name = (
+                name_by_id.get(created_by)
+                if created_by and created_by != str(subscriber_id)
+                else None
+            )
             out.append(
                 {
                     "id": str(r.id),
@@ -100,10 +153,14 @@ class CoverageSubscriptionService:
                     "assigned_by_hod": bool(
                         created_by and created_by != str(subscriber_id)
                     ),
-                    "assigned_by_name": (
-                        name_by_id.get(created_by)
-                        if created_by and created_by != str(subscriber_id)
-                        else None
+                    "assigned_by_name": assigned_by_name,
+                    # Role-explicit projection + natural-language summary (shared helper).
+                    **coverage_role_view(
+                        coverer_name=coverer_name,
+                        covers_for_name=name_by_id.get(str(r.target_user_id)),
+                        assigned_by_name=assigned_by_name,
+                        expires_at=getattr(r, "expires_at", None),
+                        redirect_assignments=bool(getattr(r, "redirect_assignments", False)),
                     ),
                 }
             )
@@ -361,6 +418,13 @@ class CoverageSubscriptionService:
         out = []
         for r in rows:
             created_by = str(r.created_by_id) if getattr(r, "created_by_id", None) else None
+            # assigned_by is the HoD who set it up — only when it differs from the
+            # coverer (self-subscribed rows have no assigner).
+            assigned_by_name = (
+                name_by_id.get(created_by)
+                if created_by and created_by != str(r.subscriber_id)
+                else None
+            )
             out.append(
                 {
                     "id": str(r.id),
@@ -375,6 +439,15 @@ class CoverageSubscriptionService:
                     "created_by_id": created_by,
                     "created_by_name": name_by_id.get(created_by) if created_by else None,
                     "assigned_by_hod": bool(created_by and created_by != str(r.subscriber_id)),
+                    # Role-explicit projection + natural-language summary (shared helper):
+                    # coverer = subscriber, covers_for = target, assigned_by = HoD.
+                    **coverage_role_view(
+                        coverer_name=name_by_id.get(str(r.subscriber_id)),
+                        covers_for_name=name_by_id.get(str(r.target_user_id)),
+                        assigned_by_name=assigned_by_name,
+                        expires_at=getattr(r, "expires_at", None),
+                        redirect_assignments=bool(getattr(r, "redirect_assignments", False)),
+                    ),
                 }
             )
         return out

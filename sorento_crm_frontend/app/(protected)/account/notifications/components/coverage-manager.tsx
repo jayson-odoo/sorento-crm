@@ -76,6 +76,10 @@ interface Row {
   expiresAt: string | null;
   /** assigned = a manager set this up (created_by != coverer); self = the coverer set it. */
   assignedByName: string | null;
+  /** Canonical role-explicit sentence from the backend (real names, not "You"). Rendered
+   * sr-only so the page snapshot the AI assistant reads is unambiguous about who covers
+   * whom vs who assigned it — the compact "name → name" row flattens that distinction. */
+  summary: string | null;
   source: 'mine' | 'team';
 }
 
@@ -174,6 +178,7 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
         redirect: c.redirect_assignments,
         expiresAt: c.expires_at,
         assignedByName: c.assigned_by_hod ? c.created_by_name ?? 'a manager' : null,
+        summary: c.summary ?? null,
         source: 'team' as const,
       }));
     }
@@ -187,6 +192,7 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
       redirect: c.redirect_assignments,
       expiresAt: c.expires_at,
       assignedByName: c.assigned_by_hod ? c.assigned_by_name ?? 'a manager' : null,
+      summary: c.summary ?? null,
       source: 'mine' as const,
     }));
   }, [canManageTeam, teamQuery.data, myQuery.data, myId]);
@@ -367,6 +373,11 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
               return (
                 <li key={r.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <div className="min-w-0">
+                    {/* Canonical role-explicit sentence — invisible on screen but present in
+                        the DOM (sr-only is captured by innerText), so the AI page snapshot and
+                        screen readers get an unambiguous "X covers for Y, assigned by Z" instead
+                        of the compact "X → Y" that flattens the roles. */}
+                    {r.summary && <span className="sr-only">{r.summary}</span>}
                     <p className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
                       <span className="truncate">{r.covererName}</span>
                       <ArrowRight className="size-3.5 shrink-0 text-muted-foreground" />
