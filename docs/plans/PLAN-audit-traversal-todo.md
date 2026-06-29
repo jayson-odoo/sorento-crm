@@ -13,6 +13,30 @@ This file is the living TODO. Findings get appended under each section with seve
 
 ---
 
+## ☀️ MORNING TRIAGE — prioritized digest (read this first, 2026-06-30 overnight)
+
+**Already SHIPPED to live** (deploy succeeded): windowed-KPI loading fix · security batch (CloudFront key untracked, const-time API-key, CORS, error-leak, log redaction) · SLA −8h timezone fix · commercial module restore · AI assistant (Outline-leak fix, turn-cache, capability answer, classifier-skip) · UI/footer/header cleanup. Guides pushed to Outline.
+
+**🔴 YOUR ACTION (can't be done by me):**
+1. **Rotate the AWS CloudFront key** + purge `private_key.pem` from git history (`RUNBOOK-purge-private-key-from-git-history.md`). The committed key is live until rotated.
+
+**🔴 TOP BUGS TO FIX (need a grilled+approved plan first):**
+2. **3 broken Create buttons** — Campaign / Form / Stock-Batch (`/…/new` page missing → falls to `[id]` → BE 500 → "not found"). Create is DEAD for these 3. + BE returns 500 (not 404/422) on non-UUID id. (§ top of Workstream-2.)
+3. **Lookup-permission 403 = HIGH, broad blast radius** — `/lookup/by-binding` requires `master_data.lookup_sets.view`, NOT granted to users who can use the forms. Breaks dropdowns + spams console + shows "Permission required" toast across **Forms, Complaints (create), Purchase Requests (create/edit/list/detail)** — via shared `components/common/LookupBoundField.tsx`. A complaint creator may be unable to submit. Fix: grant lookup-read implicitly with parent-resource access; stop the 4× retry. (§1f #9.)
+4. **Campaign DELETE is a no-op stub** (returns success without deleting) — violates ADR hard-delete; silent data non-deletion.
+
+**🟠 SECURITY phase-2 (VERIFY each first — phase-1 had a false alarm):**
+5. No rate-limit on `/auth/reset-password`, `/auth/signup` (enumeration+spam), portal OTP (enum+DOS) — bundle into one "rate-limiting" plan.
+6. Presigned-URL endpoint has no object-level authz (IDOR) — check if CloudFront/R2 keys are global vs per-tenant. + inbound webhook signature verification not found (confirm if inbound exists). Bundle into "object-level authz" plan.
+
+**🟡 SMALLER / CLEANUP:** dead filters (Email-Outbox "Deferred", Stock-Inquiry "Updated") · Campaign status casing FE/BE mismatch · OTP plain-SHA256 · Permissions in-page breadcrumb "Users"→"User Management" · Files junk test folders + raw UUID filenames + clipped Access pills + "[DONT USE THIS]" attachment type · complaint create exposes raw Respond.io IDs · attachment-create permission gap.
+
+**📗 GUIDES:** 12 new module guides drafted on branch `docs/user-guides-data-analysis-uncovered-modules` (procurement/marketing/complaints/user-mgmt/system-mgmt) — review the bugs they surfaced (§1g) then push to Outline (your gate). Already-live guides: inventory/delivery/product/sla + getting-started.
+
+**Suggested first session:** (1) you rotate the key; (2) I write a grilled plan for the broken-Create + lookup-403 fixes (both are bounded, high-impact, low-risk) → you approve → I implement+verify → deploy. Then the rate-limiting + authz security plans.
+
+---
+
 ## Workstream 1 — Codebase audit
 
 ### 1a. Backend security  ✅ AGENT DONE
