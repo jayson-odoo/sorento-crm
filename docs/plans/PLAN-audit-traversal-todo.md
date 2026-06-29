@@ -185,7 +185,12 @@ Pages to sweep (from `config/menu.config.tsx`). Desktop 1400px + mobile ~375px. 
 
 **Guides → Outline: PUSHED** ✅ (user-authorized). inventory/delivery-orders/product/sla data-analysis+how-to + `getting-started-for-new-users` now live in Outline; commercial held by forbid-list. Assistant can now serve them.
 
-_still to pass: Forms, System Mgmt list pages + a working create flow at mobile width._
+**Forms Management → Forms `/forms-management/forms` (desktop + mobile) — list ✅ CLEAN, but 403-lookup noise.**
+- List renders fine (Form Code/Name/Type/Purpose/Language), truncation OK, mobile collapses cleanly. Header fix confirmed (no top breadcrumb on mobile either).
+- [ ] **4× `403 Forbidden` on load** from `GET /api/v1/lookup/by-binding?table=forms&column=form_type` — the form_type filter's lookup options are RBAC-forbidden for this user. Page still works (filter just won't populate), but: (a) is the lookup-binding permission supposed to be denied to users who CAN view forms? mismatch; (b) FE retries it 4× and spams console errors instead of degrading gracefully (hide/disable the filter or show "unavailable"). NOT caused by Item-2 lookup change (that was query internals; this is the endpoint's auth guard). Recommend: align the lookup permission with form-view, AND make the FE filter degrade gracefully on 403.
+- Note: "Create Form" here is one of the 3 KNOWN-BROKEN creates (already logged).
+
+_still to pass: System Mgmt list pages + a working create flow at mobile width._
 
 ---
 
