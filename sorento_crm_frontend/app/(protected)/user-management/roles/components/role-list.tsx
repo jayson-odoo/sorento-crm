@@ -318,7 +318,6 @@ const RoleList = () => {
                     placeholder="Search roles"
                     value={searchQuery}
                     onChange={(e) => handleSearchChange(e.target.value)}
-                    disabled={isLoading}
                     className="ps-9 w-64"
                   />
                   {searchQuery && (

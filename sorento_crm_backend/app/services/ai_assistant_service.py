@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 import json
 import logging
 import re
@@ -83,6 +85,30 @@ def _html_to_text(raw: str | None) -> str:
             continue
         collapsed.append(line)
     return "\n".join(collapsed).strip()
+
+
+def _current_date_directive() -> str:
+    """Today's date (Asia/Kuala_Lumpur) + relative-date resolution rule.
+
+    Ports the n8n sub-semantic-parser technique: LLMs have no clock and will
+    otherwise resolve "last week" against their training cutoff (we saw a query
+    land in 2023). Injecting the real current date lets the model convert
+    relative dates to absolute calendar dates before it calls any data tool.
+    Explicit UTC+8 (matches n8n's `$now.toUTC(8*60)`) so it is correct
+    regardless of the server's own timezone.
+    """
+    now = datetime.now(ZoneInfo("Asia/Kuala_Lumpur"))
+    today = now.strftime("%A, %d %B %Y")
+    return (
+        f"CURRENT DATE: {today} (Asia/Kuala_Lumpur).\n"
+        "When the user's message contains a relative date or period — e.g. "
+        "\"today\", \"yesterday\", \"tomorrow\", \"last week\", \"this month\", "
+        "\"next 3 days\", or an upcoming weekday — resolve it to absolute "
+        "calendar dates RELATIVE TO THE CURRENT DATE ABOVE before stating any "
+        "date or calling any tool. A single day uses the same start and end "
+        "date; a \"week\" is Monday–Sunday. Never infer the current date from "
+        "your training data — always use CURRENT DATE above."
+    )
 
 
 @dataclass
@@ -667,7 +693,11 @@ class AIAssistantChatService:
             "PO -> purchase order, SO -> sales order, PR -> purchase request, SKU -> product. "
             "Keep the original abbreviation alongside the expansion (e.g. 'delivery order (DO)').\n"
             "- Keep it concise (<= 2 sentences).\n"
-            "- Do not answer the question. Output plain text only, no quotes, no prefix."
+            "- If the turn names a relative date/period (today, last week, this "
+            "month, etc.), rewrite it as the absolute calendar date(s) so "
+            "downstream tools filter the right range.\n"
+            "- Do not answer the question. Output plain text only, no quotes, no prefix.\n\n"
+            + _current_date_directive()
         )
         user_block = (
             "Conversation so far (may be empty):\n"
@@ -891,6 +921,7 @@ class AIAssistantChatService:
             [f"- {s.get('title')}: {str(s.get('why_selected') or '')[:200]}" for s in sources]
         )
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+        messages.append({"role": "system", "content": _current_date_directive()})
         if page_snapshot is not None:
             page_block = (
                 "The user is currently viewing this page. Identify what KIND of record this "
@@ -1483,6 +1514,7 @@ class AIAssistantChatService:
             system = system.rstrip() + "\n\n" + self._user_guide_protocol_addendum()
         system = (
             system.rstrip()
+            + "\n\n" + _current_date_directive()
             + "\n\nRECORD CONTEXT (deterministic, authoritative)\n"
             "Answer the user's question using ONLY these record facts. Be concise. Quote "
             "the human-readable `display_ref`, never a UUID. Times are already "
