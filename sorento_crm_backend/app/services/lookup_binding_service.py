@@ -1,7 +1,8 @@
 from __future__ import annotations
 import uuid
 from typing import Optional
-from sqlalchemy import text
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from app.models.lookup import LookupBinding, LookupOption, LookupSet
 from app.schemas.lookup import LookupBindingCreate
@@ -37,13 +38,7 @@ class LookupBindingService:
         # Verify existing rows in target column only contain values present in this set's options.
         opt_values = {v for (v,) in self.db.query(LookupOption.value).filter(
             LookupOption.set_id == set_id).all()}
-        try:
-            existing_vals = {row[0] for row in self.db.execute(
-                text(f"SELECT DISTINCT {data.column_name} FROM {data.table_name} "
-                     f"WHERE {data.column_name} IS NOT NULL")
-            ).fetchall()}
-        except Exception:
-            existing_vals = set()
+        existing_vals = self._distinct_column_values(data.table_name, data.column_name)
         unknown = existing_vals - opt_values
         if unknown:
             raise handle_validation_error(
@@ -58,6 +53,37 @@ class LookupBindingService:
         self.db.commit()
         self.db.refresh(b)
         return b
+
+    def _distinct_column_values(self, table_name: str, column_name: str) -> set:
+        """Distinct non-null values of an eligible ``(table, column)``.
+
+        Built from the RESOLVED SQLAlchemy metadata ``Column`` rather than an
+        interpolated string. Eligibility has already validated the pair against
+        ``Base.metadata`` (``lookup_eligibility._eligibility_from_metadata``), so
+        the identifiers are emitted/quoted by SQLAlchemy Core and never
+        concatenated into SQL — no injection surface, even as defense-in-depth.
+
+        Synthetic ``(table, column)`` pairs registered only via ``_REGISTRY``
+        (used by tests) are absent from ``Base.metadata``; for those we return an
+        empty set so the existing-rows guard is a no-op, matching the prior
+        ``try/except`` behaviour exactly.
+        """
+        from app.database import Base  # local import to avoid cycle on startup
+        tbl = Base.metadata.tables.get(table_name)
+        if tbl is None:
+            return set()
+        col = tbl.columns.get(column_name)
+        if col is None:
+            return set()
+        stmt = select(col).where(col.isnot(None)).distinct()
+        try:
+            rows = self.db.execute(stmt).fetchall()
+        except SQLAlchemyError:
+            # Physical table not present (e.g. a metadata-only mapping in a test
+            # DB). Narrowed from the prior bare ``except Exception`` so genuine
+            # programming errors surface; missing-table is treated as no rows.
+            return set()
+        return {row[0] for row in rows}
 
     def delete(self, binding_id: str) -> dict:
         b = self.db.query(LookupBinding).filter(LookupBinding.id == binding_id).first()
