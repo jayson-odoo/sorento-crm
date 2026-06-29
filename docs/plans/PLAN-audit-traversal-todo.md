@@ -115,6 +115,20 @@ NOTE: a `ticket-management` module exists in FE (not in sidebar menu.config) —
 
 ---
 
+## 🔴 HIGH BUG (found in sweep 2026-06-30) — 3 broken "Create" buttons + BE 500-on-bad-UUID
+
+**Browser-confirmed (Campaigns):** clicking **Create Campaign** → `/marketing-management/campaigns/new` renders "Campaign not found"; network shows `GET /api/v1/marketing/campaigns/new` → **500** (×2). Create flow is DEAD.
+
+**Root cause:** the list "Create" button `router.push('/…/new')` but there is **no `new/page.tsx`** for that resource, so Next falls through to `[id]/page.tsx` with `id="new"`, which fetches `GET /…/{id}` → backend can't parse "new" as UUID → 500 → FE shows not-found.
+
+**Systemic scan (grep of all `push('…/new')` vs presence of `new/page.tsx`):** 3 BROKEN, 14 OK.
+- [ ] **`/forms-management/forms/new`** — `FormsList.tsx:266` — Create Form broken (no `new/` page).
+- [ ] **`/inventory-management/stock-batches/new`** — `BatchesList.tsx:231` — Create Batch broken (matches earlier inventory-guide finding).
+- [ ] **`/marketing-management/campaigns/new`** — `CampaignsList.tsx:222` — Create Campaign broken (browser-confirmed).
+- [ ] **BE defensive bug:** `GET /api/v1/marketing/campaigns/{id}` (and likely other detail GETs) returns **500** for a non-UUID id — should be 404/422. Masks the above + leaks an error. Harden id parsing across detail endpoints.
+- Fix options (need grilled+approved plan): add the missing `new/page.tsx` create pages (match the 14 working ones), OR switch these creates to the modal-default per ADR CRUD-UX standard (campaign/form/batch may be simple enough for a modal). Either way also fix the BE 500→404/422.
+- OK (have `new/page.tsx`): complaints, warehouses, promotions, products, UoM, customers, order-statuses, orders, grn, packing-lists, spo-allocations, stock-inquiries, suppliers, sla-policies.
+
 ## Workstream 2 — UI traversal (mobile + desktop)
 
 Pages to sweep (from `config/menu.config.tsx`). Desktop 1400px + mobile ~375px. For each: renders? overflow? header wraps? empty-state present? UUIDs leaking? action buttons reachable?
