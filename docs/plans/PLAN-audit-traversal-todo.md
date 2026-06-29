@@ -100,6 +100,28 @@ COMMERCIAL DECISION REVISED (user): migrations 151/152 IMPORT the deleted module
 
 NOTE: a `ticket-management` module exists in FE (not in sidebar menu.config) — verify it's intentional/gated.
 
+### 1f. Security audit PHASE 2 (high-risk surfaces) — agent, 2026-06-30 — ⚠️ VERIFY/GRILL EACH BEFORE FIXING (some flagged "needs deeper check"; phase-1 had a false .env claim)
+
+**CRITICAL (verify first):**
+- [ ] **No rate-limit on `/auth/reset-password`** (`auth.py:211-282`) — login has `login_throttle` but reset doesn't → reset-link flooding / token brute-force. Reuse the throttle.
+- [ ] **No rate-limit on `/auth/signup`** (`auth.py:142-208`) — account-creation spam + email enumeration (201 new vs 409 exists). Per-IP throttle; don't free-probe emails.
+- [ ] **Portal OTP request unauthenticated + no GLOBAL rate-limit** (`public/portal.py:102` → `portal_service.py:460-545`) — per-contact cooldown(60s)/cap(10/day) exist, but no per-IP global limit; contact enumeration via error/timing; can DOS the Respond.io send queue. Add per-IP limit on `/public/portal/*`, genericize invalid-contact responses.
+
+**HIGH (verify):**
+- [ ] **Presigned-URL endpoint no owner authz** (`external/presigned_url.py:88-129`) — checks X-API-Key but NOT that the caller may access that attachment; any valid-key holder can presign ANY `file_path` (IDOR). **Check if CloudFront/R2 keys are per-tenant or GLOBAL** (`storage_router.py:84-90`) — if global, cross-customer file leak. (Multi-tenant is currently stubbed to DEFAULT_TENANT, so cross-tenant not active yet, but cross-entity within tenant is.) Fix: verify caller's permission to the parent entity before signing.
+- [ ] **Inbound webhook signature verification — NONE FOUND** (agent could not locate inbound handlers; `*_webhook*.py` are all OUTBOUND). NEEDS DEEPER CHECK: do Respond.io/n8n POST inbound to us? If yes and unsigned → anyone can POST. Confirm where inbound lands + add HMAC/JWT verify.
+- [ ] **Portal attachment download authz weak** (`public/portal.py:715,734,755`) — `_list_attachments_for` + `_safe_presigned_url` don't re-verify contact ownership; relies on upstream `list_submissions` scoping. Audit `list_submissions` (portal_service.py:622-714) for consistent `token.contact_id == submission.contact_id` filter.
+
+**MEDIUM (verify):**
+- [ ] OTP code hashed with **plain SHA256** (`portal_service.py:87`) — 6-digit space → rainbow-table-trivial on DB breach. Use bcrypt/pbkdf2 (codebase already bcrypts passwords).
+- [ ] Impersonation token: excluded from sliding renewal but **no audit log** of slides/access (`portal_service.py:349-357`); set short hard expiry on impersonation start.
+- [ ] **Lookup permission inconsistency** (`lookup.py:16-52` requires `master_data.lookup_sets.view`) → a forms-viewer without it gets 403 on `/lookup/by-binding` (THIS is the Forms-page 403 I saw). Align gate with form-view OR degrade FE gracefully.
+- [ ] **Attachment-create permission gap** (`resources/attachments.py:700` requires `resource.attachments.upload`) → a user who can create a complaint can't attach a photo (the 403 I hit in the upload test). Tie to parent-entity permission.
+
+**LOW:** portal `slug-info` leaks name + masked phone (`portal.py:169`) enabling OTP spam; OTP 6-digit entropy (mitigated by caps).
+
+**NOTE:** these are AGENT findings — confirm each against code (grill) before implementing; bundle the rate-limiting ones (auth reset/signup/portal-OTP) into one "rate-limiting" plan, the authz ones (presigned/portal-attachment) into an "object-level authz" plan.
+
 ### 1d. Cross-cutting CRITICALs found during traversal
 
 - [ ] **Commercial module deleted from `main`** (commit `02e4d88fa`, misleading title "add DO search capability to MCP"). Survivors: sidebar entries + RBAC perms + migrations `150/151/152`. **GRILL NUANCE:** migrations 151/152 do `import app.modules.commercial_core` **inside `upgrade()`**, not at module load — so the **running app is fine** (no startup/auto-migrate breakage). But `alembic upgrade head` on a **fresh DB / disaster-recovery / new environment WILL fail** (`ModuleNotFoundError` verified). Severity: dormant-but-certain-on-fresh-setup. Full impl on branch `SRT-10`. ACTION: restore (revert/merge SRT-10) vs. remove scaffolding+migrations. Commercial guides written against SRT-10 — DO NOT publish until restored.
