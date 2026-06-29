@@ -58,7 +58,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
-    expose_headers=["*"],
+    # Only expose headers the browser actually needs to read; "*" leaked internal
+    # headers cross-origin (security audit 2026-06-29).
+    expose_headers=["Content-Type", "Content-Length", "Content-Disposition"],
 )
 
 # Global exception handler for AppException
@@ -81,13 +83,16 @@ async def global_exception_handler(request: Request, exc: Exception):
     error_logger.error(f"Request method: {request.method}")
     error_logger.error(f"Traceback:\n{error_traceback}")
     
+    # Never leak exception messages/types to clients in production — they aid
+    # reconnaissance (DB schema, file paths, library hints). Full detail is logged
+    # server-side above; only expose it when debug is explicitly on (security audit 2026-06-29).
+    content = {"message": "Internal server error"}
+    if settings.debug:
+        content["detail"] = str(exc)
+        content["type"] = type(exc).__name__
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "message": "Internal server error",
-            "detail": str(exc),
-            "type": type(exc).__name__
-        }
+        content=content,
     )
 
 # Validation error handler to see detailed errors

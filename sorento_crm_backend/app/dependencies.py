@@ -1,4 +1,5 @@
 """Shared dependencies for FastAPI routes."""
+import hmac
 import time
 from fastapi import Depends, HTTPException, status, Request, Header
 from fastapi.security import OAuth2PasswordBearer
@@ -603,7 +604,9 @@ def get_current_user_or_api_key(
                 detail="API key authentication not configured"
             )
         
-        if api_key != valid_api_key:
+        # Constant-time compare to avoid leaking the key byte-by-byte via response
+        # timing (security audit 2026-06-29).
+        if not hmac.compare_digest(str(api_key), str(valid_api_key)):
             logger.warning(f"Invalid API key provided")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
