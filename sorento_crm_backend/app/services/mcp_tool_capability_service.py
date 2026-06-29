@@ -2025,6 +2025,197 @@ def build_live_capability_summary(*, include_tools: bool = True) -> dict[str, An
     }
 
 
+# ---------------------------------------------------------------------------
+# Novice-friendly capability overview (Item 4a)
+# ---------------------------------------------------------------------------
+# `build_live_capability_summary` is machine-faithful: it leaks `internal_admin.*`
+# tools, embedding skip-tools, raw `crm_*` slugs, machine category codes, and API
+# paths. None of that is suitable for a novice "what can the system do?" answer.
+#
+# `build_novice_capability_overview` is a thin transform on top of the live
+# summary that:
+#   - drops every `internal_admin.*` category and every `_EMBEDDING_SKIP_TOOLS`
+#     tool (so admin / discontinued tools never surface),
+#   - drops meta / internal categories not listed in `_NOVICE_MODULES`
+#     (e.g. `sla_management`, `commercial`, `general_enquiries.capabilities`,
+#     `user_guides`, `it_support`) — held / staff-only surfaces stay hidden,
+#   - maps machine category codes -> friendly module names,
+#   - attaches 2-3 plain-language example questions per module.
+#
+# Output contains NO tool slugs, UUIDs, raw category codes, methods, or paths.
+#
+# Example questions are seeded from the module `data-analysis.md` user guides
+# (the source of truth) but baked into code so the answer is deterministic and
+# available at runtime — prod containers do not ship the markdown.
+
+
+@dataclass(frozen=True)
+class _NoviceModule:
+    name: str
+    description: str
+    categories: tuple[str, ...]
+    example_questions: tuple[str, ...]
+
+
+_NOVICE_MODULES: tuple[_NoviceModule, ...] = (
+    _NoviceModule(
+        name="Products & catalogue",
+        description=(
+            "Search the product catalogue — find items by name, brand, category, "
+            "price, or size, and pull up full product details."
+        ),
+        categories=("general_enquiries.product",),
+        example_questions=(
+            "List products in category Beverages.",
+            "Show all products for brand Bosch with their list prices.",
+            "What's the biggest product by dimension?",
+        ),
+    ),
+    _NoviceModule(
+        name="Stock & inventory",
+        description=(
+            "Check live stock levels, low-stock alerts, batches and expiry, "
+            "warehouses, and stock movement history."
+        ),
+        categories=("general_enquiries.stock", "general_enquiries.stock_ledger"),
+        example_questions=(
+            "What's the on-hand quantity of product SRT-100 in warehouse WH-001?",
+            "Which items are low on stock right now?",
+            "Which batches expire in the next 30 days?",
+        ),
+    ),
+    _NoviceModule(
+        name="Incoming stock & shipments",
+        description=(
+            "See what stock is on the way — pending quantities, shipment ETAs, "
+            "packing lists, and which warehouse it's allocated to."
+        ),
+        categories=("general_enquiries.incoming_stock",),
+        example_questions=(
+            "Is there any incoming stock for this SKU?",
+            "What is arriving this month?",
+            "When will this product arrive and to which warehouse?",
+        ),
+    ),
+    _NoviceModule(
+        name="Orders & deliveries",
+        description=(
+            "Track delivery orders by number, customer, status, or date; find "
+            "orders containing a product; and see your top customers."
+        ),
+        categories=("order_enquiries",),
+        example_questions=(
+            "What is the status of order ORD-12345?",
+            "List orders delivered this month.",
+            "Which customers bought this product this year?",
+        ),
+    ),
+    _NoviceModule(
+        name="Promotions & campaigns",
+        description=(
+            "Find active and past promotions, the products included in a "
+            "promotion, and promotion flyers."
+        ),
+        categories=("general_enquiries.promotion",),
+        example_questions=(
+            "What promotions are active now?",
+            "Which products are included in this promotion?",
+            "Send me the promotion flyer.",
+        ),
+    ),
+    _NoviceModule(
+        name="Documents & files",
+        description=(
+            "Find documents — the product catalogue, brochures, datasheets, price "
+            "lists, the stock list, and other uploaded files."
+        ),
+        categories=("general_enquiries.attachment",),
+        example_questions=(
+            "Send me the product catalogue.",
+            "Do you have the brochure for this product?",
+            "Share the latest stock list.",
+        ),
+    ),
+    _NoviceModule(
+        name="Forms & applications",
+        description=(
+            "Find application and marketing forms — sponsorship, flower stand, "
+            "exhibition, and renovation forms — to download."
+        ),
+        categories=("marketing_agent.marketing_assets",),
+        example_questions=(
+            "What forms do you have?",
+            "Show me the sponsorship application form.",
+            "Can I have the renovation form?",
+        ),
+    ),
+    _NoviceModule(
+        name="Submitting requests & forms",
+        description=(
+            "Get a secure link to file and follow up on requests — complaints, "
+            "stock inquiries, purchase requests, and sponsorship forms — and "
+            "attach photos or files to them."
+        ),
+        categories=("user_submission_portal", "complaint.form_submission"),
+        example_questions=(
+            "I want to file a complaint.",
+            "I want to submit a stock inquiry.",
+            "Create a purchase request.",
+        ),
+    ),
+)
+
+
+def build_novice_capability_overview() -> dict[str, Any]:
+    """Novice-friendly capability overview derived from the live MCP catalog.
+
+    Drops admin/internal tools (`internal_admin.*`) + embedding skip-tools, maps
+    machine category codes to friendly module names, and attaches example
+    questions. The output NEVER contains tool slugs, UUIDs, raw category codes,
+    HTTP methods, or API paths — only friendly module names, plain-English
+    descriptions, and example questions.
+
+    A module is included only when the live catalog has at least one user-facing
+    (non-admin, non-skip) tool in its categories, so the overview can never
+    advertise a capability the system no longer ships.
+    """
+    summary = build_live_capability_summary(include_tools=True)
+
+    live_category_counts: dict[str, int] = {}
+    for group in summary.get("groups", []):
+        for tool in group.get("tools", []):
+            name = str(tool.get("tool_name", ""))
+            category = str(tool.get("category", ""))
+            if name in _EMBEDDING_SKIP_TOOLS:
+                continue
+            if category.startswith("internal_admin."):
+                continue
+            live_category_counts[category] = live_category_counts.get(category, 0) + 1
+
+    modules: list[dict[str, Any]] = []
+    for mod in _NOVICE_MODULES:
+        live = sum(live_category_counts.get(c, 0) for c in mod.categories)
+        if live <= 0:
+            continue
+        modules.append(
+            {
+                "module": mod.name,
+                "description": mod.description,
+                "example_questions": list(mod.example_questions),
+            }
+        )
+
+    return {
+        "intro": "Here's what I can help you with:",
+        "modules": modules,
+        "closing": (
+            "Just ask in plain language — for example, any of the questions "
+            "above. You can also ask me how to do something step by step."
+        ),
+        "source": "live_capability_catalog",
+    }
+
+
 def _tool_type_for_category(category: str) -> str:
     if category.endswith("form_submission"):
         return "form_submission"

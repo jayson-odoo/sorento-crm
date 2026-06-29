@@ -485,6 +485,54 @@ class AIAssistantChatService:
         user_msg = self.append_message(conv.id, "user", message, metadata_json=user_meta or None)
         logger.info("AI assistant user message appended conversation_id=%s", conv.id)
 
+        # Item 4a: deterministic capability answer. "What can you do / what can
+        # this system do / what can you help me with" is answered straight from
+        # the enriched capability catalog — NO LLM round-trip, never
+        # hallucinated. Short-circuits before reformulate / RAG / agent loop.
+        if self._is_capability_question(message):
+            capability_text = self._build_capability_answer()
+            capability_meta: dict[str, Any] = {
+                "links": self._extract_links_from_text(capability_text),
+                "sources": [],
+                "selected_tools": [],
+                "tool_calls": [],
+                "suggestions": [],
+                "deterministic": "capability_overview",
+            }
+            assistant_msg = self.append_message(
+                conv.id, "assistant", capability_text, metadata_json=capability_meta
+            )
+            total_ms = (time.perf_counter() - request_started) * 1000
+            try:
+                self.db.add(
+                    AIAssistantUsageLog(
+                        user_id=user_id,
+                        feature="ai_assistant",
+                        conversation_id=str(conv.id),
+                        message_id=str(assistant_msg.id),
+                        model=config.model,
+                        provider=config.provider,
+                        prompt_tokens=0,
+                        completion_tokens=0,
+                        total_tokens=0,
+                        tool_calls_count=0,
+                        response_time_ms=int(total_ms),
+                        was_answered=True,
+                    )
+                )
+                self.db.commit()
+            except Exception:
+                logger.exception("Failed to insert ai_assistant_usage_logs row (capability)")
+                self.db.rollback()
+            logger.info(
+                "AI assistant capability answer served deterministically "
+                "conversation_id=%s assistant_message_id=%s total_elapsed_ms=%.1f",
+                conv.id,
+                assistant_msg.id,
+                total_ms,
+            )
+            return conv, assistant_msg
+
         # Item 3b: turn-scoped, strictly-keyed tool/guide result cache. Created
         # fresh per respond() so it can never outlive the turn or leak across
         # users/threads (key includes user_id + conversation_id + turn_id). The
@@ -929,6 +977,79 @@ class AIAssistantChatService:
         if not m:
             return False
         return any(t in m for t in self._GUIDE_QUESTION_TRIGGERS)
+
+    # Deterministic "what can the system do?" intent (Item 4a). Tight phrases so
+    # a real data question ("what can I do to expedite order X?") never matches.
+    # When matched, respond() answers from the enriched capability catalog with
+    # NO LLM round-trip — the overview is fully deterministic.
+    _CAPABILITY_QUESTION_TRIGGERS = (
+        "what can you do",
+        "what can you help",
+        "what can the system do",
+        "what can this system do",
+        "what can this crm do",
+        "what can this app do",
+        "what can the assistant do",
+        "what can this assistant do",
+        "what can i ask you",
+        "what can i ask",
+        "what are your capabilities",
+        "what are you capable of",
+        "what do you do",
+        "what kind of questions can",
+        "what questions can i ask",
+        "how can you help me",
+        "what can you help me with",
+        "what else can you do",
+    )
+
+    def _is_capability_question(self, message: str) -> bool:
+        m = (message or "").strip().lower()
+        if not m:
+            return False
+        return any(t in m for t in self._CAPABILITY_QUESTION_TRIGGERS)
+
+    def _build_capability_answer(self) -> str:
+        """Render the deterministic capability overview as markdown.
+
+        Sourced from `build_novice_capability_overview()` (live catalog, enriched
+        and admin-stripped) — never hallucinated, no LLM call. Returns a friendly
+        fallback string if the catalog cannot be built for any reason.
+        """
+        from app.services.mcp_tool_capability_service import (
+            build_novice_capability_overview,
+        )
+
+        try:
+            overview = build_novice_capability_overview()
+        except Exception:
+            logger.exception("Failed to build novice capability overview")
+            return (
+                "I can help you look up products, stock, incoming shipments, "
+                "orders and deliveries, promotions, documents, and forms — and "
+                "help you file complaints, stock inquiries, and purchase "
+                "requests. Just ask in plain language."
+            )
+
+        modules = overview.get("modules") or []
+        if not modules:
+            return (
+                "I can help you find information across the system and submit "
+                "requests. Just ask in plain language."
+            )
+
+        lines: list[str] = [str(overview.get("intro") or "Here's what I can help you with:"), ""]
+        for mod in modules:
+            name = str(mod.get("module") or "").strip()
+            description = str(mod.get("description") or "").strip()
+            lines.append(f"**{name}** — {description}")
+            for q in mod.get("example_questions") or []:
+                lines.append(f"- Try: \"{q}\"")
+            lines.append("")
+        closing = str(overview.get("closing") or "").strip()
+        if closing:
+            lines.append(closing)
+        return "\n".join(lines).strip()
 
     def _cached_tool_call(
         self,
