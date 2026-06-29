@@ -11,13 +11,7 @@ import { UserDropdownMenu } from '@/partials/topbar/user-dropdown-menu';
 import { SessionUserAvatar } from '@/partials/topbar/session-user-avatar';
 import { UploadActivityIcon } from '@/components/upload-activity';
 import { MyDownloadsIcon } from '@/components/my-downloads/MyDownloadsIcon';
-import {
-  Bell,
-  LayoutGrid,
-  Menu,
-  Search,
-  SquareChevronRight,
-} from 'lucide-react';
+import { Bell, LayoutGrid, Menu, Search } from 'lucide-react';
 import { toAbsoluteUrl } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -34,8 +28,6 @@ import {
 import { Container } from '@/components/common/container';
 import { StoreClientTopbar } from '@/app/(protected)/store-client/components/common/topbar';
 import { Breadcrumb } from './breadcrumb';
-import { MegaMenu } from './mega-menu';
-import { MegaMenuMobile } from './mega-menu-mobile';
 import { SidebarMenu } from './sidebar-menu';
 
 /** Compact shortcut label for search: ⌘⇧K on Mac, Ctrl+⇧K on Windows/Linux. */
@@ -46,7 +38,6 @@ function getSearchShortcutLabel(): string {
 
 export function Header() {
   const [isSidebarSheetOpen, setIsSidebarSheetOpen] = useState(false);
-  const [isMegaMenuSheetOpen, setIsMegaMenuSheetOpen] = useState(false);
   const [searchShortcut, setSearchShortcut] = useState('⌘⇧K');
   useEffect(() => {
     setSearchShortcut(getSearchShortcutLabel());
@@ -61,7 +52,6 @@ export function Header() {
   // Close sheet when route changes
   useEffect(() => {
     setIsSidebarSheetOpen(false);
-    setIsMegaMenuSheetOpen(false);
   }, [pathname]);
 
   return (
@@ -110,38 +100,11 @@ export function Header() {
                 </SheetContent>
               </Sheet>
             )}
-            {mobileMode && (
-              <Sheet
-                open={isMegaMenuSheetOpen}
-                onOpenChange={setIsMegaMenuSheetOpen}
-              >
-                <SheetTrigger asChild>
-                  <Button variant="ghost" mode="icon">
-                    <SquareChevronRight className="text-muted-foreground/70" />
-                  </Button>
-                </SheetTrigger>
-                <SheetContent
-                  className="p-0 gap-0 w-[275px]"
-                  side="left"
-                  close={false}
-                >
-                  <SheetTitle className="sr-only">Menu</SheetTitle>
-                  <SheetHeader className="p-0 space-y-0" />
-                  <SheetBody className="p-0 overflow-y-auto">
-                    <MegaMenuMobile />
-                  </SheetBody>
-                </SheetContent>
-              </Sheet>
-            )}
           </div>
         </div>
 
-        {/* Main Content (MegaMenu or Breadcrumbs) */}
-        {pathname.startsWith('/account') ? (
-          <Breadcrumb />
-        ) : (
-          !mobileMode && <MegaMenu />
-        )}
+        {/* Main Content (Breadcrumb — replaces the removed demo mega-menu) */}
+        <Breadcrumb />
 
         {/* HeaderTopbar */}
         <div className="flex items-center gap-3">

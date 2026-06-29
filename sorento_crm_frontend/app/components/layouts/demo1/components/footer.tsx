@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import { generalSettings } from '@/config/general.config';
 import { Container } from '@/components/common/container';
 
 export function Footer() {
@@ -15,40 +14,12 @@ export function Footer() {
             <span className="text-muted-foreground">{currentYear} @ Foundryx</span>
           </div>
           <nav className="flex order-1 md:order-2 gap-4 font-normal text-sm text-muted-foreground">
-            <a
-              href={generalSettings.docsLink}
-              target="_blank"
-              className="hover:text-primary"
-            >
-              Docs
-            </a>
-            <a
-              href={generalSettings.purchaseLink}
-              target="_blank"
-              className="hover:text-primary"
-            >
-              Purchase
-            </a>
-            <a
-              href={generalSettings.faqLink}
-              target="_blank"
-              className="hover:text-primary"
-            >
-              FAQ
-            </a>
             <Link
               href="/ticket-management/tickets"
               className="hover:text-primary"
             >
               Support
             </Link>
-            <a
-              href={generalSettings.licenseLink}
-              target="_blank"
-              className="hover:text-primary"
-            >
-              License
-            </a>
           </nav>
         </div>
       </Container>
