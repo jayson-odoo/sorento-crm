@@ -332,7 +332,7 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
               <span className="text-xs text-muted-foreground">{redirect ? 'Auto-assign' : 'Notify only'}</span>
             </div>
           </div>
-          <Button onClick={handleAdd} disabled={!targetId || adding}>
+          <Button data-guide-target="dashboard.coverage.add" onClick={handleAdd} disabled={!targetId || adding}>
             {adding ? (
               <LoaderCircleIcon className="animate-spin me-2 size-4" />
             ) : (

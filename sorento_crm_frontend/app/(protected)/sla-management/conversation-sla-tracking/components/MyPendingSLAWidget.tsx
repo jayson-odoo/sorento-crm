@@ -714,6 +714,7 @@ export default function MyPendingSLAWidget() {
           <Button
             type="button"
             size="sm"
+            data-guide-target="dashboard.coverage.tab"
             variant={mode === 'coverage' ? 'primary' : 'ghost'}
             className="h-7 px-2.5"
             onClick={() => setMode('coverage')}
