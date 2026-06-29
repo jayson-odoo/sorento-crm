@@ -44,6 +44,7 @@ vi.mock('./slaKpiService', () => ({
 
 import { getKpiSummary, getKpiTrend, getKpiTasks } from './slaKpiService';
 import Page from './page';
+import { SLAKpiDashboardContent } from './SLAKpiDashboardContent';
 
 function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -53,6 +54,17 @@ function renderPage() {
     </QueryClientProvider>,
   );
 }
+
+function renderContent(props?: { defaultWindowDays?: number }) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <SLAKpiDashboardContent {...props} />
+    </QueryClientProvider>,
+  );
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 const SUMMARY = {
   scope: 'all', opened: 5, responded: 4, resolved: 3,
@@ -108,5 +120,47 @@ describe('SLA KPI Dashboard (TCK-32 UX1)', () => {
     renderPage();
     expect(await screen.findByText(/don.t have access/i)).toBeInTheDocument();
     expect(getKpiSummary).not.toHaveBeenCalled();
+  });
+
+  it('passes a bounded date window to all three queries when defaultWindowDays is set', async () => {
+    (getKpiSummary as any).mockResolvedValue(SUMMARY);
+    (getKpiTrend as any).mockResolvedValue([]);
+    (getKpiTasks as any).mockResolvedValue({ total: 0, data: [] });
+    renderContent({ defaultWindowDays: 30 });
+
+    // Scoped label is surfaced so users know the embed is windowed.
+    expect(await screen.findByText('Last 30 days')).toBeInTheDocument();
+
+    await waitFor(() => expect(getKpiSummary).toHaveBeenCalled());
+    const summaryWindow = (getKpiSummary as any).mock.calls[0][1];
+    expect(summaryWindow.date_from).toMatch(ISO_DATE);
+    expect(summaryWindow.date_to).toMatch(ISO_DATE);
+    // 30-day span (inclusive of today's date_to).
+    expect(summaryWindow.date_from < summaryWindow.date_to).toBe(true);
+
+    await waitFor(() => expect(getKpiTrend).toHaveBeenCalled());
+    expect((getKpiTrend as any).mock.calls[0][1]).toEqual(summaryWindow);
+
+    await waitFor(() => expect(getKpiTasks).toHaveBeenCalled());
+    // getKpiTasks(scope, pagination, sorting, view, state, window) — window is arg 6.
+    expect((getKpiTasks as any).mock.calls[0][5]).toEqual(summaryWindow);
+  });
+
+  it('omits the date window (all-time) when defaultWindowDays is unset', async () => {
+    (getKpiSummary as any).mockResolvedValue(SUMMARY);
+    (getKpiTrend as any).mockResolvedValue([]);
+    (getKpiTasks as any).mockResolvedValue({ total: 0, data: [] });
+    renderContent();
+
+    expect(screen.queryByText(/Last \d+ days/)).not.toBeInTheDocument();
+
+    await waitFor(() => expect(getKpiSummary).toHaveBeenCalled());
+    expect((getKpiSummary as any).mock.calls[0][1]).toBeUndefined();
+
+    await waitFor(() => expect(getKpiTrend).toHaveBeenCalled());
+    expect((getKpiTrend as any).mock.calls[0][1]).toBeUndefined();
+
+    await waitFor(() => expect(getKpiTasks).toHaveBeenCalled());
+    expect((getKpiTasks as any).mock.calls[0][5]).toBeUndefined();
   });
 });

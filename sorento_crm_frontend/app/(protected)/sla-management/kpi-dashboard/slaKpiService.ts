@@ -6,6 +6,21 @@ export type KpiScope = 'all' | 'conversation' | 'form';
 export type KpiView = 'all' | 'responded' | 'resolved' | 'pending' | 'responded_open';
 export type KpiState = 'all' | 'within' | 'overdue';
 
+// Optional inclusive date window (ISO `YYYY-MM-DD`). When omitted the backend
+// aggregates over all time. The home-dashboard embed passes a bounded window;
+// the dedicated route leaves it unset.
+export interface KpiWindow {
+  date_from?: string;
+  date_to?: string;
+}
+
+function windowExtra(window?: KpiWindow): Record<string, string> {
+  const extra: Record<string, string> = {};
+  if (window?.date_from) extra.date_from = window.date_from;
+  if (window?.date_to) extra.date_to = window.date_to;
+  return extra;
+}
+
 export interface KpiSummary {
   scope: string;
   opened: number;
@@ -87,8 +102,8 @@ function qs(scope: KpiScope, extra: Record<string, string | number> = {}) {
   return sp.toString();
 }
 
-export async function getKpiSummary(scope: KpiScope): Promise<KpiSummary> {
-  const r = await apiFetch(`${BASE}/summary?${qs(scope)}`);
+export async function getKpiSummary(scope: KpiScope, window?: KpiWindow): Promise<KpiSummary> {
+  const r = await apiFetch(`${BASE}/summary?${qs(scope, windowExtra(window))}`);
   if (!r.ok) throw new Error('Failed to load KPI summary');
   return r.json();
 }
@@ -99,8 +114,8 @@ export async function getKpiLeaderboard(scope: KpiScope): Promise<KpiLeaderRow[]
   return (await r.json()).data ?? [];
 }
 
-export async function getKpiTrend(scope: KpiScope): Promise<KpiTrendPoint[]> {
-  const r = await apiFetch(`${BASE}/trend?${qs(scope)}`);
+export async function getKpiTrend(scope: KpiScope, window?: KpiWindow): Promise<KpiTrendPoint[]> {
+  const r = await apiFetch(`${BASE}/trend?${qs(scope, windowExtra(window))}`);
   if (!r.ok) throw new Error('Failed to load trend');
   return (await r.json()).data ?? [];
 }
@@ -111,6 +126,7 @@ export async function getKpiTasks(
   sorting: SortingState = [],
   view: KpiView = 'all',
   state: KpiState = 'all',
+  window?: KpiWindow,
 ): Promise<{ data: KpiTaskRow[]; total: number }> {
   const params = buildDataGridParams(
     {
@@ -119,7 +135,7 @@ export async function getKpiTasks(
       sorting,
       searchQuery: '',
     },
-    { scope, view, state },
+    { scope, view, state, ...windowExtra(window) },
   );
   const r = await apiFetch(`${BASE}/tasks?${params.toString()}`);
   if (!r.ok) throw new Error('Failed to load tasks');

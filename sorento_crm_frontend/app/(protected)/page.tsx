@@ -28,7 +28,9 @@ export default function Page() {
       <div className="mb-5">
         <MyPendingSLAWidget />
       </div>
-      <SLAKpiDashboardContent />
+      {/* Home embed: bound the (expensive, full-table) KPI aggregates to the last
+          30 days. The dedicated /sla-management/kpi-dashboard route stays all-time. */}
+      <SLAKpiDashboardContent defaultWindowDays={30} />
     </Container>
   );
 }

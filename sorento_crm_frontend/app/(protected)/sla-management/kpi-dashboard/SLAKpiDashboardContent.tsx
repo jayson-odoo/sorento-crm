@@ -39,7 +39,27 @@ import {
   type KpiView,
   type KpiState,
   type KpiTaskRow,
+  type KpiWindow,
 } from './slaKpiService';
+
+// All three KPI aggregates are expensive (full conversation_sla_tracking scans),
+// so cache for 5 minutes — revisits/reloads inside the window hit the cache
+// instead of re-firing. Scope/window/filters are all in the query keys, so a
+// real input change still refetches.
+const KPI_STALE_MS = 5 * 60 * 1000;
+
+// Local-time ISO date (`YYYY-MM-DD`) for the date-window bounds.
+function isoDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Stable query-key fragment for the window (or 'all' when unbounded).
+function windowKey(window?: KpiWindow): string {
+  return window ? `${window.date_from ?? ''}..${window.date_to ?? ''}` : 'all';
+}
 
 // Mirrors MyPendingSLAWidget's ENTITY_ROUTES so this list navigates identically.
 const ENTITY_ROUTES: Record<string, string> = {
@@ -149,8 +169,12 @@ const TREND_CONFIG: ChartConfig = {
   resolved: { label: 'Resolved', color: 'var(--muted-foreground)' },
 };
 
-function TrendCard({ scope }: { scope: KpiScope }) {
-  const trendQ = useQuery({ queryKey: ['kpi-trend', scope], queryFn: () => getKpiTrend(scope) });
+function TrendCard({ scope, window }: { scope: KpiScope; window?: KpiWindow }) {
+  const trendQ = useQuery({
+    queryKey: ['kpi-trend', scope, windowKey(window)],
+    queryFn: () => getKpiTrend(scope, window),
+    staleTime: KPI_STALE_MS,
+  });
   return (
     <Card>
       <CardHeader className="py-4"><CardTitle className="text-base">Opened vs resolved trend</CardTitle></CardHeader>
@@ -193,7 +217,7 @@ function filterLabel(f: TaskFilter): string {
   return STATE_LABEL[f.state] ? `${VIEW_LABEL[f.view]} · ${STATE_LABEL[f.state]}` : VIEW_LABEL[f.view];
 }
 
-function TasksCard({ scope, filter, onClear }: { scope: KpiScope; filter: TaskFilter; onClear: () => void }) {
+function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter: TaskFilter; onClear: () => void; window?: KpiWindow }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -208,8 +232,9 @@ function TasksCard({ scope, filter, onClear }: { scope: KpiScope; filter: TaskFi
   }, [filter.view, filter.state, isFiltered]);
 
   const tasksQ = useQuery({
-    queryKey: ['kpi-tasks', scope, filter.view, filter.state, pagination.pageIndex, pagination.pageSize, sorting],
-    queryFn: () => getKpiTasks(scope, pagination, sorting, filter.view, filter.state),
+    queryKey: ['kpi-tasks', scope, windowKey(window), filter.view, filter.state, pagination.pageIndex, pagination.pageSize, sorting],
+    queryFn: () => getKpiTasks(scope, pagination, sorting, filter.view, filter.state, window),
+    staleTime: KPI_STALE_MS,
   });
 
   const data = tasksQ.data?.data ?? [];
@@ -358,10 +383,20 @@ function TasksCard({ scope, filter, onClear }: { scope: KpiScope; filter: TaskFi
 // Body of the KPI dashboard WITHOUT the outer <Container>, so it can be embedded
 // both on its own route (/sla-management/kpi-dashboard) and on the home dashboard
 // (app/(protected)/page.tsx) under "My pending tasks".
-export function SLAKpiDashboardContent() {
+export function SLAKpiDashboardContent({ defaultWindowDays }: { defaultWindowDays?: number } = {}) {
   const [scope, setScope] = useState<KpiScope>('all');
   const [filter, setFilter] = useState<TaskFilter>({ view: 'all', state: 'all' });
   const canView = useHasPermission('sla.kpi.view');
+
+  // When a window is requested (home embed), bound all three aggregates to the
+  // last N days (local date, inclusive). Unset → all-time (dedicated route).
+  const window = useMemo<KpiWindow | undefined>(() => {
+    if (!defaultWindowDays) return undefined;
+    const now = new Date();
+    const from = new Date(now);
+    from.setDate(from.getDate() - defaultWindowDays);
+    return { date_from: isoDate(from), date_to: isoDate(now) };
+  }, [defaultWindowDays]);
 
   // Toggle off when re-clicking the exact same slice; otherwise apply it.
   const selectFilter = (f: TaskFilter) =>
@@ -369,9 +404,10 @@ export function SLAKpiDashboardContent() {
   const clearFilter = () => setFilter({ view: 'all', state: 'all' });
 
   const summaryQ = useQuery({
-    queryKey: ['kpi-summary', scope],
-    queryFn: () => getKpiSummary(scope),
+    queryKey: ['kpi-summary', scope, windowKey(window)],
+    queryFn: () => getKpiSummary(scope, window),
     enabled: canView,
+    staleTime: KPI_STALE_MS,
   });
   const s = summaryQ.data;
 
@@ -388,7 +424,12 @@ export function SLAKpiDashboardContent() {
   return (
     <div className="space-y-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-xl font-semibold min-w-0 break-words">SLA KPI Dashboard</h1>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h1 className="text-xl font-semibold min-w-0 break-words">SLA KPI Dashboard</h1>
+            {defaultWindowDays ? (
+              <Badge variant="secondary" className="font-normal">Last {defaultWindowDays} days</Badge>
+            ) : null}
+          </div>
           <Select value={scope} onValueChange={(v) => { setScope(v as KpiScope); clearFilter(); }}>
             <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -477,10 +518,10 @@ export function SLAKpiDashboardContent() {
         ) : null}
 
       {/* Per-task drill-down — sits right under the cards; driven by card/segment clicks */}
-      <TasksCard scope={scope} filter={filter} onClear={clearFilter} />
+      <TasksCard scope={scope} filter={filter} onClear={clearFilter} window={window} />
 
       {/* Trend */}
-      <TrendCard scope={scope} />
+      <TrendCard scope={scope} window={window} />
     </div>
   );
 }
