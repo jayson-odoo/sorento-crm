@@ -904,24 +904,6 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                 </FormItem>
               )}
             />
-            <FormField
-              control={form.control}
-              name="required_on_site_support"
-              render={({ field }) => (
-                <FormItem className="flex flex-row items-center gap-2 space-y-0">
-                  <FormControl>
-                    <Checkbox
-                      checked={field.value ?? false}
-                      onCheckedChange={(v) => field.onChange(v === true)}
-                    />
-                  </FormControl>
-                  <FormLabel className="!mt-0 cursor-pointer">
-                    Required on site support
-                  </FormLabel>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
           </CardContent>
         </Card>
 
