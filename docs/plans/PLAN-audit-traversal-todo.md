@@ -100,6 +100,22 @@ COMMERCIAL DECISION REVISED (user): migrations 151/152 IMPORT the deleted module
 
 NOTE: a `ticket-management` module exists in FE (not in sidebar menu.config) — verify it's intentional/gated.
 
+### 1g. Bugs found while fact-checking guides (agent, 2026-06-30) — verify before fix
+
+**Likely real bugs / dead UI:**
+- [ ] **Marketing Campaign DELETE is a no-op stub** — `delete_campaign` returns success WITHOUT deleting. Violates ADR hard-delete standard. (Notable — silent data-non-deletion.)
+- [ ] **Campaign status casing mismatch** — BE `CampaignStatus` UPPERCASE (`PLANNING/ACTIVE/…`), FE types lowercase union → filters/badges silently miss.
+- [ ] **Email Outbox "Deferred" filter is dead** — FE + model docstring list `deferred`, but the drainer never writes it (rate-limited rows stay `pending`). Filter always returns 0.
+- [ ] **Stock Inquiry "Updated" status filter** (`updated`) — no backend writer; vestigial option.
+- [ ] **Complaints `resolved` + `draft` statuses** — appear in pill maps but CS-finalize only writes `processed_by_cs`/`closed`; no confirmed writer for `resolved`/`draft`.
+- [ ] **Import Jobs badge config** lists never-emitted values — success is `finished` (not `success`/`completed`); also Import Jobs is PER-USER (`user_id==current_user`) so "all failed imports today" is unanswerable there (use Import Logs).
+
+**Behavioral gotchas (documented in guides as caveats; mostly not bugs):**
+- Product-Suppliers read-only in UI (BE has full CRUD); Stock Inquiry `quantity`/`delivery_date` are TEXT (no date math — use `created_at`); SPO Allocation has no business/PO date.
+- Complaints UI "Assigned To" = latest unresolved SLA tracker assignee, but the list filter matches raw `complaints.assigned_to` column — mismatch source.
+- User-Mgmt labels non-obvious: "AI Agents"=`access_agents` (access-control, NOT LLM), "Internal Users"=`contact_agent_access`, "Administrative Users"=`users`; `tier` overloaded (users vs agent_teams); Users/Roles use SOFT-trash (ADR hard-delete exception); 8 notify toggles must be in all 3 manual `UserResponse` builders.
+- Minor: Promotion has no `name` (title=`description`); Product-Suppliers menu vs heading label drift; `notify_*_on_product_discontinued` singular vs FE "products" plural; Respond Outbox `business_id` dual UUID meaning.
+
 ### 1f. Security audit PHASE 2 (high-risk surfaces) — agent, 2026-06-30 — ⚠️ VERIFY/GRILL EACH BEFORE FIXING (some flagged "needs deeper check"; phase-1 had a false .env claim)
 
 **CRITICAL (verify first):**
@@ -232,7 +248,7 @@ Existing (department how-to): purchasing, warehouse, marketing, project-sales-ad
 - [x] **SLA Management guides** ✅ 6 files in `docs/user-guides/sla/` (incl `data-analysis.md` with verbatim met/breach formulas, conversation-vs-form explainer). Flags: menu "SLA Event Logs" vs in-page "Event Logs" mismatch; `max_extension_*` on model but not in Policies form UI.
 - [ ] Complaint data-analysis guide (technical-team has how-to; add data-analysis genre)
 - [ ] data-analysis index doc (`_shared/data-analysis-with-the-assistant.md`) tying all module data-analysis guides together for the assistant
-- [ ] Procurement/PR/SF/stock-inquiry data-analysis guide (how-to exists; add analysis genre)
+- [x] **Remaining module guides** ✅ 12 files on branch `docs/user-guides-data-analysis-uncovered-modules`: procurement (data-analysis + manage-suppliers + review-grn), marketing/data-analysis, complaints/data-analysis, user-management (data-analysis + manage-users-and-roles + manage-teams), system-management (data-analysis + troubleshoot-failed-notifications). NOT pushed to Outline (user-gated) — review the bugs they surfaced (§1g) then push. NOTE: on a separate branch, not main.
 
 **Bugs surfaced by guide agents (verify + fix):**
 - [ ] **Stock Batches "Create Batch" → `/stock-batches/new` has NO page implemented** (404/blank). Either build the page or hide the button (batches come from import pipeline today).
