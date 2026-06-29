@@ -353,8 +353,8 @@ def close_respond_conversation(tracking_id: str) -> dict:
                 "close_respond_conversation: no respond_io_id for %s; skipping", tracking_id
             )
             return {"tracking_id": tracking_id, "status": "skipped_no_respond_id"}
-        endpoint = f"https://api.respond.io/v2/contact/id:{identifier}/conversation/close"
-        payload = {"category": "Resolved", "summary": "Resolved from Sorento CRM SLA tracking."}
+        endpoint = f"https://api.respond.io/v2/contact/id:{identifier}/conversation/status"
+        payload = {"status": "close", "category": "Resolved", "summary": "Resolved from Sorento CRM SLA tracking."}
         try:
             response = RespondClient.for_contact_id(
                 db, str(tracking.respond_contact_id)

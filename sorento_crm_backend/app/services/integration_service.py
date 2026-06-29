@@ -252,13 +252,14 @@ class RespondClient:
         Mirrors ``send_message`` (id: prefix, Bearer auth). ``category``/``summary``
         form the closing note; a workspace may require category before closing, in
         which case omitting it yields a 4xx (callers treat close as best-effort).
-        Endpoint: POST /v2/contact/{identifier}/conversation/close.
+        Endpoint: POST /v2/contact/{identifier}/conversation/status, body
+        {status: "close", category, summary}. (No /conversation/close path — that 404s.)
         """
         if not self.api_key:
             raise ValueError("Respond API key is not configured.")
         api_id = self._contact_api_identifier(identifier)
-        url = f"{self.base_url}/v2/contact/{api_id}/conversation/close"
-        payload: dict = {}
+        url = f"{self.base_url}/v2/contact/{api_id}/conversation/status"
+        payload: dict = {"status": "close"}
         if category:
             payload["category"] = category
         if summary:
