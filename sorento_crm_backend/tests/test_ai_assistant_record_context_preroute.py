@@ -196,7 +196,7 @@ def _no_entity_snapshot() -> PageSnapshotPayload:
 def test_record_class_with_entity_bypasses_agent_loop(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
-    chat_service.intent_is_record_class = lambda _m: True  # type: ignore[assignment]
+    chat_service.intent_is_record_class = lambda _m, **_k: True  # type: ignore[assignment]
     agent = _Spy(("should-not-run", [], _USAGE))
     render = _Spy(("grounded answer from facts", [], _USAGE))
     chat_service._run_agent_loop = agent  # type: ignore[assignment]
@@ -220,7 +220,7 @@ def test_record_class_with_entity_bypasses_agent_loop(
 def test_catalog_question_with_entity_uses_agent_loop(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
-    chat_service.intent_is_record_class = lambda _m: False  # type: ignore[assignment]
+    chat_service.intent_is_record_class = lambda _m, **_k: False  # type: ignore[assignment]
     agent = _Spy(("active promos: ...", [], _USAGE))
     render = _Spy(("should-not-run", [], _USAGE))
     chat_service._run_agent_loop = agent  # type: ignore[assignment]
@@ -245,7 +245,7 @@ def test_record_phrasing_without_entity_uses_agent_loop(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
     # Even if the classifier would say record-class, no entity → no assembler.
-    chat_service.intent_is_record_class = lambda _m: True  # type: ignore[assignment]
+    chat_service.intent_is_record_class = lambda _m, **_k: True  # type: ignore[assignment]
     agent = _Spy(("...", [], _USAGE))
     render = _Spy(("should-not-run", [], _USAGE))
     chat_service._run_agent_loop = agent  # type: ignore[assignment]
@@ -279,7 +279,7 @@ def test_rbac_denied_degrades_to_agent_loop(
             return False
 
     monkeypatch.setattr(svc_module, "UserPermissionService", _DenyPerm)
-    chat_service.intent_is_record_class = lambda _m: True  # type: ignore[assignment]
+    chat_service.intent_is_record_class = lambda _m, **_k: True  # type: ignore[assignment]
     agent = _Spy(("...", [], _USAGE))
     render = _Spy(("should-not-run", [], _USAGE))
     chat_service._run_agent_loop = agent  # type: ignore[assignment]
@@ -310,7 +310,7 @@ def test_bubble_path_never_writes_contact_session_vars(
         "bubble service imported the n8n session-var writer — isolation breach"
     )
 
-    chat_service.intent_is_record_class = lambda _m: True  # type: ignore[assignment]
+    chat_service.intent_is_record_class = lambda _m, **_k: True  # type: ignore[assignment]
     chat_service._render_record_answer = _Spy(("ans", [], _USAGE))  # type: ignore[assignment]
     chat_service._run_agent_loop = _Spy(("ans", [], _USAGE))  # type: ignore[assignment]
 
@@ -332,7 +332,7 @@ def test_bubble_path_never_writes_contact_session_vars(
 def test_what_should_i_do_now_takes_record_path(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
-    chat_service.intent_is_record_class = lambda _m: True  # type: ignore[assignment]
+    chat_service.intent_is_record_class = lambda _m, **_k: True  # type: ignore[assignment]
     agent = _Spy(("generic advice", [], _USAGE))
     render = _Spy(("state-grounded next step", [], _USAGE))
     chat_service._run_agent_loop = agent  # type: ignore[assignment]
@@ -350,6 +350,122 @@ def test_what_should_i_do_now_takes_record_path(
         "'what should I do now' must be grounded by the complaint's current "
         "state (assembler render + guide), not the generic agent loop alone"
     )
+
+
+# ===========================================================================
+# UAC3c — skip the record-context classifier when no record is open
+# ===========================================================================
+# The classifier (`intent_is_record_class`) is a cheap-but-real LLM round-trip.
+# It is only meaningful when a record is open on the page; on dashboard /
+# settings / list pages there is nothing to short-circuit to, so it must NOT be
+# invoked at all (no LLM call). These tests pin both halves: skip when there is
+# no record context, invoke (unchanged behavior) when a record is present.
+
+
+class _CountingClassifier:
+    """Wraps a fixed verdict and records how many times it was invoked."""
+
+    def __init__(self, verdict: bool):
+        self.calls = 0
+        self.last_kwargs: dict | None = None
+        self._verdict = verdict
+
+    def __call__(self, message, **kwargs):  # noqa: ANN001
+        self.calls += 1
+        self.last_kwargs = kwargs
+        return self._verdict
+
+
+# --- UAC3c.1 — no record context (no entity) → classifier NOT invoked --------
+def test_classifier_not_invoked_without_entity(
+    seeded_user: str, chat_service: AIAssistantChatService
+):
+    classifier = _CountingClassifier(True)
+    chat_service.intent_is_record_class = classifier  # type: ignore[assignment]
+    agent = _Spy(("normal-path answer", [], _USAGE))
+    render = _Spy(("should-not-run", [], _USAGE))
+    chat_service._run_agent_loop = agent  # type: ignore[assignment]
+    chat_service._render_record_answer = render  # type: ignore[assignment]
+
+    chat_service.respond(
+        user_id=seeded_user,
+        conversation_id=None,
+        message="Why was it rejected?",
+        page_snapshot=_no_entity_snapshot(),
+    )
+
+    assert classifier.calls == 0, (
+        "with no record on the page the classifier LLM call must be skipped "
+        "entirely (UAC3c.1)"
+    )
+    assert agent.called is True, "no-record pages answer via the normal agent loop"
+    assert render.called is False
+
+
+# --- UAC3c.1 — no page_snapshot at all → classifier NOT invoked --------------
+def test_classifier_not_invoked_without_page_snapshot(
+    seeded_user: str, chat_service: AIAssistantChatService
+):
+    classifier = _CountingClassifier(True)
+    chat_service.intent_is_record_class = classifier  # type: ignore[assignment]
+    agent = _Spy(("normal-path answer", [], _USAGE))
+    render = _Spy(("should-not-run", [], _USAGE))
+    chat_service._run_agent_loop = agent  # type: ignore[assignment]
+    chat_service._render_record_answer = render  # type: ignore[assignment]
+
+    chat_service.respond(
+        user_id=seeded_user,
+        conversation_id=None,
+        message="What promotions are active right now?",
+        page_snapshot=None,
+    )
+
+    assert classifier.calls == 0
+    assert agent.called is True
+    assert render.called is False
+
+
+# --- UAC3c.2 — record present → classifier IS invoked, behavior unchanged -----
+def test_classifier_invoked_when_record_present(
+    seeded_user: str, chat_service: AIAssistantChatService
+):
+    classifier = _CountingClassifier(True)
+    chat_service.intent_is_record_class = classifier  # type: ignore[assignment]
+    agent = _Spy(("should-not-run", [], _USAGE))
+    render = _Spy(("grounded answer from facts", [], _USAGE))
+    chat_service._run_agent_loop = agent  # type: ignore[assignment]
+    chat_service._render_record_answer = render  # type: ignore[assignment]
+
+    chat_service.respond(
+        user_id=seeded_user,
+        conversation_id=None,
+        message="Why was this complaint rejected?",
+        page_snapshot=_complaint_snapshot(),
+    )
+
+    assert classifier.calls == 1, (
+        "a record open on the page must still be classified (UAC3c.2) — the "
+        "skip must NOT change behavior when a record is present"
+    )
+    assert render.called is True
+    assert agent.called is False
+
+
+# --- UAC3c.1 (function boundary) — has_record_context=False makes NO LLM call -
+def test_intent_is_record_class_skips_provider_without_context(
+    chat_service: AIAssistantChatService, monkeypatch
+):
+    """Defense-in-depth: even called directly, the classifier must not build a
+    provider / fire an LLM call when there is no record context."""
+    import app.services.ai_assistant_service as svc_module
+
+    class _BoomProvider:
+        def __init__(self, *_a, **_k):
+            raise AssertionError("get_provider must not be called when has_record_context=False")
+
+    monkeypatch.setattr(svc_module, "get_provider", _BoomProvider)
+
+    assert chat_service.intent_is_record_class("Why was this rejected?", has_record_context=False) is False
 
 
 # ===========================================================================

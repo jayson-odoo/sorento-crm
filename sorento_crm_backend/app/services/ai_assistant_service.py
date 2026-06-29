@@ -532,7 +532,14 @@ class AIAssistantChatService:
                 # would mis-route a record question into the agent loop. The
                 # user's own words carry the intent; the render path resolves
                 # specifics from the injected facts.
-                is_record_class = self.intent_is_record_class(message)
+                #
+                # UAC3c: the classifier LLM call runs ONLY inside this branch —
+                # i.e. only when a record was actually assembled for the page.
+                # No record context (dashboard/settings/list pages) => we never
+                # get here, so no classifier call / LLM round-trip is made.
+                is_record_class = self.intent_is_record_class(
+                    message, has_record_context=True
+                )
 
         agent_started = time.perf_counter()
         if record_ctx is not None and is_record_class:
@@ -1406,7 +1413,9 @@ class AIAssistantChatService:
             "the guide body. If the guide doesn't cover a step the user asked about, say so.\n"
         )
 
-    def intent_is_record_class(self, message: str) -> bool:
+    def intent_is_record_class(
+        self, message: str, *, has_record_context: bool = True
+    ) -> bool:
         """Semantic classifier: is this a question about the record on screen?
 
         record-class = a question about the SPECIFIC record/case currently on
@@ -1419,7 +1428,18 @@ class AIAssistantChatService:
         keyword matching — per the PLAN anti-overfit rule). Returns ``False`` on
         any provider error / missing key so we never wrongly hijack the agent
         loop (safe default = fall through).
+
+        UAC3c — record-context gate: classifying "is this about the open
+        record?" is only meaningful when a record is actually open on the page.
+        With no record context (dashboard / settings / list pages) there is
+        nothing to short-circuit to, so ``has_record_context=False`` skips the
+        LLM round-trip entirely (no provider call). The hot-path caller in
+        ``respond()`` already only reaches this with a successfully-assembled
+        ``record_ctx``; enforcing the skip here too makes a wasted classifier
+        call structurally impossible even if the call site is later refactored.
         """
+        if not has_record_context:
+            return False
         raw = (message or "").strip()
         if not raw:
             return False
