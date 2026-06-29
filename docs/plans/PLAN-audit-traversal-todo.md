@@ -128,7 +128,7 @@ NOTE: a `ticket-management` module exists in FE (not in sidebar menu.config) —
 
 **Likely real bugs / dead UI:**
 - [ ] **Marketing Campaign DELETE is a no-op stub** — `delete_campaign` returns success WITHOUT deleting. Violates ADR hard-delete standard. (Notable — silent data-non-deletion.)
-- [ ] **Campaign status casing mismatch** — BE `CampaignStatus` UPPERCASE (`PLANNING/ACTIVE/…`), FE types lowercase union → filters/badges silently miss.
+- [ ] **Campaign status casing mismatch — ✅CONFIRMED** — BE `CampaignStatus` UPPERCASE (`models/marketing.py:17` `PLANNING="PLANNING"`/`ACTIVE`), FE types + filter lowercase (`campaign.types.ts:17`; `CampaignsList.tsx:201` sends `value="planning"`). FE sends lowercase → BE stores uppercase → status filter never matches + badge mapping misses. Normalize one side.
 - [ ] **Email Outbox "Deferred" filter is dead** — FE + model docstring list `deferred`, but the drainer never writes it (rate-limited rows stay `pending`). Filter always returns 0.
 - [ ] **Stock Inquiry "Updated" status filter** (`updated`) — no backend writer; vestigial option.
 - [ ] **Complaints `resolved` + `draft` statuses** — appear in pill maps but CS-finalize only writes `processed_by_cs`/`closed`; no confirmed writer for `resolved`/`draft`.
