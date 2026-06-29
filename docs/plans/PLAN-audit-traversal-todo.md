@@ -23,10 +23,10 @@ This file is the living TODO. Findings get appended under each section with seve
 **🔴 TOP BUGS TO FIX (need a grilled+approved plan first):**
 2. **3 broken Create buttons** — Campaign / Form / Stock-Batch (`/…/new` page missing → falls to `[id]` → BE 500 → "not found"). Create is DEAD for these 3. + BE returns 500 (not 404/422) on non-UUID id. (§ top of Workstream-2.)
 3. **Lookup-permission 403 = HIGH, broad blast radius** — `/lookup/by-binding` requires `master_data.lookup_sets.view`, NOT granted to users who can use the forms. Breaks dropdowns + spams console + shows "Permission required" toast across **Forms, Complaints (create), Purchase Requests (create/edit/list/detail)** — via shared `components/common/LookupBoundField.tsx`. A complaint creator may be unable to submit. Fix: grant lookup-read implicitly with parent-resource access; stop the 4× retry. (§1f #9.)
-4. **Campaign DELETE is a no-op stub** (returns success without deleting) — violates ADR hard-delete; silent data non-deletion.
+4. **Marketing DELETE is a no-op stub — ✅CONFIRMED, TWO endpoints**: `delete_campaign` (`marketing/campaigns.py:83`) AND `delete_campaign_type` (`marketing/campaign_types.py:85`) both `# Implement delete logic` then `return {"message":"...deleted successfully"}` — return success, delete NOTHING. Violates ADR hard-delete; user thinks it deleted but it didn't.
 
 **🟠 SECURITY phase-2 (VERIFY each first — phase-1 had a false alarm):**
-5. No rate-limit on `/auth/reset-password`, `/auth/signup` (enumeration+spam), portal OTP (enum+DOS) — bundle into one "rate-limiting" plan.
+5. **✅CONFIRMED** no rate-limit on `/auth/reset-password` (auth.py:212) + `/auth/signup` (auth.py:143) — `login` HAS `login_throttle` (auth.py:44-97), these two don't. Signup 409s on existing email → enumeration. Portal OTP (enum+DOS) still to confirm. Bundle into one "rate-limiting" plan (reuse `login_throttle`).
 6. Presigned-URL endpoint has no object-level authz (IDOR) — check if CloudFront/R2 keys are global vs per-tenant. + inbound webhook signature verification not found (confirm if inbound exists). Bundle into "object-level authz" plan.
 
 **🟡 SMALLER / CLEANUP:** dead filters (Email-Outbox "Deferred", Stock-Inquiry "Updated") · Campaign status casing FE/BE mismatch · OTP plain-SHA256 · Permissions in-page breadcrumb "Users"→"User Management" · Files junk test folders + raw UUID filenames + clipped Access pills + "[DONT USE THIS]" attachment type · complaint create exposes raw Respond.io IDs · attachment-create permission gap.
