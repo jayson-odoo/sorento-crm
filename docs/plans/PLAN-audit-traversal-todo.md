@@ -36,7 +36,19 @@ DONE: commercial module CODE restore ✅ commit `d80a18fd3` (13 model-layer file
 DONE: log-hygiene ✅ commit `6fb5654d7` (no more header dump / token bytes in logs; forced-DEBUG gated on settings.debug).
 
 **SECURITY-FIRST BATCH STATUS: substantively complete** on branch `security/audit-hardening-20260629` (5 commits). Remaining security backlog (lower priority): no HTTP rate limiting (bigger — defer w/ design), `lookup_binding_service.py` f-string SQL (MED, metadata-guarded — harden to literal_column), JWT-secret-length log line (minor), FE `dangerouslySetInnerHTML` audit + OrderLinesCard UUID inputs (FE). 
-NEXT BATCH: UI/template-leak fixes (demo nav `MENU_MEGA`, footer `general.config.ts`) — confirmed + user-flagged + quick; then lookup_binding hardening; then AI assistant safe slice.
+POST-SECURITY BATCH (branch `feature/post-security-batch`, plan+UAC grilled+user-approved):
+- [x] **Item 1 UI/footer leaks** ✅ DONE+VERIFIED (commit `1602d2a20`). Demo mega-nav → Breadcrumb; footer = Support+copyright only (removed Docs/Outline, Purchase, FAQ, License). Browser-verified desktop+mobile, 0 console errors, top-bar utilities + sidebar intact, UAC1.1-1.6 pass.
+- [x] **Item 5 — assistant Outline-URL leak** ✅ DONE+VERIFIED (commit on branch). Two layers: redact `url` from guide tool-result before LLM + post-filter `doc.foundryx.my` from answers (`outline_base_url` config-derived). 9 unit tests pass; agent live-verified 3/3 guide Qs; I browser-verified "how do i rename the file" → clean inline steps, NO Outline URL, in-app links preserved (UAC5.1/5.2/5.5 ✅). Bonus: confirmed the rename-guide Outline push is live (answer shows right-click steps).
+- [x] **Item 3c (classifier-skip)** ✅ commit `40792e6b0` — `intent_is_record_class(has_record_context=False)` early-returns before any LLM call; record-open path byte-identical. 4 tests.
+- [x] **Item 3b (turn-scoped keyed cache)** ✅ commit `f37f4652b` — `_TurnToolCache` keyed `sha256(user_id∥conversation_id∥turn_id∥tool∥sha256(args))`, fresh per turn; raw output cached so Outline redaction still runs. 10 tests incl. cross-user/conversation/turn isolation (UAC3b.2 security). Pyright clean.
+- [x] **Item 4 capability + getting-started + publish safeguard** ✅ CODE DONE (committed). Deterministic `_build_capability_answer()` intercepts "what can you do" BEFORE any LLM call (browser-verified: friendly modules + example Qs, no slugs/UUIDs/Outline URL — UAC4.1/4.2). `getting-started-for-new-users.md` written (UAC4.3). Sync-script `HELD_FOLDERS={commercial}` + `_assert_no_held_folders()` RAISES if commercial in allowlist (UAC4.5, tested); `dry-run` subcommand added. 12 new tests pass.
+  - ⏳ **LIVE OUTLINE PUSH = USER ACTION** (auto-mode denied the bulk external write — correct per review-gate). Dry-run verified: 63 docs, commercial HELD, getting-started + inventory/delivery/product/sla included. User runs: `! cd <repo> && set -a; . sorento_crm_backend/.env; set +a; sorento_crm_backend/venv/bin/python scripts/sync_user_guides_outline.py push`
+- [x] **Item 3d eval harness** ✅ commit `6a28ab562` — `scripts/eval_assistant_routing.py` (132 guide questions → routed category + latency; `--check` diffs vs committed baseline, exits 1 on category/question drift; `--live` optional real-LLM). Baseline committed.
+- [x] **Item 2 lookup SQL cleanup** ✅ commit `f82175983` — Core `select(col).where(col.isnot(None)).distinct()` off validated metadata, `except` narrowed to SQLAlchemyError, `_REGISTRY` fallback preserved; 3 tests incl. injection-rejection.
+
+### ✅ POST-SECURITY BATCH COMPLETE (branch `feature/post-security-batch`)
+All approved safe-set items done + verified, NO new test failures (105 pre-existing baseline = Python-3.14 sqlite env, not ours). Branch commits: pre-existing-checkpoint → docs → Item1(1602d2a20) → Item5 → Item3c(40792e6b0) → Item3b(f37f4652b) → Item4 → Item2(f82175983) → Item3d(6a28ab562).
+**USER-GATED remaining:** (1) Outline push (command above), (2) `private_key.pem` history purge + AWS keypair rotation (RUNBOOK), (3) review + git push/merge of both branches, (4) DEFERRED (need own grilled plans): FE streaming, keyword-gate classifier replacement, admin-QoL roadmap (Workstream 4), commercial restore-to-UI vs keep-gated.
 COMMERCIAL DECISION REVISED (user): migrations 151/152 IMPORT the deleted modules at upgrade() and BUILD tables from model metadata → fresh-DB alembic ALREADY fails today. So NOT a trivial delete. **User chose: RESTORE module CODE only from branch `SRT-10` (commercial_core + commercial_activity packages + their minimal backend dep closure), keep UI gated off (no FE pages, don't enable modules for default tenant).** Goal: `alembic upgrade head` works on fresh DB + backend imports. Run AFTER perf agent (serialize commits on the branch). Commercial guides can then publish once feature is actually enabled.
 ⚠️ Working-tree had pre-existing uncommitted changes NOT mine: `ai_assistant_service.py` (+`_current_date_directive()`), `role-list.tsx` (1-line). Left untouched — confirm provenance before committing.
 
@@ -136,7 +148,13 @@ Pages to sweep (from `config/menu.config.tsx`). Desktop 1400px + mobile ~375px. 
 - [ ] Footer link row overflows at right edge ("License" clipped) at 390px; also the floating **AI assistant** FAB overlaps the footer links on short pages. Low severity — wrap footer / add bottom padding so FAB doesn't cover content.
 - (KPI dashboard mobile layout not captured — current test user lacks `sla.kpi.view`; revisit with a KPI-enabled user.)
 
-_more findings appended below as the sweep runs — REMAINING desktop+mobile pass: list/detail pages per Workstream-2 checklist (Complaints, SLA, Marketing, Forms, Resource Mgmt, System Mgmt visible to this user; rest gated)._
+**Complaints list `/complaint-management/complaints` (desktop 1280 + mobile 390) — ✅ CLEAN.**
+- Desktop: professional DataGrid (Search/Filters/Columns/Export/refresh/Create Complaint), proper truncation on Customer/Product, row-select checkboxes, breadcrumb. 0 console errors.
+- Mobile: toolbar wraps cleanly, DataGrid horizontally scrolls (DO Number + Complaint Date visible, rest via scroll) — no off-screen overflow. Create Complaint prominent.
+- Minor: top-bar breadcrumb wraps to 2 lines at 390px (tight but functional). Empty cells render "-" (complaints not linked to a DO) — acceptable.
+- Note (ties to admin-QoL): row-select checkboxes present but no bulk-action bar surfaced here.
+
+_more findings appended as the sweep continues — still to pass: SLA pages, Marketing, Forms, Resource Mgmt (Files), System Mgmt._
 
 ---
 
