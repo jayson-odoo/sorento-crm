@@ -246,7 +246,11 @@ class ConversationSLAEscalateRequest(BaseModel):
     respond_contact_id: CRM respond_contacts.id, Respond.io id, or phone (E.164 / variants).
     """
     respond_contact_id: str
-    policy_id: str
+    # Optional: the open conversation tracking for the contact already stores its
+    # policy (tied at create via agent_code + team_set_code). The server resolves the
+    # row by respond_contact_id (one-open-per-contact) and uses THAT policy. policy_id
+    # here is only a fallback when no open row is found — legacy exact-match lookup.
+    policy_id: Optional[str] = None
     # Target tier after escalation (1–3), must be greater than the row's current tier.
     # Omit (None) for signal-only escalation: the server escalates to current tier + 1,
     # or returns escalated=false when already at tier 3.
@@ -266,8 +270,10 @@ class ConversationSLAEscalateRequest(BaseModel):
     @field_validator("policy_id")
     @classmethod
     def validate_policy_id(cls, v):
+        # Optional fallback: blank / explicit null normalizes to None. The server
+        # prefers the open tracking row's own policy (agent-team-tied).
         if v is None or (isinstance(v, str) and not v.strip()):
-            raise ValueError("policy_id is required")
+            return None
         return str(v).strip()
 
     @field_validator("escalation_reason")

@@ -1958,6 +1958,38 @@ class ConversationSLATrackingService:
         )
         return tracking
 
+    def get_open_tracking_by_contact(
+        self,
+        respond_contact_id: str,
+    ) -> Optional[ConversationSLATracking]:
+        """Get the OPEN conversation SLA tracking for a contact (policy-agnostic).
+
+        Conversation SLA is max one-open-per-contact (``conversation_tracking_scope``
+        excludes form-SLA rows), so the contact alone identifies the row to escalate —
+        its stored policy_id (tied at create via agent_code + team_set_code) is the
+        source of truth. Prefers an unresolved row; falls back to the most recent.
+        """
+        from sqlalchemy.orm import joinedload
+        from app.models.sla import ConversationSLAEventLog
+
+        return (
+            self.db.query(ConversationSLATracking)
+            .options(
+                joinedload(ConversationSLATracking.policy),
+                joinedload(ConversationSLATracking.contact),
+                joinedload(ConversationSLATracking.event_logs).joinedload(ConversationSLAEventLog.assigned_user),
+            )
+            .filter(
+                ConversationSLATracking.respond_contact_id == respond_contact_id,
+                conversation_tracking_scope(),
+            )
+            .order_by(
+                ConversationSLATracking.is_resolved.asc(),  # False (open) first
+                ConversationSLATracking.created_at.desc(),
+            )
+            .first()
+        )
+
     def resolve_internal_respond_contact_id(self, respond_contact_id: str) -> Optional[str]:
         """Map API respond_contact_id to respond_contacts.id (CRM id, Respond.io id, or phone / E.164)."""
         from app.models.access import RespondContact

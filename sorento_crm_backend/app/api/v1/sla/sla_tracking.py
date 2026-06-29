@@ -842,15 +842,22 @@ async def escalate_sla_tracking_integration(
         if not internal_contact_id:
             raise handle_not_found("Respond contact", body.respond_contact_id)
 
-        tracking = service.get_tracking_by_contact_and_policy(
-            internal_contact_id,
-            body.policy_id,
-        )
+        # Source of truth = the open conversation tracking for this contact (one open
+        # per contact). Its stored policy_id is the agent-team-tied policy. body.policy_id
+        # is only a fallback — used when no open row is found (legacy exact-match lookup).
+        tracking = service.get_open_tracking_by_contact(internal_contact_id)
+        if not tracking and body.policy_id:
+            tracking = service.get_tracking_by_contact_and_policy(
+                internal_contact_id,
+                body.policy_id,
+            )
         if not tracking:
             raise handle_not_found(
                 "Conversation SLA tracking",
-                f"respond_contact_id={body.respond_contact_id}, policy_id={body.policy_id}",
+                f"respond_contact_id={body.respond_contact_id}, policy_id={body.policy_id or '(none)'}",
             )
+        # Prefer the row's own policy; fall back to body only if the row somehow lacks one.
+        effective_policy_id = str(getattr(tracking, "policy_id", None) or body.policy_id or "")
         if bool(getattr(tracking, "is_resolved", False)):
             raise handle_validation_error(
                 "Cannot escalate a resolved conversation SLA tracking."
@@ -913,7 +920,7 @@ async def escalate_sla_tracking_integration(
         # escalate_tracking) records the NEW tier assignee, not the previous tier's.
         tracking = service.escalate_tracking(
             respond_contact_id=internal_contact_id,
-            policy_id=body.policy_id,
+            policy_id=effective_policy_id,
             current_tier=target_tier,
             escalation_reason=body.escalation_reason,
             assigned_to_id=str(assignee["id"]),
@@ -938,6 +945,15 @@ async def escalate_sla_tracking_integration(
             ),
             request_payload_dict=body.model_dump(),
         )
+        # Notify the new-tier assignee through our existing notification path —
+        # in-app always, email/WhatsApp gated by the per-event escalation toggles
+        # (same as the UI escalate route + form-SLA). n8n does NOT send its own
+        # escalation notification, so the backend owns it for ALL escalations.
+        # Best-effort: the escalation already committed (helper swallows + warns).
+        _notify_conversation_sla_escalation(
+            db, tracking, assignee, getattr(body, "escalation_reason", None) or ""
+        )
+
         assigned_to_respond_user_id = str(assignee.get("respond_user_id") or "")
         assigned_to_id = str(assignee.get("id") or "")
         assigned_to_name = assignee.get("name")
@@ -1093,8 +1109,8 @@ async def escalate_conversation_sla_tracking(
     )
     # Notify the new assignee — same channels + per-event toggles as form-SLA
     # escalation, so ALL escalations behave the same. Best-effort: the escalation
-    # already committed. NOT placed in escalate_tracking, since n8n's integration
-    # escalate posts its own notification (avoids double-notify).
+    # already committed. Kept out of escalate_tracking so both routes (UI here,
+    # n8n /integration/escalate) call it explicitly — n8n does NOT send its own.
     _notify_conversation_sla_escalation(db, tracking, assignee, reason)
     # Escalation is a reassignment: push the new-tier owner to the Respond.io
     # conversation too (async + outbox-logged via the respond_io worker), mirroring
