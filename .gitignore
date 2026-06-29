@@ -6,6 +6,9 @@ sorento_crm_backend/node_modules/*
 sorento_crm_frontend/.next/*
 sorento_crm_backend/.next/*
 
+# Local MCP server config (carries Bearer tokens / secrets — never commit)
+.mcp.json
+
 # Environment files
 .env
 .env.local
