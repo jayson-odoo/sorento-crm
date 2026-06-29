@@ -1,0 +1,2989 @@
+{
+  "schema_version": 1,
+  "mode": "lexical",
+  "top_k": 3,
+  "question_count": 132,
+  "results": [
+    {
+      "module": "commercial",
+      "question": "List leads created between January and March for client {X}.",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 6.6552
+        },
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.019
+    },
+    {
+      "module": "commercial",
+      "question": "Show open leads (not in a terminal stage) owned by {user}.",
+      "routed_tool": "crm_incoming_stock_list",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.4214
+        },
+        {
+          "tool": "crm_incoming_stock_shipments",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.4214
+        },
+        {
+          "tool": "crm_it_support_ticket_create",
+          "category": "it_support",
+          "score": 3.4214
+        }
+      ],
+      "latency_ms": 0.02
+    },
+    {
+      "module": "commercial",
+      "question": "How many leads are in the {stage} stage?",
+      "routed_tool": null,
+      "routed_category": "none",
+      "top_k_tools": [],
+      "latency_ms": 0.004
+    },
+    {
+      "module": "commercial",
+      "question": "Which leads don't have a project yet?",
+      "routed_tool": "user_guides_read",
+      "routed_category": "user_guides",
+      "top_k_tools": [
+        {
+          "tool": "user_guides_read",
+          "category": "user_guides",
+          "score": 3.6741
+        }
+      ],
+      "latency_ms": 0.005
+    },
+    {
+      "module": "commercial",
+      "question": "List leads with budget range {RM band} and high sales-closure confidence.",
+      "routed_tool": "crm_master_products_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 6.432
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 5.7389
+        },
+        {
+          "tool": "crm_it_support_ticket_create",
+          "category": "it_support",
+          "score": 3.6741
+        }
+      ],
+      "latency_ms": 0.011
+    },
+    {
+      "module": "commercial",
+      "question": "Show leads created this month, sorted by client name.",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 6.4024
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 6.4024
+        },
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 3.981
+        }
+      ],
+      "latency_ms": 0.018
+    },
+    {
+      "module": "commercial",
+      "question": "Which leads are linked to a Respond.io workspace?",
+      "routed_tool": "crm_it_support_ticket_create",
+      "routed_category": "it_support",
+      "top_k_tools": [
+        {
+          "tool": "crm_it_support_ticket_create",
+          "category": "it_support",
+          "score": 6.9428
+        },
+        {
+          "tool": "crm_sla_conversation_tracking_list",
+          "category": "sla_management",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.008
+    },
+    {
+      "module": "commercial",
+      "question": "List projects owned by {user}.",
+      "routed_tool": "crm_master_customers_list",
+      "routed_category": "commercial",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 4.6741
+        },
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 1.0
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.0
+        }
+      ],
+      "latency_ms": 0.015
+    },
+    {
+      "module": "commercial",
+      "question": "Show projects for developer {customer}.",
+      "routed_tool": "crm_master_customers_list",
+      "routed_category": "commercial",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 10.3293
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "commercial",
+      "question": "How many active projects do we have?",
+      "routed_tool": "crm_master_customers_list",
+      "routed_category": "commercial",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 3.6741
+        },
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 2.1701
+        },
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 2.1701
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "commercial",
+      "question": "Which projects start after {date}?",
+      "routed_tool": "crm_marketing_promotions_list",
+      "routed_category": "general_enquiries.promotion",
+      "top_k_tools": [
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 5.0457
+        },
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 3.6741
+        },
+        {
+          "tool": "crm_portal_link_get",
+          "category": "user_submission_portal",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.01
+    },
+    {
+      "module": "commercial",
+      "question": "List projects linked to lead {lead_code}.",
+      "routed_tool": "crm_master_customers_list",
+      "routed_category": "commercial",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 5.4024
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 4.7092
+        },
+        {
+          "tool": "crm_master_product_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 4.7092
+        }
+      ],
+      "latency_ms": 0.01
+    },
+    {
+      "module": "commercial",
+      "question": "Show projects in the {stage} stage created this quarter.",
+      "routed_tool": "crm_master_customers_list",
+      "routed_category": "commercial",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 3.6741
+        },
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "commercial",
+      "question": "List open tenders.",
+      "routed_tool": "crm_incoming_stock_list",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.4214
+        },
+        {
+          "tool": "crm_incoming_stock_shipments",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.4214
+        },
+        {
+          "tool": "crm_it_support_ticket_create",
+          "category": "it_support",
+          "score": 2.4214
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "commercial",
+      "question": "Show tenders closing this month (by expected close date).",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.7092
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.7092
+        },
+        {
+          "tool": "crm_incoming_stock_shipments",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.7092
+        }
+      ],
+      "latency_ms": 0.009
+    },
+    {
+      "module": "commercial",
+      "question": "How many tenders did we lose vs win this year?",
+      "routed_tool": "crm_marketing_promotions_list",
+      "routed_category": "general_enquiries.promotion",
+      "top_k_tools": [
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 3.6741
+        }
+      ],
+      "latency_ms": 0.005
+    },
+    {
+      "module": "commercial",
+      "question": "List tenders under project {X} with their forecast value.",
+      "routed_tool": "user_guides_read",
+      "routed_category": "user_guides",
+      "top_k_tools": [
+        {
+          "tool": "user_guides_read",
+          "category": "user_guides",
+          "score": 3.6741
+        },
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 2.5755
+        },
+        {
+          "tool": "crm_lookup_resolve",
+          "category": "lookup",
+          "score": 2.5755
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "commercial",
+      "question": "Which tenders are withdrawn or no-award?",
+      "routed_tool": null,
+      "routed_category": "none",
+      "top_k_tools": [],
+      "latency_ms": 0.003
+    },
+    {
+      "module": "commercial",
+      "question": "Show the highest-value open tenders by forecast amount.",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 2.5755
+        },
+        {
+          "tool": "crm_lookup_resolve",
+          "category": "lookup",
+          "score": 2.5755
+        },
+        {
+          "tool": "crm_marketing_promotion_products_list",
+          "category": "general_enquiries.promotion",
+          "score": 2.5755
+        }
+      ],
+      "latency_ms": 0.01
+    },
+    {
+      "module": "commercial",
+      "question": "Which quotations are on tender {tender_code}, and which is the winner?",
+      "routed_tool": "crm_forms_management_forms_list",
+      "routed_category": "marketing_agent.marketing_assets",
+      "top_k_tools": [
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 1.7282
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.7282
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.7282
+        }
+      ],
+      "latency_ms": 0.01
+    },
+    {
+      "module": "commercial",
+      "question": "List quotations for client {X} created between Jan and Mar.",
+      "routed_tool": "crm_master_products_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "commercial",
+      "question": "Show quotations in the {stage} stage owned by {user}.",
+      "routed_tool": "crm_forms_management_forms_list",
+      "routed_category": "marketing_agent.marketing_assets",
+      "top_k_tools": [
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 1.0
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.0
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.0
+        }
+      ],
+      "latency_ms": 0.016
+    },
+    {
+      "module": "commercial",
+      "question": "Which quotations are the winner on their tender (path_role = winner)?",
+      "routed_tool": "crm_forms_management_forms_list",
+      "routed_category": "marketing_agent.marketing_assets",
+      "top_k_tools": [
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 1.0
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.0
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.0
+        }
+      ],
+      "latency_ms": 0.016
+    },
+    {
+      "module": "commercial",
+      "question": "List quotations expiring (valid_until) before {date}.",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 5.5565
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 5.5565
+        },
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.009
+    },
+    {
+      "module": "commercial",
+      "question": "What's the total quoted value of open quotations on tender {tender_code}?",
+      "routed_tool": "crm_incoming_stock_list",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 7.1306
+        },
+        {
+          "tool": "crm_incoming_stock_shipments",
+          "category": "general_enquiries.incoming_stock",
+          "score": 5.4024
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.7092
+        }
+      ],
+      "latency_ms": 0.014
+    },
+    {
+      "module": "commercial",
+      "question": "Show quotations awaiting pricing approval.",
+      "routed_tool": "crm_master_products_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 3.6741
+        },
+        {
+          "tool": "user_guides_read",
+          "category": "user_guides",
+          "score": 3.6741
+        }
+      ],
+      "latency_ms": 0.005
+    },
+    {
+      "module": "commercial",
+      "question": "List my quotations updated this week.",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "commercial",
+      "question": "How many revisions does quotation {code} have?",
+      "routed_tool": "crm_forms_management_forms_list",
+      "routed_category": "marketing_agent.marketing_assets",
+      "top_k_tools": [
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 1.7282
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.7282
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.7282
+        }
+      ],
+      "latency_ms": 0.012
+    },
+    {
+      "module": "commercial",
+      "question": "Which revision is the final selected one for quotation {code}?",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.5306
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.5306
+        },
+        {
+          "tool": "crm_marketing_promotion_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 3.5306
+        }
+      ],
+      "latency_ms": 0.014
+    },
+    {
+      "module": "commercial",
+      "question": "List revisions created after {date}.",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 5.2689
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 5.2689
+        },
+        {
+          "tool": "crm_portal_link_get",
+          "category": "user_submission_portal",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.009
+    },
+    {
+      "module": "commercial",
+      "question": "List sales orders created this quarter.",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 8.5375
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 5.5565
+        },
+        {
+          "tool": "user_guides_read",
+          "category": "user_guides",
+          "score": 5.5565
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "commercial",
+      "question": "How many confirmed sales orders do we have?",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 5.5565
+        },
+        {
+          "tool": "user_guides_read",
+          "category": "user_guides",
+          "score": 5.5565
+        },
+        {
+          "tool": "crm_marketing_promotion_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "commercial",
+      "question": "Which sales order came from tender {tender_code}?",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 7.4671
+        },
+        {
+          "tool": "user_guides_read",
+          "category": "user_guides",
+          "score": 5.7389
+        },
+        {
+          "tool": "crm_marketing_promotion_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 4.7092
+        }
+      ],
+      "latency_ms": 0.011
+    },
+    {
+      "module": "commercial",
+      "question": "Show void or cancelled sales orders.",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 5.5565
+        },
+        {
+          "tool": "user_guides_read",
+          "category": "user_guides",
+          "score": 5.5565
+        },
+        {
+          "tool": "crm_marketing_promotion_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "delivery-orders",
+      "question": "List orders for customer Deluxe Home Center delivered between 1 Jan 2026 and 31 Mar 2026.",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 15.3626
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 12.0939
+        },
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 5.5565
+        }
+      ],
+      "latency_ms": 0.012
+    },
+    {
+      "module": "delivery-orders",
+      "question": "Show undelivered orders older than 30 days.",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 3.6741
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_portal_link_get",
+          "category": "user_submission_portal",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.008
+    },
+    {
+      "module": "delivery-orders",
+      "question": "Orders delivered this month.",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 8.2656
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 8.2656
+        },
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 2.5755
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "delivery-orders",
+      "question": "List delivery orders for debtor code 300-D093.",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 10.2658
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 10.2658
+        },
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 7.2848
+        }
+      ],
+      "latency_ms": 0.011
+    },
+    {
+      "module": "delivery-orders",
+      "question": "Which orders are still pending delivery?",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 8.1321
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 8.1321
+        },
+        {
+          "tool": "user_guides_read",
+          "category": "user_guides",
+          "score": 5.5565
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "delivery-orders",
+      "question": "Orders placed in February 2026",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 12.3816
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 12.3816
+        },
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 2.5755
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "delivery-orders",
+      "question": "Show the 20 most recent delivered orders.",
+      "routed_tool": "crm_order_management_orders_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 12.0939
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 8.8252
+        },
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 5.5565
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "delivery-orders",
+      "question": "List cancelled orders this quarter.",
+      "routed_tool": "crm_forms_management_forms_list",
+      "routed_category": "marketing_agent.marketing_assets",
+      "top_k_tools": [
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 2.5755
+        },
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 2.5755
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 2.5755
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "delivery-orders",
+      "question": "Orders with no delivery order lines.",
+      "routed_tool": "crm_order_management_orders_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 10.8899
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 8.3144
+        },
+        {
+          "tool": "user_guides_read",
+          "category": "user_guides",
+          "score": 8.3144
+        }
+      ],
+      "latency_ms": 0.008
+    },
+    {
+      "module": "delivery-orders",
+      "question": "List orders containing product <X> delivered last week.",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 16.38
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 13.1113
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 7.2671
+        }
+      ],
+      "latency_ms": 0.015
+    },
+    {
+      "module": "delivery-orders",
+      "question": "Which customers bought product <X> this year?",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 8.078
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 5.097
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 4.4039
+        }
+      ],
+      "latency_ms": 0.011
+    },
+    {
+      "module": "delivery-orders",
+      "question": "Top 10 customers by order count.",
+      "routed_tool": "crm_master_customers_list",
+      "routed_category": "commercial",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 14.9695
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 11.2954
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 5.7389
+        }
+      ],
+      "latency_ms": 0.01
+    },
+    {
+      "module": "delivery-orders",
+      "question": "How many orders does each customer have?",
+      "routed_tool": "crm_master_customers_list",
+      "routed_category": "commercial",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 5.5565
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 5.5565
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 5.5565
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "delivery-orders",
+      "question": "List our customers alphabetically.",
+      "routed_tool": "crm_master_customers_list",
+      "routed_category": "commercial",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.004
+    },
+    {
+      "module": "delivery-orders",
+      "question": "How many orders does <customer> have?",
+      "routed_tool": "crm_master_customers_list",
+      "routed_category": "commercial",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 5.5565
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 5.5565
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 5.5565
+        }
+      ],
+      "latency_ms": 0.005
+    },
+    {
+      "module": "delivery-orders",
+      "question": "How many orders are in each status this month?",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 7.2848
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 7.2848
+        },
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 4.8634
+        }
+      ],
+      "latency_ms": 0.01
+    },
+    {
+      "module": "delivery-orders",
+      "question": "List orders that are 'Delivered'.",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 5.8442
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 5.8442
+        },
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 2.5755
+        }
+      ],
+      "latency_ms": 0.005
+    },
+    {
+      "module": "inventory",
+      "question": "How many active warehouses do we have?",
+      "routed_tool": "crm_inventory_warehouses_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_warehouses_list",
+          "category": "general_enquiries.stock",
+          "score": 5.4388
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 2.1701
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "inventory",
+      "question": "List warehouses with no storage zones.",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_inventory_warehouses_list",
+          "category": "general_enquiries.stock",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.004
+    },
+    {
+      "module": "inventory",
+      "question": "Which warehouse holds the most distinct products?",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 5.4024
+        },
+        {
+          "tool": "crm_incoming_stock_shipments",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.9504
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.3908
+        }
+      ],
+      "latency_ms": 0.011
+    },
+    {
+      "module": "inventory",
+      "question": "Show inactive warehouses.",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_inventory_warehouses_list",
+          "category": "general_enquiries.stock",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_marketing_promotion_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.005
+    },
+    {
+      "module": "inventory",
+      "question": "What's the code for the Selangor Main DC?",
+      "routed_tool": "crm_forms_management_forms_list",
+      "routed_category": "marketing_agent.marketing_assets",
+      "top_k_tools": [
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 1.7282
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.7282
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.7282
+        }
+      ],
+      "latency_ms": 0.009
+    },
+    {
+      "module": "inventory",
+      "question": "Which warehouses were created this year?",
+      "routed_tool": "crm_marketing_promotions_list",
+      "routed_category": "general_enquiries.promotion",
+      "top_k_tools": [
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 3.6741
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_inventory_warehouses_list",
+          "category": "general_enquiries.stock",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "inventory",
+      "question": "How many zones does the KL warehouse have?",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.4214
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.4214
+        },
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 2.4214
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "inventory",
+      "question": "List all cold / pallet zones.",
+      "routed_tool": null,
+      "routed_category": "none",
+      "top_k_tools": [],
+      "latency_ms": 0.01
+    },
+    {
+      "module": "inventory",
+      "question": "What's the total capacity of warehouse WH-001?",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 5.4024
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 5.4024
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 3.6741
+        }
+      ],
+      "latency_ms": 0.009
+    },
+    {
+      "module": "inventory",
+      "question": "Which warehouse has the highest zone utilization?",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.4214
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.4214
+        },
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 2.4214
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "inventory",
+      "question": "Show zones with capacity over 1000.",
+      "routed_tool": null,
+      "routed_category": "none",
+      "top_k_tools": [],
+      "latency_ms": 0.003
+    },
+    {
+      "module": "inventory",
+      "question": "Does warehouse X have a zone called ZONE-12?",
+      "routed_tool": "crm_resource_attachments_list",
+      "routed_category": "general_enquiries.attachment",
+      "top_k_tools": [
+        {
+          "tool": "crm_resource_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 3.6741
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.4214
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.4214
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "inventory",
+      "question": "What's the on-hand quantity of product SRT-100 in warehouse WH-001?",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 9.6885
+        },
+        {
+          "tool": "crm_portal_link_get",
+          "category": "user_submission_portal",
+          "score": 7.1129
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 6.4198
+        }
+      ],
+      "latency_ms": 0.015
+    },
+    {
+      "module": "inventory",
+      "question": "Show all stock below 10 available for warehouse Selangor Main DC.",
+      "routed_tool": "crm_order_management_orders_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 4.7092
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.1496
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.1496
+        }
+      ],
+      "latency_ms": 0.015
+    },
+    {
+      "module": "inventory",
+      "question": "List every product with status Critical.",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 10.3659
+        },
+        {
+          "tool": "crm_incoming_stock_shipments",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.4039
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 4.4039
+        }
+      ],
+      "latency_ms": 0.012
+    },
+    {
+      "module": "inventory",
+      "question": "Which items are low on stock right now?",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 4.9969
+        },
+        {
+          "tool": "crm_it_support_ticket_create",
+          "category": "it_support",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.012
+    },
+    {
+      "module": "inventory",
+      "question": "Current on-hand by warehouse for product X.",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 9.5343
+        },
+        {
+          "tool": "crm_portal_link_get",
+          "category": "user_submission_portal",
+          "score": 7.1129
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.8442
+        }
+      ],
+      "latency_ms": 0.012
+    },
+    {
+      "module": "inventory",
+      "question": "How much is reserved vs available for product Y across all warehouses?",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 7.9602
+        },
+        {
+          "tool": "crm_resource_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 4.6915
+        },
+        {
+          "tool": "crm_master_brands_list",
+          "category": "general_enquiries.product",
+          "score": 4.1807
+        }
+      ],
+      "latency_ms": 0.013
+    },
+    {
+      "module": "inventory",
+      "question": "What's overstocked?",
+      "routed_tool": null,
+      "routed_category": "none",
+      "top_k_tools": [],
+      "latency_ms": 0.003
+    },
+    {
+      "module": "inventory",
+      "question": "Total available units of category Beverages.",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 4.2687
+        },
+        {
+          "tool": "crm_master_units_of_measure_list",
+          "category": "general_enquiries.product",
+          "score": 4.2687
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.981
+        }
+      ],
+      "latency_ms": 0.016
+    },
+    {
+      "module": "inventory",
+      "question": "Which batches expire in the next 30 days?",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 3.6741
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_portal_link_get",
+          "category": "user_submission_portal",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "inventory",
+      "question": "List expired batches we still hold.",
+      "routed_tool": "crm_marketing_promotion_attachments_list",
+      "routed_category": "general_enquiries.attachment",
+      "top_k_tools": [
+        {
+          "tool": "crm_marketing_promotion_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_marketing_promotion_products_list",
+          "category": "general_enquiries.promotion",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.005
+    },
+    {
+      "module": "inventory",
+      "question": "Batches of product X by expiry date, soonest first.",
+      "routed_tool": "crm_marketing_promotions_list",
+      "routed_category": "general_enquiries.promotion",
+      "top_k_tools": [
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 6.1321
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 6.1321
+        },
+        {
+          "tool": "crm_marketing_promotion_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 3.8442
+        }
+      ],
+      "latency_ms": 0.016
+    },
+    {
+      "module": "inventory",
+      "question": "How many units are in available batches for warehouse WH-001?",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 5.6901
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 3.6741
+        },
+        {
+          "tool": "crm_master_units_of_measure_list",
+          "category": "general_enquiries.product",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.01
+    },
+    {
+      "module": "inventory",
+      "question": "What was received this month?",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.9969
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.9969
+        },
+        {
+          "tool": "crm_incoming_stock_shipments",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.9969
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "inventory",
+      "question": "Show batch ABC-123 — its quantity, dates, and status.",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 5.8442
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 5.8442
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 5.5565
+        }
+      ],
+      "latency_ms": 0.011
+    },
+    {
+      "module": "inventory",
+      "question": "Total quantity in reserved batches for product Y.",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 6.9794
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 6.9794
+        },
+        {
+          "tool": "crm_incoming_stock_shipments",
+          "category": "general_enquiries.incoming_stock",
+          "score": 6.9794
+        }
+      ],
+      "latency_ms": 0.012
+    },
+    {
+      "module": "inventory",
+      "question": "Any batches manufactured before 2024 still in stock?",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.9969
+        },
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 1.7282
+        }
+      ],
+      "latency_ms": 0.011
+    },
+    {
+      "module": "inventory",
+      "question": "Show ledger movements for product Z in warehouse WH-001 between 1 Jan and 31 Mar.",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 7.5184
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 7.1129
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 5.097
+        }
+      ],
+      "latency_ms": 0.014
+    },
+    {
+      "module": "inventory",
+      "question": "What was the last change to product X's balance and who made it?",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 4.6915
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 4.6915
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 4.6915
+        }
+      ],
+      "latency_ms": 0.013
+    },
+    {
+      "module": "inventory",
+      "question": "List all SYSTEM_ADJUSTMENT entries this week.",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 2.4214
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "inventory",
+      "question": "How many units came in via imports for product Y this month?",
+      "routed_tool": "crm_marketing_promotions_list",
+      "routed_category": "general_enquiries.promotion",
+      "top_k_tools": [
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 6.4198
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 6.4198
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 6.4198
+        }
+      ],
+      "latency_ms": 0.016
+    },
+    {
+      "module": "inventory",
+      "question": "What was the on-hand of product X before and after its most recent movement?",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 8.3657
+        },
+        {
+          "tool": "crm_portal_link_get",
+          "category": "user_submission_portal",
+          "score": 7.9602
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 4.6915
+        }
+      ],
+      "latency_ms": 0.014
+    },
+    {
+      "module": "inventory",
+      "question": "Show every movement against warehouse WH-002 today.",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 9.0765
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 5.5565
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 4.9969
+        }
+      ],
+      "latency_ms": 0.01
+    },
+    {
+      "module": "inventory",
+      "question": "Which products had stock zeroed by a snapshot import?",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.6976
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.6976
+        },
+        {
+          "tool": "crm_incoming_stock_shipments",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.6976
+        }
+      ],
+      "latency_ms": 0.013
+    },
+    {
+      "module": "product",
+      "question": "List products in category Beverages.",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.9694
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.9694
+        },
+        {
+          "tool": "crm_incoming_stock_shipments",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.9694
+        }
+      ],
+      "latency_ms": 0.015
+    },
+    {
+      "module": "product",
+      "question": "Show all products for brand Bosch with their list prices.",
+      "routed_tool": "crm_master_products_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 8.9122
+        },
+        {
+          "tool": "crm_master_brands_list",
+          "category": "general_enquiries.product",
+          "score": 5.2381
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.9694
+        }
+      ],
+      "latency_ms": 0.009
+    },
+    {
+      "module": "product",
+      "question": "Which products are discontinued?",
+      "routed_tool": "crm_master_products_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 5.6435
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.9694
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.9694
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "product",
+      "question": "How many active SKUs do we have?",
+      "routed_tool": "crm_marketing_promotion_products_list",
+      "routed_category": "general_enquiries.promotion",
+      "top_k_tools": [
+        {
+          "tool": "crm_marketing_promotion_products_list",
+          "category": "general_enquiries.promotion",
+          "score": 5.4388
+        },
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 5.4388
+        },
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 2.1701
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "product",
+      "question": "Find the stainless 12-litre mixing bowl.",
+      "routed_tool": null,
+      "routed_category": "none",
+      "top_k_tools": [],
+      "latency_ms": 0.005
+    },
+    {
+      "module": "product",
+      "question": "Products over RM 500, cheapest first.",
+      "routed_tool": "crm_master_products_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 9.3177
+        },
+        {
+          "tool": "crm_marketing_promotion_products_list",
+          "category": "general_enquiries.promotion",
+          "score": 4.3908
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 4.3908
+        }
+      ],
+      "latency_ms": 0.01
+    },
+    {
+      "module": "product",
+      "question": "What's the biggest product by dimension?",
+      "routed_tool": "crm_master_products_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 8.3657
+        },
+        {
+          "tool": "crm_marketing_promotion_products_list",
+          "category": "general_enquiries.promotion",
+          "score": 4.6915
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.4229
+        }
+      ],
+      "latency_ms": 0.011
+    },
+    {
+      "module": "product",
+      "question": "List service-type items.",
+      "routed_tool": "crm_marketing_promotions_list",
+      "routed_category": "general_enquiries.promotion",
+      "top_k_tools": [
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 5.071
+        },
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 5.071
+        },
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 1.8023
+        }
+      ],
+      "latency_ms": 0.008
+    },
+    {
+      "module": "product",
+      "question": "Which products use batch tracking?",
+      "routed_tool": "crm_order_management_orders_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 5.8677
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 5.2381
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 5.2381
+        }
+      ],
+      "latency_ms": 0.015
+    },
+    {
+      "module": "product",
+      "question": "Show inactive products in category X created this year.",
+      "routed_tool": "crm_marketing_promotions_list",
+      "routed_category": "general_enquiries.promotion",
+      "top_k_tools": [
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 9.6246
+        },
+        {
+          "tool": "crm_marketing_promotion_products_list",
+          "category": "general_enquiries.promotion",
+          "score": 5.9504
+        },
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 5.9504
+        }
+      ],
+      "latency_ms": 0.017
+    },
+    {
+      "module": "product",
+      "question": "How many categories do we have?",
+      "routed_tool": "crm_master_product_categories_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_product_categories_list",
+          "category": "general_enquiries.product",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_system_tool_capabilities_summary",
+          "category": "general_enquiries.capabilities",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.004
+    },
+    {
+      "module": "product",
+      "question": "List top-level categories.",
+      "routed_tool": "crm_system_tool_capabilities_summary",
+      "routed_category": "general_enquiries.capabilities",
+      "top_k_tools": [
+        {
+          "tool": "crm_system_tool_capabilities_summary",
+          "category": "general_enquiries.capabilities",
+          "score": 6.0265
+        },
+        {
+          "tool": "crm_it_support_ticket_create",
+          "category": "it_support",
+          "score": 5.3334
+        },
+        {
+          "tool": "crm_master_product_categories_list",
+          "category": "general_enquiries.product",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.008
+    },
+    {
+      "module": "product",
+      "question": "What are the sub-categories of Power Tools?",
+      "routed_tool": "crm_system_tool_capabilities_summary",
+      "routed_category": "general_enquiries.capabilities",
+      "top_k_tools": [
+        {
+          "tool": "crm_system_tool_capabilities_summary",
+          "category": "general_enquiries.capabilities",
+          "score": 6.5374
+        },
+        {
+          "tool": "crm_master_product_categories_list",
+          "category": "general_enquiries.product",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_portal_link_get",
+          "category": "user_submission_portal",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "product",
+      "question": "Which category has the most products?",
+      "routed_tool": "crm_incoming_stock_by_product",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.9694
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.9694
+        },
+        {
+          "tool": "crm_incoming_stock_shipments",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.9694
+        }
+      ],
+      "latency_ms": 0.014
+    },
+    {
+      "module": "product",
+      "question": "Show inactive categories.",
+      "routed_tool": "crm_master_product_categories_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_product_categories_list",
+          "category": "general_enquiries.product",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_system_tool_capabilities_summary",
+          "category": "general_enquiries.capabilities",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_marketing_promotion_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "product",
+      "question": "How many products are in category CAT-001?",
+      "routed_tool": "crm_order_management_orders_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 6.6435
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.9694
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.9694
+        }
+      ],
+      "latency_ms": 0.014
+    },
+    {
+      "module": "product",
+      "question": "List all brands and how many products each has.",
+      "routed_tool": "crm_master_brands_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_brands_list",
+          "category": "general_enquiries.product",
+          "score": 5.6435
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.9694
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.9694
+        }
+      ],
+      "latency_ms": 0.008
+    },
+    {
+      "module": "product",
+      "question": "Which brands have no products?",
+      "routed_tool": "crm_master_brands_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_brands_list",
+          "category": "general_enquiries.product",
+          "score": 5.6435
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.9694
+        },
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.9694
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "product",
+      "question": "Show active brands only.",
+      "routed_tool": "crm_forms_management_forms_list",
+      "routed_category": "marketing_agent.marketing_assets",
+      "top_k_tools": [
+        {
+          "tool": "crm_forms_management_forms_list",
+          "category": "marketing_agent.marketing_assets",
+          "score": 3.7648
+        },
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 3.7648
+        },
+        {
+          "tool": "crm_inventory_warehouses_list",
+          "category": "general_enquiries.stock",
+          "score": 3.7648
+        }
+      ],
+      "latency_ms": 0.011
+    },
+    {
+      "module": "product",
+      "question": "Who manufactures brand X?",
+      "routed_tool": "crm_master_brands_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_brands_list",
+          "category": "general_enquiries.product",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.004
+    },
+    {
+      "module": "product",
+      "question": "Products by brand Y.",
+      "routed_tool": "crm_master_brands_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_brands_list",
+          "category": "general_enquiries.product",
+          "score": 5.2381
+        },
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 5.2381
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 1.9694
+        }
+      ],
+      "latency_ms": 0.007
+    },
+    {
+      "module": "product",
+      "question": "Which brands are visible to dealers?",
+      "routed_tool": "crm_master_brands_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_brands_list",
+          "category": "general_enquiries.product",
+          "score": 3.6741
+        }
+      ],
+      "latency_ms": 0.004
+    },
+    {
+      "module": "product",
+      "question": "List all units of measure.",
+      "routed_tool": "crm_master_units_of_measure_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_units_of_measure_list",
+          "category": "general_enquiries.product",
+          "score": 6.9428
+        },
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.004
+    },
+    {
+      "module": "product",
+      "question": "How many products use UOM 'Each'?",
+      "routed_tool": "crm_master_units_of_measure_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_units_of_measure_list",
+          "category": "general_enquiries.product",
+          "score": 5.6435
+        },
+        {
+          "tool": "crm_incoming_stock_shipments",
+          "category": "general_enquiries.incoming_stock",
+          "score": 3.2922
+        },
+        {
+          "tool": "crm_marketing_promotion_products_list",
+          "category": "general_enquiries.promotion",
+          "score": 3.2922
+        }
+      ],
+      "latency_ms": 0.013
+    },
+    {
+      "module": "product",
+      "question": "Which units are derived from another unit?",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_master_units_of_measure_list",
+          "category": "general_enquiries.product",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_master_customers_list",
+          "category": "commercial",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "product",
+      "question": "What's the conversion factor for Box?",
+      "routed_tool": null,
+      "routed_category": "none",
+      "top_k_tools": [],
+      "latency_ms": 0.003
+    },
+    {
+      "module": "product",
+      "question": "Show inactive units of measure.",
+      "routed_tool": "crm_master_units_of_measure_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_units_of_measure_list",
+          "category": "general_enquiries.product",
+          "score": 6.9428
+        },
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_marketing_promotion_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.005
+    },
+    {
+      "module": "product",
+      "question": "What is the base unit of CARTON?",
+      "routed_tool": "crm_master_units_of_measure_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_units_of_measure_list",
+          "category": "general_enquiries.product",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_portal_link_get",
+          "category": "user_submission_portal",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.004
+    },
+    {
+      "module": "product",
+      "question": "Which products have no attachments?",
+      "routed_tool": "crm_marketing_promotion_products_list",
+      "routed_category": "general_enquiries.promotion",
+      "top_k_tools": [
+        {
+          "tool": "crm_marketing_promotion_products_list",
+          "category": "general_enquiries.promotion",
+          "score": 4.0341
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 4.0341
+        },
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 4.0341
+        }
+      ],
+      "latency_ms": 0.01
+    },
+    {
+      "module": "product",
+      "question": "Products by brand Y that have no attachments.",
+      "routed_tool": "crm_master_products_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 7.3028
+        },
+        {
+          "tool": "crm_master_brands_list",
+          "category": "general_enquiries.product",
+          "score": 5.2381
+        },
+        {
+          "tool": "crm_marketing_promotion_products_list",
+          "category": "general_enquiries.promotion",
+          "score": 4.0341
+        }
+      ],
+      "latency_ms": 0.01
+    },
+    {
+      "module": "product",
+      "question": "What's the primary image/datasheet for product SRT-100?",
+      "routed_tool": "crm_resource_attachments_list",
+      "routed_category": "general_enquiries.attachment",
+      "top_k_tools": [
+        {
+          "tool": "crm_resource_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 8.3657
+        },
+        {
+          "tool": "crm_master_product_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 4.6915
+        },
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 4.6915
+        }
+      ],
+      "latency_ms": 0.015
+    },
+    {
+      "module": "product",
+      "question": "List all datasheets.",
+      "routed_tool": "crm_marketing_promotion_attachments_list",
+      "routed_category": "general_enquiries.attachment",
+      "top_k_tools": [
+        {
+          "tool": "crm_marketing_promotion_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_master_product_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.004
+    },
+    {
+      "module": "product",
+      "question": "How many products have at least one attachment?",
+      "routed_tool": "crm_incoming_stock_list",
+      "routed_category": "general_enquiries.incoming_stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_incoming_stock_list",
+          "category": "general_enquiries.incoming_stock",
+          "score": 8.1625
+        },
+        {
+          "tool": "crm_incoming_stock_shipments",
+          "category": "general_enquiries.incoming_stock",
+          "score": 8.1625
+        },
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 6.3602
+        }
+      ],
+      "latency_ms": 0.013
+    },
+    {
+      "module": "product",
+      "question": "Show the files linked to product X in display order.",
+      "routed_tool": "crm_master_products_list",
+      "routed_category": "general_enquiries.product",
+      "top_k_tools": [
+        {
+          "tool": "crm_master_products_list",
+          "category": "general_enquiries.product",
+          "score": 7.3849
+        },
+        {
+          "tool": "user_guides_read",
+          "category": "user_guides",
+          "score": 7.1617
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 4.4039
+        }
+      ],
+      "latency_ms": 0.015
+    },
+    {
+      "module": "sla",
+      "question": "How many overdue conversation SLAs does Aisha have right now?",
+      "routed_tool": "crm_sla_conversation_event_logs_list",
+      "routed_category": "sla_management",
+      "top_k_tools": [
+        {
+          "tool": "crm_sla_conversation_event_logs_list",
+          "category": "sla_management",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_sla_conversation_tracking_dashboard",
+          "category": "sla_management",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_sla_conversation_tracking_list",
+          "category": "sla_management",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.006
+    },
+    {
+      "module": "sla",
+      "question": "What's our average response time this month?",
+      "routed_tool": "crm_marketing_promotions_list",
+      "routed_category": "general_enquiries.promotion",
+      "top_k_tools": [
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 7.6006
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 7.6006
+        },
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 5.1792
+        }
+      ],
+      "latency_ms": 0.009
+    },
+    {
+      "module": "sla",
+      "question": "Form SLA breaches by entity type last quarter.",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 10.2221
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 5.071
+        },
+        {
+          "tool": "crm_resource_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 5.071
+        }
+      ],
+      "latency_ms": 0.015
+    },
+    {
+      "module": "sla",
+      "question": "How many tasks were escalated to tier 2 or higher last week?",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 6.5374
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 3.2687
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 3.2687
+        }
+      ],
+      "latency_ms": 0.008
+    },
+    {
+      "module": "sla",
+      "question": "What % of conversation SLAs were resolved within due?",
+      "routed_tool": "crm_resource_attachments_catalogue",
+      "routed_category": "general_enquiries.attachment",
+      "top_k_tools": [
+        {
+          "tool": "crm_resource_attachments_catalogue",
+          "category": "general_enquiries.attachment",
+          "score": 3.6741
+        },
+        {
+          "tool": "crm_incoming_stock_by_product",
+          "category": "general_enquiries.incoming_stock",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.008
+    },
+    {
+      "module": "sla",
+      "question": "Who has the most open SLA tasks?",
+      "routed_tool": "crm_sla_conversation_event_logs_list",
+      "routed_category": "sla_management",
+      "top_k_tools": [
+        {
+          "tool": "crm_sla_conversation_event_logs_list",
+          "category": "sla_management",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_sla_conversation_tracking_dashboard",
+          "category": "sla_management",
+          "score": 2.981
+        },
+        {
+          "tool": "crm_sla_conversation_tracking_list",
+          "category": "sla_management",
+          "score": 2.981
+        }
+      ],
+      "latency_ms": 0.008
+    },
+    {
+      "module": "sla",
+      "question": "How many escalations were manual vs automatic last month?",
+      "routed_tool": "crm_marketing_promotions_list",
+      "routed_category": "general_enquiries.promotion",
+      "top_k_tools": [
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 5.6901
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 5.6901
+        },
+        {
+          "tool": "crm_master_product_attachments_list",
+          "category": "general_enquiries.attachment",
+          "score": 3.6741
+        }
+      ],
+      "latency_ms": 0.009
+    },
+    {
+      "module": "sla",
+      "question": "Which complaints breached resolution and are still unresolved?",
+      "routed_tool": "crm_portal_link_get",
+      "routed_category": "user_submission_portal",
+      "top_k_tools": [
+        {
+          "tool": "crm_portal_link_get",
+          "category": "user_submission_portal",
+          "score": 3.6741
+        }
+      ],
+      "latency_ms": 0.004
+    },
+    {
+      "module": "sla",
+      "question": "Average resolution time for purchase requests vs sponsorship forms.",
+      "routed_tool": "crm_portal_link_get",
+      "routed_category": "user_submission_portal",
+      "top_k_tools": [
+        {
+          "tool": "crm_portal_link_get",
+          "category": "user_submission_portal",
+          "score": 10.6668
+        },
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 6.8873
+        },
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 6.8873
+        }
+      ],
+      "latency_ms": 0.012
+    },
+    {
+      "module": "sla",
+      "question": "How many SLA timers opened vs resolved each day this week?",
+      "routed_tool": "crm_order_management_orders_by_product_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_by_product_list",
+          "category": "order_enquiries",
+          "score": 6.5374
+        },
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 6.5374
+        },
+        {
+          "tool": "crm_portal_link_get",
+          "category": "user_submission_portal",
+          "score": 3.6741
+        }
+      ],
+      "latency_ms": 0.009
+    },
+    {
+      "module": "sla",
+      "question": "Show tier-3 tasks awaiting response that are overdue.",
+      "routed_tool": "crm_inventory_stock_balance_list",
+      "routed_category": "general_enquiries.stock",
+      "top_k_tools": [
+        {
+          "tool": "crm_inventory_stock_balance_list",
+          "category": "general_enquiries.stock",
+          "score": 2.4214
+        },
+        {
+          "tool": "crm_inventory_warehouses_list",
+          "category": "general_enquiries.stock",
+          "score": 2.4214
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 2.4214
+        }
+      ],
+      "latency_ms": 0.008
+    },
+    {
+      "module": "sla",
+      "question": "What's the response-met rate for stock inquiries this month, and who's dragging it down?",
+      "routed_tool": "crm_order_management_orders_list",
+      "routed_category": "order_enquiries",
+      "top_k_tools": [
+        {
+          "tool": "crm_order_management_orders_list",
+          "category": "order_enquiries",
+          "score": 6.571
+        },
+        {
+          "tool": "crm_portal_link_get",
+          "category": "user_submission_portal",
+          "score": 5.4024
+        },
+        {
+          "tool": "crm_marketing_promotions_list",
+          "category": "general_enquiries.promotion",
+          "score": 4.8428
+        }
+      ],
+      "latency_ms": 0.014
+    }
+  ]
+}
