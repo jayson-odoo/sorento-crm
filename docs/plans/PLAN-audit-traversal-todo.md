@@ -154,7 +154,19 @@ Pages to sweep (from `config/menu.config.tsx`). Desktop 1400px + mobile ~375px. 
 - Minor: top-bar breadcrumb wraps to 2 lines at 390px (tight but functional). Empty cells render "-" (complaints not linked to a DO) — acceptable.
 - Note (ties to admin-QoL): row-select checkboxes present but no bulk-action bar surfaced here.
 
-_more findings appended as the sweep continues — still to pass: SLA pages, Marketing, Forms, Resource Mgmt (Files), System Mgmt._
+**Resource Management → Files `/resource-management/attachment-directories` (desktop 1280 + mobile 390) — swept.**
+- Responsive: ✅ desktop two-pane (folder tree + attachments table); mobile collapses to a single list with a folder-toggle button — clean, no overflow, toolbar wraps (Search/Filters/Columns/Export/Bulk import ZIP/Upload). 0 console errors.
+- [ ] **Junk/test folders in the production tree**: "aaa-drive-reveal-parent-688…", "aaa-drive-search-parent-64…", "aaa-drive-sel-731619-940", "aaa-drive-sel-897231-143", "fdas", "Test", "Testing". Leftover test data (likely from automated e2e hitting a shared DB). Unprofessional in a real tenant — clean up the data, and check whether tests seed into the dev/staging DB.
+- [ ] **UUID filenames shown raw as Name** (e.g. "bef38628-f4de-4eae-a8b6-…", Type "-"). Ties to the attachment `original_filename`=key-basename gotcha. FE Files grid should prefer the editable display name (`stored_filename`) as the primary label, falling back to original only when no display name — avoids UUIDs in UI (cursor rule).
+- [ ] **Access-column pills clipped/overflow** at the right edge on desktop within the two-pane width ("End Use", "Sorento Office" cut to "3orento Office"). Fix the Access column sizing / allow wrap, or move pills to a tooltip.
+
+**SLA Management → SLA Policies `/sla-management/sla-policies` (desktop + mobile) — ✅ CLEAN.**
+- Professional DataGrid (Code/Name/Description/Tiers count-pill/Status Active-pill), Search/Filters/Columns/Export/Create SLA Policy, rows-per-page, 1-8 of 8, proper truncation. 0 console errors. Mobile: toolbar wraps, DataGrid scrolls horizontally. No overflow.
+- Recurring minor (all pages): top-bar breadcrumb wraps to 2 lines at 390px — tight but functional; could shorten to current-page only on mobile.
+
+**Sweep pattern note:** list pages (complaints, SLA policies) share a consistent, clean, responsive DataGrid; no per-page sus UI found beyond the fixed template leaks (Item 1) + the Files data-quality items. Remaining: Marketing, Forms, System Mgmt, and detail/create-modal flows.
+
+_still to pass: Marketing, Forms, System Mgmt, + a detail page + a create modal at mobile width._
 
 ---
 
