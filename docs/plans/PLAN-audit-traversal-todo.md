@@ -131,7 +131,7 @@ NOTE: a `ticket-management` module exists in FE (not in sidebar menu.config) —
 **MEDIUM (verify):**
 - [ ] OTP code hashed with **plain SHA256** (`portal_service.py:87`) — 6-digit space → rainbow-table-trivial on DB breach. Use bcrypt/pbkdf2 (codebase already bcrypts passwords).
 - [ ] Impersonation token: excluded from sliding renewal but **no audit log** of slides/access (`portal_service.py:349-357`); set short hard expiry on impersonation start.
-- [ ] **Lookup permission inconsistency** (`lookup.py:16-52` requires `master_data.lookup_sets.view`) → a forms-viewer without it gets 403 on `/lookup/by-binding` (THIS is the Forms-page 403 I saw). Align gate with form-view OR degrade FE gracefully.
+- [ ] **Lookup permission inconsistency — ELEVATE TO HIGH** (`lookup.py:16-52` requires `master_data.lookup_sets.view`). Beyond the Forms filter: it **breaks CREATE forms**. Verified on **Create Complaint** (`/complaint-management/complaints/new`) at mobile — ALL 4 lookup dropdowns 403 (`complaint_type`, `customer_type`, `defects_discovered`, `within_warranty`), 16 console errors (×4 retries each), and a confusing toast **"Permission required: master_data.lookup_sets.view"**. The Customer Type / Within Warranty selects stay EMPTY → if required, a user who can reach Create Complaint CANNOT complete it. Fix: grant lookup-read implicitly to anyone who can view/create the parent resource (or make the FE degrade), AND stop the 4× retry spam.
 - [ ] **Attachment-create permission gap** (`resources/attachments.py:700` requires `resource.attachments.upload`) → a user who can create a complaint can't attach a photo (the 403 I hit in the upload test). Tie to parent-entity permission.
 
 **LOW:** portal `slug-info` leaks name + masked phone (`portal.py:169`) enabling OTP spam; OTP 6-digit entropy (mitigated by caps).
@@ -228,7 +228,12 @@ Pages to sweep (from `config/menu.config.tsx`). Desktop 1400px + mobile ~375px. 
 - [ ] **4× `403 Forbidden` on load** from `GET /api/v1/lookup/by-binding?table=forms&column=form_type` — the form_type filter's lookup options are RBAC-forbidden for this user. Page still works (filter just won't populate), but: (a) is the lookup-binding permission supposed to be denied to users who CAN view forms? mismatch; (b) FE retries it 4× and spams console errors instead of degrading gracefully (hide/disable the filter or show "unavailable"). NOT caused by Item-2 lookup change (that was query internals; this is the endpoint's auth guard). Recommend: align the lookup permission with form-view, AND make the FE filter degrade gracefully on 403.
 - Note: "Create Form" here is one of the 3 KNOWN-BROKEN creates (already logged).
 
-_still to pass: System Mgmt list pages + a working create flow at mobile width._
+**Create Complaint `/complaint-management/complaints/new` (mobile 390) — page-based create, scroll ✅.**
+- Long form renders fully at phone width; scrollable; **"Create Complaint" + "Cancel" reachable at bottom** (mobile-scroll standard satisfied for page-based creates).
+- 🔴 lookup 403 breaks the form's dropdowns — see §1f #9 (elevated to HIGH).
+- [ ] Minor UX: create form exposes raw **"Contact ID / Space ID — Respond.io contact ID / space ID"** as free-text inputs (Technical Team section) — asking a CS user to hand-enter Respond.io integration IDs is odd; should be auto-resolved/hidden or clearly optional.
+
+_still to pass: System Mgmt list pages._
 
 ---
 
