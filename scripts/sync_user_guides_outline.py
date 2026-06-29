@@ -58,9 +58,38 @@ PARENT_TITLES = {
     "project-sales-manager": "5-Project Sales Manager",
     "project-sales-rep": "6-Project Sales Rep",
     "technical-team": "7-Technical Team",
+    # Module data guides — published once the module is ready. `commercial` is
+    # deliberately ABSENT (held until the module is restored/enabled per the
+    # audit decision log) and is enforced by HELD_FOLDERS below.
+    "inventory": "8-Inventory",
+    "delivery-orders": "9-Delivery Orders",
+    "product": "10-Product",
+    "sla": "11-SLA",
 }
 
+# Folders that are intentionally HELD back from Outline publishing. They MUST
+# NEVER appear in PARENT_TITLES (the publish allowlist). `_assert_no_held_folders`
+# RAISES if one ever does — a passive "skip unknown folder" is not enough to
+# stop an accidental leak, so we fail loudly instead of relying on discipline.
+HELD_FOLDERS = frozenset({"commercial"})
+
 ROOT_DOC_TITLE = "Overview"
+
+
+def _assert_no_held_folders() -> None:
+    """Hard safeguard: refuse to publish if a held folder leaked into the allowlist.
+
+    Raises ``RuntimeError`` (loud, blocks push + dry-run) when any folder in
+    ``HELD_FOLDERS`` is present in ``PARENT_TITLES``.
+    """
+    leaked = sorted(HELD_FOLDERS & set(PARENT_TITLES))
+    if leaked:
+        raise RuntimeError(
+            "REFUSING TO PUBLISH: held folder(s) "
+            f"{leaked} are present in PARENT_TITLES (the publish allowlist). "
+            "These modules are held until restored/enabled per the audit "
+            "decision log — remove them from PARENT_TITLES before syncing."
+        )
 
 
 def load_env() -> tuple[str, str, str]:
@@ -193,7 +222,80 @@ def relpath(p: Path) -> str:
     return str(p.relative_to(GUIDES_DIR))
 
 
+def plan_push() -> tuple[list[str], list[str]]:
+    """Compute, with NO network call, the create/update plan for a push.
+
+    Runs the held-folder guard first, then walks the repo exactly like
+    ``push()`` to report which docs WOULD be created or updated and which
+    folders are skipped (not in the allowlist). ``create`` vs ``update`` is
+    derived from the saved state file: a doc with a saved id updates in place;
+    otherwise it is created on the next push.
+
+    Returns ``(plan_lines, skipped)``.
+    """
+    _assert_no_held_folders()
+    state = load_state()
+    plan: list[str] = []
+    skipped: list[str] = []
+
+    def verb(key: str) -> str:
+        return "update" if state.get(key) else "create"
+
+    readme = GUIDES_DIR / "README.md"
+    if readme.exists():
+        plan.append(f"[{verb('README.md')}] README.md  ->  \"{ROOT_DOC_TITLE}\"")
+    for folder, title in PARENT_TITLES.items():
+        if not (GUIDES_DIR / folder).exists():
+            continue
+        key = f"{folder}/__parent__"
+        plan.append(f"[{verb(key)}] {folder}/  (parent)  ->  \"{title}\"")
+
+    for md in discover_files():
+        rel = relpath(md)
+        if rel == "README.md":
+            continue
+        parts = rel.split("/")
+        if len(parts) != 2:
+            skipped.append(f"{rel}  (unexpected layout)")
+            continue
+        folder = parts[0]
+        if folder not in PARENT_TITLES:
+            skipped.append(rel)
+            continue
+        title = first_h1_or_filename(md)
+        plan.append(f"[{verb(rel)}] {rel}  ->  \"{title}\"")
+
+    return plan, skipped
+
+
+def dry_run(args: argparse.Namespace) -> None:
+    """Print the exact push plan without touching Outline (no network call)."""
+    plan, skipped = plan_push()
+    print("DRY RUN — no Outline calls made. The following docs WOULD publish:\n")
+    for line in plan:
+        print(f"  {line}")
+    print(f"\nTotal docs to create/update: {len(plan)}")
+    if skipped:
+        print("\nSKIPPED (folder not in publish allowlist — will NOT publish):")
+        for s in skipped:
+            print(f"  - {s}")
+    held_present = sorted(HELD_FOLDERS & {p.split('/')[0] for p in skipped})
+    print(
+        "\nHeld-folder check: "
+        + (
+            f"OK — {sorted(HELD_FOLDERS)} held back (not published)."
+            if not (HELD_FOLDERS & set(PARENT_TITLES))
+            else "FAILED"
+        )
+    )
+    _ = held_present
+    print("Done (dry run).")
+
+
 def push(args: argparse.Namespace) -> None:
+    # Hard safeguard FIRST — fail loudly before any network call if a held
+    # folder (e.g. commercial) ever leaked into PARENT_TITLES.
+    _assert_no_held_folders()
     base_url, token, collection_id = load_env()
     o = Outline(base_url=base_url, token=token)
 
@@ -356,8 +458,12 @@ def main() -> int:
     sub.add_parser("push", help="repo -> Outline")
     sub.add_parser("pull", help="Outline -> repo")
     sub.add_parser("status", help="diff")
+    sub.add_parser(
+        "dry-run",
+        help="print exactly which docs would be created/updated on push (no network call)",
+    )
     args = parser.parse_args()
-    {"push": push, "pull": pull, "status": status}[args.cmd](args)
+    {"push": push, "pull": pull, "status": status, "dry-run": dry_run}[args.cmd](args)
     return 0
 
 
