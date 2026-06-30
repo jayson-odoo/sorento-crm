@@ -48,6 +48,7 @@ class SystemSettingUpdate(BaseModel):
     notify_system_error_failure_email: Optional[bool] = None
     notify_system_error_web: Optional[bool] = None
     notify_system_error_role_ids: Optional[list[str]] = None
+    complaint_do_delivered_notify_tiers: Optional[str] = None
     smtp_host: Optional[str] = None
     smtp_port: Optional[str] = None
     smtp_secure: Optional[bool] = None
@@ -131,6 +132,11 @@ async def get_settings(
                 else None,
                 "n8n_stock_inquiry_revise_webhook_url": getattr(
                     settings, "n8n_stock_inquiry_revise_webhook_url", None
+                )
+                if settings
+                else None,
+                "complaint_do_delivered_notify_tiers": getattr(
+                    settings, "complaint_do_delivered_notify_tiers", "1,2"
                 )
                 if settings
                 else None,

@@ -66,6 +66,8 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
     n8nCrmChatOutboundWebhookUrl: (raw.n8n_crm_chat_outbound_webhook_url as string | null) ?? null,
     n8nStockInquiryReviseWebhookUrl:
       (raw.n8n_stock_inquiry_revise_webhook_url as string | null) ?? null,
+    complaintDoDeliveredNotifyTiers:
+      (raw.complaint_do_delivered_notify_tiers as string) ?? '1,2',
     smtp: raw.smtp as SystemSetting['smtp'] ?? null,
   } as SystemSetting;
 }
@@ -124,6 +126,7 @@ function createDefaultSettings(): SystemSetting {
     notifySystemErrorFailureEmail: false,
     notifySystemErrorWeb: false,
     notifySystemErrorRoleIds: [],
+    complaintDoDeliveredNotifyTiers: '1,2',
     smtp: null,
   };
 }
@@ -154,6 +157,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       notifications: {
         title: 'Notifications',
         path: '/user-management/settings/notifications',
+      },
+      complaints: {
+        title: 'Complaints',
+        path: '/user-management/settings/complaints',
       },
       smtp: {
         title: 'SMTP',

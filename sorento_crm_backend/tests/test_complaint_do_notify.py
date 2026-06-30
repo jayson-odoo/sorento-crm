@@ -244,3 +244,33 @@ def test_N8_notify_failure_does_not_propagate(db: Session, monkeypatch) -> None:
     ]
     # Must NOT raise despite both sends throwing (best-effort post-commit).
     ComplaintFulfilmentService(db).dispatch_delivery_notifications(payloads)
+
+
+def test_notify_tiers_resolution_db_then_env_then_default() -> None:
+    """N3b: notify tiers resolve DB (system_settings) → env → default '1,2'.
+
+    Uses a mock session so the test never touches the real settings row or needs
+    ARRAY-column DDL on sqlite.
+    """
+    from unittest.mock import MagicMock
+    from app.services.complaints_service import ComplaintService
+
+    def _svc_with_db_value(value):
+        svc = ComplaintService.__new__(ComplaintService)
+        row = MagicMock()
+        row.complaint_do_delivered_notify_tiers = value
+        db = MagicMock()
+        db.query.return_value.first.return_value = row
+        svc.db = db
+        return svc
+
+    # DB value wins, parsed + clamped + deduped, order preserved.
+    assert _svc_with_db_value("1")._complaint_do_delivered_notify_tiers() == (1,)
+    assert _svc_with_db_value("2,1")._complaint_do_delivered_notify_tiers() == (2, 1)
+    assert _svc_with_db_value("1,2,3")._complaint_do_delivered_notify_tiers() == (1, 2, 3)
+    # Junk / out-of-range stripped; empty result falls back to default.
+    assert _svc_with_db_value("9,foo,2")._complaint_do_delivered_notify_tiers() == (2,)
+    assert _svc_with_db_value("9,foo")._complaint_do_delivered_notify_tiers() == (1, 2)
+    # Blank DB value → env/default fallback (env unset in tests → "1,2").
+    assert _svc_with_db_value("")._complaint_do_delivered_notify_tiers() == (1, 2)
+    assert _svc_with_db_value(None)._complaint_do_delivered_notify_tiers() == (1, 2)

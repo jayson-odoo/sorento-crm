@@ -970,13 +970,25 @@ class ComplaintService:
 
     # ----- Replacement-DO delivery notifications (complaint auto-fulfilment) -----
 
-    @staticmethod
-    def _complaint_do_delivered_notify_tiers() -> tuple[int, ...]:
-        """Configured Complaint-team tiers for the DO-delivered notice
-        (``COMPLAINT_DO_DELIVERED_NOTIFY_TIERS``, default Tier 1 + Tier 2)."""
-        from app.config import settings
+    def _complaint_do_delivered_notify_tiers(self) -> tuple[int, ...]:
+        """Configured Complaint-team tiers for the DO-delivered notice.
 
-        raw = getattr(settings, "complaint_do_delivered_notify_tiers", "1,2") or "1,2"
+        Resolution order: DB (``system_settings.complaint_do_delivered_notify_tiers``,
+        admin-editable in Settings → Complaints) → env COMPLAINT_DO_DELIVERED_NOTIFY_TIERS
+        → default Tier 1 + Tier 2."""
+        from app.config import settings
+        from app.models.user import SystemSetting
+
+        raw = None
+        try:
+            row = self.db.query(SystemSetting).first()
+            if row is not None:
+                raw = getattr(row, "complaint_do_delivered_notify_tiers", None)
+        except Exception:
+            raw = None
+        if not (raw and str(raw).strip()):
+            raw = getattr(settings, "complaint_do_delivered_notify_tiers", "1,2")
+        raw = raw or "1,2"
         tiers: list[int] = []
         for part in str(raw).split(","):
             part = part.strip()
