@@ -743,6 +743,17 @@ class ComplaintService:
         base_url = self._complaint_view_base_url(base_url_override)
         return self._format_complaint_view_url(base_url, view_token)
 
+    def _build_complaint_internal_url(self, complaint_id: str, base_url_override: Optional[str] = None) -> str:
+        """In-system (authenticated) complaint detail-page link for STAFF emails.
+
+        Staff team notifications must link to the internal page, NOT the public
+        tokenized /view URL (which is being discontinued). The (protected) layout's
+        deep-link-after-login carries the recipient back here once authenticated.
+        """
+        base_url = self._complaint_view_base_url(base_url_override)
+        path = f"/complaint-management/complaints/{complaint_id}"
+        return f"{base_url}{path}" if base_url else path
+
     def _batch_complaint_view_urls(self, complaint_ids: List[str]) -> dict:
         """Resolve view URLs for many complaints with O(1) queries instead of O(rows).
 
@@ -1082,7 +1093,8 @@ class ComplaintService:
         )
         sentence = headline + (f"\n\n{items_block}" if items_block else "")
         title = "Replacement delivery order delivered"
-        view_url = self._build_complaint_view_url(complaint_id)
+        # Staff team email -> internal detail page, never the public /view token URL.
+        view_url = self._build_complaint_internal_url(complaint_id)
         body_plain = (
             f"Dear Complaint Team,\n\n{sentence}\n\n{view_url}\n\n"
             "This is a system generated email. Please do not reply."

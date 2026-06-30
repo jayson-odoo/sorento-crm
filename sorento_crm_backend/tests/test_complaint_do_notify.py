@@ -193,6 +193,10 @@ def test_N3_N6_team_in_app_and_email(db: Session, monkeypatch) -> None:
     assert "\n- SKU-1 x 2\n- SKU-2 x 1" in (notif.body or "")
     # email HTML uses a <ul> list
     assert "<li>SKU-1 x 2</li>" in ((notif.data or {}).get("body_html") or "")
+    # staff email links to the INTERNAL detail page, never the public /view token URL
+    assert f"/complaint-management/complaints/{c.id}" in (notif.body or "")
+    assert "/view/complaint?token=" not in (notif.body or "")
+    assert "/view/complaint?token=" not in ((notif.data or {}).get("body_html") or "")
     # email recipient captured in data for the single-email-to-all path
     assert (notif.data or {}).get("recipient_emails")
 
