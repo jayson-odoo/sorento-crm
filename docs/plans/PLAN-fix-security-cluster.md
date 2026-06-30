@@ -184,8 +184,13 @@ This is **XL** — 229+54 = ~283 mechanical sites + 14 security-sensitive + UI w
 7. ✅ D → Tier-1 only, canonical = AuditLog.
 8. ✅ E → opportunistic + lint rule.
 
-## Implementation order (post-grill) — READY TO CODE (pending B role-verify)
-1. **Phase 1 (low-risk, land first):** C1 (real hard-delete) · C2 (remove dead filters) · C3 (allowlisted UUIDPath, all verbs) · C4 (lookup degrade) · A (rate-limiting). One combined branch or split C/A.
+## Implementation order (post-grill)
+1. ✅ **Phase 1 DONE** — branch `fix/phase1-bounded-bugs` (4 commits off main `551dc4012`; not yet pushed/merged).
+   - C1+C2 `7e0866899` — marketing real hard-delete + type-in-use 409 (5 pytest); dropped 5 dead campaign filter params (3 vitest).
+   - C4 `021d57309` — lookup 403 silent degrade, no retry/toast/spam (3 vitest).
+   - A  `dbfc44854` — per-IP rate limiter (signup 3/hr, reset 5/15min, portal-OTP 30/min; env-configurable; fail-open) + enumeration-safe signup/reset (7 pytest).
+   - C3 `bc8154940` — UUIDPath guard on 173 internal-UUID handlers/35 files; EXCLUDED resolve_identifier code-or-UUID routes + contacts + external/public + UUID-typed tracking_id (63 pytest; +59 suite passes, 0 new failures vs baseline).
+   - ⏳ Pending: browser-verify the 2 FE changes (C2 filters gone, C4 lookup degrade), then push/merge.
 2. **Phase 2:** B (object-authz + short TTL + presign audit) — AFTER verifying n8n act-as role view-perms so legit presigns don't 403.
 3. **Phase 3:** D Tier-1 — `/system-management/audit-logs` FE page (on existing API) + bulk-action UI on outbox/import lists + explicit IMPERSONATE audit event.
 4. **Ongoing:** E — opportunistic refactor on-touch + ESLint rule banning `.json().catch` / manual `URLSearchParams` / native `confirm()`; hand-review the 14 `dangerouslySetInnerHTML` as a one-off security PR.
