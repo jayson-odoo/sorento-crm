@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, require_permission
 from app.services.user_service import UserRoleService
 from app.schemas.user import UserRoleCreate, UserRoleUpdate, UserRoleResponse
@@ -52,6 +53,7 @@ async def get_role(
 ):
     """Get a single role by ID."""
     try:
+        validate_uuid_path(role_id, resource="User Role")
         service = UserRoleService(db)
         role = service.get_role(role_id)
         return role
@@ -87,6 +89,7 @@ async def update_role(
 ):
     """Update a role."""
     try:
+        validate_uuid_path(role_id, resource="User Role")
         service = UserRoleService(db)
         role = service.update_role(role_id, role_data)
         return role
@@ -104,6 +107,7 @@ async def delete_role(
 ):
     """Delete a role."""
     try:
+        validate_uuid_path(role_id, resource="User Role")
         service = UserRoleService(db)
         return service.delete_role(role_id)
     except HTTPException:
@@ -120,6 +124,7 @@ async def set_default_role(
 ):
     """Set a role as the default role."""
     try:
+        validate_uuid_path(role_id, resource="User Role")
         service = UserRoleService(db)
         result = service.set_default_role(role_id)
         return result

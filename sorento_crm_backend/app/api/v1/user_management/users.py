@@ -12,6 +12,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.config import settings as app_settings
+from app.services.uuid_path_param import validate_uuid_path
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission, require_any_permission
 from app.models.auth import VerificationToken
@@ -281,6 +282,7 @@ async def update_user_daily_sla_summary_subscription(
 ):
     """Admin update for a user's daily SLA summary subscription."""
     try:
+        validate_uuid_path(user_id, resource="User")
         service = UserService(db)
         user = service.get_user(user_id)
         user.daily_sla_summary_subscribed = bool(body.subscribed)
@@ -404,6 +406,7 @@ async def get_user_roles(
 ):
     """List roles assigned to a user."""
     try:
+        validate_uuid_path(user_id, resource="User")
         service = UserService(db)
         roles = service.list_user_roles(user_id)
         return roles
@@ -422,6 +425,7 @@ async def set_user_roles(
 ):
     """Replace user's role assignments with the given role_ids."""
     try:
+        validate_uuid_path(user_id, resource="User")
         service = UserService(db)
         return service.set_user_roles(user_id, body.role_ids)
     except HTTPException:
@@ -438,6 +442,7 @@ async def get_user(
 ):
     """Get a single user by ID."""
     try:
+        validate_uuid_path(user_id, resource="User")
         service = UserService(db)
         user = service.get_user(user_id)
         roles = service.list_user_roles(user_id)
@@ -526,6 +531,7 @@ async def update_user(
 ):
     """Update a user."""
     try:
+        validate_uuid_path(user_id, resource="User")
         service = UserService(db)
         user = service.update_user(user_id, user_data)
         return user
@@ -544,6 +550,7 @@ async def delete_user(
 ):
     """Soft-delete a user (default) or permanently delete if permanent=true and user is trashed."""
     try:
+        validate_uuid_path(user_id, resource="User")
         service = UserService(db)
         if permanent:
             service.permanent_delete_user(user_id)
@@ -564,6 +571,7 @@ async def restore_user(
 ):
     """Restore a trashed user (set is_trashed=False)."""
     try:
+        validate_uuid_path(user_id, resource="User")
         service = UserService(db)
         service.restore_user(user_id)
         return {"message": "User restored successfully"}
@@ -581,6 +589,7 @@ async def resend_invite(
 ):
     """Resend invitation email so the user can set their password and sign in."""
     try:
+        validate_uuid_path(user_id, resource="User")
         service = UserService(db)
         user = service.get_user(user_id)
         message = _send_invitation_link_for_user(db, user)
@@ -603,6 +612,7 @@ async def sync_respond_user(
 ):
     """Sync a user with Respond.io."""
     try:
+        validate_uuid_path(user_id, resource="User")
         service = UserService(db)
         # Use respond_user_id from request if provided, otherwise use from database
         respond_user_id = request_data.respond_user_id if request_data and request_data.respond_user_id else None

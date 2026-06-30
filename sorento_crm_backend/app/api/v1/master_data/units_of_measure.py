@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.services.product_service import UnitOfMeasureService
 from app.schemas.product import UnitOfMeasureCreate, UnitOfMeasureUpdate, UnitOfMeasureResponse
@@ -78,6 +79,7 @@ async def get_uom(
 ):
     """Get a single UOM by ID."""
     try:
+        validate_uuid_path(uom_id, resource="Unit of Measure")
         service = UnitOfMeasureService(db)
         uom = service.get_uom(uom_id)
         return uom
@@ -113,6 +115,7 @@ async def update_uom(
 ):
     """Update a UOM."""
     try:
+        validate_uuid_path(uom_id, resource="Unit of Measure")
         service = UnitOfMeasureService(db)
         uom = service.update_uom(uom_id, uom_data)
         return uom
@@ -130,6 +133,7 @@ async def delete_uom(
 ):
     """Delete a UOM."""
     try:
+        validate_uuid_path(uom_id, resource="Unit of Measure")
         service = UnitOfMeasureService(db)
         return service.delete_uom(uom_id)
     except HTTPException:

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.resources_service import AttachmentTypeService
 from app.schemas.resources import AttachmentTypeCreate, AttachmentTypeUpdate, AttachmentTypeResponse
@@ -46,6 +47,7 @@ async def get_attachment_type(
 ):
     """Get a single attachment type by ID."""
     try:
+        validate_uuid_path(type_id, resource="Attachment Type")
         service = AttachmentTypeService(db)
         attachment_type = service.get_type(type_id)
         return attachment_type
@@ -81,6 +83,7 @@ async def update_attachment_type(
 ):
     """Update an attachment type."""
     try:
+        validate_uuid_path(type_id, resource="Attachment Type")
         service = AttachmentTypeService(db)
         attachment_type = service.update_type(type_id, type_data)
         return attachment_type
@@ -98,6 +101,7 @@ async def delete_attachment_type(
 ):
     """Delete an attachment type."""
     try:
+        validate_uuid_path(type_id, resource="Attachment Type")
         service = AttachmentTypeService(db)
         service.delete_type(type_id)
         return {"message": "Attachment type deleted successfully"}

@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from typing import Optional
 
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, require_permission
 from app.models.user import UserQuickAccess
 from app.services.error_handler import handle_internal_error
@@ -146,6 +147,7 @@ async def remove_quick_access(
 ):
     """Remove one quick access entry by id (must belong to current user)."""
     try:
+        validate_uuid_path(entry_id, resource="Quick Access Entry")
         row = (
             db.query(UserQuickAccess)
             .filter(

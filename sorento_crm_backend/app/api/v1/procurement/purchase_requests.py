@@ -6,6 +6,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.procurement_service import PurchaseRequestService
 from app.schemas.procurement import (
@@ -120,6 +121,7 @@ async def get_purchase_request(
 ):
     """Get a purchase request or sponsorship form by ID with lines and attachments."""
     try:
+        validate_uuid_path(request_id, resource="Request")
         from app.models.user import User
 
         service = PurchaseRequestService(db)
@@ -179,6 +181,7 @@ async def get_purchase_request_conversation(
 ):
     """Get Respond.io conversation messages for this purchase request or sponsorship form."""
     try:
+        validate_uuid_path(request_id, resource="Request")
         from app.services.integration_service import RespondClient
         from app.models.access import RespondContact
         service = PurchaseRequestService(db)
@@ -246,6 +249,7 @@ async def update_purchase_request(
 ):
     """Update a purchase request or sponsorship form."""
     try:
+        validate_uuid_path(request_id, resource="Request")
         service = PurchaseRequestService(db)
         header = service.update_request(request_id, data)
         db.commit()
@@ -267,6 +271,7 @@ async def update_purchase_request_and_reply(
     """Update purchase request (e.g. form number) and send a reply to the conversation via Respond.io.
     Either send reply_message or set request_number to auto-send 'Your request has been assigned form number: X'."""
     try:
+        validate_uuid_path(request_id, resource="Request")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = PurchaseRequestService(db)
         header = service.update_request_and_reply(
@@ -303,6 +308,7 @@ async def set_pending_approval(
     import logging
     logger = logging.getLogger(__name__)
     try:
+        validate_uuid_path(request_id, resource="Request")
         service = PurchaseRequestService(db)
         header = service.set_pending_approval(request_id, requested_by_user_id=current_user.get("id"))
         if getattr(header, "approver_user_id", None):
@@ -331,6 +337,7 @@ async def reject_submitted_purchase_request(
 ):
     """Reject a submitted PR / sponsorship form before sending for approval. Sends a Respond.io update message to the contact with the rejection reason. Same permission as Send for Approval."""
     try:
+        validate_uuid_path(request_id, resource="Request")
         service = PurchaseRequestService(db)
         header = service.reject_submitted(
             request_id,
@@ -370,6 +377,7 @@ async def decide_purchase_request_approval(
     the public approval submit: same status transition, notifications, form-SLA event,
     and approval automation. Requires the request to be pending approval."""
     try:
+        validate_uuid_path(request_id, resource="Request")
         from app.models.user import User
 
         service = PurchaseRequestService(db)
@@ -417,6 +425,7 @@ async def process_request_by_cs(
     sends a status-update message (+ optional note) to the contact via Respond.io.
     """
     try:
+        validate_uuid_path(request_id, resource="Request")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = PurchaseRequestService(db)
         header = service.mark_processed_by_cs(
@@ -445,6 +454,7 @@ async def close_request_by_cs(
     (+ optional note) to the contact via Respond.io.
     """
     try:
+        validate_uuid_path(request_id, resource="Request")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = PurchaseRequestService(db)
         header = service.close_request(
@@ -484,6 +494,7 @@ async def delete_purchase_request(
 ):
     """Delete a purchase request or sponsorship form."""
     try:
+        validate_uuid_path(request_id, resource="Request")
         service = PurchaseRequestService(db)
         service.delete_request(request_id)
         return {"message": "Purchase request deleted successfully"}
@@ -504,6 +515,7 @@ async def send_approval_link(
     if not data.approver_email and not data.approver_user_id:
         raise HTTPException(status_code=400, detail="Provide approver_email or approver_user_id.")
     try:
+        validate_uuid_path(request_id, resource="Request")
         service = PurchaseRequestService(db)
         base_url = (data.base_url or getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
         expires_hours = data.expires_hours or 24
@@ -608,6 +620,7 @@ async def link_attachment_to_purchase_request(
 ):
     """Link an existing attachment to a purchase request or sponsorship form."""
     try:
+        validate_uuid_path(request_id, resource="Request")
         service = PurchaseRequestService(db)
         created_by = (current_user.get("id") or None) if isinstance(current_user.get("id"), str) and len(str(current_user.get("id"))) == 36 else None
         link = service.link_attachment_to_request(
@@ -640,6 +653,7 @@ async def get_or_create_view_link(
 ):
     """Get or create a shareable view link (no login required). Use in Update & Reply to send to Respond."""
     try:
+        validate_uuid_path(request_id, resource="Request")
         service = PurchaseRequestService(db)
         service.get_request(request_id)  # ensure exists and user can access
         token = service.get_or_create_view_token(request_id)

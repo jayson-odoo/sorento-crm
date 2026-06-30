@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user_or_api_key
 from app.services.sla_service import SLAPolicyService, SLAPolicyTierService
 from app.schemas.sla import (
@@ -50,6 +51,7 @@ async def get_sla_policy(
 ):
     """Get a single SLA policy by ID."""
     try:
+        validate_uuid_path(policy_id, resource="SLA Policy")
         service = SLAPolicyService(db)
         policy = service.get_policy(policy_id)
         return policy
@@ -85,6 +87,7 @@ async def update_sla_policy(
 ):
     """Update an SLA policy."""
     try:
+        validate_uuid_path(policy_id, resource="SLA Policy")
         service = SLAPolicyService(db)
         policy = service.update_policy(policy_id, policy_data)
         return policy
@@ -102,6 +105,7 @@ async def delete_sla_policy(
 ):
     """Delete an SLA policy."""
     try:
+        validate_uuid_path(policy_id, resource="SLA Policy")
         service = SLAPolicyService(db)
         return service.delete_policy(policy_id)
     except HTTPException:
@@ -118,6 +122,7 @@ async def get_sla_policy_tiers(
 ):
     """Get tiers for an SLA policy."""
     try:
+        validate_uuid_path(policy_id, resource="SLA Policy")
         service = SLAPolicyTierService(db)
         tiers = service.list_tiers(policy_id)
         return tiers
@@ -134,6 +139,7 @@ async def create_sla_policy_tier(
 ):
     """Create a tier for an SLA policy."""
     try:
+        validate_uuid_path(policy_id, resource="SLA Policy")
         service = SLAPolicyTierService(db)
         # Ensure policy_id matches
         tier_data.policy_id = policy_id
@@ -155,6 +161,7 @@ async def update_sla_policy_tier(
 ):
     """Update an SLA policy tier."""
     try:
+        validate_uuid_path(policy_id, resource="SLA Policy")
         service = SLAPolicyTierService(db)
         tier = service.update_tier(tier_id, tier_data)
         return tier
@@ -173,6 +180,7 @@ async def delete_sla_policy_tier(
 ):
     """Delete an SLA policy tier."""
     try:
+        validate_uuid_path(policy_id, resource="SLA Policy")
         service = SLAPolicyTierService(db)
         result = service.delete_tier(tier_id)
         return result

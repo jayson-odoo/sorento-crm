@@ -6,6 +6,7 @@ import logging
 import traceback
 from datetime import datetime
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user_or_api_key
 from app.services.integration_service import IntegrationLogService
 from app.schemas.integration import IntegrationLogResponse, IntegrationLogUpdateRequest, IntegrationLogCreate
@@ -56,6 +57,7 @@ async def get_integration_log(
 ):
     """Get a single integration log by ID."""
     try:
+        validate_uuid_path(log_id, resource="Integration Log")
         service = IntegrationLogService(db)
         log = service.get_integration_log_response(log_id)
         return log
@@ -73,6 +75,7 @@ async def get_integration_log_status(
 ):
     """Get integration log status (same as GET /{log_id}; allows GET .../status for polling/links)."""
     try:
+        validate_uuid_path(log_id, resource="Integration Log")
         service = IntegrationLogService(db)
         log = service.get_integration_log_response(log_id)
         return log
@@ -95,6 +98,7 @@ async def update_integration_log(
     This endpoint allows n8n to update the integration log after processing.
     """
     try:
+        validate_uuid_path(log_id, resource="Integration Log")
         service = IntegrationLogService(db)
 
         # Prepare update data with processed timestamp
@@ -127,6 +131,7 @@ async def update_integration_log_status(
 ):
     """Update integration log status with audit logging."""
     try:
+        validate_uuid_path(log_id, resource="Integration Log")
         service = IntegrationLogService(db)
 
         from app.schemas.integration import IntegrationLogUpdate
@@ -174,6 +179,7 @@ async def retry_integration_log(
 ):
     """Manually retry sending webhook for an integration log."""
     try:
+        validate_uuid_path(log_id, resource="Integration Log")
         service = IntegrationLogService(db)
         success, error_msg = service.send_webhook_for_log(log_id)
         

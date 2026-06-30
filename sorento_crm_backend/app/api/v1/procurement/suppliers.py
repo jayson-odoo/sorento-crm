@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user
 from app.services.procurement_service import SupplierService
 from app.schemas.procurement import SupplierCreate, SupplierUpdate, SupplierResponse
@@ -101,6 +102,7 @@ async def get_supplier(
 ):
     """Get a single supplier by ID."""
     try:
+        validate_uuid_path(supplier_id, resource="Supplier")
         service = SupplierService(db)
         supplier = service.get_supplier(supplier_id)
         return supplier
@@ -136,6 +138,7 @@ async def update_supplier(
 ):
     """Update a supplier."""
     try:
+        validate_uuid_path(supplier_id, resource="Supplier")
         service = SupplierService(db)
         supplier = service.update_supplier(supplier_id, supplier_data)
         return supplier
@@ -153,6 +156,7 @@ async def delete_supplier(
 ):
     """Delete a supplier."""
     try:
+        validate_uuid_path(supplier_id, resource="Supplier")
         service = SupplierService(db)
         # Implement delete logic
         return {"message": "Supplier deleted successfully"}

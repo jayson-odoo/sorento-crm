@@ -13,6 +13,7 @@ import zipfile
 import io
 import mimetypes
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
 from app.services.storage_router import sanitize_storage_filename
@@ -595,6 +596,7 @@ async def get_attachment(
 ):
     """Get a single attachment by ID."""
     try:
+        validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
         attachment = service.get_attachment(attachment_id)
         return _attachment_response_with_linked_entities(service, attachment)
@@ -620,6 +622,7 @@ async def link_attachment_to_packing_list(
     if not shipment:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Packing list not found")
     try:
+        validate_uuid_path(attachment_id, resource="Attachment")
         service = EntityAttachmentService(db)
         link = service.link_existing_attachment(
             entity_type="inbound_shipment",
@@ -1304,6 +1307,7 @@ async def update_attachment(
 ):
     """Update an attachment."""
     try:
+        validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
         attachment = service.update_attachment(attachment_id, attachment_data)
         return attachment
@@ -1338,6 +1342,7 @@ async def download_attachment(
 ):
     """Download an attachment file from S3."""
     try:
+        validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
         attachment = service.get_attachment(attachment_id)
         
@@ -1371,6 +1376,7 @@ async def get_attachment_metadata(
 ):
     """Get attachment metadata without downloading the file."""
     try:
+        validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
         attachment = service.get_attachment(attachment_id)
         return _attachment_response_with_linked_entities(service, attachment)
@@ -1388,6 +1394,7 @@ async def get_attachment_preview_url(
 ):
     """Get a fresh signed URL for preview/open action."""
     try:
+        validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
         attachment = service.get_attachment(attachment_id)
         file_path = getattr(attachment, "file_path", None)
@@ -1410,6 +1417,7 @@ async def delete_attachment(
 ):
     """Delete an attachment permanently (hard delete). Use archive for retention."""
     try:
+        validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
         result = service.delete_attachment(attachment_id, current_user["id"])
         return result
@@ -1427,6 +1435,7 @@ async def archive_attachment(
 ):
     """Archive an attachment (soft delete). Data remains for retention. Use restore to unarchive."""
     try:
+        validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
         result = service.archive_attachment(attachment_id, current_user["id"])
         return result
@@ -1444,6 +1453,7 @@ async def restore_attachment(
 ):
     """Restore an archived attachment."""
     try:
+        validate_uuid_path(attachment_id, resource="Attachment")
         service = AttachmentService(db)
         result = service.restore_attachment(attachment_id)
         return result
@@ -1579,6 +1589,7 @@ async def resubmit_attachment_webhook(
 ):
     """Resubmit attachment webhook to n8n: refresh CloudFront signed URL (may have expired) then POST payload."""
     try:
+        validate_uuid_path(attachment_id, resource="Attachment")
         # Verify attachment exists (ORM row; file_path is stable base URL or S3 key from DB)
         attachment_service = AttachmentService(db)
         attachment = attachment_service.get_attachment(attachment_id)

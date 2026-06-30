@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, require_permission
 from app.services.user_service import UserPermissionService
 from app.schemas.user import UserPermissionCreate, UserPermissionUpdate, UserPermissionResponse
@@ -51,6 +52,7 @@ async def get_permission(
 ):
     """Get a single permission by ID."""
     try:
+        validate_uuid_path(permission_id, resource="User Permission")
         service = UserPermissionService(db)
         permission = service.get_permission(permission_id)
         return permission
@@ -86,6 +88,7 @@ async def update_permission(
 ):
     """Update a permission."""
     try:
+        validate_uuid_path(permission_id, resource="User Permission")
         service = UserPermissionService(db)
         permission = service.update_permission(permission_id, permission_data)
         return permission
@@ -103,6 +106,7 @@ async def delete_permission(
 ):
     """Delete a permission."""
     try:
+        validate_uuid_path(permission_id, resource="User Permission")
         service = UserPermissionService(db)
         # Implement delete logic
         return {"message": "Permission deleted successfully"}

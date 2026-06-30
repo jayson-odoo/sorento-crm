@@ -13,6 +13,7 @@ from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.download import DownloadStatus
 from app.schemas.download import DownloadListResponse, DownloadResponse, DownloadUrlResponse
+from app.services.uuid_path_param import validate_uuid_path
 from app.services.download_service import DownloadService
 from app.services.storage_router import resolve_signed_url
 
@@ -47,6 +48,7 @@ def get_download_url(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> DownloadUrlResponse:
+    validate_uuid_path(download_id, resource="Download")
     user_id = str(current_user["id"])
     row = DownloadService(db).get_for_user(download_id, user_id)
     if row is None:

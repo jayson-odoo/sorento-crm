@@ -83,6 +83,7 @@ async def update_stock_batch(
 ):
     """Update a stock batch."""
     try:
+        validate_uuid_path(batch_id, resource="Stock Batch")
         service = StockBatchService(db)
         batch = service.update_batch(batch_id, batch_data)
         return batch
@@ -100,6 +101,7 @@ async def delete_stock_batch(
 ):
     """Delete a stock batch."""
     try:
+        validate_uuid_path(batch_id, resource="Stock Batch")
         service = StockBatchService(db)
         # Implement delete logic
         return {"message": "Stock batch deleted successfully"}

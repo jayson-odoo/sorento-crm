@@ -14,6 +14,7 @@ from app.dependencies import (
     require_permission,
 )
 from app.models.sla import FormSLAConfig, SLAPolicy
+from app.services.uuid_path_param import validate_uuid_path
 from app.schemas.sla import (
     FormSLAConfigCreate,
     FormSLAConfigUpdate,
@@ -97,6 +98,7 @@ async def get_form_sla_config(
     ),
     db: Session = Depends(get_db),
 ):
+    validate_uuid_path(config_id, resource="Form SLA Config")
     config = db.query(FormSLAConfig).filter(FormSLAConfig.id == config_id).first()
     if not config:
         raise handle_not_found("Form SLA Config", config_id)
@@ -167,6 +169,7 @@ async def update_form_sla_config(
     db: Session = Depends(get_db),
 ):
     try:
+        validate_uuid_path(config_id, resource="Form SLA Config")
         config = (
             db.query(FormSLAConfig).filter(FormSLAConfig.id == config_id).first()
         )
@@ -217,6 +220,7 @@ async def delete_form_sla_config(
     db: Session = Depends(get_db),
 ):
     try:
+        validate_uuid_path(config_id, resource="Form SLA Config")
         config = (
             db.query(FormSLAConfig).filter(FormSLAConfig.id == config_id).first()
         )

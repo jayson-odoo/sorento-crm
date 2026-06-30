@@ -5,6 +5,7 @@ from typing import Optional
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.marketing_service import PromotionService, PromotionProductService
 from app.services.query_normalizer import strip_domain_stopwords
@@ -266,6 +267,7 @@ async def get_promotion(
 ):
     """Get a single promotion by ID. Optional access_levels (names) intersection filter."""
     try:
+        validate_uuid_path(promotion_id, resource="Promotion")
         from app.services.contact_access_type_service import ContactAccessTypeService
         from app.services.entity_filter_helpers import normalize_list_query_param
         access_levels = normalize_list_query_param(access_levels)
@@ -335,6 +337,7 @@ async def update_promotion(
 ):
     """Update a promotion."""
     try:
+        validate_uuid_path(promotion_id, resource="Promotion")
         service = PromotionService(db)
         promotion = service.update_promotion(promotion_id, promotion_data)
         return promotion
@@ -384,6 +387,7 @@ async def delete_promotion(
 ):
     """Delete a promotion."""
     try:
+        validate_uuid_path(promotion_id, resource="Promotion")
         service = PromotionService(db)
         service.delete_promotion(promotion_id)
         return {"message": "Promotion deleted successfully"}

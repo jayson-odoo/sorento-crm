@@ -74,6 +74,7 @@ async def update_campaign(
 ):
     """Update a marketing campaign."""
     try:
+        validate_uuid_path(campaign_id, resource="Campaign")
         service = MarketingCampaignService(db)
         campaign = service.update_campaign(campaign_id, campaign_data)
         return campaign
@@ -91,6 +92,7 @@ async def delete_campaign(
 ):
     """Delete a marketing campaign."""
     try:
+        validate_uuid_path(campaign_id, resource="Campaign")
         service = MarketingCampaignService(db)
         return service.delete_campaign(campaign_id)
     except HTTPException:
