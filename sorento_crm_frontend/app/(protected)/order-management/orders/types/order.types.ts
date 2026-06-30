@@ -16,6 +16,13 @@ export interface Order {
   agent?: string | null;
   is_cancelled?: boolean | null;
   remarks_cs?: string | null;
+  /**
+   * True when this DO is delivered AND linked to ≥1 complaint, so Remarks CS is
+   * frozen (its fulfilment is historical / already notified). Backend-owned in
+   * Phase 2; until then the FE falls back to a mock derivation. Drives the
+   * readonly state of the Remarks CS field in OrderForm.
+   */
+  remarks_cs_locked?: boolean | null;
   order_type?: string | null;
   pickup_time?: string | null;
   checker?: string | null;

@@ -58,6 +58,7 @@ import ComplaintDeleteDialog from './ComplaintDeleteDialog';
 import ComplaintNavigation from './ComplaintNavigation';
 import ComplaintManualAttachmentsSection from './ComplaintManualAttachmentsSection';
 import ComplaintConversationPanel from './ComplaintConversationPanel';
+import ComplaintFulfilmentOrdersSection from './ComplaintFulfilmentOrdersSection';
 import AuditTrail from '@/components/audit/AuditTrail';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
@@ -949,6 +950,10 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               </div>
             </div>
           )}
+          {/* Replacement / fulfilment delivery orders linked to this complaint
+              (keyed off the DO's Remarks CS). Always rendered with its own empty
+              state. Sits after the Respond conversation, before Assignee. */}
+          <ComplaintFulfilmentOrdersSection complaintId={complaintId} />
           <div>
             <p className="text-sm text-muted-foreground">Assignee</p>
             <p className="font-medium">

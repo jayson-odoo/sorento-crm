@@ -14,12 +14,16 @@ export const COMPLAINT_STATUS_PILL_CLASS: Record<string, string> = {
   rejected: 'bg-red-100 text-red-800',
   processed_by_cs: 'bg-emerald-100 text-emerald-800',
   resolved: 'bg-emerald-100 text-emerald-800',
+  // Auto-fulfilment: complaint closed by a delivered replacement DO. Distinct
+  // green from processed_by_cs so the terminal "Fulfilled" state reads apart.
+  fulfilled: 'bg-green-100 text-green-800',
   closed: 'bg-slate-200 text-slate-700',
 };
 
 // Explicit labels where a simple title-case wouldn't read well.
 const COMPLAINT_STATUS_LABEL: Record<string, string> = {
   processed_by_cs: 'Processed by CS',
+  fulfilled: 'Fulfilled',
 };
 
 export function complaintStatusPillClass(status?: string | null): string {
