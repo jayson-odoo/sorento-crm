@@ -1325,6 +1325,12 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
         query = dict(query or {})
         query["limit"] = _coerce_grn_limit(query.get("limit"))
 
+    if spec.name == "crm_inventory_stock_balance_list":
+        # MCP always hides on-hand=0 rows that were zeroed by a SYSTEM_ADJUSTMENT
+        # (e.g. "missing from full stock take") — a genuine 0 is still returned.
+        query = dict(query or {})
+        query["exclude_zero_system_adjustment"] = "true"
+
     missing_narrowing = _missing_narrowing_filters(spec.name, query)
     if missing_narrowing is not None:
         return _empty_narrowing_response(spec.name, query, missing_narrowing)

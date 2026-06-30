@@ -555,6 +555,7 @@ class StockService:
         quantity_value: Optional[str] = None,
         status: Optional[str] = None,
         entities: Optional[list[str]] = None,
+        exclude_zero_system_adjustment: bool = False,
     ):
         """List stock with product and warehouse info.
 
@@ -681,6 +682,28 @@ class StockService:
                 q = q.filter(Stock.quantity_available >= reorder)
             elif status == 'overstock':
                 q = q.filter(Stock.quantity_available > reorder * 2)
+
+        # Hide rows whose on-hand is 0 ONLY because the most recent ledger movement
+        # was a SYSTEM_ADJUSTMENT (e.g. "missing from full stock take") — a real 0
+        # (last movement a genuine import/sale to zero, or no ledger) is still shown.
+        if exclude_zero_system_adjustment:
+            latest_txn = (
+                self.db.query(StockLedger.transaction_type)
+                .filter(
+                    StockLedger.product_id == Stock.product_id,
+                    StockLedger.warehouse_id == Stock.warehouse_id,
+                )
+                .order_by(StockLedger.created_at.desc())
+                .limit(1)
+                .correlate(Stock)
+                .scalar_subquery()
+            )
+            q = q.filter(
+                or_(
+                    Stock.quantity_on_hand != 0,
+                    func.coalesce(latest_txn, '') != 'SYSTEM_ADJUSTMENT',
+                )
+            )
 
         sort_col = None
         if sort and dir in ('asc', 'desc'):
