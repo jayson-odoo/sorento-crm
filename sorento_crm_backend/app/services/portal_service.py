@@ -1255,7 +1255,6 @@ class PortalService:
                 "additional_remark",
             )
         return (
-            "request_date",
             "customer_name",
             "project_title",
             "purpose",
@@ -1275,7 +1274,7 @@ class PortalService:
         if kind == "complaint":
             return ("complaint_date",)
         if kind in ("purchase_request", "sponsorship_form"):
-            return ("request_date", "expected_delivery_date", "expected_po_date")
+            return ("expected_delivery_date", "expected_po_date")
         return ()
 
     @staticmethod

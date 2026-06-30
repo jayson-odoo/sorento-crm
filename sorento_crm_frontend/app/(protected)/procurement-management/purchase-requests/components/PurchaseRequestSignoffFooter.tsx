@@ -7,8 +7,6 @@ import { formatDate } from '@/lib/helpers';
 export type PurchaseRequestSignoffFields = {
   approval_status?: string | null;
   requested_by?: string | null;
-  /** Footer "Date" under Requested by = the request date (user-entered). */
-  request_date?: string | null;
   approved_by?: string | null;
   approved_at?: string | null;
   approval_comments?: string | null;
@@ -55,8 +53,6 @@ export function PurchaseRequestSignoffFooter({
           <div className="py-2 border-b border-border/60">
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Requested by</p>
             <p className="text-sm font-medium">{request.requested_by || '—'}</p>
-            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 mt-3">Request date</p>
-            <p className="text-sm font-medium">{formatDateOrDash(request.request_date)}</p>
           </div>
           <div className="py-2 border-b border-border/60">
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">
@@ -88,8 +84,6 @@ export function PurchaseRequestSignoffFooter({
           <>
             <p className="text-sm text-muted-foreground">Requested by</p>
             <p className="font-medium">{request.requested_by || '—'}</p>
-            <p className="text-sm text-muted-foreground mt-3">Request date</p>
-            <p className="font-medium">{formatDateOrDash(request.request_date)}</p>
           </>
         )}
       </div>

@@ -49,7 +49,7 @@ async def get_purchase_requests(
     request_type: Optional[str] = Query(None, description="purchase_request or sponsorship_form"),
     approval_status: Optional[str] = Query(None, description="draft, pending, approved, rejected"),
     assigned_to: Optional[str] = Query(None, description="users.id of the latest unresolved SLA assignee, or __unassigned__"),
-    sort: Optional[str] = Query("request_date"),
+    sort: Optional[str] = Query("submitted_at"),
     dir: Optional[str] = Query("desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
@@ -66,7 +66,7 @@ async def get_purchase_requests(
             request_type=request_type,
             approval_status=approval_status,
             assigned_to=assigned_to,
-            sort_field=sort or "request_date",
+            sort_field=sort or "submitted_at",
             sort_dir=dir or "desc",
         )
         return result
@@ -81,7 +81,7 @@ async def get_purchase_request_neighbours(
     request_type: Optional[str] = Query(None, description="purchase_request or sponsorship_form"),
     approval_status: Optional[str] = Query(None, description="draft, pending, approved, rejected"),
     assigned_to: Optional[str] = Query(None, description="users.id of the latest unresolved SLA assignee, or __unassigned__"),
-    sort: Optional[str] = Query("request_date"),
+    sort: Optional[str] = Query("submitted_at"),
     dir: Optional[str] = Query("desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
@@ -103,7 +103,7 @@ async def get_purchase_request_neighbours(
             request_type=request_type,
             approval_status=approval_status,
             assigned_to=assigned_to,
-            sort_field=sort or "request_date",
+            sort_field=sort or "submitted_at",
             sort_dir=dir or "desc",
         )
     except HTTPException:

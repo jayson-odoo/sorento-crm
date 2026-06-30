@@ -253,16 +253,16 @@ export default function PurchaseRequestsList({
         meta: { headerTitle: requestNumberColumnTitle, skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
-        accessorKey: 'request_date',
+        accessorKey: 'submitted_at',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Date" column={column} />
+          <DataGridColumnHeader title="Submitted date" column={column} />
         ),
         cell: ({ row }) =>
-          row.original.request_date
-            ? formatDate(new Date(row.original.request_date))
+          row.original.submitted_at
+            ? formatDate(new Date(row.original.submitted_at))
             : '-',
-        size: 120,
-        meta: { headerTitle: 'Date', skeleton: <Skeleton className="h-4 w-24" /> },
+        size: 140,
+        meta: { headerTitle: 'Submitted date', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
         accessorKey: 'created_at',

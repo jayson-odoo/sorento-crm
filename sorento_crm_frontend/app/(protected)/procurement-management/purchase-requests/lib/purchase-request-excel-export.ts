@@ -58,13 +58,12 @@ function str(value: unknown): string {
 export async function exportPurchaseRequestToExcel(request: PurchaseRequest): Promise<void> {
   const xlsx = await getXLSX();
   const lines = request.lines ?? [];
-  // Top "Date" = submitted date (auto); footer "Requested by" date = request date.
+  // Single submission date shown at the top "Date"; no separate footer date.
   const requestDate = formatDateShort(request.submitted_at);
   const expectedDelivery = str(request.expected_delivery_date)
     ? formatDateCell(request.expected_delivery_date)
     : str(request.expected_delivery_date);
   const expectedPO = request.expected_po_date_text ?? (request.expected_po_date ? formatDateCell(request.expected_po_date) : '');
-  const requestedAt = formatDateCell(request.request_date);
   const approvedAt = request.approved_at
     ? formatDateCell(request.approved_at)
     : '';
@@ -93,7 +92,7 @@ export async function exportPurchaseRequestToExcel(request: PurchaseRequest): Pr
 
   aoa.push(
     [],
-    ['Requested by:', str(request.requested_by), 'Date:', requestedAt],
+    ['Requested by:', str(request.requested_by)],
     ['Approved by:', str(request.approved_by), 'Date:', approvedAt],
   );
 
@@ -120,10 +119,9 @@ const SORENTO_HEADER = [
 export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Promise<void> {
   const xlsx = await getXLSX();
   const lines = request.lines ?? [];
-  // Top "Date" = submitted date (auto); footer "Requested by" date = request date.
+  // Single submission date shown at the top "Date"; no separate footer date.
   const requestDate = formatDateForSponsorship(request.submitted_at);
   const deliveryDate = formatDateForSponsorship(request.expected_delivery_date);
-  const requestedAt = formatDateForSponsorship(request.request_date);
   const approvedAt = request.approved_at
     ? formatDateForSponsorship(request.approved_at)
     : '';
@@ -172,7 +170,7 @@ export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Pr
   aoa.push(
     ['', '', '', 'Grand Total:', grandTotal.toFixed(2)],
     [],
-    ['Requested by:', str(request.requested_by), 'Date:', requestedAt],
+    ['Requested by:', str(request.requested_by)],
     ['Approved by:', str(request.approved_by), 'Date:', approvedAt],
   );
 

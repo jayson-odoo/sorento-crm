@@ -5514,12 +5514,13 @@ class PurchaseRequestService:
                 q = q.filter(PurchaseRequestHeader.approval_status == status_val)
 
         sort_map = {
+            "submitted_at": PurchaseRequestHeader.submitted_at,
             "request_date": PurchaseRequestHeader.request_date,
             "created_at": PurchaseRequestHeader.created_at,
             "customer_name": PurchaseRequestHeader.customer_name,
             "project_title": PurchaseRequestHeader.project_title,
         }
-        sort_col = sort_map.get(sort_field, PurchaseRequestHeader.request_date)
+        sort_col = sort_map.get(sort_field, PurchaseRequestHeader.submitted_at)
         if sort_dir == "desc":
             q = q.order_by(sort_col.desc().nullslast(), PurchaseRequestHeader.id.asc())
         else:
@@ -5676,10 +5677,10 @@ class PurchaseRequestService:
     def get_neighbour_ids(
         self, request_id: str, request_type: Optional[str] = None
     ) -> dict:
-        """Return prev_id and next_id for the given request (order: request_date desc, same as list)."""
+        """Return prev_id and next_id for the given request (order: submitted_at desc, same as list)."""
         header = self.get_request(request_id)
         q = self.db.query(PurchaseRequestHeader.id).order_by(
-            PurchaseRequestHeader.request_date.desc().nullslast(),
+            PurchaseRequestHeader.submitted_at.desc().nullslast(),
             PurchaseRequestHeader.id.desc(),
         )
         if request_type and request_type.strip() in ("purchase_request", "sponsorship_form"):

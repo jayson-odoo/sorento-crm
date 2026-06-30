@@ -357,19 +357,6 @@ export default function PurchaseRequestForm({
                 )}
                 <FormField
                   control={form.control}
-                  name="request_date"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Request date</FormLabel>
-                      <FormControl>
-                        <Input type="date" {...field} value={field.value ?? ''} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
                   name="customer_name"
                   render={({ field }) => (
                     <FormItem>

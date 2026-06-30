@@ -178,7 +178,6 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
     { name: 'customer_name', label: 'Customer name', widget: 'debtor-async' },
     { name: 'project_title', label: 'Project title' },
     { name: 'purpose', label: 'Purpose', widget: 'textarea' },
-    { name: 'request_date', label: 'Request date', widget: 'date' },
     {
       name: 'expected_delivery_date',
       label: 'Expected delivery date',
@@ -213,7 +212,6 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       label: 'Expected delivery date',
       widget: 'date',
     },
-    { name: 'request_date', label: 'Request date', widget: 'date' },
     { name: 'requested_by', label: 'Requested by', defaultFromContact: 'fullname' },
   ],
 };

@@ -628,23 +628,6 @@ export function PurchaseRequestDocumentEditCard({
                     />
                   </div>
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Request date</p>
-                  <div className="mt-1.5">
-                    <FormField
-                      control={control}
-                      name="request_date"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormControl>
-                            <Input type="date" {...field} value={field.value ?? ''} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-                </div>
               </>
             )}
           />
