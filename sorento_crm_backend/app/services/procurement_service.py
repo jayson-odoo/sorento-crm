@@ -6001,6 +6001,13 @@ class PurchaseRequestService:
                 "Cannot change to pending approval: request was rejected. "
                 "Salesperson must edit and re-submit from the portal."
             )
+        # No-op guard: only treat this as a real transition into pending when it
+        # wasn't already pending. A redundant call (double-click before the FE
+        # refetch hides the button, client/proxy retry, etc.) must NOT re-emit the
+        # 'send_for_approval' SLA event — that re-runs the approval-stage start and,
+        # combined with stages sharing a policy, spawns a duplicate assignment +
+        # duplicate WhatsApp. See _active_tracker stage-scoping fix in form_sla_service.
+        already_pending = current == "pending"
         header.approval_status = "pending"
         header.approved_at = None
         header.approved_by = None
@@ -6013,18 +6020,19 @@ class PurchaseRequestService:
         except Exception as e:
             self.db.rollback()
             raise
-        try:
-            from app.services.form_sla_service import emit_form_event
-            emit_form_event(
-                self.db,
-                getattr(header, "request_type", None) or "purchase_request",
-                str(header.id),
-                "send_for_approval",
-                contact_id=getattr(header, "contact_id", None),
-                actor_user_id=requested_by_user_id,
-            )
-        except Exception as e:
-            logger.warning("Form SLA emit 'send_for_approval' failed for %s: %s", request_id, e)
+        if not already_pending:
+            try:
+                from app.services.form_sla_service import emit_form_event
+                emit_form_event(
+                    self.db,
+                    getattr(header, "request_type", None) or "purchase_request",
+                    str(header.id),
+                    "send_for_approval",
+                    contact_id=getattr(header, "contact_id", None),
+                    actor_user_id=requested_by_user_id,
+                )
+            except Exception as e:
+                logger.warning("Form SLA emit 'send_for_approval' failed for %s: %s", request_id, e)
         # Re-query with relationships loaded to avoid expired instance issues
         return self.get_request(request_id)
 

@@ -57,6 +57,16 @@ class Settings(BaseSettings):
     
     # Redis Queue (must match everywhere: API, workers, seed scripts; use same host:port/db)
     redis_url: str = "redis://localhost:6379/0"
+
+    # Request idempotency (duplicate-submit / network-slowness backstop) — see
+    # docs/plans/PLAN-uniform-idempotency.md. Scoped to an allowlist of action endpoints
+    # in app/middleware/idempotency_middleware.py.
+    idempotency_enabled: bool = True            # IDEMPOTENCY_ENABLED
+    idempotency_mode: str = "enforce"           # IDEMPOTENCY_MODE: "enforce" | "observe"
+    idempotency_result_ttl: int = 10            # dedupe window seconds (a repeat within this is collapsed)
+    idempotency_lock_ttl: int = 60              # in-flight lock seconds (must exceed max handler duration)
+    idempotency_wait_ms: int = 2000             # how long a concurrent replay waits for the first, then 409
+    idempotency_max_body: int = 262144          # skip dedupe for bodies larger than this (bytes)
     embedding_queue_name: str = "embeddings"
     # When True, scheduled task also drains pending rows from embedding_queue if Redis is empty of jobs.
     # Set False to use Redis (RQ) only; then REDIS_URL must be the instance where jobs were enqueued.

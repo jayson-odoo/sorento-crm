@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock, MessageSquare, FileDown, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
@@ -148,7 +149,19 @@ export default function PurchaseRequestDetail({
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [approverComboboxOpen, setApproverComboboxOpen] = useState(false);
-  const [settingPending, setSettingPending] = useState(false);
+  // Change-to-pending action via the shared one-shot guard (ref-lock kills same-tick
+  // double-click; awaiting the refetch inside keeps it disabled until status flips,
+  // so it can't re-fire on a stale view). Backend idempotency middleware is the net.
+  const changeToPending = useAction(async () => {
+    if (!requestId) return;
+    try {
+      await setPendingApproval(requestId);
+      await queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
+      toast.success('Status set to Pending approval');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to set pending approval');
+    }
+  });
   const [exportingExcel, setExportingExcel] = useState(false);
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [approvalLinkCopying, setApprovalLinkCopying] = useState(false);
@@ -352,24 +365,12 @@ export default function PurchaseRequestDetail({
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           {showPrimaryChangeToPending && (
             <Button
-              disabled={settingPending}
-              onClick={async () => {
-                if (!requestId) return;
-                setSettingPending(true);
-                try {
-                  await setPendingApproval(requestId);
-                  queryClient.invalidateQueries({ queryKey: ['purchase-request', requestId] });
-                  toast.success('Status set to Pending approval');
-                } catch (e) {
-                  toast.error(e instanceof Error ? e.message : 'Failed to set pending approval');
-                } finally {
-                  setSettingPending(false);
-                }
-              }}
+              disabled={changeToPending.running}
+              onClick={() => changeToPending.run()}
               data-guide-target="procurement.approvals.change-to-pending-approval-button"
             >
               <Clock className="size-4" />
-              {settingPending ? 'Updating…' : 'Change to pending approval'}
+              {changeToPending.running ? 'Updating…' : 'Change to pending approval'}
             </Button>
           )}
           {showRejectSubmitted && (
