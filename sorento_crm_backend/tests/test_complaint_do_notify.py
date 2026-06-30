@@ -197,8 +197,70 @@ def test_N3_N6_team_in_app_and_email(db: Session, monkeypatch) -> None:
     assert f"/complaint-management/complaints/{c.id}" in (notif.body or "")
     assert "/view/complaint?token=" not in (notif.body or "")
     assert "/view/complaint?token=" not in ((notif.data or {}).get("body_html") or "")
-    # email recipient captured in data for the single-email-to-all path
-    assert (notif.data or {}).get("recipient_emails")
+    # the user gets their OWN email delivery (To=themselves), not a shared To+CC blast
+    from app.models.notification import NotificationDelivery
+
+    channels = {
+        d.channel
+        for d in db.query(NotificationDelivery)
+        .filter(NotificationDelivery.notification_id == notif.id)
+        .all()
+    }
+    assert channels == {"in_app", "email"}
+    # no single-email-to-all / CC fan-out anymore
+    assert "recipient_emails" not in (notif.data or {})
+    assert (notif.data or {}).get("single_email_to_all") is None
+
+
+def test_N3b_each_member_gets_own_email(db: Session, monkeypatch) -> None:
+    """Tier 1 + Tier 2: EVERY member gets their own notification + email delivery
+    (To=themselves), not one shared email where only the first recipient lands."""
+    from app.models.notification import NotificationDelivery
+
+    captured: list = []
+    _patch_enqueue(monkeypatch, captured)
+    members = []
+    for n in range(3):
+        u = User(
+            id=str(uuid.uuid4()),
+            email=f"{U_EMAIL_PREFIX}multi-{uuid.uuid4().hex[:6]}@example.com",
+            name=f"CDN Member {n}",
+            status="ACTIVE",
+        )
+        db.add(u)
+        members.append(u)
+    db.commit()
+    ids = [str(u.id) for u in members]
+
+    svc = ComplaintService(db)
+    monkeypatch.setattr(svc, "_get_complaint_team_user_ids_tiers", lambda tiers=(1, 2): ids)
+    c = _mk_complaint(db, f"{C_PREFIX}MULTI")
+    svc.notify_team_do_delivered(
+        c.id, complaint_number=f"{C_PREFIX}MULTI", order_number="REPPS-7777", items=_ITEMS
+    )
+
+    db.expire_all()
+    for uid in ids:
+        notif = (
+            db.query(Notification)
+            .filter(
+                Notification.source_entity_id == c.id,
+                Notification.user_id == uid,
+                Notification.event_type == "do_delivered:REPPS-7777",
+            )
+            .first()
+        )
+        assert notif is not None, f"member {uid} got no notification"
+        channels = {
+            d.channel
+            for d in db.query(NotificationDelivery)
+            .filter(NotificationDelivery.notification_id == notif.id)
+            .all()
+        }
+        assert "email" in channels, f"member {uid} got no email delivery"
+    # one queued email send per member (each To=themselves)
+    email_jobs = [j for j in captured if j.get("fn") == "send_notification_deliveries"]
+    assert len(email_jobs) == 3
 
 
 def test_N3_team_no_members_noop(db: Session, monkeypatch) -> None:

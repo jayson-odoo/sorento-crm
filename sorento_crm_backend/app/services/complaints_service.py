@@ -1082,7 +1082,6 @@ class ComplaintService:
         from datetime import datetime
         from app.models.user import User
         from app.models.notification import Notification, NotificationDelivery
-        from app.services.notification_service import NotificationService
 
         logger = logging.getLogger(__name__)
         user_ids = self._get_complaint_team_user_ids_tiers(
@@ -1095,7 +1094,6 @@ class ComplaintService:
             )
             return
         users = self.db.query(User).filter(User.id.in_(user_ids)).all()
-        emails = [u.email for u in users if getattr(u, "email", None) and str(u.email).strip()]
 
         items_block = self._format_do_items(items)
         items_block_html = self._format_do_items_html(items)
@@ -1119,25 +1117,35 @@ class ComplaintService:
         )
         event_type = f"do_delivered:{order_number}"
 
-        notif_svc = NotificationService(self.db)
-        first_uid = user_ids[0]
-        existing_notif = (
-            self.db.query(Notification)
-            .filter(
-                Notification.user_id == first_uid,
-                Notification.source_entity_type == "complaint",
-                Notification.source_entity_id == complaint_id,
-                Notification.event_type == event_type,
+        # One INDIVIDUAL email per team member (each as the To recipient) + in-app.
+        # Previously this was a single email with To=first member, CC=the rest — but
+        # CC recipients were unreliably delivered (mail server/client filtering), so
+        # only the To member actually got it. Direct per-recipient emails guarantee
+        # every Tier 1/2 member receives their own copy.
+        from app.services.queue_service import enqueue_job
+        from app.tasks import notification_tasks
+
+        for u in users:
+            uid = str(u.id)
+            existing_notif = (
+                self.db.query(Notification)
+                .filter(
+                    Notification.user_id == uid,
+                    Notification.source_entity_type == "complaint",
+                    Notification.source_entity_id == complaint_id,
+                    Notification.event_type == event_type,
+                )
+                .first()
             )
-            .first()
-        )
-        if emails and existing_notif is None:
+            if existing_notif is not None:
+                continue
+            has_email = bool(getattr(u, "email", None) and str(u.email).strip())
             notification = Notification(
-                user_id=first_uid,
+                user_id=uid,
                 type="complaint_notification",
                 title=title,
                 body=body_plain,
-                data={"recipient_emails": emails, "single_email_to_all": True, "body_html": body_html},
+                data={"body_html": body_html},
                 source_entity_type="complaint",
                 source_entity_id=complaint_id,
                 event_type=event_type,
@@ -1152,34 +1160,25 @@ class ComplaintService:
                     sent_at=datetime.utcnow(),
                 )
             )
-            self.db.add(NotificationDelivery(notification_id=notification.id, channel="email", status="pending"))
+            if has_email:
+                self.db.add(
+                    NotificationDelivery(
+                        notification_id=notification.id, channel="email", status="pending"
+                    )
+                )
             self.db.commit()
             self.db.refresh(notification)
-            try:
-                from app.services.queue_service import enqueue_job
-                from app.tasks import notification_tasks
-                enqueue_job(
-                    notification_tasks.send_notification_deliveries,
-                    str(notification.id),
-                    queue_name="notifications",
-                )
-            except Exception as e:
-                logger.warning("DO-delivered notify: failed to enqueue email deliveries: %s", e)
-        for uid in user_ids:
-            if uid == first_uid and emails:
-                continue
-            try:
-                notif_svc.create_in_app_only(
-                    user_id=uid,
-                    type="complaint_notification",
-                    title=title,
-                    body=body_plain,
-                    source_entity_type="complaint",
-                    source_entity_id=complaint_id,
-                    event_type=event_type,
-                )
-            except Exception as e:
-                logger.warning("DO-delivered notify: in-app create failed for user %s: %s", uid, e)
+            if has_email:
+                try:
+                    enqueue_job(
+                        notification_tasks.send_notification_deliveries,
+                        str(notification.id),
+                        queue_name="notifications",
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "DO-delivered notify: failed to enqueue email for user %s: %s", uid, e
+                    )
 
     def notify_customer_do_delivered(
         self,
