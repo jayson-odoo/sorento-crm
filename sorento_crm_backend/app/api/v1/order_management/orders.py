@@ -691,6 +691,26 @@ async def get_order_neighbours(
         raise handle_internal_error(str(e))
 
 
+@router.get("/{order_id}/fulfilled-complaints")
+async def get_order_fulfilled_complaints(
+    order_id: str,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Complaints this Delivery Order fulfils (reverse of the complaint detail
+    "Fulfilment Delivery Orders" section). See
+    docs/plans/PLAN-complaint-do-auto-fulfilment.md."""
+    try:
+        from app.services.complaint_fulfilment_service import ComplaintFulfilmentService
+
+        order = OrderService(db).get_order(order_id)  # 404 if missing
+        return ComplaintFulfilmentService(db).list_fulfilled_complaints(str(order.id))
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{order_id}", response_model=OrderResponse)
 async def get_order(
     order_id: str,

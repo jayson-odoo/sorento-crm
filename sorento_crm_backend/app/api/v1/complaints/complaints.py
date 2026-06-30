@@ -391,6 +391,26 @@ router.include_router(
 )
 
 
+@router.get("/{complaint_id}/fulfilment-orders")
+async def get_complaint_fulfilment_orders(
+    complaint_id: str,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Replacement / fulfilment Delivery Orders linked to this complaint (newest
+    linked first), each with its line items for the detail popup. See
+    docs/plans/PLAN-complaint-do-auto-fulfilment.md."""
+    try:
+        from app.services.complaint_fulfilment_service import ComplaintFulfilmentService
+
+        ComplaintService(db).get_complaint(complaint_id)  # 404 if missing
+        return ComplaintFulfilmentService(db).list_fulfilment_orders(complaint_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{complaint_id}", response_model=ComplaintResponse)
 async def get_complaint(
     complaint_id: str,

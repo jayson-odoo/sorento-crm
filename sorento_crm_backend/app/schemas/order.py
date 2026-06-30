@@ -180,6 +180,11 @@ class OrderSimpleRef(BaseModel):
 
 class OrderResponse(OrderBase):
     id: str
+    # True when this DO is delivered AND linked to >=1 complaint, so Remarks CS is
+    # frozen (its fulfilment is historical / already notified). Computed on the
+    # single-order GET / PUT; defaults False on list rows (the edit form reads the
+    # single GET). See PLAN-complaint-do-auto-fulfilment.md.
+    remarks_cs_locked: bool = False
     created_at: datetime
     updated_at: datetime
     deleted_at: Optional[datetime] = None

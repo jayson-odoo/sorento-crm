@@ -526,7 +526,25 @@ class OrderService:
         )
         if not order:
             raise handle_not_found("Order", order_id)
+        self._attach_remarks_cs_locked(order)
         return order
+
+    def _attach_remarks_cs_locked(self, order) -> None:
+        """Stamp the transient ``remarks_cs_locked`` flag the OrderResponse exposes.
+
+        Delivered DO linked to >=1 complaint => its Remarks CS is frozen. Cheap
+        single-row EXISTS; only called on the single-order GET / PUT path.
+        """
+        try:
+            from app.services.complaint_fulfilment_service import (
+                ComplaintFulfilmentService,
+            )
+
+            order.remarks_cs_locked = ComplaintFulfilmentService(
+                self.db
+            ).is_remarks_cs_locked(order)
+        except Exception:
+            order.remarks_cs_locked = False
 
     def order_neighbours(
         self,
@@ -1107,10 +1125,34 @@ class OrderService:
     def update_order(self, order_id: str, order_data: OrderUpdate, updated_by: str):
         """Update an order."""
         order = self.get_order(order_id)
-        
+
         update_data = order_data.model_dump(exclude_unset=True)
         if update_data:
             update_data = self._normalize_uuid_fields(update_data)
+
+            # Freeze guard: a delivered DO linked to a complaint has historical,
+            # already-notified fulfilment — its Remarks CS is read-only. Reject any
+            # change rather than silently keep the old value (FE renders it readonly).
+            old_remarks_cs = order.remarks_cs
+            remarks_cs_changing = (
+                "remarks_cs" in update_data
+                and (update_data.get("remarks_cs") or "").strip()
+                != (old_remarks_cs or "").strip()
+            )
+            old_actual_delivery = order.actual_delivery_date
+            old_is_cancelled = bool(order.is_cancelled)
+            if remarks_cs_changing and getattr(order, "remarks_cs_locked", False):
+                from app.services.error_handler import AppException
+                from fastapi import status as _status
+
+                raise AppException(
+                    status_code=_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    message=(
+                        "Remarks CS is locked: this delivery order is delivered and "
+                        "linked to a complaint, so its complaint reference cannot be changed."
+                    ),
+                    code="REMARKS_CS_LOCKED",
+                )
             # Recalculate total if amounts changed
             if any(k in update_data for k in ["subtotal_amount", "discount_amount", "tax_amount"]):
                 subtotal = update_data.get("subtotal_amount", order.subtotal_amount) or Decimal("0")
@@ -1139,6 +1181,29 @@ class OrderService:
 
             self.db.commit()
             self.db.refresh(order)
+
+            # Complaint <-> DO auto-fulfilment: a Remarks CS, delivery-date, or
+            # is_cancelled change can (un)link complaints, (re)fulfil them, and
+            # fire a per-DO delivery notice. Best-effort — never fail the update.
+            try:
+                fulfilment_relevant = (
+                    remarks_cs_changing
+                    or (order.actual_delivery_date is not None) != (old_actual_delivery is not None)
+                    or bool(order.is_cancelled) != old_is_cancelled
+                )
+                if fulfilment_relevant:
+                    from app.services.complaint_fulfilment_service import (
+                        ComplaintFulfilmentService,
+                    )
+
+                    ComplaintFulfilmentService(self.db).apply_for_orders(
+                        [{"order": order, "old_remarks": old_remarks_cs}]
+                    )
+                    self._attach_remarks_cs_locked(order)
+            except Exception:
+                logger.exception(
+                    "Order %s: complaint fulfilment recompute failed after update", order_id
+                )
 
         return order
 
@@ -1546,6 +1611,36 @@ class OrderService:
                     if order.order_number:
                         existing_orders[order.order_number.lower()] = order
 
+        # Complaint <-> DO freeze: preload (once, batched) which existing orders are
+        # already linked to a complaint and the complaint numbers, so the Master loop
+        # can freeze Remarks CS on delivered+linked DOs without per-row queries.
+        from app.models.complaints import ComplaintFulfilmentOrder, Complaint
+        linked_order_ids: set[str] = set()
+        linked_complaints_by_order: dict[str, list[str]] = {}
+        _existing_ids = [str(o.id) for o in existing_orders.values() if getattr(o, "id", None)]
+        for id_chunk in chunked(_existing_ids, 500):
+            for oid, cnum in (
+                self.db.query(ComplaintFulfilmentOrder.order_id, Complaint.complaint_number)
+                .join(Complaint, Complaint.id == ComplaintFulfilmentOrder.complaint_id)
+                .filter(ComplaintFulfilmentOrder.order_id.in_(id_chunk))
+                .all()
+            ):
+                linked_order_ids.add(str(oid))
+                linked_complaints_by_order.setdefault(str(oid), []).append(cnum)
+        # Pre-change snapshot per order (remarks / delivered / cancelled), keyed by
+        # lower order_number — captured BEFORE any setattr so the reconcile pass can
+        # diff old vs new and run delta-only.
+        pre_state: dict[str, dict] = {}
+
+        def _snapshot_order(order_obj, number_lower: str) -> None:
+            if number_lower in pre_state:
+                return
+            pre_state[number_lower] = {
+                "remarks": getattr(order_obj, "remarks_cs", None),
+                "delivered": getattr(order_obj, "actual_delivery_date", None) is not None,
+                "cancelled": bool(getattr(order_obj, "is_cancelled", False)),
+            }
+
         def parse_date_value(value, doc_date_value=None):
             if value is None or value == "":
                 return None
@@ -1656,9 +1751,34 @@ class OrderService:
                     )
 
                 order_number = mapped["order_number"]
-                existing_order = existing_orders.get(order_number.lower())
+                number_lower = order_number.lower()
+                existing_order = existing_orders.get(number_lower)
 
                 if existing_order:
+                    # Snapshot BEFORE mutation for the delta-only reconcile pass.
+                    _snapshot_order(existing_order, number_lower)
+                    # Freeze guard: a delivered DO linked to a complaint has historical,
+                    # already-notified fulfilment — keep the DB Remarks CS, skip that
+                    # field only, and warn (surfaces in test + real import alike).
+                    if (
+                        "remarks_cs" in mapped
+                        and existing_order.actual_delivery_date is not None
+                        and str(existing_order.id) in linked_order_ids
+                        and (mapped.get("remarks_cs") or "").strip()
+                        != (existing_order.remarks_cs or "").strip()
+                    ):
+                        _nums = ", ".join(
+                            linked_complaints_by_order.get(str(existing_order.id), [])
+                        )
+                        warnings.append({
+                            "row": row_idx,
+                            "warning": (
+                                f"Order {order_number}: Remarks CS change ignored — "
+                                f"delivery order delivered and linked to complaint {_nums}"
+                            ),
+                            "data": row_data,
+                        })
+                        mapped.pop("remarks_cs", None)
                     for key, value in mapped.items():
                         if key != "order_number":
                             setattr(existing_order, key, value)
@@ -1669,6 +1789,12 @@ class OrderService:
                     updated += 1
                     touched_orders.append(existing_order)
                 else:
+                    # Brand-new order: pre-change state is empty (no prior remarks /
+                    # delivery / cancel), so any non-empty Remarks CS enters the reconcile.
+                    pre_state.setdefault(
+                        order_number.lower(),
+                        {"remarks": None, "delivered": False, "cancelled": False},
+                    )
                     mapped["created_by"] = user_id
                     if new_status_id:
                         mapped["order_status_id"] = new_status_id
@@ -1712,6 +1838,10 @@ class OrderService:
                 if not order:
                     warnings.append({"row": row_idx, "warning": f"Order '{order_number}' not found in Master sheet", "data": row_data})
                     continue
+
+                # Snapshot pre-tracking state for tracking-only orders (Master-touched
+                # ones were already snapshotted before their delivery date is applied).
+                _snapshot_order(order, order_number.lower())
 
                 delivery_date = mapped.get("actual_delivery_date")
                 pickup_time = parse_time_value(row_data.get("Time"))
@@ -1810,6 +1940,43 @@ class OrderService:
         if len(errors) > 5:
             logger.warning("Order tracking import: ... and %s more errors", len(errors) - 5)
 
+        # Complaint <-> DO auto-fulfilment: reconcile links + recompute fulfilment
+        # for orders whose Remarks CS / delivery / cancel actually changed (delta-only;
+        # one batched complaint lookup). On validate_only it computes warnings only and
+        # writes nothing. Real-path link/status writes ride the commit below; the per-DO
+        # delivery notifications are dispatched AFTER that commit (best-effort).
+        fulfilment_notify_payloads: list[dict] = []
+        changes: list[dict] = []
+        _seen_change: set[str] = set()
+        for o in touched_orders:
+            num_lower = (getattr(o, "order_number", None) or "").lower()
+            if not num_lower or num_lower in _seen_change:
+                continue
+            _seen_change.add(num_lower)
+            pre = pre_state.get(num_lower) or {"remarks": None, "delivered": False, "cancelled": False}
+            new_remarks = getattr(o, "remarks_cs", None)
+            new_delivered = getattr(o, "actual_delivery_date", None) is not None
+            new_cancelled = bool(getattr(o, "is_cancelled", False))
+            if (
+                (new_remarks or "").strip() != (pre["remarks"] or "").strip()
+                or new_delivered != pre["delivered"]
+                or new_cancelled != pre["cancelled"]
+            ):
+                changes.append({"order": o, "old_remarks": pre["remarks"]})
+        if changes:
+            try:
+                from app.services.complaint_fulfilment_service import (
+                    ComplaintFulfilmentService,
+                )
+
+                _f_warnings, fulfilment_notify_payloads = ComplaintFulfilmentService(
+                    self.db
+                ).reconcile_links_and_status(changes, dry_run=validate_only)
+                for _w in _f_warnings:
+                    warnings.append({"row": None, "warning": _w, "data": None})
+            except Exception:
+                logger.exception("Order import: complaint fulfilment reconcile failed")
+
         if validate_only:
             self.db.rollback()
             err_list = [e.get("error", str(e)) if isinstance(e, dict) else str(e) for e in errors]
@@ -1851,10 +2018,26 @@ class OrderService:
                     enqueued, len(touched_orders),
                 )
                 self.db.commit()
+            _import_commit_ok = True
         except Exception as exc:
             self.db.rollback()
+            _import_commit_ok = False
             errors.append({"row": None, "error": f"Database error: {exc}", "data": None})
             logger.exception("Order tracking import: database commit failed")
+
+        # Per-DO delivery notifications (customer + Complaint team) — only after the
+        # link/status writes committed. Best-effort; never fail the import.
+        if _import_commit_ok and fulfilment_notify_payloads:
+            try:
+                from app.services.complaint_fulfilment_service import (
+                    ComplaintFulfilmentService,
+                )
+
+                ComplaintFulfilmentService(self.db).dispatch_delivery_notifications(
+                    fulfilment_notify_payloads
+                )
+            except Exception:
+                logger.exception("Order import: fulfilment delivery notify dispatch failed")
 
         duration_ms = int((time.monotonic() - start_time) * 1000)
         if not validate_only:

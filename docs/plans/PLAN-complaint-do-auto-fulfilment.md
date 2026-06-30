@@ -1,6 +1,14 @@
 # PLAN — Complaint ↔ Delivery Order Auto-Fulfilment (keyed by Remarks CS)
 
-**Status:** Drafted (grilled with user 2026-06-30). Awaiting final plan review → then Phase 1.
+**Status:** Phase 1 FE prototype DONE. Phase 2 BE wiring + tests DONE (migration 251, `complaint_fulfilment_service`,
+import/PUT/cancel triggers, freeze guard, customer+team notify, 2 GET endpoints, idempotent stamp-without-send
+backfill `scripts/backfill_complaint_fulfilment_orders.py`; FE off mocks; pytest 32 green
+[`test_complaint_do_fulfilment.py` + `test_complaint_do_notify.py`], vitest 8 green; tsc clean).
+Browser-verified via Playwright MCP (2026-06-30): seeded link → complaint detail shows "Fulfilment Delivery Orders"
+section (DO link, delivery date, items popup product×qty), status pill → **Fulfilled**, DO detail "Fulfils complaints"
+links back; 0 console errors. Remaining: optional persisted playwright round-trip spec (UI DO-import flow), then
+Phase 3 `/code-review` → PR.
+(Pre-existing unrelated failures in `test_complaint_notify_endpoints.py` — async RQ enqueue vs sync mock — not from this branch.)
 
 ## Problem
 

@@ -1,15 +1,14 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 
 /**
  * Complaint ↔ Delivery Order auto-fulfilment — FE service contract.
  * See docs/plans/PLAN-complaint-do-auto-fulfilment.md.
  *
- * PHASE 1 (current): the section is driven by MOCK fixtures via
- * `hooks/useComplaintFulfilmentOrders` + `__mocks__/complaintFulfilmentOrders`.
- * The fetch helper below documents the exact shape the FE expects so Phase 2
- * can wire it onto the real endpoint with no UI change.
+ * The "Fulfilment Delivery Orders" section is served by
+ * `hooks/useComplaintFulfilmentOrders` → `getComplaintFulfilmentOrders`.
  *
- * ── Expected API contract (Phase 2) ──────────────────────────────────────────
+ * ── API contract ─────────────────────────────────────────────────────────────
  *
  * GET /api/v1/complaints-management/complaints/{id}/fulfilment-orders
  *   Auth: same dependency + module guard as the complaint detail GET.
@@ -55,10 +54,6 @@ export interface FulfilmentOrder {
   items: FulfilmentOrderItem[];
 }
 
-/**
- * Phase 2 wiring — not yet called (the hook serves mocks in Phase 1). Kept here
- * so the request/response contract lives next to its types.
- */
 export async function getComplaintFulfilmentOrders(
   complaintId: string,
 ): Promise<FulfilmentOrder[]> {
@@ -66,11 +61,8 @@ export async function getComplaintFulfilmentOrders(
     `/api/v1/complaints-management/complaints/${complaintId}/fulfilment-orders`,
   );
   if (!response.ok) {
-    const error = await response
-      .json()
-      .catch(() => ({ message: 'Failed to load fulfilment delivery orders' }));
     throw new Error(
-      error.detail || error.message || 'Failed to load fulfilment delivery orders',
+      await extractApiError(response, 'Failed to load fulfilment delivery orders'),
     );
   }
   return response.json();
