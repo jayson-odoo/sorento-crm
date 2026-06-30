@@ -6,8 +6,13 @@ backfill `scripts/backfill_complaint_fulfilment_orders.py`; FE off mocks; pytest
 [`test_complaint_do_fulfilment.py` + `test_complaint_do_notify.py`], vitest 8 green; tsc clean).
 Browser-verified via Playwright MCP (2026-06-30): seeded link → complaint detail shows "Fulfilment Delivery Orders"
 section (DO link, delivery date, items popup product×qty), status pill → **Fulfilled**, DO detail "Fulfils complaints"
-links back; 0 console errors. Remaining: optional persisted playwright round-trip spec (UI DO-import flow), then
-Phase 3 `/code-review` → PR.
+links back; 0 console errors.
+**Phase 3 DONE (2026-06-30):** reviewer (no correctness blockers), tester (zero branch regressions — full-suite
+failures proven identical on clean `main`; all UAC covered), `/code-review` high. Fixes applied: FE `extractApiError`
+on both services, `resolved_at=None` on auto-reopen, N8 best-effort no-500 test, Z3 OrderForm-readonly test
+(setTimeout+tab flush). Final: pytest 39 + vitest 14 green, tsc clean. **Committed `0f5f2f71b`** on
+`feat/complaint-do-auto-fulfilment`. Remaining: optional persisted playwright round-trip spec (UI DO-import flow) +
+open PR. N2 (Respond-fail outbox log) delegated to the shared `respond_io` worker task per the outbox pattern.
 (Pre-existing unrelated failures in `test_complaint_notify_endpoints.py` — async RQ enqueue vs sync mock — not from this branch.)
 
 ## Problem
