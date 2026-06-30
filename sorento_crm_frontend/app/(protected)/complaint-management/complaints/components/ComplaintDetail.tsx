@@ -949,6 +949,8 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               </div>
             </div>
           )}
+          {/* Replacement / fulfilment delivery orders now live in their own
+              "Fulfilment DOs" tab (see the complaint detail page wrapper). */}
           <div>
             <p className="text-sm text-muted-foreground">Assignee</p>
             <p className="font-medium">

@@ -16,6 +16,13 @@ export interface Order {
   agent?: string | null;
   is_cancelled?: boolean | null;
   remarks_cs?: string | null;
+  /**
+   * True when this DO is delivered AND linked to ≥1 complaint, so Remarks CS is
+   * frozen (its fulfilment is historical / already notified). Backend-owned in
+   * Phase 2; until then the FE falls back to a mock derivation. Drives the
+   * readonly state of the Remarks CS field in OrderForm.
+   */
+  remarks_cs_locked?: boolean | null;
   order_type?: string | null;
   pickup_time?: string | null;
   checker?: string | null;
@@ -75,8 +82,9 @@ export interface OrderLine {
 export interface OrderFormData {
   order_number: string;
   order_date: Date;
-  estimated_delivery_date?: Date;
-  actual_delivery_date?: Date;
+  // null = explicitly clear the date on update (undefined = leave unchanged).
+  estimated_delivery_date?: Date | null;
+  actual_delivery_date?: Date | null;
   customer_id?: string | null;
   order_status_id: string;
   billing_address_id?: string;

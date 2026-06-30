@@ -135,3 +135,29 @@ class ComplaintManualAttachment(Base):
     )
 
 
+class ComplaintFulfilmentOrder(Base):
+    """Link: complaint <-> replacement/fulfilment Delivery Order.
+
+    Auto-managed from the DO's Remarks CS field (the DO names the complaint
+    number(s) it fulfils). Many-to-many; ``delivery_notified_at`` is the
+    per-(complaint, DO) idempotency stamp for the delivery notification.
+    See docs/plans/PLAN-complaint-do-auto-fulfilment.md.
+    """
+    __tablename__ = "complaint_fulfilment_orders"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    complaint_id = Column(UUID(as_uuid=False), ForeignKey("complaints.id", ondelete="CASCADE"), nullable=False)
+    order_id = Column(UUID(as_uuid=False), ForeignKey("orders.id", ondelete="CASCADE"), nullable=False)
+    linked_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    delivery_notified_at = Column(DateTime(timezone=False), nullable=True)
+
+    complaint = relationship("Complaint")
+    order = relationship("Order")
+
+    __table_args__ = (
+        Index("ix_complaint_fulfilment_orders_complaint_id", "complaint_id"),
+        Index("ix_complaint_fulfilment_orders_order_id", "order_id"),
+        Index("uq_complaint_fulfilment_order", "complaint_id", "order_id", unique=True),
+    )
+
+

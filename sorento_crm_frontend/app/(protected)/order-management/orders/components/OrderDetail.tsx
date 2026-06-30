@@ -20,6 +20,7 @@ import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import OrderDeleteDialog from './order-delete-dialog';
 import OrderLinesCard from './OrderLinesCard';
+import OrderFulfilledComplaintsCard from './OrderFulfilledComplaintsCard';
 import OrderNavigation from './OrderNavigation';
 
 interface OrderDetailProps {
@@ -371,6 +372,11 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Reverse of the complaint "Fulfilment Delivery Orders" section: the
+          complaint(s) this DO fulfils (auto-linked from Remarks CS). Always
+          rendered with its own empty state. */}
+      <OrderFulfilledComplaintsCard orderId={orderId} />
     </div>
   );
 }

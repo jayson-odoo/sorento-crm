@@ -743,6 +743,17 @@ class ComplaintService:
         base_url = self._complaint_view_base_url(base_url_override)
         return self._format_complaint_view_url(base_url, view_token)
 
+    def _build_complaint_internal_url(self, complaint_id: str, base_url_override: Optional[str] = None) -> str:
+        """In-system (authenticated) complaint detail-page link for STAFF emails.
+
+        Staff team notifications must link to the internal page, NOT the public
+        tokenized /view URL (which is being discontinued). The (protected) layout's
+        deep-link-after-login carries the recipient back here once authenticated.
+        """
+        base_url = self._complaint_view_base_url(base_url_override)
+        path = f"/complaint-management/complaints/{complaint_id}"
+        return f"{base_url}{path}" if base_url else path
+
     def _batch_complaint_view_urls(self, complaint_ids: List[str]) -> dict:
         """Resolve view URLs for many complaints with O(1) queries instead of O(rows).
 
@@ -956,6 +967,272 @@ class ComplaintService:
                 )
             except Exception as e:
                 logger.warning("Failed to create in-app notification for user %s: %s", uid, e)
+
+    # ----- Replacement-DO delivery notifications (complaint auto-fulfilment) -----
+
+    def _complaint_do_delivered_notify_tiers(self) -> tuple[int, ...]:
+        """Configured Complaint-team tiers for the DO-delivered notice.
+
+        Resolution order: DB (``system_settings.complaint_do_delivered_notify_tiers``,
+        admin-editable in Settings → Complaints) → env COMPLAINT_DO_DELIVERED_NOTIFY_TIERS
+        → default Tier 1 + Tier 2."""
+        from app.config import settings
+        from app.models.user import SystemSetting
+
+        raw = None
+        try:
+            row = self.db.query(SystemSetting).first()
+            if row is not None:
+                raw = getattr(row, "complaint_do_delivered_notify_tiers", None)
+        except Exception:
+            raw = None
+        if not (raw and str(raw).strip()):
+            raw = getattr(settings, "complaint_do_delivered_notify_tiers", "1,2")
+        raw = raw or "1,2"
+        tiers: list[int] = []
+        for part in str(raw).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                t = int(part)
+            except ValueError:
+                continue
+            if 1 <= t <= 3 and t not in tiers:
+                tiers.append(t)
+        return tuple(tiers) or (1, 2)
+
+    def _get_complaint_team_user_ids_tiers(self, tiers: tuple[int, ...] = (1, 2)) -> List[str]:
+        """Union of members across the given tiers of agent ``complaint`` (set ``complaint``).
+
+        Used for replacement-DO delivery notifications which fan out to both Tier 1
+        and Tier 2 of the Complaint team (single source of truth = team membership).
+        """
+        from app.services.user_service import AccessAgentService
+        from app.models.access import TeamMember
+
+        agent_svc = AccessAgentService(self.db)
+        agent_id = agent_svc.get_agent_id_by_code("complaint")
+        if not agent_id:
+            return []
+        team_ids: list[str] = []
+        for tier in tiers:
+            try:
+                tid = agent_svc.get_team_id_by_tier(agent_id, tier, team_set_code="complaint")
+            except HTTPException:
+                tid = None
+            if tid:
+                team_ids.append(tid)
+        if not team_ids:
+            return []
+        rows = (
+            self.db.query(TeamMember.user_id)
+            .filter(TeamMember.team_id.in_(team_ids))
+            .distinct()
+            .all()
+        )
+        return [str(r[0]) for r in rows if r and r[0]]
+
+    @staticmethod
+    def _do_item_lines(items: Optional[Iterable[dict]]) -> list[str]:
+        """['CODE x QTY', ...] — one entry per delivered line (skips blank codes)."""
+        lines: list[str] = []
+        for it in items or []:
+            code = str((it or {}).get("product_code") or "").strip()
+            if not code:
+                continue
+            qty = (it or {}).get("qty")
+            qty_str = "" if qty in (None, "") else f" x {qty}"
+            lines.append(f"{code}{qty_str}")
+        return lines
+
+    @classmethod
+    def _format_do_items(cls, items: Optional[Iterable[dict]]) -> str:
+        """Plain-text delivery-notice item block — an 'Items delivered:' header with
+        one item per line ('- CODE x QTY'). Empty string when there are no items."""
+        lines = cls._do_item_lines(items)
+        if not lines:
+            return ""
+        return "Items delivered:\n" + "\n".join(f"- {line}" for line in lines)
+
+    @classmethod
+    def _format_do_items_html(cls, items: Optional[Iterable[dict]]) -> str:
+        """HTML delivery-notice item block (<ul> list) for email bodies. '' when none."""
+        lines = cls._do_item_lines(items)
+        if not lines:
+            return ""
+        lis = "".join(f"<li>{line}</li>" for line in lines)
+        return f"<p>Items delivered:</p>\n<ul>{lis}</ul>"
+
+    def notify_team_do_delivered(
+        self,
+        complaint_id: str,
+        *,
+        complaint_number: str,
+        order_number: str,
+        items: Optional[Iterable[dict]] = None,
+    ) -> None:
+        """Notify the Complaint team (Tier 1 + Tier 2) that a replacement DO was
+        delivered — in-app + a single email to all. Content is a delivery FACT;
+        it never announces "fulfilled". Idempotency is enforced upstream by the
+        ``complaint_fulfilment_orders.delivery_notified_at`` stamp, but the
+        notification ``event_type`` is also keyed by the DO so two DOs delivering
+        for one complaint each notify once.
+        """
+        from datetime import datetime
+        from app.models.user import User
+        from app.models.notification import Notification, NotificationDelivery
+
+        logger = logging.getLogger(__name__)
+        user_ids = self._get_complaint_team_user_ids_tiers(
+            self._complaint_do_delivered_notify_tiers()
+        )
+        if not user_ids:
+            logger.warning(
+                "DO-delivered notify: no Complaint team members (Tier 1/2, set 'complaint') for complaint %s.",
+                complaint_id,
+            )
+            return
+        users = self.db.query(User).filter(User.id.in_(user_ids)).all()
+
+        items_block = self._format_do_items(items)
+        items_block_html = self._format_do_items_html(items)
+        headline = (
+            f"Replacement delivery order {order_number} for complaint "
+            f"{complaint_number} has been delivered."
+        )
+        sentence = headline + (f"\n\n{items_block}" if items_block else "")
+        title = "Replacement delivery order delivered"
+        # Staff team email -> internal detail page, never the public /view token URL.
+        view_url = self._build_complaint_internal_url(complaint_id)
+        body_plain = (
+            f"Dear Complaint Team,\n\n{sentence}\n\n{view_url}\n\n"
+            "This is a system generated email. Please do not reply."
+        )
+        body_html = (
+            f"<p>Dear Complaint Team,<br /><br />{headline}</p>\n"
+            + (f"{items_block_html}\n" if items_block_html else "")
+            + f'<p><a href="{view_url}">{view_url}</a></p>\n'
+            "<p>This is a system generated email. Please do not reply.</p>"
+        )
+        event_type = f"do_delivered:{order_number}"
+
+        # One INDIVIDUAL email per team member (each as the To recipient) + in-app.
+        # Previously this was a single email with To=first member, CC=the rest — but
+        # CC recipients were unreliably delivered (mail server/client filtering), so
+        # only the To member actually got it. Direct per-recipient emails guarantee
+        # every Tier 1/2 member receives their own copy.
+        from app.services.queue_service import enqueue_job
+        from app.tasks import notification_tasks
+
+        for u in users:
+            uid = str(u.id)
+            existing_notif = (
+                self.db.query(Notification)
+                .filter(
+                    Notification.user_id == uid,
+                    Notification.source_entity_type == "complaint",
+                    Notification.source_entity_id == complaint_id,
+                    Notification.event_type == event_type,
+                )
+                .first()
+            )
+            if existing_notif is not None:
+                continue
+            has_email = bool(getattr(u, "email", None) and str(u.email).strip())
+            notification = Notification(
+                user_id=uid,
+                type="complaint_notification",
+                title=title,
+                body=body_plain,
+                data={"body_html": body_html},
+                source_entity_type="complaint",
+                source_entity_id=complaint_id,
+                event_type=event_type,
+            )
+            self.db.add(notification)
+            self.db.flush()
+            self.db.add(
+                NotificationDelivery(
+                    notification_id=notification.id,
+                    channel="in_app",
+                    status="sent",
+                    sent_at=datetime.utcnow(),
+                )
+            )
+            if has_email:
+                self.db.add(
+                    NotificationDelivery(
+                        notification_id=notification.id, channel="email", status="pending"
+                    )
+                )
+            self.db.commit()
+            self.db.refresh(notification)
+            if has_email:
+                try:
+                    enqueue_job(
+                        notification_tasks.send_notification_deliveries,
+                        str(notification.id),
+                        queue_name="notifications",
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "DO-delivered notify: failed to enqueue email for user %s: %s", uid, e
+                    )
+
+    def notify_customer_do_delivered(
+        self,
+        complaint_id: str,
+        *,
+        complaint_number: str,
+        order_number: str,
+        items: Optional[Iterable[dict]] = None,
+    ) -> bool:
+        """Send the customer a Respond.io/WhatsApp delivery FACT for a replacement DO.
+
+        Enqueues through the ``respond_io`` queue (window-aware send + integration_log
+        on success AND failure). Returns False and skips gracefully when the complaint
+        has no linked Respond.io contact. Never announces "fulfilled".
+        """
+        complaint = self.get_complaint(complaint_id)
+        identifier = self._identifier_from_respond_inbox_url(
+            getattr(complaint, "respond_inbox_url", None)
+        )
+        if not identifier:
+            return False
+
+        items_block = self._format_do_items(items)
+        link_part = self._complaint_status_link_part(complaint, complaint_id)
+        headline = (
+            f"Your replacement delivery order {order_number} for complaint "
+            f"{complaint_number} has been delivered."
+        )
+        display_message = (
+            headline + (f"\n\n{items_block}" if items_block else "") + link_part
+        )
+        update_text = (
+            f"Replacement delivery order {order_number} has been delivered."
+        )
+        if items_block:
+            update_text += f"\n\n{items_block}"
+        extra_vars = {
+            "update": update_text.strip(),
+            "portal_url": self._complaint_portal_or_view_url(complaint, complaint_id),
+            "view_url": (self._build_complaint_view_url(complaint_id) or "").strip(),
+        }
+        # Automated system send — no acting Respond.io user; fall back to the
+        # complaint's assignee (used only for chat-thread assignee resolution).
+        respond_user_id = (getattr(complaint, "assigned_to", None) or "").strip()
+        self._enqueue_respond_message_for_complaint(
+            complaint_id=complaint_id,
+            identifier=identifier,
+            display_message=display_message,
+            respond_user_id=respond_user_id,
+            crm_sender_user_id=None,
+            space_id=getattr(complaint, "space_id", None),
+            extra_context_vars=extra_vars,
+        )
+        return True
 
     def get_complaint_summary_by_token(self, token_value: str) -> dict:
         """Return read-only complaint summary for the given view token. No auth required."""

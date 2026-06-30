@@ -104,6 +104,14 @@ def get_stock_balance(
     quantity_operator: Optional[str] = Query(None),
     quantity_value: Optional[str] = Query(None),
     status: Optional[str] = Query(None, description="Filter by status: critical, low, normal, overstock"),
+    exclude_zero_system_adjustment: bool = Query(
+        False,
+        description=(
+            "When true, hide rows whose on-hand is 0 ONLY because the latest stock-ledger "
+            "movement was a SYSTEM_ADJUSTMENT (e.g. 'missing from full stock take'). A genuine "
+            "0 (last movement an import/sale, or no ledger) is still returned. Used by the MCP."
+        ),
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -124,6 +132,7 @@ def get_stock_balance(
             quantity_value=quantity_value,
             status=status,
             entities=_normalize_entities(entities),
+            exclude_zero_system_adjustment=exclude_zero_system_adjustment,
         )
         return result
     except Exception as e:

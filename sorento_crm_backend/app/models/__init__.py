@@ -16,7 +16,7 @@ from app.models.workflow_forms import (
     WorkflowSubmissionLine,
     WorkflowSubmissionTransitionLog,
 )
-from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment
+from app.models.complaints import Complaint, ComplaintAttachment, ComplaintManualAttachment, ComplaintFulfilmentOrder
 from app.models.complaint_master_data import ComplaintRootCause, ComplaintResolution
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.attachment_field_link import AttachmentFieldLink
@@ -116,6 +116,7 @@ __all__ = [
     "Complaint",
     "ComplaintAttachment",
     "ComplaintManualAttachment",
+    "ComplaintFulfilmentOrder",
     "EntityAttachmentLink",
     "AttachmentFieldLink",
     "SLAPolicy",

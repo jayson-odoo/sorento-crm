@@ -77,6 +77,11 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
   const createMutation = useCreateOrder();
   const updateMutation = useUpdateOrder();
 
+  // Remarks CS is frozen once the DO is delivered AND linked to a complaint
+  // (its fulfilment is historical). Backend-owned: `remarks_cs_locked` on the
+  // single-order GET response. See PLAN-complaint-do-auto-fulfilment.md.
+  const remarksCsLocked = isEditMode && !!order?.remarks_cs_locked;
+
   const defaultOrderDate = new Date();
   const defaultEstimatedDeliveryDate = (() => {
     const d = new Date(defaultOrderDate);
@@ -219,8 +224,11 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
       const formData: OrderFormData = {
         order_number: data.order_number,
         order_date: data.order_date,
-        estimated_delivery_date: data.estimated_delivery_date || undefined,
-        actual_delivery_date: data.actual_delivery_date || undefined,
+        // Send explicit null (not undefined) for cleared dates so the BE actually
+        // clears them — undefined is dropped by JSON.stringify and skipped by the
+        // backend's exclude_unset, so clearing the field would otherwise be a no-op.
+        estimated_delivery_date: data.estimated_delivery_date || null,
+        actual_delivery_date: data.actual_delivery_date || null,
         customer_id: data.customer_id ?? undefined,
         order_status_id: data.order_status_id,
         billing_address_id: data.billing_address_id || undefined,
@@ -511,8 +519,18 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                       <FormItem>
                         <FormLabel>Remarks CS</FormLabel>
                         <FormControl>
-                          <Input placeholder="e.g. PS25-2053" {...field} value={field.value ?? ''} />
+                          <Input
+                            placeholder="e.g. PS25-2053"
+                            {...field}
+                            value={field.value ?? ''}
+                            disabled={remarksCsLocked}
+                          />
                         </FormControl>
+                        {remarksCsLocked && (
+                          <FormDescription>
+                            Locked — this delivery order is delivered and linked to a complaint.
+                          </FormDescription>
+                        )}
                         <FormMessage />
                       </FormItem>
                     )}
@@ -662,8 +680,19 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                         <FormItem className="md:col-span-2">
                           <FormLabel>Remarks CS</FormLabel>
                           <FormControl>
-                            <Textarea placeholder="Remarks from CS..." {...field} value={field.value || ''} rows={3} />
+                            <Textarea
+                              placeholder="Remarks from CS..."
+                              {...field}
+                              value={field.value || ''}
+                              rows={3}
+                              disabled={remarksCsLocked}
+                            />
                           </FormControl>
+                          {remarksCsLocked && (
+                            <FormDescription>
+                              Locked — this delivery order is delivered and linked to a complaint.
+                            </FormDescription>
+                          )}
                           <FormMessage />
                         </FormItem>
                       )}

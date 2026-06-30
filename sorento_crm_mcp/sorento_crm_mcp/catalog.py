@@ -300,7 +300,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "ALL FILTERS OPTIONAL — call with none to span every product + active warehouse.\n"
             "FILTER BY UUID: `product_ids` (canonical product UUIDs csv / JSON / repeated); "
             "`warehouse_ids` (canonical warehouse UUIDs csv / JSON / repeated). "
-            "quantity_operator / quantity_value filter on-hand; status = critical|low|normal|overstock."
+            "quantity_operator / quantity_value filter on-hand; status = critical|low|normal|overstock.\n"
+            "Rows whose on-hand is 0 ONLY because the latest stock movement was a SYSTEM_ADJUSTMENT "
+            "(e.g. 'missing from full stock take') are always hidden; a genuine 0 is still returned."
         ),
         "/api/v1/inventory/stock/balance",
         (),

@@ -77,6 +77,10 @@ export interface SystemSetting {
   notifySystemErrorWeb: boolean;
   notifySystemErrorRoleIds: string[];
 
+  // Complaint <-> DO auto-fulfilment: comma list of Complaint-team tiers (e.g. "1,2")
+  // that receive the replacement-DO-delivered notification.
+  complaintDoDeliveredNotifyTiers: string;
+
   smtp?: {
     smtp_host?: string | null;
     smtp_port?: string | null;

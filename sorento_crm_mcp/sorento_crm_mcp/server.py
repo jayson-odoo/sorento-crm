@@ -549,7 +549,11 @@ def _to_malaysia_iso(value: Any) -> Any:
         return value
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(_MALAYSIA_TZ).isoformat()
+    # Emit the Malaysia WALL-CLOCK time as a NAIVE ISO string (no "+08:00" offset).
+    # Downstream consumers (n8n/luxon) re-convert an offset-aware timestamp back to
+    # UTC for display, which would undo the conversion and show UTC again; a naive
+    # MYT string is rendered literally as the Malaysia time. See PLAN/timezone note.
+    return dt.astimezone(_MALAYSIA_TZ).replace(tzinfo=None).isoformat()
 
 
 def _normalize_updated_at(value: Any) -> Any:
@@ -1320,6 +1324,12 @@ async def _execute_tool_request(spec: ToolSpec, client: Any, path_params: dict[s
     if spec.name == _GRN_LIST_TOOL:
         query = dict(query or {})
         query["limit"] = _coerce_grn_limit(query.get("limit"))
+
+    if spec.name == "crm_inventory_stock_balance_list":
+        # MCP always hides on-hand=0 rows that were zeroed by a SYSTEM_ADJUSTMENT
+        # (e.g. "missing from full stock take") — a genuine 0 is still returned.
+        query = dict(query or {})
+        query["exclude_zero_system_adjustment"] = "true"
 
     missing_narrowing = _missing_narrowing_filters(spec.name, query)
     if missing_narrowing is not None:

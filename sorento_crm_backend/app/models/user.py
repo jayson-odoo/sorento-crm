@@ -215,6 +215,13 @@ class SystemSetting(Base):
     notify_system_error_web = Column(Boolean, default=True, nullable=False)
     notify_system_error_role_ids = Column(ARRAY(String), nullable=True)
 
+    # Complaint <-> DO auto-fulfilment: which Complaint-team tiers (Access-Agent
+    # `complaint`, set `complaint`) receive the replacement-DO-delivered email/in-app.
+    # Comma list of tier numbers, e.g. "1,2" (Tier 1 + Tier 2) or "1" (Tier 1 only).
+    complaint_do_delivered_notify_tiers = Column(
+        String(20), nullable=False, server_default="1,2", default="1,2"
+    )
+
     # SMTP for notification emails (password not returned in read APIs)
     smtp_host = Column(String(255), nullable=True)
     smtp_port = Column(String(10), nullable=True)
