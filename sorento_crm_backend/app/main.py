@@ -24,6 +24,7 @@ from app.config import settings
 from app.api.v1 import api_router
 from app.services.error_handler import AppException
 from app.middleware.logging_middleware import LoggingMiddleware
+from app.middleware.idempotency_middleware import IdempotencyMiddleware
 
 # Configure logging
 logging.basicConfig(
@@ -46,6 +47,11 @@ app = FastAPI(
 
 # Add logging middleware
 app.add_middleware(LoggingMiddleware)
+
+# Request idempotency: dedupe replays of allowlisted action endpoints (double-click,
+# proxy retry, two tabs) so harmful side effects (SLA assignment, Respond sends,
+# status transitions) execute exactly once. See app/middleware/idempotency_middleware.py.
+app.add_middleware(IdempotencyMiddleware)
 
 # Compress JSON responses. List endpoints (products, attachments) return 50-70KB
 # of JSON per page; uncompressed transfer was ~1s of "content download" on prod.
