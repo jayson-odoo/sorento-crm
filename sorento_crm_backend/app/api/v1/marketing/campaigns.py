@@ -92,8 +92,7 @@ async def delete_campaign(
     """Delete a marketing campaign."""
     try:
         service = MarketingCampaignService(db)
-        # Implement delete logic
-        return {"message": "Campaign deleted successfully"}
+        return service.delete_campaign(campaign_id)
     except HTTPException:
         raise
     except Exception as e:

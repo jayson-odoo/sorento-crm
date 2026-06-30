@@ -1,65 +1,192 @@
-# PLAN — Security fix cluster (rate-limiting + object-level authz)
+# PLAN — Fix Cluster (security + bounded bugs + admin-QoL + FE arch refactors)
 
-**Status:** DRAFT for USER GRILL, 2026-06-30. No code. All items CONFIRMED in the audit. Two independent sub-plans; grill each. Format per item: root cause · fix + recommendation · alternative rejected · risk · UAC · open questions.
+**Status:** DRAFT for USER GRILL, 2026-06-30. No code yet. Combines 4 workstreams folded in per user (2026-06-30). Was "Security fix cluster"; broadened to absorb the no-plan open items from `PLAN-audit-traversal-todo.md`.
+**Process:** grill-first (user-confirmed) — resolve every open question below, get sign-off, THEN code. Per item: root cause · fix + recommendation · alternative rejected · risk · UAC · open questions.
+**DECIDED (2026-06-30 grill):**
+- Signup enumeration → **generic response for new AND existing email** (identical body + timing).
+- **A:** rate-limit thresholds **env-configurable with sensible defaults, NO CAPTCHA** (defaults: reset 5/15min/IP, signup 3/hr/IP, portal-OTP 30/min/IP — tune in env).
+- **B:** object-authz + **short presign TTL + presign audit log NOW**; per-tenant CloudFront keys **deferred** to real multi-tenant.
+- **C1:** campaign_type delete with referencing campaigns → **block 409 "in use"** (no cascade).
+- **C2:** dead campaign filters → **REMOVE the FE controls** (keep working status filter).
+- **C3:** UUIDPath → **ALLOWLIST of internal-UUID-only params, all verbs**; exclude respond_io_id/code/slug/token/dual-id contact routes (see C3).
+- **C4:** lookup 403 → **disabled + "unavailable" hint** (field stays, no retry/toast/spam).
+- **D:** **Tier-1 only** this cycle (audit-log page + bulk-action UI + impersonate audit event); canonical log source = AuditLog.
+- **E:** **opportunistic** — fix on-touch + add lint rule to block new violations; NO big-bang codemod.
+- **Still to confirm at impl time:** n8n `EXTERNAL_API_KEY_ACT_AS_USER_ID` role view-perms (so Sub-plan B doesn't 403 n8n) — verify against the live role before shipping B; presign TTL value.
+
+## Sub-plan map + sequencing
+
+| # | Sub-plan | Size | Risk | Order | Gate |
+|---|----------|------|------|-------|------|
+| A | Security: rate-limiting | S | low | 1st | thresholds |
+| B | Security: object-level authz | M | **med-high** (n8n path) | 2nd | n8n act-as role |
+| C | Bounded bugs (4) | S | low | parallel | campaign filters wire-vs-remove |
+| D | Admin-QoL | L | low-med | tiered, after A-C | tier scope |
+| E | FE arch refactors | **XL (229+54 sites)** | low each, big surface | last, batched codemod | batch order |
+
+Rationale: A/C are self-contained low-risk → land first. B needs integration coordination. D + E are large → phased, not one PR. E especially is a multi-week codemod (real counts below blow past the audit's estimates).
 
 ---
 
-## SUB-PLAN 1 — Rate-limiting (auth + portal OTP)
+## SUB-PLAN A — Rate-limiting (auth + portal OTP)
 
 **Confirmed gaps:**
 - `/auth/signup` (`auth.py:143`) — no throttle → account-creation spam + **email enumeration** (409 on existing email).
 - `/auth/reset-password` (`auth.py:212`) — no throttle → reset-link flooding / token brute-force.
-- Portal OTP `request_otp` (`portal_service.py:461`) — per-contact 60s cooldown + 10/day cap, but **no per-IP global limit** → contact enumeration + DOS of the Respond.io send queue. Unauthenticated endpoint.
+- Portal OTP `request_otp` (`portal_service.py:461`) — per-contact 60s cooldown + 10/day cap, but **no per-IP global limit** → contact enumeration + DOS of the Respond.io send queue. Unauthenticated.
 - (Login already has `login_throttle` — `auth.py:44-97` — reuse it.)
 
 **Fix (recommended):**
-- **Reuse the existing `login_throttle`** (per email+ip, fails open if Redis down) on `reset_password` and `signup`. For signup, key by IP (no pre-existing account) + cap accounts/hour/IP; return the SAME response timing/shape for new vs existing email to kill enumeration (or at least throttle the 409 path).
-- **Add a per-IP global limiter** on `/public/portal/*` (e.g. 30 req/min/IP) in front of `request_otp`; genericize invalid-contact responses (always 404, no timing/error-detail difference).
-- *Alternative rejected:* a full API-gateway/WAF rate-limit layer — out of scope for an app-level fix now; the in-app `login_throttle` pattern is already present and proven.
+- **Reuse `login_throttle`** (per email+ip, fails open if Redis down) on `reset_password` and `signup`. Signup keyed by IP + cap accounts/hour/IP.
+- **Enumeration (DECIDED):** signup returns generic "check your email to continue" for BOTH new + existing email — same body, same status, same timing (no fast-path 409). Existing-email branch still creates no duplicate; it just doesn't reveal that.
+- **Per-IP global limiter** on `/public/portal/*` (e.g. 30 req/min/IP) in front of `request_otp`; genericize invalid-contact responses (always same shape, no timing/error-detail tell).
+- *Alternative rejected:* full API-gateway/WAF rate-limit — out of scope; the in-app `login_throttle` is present and proven.
 
-**Risk/blast radius:** low — additive throttles. Watch: throttle must **fail open** if Redis is down (login_throttle already does) so a Redis outage doesn't lock out auth. Don't over-tighten signup (legit bursts from shared office IP) — make the cap configurable.
+**Risk:** low — additive throttles. Must **fail open** if Redis down (login_throttle already does). Don't over-tighten signup (shared office IP bursts) — caps env-configurable.
 
 **UAC:**
-- Rapid repeated `reset-password`/`signup`/`portal request-otp` from one IP → 429 after the threshold; `Retry-After` set.
-- Existing-vs-new email on signup → indistinguishable response (no enumeration); throttled either way.
+- Repeated `reset-password`/`signup`/`portal request-otp` from one IP → 429 after threshold; `Retry-After` set.
+- Signup new-vs-existing email → indistinguishable response (body + timing); no duplicate account created.
 - Redis down → auth still works (fail-open), logged.
 - Unit tests per endpoint (throttle hit + fail-open); no regression to login.
 
-**Open questions to grill:**
-1. Signup: block enumeration by returning a generic "check your email" for BOTH new + existing (recommended), or keep 409 but throttle it?
-2. Thresholds (reset/signup/IP-global) — your preferred numbers? Make them env-configurable?
-3. Portal OTP: per-IP global limit value, and is a CAPTCHA acceptable on the portal OTP request as defense-in-depth?
+**Open questions:**
+1. Thresholds (reset / signup / portal IP-global) — your numbers? All env-configurable (recommend yes)?
+2. Portal OTP: CAPTCHA acceptable as defense-in-depth, or rate-limit only?
 
 ---
 
-## SUB-PLAN 2 — Object-level authz (presigned URLs + portal attachments)
+## SUB-PLAN B — Object-level authz (presigned URLs + portal attachments)
 
 **Confirmed gaps:**
-- Presigned-URL endpoint (`external/presigned_url.py:88`) — gates on `get_external_api_user` (X-API-Key) but signs **any `file_path`** with no attachment-ownership/permission check (**IDOR**). CloudFront signer uses a **single global key_pair_id** (not per-tenant), so signed URLs are global.
-- Portal attachment download (`public/portal.py:715,734`) — `_list_attachments_for` + `_safe_presigned_url` don't re-verify contact ownership; relies on upstream `list_submissions` scoping.
+- Presigned-URL endpoint (`external/presigned_url.py:88`) — gates on X-API-Key but signs **any `file_path`** with no ownership check (**IDOR**). CloudFront signer uses a **single global key_pair_id**.
+- Portal attachment download (`public/portal.py:715,734`) — `_list_attachments_for` + `_safe_presigned_url` don't re-verify contact ownership; rely on upstream `list_submissions` scoping.
 
 **Fix (recommended):**
-- **Presigned endpoint:** after resolving the Attachment row for `file_path`, verify the caller (X-API-Key → `EXTERNAL_API_KEY_ACT_AS_USER_ID` user) has permission to view the **parent entity** the attachment belongs to; 403 otherwise. Reject `file_path`s that don't resolve to a known Attachment row (no signing arbitrary keys).
-- **Portal:** ensure `list_submissions` consistently filters `token.contact_id == submission.contact_id`, and re-assert ownership before generating any presigned URL in `_list_attachments_for`.
-- **Key scoping (bigger, grill):** evaluate per-tenant CloudFront key groups OR a short presign TTL + audit log of every presign. (Multi-tenant is currently stubbed to DEFAULT_TENANT, so cross-tenant isn't active yet, but cross-entity within the tenant is.)
-- *Alternative rejected:* rely on "S3 keys are unguessable" — not a security control; keys appear in URLs/logs.
+- **Presigned endpoint:** resolve Attachment row for `file_path` → verify the act-as user (`EXTERNAL_API_KEY_ACT_AS_USER_ID`) can view the **parent entity**; 403 otherwise. Reject `file_path`s with no matching Attachment row (no signing arbitrary keys).
+- **Portal:** ensure `list_submissions` filters `token.contact_id == submission.contact_id`; re-assert ownership before any presign in `_list_attachments_for`.
+- **Key scoping (bigger, grill):** per-tenant CloudFront key groups OR short presign TTL + audit log of every presign. Multi-tenant stubbed to DEFAULT_TENANT today → cross-tenant not active, cross-entity within tenant IS.
+- *Alternative rejected:* "S3 keys are unguessable" — not a control; keys leak in URLs/logs.
 
-**Risk/blast radius:** MEDIUM-HIGH change to a hot integration path (n8n uses presigned URLs). Must not break legitimate n8n flows — verify the act-as user has the needed view perms, or n8n's presign calls will start 403'ing. **Coordinate with whoever owns the n8n EXTERNAL_API_KEY_ACT_AS_USER_ID role.**
+**Risk:** MED-HIGH — hot integration path (n8n presigns). Must not 403 legitimate n8n flows. **Coordinate the n8n EXTERNAL_API_KEY_ACT_AS_USER_ID role.**
 
 **UAC:**
-- Presign for an attachment the act-as user CAN view → signed URL (works as today).
-- Presign for an attachment the act-as user CANNOT view, or a `file_path` with no Attachment row → 403/404, no URL.
-- Portal: contact A cannot obtain a presigned URL for contact B's attachment (test).
-- n8n's existing presign flows still work (regression — verify the act-as role has the perms those flows need).
+- Presign attachment act-as user CAN view → signed URL (unchanged).
+- Presign attachment they CANNOT view, or `file_path` with no Attachment row → 403/404.
+- Portal: contact A cannot presign contact B's attachment (test).
+- n8n existing presign flows still work (regression — act-as role has needed perms).
 
-**Open questions to grill:**
-1. What role is `EXTERNAL_API_KEY_ACT_AS_USER_ID`, and does it have broad view perms (so adding the check won't break n8n)? May need a dedicated service role.
-2. Per-tenant CloudFront keys now, or defer until real multi-tenant lands (and just add object-authz + short TTL + audit for now)?
-3. Presign TTL — current value acceptable, or shorten?
+**Open questions:**
+1. What role is `EXTERNAL_API_KEY_ACT_AS_USER_ID`? Broad view perms (won't break n8n)? Need a dedicated service role?
+2. Per-tenant CloudFront keys now, or defer to real multi-tenant (object-authz + short TTL + audit for now)?
+3. Presign TTL — keep current or shorten?
 
 ---
 
-## Sequence
-Independent of the broken-Creates/lookup-403 plan. Suggested: **Sub-plan 1 (rate-limiting) first** — self-contained, low-risk, high listed-co value. **Sub-plan 2 (authz)** second — needs the n8n-role coordination to avoid breaking integrations. Each: implement → pytest (throttle/authz unit tests) → verify → deploy.
+## SUB-PLAN C — Bounded bugs (4 confirmed)
 
-*(Quick wins not needing a plan, can batch anytime: marketing delete no-op → implement real hard-delete; campaign status casing → normalize; dead filters → remove the never-written options; OTP SHA256 → bcrypt.)*
+### C1. Marketing DELETE no-op stub — ADR hard-delete violation
+- **Root cause:** `delete_campaign` (`marketing/campaigns.py:85`) + `delete_campaign_type` (`marketing/campaign_types.py`) both `# Implement delete logic` → return `{"message":"...deleted successfully"}` while deleting NOTHING. User thinks it deleted; row persists.
+- **Fix:** implement real hard-delete in `MarketingCampaignService` + `CampaignTypeService` (per ADR hard-delete). Handle FK constraints (campaign_type in use → 409 with clear message, don't orphan). FE: confirm via `ConfirmDeleteDialog` (verify it's not a native `confirm()` — if so fold into C/E).
+- **Risk:** low. Watch FK: campaign_type referenced by campaigns → block or cascade (grill).
+- **UAC:** delete campaign → row gone from DB + list; delete in-use campaign_type → 409 "in use", no silent success; pytest happy + FK-block + auth-deny.
+- **Open Q:** campaign_type in use → block (recommend) or cascade-null?
+
+### C2. Campaign list type/date/budget filters dead
+- **Root cause:** `status` filter wired (Plan-1), but FE still sends `campaign_type_id`/`date_from`/`date_to`/`budget_min`/`budget_max` which `list_campaigns` ignores. `marketing_service.py` uses an `active`/`status` model, not these.
+- **Fix (recommend REMOVE):** drop the dead FE controls — simpler, honest UI. OR wire them in the service if filtering by type/date/budget is genuinely wanted.
+- **Risk:** trivial.
+- **UAC:** no filter control present that doesn't work; if wired, each filter narrows results + pytest.
+- **Open Q:** **wire or remove?** (recommend remove unless you want the analytics filter.)
+
+### C3. UUIDPath sweep — ALLOWLIST, not blanket (grill catch 2026-06-30)
+- **Root cause:** Plan-1 added `UUIDPath` validator (`uuid_path_param.py`) to only 3 routes (forms/stock-batches/campaigns). Other internal-UUID detail routes still 500 on a non-UUID id instead of 422.
+- **⚠️ CRITICAL GUARDRAIL (user grill):** do **NOT** blanket-apply. Many path params are NOT internal UUIDs and UUIDPath would 422 valid calls:
+  - **`/external/conversation-variables/{respond_io_id}`** — docstring: "Respond.io contact id, not internal UUID". n8n hot path. MUST stay string.
+  - **`{contact_id}` routes that accept EITHER id** — `complaints.py:348`, `procurement/stock_inquiries.py:166`, `procurement/purchase_requests.py:194` match `RespondContact.respond_io_id == contact_id_val OR internal`. A respond_io_id is a VALID value here.
+  - Non-UUID by design: `{code}`, `{code_norm}`, `{slug}`, `{token}`, `{set_key}`, `{module_key}`, `{bundle_key}`, `{key}`, `{entity}`, `{entity_type}`, `{form_key}`, `{event_key}`, `{tz_key}`, `{status_code}`, `{contact_phone}`, `{prefix}`, `{resource_key}`. `{workspace_id}` — verify (may be UUID).
+- **Fix:** build an **allowlist** of params that are strictly internal-UUID PKs with NO external-id fallback (e.g. `campaign_id`, `order_id`, `product_id`, `supplier_id`, `warehouse_id`, `form_id`, `tracking_id`…). Apply UUIDPath only to those. Per-route confirm the handler doesn't fall back to an external id before adding the validator.
+- **Risk:** MED if done blindly (would break n8n + dual-id lookups) → LOW with the allowlist + per-route check.
+- **UAC:** allowlisted route → bad id 422 not 500, valid UUID unchanged; **respond_io_id / code / token routes UNCHANGED (regression test: a respond_io_id on `conversation-variables/{respond_io_id}` still 200, NOT 422)**; n8n dual-id contact lookups still resolve via respond_io_id.
+- **DECIDED (user):** all verbs (GET/PUT/DELETE/POST sub-routes) **on allowlisted UUID params only** — verb coverage yes, param coverage allowlist-gated.
+
+### C4. FE lookup 403 graceful-degrade + stop 4× retry
+- **Root cause:** even post Plan-1 authz fix, `LookupBoundField` (shared) retries `/lookup/by-binding` 4× on failure → console spam + "Permission required" toast when a binding is still forbidden.
+- **Fix:** on 403, degrade — disable/hide the field with an "unavailable" hint, NO retry, NO toast. Verify whether Plan-1's authz fix already removed the 403 for the standard roles (then this is belt-and-suspenders).
+- **Risk:** low, single shared component.
+- **UAC:** forbidden binding → field degrades quietly, 0 console errors, 0 retry, no toast; allowed binding unchanged. Vitest on the 403 branch.
+- **Open Q:** degrade = hide the field, or show disabled "unavailable"? (recommend disabled+hint so layout stays.)
+
+---
+
+## SUB-PLAN D — Admin quality-of-life (tiered, from audit §4a)
+
+Existing surfaces (don't rebuild): AuditLog API (`/api/v1/audit/`, no FE page), SystemLog (`/user-management/logs`), Import/Integration/Email/Respond outboxes, ScheduledTask, `ActivitiesNotesPanel`.
+
+### Tier-1 quick wins (~2-3d)
+- [ ] **Bulk-action UI** on email-outbox / import-logs / respond-outbox / scheduled-tasks — checkboxes already render; copy `FormsList` bulkActions, reuse existing bulk endpoints.
+- [ ] **`/system-management/audit-logs` FE page** on existing `/api/v1/audit/` API (no BE work) — "who changed what".
+- [ ] **Explicit IMPERSONATE audit event** (today impersonation silently rewrites created_by).
+
+### Tier-2 (~3-4d)
+- [ ] Bulk retry/cancel for failed emails.
+- [ ] Expand `__audit_track__` → Order, User, Form, Supplier, Promotion (~2 lines/model). Currently tracked: Ticket, Complaint, Product, StockInquiry, PurchaseRequestHeader.
+- [ ] Request `trace_id` through LoggingMiddleware → audit_context → AuditLog column → filterable in UI.
+
+### Tier-3 (~4-7d)
+- [ ] Admin health dashboard (`/system-management/health`): email queue depth, failed sends 24h, import success rate, overdue scheduled tasks, integration success-by-channel, audit trend.
+- [ ] Cross-entity activity search/timeline.
+- [ ] Generic bulk record updater (filter any resource → bulk status/assign/tag, audit-trailed).
+
+**Decide first:** SystemLog vs AuditLog are partly redundant — pick the canonical source before building the viewer.
+
+**Open questions:**
+1. Tier scope for THIS cycle — Tier-1 only, or +Tier-2?
+2. Canonical log source: AuditLog (recommend) or SystemLog?
+3. Which entities most need `__audit_track__` for your compliance story?
+
+---
+
+## SUB-PLAN E — FE architecture refactors (codemod, batched)
+
+**Real scope (swept 2026-06-30, NOT the audit's estimates):**
+| Pattern | Count | Files | Fix |
+|---------|-------|-------|-----|
+| Hand-rolled `.json().catch(()=>({}))` | **229 sites** | 74 files | `extractApiError(response, fallback)` |
+| Manual `new URLSearchParams` in services | **54** | — | `buildDataGridParams(params, extra)` |
+| Native `confirm()` | **8** | — | `ConfirmDeleteDialog` / `AlertDialog` |
+| `dangerouslySetInnerHTML` | **14** | — | audit each; DOMPurify on user-entered |
+| DataGrid lists missing `tableLayout` fixed/resizable | most | — | add `tableLayout:{width:'fixed',columnsResizable:true}` + `columnResizeMode:'onChange'` |
+| UUID inputs in UI (`OrderLinesCard`) | 1 | — | searchable selects |
+
+This is **XL** — 229+54 = ~283 mechanical sites + 14 security-sensitive + UI work. NOT one PR.
+
+**Approach:**
+- **Codemod where safe:** `.json().catch` → `extractApiError` and `URLSearchParams` → `buildDataGridParams` are largely mechanical — script the transform, review per-file, batch by domain (forms, orders, marketing, system-mgmt…) one PR per domain so review stays sane.
+- **Hand-review the 14 `dangerouslySetInnerHTML`** — security-sensitive; user-entered HTML (chat, ticket, email body, notes) gets DOMPurify; static/trusted ones documented as safe.
+- **`confirm()` ×8 + UUID inputs** — small, do in one "UX-compliance" PR.
+- **DataGrid tableLayout** — per-list, fold into each domain batch.
+- Regression: existing vitest per touched component; add tests where missing per three-phase rule.
+
+**Risk:** low per-site, but huge surface → risk is review fatigue + silent behavior drift. Mitigate by small per-domain PRs + codemod determinism + green vitest gate.
+
+**Open questions:**
+1. Batch order — by domain priority (which modules first)?
+2. Codemod-then-review acceptable, or hand-edit each (slower, safer)?
+3. Do ALL 229, or only actively-touched files going forward (opportunistic)?
+
+---
+
+## Consolidated grill agenda — ✅ RESOLVED 2026-06-30 (see DECIDED block at top)
+1. ✅ A thresholds → env-configurable defaults, no CAPTCHA.
+2. ⏳ B n8n act-as role → verify at impl time (only open item); per-tenant keys deferred; short TTL + audit now.
+3. ✅ C1 → block 409. 4. ✅ C2 → remove. 5. ✅ C3 → allowlist, all verbs. 6. ✅ C4 → disabled+hint.
+7. ✅ D → Tier-1 only, canonical = AuditLog.
+8. ✅ E → opportunistic + lint rule.
+
+## Implementation order (post-grill) — READY TO CODE (pending B role-verify)
+1. **Phase 1 (low-risk, land first):** C1 (real hard-delete) · C2 (remove dead filters) · C3 (allowlisted UUIDPath, all verbs) · C4 (lookup degrade) · A (rate-limiting). One combined branch or split C/A.
+2. **Phase 2:** B (object-authz + short TTL + presign audit) — AFTER verifying n8n act-as role view-perms so legit presigns don't 403.
+3. **Phase 3:** D Tier-1 — `/system-management/audit-logs` FE page (on existing API) + bulk-action UI on outbox/import lists + explicit IMPERSONATE audit event.
+4. **Ongoing:** E — opportunistic refactor on-touch + ESLint rule banning `.json().catch` / manual `URLSearchParams` / native `confirm()`; hand-review the 14 `dangerouslySetInnerHTML` as a one-off security PR.
+Each phase: implement → pytest/vitest/playwright per three-phase rule → browser-verify → deploy. Write UAC doc before coding each phase (per user rule).

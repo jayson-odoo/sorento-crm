@@ -1613,14 +1613,41 @@ class CampaignTypeService:
     def update_campaign_type(self, type_id: str, type_data: CampaignTypeUpdate):
         """Update a campaign type."""
         campaign_type = self.get_campaign_type(type_id)
-        
+
         update_data = type_data.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(campaign_type, key, value)
-        
+
         self.db.commit()
         self.db.refresh(campaign_type)
         return campaign_type
+
+    def delete_campaign_type(self, type_id: str):
+        """Hard-delete a campaign type.
+
+        Blocks with 409 when any campaign still references the type (the
+        ``marketing_campaigns.campaign_type_id`` FK is NOT NULL — cascading
+        would silently break those campaigns), per ADR hard-delete standard.
+        """
+        campaign_type = (
+            self.db.query(CampaignType).filter(CampaignType.id == type_id).first()
+        )
+        if not campaign_type:
+            raise handle_not_found("Campaign Type", type_id)
+
+        in_use = (
+            self.db.query(MarketingCampaign)
+            .filter(MarketingCampaign.campaign_type_id == type_id)
+            .count()
+        )
+        if in_use:
+            raise handle_conflict(
+                f"Campaign type is in use by {in_use} campaign(s) and cannot be deleted."
+            )
+
+        self.db.delete(campaign_type)
+        self.db.commit()
+        return {"message": "Campaign type deleted successfully"}
 
 
 class MarketingCampaignService:
@@ -1681,10 +1708,17 @@ class MarketingCampaignService:
         update_data = campaign_data.model_dump(exclude_unset=True)
         for key, value in update_data.items():
             setattr(campaign, key, value)
-        
+
         self.db.commit()
         self.db.refresh(campaign)
         return campaign
+
+    def delete_campaign(self, campaign_id: str):
+        """Hard-delete a marketing campaign (per ADR hard-delete standard)."""
+        campaign = self.get_campaign(campaign_id)
+        self.db.delete(campaign)
+        self.db.commit()
+        return {"message": "Campaign deleted successfully"}
 
 
 class PromotionAttachmentService:
