@@ -14,10 +14,12 @@ if TYPE_CHECKING:
 
 
 class CampaignStatus(str, enum.Enum):
-    PLANNING = "PLANNING"
-    ACTIVE = "ACTIVE"
-    COMPLETED = "COMPLETED"
-    CANCELLED = "CANCELLED"
+    # Values are LOWERCASE to match the DB CHECK constraint
+    # `marketing_campaigns_status_check` (planning/active/completed/cancelled).
+    PLANNING = "planning"
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
 
 
 class Promotion(Base):

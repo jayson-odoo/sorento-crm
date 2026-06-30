@@ -5,6 +5,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.forms_service import FormService
 from app.services.uuid_list_param import parse_uuid_list
@@ -189,6 +190,7 @@ async def get_form(
 ):
     """Get a single form by ID."""
     try:
+        validate_uuid_path(form_id, resource="Form")
         service = FormService(db)
         form = service.get_form(form_id, contact_access_codes=None)
         return form

@@ -29,6 +29,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton';
 import { useCampaigns } from '../hooks/useCampaigns';
 import type { Campaign } from '../types/campaign.types';
+import { CAMPAIGN_STATUSES, campaignStatusLabel } from '../types/campaign.types';
 import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 
@@ -115,7 +116,7 @@ export default function CampaignsList() {
           const status = row.original.status;
           return (
             <Badge variant={getStatusBadgeVariant(status)} appearance="ghost">
-              {status ? status.charAt(0).toUpperCase() + status.slice(1) : '—'}
+              {campaignStatusLabel(status)}
             </Badge>
           );
         },
@@ -198,10 +199,11 @@ export default function CampaignsList() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All statuses</SelectItem>
-                        <SelectItem value="planning">Planning</SelectItem>
-                        <SelectItem value="active">Active</SelectItem>
-                        <SelectItem value="completed">Completed</SelectItem>
-                        <SelectItem value="cancelled">Cancelled</SelectItem>
+                        {CAMPAIGN_STATUSES.map((s) => (
+                          <SelectItem key={s.value} value={s.value}>
+                            {s.label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>

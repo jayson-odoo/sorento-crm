@@ -4,6 +4,23 @@ export interface CampaignType {
   description?: string | null;
 }
 
+export type CampaignStatus = 'planning' | 'active' | 'completed' | 'cancelled';
+
+/** Canonical LOWERCASE statuses (match the DB CHECK constraint) + display labels. */
+export const CAMPAIGN_STATUSES: { value: CampaignStatus; label: string }[] = [
+  { value: 'planning', label: 'Planning' },
+  { value: 'active', label: 'Active' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+/** Title-case display for a stored (lowercase) campaign status. */
+export function campaignStatusLabel(status?: string | null): string {
+  if (!status) return '—';
+  const found = CAMPAIGN_STATUSES.find((s) => s.value === status.toLowerCase());
+  return found ? found.label : status;
+}
+
 export interface Campaign {
   id: string;
   campaign_code: string;

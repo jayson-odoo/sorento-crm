@@ -49,6 +49,13 @@ These are IN MAIN (origin/main `c68969b11`, deployed) — DONE, do not re-do:
 
 ---
 
+## 🆕 Spun off during Plan-1 grill (2026-06-30) — new backlog items
+- [ ] **Access-Denied page panel** for pages where user lacks **read** permission — route-level RBAC UX (today a hard denial shows only a toast, page renders broken behind it). Render a proper Access-Denied state.
+- [ ] **Attachment-create perm gap** (`resources/attachments.py:700` requires `resource.attachments.upload`) — a complaint-creator can't attach a photo. Tie upload to parent-entity permission (sibling of the lookup-403 "gate too tight" class).
+- [ ] **Migrate simple Create/Edit to ADR modal-default** — consistency pass across the ~16 page-based create/edit siblings (deferred from Bug-A1 which chose pages for now).
+- [ ] **Adopt `UUIDPath` validator across ALL `{id}` detail GETs** — full sweep (Bug-A2 applied it only to campaigns/forms/stock-batches in-scope).
+- [ ] **Campaign list: type/date/budget filters still dead** — `get_campaigns` route + `list_campaigns` service only wire `status` now (Plan-1 A5). The FE sends `campaign_type_id`/`date_from`/`date_to`/`budget_min/max` but route ignores them. Wire or remove the controls.
+
 ## Workstream 1 — Codebase audit
 
 ### 1a. Backend security  ✅ AGENT DONE
@@ -140,7 +147,7 @@ NOTE: a `ticket-management` module exists in FE (not in sidebar menu.config) —
 
 **Likely real bugs / dead UI:**
 - [ ] **Marketing Campaign DELETE is a no-op stub** — `delete_campaign` returns success WITHOUT deleting. Violates ADR hard-delete standard. (Notable — silent data-non-deletion.)
-- [ ] **Campaign status casing mismatch — ✅CONFIRMED** — BE `CampaignStatus` UPPERCASE (`models/marketing.py:17` `PLANNING="PLANNING"`/`ACTIVE`), FE types + filter lowercase (`campaign.types.ts:17`; `CampaignsList.tsx:201` sends `value="planning"`). FE sends lowercase → BE stores uppercase → status filter never matches + badge mapping misses. Normalize one side.
+- [x] **Campaign status casing — FIXED (Plan-1) — audit was INVERTED.** Ground truth: DB CHECK constraint `marketing_campaigns_status_check` enforces **lowercase** (planning/active/completed/cancelled). The model's uppercase `CampaignStatus` enum was the wrong artifact (its default would violate the constraint). Canonicalized everything to lowercase: enum values, schema validator (coerce+enum-validate), list filter (now actually applied — was ignored entirely at the service), FE types/labels. Browser-verified create→stored `planning`→badge "Planning"→filter works.
 - [ ] **Email Outbox "Deferred" filter is dead** — FE + model docstring list `deferred`, but the drainer never writes it (rate-limited rows stay `pending`). Filter always returns 0.
 - [ ] **Stock Inquiry "Updated" status filter** (`updated`) — no backend writer; vestigial option.
 - [ ] **Complaints `resolved` + `draft` statuses** — appear in pill maps but CS-finalize only writes `processed_by_cs`/`closed`; no confirmed writer for `resolved`/`draft`.

@@ -370,11 +370,33 @@ class MarketingCampaignBase(BaseModel):
     end_date: Optional[datetime] = None
     budget: Optional[Decimal] = None
     target_audience: Optional[str] = None
-    status: str = "PLANNING"
+    status: str = "planning"
+
+
+def _normalize_campaign_status(v):
+    """Coerce campaign status to canonical LOWERCASE; reject values off-enum.
+
+    The DB CHECK constraint `marketing_campaigns_status_check` only allows the
+    LOWERCASE values planning/active/completed/cancelled. Normalising at the
+    input boundary keeps stored data in agreement with the constraint + the FE
+    badge/filter maps. None passes through (Update = no change).
+    """
+    from app.models.marketing import CampaignStatus
+
+    if v is None:
+        return v
+    low = str(v).strip().lower()
+    valid = {s.value for s in CampaignStatus}
+    if low not in valid:
+        raise ValueError(f"Invalid status '{v}'. Must be one of {sorted(valid)}")
+    return low
 
 
 class MarketingCampaignCreate(MarketingCampaignBase):
-    pass
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status(cls, v):
+        return _normalize_campaign_status(v)
 
 
 class MarketingCampaignUpdate(BaseModel):
@@ -387,6 +409,11 @@ class MarketingCampaignUpdate(BaseModel):
     target_audience: Optional[str] = None
     status: Optional[str] = None
 
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_status(cls, v):
+        return _normalize_campaign_status(v)
+
 
 class MarketingCampaignResponse(MarketingCampaignBase):
     id: str
@@ -394,7 +421,14 @@ class MarketingCampaignResponse(MarketingCampaignBase):
     created_at: datetime
     updated_at: datetime
     campaign_type: Optional[CampaignTypeSimple] = None
-    
+
+    @field_validator("id", "campaign_type_id", "created_by", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, v):
+        # created_by may be a UUID object straight off a freshly-created row
+        # (current_user["id"]); coerce so the str-typed response validates.
+        return str(v) if v is not None else v
+
     class Config:
         from_attributes = True
 

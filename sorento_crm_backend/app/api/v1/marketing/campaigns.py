@@ -1,7 +1,9 @@
 """Marketing campaigns API routes."""
+from typing import Optional
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.marketing_service import MarketingCampaignService
 from app.schemas.marketing import MarketingCampaignCreate, MarketingCampaignUpdate, MarketingCampaignResponse
@@ -15,13 +17,14 @@ router = APIRouter()
 async def get_campaigns(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
+    status: Optional[str] = Query(None, description="Filter by status (case-insensitive)"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get marketing campaigns with pagination."""
     try:
         service = MarketingCampaignService(db)
-        result = service.list_campaigns(page=page, limit=limit)
+        result = service.list_campaigns(page=page, limit=limit, status=status)
         return result
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -35,6 +38,7 @@ async def get_campaign(
 ):
     """Get a single campaign by ID."""
     try:
+        validate_uuid_path(campaign_id, resource="Campaign")
         service = MarketingCampaignService(db)
         campaign = service.get_campaign(campaign_id)
         return campaign

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission_with_api_key
+from app.dependencies import get_current_user_or_api_key
 from app.schemas.lookup import LookupResolveRequest, LookupResolveResponse
 from app.services.lookup_resolver import LookupResolverService
 from app.services.lookup_set_service import LookupSetService
@@ -18,7 +18,7 @@ async def options_by_binding(
     table: str = Query(..., min_length=1),
     column: str = Query(..., min_length=1),
     include_inactive: bool = Query(False),
-    current_user=Depends(require_permission_with_api_key("master_data.lookup_sets.view")),
+    current_user=Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     """Return active options for the LookupSet bound to (table, column).
@@ -56,7 +56,7 @@ async def options_by_binding(
 async def list_options_public(
     set_key: str,
     include_inactive: bool = Query(False),
-    current_user=Depends(require_permission_with_api_key("master_data.lookup_sets.view")),
+    current_user=Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     s = LookupSetService(db).get_by_key(set_key)
@@ -78,7 +78,7 @@ async def list_options_public(
 @router.post("/resolve", response_model=LookupResolveResponse)
 async def resolve(
     body: LookupResolveRequest,
-    current_user=Depends(require_permission_with_api_key("master_data.lookup_sets.view")),
+    current_user=Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
     return LookupResolverService(db).resolve(body.set_key, body.raw, body.locale)

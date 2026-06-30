@@ -32,11 +32,15 @@ export async function getCampaign(id: string): Promise<CampaignDetail> {
 export async function getCampaignTypes(): Promise<CampaignType[]> {
   const response = await apiFetch('/api/v1/marketing/campaign-types');
   if (!response.ok) throw new Error('Failed to fetch campaign types');
-  return response.json();
+  // Endpoint returns a paginated envelope `{ data: [...] }`, not a bare array.
+  const body = await response.json();
+  return Array.isArray(body) ? body : (body?.data ?? []);
 }
 
 export async function createCampaign(data: CampaignFormData): Promise<Campaign> {
-  const response = await apiFetch('/api/v1/marketing/campaigns', {
+  // Trailing slash matches the FastAPI route exactly — without it the POST 307s
+  // to `/campaigns/` and the cross-origin redirect drops the CORS header.
+  const response = await apiFetch('/api/v1/marketing/campaigns/', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),

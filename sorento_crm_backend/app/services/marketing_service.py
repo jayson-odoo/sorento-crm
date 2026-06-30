@@ -1629,10 +1629,18 @@ class MarketingCampaignService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_campaigns(self, page: int = 1, limit: int = 50):
-        """List marketing campaigns."""
+    def list_campaigns(self, page: int = 1, limit: int = 50, status: str | None = None):
+        """List marketing campaigns, optionally filtered by status.
+
+        Status is normalised to canonical LOWERCASE (matching the DB CHECK
+        constraint) so any-cased FE value still matches stored rows.
+        ``None`` / ``"all"`` means no filter.
+        """
         q = self.db.query(MarketingCampaign).order_by(MarketingCampaign.created_at.desc())
-        
+
+        if status and status.strip().lower() != "all":
+            q = q.filter(MarketingCampaign.status == status.strip().lower())
+
         total = q.count()
         offset = (page - 1) * limit
         campaigns = q.offset(offset).limit(limit).all()

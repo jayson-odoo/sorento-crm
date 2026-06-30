@@ -1,6 +1,35 @@
 # PLAN — Fix broken Create flows + lookup-403 (top confirmed bugs)
 
-**Status:** DRAFT for USER GRILL, 2026-06-30. No code written. Both bugs CONFIRMED in the audit (see `PLAN-audit-traversal-todo.md`). Per process: grill this → approve → implement vs UAC → verify → deploy. Each item documents: root cause · fix options + recommendation · alternative rejected · risk/blast radius · verification · open questions.
+**Status:** IMPLEMENTED (code + tests) on branch `fix/plan1-broken-creates-and-lookup403`, 2026-06-30. BE + FE verified at API/unit/build level (28 pytest + 7 vitest + tsc 0 + prod build). Live browser click-through (B-6/B-7, A-1/3/5/7 visual) PENDING — E2E creds can't be injected without surfacing the secret; user to verify in browser. See `UAC-plan1-broken-creates-and-lookup403.md` for the evidence matrix.
+
+---
+
+## ✅ GRILL RESOLVED (2026-06-30, user-approved) — IMPLEMENT THIS
+
+### Bug B — lookup-403 (pure backend, do FIRST)
+- **B1:** in `app/api/v1/lookup.py`, swap the gate on **all 3 read endpoints** — `GET /by-binding`, `GET /{set_key}/options`, `POST /resolve` — from `require_permission_with_api_key("master_data.lookup_sets.view")` → `Depends(get_current_user_or_api_key)` (authenticated-only). Verified: all bindings are enum-like config dropdowns (`forms.form_type`, `purchase_requests.sponsor_subject`, complaint `complaint_type/customer_type/within_warranty/defects_discovered`) — zero PII/financial.
+- **B2:** DROPPED. No FE change. Keep default react-query retry + loud global toast on purpose — visible errors are a bug canary (console-only is invisible in practice). B1 removes the real 403, so no spam in normal use.
+- **Untouched:** admin SETS screen (`app/api/v1/master_data/lookup_sets.py`) — separate router, keeps its own `lookup_sets.view/add/edit/delete` gates. Verified no overlap.
+- **UAC:** (1) authenticated non-admin user → `GET /lookup/by-binding?table=forms&column=form_type` → 200 w/ options; (2) same user → admin `GET /master-data/lookup-sets/` → still 403 (regression pin); (3) complaint-creator role loads `/complaints/new` → 4 dropdowns populate → can submit; (4) Forms `form_type` filter + PR `sponsor_subject` populate (same shared endpoint).
+
+### Bug A — broken Creates + BE 500
+- **A1 design = dedicated `new/page.tsx` pages** (Option A — match the 14 working siblings; modal-migration deferred as separate optional item):
+  - **Form** — build `forms-management/forms/new/page.tsx` mirroring `[id]/edit/page.tsx`, rendering the existing `FormForm` in create mode (blank metadata form: code/name/type/purpose/lang — NOT the workflow drag-drop builder).
+  - **Campaign** — build `marketing-management/campaigns/new/page.tsx` + a NEW `CampaignForm` component (none exists; `[id]` is a Dashboard). Wire `useCreateCampaign`. **Fold in the status-casing fix (A5).**
+  - **Stock-Batch** — REMOVE the "Create Batch" button (`BatchesList.tsx:231`). Batches come from the import pipeline. Keep the BE `POST /stock-batches/` (used by import/tests); only the dead UI entry goes.
+- **A2 — BE 500→404 on non-UUID id:** build a reusable `UUIDPath` dependency/validator that try-parses the path id and raises **404** on a non-UUID. Apply to the in-scope detail GETs (marketing campaigns + forms + stock-batches) now; log "adopt UUIDPath across ALL `{id}` detail GETs" as a follow-up sweep (Option A breadth — don't touch ~40 routes in this change).
+- **A5 — campaign status casing (folded into Campaign create):** BE is canonical UPPERCASE. Make the BE create/update schema **coerce incoming `status` → uppercase + validate against `CampaignStatus`** (reject garbage). Align FE filter/badge values to uppercase. Fixes create-bad-data + the dead status filter together.
+- **A-UAC:** Create Campaign / Create Form open working create pages; submit → row appears in list with correct (uppercase) status; no 500/not-found. Create Batch button gone. `GET /…/{id}` with non-UUID → 404 (test). Mobile + desktop, 0 console errors.
+
+**New backlog items spun off during grill (NOT this plan — added to master TODO):**
+1. Access-Denied page panel for pages where user lacks **read** permission (route-level RBAC UX; replaces bare toast).
+2. Attachment-create perm gap (`resources/attachments.py:700` requires `resource.attachments.upload`) — sibling "gate too tight" bug; tie to parent-entity permission.
+3. Migrate simple Create/Edit flows to ADR modal-default (consistency pass across the page-based siblings).
+4. Adopt `UUIDPath` validator across ALL detail GETs (full sweep).
+
+---
+
+**Status (original draft below):** DRAFT for USER GRILL, 2026-06-30. No code written. Both bugs CONFIRMED in the audit (see `PLAN-audit-traversal-todo.md`). Per process: grill this → approve → implement vs UAC → verify → deploy. Each item documents: root cause · fix options + recommendation · alternative rejected · risk/blast radius · verification · open questions.
 
 ---
 

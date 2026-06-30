@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -12,7 +11,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, Search, X } from 'lucide-react';
+import { ChevronRight, Search, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -41,7 +40,6 @@ const BATCH_STATUSES: { value: string; label: string }[] = [
 ];
 
 export default function BatchesList() {
-  const router = useRouter();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -227,12 +225,6 @@ export default function BatchesList() {
             exportConfig={{ filename: 'stock_batches_export.xlsx' }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
-            primaryAction={
-              <Button onClick={() => router.push('/inventory-management/stock-batches/new')}>
-                <Plus />
-                Create Batch
-              </Button>
-            }
           />
         </CardHeader>
         <CardTable>

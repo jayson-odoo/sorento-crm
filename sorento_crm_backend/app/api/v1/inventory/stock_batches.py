@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.inventory_service import StockBatchService
 from app.schemas.inventory import StockBatchCreate, StockBatchUpdate, StockBatchResponse
@@ -46,6 +47,7 @@ async def get_stock_batch(
 ):
     """Get a single stock batch by ID."""
     try:
+        validate_uuid_path(batch_id, resource="Stock batch")
         service = StockBatchService(db)
         batch = service.get_batch(batch_id)
         return batch
