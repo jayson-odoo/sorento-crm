@@ -360,7 +360,7 @@ export default function PurchaseRequestForm({
                   name="request_date"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Date</FormLabel>
+                      <FormLabel>Request date</FormLabel>
                       <FormControl>
                         <Input type="date" {...field} value={field.value ?? ''} />
                       </FormControl>
@@ -584,19 +584,6 @@ export default function PurchaseRequestForm({
                           {...field}
                           value={field.value ?? ''}
                         />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="requested_at"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>{isSponsorship ? 'Date (requested)' : 'Requested At'}</FormLabel>
-                      <FormControl>
-                        <Input type="date" {...field} value={field.value ?? ''} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

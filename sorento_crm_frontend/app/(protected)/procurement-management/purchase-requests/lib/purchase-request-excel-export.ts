@@ -58,12 +58,13 @@ function str(value: unknown): string {
 export async function exportPurchaseRequestToExcel(request: PurchaseRequest): Promise<void> {
   const xlsx = await getXLSX();
   const lines = request.lines ?? [];
-  const requestDate = formatDateShort(request.request_date);
+  // Top "Date" = submitted date (auto); footer "Requested by" date = request date.
+  const requestDate = formatDateShort(request.submitted_at);
   const expectedDelivery = str(request.expected_delivery_date)
     ? formatDateCell(request.expected_delivery_date)
     : str(request.expected_delivery_date);
   const expectedPO = request.expected_po_date_text ?? (request.expected_po_date ? formatDateCell(request.expected_po_date) : '');
-  const requestedAt = formatDateCell(request.requested_at);
+  const requestedAt = formatDateCell(request.request_date);
   const approvedAt = request.approved_at
     ? formatDateCell(request.approved_at)
     : '';
@@ -119,9 +120,10 @@ const SORENTO_HEADER = [
 export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Promise<void> {
   const xlsx = await getXLSX();
   const lines = request.lines ?? [];
-  const requestDate = formatDateForSponsorship(request.request_date);
+  // Top "Date" = submitted date (auto); footer "Requested by" date = request date.
+  const requestDate = formatDateForSponsorship(request.submitted_at);
   const deliveryDate = formatDateForSponsorship(request.expected_delivery_date);
-  const requestedAt = formatDateForSponsorship(request.requested_at);
+  const requestedAt = formatDateForSponsorship(request.request_date);
   const approvedAt = request.approved_at
     ? formatDateForSponsorship(request.approved_at)
     : '';

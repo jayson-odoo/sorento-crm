@@ -41,6 +41,7 @@ interface ViewSummary {
   sponsor_subject?: string | null;
   requested_by: string | null;
   request_date: string | null;
+  submitted_at?: string | null;
   created_at: string | null;
   expected_delivery_date: string | null;
   expected_po_date: string | null;
@@ -281,9 +282,9 @@ function ViewRequestContent() {
                 <p className="text-sm font-medium">{summary?.request_number ?? '—'}</p>
               </div>
               <div className="py-2 border-b border-border/60">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Date</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Submitted date</p>
                 <p className="text-sm font-medium">
-                  {summary?.request_date ? formatDateStr(summary.request_date) : '—'}
+                  {summary?.submitted_at ? formatDateStr(summary.submitted_at) : '—'}
                 </p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">
@@ -372,9 +373,9 @@ function ViewRequestContent() {
                 <p className="text-sm font-medium">{summary?.request_number ?? '—'}</p>
               </div>
               <div className="py-2 border-b border-border/60">
-                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Date</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Submitted date</p>
                 <p className="text-sm font-medium">
-                  {summary?.request_date ? formatDateStr(summary.request_date) : '—'}
+                  {summary?.submitted_at ? formatDateStr(summary.submitted_at) : '—'}
                 </p>
               </div>
               <div className="sm:col-span-2 py-2 border-b border-border/60">

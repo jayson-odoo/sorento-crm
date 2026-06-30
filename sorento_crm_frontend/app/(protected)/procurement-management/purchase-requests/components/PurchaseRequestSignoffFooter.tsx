@@ -7,7 +7,8 @@ import { formatDate } from '@/lib/helpers';
 export type PurchaseRequestSignoffFields = {
   approval_status?: string | null;
   requested_by?: string | null;
-  requested_at?: string | null;
+  /** Footer "Date" under Requested by = the request date (user-entered). */
+  request_date?: string | null;
   approved_by?: string | null;
   approved_at?: string | null;
   approval_comments?: string | null;
@@ -15,16 +16,7 @@ export type PurchaseRequestSignoffFields = {
 
 type Variant = 'detailCard' | 'publicCard';
 
-function formatRequestedAt(value: string | null | undefined): string {
-  if (value == null || value === '') return '—';
-  try {
-    return formatDate(new Date(value));
-  } catch {
-    return '—';
-  }
-}
-
-function formatDecisionAt(value: string | null | undefined): string {
+function formatDateOrDash(value: string | null | undefined): string {
   if (value == null || value === '') return '—';
   try {
     return formatDate(new Date(value));
@@ -51,7 +43,7 @@ export function PurchaseRequestSignoffFooter({
   const hasDecision = isRejected || isApproved;
 
   const actorLabel = isRejected ? 'Rejected by' : 'Approved by';
-  const dateLabel = isRejected ? 'Rejected at' : 'Approved at';
+  const dateLabel = isRejected ? 'Rejected date' : 'Approved date';
   const commentsLabel = isRejected ? 'Rejection comments' : 'Approval comments';
 
   const comments = (request.approval_comments ?? '').trim();
@@ -63,8 +55,8 @@ export function PurchaseRequestSignoffFooter({
           <div className="py-2 border-b border-border/60">
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Requested by</p>
             <p className="text-sm font-medium">{request.requested_by || '—'}</p>
-            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 mt-3">Date</p>
-            <p className="text-sm font-medium">{formatRequestedAt(request.requested_at)}</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 mt-3">Request date</p>
+            <p className="text-sm font-medium">{formatDateOrDash(request.request_date)}</p>
           </div>
           <div className="py-2 border-b border-border/60">
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">
@@ -72,9 +64,9 @@ export function PurchaseRequestSignoffFooter({
             </p>
             <p className="text-sm font-medium">{hasDecision ? request.approved_by || '—' : '—'}</p>
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5 mt-3">
-              {hasDecision ? dateLabel : 'Date'}
+              {hasDecision ? dateLabel : 'Approved date'}
             </p>
-            <p className="text-sm font-medium">{hasDecision ? formatDecisionAt(request.approved_at) : '—'}</p>
+            <p className="text-sm font-medium">{hasDecision ? formatDateOrDash(request.approved_at) : '—'}</p>
           </div>
           <div className="sm:col-span-2 py-2 border-b border-border/60 last:border-b-0">
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">{commentsLabel}</p>
@@ -96,16 +88,16 @@ export function PurchaseRequestSignoffFooter({
           <>
             <p className="text-sm text-muted-foreground">Requested by</p>
             <p className="font-medium">{request.requested_by || '—'}</p>
-            <p className="text-sm text-muted-foreground mt-3">Date</p>
-            <p className="font-medium">{formatRequestedAt(request.requested_at)}</p>
+            <p className="text-sm text-muted-foreground mt-3">Request date</p>
+            <p className="font-medium">{formatDateOrDash(request.request_date)}</p>
           </>
         )}
       </div>
       <div>
         <p className="text-sm text-muted-foreground">{hasDecision ? actorLabel : 'Approved by'}</p>
         <p className="font-medium">{hasDecision ? request.approved_by || '—' : '—'}</p>
-        <p className="text-sm text-muted-foreground mt-3">{hasDecision ? dateLabel : 'Date'}</p>
-        <p className="font-medium">{hasDecision ? formatDecisionAt(request.approved_at) : '—'}</p>
+        <p className="text-sm text-muted-foreground mt-3">{hasDecision ? dateLabel : 'Approved date'}</p>
+        <p className="font-medium">{hasDecision ? formatDateOrDash(request.approved_at) : '—'}</p>
       </div>
       <div className="sm:col-span-2">
         <p className="text-sm text-muted-foreground">{commentsLabel}</p>

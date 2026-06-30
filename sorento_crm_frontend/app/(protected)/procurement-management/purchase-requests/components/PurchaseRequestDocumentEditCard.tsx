@@ -1,6 +1,7 @@
 'use client';
 
 import type { UseFormReturn, FieldArrayWithId } from 'react-hook-form';
+import { formatDate } from '@/lib/helpers';
 import { Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -169,19 +170,11 @@ export function PurchaseRequestDocumentEditCard({
               />
             </DocField>
 
-            <DocField label="Date">
-              <FormField
-                control={control}
-                name="request_date"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormControl>
-                      <Input type="date" {...field} value={field.value ?? ''} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+            <DocField label="Submitted date">
+              {/* Auto-stamped on submit; read-only. */}
+              <p className="font-medium py-2">
+                {request.submitted_at ? formatDate(new Date(request.submitted_at)) : '—'}
+              </p>
             </DocField>
 
             <DocField label="Customer Name" className="sm:col-span-2">
@@ -636,11 +629,11 @@ export function PurchaseRequestDocumentEditCard({
                   </div>
                 </div>
                 <div>
-                  <p className="text-sm text-muted-foreground">Date</p>
+                  <p className="text-sm text-muted-foreground">Request date</p>
                   <div className="mt-1.5">
                     <FormField
                       control={control}
-                      name="requested_at"
+                      name="request_date"
                       render={({ field }) => (
                         <FormItem>
                           <FormControl>

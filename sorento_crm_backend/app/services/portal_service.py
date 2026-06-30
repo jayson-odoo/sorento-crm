@@ -870,6 +870,10 @@ class PortalService:
                     f"Cannot submit {kind} with status {previous_status!r}."
                 )
             row.status = "submitted"
+            # Top "Date" on the document = submitted date. Re-stamp on every submit,
+            # including resubmit-after-rejection, so it reflects the latest submission
+            # (mirrors approved_at, which also resets per approval cycle).
+            row.submitted_at = _utcnow()
             if approval_rejected:
                 # Salesperson is re-submitting a rejected approval — clear the rejection
                 # state so reviewers see a fresh submission.
@@ -1508,6 +1512,7 @@ class PortalService:
             {
                 "request_type": row.request_type,
                 "request_date": row.request_date.isoformat() if row.request_date else None,
+                "submitted_at": row.submitted_at.isoformat() if row.submitted_at else None,
                 "customer_name": row.customer_name,
                 "project_title": row.project_title,
                 "purpose": row.purpose,

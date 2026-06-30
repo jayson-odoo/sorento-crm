@@ -705,7 +705,8 @@ class PurchaseRequestHeaderBase(BaseModel):
     expected_po_date: Optional[date] = None
     expected_po_date_text: Optional[str] = None
     requested_by: Optional[str] = None
-    requested_at: Optional[date] = None
+    requested_at: Optional[date] = None  # DEPRECATED — see submitted_at + request_date
+    submitted_at: Optional[datetime] = None  # auto-stamped on submit; top "Date" on the document (read-only)
     status: Optional[str] = None
     source: Optional[str] = None
     external_reference: Optional[str] = None
@@ -903,6 +904,7 @@ class PublicApprovalSummaryResponse(BaseModel):
     sponsor_subject_other: Optional[str] = None  # sponsorship form: free-text when 'others'
     requested_by: Optional[str] = None
     request_date: Optional[date] = None
+    submitted_at: Optional[datetime] = None  # top "Date" on the document (auto-stamped on submit)
     created_at: Optional[datetime] = None
     expected_delivery_date: Optional[date] = None
     expected_po_date: Optional[date] = None

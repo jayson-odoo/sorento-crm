@@ -343,8 +343,8 @@ export default function PurchaseRequestDetail({
                   : ''}
           </h1>
           <p className="text-sm text-muted-foreground">
-            {request.request_date
-              ? formatDate(new Date(request.request_date))
+            {request.submitted_at
+              ? formatDate(new Date(request.submitted_at))
               : '-'}{' '}
             · {typeLabel}
           </p>
@@ -862,10 +862,10 @@ export default function PurchaseRequestDetail({
                     <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Date</p>
+                    <p className="text-sm text-muted-foreground">Submitted date</p>
                     <p className="font-medium">
-                      {request.request_date
-                        ? formatDate(new Date(request.request_date))
+                      {request.submitted_at
+                        ? formatDate(new Date(request.submitted_at))
                         : '—'}
                     </p>
                   </div>
@@ -999,10 +999,10 @@ export default function PurchaseRequestDetail({
                     <p className="font-medium tabular-nums">{request.request_number || '—'}</p>
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Date</p>
+                    <p className="text-sm text-muted-foreground">Submitted date</p>
                     <p className="font-medium">
-                      {request.request_date
-                        ? formatDate(new Date(request.request_date))
+                      {request.submitted_at
+                        ? formatDate(new Date(request.submitted_at))
                         : '—'}
                     </p>
                   </div>
