@@ -146,15 +146,44 @@ async def signup(
     db: Session = Depends(get_db)
 ):
     """Register a new user."""
+    # Generic, enumeration-safe response used for BOTH new and already-registered
+    # emails so an attacker cannot probe which emails exist (see PLAN-fix-security
+    # -cluster A). Same message + 201 either way.
+    _GENERIC_SIGNUP_MSG = (
+        "If this email is available, a verification link has been sent. "
+        "Please check your inbox to verify your account."
+    )
     try:
-        # Check if user exists
+        ip = request.client.host if request.client else None
+        from app.services import rate_limit
+        gate = rate_limit.hit(
+            "signup", ip,
+            limit=app_settings.rate_limit_signup_max,
+            window_seconds=app_settings.rate_limit_signup_window_seconds,
+        )
+        if not gate.allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many sign-up attempts. Please try again later.",
+                headers={"Retry-After": str(gate.retry_after_seconds or app_settings.rate_limit_signup_window_seconds)},
+            )
+
+        # Already-registered email: do NOT reveal it (no 409). Equalise timing with
+        # a throwaway hash so the response is indistinguishable from a fresh signup,
+        # then return the same generic message without creating a duplicate.
         existing = db.query(User).filter(User.email == payload.email).first()
         if existing:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Email is already registered."
+            try:
+                bcrypt.hashpw(payload.password.encode("utf-8"), bcrypt.gensalt())
+            except Exception:
+                pass
+            return SignupResponse(
+                id="",
+                email=str(payload.email),
+                name=str(payload.name),
+                message=_GENERIC_SIGNUP_MSG,
             )
-        
+
         # Get default role
         default_role = db.query(UserRole).filter(UserRole.is_default.is_(True)).first()
         if not default_role:
@@ -196,11 +225,14 @@ async def signup(
         
         # TODO: Send verification email (can be done via integration service)
         
+        # Return the SAME shape as the already-registered branch (empty id, echoed
+        # email/name) so the two are byte-identical — no enumeration tell. The FE
+        # only checks response.ok then redirects; it never reads these fields.
         return SignupResponse(
-            id=str(getattr(user, "id", "") or ""),
-            email=str(getattr(user, "email", "") or ""),
-            name=str(getattr(user, "name", "") or ""),
-            message="User registered successfully. Please check your email to verify your account.",
+            id="",
+            email=str(payload.email),
+            name=str(payload.name),
+            message=_GENERIC_SIGNUP_MSG,
         )
     except HTTPException:
         raise
@@ -215,14 +247,30 @@ async def reset_password(
     db: Session = Depends(get_db)
 ):
     """Request password reset."""
+    # Generic, enumeration-safe response regardless of whether the email exists
+    # (see PLAN-fix-security-cluster A). A reset link is only actually sent when an
+    # account is found, but the caller can't tell the difference.
+    _GENERIC_RESET_MSG = "If an account exists for this email, a password reset link has been sent."
     try:
+        ip = request.client.host if request.client else None
+        from app.services import rate_limit
+        gate = rate_limit.hit(
+            "reset", ip,
+            limit=app_settings.rate_limit_reset_max,
+            window_seconds=app_settings.rate_limit_reset_window_seconds,
+        )
+        if not gate.allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many password-reset requests. Please try again later.",
+                headers={"Retry-After": str(gate.retry_after_seconds or app_settings.rate_limit_reset_window_seconds)},
+            )
+
         user = db.query(User).filter(User.email == payload.email).first()
         if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No account found with this email address.",
-            )
-        
+            # Don't reveal that the account is missing — same response as success.
+            return ResetPasswordResponse(message=_GENERIC_RESET_MSG)
+
         # Generate reset token
         token = secrets.token_urlsafe(32)
         
@@ -273,9 +321,7 @@ async def reset_password(
         except Exception as e:
             logger.warning("Password reset email enqueue failed: %s", e)
 
-        return ResetPasswordResponse(
-            message="A password reset link has been sent to your email."
-        )
+        return ResetPasswordResponse(message=_GENERIC_RESET_MSG)
     except HTTPException:
         raise
     except Exception as e:

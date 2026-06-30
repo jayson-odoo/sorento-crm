@@ -72,6 +72,17 @@ class Settings(BaseSettings):
     idempotency_lock_ttl: int = 60              # in-flight lock seconds (must exceed max handler duration)
     idempotency_wait_ms: int = 2000             # how long a concurrent replay waits for the first, then 409
     idempotency_max_body: int = 262144          # skip dedupe for bodies larger than this (bytes)
+
+    # Per-IP rate limits on unauthenticated/abuse-prone endpoints (fixed window,
+    # fail-open if Redis down) — see PLAN-fix-security-cluster Sub-plan A. All
+    # env-overridable; set max<=0 to disable a given limiter.
+    rate_limit_signup_max: int = 3              # signups per window per IP
+    rate_limit_signup_window_seconds: int = 3600
+    rate_limit_reset_max: int = 5              # password-reset requests per window per IP
+    rate_limit_reset_window_seconds: int = 900
+    rate_limit_portal_otp_max: int = 30        # portal OTP requests per window per IP
+    rate_limit_portal_otp_window_seconds: int = 60
+
     embedding_queue_name: str = "embeddings"
     # When True, scheduled task also drains pending rows from embedding_queue if Redis is empty of jobs.
     # Set False to use Redis (RQ) only; then REDIS_URL must be the instance where jobs were enqueued.
