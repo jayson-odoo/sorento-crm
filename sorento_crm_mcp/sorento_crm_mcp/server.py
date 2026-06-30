@@ -549,7 +549,11 @@ def _to_malaysia_iso(value: Any) -> Any:
         return value
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(_MALAYSIA_TZ).isoformat()
+    # Emit the Malaysia WALL-CLOCK time as a NAIVE ISO string (no "+08:00" offset).
+    # Downstream consumers (n8n/luxon) re-convert an offset-aware timestamp back to
+    # UTC for display, which would undo the conversion and show UTC again; a naive
+    # MYT string is rendered literally as the Malaysia time. See PLAN/timezone note.
+    return dt.astimezone(_MALAYSIA_TZ).replace(tzinfo=None).isoformat()
 
 
 def _normalize_updated_at(value: Any) -> Any:

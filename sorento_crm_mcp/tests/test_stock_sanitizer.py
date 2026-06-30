@@ -28,7 +28,7 @@ def test_stock_tool_response_hides_non_on_hand_quantities_and_normalizes_updated
     row = sanitized["data"][0]
 
     assert row["quantity_on_hand"] == 12
-    assert row["updated_at"] == "2026-03-01T08:00:00+08:00"
+    assert row["updated_at"] == "2026-03-01T08:00:00"
     assert "quantity_available" not in row
     assert "quantity_reserved" not in row
     assert "quantity_damaged" not in row
@@ -56,7 +56,7 @@ def test_non_stock_tool_response_normalizes_updated_at():
     )
     row = sanitized["data"][0]
 
-    assert row["updated_at"] == "2026-03-01T08:00:00+08:00"
+    assert row["updated_at"] == "2026-03-01T08:00:00"
     # Non-stock tools keep their full payload; nothing is stripped.
     assert row["quantity_available"] == 10
 
@@ -95,9 +95,9 @@ def test_nested_updated_at_is_normalized_for_non_stock_tool():
     )
     row = sanitized["data"][0]
 
-    assert row["updated_at"] == "2026-03-01T08:00:00+08:00"
-    assert row["product"]["updated_at"] == "2026-04-15T20:30:00+08:00"
-    assert row["attachments"][0]["updated_at"] == "2026-05-01T09:00:00+08:00"
+    assert row["updated_at"] == "2026-03-01T08:00:00"
+    assert row["product"]["updated_at"] == "2026-04-15T20:30:00"
+    assert row["attachments"][0]["updated_at"] == "2026-05-01T09:00:00"
 
 
 def test_response_is_unchanged_when_no_updated_at_present():
