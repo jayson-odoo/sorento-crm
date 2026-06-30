@@ -11,11 +11,13 @@ import uuid
 from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import JSON, create_engine
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base
+from app.models.audit import AuditLog
 from app.models.inventory import Stock, StockLedger, Warehouse
 from app.models.lookup import LookupBinding, LookupOption, LookupSet
 from app.models.product import Product
@@ -29,6 +31,11 @@ def db():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+    # sqlite can't DDL JSONB (audit_logs.old_values/new_values) — swap to JSON.
+    for col in AuditLog.__table__.columns:
+        if isinstance(col.type, JSONB):
+            col.type = JSON()
+            col.server_default = None
     Base.metadata.create_all(
         engine,
         tables=[
@@ -39,6 +46,9 @@ def db():
             LookupSet.__table__,
             LookupOption.__table__,
             LookupBinding.__table__,
+            # Global audit listeners (registered by other test modules) fire on
+            # our inserts when the full suite runs — give them their table.
+            AuditLog.__table__,
         ],
     )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
