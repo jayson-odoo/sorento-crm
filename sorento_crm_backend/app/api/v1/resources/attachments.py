@@ -25,6 +25,7 @@ from app.services.excel_macro_stripper import (
     extract_macro_template_xlsx,
     is_xlsm_filename,
 )
+from app.services.image_normalizer import ensure_rgb_image
 from app.services.n8n_webhook_settings import get_n8n_attachment_webhook_url
 from app.schemas.resources import (
     AttachmentCreate,
@@ -727,6 +728,13 @@ async def create_attachment(
         file_content = await file.read()
         upload_filename = file.filename or "unknown"
         upload_mime = file.content_type
+
+        # WhatsApp/Meta reject CMYK JPEGs (print-pipeline tech-spec drawings)
+        # with a generic "Media upload error". Transcode CMYK/YCCK -> RGB JPEG
+        # at the upload boundary so stored bytes are always WhatsApp-safe.
+        file_content, upload_filename, upload_mime = ensure_rgb_image(
+            file_content, upload_filename, upload_mime
+        )
 
         # Stock List macro pipeline (docs/plans/PLAN-stock-list-xlsm-macro-upload.md):
         # `.xlsm` uploads typed Stock List are stripped of VBA and reduced to the
