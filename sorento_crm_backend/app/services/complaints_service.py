@@ -959,6 +959,26 @@ class ComplaintService:
 
     # ----- Replacement-DO delivery notifications (complaint auto-fulfilment) -----
 
+    @staticmethod
+    def _complaint_do_delivered_notify_tiers() -> tuple[int, ...]:
+        """Configured Complaint-team tiers for the DO-delivered notice
+        (``COMPLAINT_DO_DELIVERED_NOTIFY_TIERS``, default Tier 1 + Tier 2)."""
+        from app.config import settings
+
+        raw = getattr(settings, "complaint_do_delivered_notify_tiers", "1,2") or "1,2"
+        tiers: list[int] = []
+        for part in str(raw).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                t = int(part)
+            except ValueError:
+                continue
+            if 1 <= t <= 3 and t not in tiers:
+                tiers.append(t)
+        return tuple(tiers) or (1, 2)
+
     def _get_complaint_team_user_ids_tiers(self, tiers: tuple[int, ...] = (1, 2)) -> List[str]:
         """Union of members across the given tiers of agent ``complaint`` (set ``complaint``).
 
@@ -991,17 +1011,35 @@ class ComplaintService:
         return [str(r[0]) for r in rows if r and r[0]]
 
     @staticmethod
-    def _format_do_items(items: Optional[Iterable[dict]]) -> str:
-        """'CODE x QTY, CODE2 x QTY2' for delivery-notice bodies."""
-        parts: list[str] = []
+    def _do_item_lines(items: Optional[Iterable[dict]]) -> list[str]:
+        """['CODE x QTY', ...] — one entry per delivered line (skips blank codes)."""
+        lines: list[str] = []
         for it in items or []:
             code = str((it or {}).get("product_code") or "").strip()
             if not code:
                 continue
             qty = (it or {}).get("qty")
             qty_str = "" if qty in (None, "") else f" x {qty}"
-            parts.append(f"{code}{qty_str}")
-        return ", ".join(parts)
+            lines.append(f"{code}{qty_str}")
+        return lines
+
+    @classmethod
+    def _format_do_items(cls, items: Optional[Iterable[dict]]) -> str:
+        """Plain-text delivery-notice item block — an 'Items delivered:' header with
+        one item per line ('- CODE x QTY'). Empty string when there are no items."""
+        lines = cls._do_item_lines(items)
+        if not lines:
+            return ""
+        return "Items delivered:\n" + "\n".join(f"- {line}" for line in lines)
+
+    @classmethod
+    def _format_do_items_html(cls, items: Optional[Iterable[dict]]) -> str:
+        """HTML delivery-notice item block (<ul> list) for email bodies. '' when none."""
+        lines = cls._do_item_lines(items)
+        if not lines:
+            return ""
+        lis = "".join(f"<li>{line}</li>" for line in lines)
+        return f"<p>Items delivered:</p>\n<ul>{lis}</ul>"
 
     def notify_team_do_delivered(
         self,
@@ -1024,7 +1062,9 @@ class ComplaintService:
         from app.services.notification_service import NotificationService
 
         logger = logging.getLogger(__name__)
-        user_ids = self._get_complaint_team_user_ids_tiers((1, 2))
+        user_ids = self._get_complaint_team_user_ids_tiers(
+            self._complaint_do_delivered_notify_tiers()
+        )
         if not user_ids:
             logger.warning(
                 "DO-delivered notify: no Complaint team members (Tier 1/2, set 'complaint') for complaint %s.",
@@ -1034,12 +1074,13 @@ class ComplaintService:
         users = self.db.query(User).filter(User.id.in_(user_ids)).all()
         emails = [u.email for u in users if getattr(u, "email", None) and str(u.email).strip()]
 
-        items_str = self._format_do_items(items)
-        items_part = f" Items delivered: {items_str}." if items_str else ""
-        sentence = (
-            f"Replacement delivery order {order_number} for complaint {complaint_number} "
-            f"has been delivered.{items_part}"
+        items_block = self._format_do_items(items)
+        items_block_html = self._format_do_items_html(items)
+        headline = (
+            f"Replacement delivery order {order_number} for complaint "
+            f"{complaint_number} has been delivered."
         )
+        sentence = headline + (f"\n\n{items_block}" if items_block else "")
         title = "Replacement delivery order delivered"
         view_url = self._build_complaint_view_url(complaint_id)
         body_plain = (
@@ -1047,8 +1088,9 @@ class ComplaintService:
             "This is a system generated email. Please do not reply."
         )
         body_html = (
-            f"<p>Dear Complaint Team,<br /><br />{sentence}</p>\n"
-            f'<p><a href="{view_url}">{view_url}</a></p>\n'
+            f"<p>Dear Complaint Team,<br /><br />{headline}</p>\n"
+            + (f"{items_block_html}\n" if items_block_html else "")
+            + f'<p><a href="{view_url}">{view_url}</a></p>\n'
             "<p>This is a system generated email. Please do not reply.</p>"
         )
         event_type = f"do_delivered:{order_number}"
@@ -1136,17 +1178,22 @@ class ComplaintService:
         if not identifier:
             return False
 
-        items_str = self._format_do_items(items)
-        items_part = f" Items delivered: {items_str}." if items_str else ""
+        items_block = self._format_do_items(items)
         link_part = self._complaint_status_link_part(complaint, complaint_id)
-        display_message = (
+        headline = (
             f"Your replacement delivery order {order_number} for complaint "
-            f"{complaint_number} has been delivered.{items_part}{link_part}"
+            f"{complaint_number} has been delivered."
         )
+        display_message = (
+            headline + (f"\n\n{items_block}" if items_block else "") + link_part
+        )
+        update_text = (
+            f"Replacement delivery order {order_number} has been delivered."
+        )
+        if items_block:
+            update_text += f"\n\n{items_block}"
         extra_vars = {
-            "update": (
-                f"Replacement delivery order {order_number} has been delivered.{items_part}"
-            ).strip(),
+            "update": update_text.strip(),
             "portal_url": self._complaint_portal_or_view_url(complaint, complaint_id),
             "view_url": (self._build_complaint_view_url(complaint_id) or "").strip(),
         }

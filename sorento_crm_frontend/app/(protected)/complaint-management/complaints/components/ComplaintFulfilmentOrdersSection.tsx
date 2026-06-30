@@ -56,14 +56,14 @@ function FulfilmentItemsPopover({ order }: { order: FulfilmentOrder }) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Product code</TableHead>
+                  <TableHead className="text-left">Product code</TableHead>
                   <TableHead className="w-16 text-right">Qty</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {order.items.map((item, i) => (
                   <TableRow key={`${item.product_code}-${i}`}>
-                    <TableCell className="font-medium">
+                    <TableCell className="text-left font-medium">
                       <span className="block truncate" title={item.product_code}>
                         {item.product_code}
                       </span>

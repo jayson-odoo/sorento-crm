@@ -14,9 +14,10 @@ export const COMPLAINT_STATUS_PILL_CLASS: Record<string, string> = {
   rejected: 'bg-red-100 text-red-800',
   processed_by_cs: 'bg-emerald-100 text-emerald-800',
   resolved: 'bg-emerald-100 text-emerald-800',
-  // Auto-fulfilment: complaint closed by a delivered replacement DO. Distinct
-  // green from processed_by_cs so the terminal "Fulfilled" state reads apart.
-  fulfilled: 'bg-green-100 text-green-800',
+  // Auto-fulfilment: complaint closed by a delivered replacement DO. Violet —
+  // a non-green hue so the terminal "Fulfilled" state is unmistakably distinct
+  // from the emerald processed_by_cs / resolved states.
+  fulfilled: 'bg-violet-100 text-violet-800',
   closed: 'bg-slate-200 text-slate-700',
 };
 

@@ -40,6 +40,12 @@ logger = logging.getLogger(__name__)
 # being processed by CS (the single open state in the fulfilment loop).
 LINKABLE_STATUSES = {"processed_by_cs", "fulfilled"}
 
+# A DO counts as "delivered" for fulfilment/freeze only when BOTH its delivery date
+# is set AND its order status is a delivered/completed state (decision 2026-06-30):
+# the Status dropdown alone (no date), or a date under a non-delivered status, does
+# NOT fulfil. ``completed`` is included as a delivered-and-done superset of delivered.
+DELIVERED_STATUS_CODES = {"delivered", "completed"}
+
 # Remarks CS tokens split on '&', ',', and any whitespace.
 _TOKEN_SPLIT = re.compile(r"[\s,&]+")
 
@@ -67,6 +73,43 @@ class ComplaintFulfilmentService:
     @staticmethod
     def _norm_remarks(value: Optional[str]) -> str:
         return (value or "").strip()
+
+    # ------------------------------------------------------------------ #
+    # Delivered-state — date AND delivered/completed status (decision 2026-06-30)
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _status_is_delivered(status_code: Optional[str]) -> bool:
+        return (status_code or "").strip().lower() in DELIVERED_STATUS_CODES
+
+    @classmethod
+    def _is_delivered_state(
+        cls, status_code: Optional[str], actual_delivery_date
+    ) -> bool:
+        """A DO is delivered iff its date is set AND its status is delivered/completed."""
+        return actual_delivery_date is not None and cls._status_is_delivered(status_code)
+
+    def _status_code_for_id(self, status_id) -> Optional[str]:
+        if not status_id:
+            return None
+        from app.models.order import OrderStatus
+
+        row = (
+            self.db.query(OrderStatus.status_code)
+            .filter(OrderStatus.id == str(status_id))
+            .first()
+        )
+        return row[0] if row else None
+
+    def _order_status_code(self, order) -> Optional[str]:
+        st = getattr(order, "order_status", None)
+        if st is not None:
+            return getattr(st, "status_code", None)
+        return self._status_code_for_id(getattr(order, "order_status_id", None))
+
+    def _order_is_delivered(self, order) -> bool:
+        return self._is_delivered_state(
+            self._order_status_code(order), getattr(order, "actual_delivery_date", None)
+        )
 
     def _items_for_orders(self, order_ids: list[str]) -> dict[str, list[dict]]:
         """``{order_id: [{product_code, product_type, qty}]}`` in one query."""
@@ -241,7 +284,10 @@ class ComplaintFulfilmentService:
         if linked_order_ids:
             orders_by_id = {
                 str(o.id): o
-                for o in db.query(Order).filter(Order.id.in_(linked_order_ids)).all()
+                for o in db.query(Order)
+                .options(joinedload(Order.order_status))
+                .filter(Order.id.in_(linked_order_ids))
+                .all()
             }
 
         now = datetime.utcnow()
@@ -253,7 +299,7 @@ class ComplaintFulfilmentService:
                 o for o in linked_orders if o is not None and not bool(o.is_cancelled)
             ]
             all_delivered = bool(non_cancelled) and all(
-                o.actual_delivery_date is not None for o in non_cancelled
+                self._order_is_delivered(o) for o in non_cancelled
             )
             status = (getattr(complaint, "status", None) or "").strip().lower()
             if status == "processed_by_cs" and all_delivered:
@@ -272,7 +318,7 @@ class ComplaintFulfilmentService:
                 order = orders_by_id.get(str(link.order_id))
                 if order is None or bool(order.is_cancelled):
                     continue
-                if order.actual_delivery_date is None:
+                if not self._order_is_delivered(order):
                     continue
                 if link.delivery_notified_at is not None:
                     continue
@@ -382,18 +428,35 @@ class ComplaintFulfilmentService:
     # ------------------------------------------------------------------ #
     # Freeze signal
     # ------------------------------------------------------------------ #
-    def is_remarks_cs_locked(self, order: Order) -> bool:
-        """A DO's Remarks CS is frozen once it is delivered AND linked to >=1 complaint."""
-        if order is None or getattr(order, "actual_delivery_date", None) is None:
-            return False
-        if getattr(order, "id", None) is None:
-            return False
+    def _order_has_link(self, order_id) -> bool:
         return (
             self.db.query(ComplaintFulfilmentOrder.id)
-            .filter(ComplaintFulfilmentOrder.order_id == str(order.id))
+            .filter(ComplaintFulfilmentOrder.order_id == str(order_id))
             .first()
             is not None
         )
+
+    def is_remarks_cs_locked(self, order: Order) -> bool:
+        """A DO's Remarks CS is frozen once it is delivered (date set AND
+        delivered/completed status) AND linked to >=1 complaint."""
+        if order is None or getattr(order, "id", None) is None:
+            return False
+        if not self._order_is_delivered(order):
+            return False
+        return self._order_has_link(order.id)
+
+    def is_locked_for_state(self, order, status_id, actual_delivery_date) -> bool:
+        """Would this DO's Remarks CS be frozen under a hypothetical (status, delivery)
+        state? Lets ``update_order`` evaluate the freeze against the INCOMING status so
+        moving a DO off the delivered status in the SAME save unfreezes Remarks CS
+        (the unfreeze-via-status flow). Frozen = delivered-state AND linked."""
+        if order is None or getattr(order, "id", None) is None:
+            return False
+        if not self._is_delivered_state(
+            self._status_code_for_id(status_id), actual_delivery_date
+        ):
+            return False
+        return self._order_has_link(order.id)
 
     # ------------------------------------------------------------------ #
     # Read endpoints

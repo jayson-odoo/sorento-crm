@@ -1141,18 +1141,38 @@ class OrderService:
             )
             old_actual_delivery = order.actual_delivery_date
             old_is_cancelled = bool(order.is_cancelled)
-            if remarks_cs_changing and getattr(order, "remarks_cs_locked", False):
-                from app.services.error_handler import AppException
-                from fastapi import status as _status
-
-                raise AppException(
-                    status_code=_status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    message=(
-                        "Remarks CS is locked: this delivery order is delivered and "
-                        "linked to a complaint, so its complaint reference cannot be changed."
-                    ),
-                    code="REMARKS_CS_LOCKED",
+            old_status_id = order.order_status_id
+            if remarks_cs_changing:
+                # Evaluate the freeze against the INCOMING (status, delivery) state, so
+                # moving the DO off the delivered status in this SAME save unfreezes
+                # Remarks CS (the unfreeze-via-status flow). Frozen = delivered (date
+                # set AND delivered/completed status) AND linked to a complaint.
+                from app.services.complaint_fulfilment_service import (
+                    ComplaintFulfilmentService,
                 )
+
+                incoming_status_id = update_data.get(
+                    "order_status_id", order.order_status_id
+                )
+                incoming_delivery = (
+                    update_data["actual_delivery_date"]
+                    if "actual_delivery_date" in update_data
+                    else order.actual_delivery_date
+                )
+                if ComplaintFulfilmentService(self.db).is_locked_for_state(
+                    order, incoming_status_id, incoming_delivery
+                ):
+                    from app.services.error_handler import AppException
+                    from fastapi import status as _status
+
+                    raise AppException(
+                        status_code=_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        message=(
+                            "Remarks CS is locked: this delivery order is delivered and "
+                            "linked to a complaint, so its complaint reference cannot be changed."
+                        ),
+                        code="REMARKS_CS_LOCKED",
+                    )
             # Recalculate total if amounts changed
             if any(k in update_data for k in ["subtotal_amount", "discount_amount", "tax_amount"]):
                 subtotal = update_data.get("subtotal_amount", order.subtotal_amount) or Decimal("0")
@@ -1190,6 +1210,9 @@ class OrderService:
                     remarks_cs_changing
                     or (order.actual_delivery_date is not None) != (old_actual_delivery is not None)
                     or bool(order.is_cancelled) != old_is_cancelled
+                    # Status change flips the delivered-state (delivered = date AND
+                    # delivered/completed status), so recompute on a status change too.
+                    or str(order.order_status_id or "") != str(old_status_id or "")
                 )
                 if fulfilment_relevant:
                     from app.services.complaint_fulfilment_service import (
@@ -1510,6 +1533,13 @@ class OrderService:
         status_by_code_lower = {str(s.status_code).lower(): s.id for s in status_rows}
         new_status_id = status_by_code_lower.get("new")
         delivered_status_id = status_by_code_lower.get("delivered")
+        # Status ids that count as "delivered" for the complaint-DO freeze (date set
+        # AND a delivered/completed status). Mirrors ComplaintFulfilmentService.
+        delivered_status_ids = {
+            str(sid)
+            for code, sid in status_by_code_lower.items()
+            if code in ("delivered", "completed") and sid
+        }
 
         try:
             workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
@@ -1763,6 +1793,7 @@ class OrderService:
                     if (
                         "remarks_cs" in mapped
                         and existing_order.actual_delivery_date is not None
+                        and str(existing_order.order_status_id or "") in delivered_status_ids
                         and str(existing_order.id) in linked_order_ids
                         and (mapped.get("remarks_cs") or "").strip()
                         != (existing_order.remarks_cs or "").strip()

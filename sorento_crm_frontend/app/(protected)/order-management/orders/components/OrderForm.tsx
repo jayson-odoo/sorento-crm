@@ -224,8 +224,11 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
       const formData: OrderFormData = {
         order_number: data.order_number,
         order_date: data.order_date,
-        estimated_delivery_date: data.estimated_delivery_date || undefined,
-        actual_delivery_date: data.actual_delivery_date || undefined,
+        // Send explicit null (not undefined) for cleared dates so the BE actually
+        // clears them — undefined is dropped by JSON.stringify and skipped by the
+        // backend's exclude_unset, so clearing the field would otherwise be a no-op.
+        estimated_delivery_date: data.estimated_delivery_date || null,
+        actual_delivery_date: data.actual_delivery_date || null,
         customer_id: data.customer_id ?? undefined,
         order_status_id: data.order_status_id,
         billing_address_id: data.billing_address_id || undefined,

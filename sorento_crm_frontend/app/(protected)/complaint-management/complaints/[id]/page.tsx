@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
 import ComplaintDetail from '../components/ComplaintDetail';
+import ComplaintFulfilmentOrdersSection from '../components/ComplaintFulfilmentOrdersSection';
 import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
 import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
 
@@ -65,7 +66,17 @@ async function ComplaintDetailWrapper({
   }
 
   return (
-    <FormDetailWithSLATabs sourceEntityType="complaint" sourceEntityId={id}>
+    <FormDetailWithSLATabs
+      sourceEntityType="complaint"
+      sourceEntityId={id}
+      extraTabs={[
+        {
+          value: 'fulfilment',
+          label: 'Fulfilment DOs',
+          content: <ComplaintFulfilmentOrdersSection complaintId={id} />,
+        },
+      ]}
+    >
       <RecordEntityRegistrar entityType="complaint" id={id} />
       <ComplaintDetail complaintId={id} />
     </FormDetailWithSLATabs>

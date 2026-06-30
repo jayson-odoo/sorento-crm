@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     environment: str = "development"
     debug: bool = False
 
+    # Complaint <-> DO auto-fulfilment: which Complaint-team tiers (agent `complaint`,
+    # set `complaint`) receive the replacement-DO-delivered email/in-app. Comma list,
+    # e.g. "1,2" (Tier 1 + Tier 2) or "1" (Tier 1 only). COMPLAINT_DO_DELIVERED_NOTIFY_TIERS
+    complaint_do_delivered_notify_tiers: str = "1,2"
+
     # Respond.io
     respond_api_key: str | None = None
     respond_base_url: str = "https://api.respond.io"

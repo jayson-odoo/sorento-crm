@@ -96,6 +96,15 @@ def _mk_complaint(
     return c
 
 
+def _delivered_status_id(db: Session) -> str:
+    """The DELIVERED order-status id (a DO is 'delivered' only with date AND this status)."""
+    row = db.execute(
+        text("SELECT id FROM order_statuses WHERE lower(status_code) = 'delivered' LIMIT 1")
+    ).first()
+    assert row is not None, "seed order_statuses must contain a 'delivered' code"
+    return str(row[0])
+
+
 def _mk_order(
     db: Session,
     number: str,
@@ -108,13 +117,22 @@ def _mk_order(
         id=str(uuid.uuid4()),
         order_number=number,
         remarks_cs=remarks_cs,
+        # Delivered = delivery date AND a delivered status (both required).
         actual_delivery_date=datetime(2026, 6, 1, 10, 0) if delivered else None,
+        order_status_id=_delivered_status_id(db) if delivered else None,
         is_cancelled=cancelled,
     )
     db.add(o)
     db.commit()
     db.refresh(o)
     return o
+
+
+def _mark_delivered(db: Session, order: Order, when: Optional[datetime] = None) -> None:
+    """Flip an existing order to delivered: sets BOTH the date and the delivered status."""
+    order.actual_delivery_date = when or datetime(2026, 6, 2, 9, 0)
+    order.order_status_id = _delivered_status_id(db)
+    db.commit()
 
 
 def _reconcile(db: Session, *changes, dry_run: bool = False):
@@ -247,8 +265,7 @@ def test_F1_single_delivered_becomes_fulfilled(db: Session) -> None:
     o = _mk_order(db, f"{O_PREFIX}F1", remarks_cs=f"{C_PREFIX}F1")
     _reconcile(db, (o, None))
     assert _status(db, c.id) == "processed_by_cs"
-    o.actual_delivery_date = datetime(2026, 6, 2, 9, 0)
-    db.commit()
+    _mark_delivered(db, o)
     _reconcile(db, (o, f"{C_PREFIX}F1"))
     assert _status(db, c.id) == "fulfilled"
 
@@ -306,8 +323,7 @@ def test_F6_reopen_then_deliver_refulfils(db: Session) -> None:
     o2 = _mk_order(db, f"{O_PREFIX}F6b", remarks_cs=f"{C_PREFIX}F6", delivered=False)
     _reconcile(db, (o2, None))
     assert _status(db, c.id) == "processed_by_cs"
-    o2.actual_delivery_date = datetime(2026, 6, 3, 8, 0)
-    db.commit()
+    _mark_delivered(db, o2, datetime(2026, 6, 3, 8, 0))
     _reconcile(db, (o2, f"{C_PREFIX}F6"))
     assert _status(db, c.id) == "fulfilled"
 
@@ -395,6 +411,61 @@ def test_locked_when_delivered_and_linked(db: Session) -> None:
     o = _mk_order(db, f"{O_PREFIX}LOCK", remarks_cs=f"{C_PREFIX}LOCK", delivered=True)
     _reconcile(db, (o, None))
     assert ComplaintFulfilmentService(db).is_remarks_cs_locked(o) is True
+
+
+def _status_id(db: Session, code: str) -> str:
+    row = db.execute(
+        text("SELECT id FROM order_statuses WHERE lower(status_code) = :c LIMIT 1"),
+        {"c": code.lower()},
+    ).first()
+    assert row is not None, f"seed order_statuses must contain '{code}'"
+    return str(row[0])
+
+
+def test_AND_date_without_delivered_status_not_fulfilled(db: Session) -> None:
+    """Delivered = date AND delivered/completed status. A date under a non-delivered
+    status (e.g. NEW) does NOT fulfil; flipping the status to DELIVERED then fulfils."""
+    c = _mk_complaint(db, f"{C_PREFIX}AND")
+    o = Order(
+        id=str(uuid.uuid4()),
+        order_number=f"{O_PREFIX}AND",
+        remarks_cs=f"{C_PREFIX}AND",
+        actual_delivery_date=datetime(2026, 6, 1, 10, 0),  # date set...
+        order_status_id=_status_id(db, "NEW"),  # ...but status is NOT delivered
+        is_cancelled=False,
+    )
+    db.add(o)
+    db.commit()
+    db.refresh(o)
+    _reconcile(db, (o, None))
+    assert _status(db, c.id) == "processed_by_cs"  # date alone is not enough
+
+    # Now flip the status to DELIVERED (date already set) -> delivered -> fulfilled.
+    o.order_status_id = _status_id(db, "DELIVERED")
+    db.commit()
+    _reconcile(db, (o, f"{C_PREFIX}AND"))
+    assert _status(db, c.id) == "fulfilled"
+
+
+def test_unfreeze_via_status(db: Session) -> None:
+    """Unfreeze-via-status: a delivered+linked DO is locked, but evaluating the lock
+    against an incoming non-delivered status returns False (so the same PUT that moves
+    the DO off DELIVERED may also edit Remarks CS)."""
+    c = _mk_complaint(db, f"{C_PREFIX}UNFRZ")
+    o = _mk_order(db, f"{O_PREFIX}UNFRZ", remarks_cs=f"{C_PREFIX}UNFRZ", delivered=True)
+    _reconcile(db, (o, None))
+    svc = ComplaintFulfilmentService(db)
+    assert svc.is_remarks_cs_locked(o) is True
+    # Hypothetical: status moved to NEW (date unchanged) -> no longer delivered -> unlocked.
+    assert (
+        svc.is_locked_for_state(o, _status_id(db, "NEW"), o.actual_delivery_date)
+        is False
+    )
+    # Still locked if it stays DELIVERED.
+    assert (
+        svc.is_locked_for_state(o, _status_id(db, "DELIVERED"), o.actual_delivery_date)
+        is True
+    )
 
 
 def test_Z2_put_rejects_locked_remarks_cs(db: Session) -> None:

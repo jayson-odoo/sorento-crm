@@ -132,6 +132,11 @@ def test_N1_N6_customer_delivery_fact_wording(db: Session, monkeypatch) -> None:
     assert "REPPS-0012" in display_message
     assert "SKU-1" in display_message and "SKU-2" in display_message
     assert "fulfilled" not in display_message.lower()
+    # structured: each item on its own line under an "Items delivered:" header
+    assert "Items delivered:" in display_message
+    assert "- SKU-1 x 2" in display_message
+    assert "- SKU-2 x 1" in display_message
+    assert "\n- SKU-1 x 2\n- SKU-2 x 1" in display_message
 
 
 def test_N5_customer_skipped_without_contact(db: Session, monkeypatch) -> None:
@@ -184,6 +189,10 @@ def test_N3_N6_team_in_app_and_email(db: Session, monkeypatch) -> None:
     assert "REPPS-0099" in (notif.body or "")
     assert "delivered" in (notif.body or "").lower()
     assert "fulfilled" not in (notif.body or "").lower()
+    # structured email/in-app body: one item per line
+    assert "\n- SKU-1 x 2\n- SKU-2 x 1" in (notif.body or "")
+    # email HTML uses a <ul> list
+    assert "<li>SKU-1 x 2</li>" in ((notif.data or {}).get("body_html") or "")
     # email recipient captured in data for the single-email-to-all path
     assert (notif.data or {}).get("recipient_emails")
 
