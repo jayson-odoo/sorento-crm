@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   ColumnDef,
   PaginationState,
@@ -12,26 +14,56 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Plus, Search, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, PencilLine, Plus, Search, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
-import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
+import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  BulkUpdateDialog,
+  type BulkEditableField,
+} from '@/components/common/BulkUpdateDialog';
 import { useSuppliers } from '../hooks/useSuppliers';
+import { bulkUpdateSuppliers } from '../services/supplierBulkUpdateService';
 import type { Supplier } from '../types/supplier.types';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 
+// Whitelist of bulk-editable fields for suppliers (the safety boundary — mirrors
+// the backend registry in app/services/bulk_update_registry.py). Only these
+// fields/values can be bulk-edited; every row still runs through the normal
+// SupplierService.update_supplier path (validated + audit-trailed).
+const SUPPLIER_BULK_FIELDS: BulkEditableField[] = [
+  {
+    key: 'is_active',
+    label: 'Status',
+    type: 'select',
+    options: [
+      { value: 'true', label: 'Active' },
+      { value: 'false', label: 'Inactive' },
+    ],
+    helpText: 'Set the selected suppliers active or inactive.',
+  },
+];
+
 export default function SuppliersList() {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -145,6 +177,21 @@ export default function SuppliersList() {
     manualFiltering: true,
   });
 
+  const selectedIds = selectedRowIds(table);
+
+  const handleBulkApply = async (fieldKey: string, value: string) => {
+    const result = await bulkUpdateSuppliers(selectedIds, fieldKey, value);
+    // Refetch the list so updated rows reflect the change, and drop the selection.
+    await queryClient.invalidateQueries({ queryKey: ['suppliers'] });
+    setRowSelection({});
+    toast.success(
+      `Bulk update applied — ${result.updated} updated${
+        result.skipped.length ? `, ${result.skipped.length} skipped` : ''
+      }.`,
+    );
+    return result;
+  };
+
   return (
     <DataGrid
       table={table}
@@ -158,6 +205,21 @@ export default function SuppliersList() {
         <CardHeader className="block">
           <DataGridListToolbar
             table={table}
+            bulkActionsSlot={() => (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5">
+                    Action
+                    <ChevronDown className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onClick={() => setBulkOpen(true)}>
+                    <PencilLine className="size-4 me-2" /> Bulk update…
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
             searchSlot={
               <div className="relative">
                 <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
@@ -221,6 +283,14 @@ export default function SuppliersList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+
+      <BulkUpdateDialog
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        selectedCount={selectedIds.length}
+        fields={SUPPLIER_BULK_FIELDS}
+        onApply={handleBulkApply}
+      />
     </DataGrid>
   );
 }
