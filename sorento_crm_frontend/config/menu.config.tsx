@@ -674,6 +674,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/system-management/audit-logs',
       },
       {
+        title: 'System Health',
+        path: '/system-management/health',
+      },
+      {
         title: 'Integration Logs',
         path: '/integration-management/integration-logs',
       },
@@ -1503,6 +1507,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Audit Logs',
         path: '/system-management/audit-logs',
+      },
+      {
+        title: 'System Health',
+        path: '/system-management/health',
       },
       {
         title: 'Integration Logs',
