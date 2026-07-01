@@ -153,6 +153,7 @@ class Transporter(Base):
 
 class Order(Base):
     __tablename__ = "orders"
+    __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     order_number = Column(String(100), unique=True, nullable=False)

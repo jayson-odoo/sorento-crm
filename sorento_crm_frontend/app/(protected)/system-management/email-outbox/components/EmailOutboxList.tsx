@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { sanitizedHtml } from '@/lib/sanitize';
 import {
   ColumnDef,
   PaginationState,
@@ -414,7 +415,7 @@ export default function EmailOutboxList() {
                   {detail.body_html ? (
                     <div
                       className="prose prose-sm dark:prose-invert max-w-none"
-                      dangerouslySetInnerHTML={{ __html: detail.body_html }}
+                      dangerouslySetInnerHTML={sanitizedHtml(detail.body_html)}
                     />
                   ) : (
                     <pre className="whitespace-pre-wrap">{detail.body_text || '-'}</pre>

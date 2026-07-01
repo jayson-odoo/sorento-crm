@@ -24,7 +24,8 @@ class CampaignStatus(str, enum.Enum):
 
 class Promotion(Base):
     __tablename__ = "promotions"
-    
+    __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     description = Column(Text, nullable=True)
     start_date = Column(Date, nullable=True)

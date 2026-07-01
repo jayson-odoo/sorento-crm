@@ -1,6 +1,7 @@
 'use client';
 
 import { use, useEffect, useState } from 'react';
+import { sanitizedHtml } from '@/lib/sanitize';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import {
@@ -384,7 +385,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                     {ticket.description_html ? (
                       <div
                         className="prose prose-sm max-w-none text-sm break-words [&_pre]:whitespace-pre-wrap [&_pre]:break-all [&_code]:break-all"
-                        dangerouslySetInnerHTML={{ __html: ticket.description_html }}
+                        dangerouslySetInnerHTML={sanitizedHtml(ticket.description_html)}
                       />
                     ) : ticket.description_text ? (
                       <div className="prose prose-sm max-w-none whitespace-pre-wrap break-words text-sm">{ticket.description_text}</div>
@@ -474,7 +475,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                 ) : ticket.response_html ? (
                   <div
                     className="text-sm prose prose-sm max-w-none break-words [&_pre]:whitespace-pre-wrap [&_pre]:break-all [&_code]:break-all"
-                    dangerouslySetInnerHTML={{ __html: ticket.response_html }}
+                    dangerouslySetInnerHTML={sanitizedHtml(ticket.response_html)}
                   />
                 ) : (
                   <div className="text-sm text-muted-foreground">No response yet.</div>
@@ -520,7 +521,7 @@ export default function TicketDetailPage({ params }: PageProps) {
                 ) : ticket.resolution_html ? (
                   <div
                     className="text-sm prose prose-sm max-w-none break-words [&_pre]:whitespace-pre-wrap [&_pre]:break-all [&_code]:break-all"
-                    dangerouslySetInnerHTML={{ __html: ticket.resolution_html }}
+                    dangerouslySetInnerHTML={sanitizedHtml(ticket.resolution_html)}
                   />
                 ) : (
                   <div className="text-sm text-muted-foreground">Not resolved yet.</div>

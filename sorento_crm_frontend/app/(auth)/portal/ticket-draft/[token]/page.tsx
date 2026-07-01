@@ -1,6 +1,7 @@
 'use client';
 
 import { use, useEffect, useState } from 'react';
+import { sanitizedHtml } from '@/lib/sanitize';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -297,7 +298,7 @@ export default function TicketDraftPortalPage({ params }: PageProps) {
           ) : ticket.description_html ? (
             <div
               className="prose prose-sm max-w-none"
-              dangerouslySetInnerHTML={{ __html: ticket.description_html }}
+              dangerouslySetInnerHTML={sanitizedHtml(ticket.description_html)}
             />
           ) : (
             <p className="text-sm whitespace-pre-wrap">{ticket.description_text ?? '—'}</p>
