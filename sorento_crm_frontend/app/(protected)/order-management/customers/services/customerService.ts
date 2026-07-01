@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type { Customer, CustomerFormData, CustomerDetail } from '../types/customer.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
@@ -48,8 +49,7 @@ export async function createCustomer(data: CustomerFormData): Promise<Customer> 
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to create customer' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to create customer'));
   }
   return response.json();
 }
@@ -61,8 +61,7 @@ export async function updateCustomer(id: string, data: Partial<CustomerFormData>
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to update customer' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to update customer'));
   }
   return response.json();
 }
@@ -70,7 +69,6 @@ export async function updateCustomer(id: string, data: Partial<CustomerFormData>
 export async function deleteCustomer(id: string): Promise<void> {
   const response = await apiFetch(`/api/v1/order-management/customers/${id}`, { method: 'DELETE' });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to delete customer' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to delete customer'));
   }
 }
