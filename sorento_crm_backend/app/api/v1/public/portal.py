@@ -782,8 +782,9 @@ async def portal_upload_attachment(
     from app.services.storage_router import default_provider, get_backend
 
     portal_provider = default_provider()
+    portal_backend = get_backend(portal_provider)
     try:
-        get_backend(portal_provider).upload_file(
+        portal_backend.upload_file(
             contents, s3_key, content_type=file.content_type
         )
     except Exception as e:  # noqa: BLE001
@@ -792,6 +793,14 @@ async def portal_upload_attachment(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="File upload failed. Please try again.",
         ) from e
+
+    # Grid thumbnail (images only) — portal uploads are device bytes in our own
+    # bucket, so the same small-variant path applies. Best-effort; never blocks.
+    from app.services.image_thumbnailer import store_thumbnail
+
+    portal_thumbnail = store_thumbnail(
+        portal_backend, portal_provider, s3_key, contents, file.content_type
+    )
 
     service = EntityAttachmentService(db)
     link = service.create_attachment_and_link(
@@ -802,6 +811,7 @@ async def portal_upload_attachment(
         file_size_bytes=incoming_size,
         attachment_type_code=PORTAL_ATTACHMENT_TYPE_CODE,
         created_by=None,
+        thumbnail_path=portal_thumbnail,
         storage_provider=portal_provider,
     )
     db.commit()

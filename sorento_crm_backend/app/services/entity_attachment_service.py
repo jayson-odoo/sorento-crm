@@ -140,6 +140,7 @@ class EntityAttachmentService:
         attachment_type_code: str = "complaint_document",
         created_by: Optional[str] = None,
         storage_provider: Optional[str] = None,
+        thumbnail_path: Optional[str] = None,
     ) -> EntityAttachmentLink:
         et, eid = self._normalize(entity_type, entity_id)
         url = (file_url or "").strip()
@@ -160,6 +161,7 @@ class EntityAttachmentService:
             original_filename=name,
             stored_filename=stored,
             file_path=path,
+            thumbnail_path=thumbnail_path,
             file_size_bytes=file_size_bytes,
             storage_provider=provider,
         )
