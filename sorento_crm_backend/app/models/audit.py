@@ -20,6 +20,9 @@ class AuditLog(Base):
     new_values = Column(JSONB, nullable=True)
     description = Column(Text, nullable=True)
     ip_address = Column(String(100), nullable=True)
+    # Per-request correlation id (Sub-plan D Tier-2): all rows written during one
+    # HTTP request share this, so a multi-row change is traceable as one action.
+    trace_id = Column(String(64), nullable=True, index=True)
 
     __table_args__ = (
         Index("ix_audit_logs_entity_type_entity_id", "entity_type", "entity_id"),

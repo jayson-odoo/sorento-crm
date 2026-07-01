@@ -38,3 +38,22 @@ def get_real_and_effective_user_ids() -> tuple[Optional[str], Optional[str]]:
     """Return (real_user_id, effective_user_id) for the current request."""
     real, _ip, eff = _audit_context.get()
     return real, eff
+
+
+# Per-request correlation id (Sub-plan D Tier-2). Kept in a SEPARATE contextvar
+# so the (user, ip, effective) tuple and its callers are untouched. The
+# LoggingMiddleware stamps one id per request; the audit listener copies it onto
+# every AuditLog row so all changes from one request are correlatable.
+_trace_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "audit_trace_id", default=None
+)
+
+
+def set_trace_id(trace_id: Optional[str]) -> None:
+    """Set the current request's trace/correlation id."""
+    _trace_id.set(trace_id)
+
+
+def get_trace_id() -> Optional[str]:
+    """Return the current request's trace/correlation id (None outside a request)."""
+    return _trace_id.get()
