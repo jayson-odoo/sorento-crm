@@ -33,7 +33,7 @@ function calledUrl(): string {
 beforeEach(() => vi.clearAllMocks());
 
 describe('getAuditLogs', () => {
-  it('hits the /api/v1/audit/ endpoint with 1-based page and limit', async () => {
+  it('hits the /api/v1/audit/logs/ endpoint with 1-based page and limit', async () => {
     mockedFetch.mockResolvedValue(
       okResponse({ data: [], pagination: { total: 0, page: 1, limit: 50 }, empty: true }),
     );
@@ -41,7 +41,7 @@ describe('getAuditLogs', () => {
     await getAuditLogs({ pageIndex: 0, pageSize: 50 });
 
     const url = calledUrl();
-    expect(url).toContain('/api/v1/audit/?');
+    expect(url).toContain('/api/v1/audit/logs/?');
     expect(url).toContain('page=1');
     expect(url).toContain('limit=50');
   });
