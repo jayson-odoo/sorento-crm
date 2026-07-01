@@ -135,8 +135,8 @@ Existing surfaces (don't rebuild): AuditLog API (`/api/v1/audit/`, no FE page), 
 
 ### Tier-3 (~4-7d)
 - [x] Admin health dashboard (`/system-management/health`): email queue depth, failed sends 24h, import success rate, overdue scheduled tasks, integration success-by-channel, audit trend. **DONE** (`f3dba9fd6`, verified live — real data rendering).
-- [ ] Cross-entity activity search/timeline. **NOT STARTED** — large standalone feature; needs Phase-1 prototype first.
-- [ ] Generic bulk record updater (filter any resource → bulk status/assign/tag, audit-trailed). **NOT STARTED** — large standalone feature; needs Phase-1 prototype first.
+- [~] Cross-entity activity search/timeline. **PHASE-1 PROTOTYPE DONE** (`/system-management/activity`, mock data, verified live) — awaiting sign-off before Phase-2 BE (`GET /api/v1/audit/activity`, contract in `activityService.ts`).
+- [~] Generic bulk record updater — **REFRAMED to safe whitelisted bulk edit + PHASE-1 PROTOTYPE DONE** (reusable `BulkUpdateDialog` + demo at `/system-management/bulk-update-demo`, verified). A truly-generic column writer was rejected as a data-integrity footgun; BE must whitelist fields + use the normal update path. Awaiting sign-off before Phase-2 BE.
 
 **Decide first:** SystemLog vs AuditLog are partly redundant — pick the canonical source before building the viewer.
 
@@ -209,4 +209,4 @@ Integration branch `fix/security-cluster-full` (off `feat/complaint-do-auto-fulf
 **REMAINING (2 large features + 1 mass refactor — NOT built):**
 - **D-Tier3 Cross-entity activity timeline** — large standalone feature. Needs Phase-1 prototype (three-phase rule) before BE.
 - **D-Tier3 Generic bulk record updater** — large standalone feature. Needs Phase-1 prototype first.
-- **E-broad** — 229 `.json().catch` + 54 `URLSearchParams` = ~283 mechanical sites. Per earlier decision: opportunistic on-touch; E-1 lint guard now surfaces new ones. A full codemod sweep is a separate multi-PR effort.
+- **E-broad** — `.json().catch` → `extractApiError`. **Batches 1–2 DONE + committed** (contacts, forms, sla — ~34 sites, tsc-clean, safe `;`-bounded transform). **Procurement attempted + REVERTED**: an aggressive multi-line regex codemod over-matched and deleted whole functions — reverted to clean state, tsc verified. **Lesson: the single-line `;`-bounded codemod is safe; multi-line-formatted `.json()\n.catch` files need per-site hand editing, NOT a greedy regex.** Remaining ~65 files (incl. procurement) are careful per-domain follow-up PRs, one domain each. E-1 lint guard surfaces new violations. URLSearchParams→buildDataGridParams NOT started (many are legit non-DataGrid uses — per-site judgment).
