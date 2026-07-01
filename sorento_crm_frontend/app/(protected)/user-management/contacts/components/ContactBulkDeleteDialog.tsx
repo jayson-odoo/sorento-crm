@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import { toast } from 'sonner';
 
 interface ContactBulkDeleteDialogProps {
@@ -37,13 +38,7 @@ export default function ContactBulkDeleteDialog({
         body: JSON.stringify({ ids }),
       });
       if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        const message =
-          (error.detail && typeof error.detail === 'object' && error.detail.message) ||
-          (typeof error.detail === 'string' ? error.detail : null) ||
-          error.message ||
-          'Failed to delete contacts';
-        throw new Error(message);
+        throw new Error(await extractApiError(response, 'Failed to delete contacts'));
       }
       return response.json();
     },
