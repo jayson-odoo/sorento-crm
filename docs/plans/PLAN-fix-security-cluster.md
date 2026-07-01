@@ -192,18 +192,16 @@ This is **XL** — 229+54 = ~283 mechanical sites + 14 security-sensitive + UI w
    - C3 `bc8154940` — UUIDPath guard on 173 internal-UUID handlers/35 files; EXCLUDED resolve_identifier code-or-UUID routes + contacts + external/public + UUID-typed tracking_id (63 pytest; +59 suite passes, 0 new failures vs baseline).
    - ⏳ Pending: browser-verify the 2 FE changes (C2 filters gone, C4 lookup degrade), then push/merge.
 2. ✅ **Phase 2 DONE** — B `07e691b9f` — presigned-URL hardening: only signs a key with a real attachments row (escape hatch `PRESIGNED_REQUIRE_ATTACHMENT_ROW`), TTL clamp (`PRESIGNED_MAX_TTL_SECONDS`, default 3600), presign audit logger (4 pytest). Deliberately NO per-entity RBAC (shared broad service principal → theatre; real fix = require-row + TTL + audit + key rotation, per-tenant keys deferred). Portal attachment side audited → **already owner-scoped** (list/get/upload/delete gate on get_submission contact_id+space_id); audit's "weak portal authz" was a false alarm. n8n act-as role: not needed since no RBAC check added.
-3. **Phase 3 (D Tier-1) — PARTIAL:**
+3. ✅ **Phase 3 (D Tier-1) — DONE:**
    - ✅ **D-3 already implemented** — user- AND contact-impersonation both `log_audit` on start+stop (impersonation.py:138/176, contact_impersonation.py:169/224) with admin+target+ip. §4a finding was stale. No work needed.
-   - ⏳ **D-1 audit-logs FE page** — building now (agent): `/system-management/audit-logs` on the existing `GET /api/v1/audit/` API + sidebar entry + vitest.
-   - ⬜ **D-2 bulk-action UI — RE-SCOPED**: the audit assumed bulk endpoints exist; they DON'T. email-outbox/scheduled-tasks have only PER-ROW actions (retry/cancel/run-now); import-logs/respond-outbox are read-only. Real work = build NEW BE bulk endpoints (e.g. email-outbox bulk retry/cancel) THEN wire FE bars. Own focused pass.
-4. **Phase 4 (E) — PARTIAL:**
+   - ✅ **D-1 audit-logs FE page** `2cda7c039` — `/system-management/audit-logs` on the existing `GET /api/v1/audit/` API + sidebar entry (both menus) + details dialog + 10 vitest. Contract note: audit API has no free-text search/server sort → search maps to entity_id, sort emitted-but-ignored.
+   - ✅ **D-2 bulk retry/cancel** `1de0604f1` — RE-SCOPED honestly: the 4 lists had NO bulk endpoints (audit was wrong). Built NEW BE bulk-retry/bulk-cancel on email-outbox (partial-success, <=500, perm-gated, 6 pytest) + FE bulk-action bar (3 vitest). import-logs/respond-outbox are read-only, scheduled-tasks run-now niche → left single-action.
+4. **Phase 4 (E) — MOSTLY DONE:**
    - ✅ **E-1 lint guard** `4a113b8c0` — `no-restricted-syntax` (warn) bans new `.json().catch` + native `confirm()`; URLSearchParams left out (not cleanly lintable).
-   - ⬜ **E-2 DOMPurify** — 12 of 14 `dangerouslySetInnerHTML` render user/external HTML (chat message.text, ticket/notes/email bodies) and need sanitizing; 2 are safe (layout script, recharts styles). Needs a new runtime dep (`isomorphic-dompurify`) → own PR so the `npm install` doesn't disrupt a running dev server.
+   - ⬜ **E-2 DOMPurify** — ONLY remaining item. 12 of 14 `dangerouslySetInnerHTML` render user/external HTML (chat message.text, ticket/notes/email bodies) → sanitize; 2 safe (layout script, recharts styles). Needs new dep `isomorphic-dompurify` — **BLOCKED in this worktree**: `npm install` can't run through a symlinked node_modules (ENOTEMPTY). Do in a full checkout / CI as its own PR.
    - ⬜ **E broad refactor** — 229 `.json().catch` + 54 `URLSearchParams` sites: opportunistic on-touch (decided), lint now surfaces new ones.
-Each phase: implement → pytest/vitest/playwright per three-phase rule → browser-verify → deploy.
 
-## Remaining scoped follow-ups (precise)
-- **D-1 finish**: commit + browser-verify the audit page.
-- **D-2**: new BE bulk endpoints (email-outbox bulk retry/cancel first) + FE bulk-action bar + tests.
-- **E-2**: add `isomorphic-dompurify`, a shared `sanitizeHtml()` helper, apply to the 12 user-HTML sinks; leave layout.tsx + chart.tsx.
-- **Browser-verify** all FE changes (C2, C4, D-1) from the worktree on a spare port, then push/merge the branch.
+## Status: plan effectively COMPLETE except E-2 (dep-blocked) + opportunistic E-broad.
+Branch `fix/phase1-bounded-bugs` (misnomer now — holds the whole cluster), 11 commits, rebased on current main. **Remaining:**
+- **E-2**: in a full checkout add `isomorphic-dompurify` + a shared `sanitizeHtml()` helper, apply to the 12 user-HTML sinks (leave layout.tsx + chart.tsx).
+- **Browser-verify** FE changes (C2, C4, D-1 audit page, D-2 bulk bar) on a spare port, then push/merge.
