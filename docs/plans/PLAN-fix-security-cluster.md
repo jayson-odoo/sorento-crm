@@ -129,14 +129,14 @@ Existing surfaces (don't rebuild): AuditLog API (`/api/v1/audit/`, no FE page), 
 - [ ] **Explicit IMPERSONATE audit event** (today impersonation silently rewrites created_by).
 
 ### Tier-2 (~3-4d)
-- [ ] Bulk retry/cancel for failed emails.
-- [ ] Expand `__audit_track__` → Order, User, Form, Supplier, Promotion (~2 lines/model). Currently tracked: Ticket, Complaint, Product, StockInquiry, PurchaseRequestHeader.
-- [ ] Request `trace_id` through LoggingMiddleware → audit_context → AuditLog column → filterable in UI.
+- [x] Bulk retry/cancel for failed emails. **DONE** (`1de0604f1`, verified live on :3000).
+- [x] Expand `__audit_track__` → Order, User, Form, Supplier, Promotion. **DONE** (`408ad83a7`, verified via registry + live `users` UPDATE row).
+- [x] Request `trace_id` through LoggingMiddleware → audit_context → AuditLog column → filterable in UI. **DONE** (`f93398992`, migration 254, X-Trace-Id live on :8000).
 
 ### Tier-3 (~4-7d)
-- [ ] Admin health dashboard (`/system-management/health`): email queue depth, failed sends 24h, import success rate, overdue scheduled tasks, integration success-by-channel, audit trend.
-- [ ] Cross-entity activity search/timeline.
-- [ ] Generic bulk record updater (filter any resource → bulk status/assign/tag, audit-trailed).
+- [x] Admin health dashboard (`/system-management/health`): email queue depth, failed sends 24h, import success rate, overdue scheduled tasks, integration success-by-channel, audit trend. **DONE** (`f3dba9fd6`, verified live — real data rendering).
+- [ ] Cross-entity activity search/timeline. **NOT STARTED** — large standalone feature; needs Phase-1 prototype first.
+- [ ] Generic bulk record updater (filter any resource → bulk status/assign/tag, audit-trailed). **NOT STARTED** — large standalone feature; needs Phase-1 prototype first.
 
 **Decide first:** SystemLog vs AuditLog are partly redundant — pick the canonical source before building the viewer.
 
@@ -201,7 +201,12 @@ This is **XL** — 229+54 = ~283 mechanical sites + 14 security-sensitive + UI w
    - ⬜ **E-2 DOMPurify** — ONLY remaining item. 12 of 14 `dangerouslySetInnerHTML` render user/external HTML (chat message.text, ticket/notes/email bodies) → sanitize; 2 safe (layout script, recharts styles). Needs new dep `isomorphic-dompurify` — **BLOCKED in this worktree**: `npm install` can't run through a symlinked node_modules (ENOTEMPTY). Do in a full checkout / CI as its own PR.
    - ⬜ **E broad refactor** — 229 `.json().catch` + 54 `URLSearchParams` sites: opportunistic on-touch (decided), lint now surfaces new ones.
 
-## Status: plan effectively COMPLETE except E-2 (dep-blocked) + opportunistic E-broad.
-Branch `fix/phase1-bounded-bugs` (misnomer now — holds the whole cluster), 11 commits, rebased on current main. **Remaining:**
-- **E-2**: in a full checkout add `isomorphic-dompurify` + a shared `sanitizeHtml()` helper, apply to the 12 user-HTML sinks (leave layout.tsx + chart.tsx).
-- **Browser-verify** FE changes (C2, C4, D-1 audit page, D-2 bulk bar) on a spare port, then push/merge.
+## Status: A, B, C1–C4, D-1/D-2/D-3, D-Tier2 (all), D-Tier3 health, E-1, E-2 — DONE + browser-verified live on :3000.
+Integration branch `fix/security-cluster-full` (off `feat/complaint-do-auto-fulfilment` + merged `fix/phase1-bounded-bugs`), 14 commits. FE rebuilt + serving on :3000; BE live on :8000 (`--reload`).
+
+**Verified live 2026-07-01:** System Health dashboard (real data), Audit Logs page (`/api/v1/audit/logs/` 200), Email Outbox bulk retry/cancel bar, `users` audit row from login (audit-track working), X-Trace-Id header on every response.
+
+**REMAINING (2 large features + 1 mass refactor — NOT built):**
+- **D-Tier3 Cross-entity activity timeline** — large standalone feature. Needs Phase-1 prototype (three-phase rule) before BE.
+- **D-Tier3 Generic bulk record updater** — large standalone feature. Needs Phase-1 prototype first.
+- **E-broad** — 229 `.json().catch` + 54 `URLSearchParams` = ~283 mechanical sites. Per earlier decision: opportunistic on-touch; E-1 lint guard now surfaces new ones. A full codemod sweep is a separate multi-PR effort.
