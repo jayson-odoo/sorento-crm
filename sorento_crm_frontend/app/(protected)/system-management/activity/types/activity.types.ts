@@ -96,7 +96,6 @@ export interface ActivityFilters {
   date_from?: string; // yyyy-MM-dd
   date_to?: string; // yyyy-MM-dd
   q?: string;
+  /** Show only rows in one grouped multi-row action. */
+  trace_id?: string;
 }
-
-/** Demo-only knob so every UI state can be exercised without a backend. */
-export type ActivityMockState = 'success' | 'loading' | 'empty' | 'error';

@@ -2,14 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import {
-  Filter,
-  Layers,
-  RotateCcw,
-  Search,
-  SlidersHorizontal,
-  X,
-} from 'lucide-react';
+import { Filter, Layers, RotateCcw, Search, X } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,7 +28,6 @@ import type {
   ActivityAction,
   ActivityEntityType,
   ActivityItem,
-  ActivityMockState,
 } from '../types/activity.types';
 import {
   ACTION_OPTIONS,
@@ -49,9 +41,6 @@ import {
 const ANY = '__any__';
 
 export default function ActivityTimeline() {
-  // PHASE-1 demo knob — lets reviewers exercise every UI state without a backend.
-  const [mockState, setMockState] = useState<ActivityMockState>('success');
-
   const [entityTypes, setEntityTypes] = useState<ActivityEntityType[]>([]);
   const [action, setAction] = useState<string>(ANY);
   const [userId, setUserId] = useState<string>(ANY);
@@ -61,7 +50,6 @@ export default function ActivityTimeline() {
 
   const { data, isLoading, isError, error, refetch, isFetching } =
     useActivityFeed({
-      mockState,
       entity_types: entityTypes,
       action: action !== ANY ? (action as ActivityAction) : undefined,
       user_id: userId !== ANY ? userId : undefined,
@@ -116,8 +104,6 @@ export default function ActivityTimeline() {
         onReset={resetFilters}
         onRefresh={() => void refetch()}
         isRefreshing={isFetching && !isLoading}
-        mockState={mockState}
-        onMockStateChange={setMockState}
       />
 
       {isLoading ? (
@@ -190,8 +176,6 @@ interface FilterBarProps {
   onReset: () => void;
   onRefresh: () => void;
   isRefreshing: boolean;
-  mockState: ActivityMockState;
-  onMockStateChange: (v: ActivityMockState) => void;
 }
 
 function FilterBar(props: FilterBarProps) {
@@ -315,22 +299,6 @@ function FilterBar(props: FilterBarProps) {
         </div>
 
         <div className="flex items-center gap-2 lg:ms-auto">
-          {/* PHASE-1 demo state switcher — remove when the real endpoint lands. */}
-          <Select
-            value={props.mockState}
-            onValueChange={(v) => props.onMockStateChange(v as ActivityMockState)}
-          >
-            <SelectTrigger size="sm" className="w-[140px]">
-              <SlidersHorizontal className="size-4 text-muted-foreground" />
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="success">Demo: data</SelectItem>
-              <SelectItem value="loading">Demo: loading</SelectItem>
-              <SelectItem value="empty">Demo: empty</SelectItem>
-              <SelectItem value="error">Demo: error</SelectItem>
-            </SelectContent>
-          </Select>
           <Button
             variant="outline"
             size="sm"
