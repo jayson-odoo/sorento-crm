@@ -1,5 +1,6 @@
 """Email outbox admin API. List, view, retry, cancel rows."""
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -13,6 +14,19 @@ from app.services.email_outbox_service import cancel as cancel_outbox, retry as 
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
+
+_MAX_BULK = 500
+
+
+class BulkOutboxRequest(BaseModel):
+    row_ids: list[str] = Field(..., min_length=1, max_length=_MAX_BULK)
+
+
+class BulkOutboxResult(BaseModel):
+    requested: int
+    succeeded: int
+    failed: int
+    failed_ids: list[str]
 
 
 def _to_response(row: EmailOutbox) -> EmailOutboxRowResponse:
@@ -114,3 +128,49 @@ async def cancel_email_outbox(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Row cannot be cancelled in its current state")
     row = db.query(EmailOutbox).filter(EmailOutbox.id == row_id).first()
     return _to_response(row)
+
+
+def _bulk_apply(db: Session, row_ids: list[str], action) -> BulkOutboxResult:
+    """Apply a per-row action across a selection; a row that can't transition (or
+    errors) is counted as failed, never aborting the batch — partial success is
+    the expected outcome for a mixed selection."""
+    seen: set[str] = set()
+    failed: list[str] = []
+    succeeded = 0
+    for rid in row_ids:
+        if rid in seen:
+            continue
+        seen.add(rid)
+        try:
+            if action(db, rid):
+                succeeded += 1
+            else:
+                failed.append(rid)
+        except Exception:  # noqa: BLE001 — one bad row must not sink the batch
+            failed.append(rid)
+    return BulkOutboxResult(
+        requested=len(seen), succeeded=succeeded, failed=len(failed), failed_ids=failed
+    )
+
+
+@router.post("/email-outbox/bulk-retry", response_model=BulkOutboxResult)
+async def bulk_retry_email_outbox(
+    payload: BulkOutboxRequest,
+    current_user: dict = Depends(require_permission("system.email_outbox.manage")),
+    db: Session = Depends(get_db),
+):
+    """Retry many outbox rows at once. Rows not in a retryable state are reported
+    in ``failed_ids`` rather than 400-ing the whole request."""
+    return _bulk_apply(db, payload.row_ids, retry_outbox)
+
+
+@router.post("/email-outbox/bulk-cancel", response_model=BulkOutboxResult)
+async def bulk_cancel_email_outbox(
+    payload: BulkOutboxRequest,
+    current_user: dict = Depends(require_permission("system.email_outbox.manage")),
+    db: Session = Depends(get_db),
+):
+    """Cancel many outbox rows at once (partial success reported in failed_ids)."""
+    return _bulk_apply(
+        db, payload.row_ids, lambda d, rid: cancel_outbox(d, rid, reason="cancelled_by_admin")
+    )

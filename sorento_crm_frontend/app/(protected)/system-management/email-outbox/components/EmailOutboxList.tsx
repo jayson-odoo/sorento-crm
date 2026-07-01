@@ -47,6 +47,8 @@ import {
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Eye, RotateCcw, Ban, Search, X } from 'lucide-react';
 import {
+  useBulkCancelEmailOutbox,
+  useBulkRetryEmailOutbox,
   useCancelEmailOutboxRow,
   useEmailOutbox,
   useEmailOutboxRow,
@@ -73,6 +75,11 @@ export default function EmailOutboxList() {
   const detailQuery = useEmailOutboxRow(detailId);
   const retryMut = useRetryEmailOutboxRow();
   const cancelMut = useCancelEmailOutboxRow();
+  const bulkRetryMut = useBulkRetryEmailOutbox();
+  const bulkCancelMut = useBulkCancelEmailOutbox();
+  const selectedIds = Object.keys(rowSelection);
+  const bulkPending = bulkRetryMut.isPending || bulkCancelMut.isPending;
+  const clearSelection = () => setRowSelection({});
 
   const columns = useMemo<ColumnDef<EmailOutboxRow>[]>(
     () => [
@@ -242,6 +249,37 @@ export default function EmailOutboxList() {
     >
       <Card>
         <CardHeader className="block">
+          {selectedIds.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
+              <span className="text-sm font-medium">{selectedIds.length} selected</span>
+              <div className="ms-auto flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={bulkPending}
+                  onClick={() =>
+                    bulkRetryMut.mutate(selectedIds, { onSuccess: clearSelection })
+                  }
+                >
+                  <RotateCcw className="size-4" /> Retry selected
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  disabled={bulkPending}
+                  onClick={() =>
+                    bulkCancelMut.mutate(selectedIds, { onSuccess: clearSelection })
+                  }
+                >
+                  <Ban className="size-4" /> Cancel selected
+                </Button>
+                <Button variant="dim" size="sm" disabled={bulkPending} onClick={clearSelection}>
+                  Clear
+                </Button>
+              </div>
+            </div>
+          )}
           <DataGridListToolbar
             table={table}
             searchSlot={
