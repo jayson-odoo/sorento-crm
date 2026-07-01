@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type { Form, FormFormData, FormVersion } from '../types/form.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
@@ -57,8 +58,7 @@ export async function createForm(data: FormFormData): Promise<Form> {
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to create form' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to create form'));
   }
   return response.json();
 }
@@ -70,8 +70,7 @@ export async function updateForm(id: string, data: Partial<FormFormData>): Promi
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to update form' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to update form'));
   }
   return response.json();
 }
@@ -79,8 +78,7 @@ export async function updateForm(id: string, data: Partial<FormFormData>): Promi
 export async function deleteForm(id: string): Promise<void> {
   const response = await apiFetch(`/api/v1/forms-management/forms/${id}`, { method: 'DELETE' });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to delete form' }));
-    throw new Error(error.detail || error.message);
+    throw new Error(await extractApiError(response, 'Failed to delete form'));
   }
 }
 
@@ -91,8 +89,7 @@ export async function bulkDeleteForms(ids: string[]): Promise<{ message: string;
     body: JSON.stringify({ ids }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to bulk delete forms' }));
-    throw new Error(error.detail || error.message);
+    throw new Error(await extractApiError(response, 'Failed to bulk delete forms'));
   }
   return response.json();
 }
@@ -104,8 +101,7 @@ export async function duplicateForm(id: string, newCode: string): Promise<Form> 
     body: JSON.stringify({ code: newCode }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to duplicate form' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to duplicate form'));
   }
   return response.json();
 }
@@ -113,8 +109,7 @@ export async function duplicateForm(id: string, newCode: string): Promise<Form> 
 export async function publishForm(id: string): Promise<void> {
   const response = await apiFetch(`/api/v1/forms-management/forms/${id}/publish`, { method: 'POST' });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to publish form' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to publish form'));
   }
 }
 

@@ -60,8 +60,7 @@ export async function deleteSLAPolicy(id: string): Promise<void> {
 export async function getSLAPolicyTiers(policyId: string): Promise<SLAPolicyTier[]> {
   const response = await apiFetch(`/api/v1/sla-management/sla-policies/${policyId}/tiers`);
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to fetch SLA policy tiers' }));
-    throw new Error(error.message || 'Failed to fetch SLA policy tiers');
+    throw new Error(await extractApiError(response, 'Failed to fetch SLA policy tiers'));
   }
   return response.json();
 }

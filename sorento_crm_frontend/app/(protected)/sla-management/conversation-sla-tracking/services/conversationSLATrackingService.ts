@@ -268,8 +268,7 @@ export async function deleteConversationSLAEventLog(logId: string): Promise<void
     method: 'DELETE',
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Failed to delete event log' }));
-    throw new Error(error.detail || 'Failed to delete event log');
+    throw new Error(await extractApiError(response, 'Failed to delete event log'));
   }
 }
 
@@ -285,9 +284,7 @@ export async function syncAssigneeFromRespond(trackingId: string): Promise<SyncA
     method: 'POST',
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ detail: 'Sync assignee failed' }));
-    const msg = typeof err.detail === 'object' && err.detail?.message ? err.detail.message : err.detail || 'Sync assignee failed';
-    throw new Error(msg);
+    throw new Error(await extractApiError(response, 'Sync assignee failed'));
   }
   return response.json();
 }
@@ -312,17 +309,7 @@ export async function postConversationSLATestOverrides(
     body: JSON.stringify(body),
   });
   if (!response.ok) {
-    const err = await response.json().catch(() => ({ detail: 'Update failed' }));
-    const detail = err.detail;
-    const msg =
-      typeof detail === 'string'
-        ? detail
-        : Array.isArray(detail)
-          ? detail.map((d: { msg?: string }) => d.msg).filter(Boolean).join(' ')
-          : typeof detail === 'object' && detail !== null && 'message' in detail
-            ? String((detail as { message?: string }).message)
-            : 'Update failed';
-    throw new Error(msg);
+    throw new Error(await extractApiError(response, 'Update failed'));
   }
   return response.json();
 }
@@ -338,8 +325,7 @@ export async function getSlaTrackingConversation(
   const url = `/api/v1/sla-management/conversation-sla-tracking/${trackingId}/conversation${qs ? `?${qs}` : ''}`;
   const response = await apiFetch(url);
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err.detail || err.message || 'Failed to load conversation');
+    throw new Error(await extractApiError(response, 'Failed to load conversation'));
   }
   return response.json();
 }
@@ -532,14 +518,6 @@ export async function postSlaTrackingConversationReply(
     },
   );
   if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    const detail = err.detail;
-    const msg =
-      typeof detail === 'string'
-        ? detail
-        : Array.isArray(detail)
-          ? detail.map((d: { msg?: string }) => d.msg).filter(Boolean).join(' ')
-          : err.message || 'Failed to send message';
-    throw new Error(msg);
+    throw new Error(await extractApiError(response, 'Failed to send message'));
   }
 }
