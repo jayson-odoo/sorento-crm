@@ -46,7 +46,13 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { Eye, RotateCcw, Ban, Search, X } from 'lucide-react';
+import { Eye, RotateCcw, Ban, Search, X, ChevronDown, Download } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   useBulkCancelEmailOutbox,
   useBulkRetryEmailOutbox,
@@ -250,39 +256,38 @@ export default function EmailOutboxList() {
     >
       <Card>
         <CardHeader className="block">
-          {selectedIds.length > 0 && (
-            <div className="mb-3 flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 px-3 py-2">
-              <span className="text-sm font-medium">{selectedIds.length} selected</span>
-              <div className="ms-auto flex flex-wrap items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={bulkPending}
-                  onClick={() =>
-                    bulkRetryMut.mutate(selectedIds, { onSuccess: clearSelection })
-                  }
-                >
-                  <RotateCcw className="size-4" /> Retry selected
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  disabled={bulkPending}
-                  onClick={() =>
-                    bulkCancelMut.mutate(selectedIds, { onSuccess: clearSelection })
-                  }
-                >
-                  <Ban className="size-4" /> Cancel selected
-                </Button>
-                <Button variant="dim" size="sm" disabled={bulkPending} onClick={clearSelection}>
-                  Clear
-                </Button>
-              </div>
-            </div>
-          )}
           <DataGridListToolbar
             table={table}
+            bulkActionsSlot={({ openExport }) => (
+              // Consolidated "Action ▾" dropdown in the base toolbar's bulk strip
+              // (reuses DataGridListToolbar; Export lives inside via openExport).
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5" disabled={bulkPending}>
+                    Action
+                    <ChevronDown className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem
+                    disabled={bulkPending}
+                    onClick={() => bulkRetryMut.mutate(selectedIds, { onSuccess: clearSelection })}
+                  >
+                    <RotateCcw className="size-4 me-2" /> Retry selected
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={bulkPending}
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => bulkCancelMut.mutate(selectedIds, { onSuccess: clearSelection })}
+                  >
+                    <Ban className="size-4 me-2" /> Cancel selected
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={openExport}>
+                    <Download className="size-4 me-2" /> Export
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
             searchSlot={
               <div className="relative">
                 <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
