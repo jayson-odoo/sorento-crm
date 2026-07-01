@@ -5,6 +5,7 @@ from urllib.parse import urlparse, unquote
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.services.storage_router import (
@@ -15,6 +16,9 @@ from app.services.storage_router import (
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+# Dedicated audit channel: one line per presign (who / key / attachment / entity /
+# ttl) so every signed URL is traceable if the shared key is ever misused.
+presign_audit = logging.getLogger("presign_audit")
 
 router = APIRouter()
 
@@ -59,30 +63,49 @@ def _normalize_to_s3_key(file_path: str) -> str:
     return key
 
 
-def _provider_for_file_path(db: Session, file_path: str) -> str:
-    """Best-effort provider lookup so the right backend signs the URL.
+def _resolve_attachment(db: Session, raw_file_path: str, key: str):
+    """Return the most-recent Attachment row matching this file_path, or None.
 
-    Tries DB lookup by stored file_path first (the canonical source of truth),
-    then URL-host sniffing, finally STORAGE_DEFAULT_PROVIDER.
+    Matches on either the raw request value or the normalized S3 key — attachments
+    store file_path as a bare key OR a full CDN URL, so try both.
     """
     from app.models.resources import Attachment
 
-    # Match the row by its stored file_path. Row ordering picks the most recent
-    # so reuploads of the same key resolve to the latest provider.
     try:
-        row = (
-            db.query(Attachment.storage_provider)
-            .filter(Attachment.file_path == file_path)
+        return (
+            db.query(Attachment)
+            .filter(Attachment.file_path.in_([raw_file_path, key]))
             .order_by(Attachment.uploaded_at.desc())
             .first()
         )
-        if row and row[0]:
-            return str(row[0])
     except Exception as e:  # noqa: BLE001
-        logger.debug("storage_provider lookup failed for %s: %s", file_path[:80], e)
+        logger.debug("attachment lookup failed for %s: %s", (key or "")[:80], e)
+        return None
 
+
+def _provider_for_attachment(attachment, file_path: str) -> str:
+    """Provider from the resolved attachment row, else URL sniff, else default."""
+    if attachment is not None and getattr(attachment, "storage_provider", None):
+        return str(attachment.storage_provider)
     sniffed = detect_provider_from_url(file_path)
     return sniffed or default_provider()
+
+
+def _entity_link_for(db: Session, attachment_id: str) -> str:
+    """Human-readable 'entity_type:entity_id' for the audit line (best-effort)."""
+    try:
+        from app.models.entity_attachment import EntityAttachmentLink
+
+        link = (
+            db.query(EntityAttachmentLink)
+            .filter(EntityAttachmentLink.attachment_id == attachment_id)
+            .first()
+        )
+        if link:
+            return f"{link.entity_type}:{link.entity_id}"
+    except Exception:  # noqa: BLE001
+        pass
+    return "-"
 
 
 @router.post("/", response_model=PresignedUrlResponse)
@@ -108,16 +131,43 @@ async def get_presigned_url(
     """
     try:
         key = _normalize_to_s3_key(body.file_path)
-        provider = _provider_for_file_path(db, body.file_path)
+
+        # Object-level guard: only sign a key that maps to a real attachments row,
+        # so a holder of the shared X-API-Key cannot presign arbitrary/guessed
+        # paths (IDOR). Escape hatch via settings for legit keys with no row yet.
+        attachment = _resolve_attachment(db, body.file_path, key)
+        if attachment is None and settings.presigned_require_attachment_row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No attachment found for the given file_path.",
+            )
+
+        # Clamp the URL lifetime — a signed URL must not outlive the action.
+        expires_in = min(int(body.expires_in), int(settings.presigned_max_ttl_seconds))
+
+        provider = _provider_for_attachment(attachment, body.file_path)
         backend = get_backend(provider)
-        presigned_url = backend.get_signed_url(key, expires_in=body.expires_in)
+        presigned_url = backend.get_signed_url(key, expires_in=expires_in)
+
+        attachment_id = str(getattr(attachment, "id", "")) if attachment else "-"
+        presign_audit.info(
+            "presign act_as=%s attachment=%s entity=%s key=%s ttl=%s provider=%s",
+            (current_user or {}).get("id", "-"),
+            attachment_id,
+            _entity_link_for(db, attachment_id) if attachment else "-",
+            key,
+            expires_in,
+            provider,
+        )
         return PresignedUrlResponse(
             presigned_url=presigned_url,
             file_path=key,
             filename=body.filename,
-            expires_in=body.expires_in,
+            expires_in=expires_in,
             storage_provider=provider,
         )
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:

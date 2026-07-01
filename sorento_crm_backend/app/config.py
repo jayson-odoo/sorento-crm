@@ -83,6 +83,14 @@ class Settings(BaseSettings):
     rate_limit_portal_otp_max: int = 30        # portal OTP requests per window per IP
     rate_limit_portal_otp_window_seconds: int = 60
 
+    # Presigned-URL hardening (external API) — see PLAN-fix-security-cluster Sub-plan B.
+    # When True, /external/presigned-url only signs a file_path that resolves to a
+    # real attachments row (blocks signing arbitrary/guessed keys). Escape hatch:
+    # set PRESIGNED_REQUIRE_ATTACHMENT_ROW=false if a legit n8n flow presigns a key
+    # with no row yet. Max TTL clamps expires_in (URLs shouldn't outlive the action).
+    presigned_require_attachment_row: bool = True
+    presigned_max_ttl_seconds: int = 3600
+
     embedding_queue_name: str = "embeddings"
     # When True, scheduled task also drains pending rows from embedding_queue if Redis is empty of jobs.
     # Set False to use Redis (RQ) only; then REDIS_URL must be the instance where jobs were enqueued.
