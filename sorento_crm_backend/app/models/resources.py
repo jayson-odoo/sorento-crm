@@ -58,6 +58,9 @@ class Attachment(Base):
     original_filename = Column(String(255), nullable=False)
     stored_filename = Column(String(255), nullable=False)
     file_path = Column(Text, nullable=False)  # URL or path; TEXT to support CloudFront signed URLs
+    # CDN base URL of a ~320px thumbnail object ("{key}.thumb.jpg") for the Files
+    # grid; NULL for non-images / pre-backfill rows. Signed on read like file_path.
+    thumbnail_path = Column(Text, nullable=True)
     file_size_bytes = Column(Integer, nullable=True)
     mime_type = Column(String(100), nullable=True)
     file_hash = Column(String(64), nullable=True)

@@ -74,4 +74,30 @@ describe('DriveImageThumbnail', () => {
     await waitFor(() => expect(mockedPreview).toHaveBeenCalled());
     expect(screen.queryByRole('img')).toBeNull();
   });
+
+  it('thumbnail fast path: renders the pre-signed thumbnail immediately, no fetch, no IO wait', async () => {
+    render(
+      <DriveImageThumbnail
+        attachmentId="a1"
+        alt="photo"
+        thumbnailUrl="https://cdn.example/thumb/abc.thumb.jpg"
+      />
+    );
+    // Rendered right away — never waited for IntersectionObserver.
+    const img = await screen.findByRole('img');
+    expect(img).toHaveAttribute('src', 'https://cdn.example/thumb/abc.thumb.jpg');
+    expect(img).toHaveAttribute('loading', 'lazy');
+    expect(img).toHaveAttribute('decoding', 'async');
+    // The expensive per-image serve-URL round-trip is skipped entirely.
+    expect(mockedPreview).not.toHaveBeenCalled();
+  });
+
+  it('thumbnail fast path: falls back to the fetch path when no thumbnailUrl is given', async () => {
+    render(<DriveImageThumbnail attachmentId="a1" alt="photo" thumbnailUrl={null} />);
+    expect(screen.queryByRole('img')).toBeNull();
+    await act(async () => {
+      lastCallback?.([{ isIntersecting: true }]);
+    });
+    await waitFor(() => expect(mockedPreview).toHaveBeenCalledWith('a1'));
+  });
 });

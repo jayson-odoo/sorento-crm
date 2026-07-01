@@ -115,6 +115,7 @@ function DriveCard({
             <DriveImageThumbnail
               attachmentId={item.id}
               alt={itemLabel(item)}
+              thumbnailUrl={isFileItem(item) ? item.thumbnail_url : null}
               className="h-full w-full"
             />
           ) : (

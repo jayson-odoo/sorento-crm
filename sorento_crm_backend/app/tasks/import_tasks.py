@@ -626,6 +626,13 @@ def process_attachment_bulk_import(
                         file_path=s3_file_path,
                         content_type=guessed_type,
                     )
+                    # Grid thumbnail (images only) — same small-variant path as the
+                    # single-file upload route so bulk-imported photos also render
+                    # at ~320px in the Files grid. Best-effort; never fails import.
+                    from app.services.image_thumbnailer import store_thumbnail
+                    bulk_thumbnail_path = store_thumbnail(
+                        storage_backend, storage_provider, s3_key, file_content, guessed_type
+                    )
 
                     if existing_to_replace is not None:
                         # Replace-in-place: preserve attachment_id + every linkage.
@@ -634,6 +641,7 @@ def process_attachment_bulk_import(
                         existing_to_replace.attachment_type_id = attachment_type_id  # type: ignore[assignment]
                         existing_to_replace.stored_filename = stored_filename  # type: ignore[assignment]
                         existing_to_replace.file_path = cdn_base_url(storage_provider, s3_key)  # type: ignore[assignment]
+                        existing_to_replace.thumbnail_path = bulk_thumbnail_path  # type: ignore[assignment]
                         existing_to_replace.file_size_bytes = len(file_content)  # type: ignore[assignment]
                         existing_to_replace.mime_type = guessed_type or "application/octet-stream"  # type: ignore[assignment]
                         existing_to_replace.file_hash = hashlib.sha256(file_content).hexdigest()  # type: ignore[assignment]
@@ -676,6 +684,7 @@ def process_attachment_bulk_import(
                         original_filename=key_basename,
                         stored_filename=stored_filename,
                         file_path=cdn_base_url(storage_provider, s3_key),
+                        thumbnail_path=bulk_thumbnail_path,
                         file_size_bytes=len(file_content),
                         mime_type=guessed_type or "application/octet-stream",
                         file_hash=hashlib.sha256(file_content).hexdigest(),

@@ -15,7 +15,11 @@ import mimetypes
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.resources_service import AttachmentService, AttachmentTypeService, AttachmentDirectoryService
-from app.services.storage_router import sanitize_storage_filename
+from app.services.storage_router import (
+    PROVIDER_R2,
+    normalize_provider,
+    sanitize_storage_filename,
+)
 from app.services.uuid_list_param import parse_uuid_list
 from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.integration_service import IntegrationLogService
@@ -26,6 +30,7 @@ from app.services.excel_macro_stripper import (
     is_xlsm_filename,
 )
 from app.services.image_normalizer import ensure_rgb_image
+from app.services.image_thumbnailer import store_thumbnail
 from app.services.n8n_webhook_settings import get_n8n_attachment_webhook_url
 from app.schemas.resources import (
     AttachmentCreate,
@@ -465,6 +470,21 @@ async def get_drive_contents(
                 att = it["attachment"]
                 row = DriveFileItem.model_validate(att).model_dump()
                 row["directory_path"] = it.get("directory_path")
+                # Grid thumbnail URL. R2's CDN domain is public, so the stored
+                # thumbnail_path is already a stable, cacheable URL — serve it
+                # as-is. A per-load presigned signature would change every render
+                # and bust the browser/CDN cache, forcing a re-download of every
+                # thumbnail on every grid load (the "not instant" symptom).
+                # S3/CloudFront is private, so those must still be signed.
+                thumb_path = getattr(att, "thumbnail_path", None)
+                if thumb_path:
+                    prov = getattr(att, "storage_provider", None)
+                    if normalize_provider(prov) == PROVIDER_R2:
+                        row["thumbnail_url"] = str(thumb_path)
+                    else:
+                        row["thumbnail_url"] = _resolve_attachment_file_path(
+                            str(thumb_path), provider=prov
+                        )
                 uid = getattr(att, "uploaded_by", None)
                 user_info = user_map.get(str(uid)) if uid else None
                 if user_info:
@@ -893,6 +913,11 @@ async def create_attachment(
         is_promotion_upload = (entity_type or "").strip().lower() == "promotion"
         # Persist only a stable, non-signed CDN URL in DB; signing happens on read.
         stored_file_path = cdn_base_url(provider, s3_key)
+        # Grid thumbnail (image uploads only) — small variant so the Files grid
+        # paints a ~320px image instead of the full-resolution original.
+        stored_thumbnail_path = store_thumbnail(
+            backend, provider, s3_key, file_content, upload_mime
+        )
 
         # Parse access levels for attachment record and webhook (JSON array string expected).
         # For promotion uploads, use the promotion's access_levels when entity_id is provided.
@@ -945,6 +970,7 @@ async def create_attachment(
             existing_to_replace.attachment_type_id = type_id  # type: ignore[assignment]
             existing_to_replace.stored_filename = stored_filename  # type: ignore[assignment]
             existing_to_replace.file_path = stored_file_path  # type: ignore[assignment]
+            existing_to_replace.thumbnail_path = stored_thumbnail_path  # type: ignore[assignment]
             existing_to_replace.file_size_bytes = file_size  # type: ignore[assignment]
             existing_to_replace.mime_type = upload_mime or "application/octet-stream"  # type: ignore[assignment]
             existing_to_replace.file_hash = file_hash  # type: ignore[assignment]
@@ -988,6 +1014,7 @@ async def create_attachment(
             original_filename=original_filename,
             stored_filename=stored_filename,
             file_path=stored_file_path,
+            thumbnail_path=stored_thumbnail_path,
             file_size_bytes=file_size,
             mime_type=upload_mime or "application/octet-stream",  # Default if None
             file_hash=file_hash,
@@ -1383,6 +1410,10 @@ async def get_attachment_metadata(
 @router.get("/{attachment_id}/preview-url")
 async def get_attachment_preview_url(
     attachment_id: str,
+    variant: str = Query(
+        "original",
+        description="original (default) | thumb — thumb signs the grid thumbnail, falling back to the original when none exists.",
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -1391,6 +1422,10 @@ async def get_attachment_preview_url(
         service = AttachmentService(db)
         attachment = service.get_attachment(attachment_id)
         file_path = getattr(attachment, "file_path", None)
+        if (variant or "").strip().lower() == "thumb":
+            thumb_path = getattr(attachment, "thumbnail_path", None)
+            if thumb_path:
+                file_path = thumb_path
         preview_url = _resolve_attachment_file_path(
             str(file_path) if file_path is not None else None,
             provider=getattr(attachment, "storage_provider", None),

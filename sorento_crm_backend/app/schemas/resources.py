@@ -95,6 +95,7 @@ class AttachmentBase(BaseModel):
     access_levels: Optional[list[str]] = None  # e.g. ["dealer", "end_user"]
     sort_order: Optional[int] = None
     storage_provider: Optional[str] = None  # 's3' or 'r2'; controls URL signing dispatch
+    thumbnail_path: Optional[str] = None  # CDN base URL of the grid thumbnail; NULL for non-images
     # Field-linkage template applied when the attachment is later linked to a
     # specific row via any link API. See app.services.field_linkage.registry.
     target_entity_type: Optional[str] = None
@@ -293,6 +294,7 @@ class AttachmentResponse(AttachmentBase):
     deleted_by: Optional[str] = None
     storage_status: Optional[str] = None  # accessible | missing | unchecked (read-only audit flag)
     storage_checked_at: Optional[datetime] = None
+    thumbnail_url: Optional[str] = None  # freshly-signed thumbnail URL for the grid (set by list serializer)
     attachment_type: Optional[AttachmentTypeSimple] = None
     entity_display_name: Optional[str] = None
     linked_products: list[LinkedEntityRef] = []

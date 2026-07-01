@@ -89,6 +89,10 @@ export interface AttachmentResponse {
   original_filename: string;
   stored_filename: string;
   file_path: string;
+  /** CDN base URL of the stored grid thumbnail; null for non-images / pre-backfill. */
+  thumbnail_path?: string | null;
+  /** Freshly-signed thumbnail URL supplied by the drive-list serializer for the grid. */
+  thumbnail_url?: string | null;
   file_size_bytes?: number | null;
   mime_type?: string | null;
   file_hash?: string | null;
