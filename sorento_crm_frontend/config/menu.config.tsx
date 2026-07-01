@@ -670,6 +670,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/system-management/import-logs',
       },
       {
+        title: 'Audit Logs',
+        path: '/system-management/audit-logs',
+      },
+      {
         title: 'Integration Logs',
         path: '/integration-management/integration-logs',
       },
@@ -1495,6 +1499,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Import Logs',
         path: '/system-management/import-logs',
+      },
+      {
+        title: 'Audit Logs',
+        path: '/system-management/audit-logs',
       },
       {
         title: 'Integration Logs',

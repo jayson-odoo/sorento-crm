@@ -191,7 +191,19 @@ This is **XL** — 229+54 = ~283 mechanical sites + 14 security-sensitive + UI w
    - A  `dbfc44854` — per-IP rate limiter (signup 3/hr, reset 5/15min, portal-OTP 30/min; env-configurable; fail-open) + enumeration-safe signup/reset (7 pytest).
    - C3 `bc8154940` — UUIDPath guard on 173 internal-UUID handlers/35 files; EXCLUDED resolve_identifier code-or-UUID routes + contacts + external/public + UUID-typed tracking_id (63 pytest; +59 suite passes, 0 new failures vs baseline).
    - ⏳ Pending: browser-verify the 2 FE changes (C2 filters gone, C4 lookup degrade), then push/merge.
-2. **Phase 2:** B (object-authz + short TTL + presign audit) — AFTER verifying n8n act-as role view-perms so legit presigns don't 403.
-3. **Phase 3:** D Tier-1 — `/system-management/audit-logs` FE page (on existing API) + bulk-action UI on outbox/import lists + explicit IMPERSONATE audit event.
-4. **Ongoing:** E — opportunistic refactor on-touch + ESLint rule banning `.json().catch` / manual `URLSearchParams` / native `confirm()`; hand-review the 14 `dangerouslySetInnerHTML` as a one-off security PR.
-Each phase: implement → pytest/vitest/playwright per three-phase rule → browser-verify → deploy. Write UAC doc before coding each phase (per user rule).
+2. ✅ **Phase 2 DONE** — B `07e691b9f` — presigned-URL hardening: only signs a key with a real attachments row (escape hatch `PRESIGNED_REQUIRE_ATTACHMENT_ROW`), TTL clamp (`PRESIGNED_MAX_TTL_SECONDS`, default 3600), presign audit logger (4 pytest). Deliberately NO per-entity RBAC (shared broad service principal → theatre; real fix = require-row + TTL + audit + key rotation, per-tenant keys deferred). Portal attachment side audited → **already owner-scoped** (list/get/upload/delete gate on get_submission contact_id+space_id); audit's "weak portal authz" was a false alarm. n8n act-as role: not needed since no RBAC check added.
+3. **Phase 3 (D Tier-1) — PARTIAL:**
+   - ✅ **D-3 already implemented** — user- AND contact-impersonation both `log_audit` on start+stop (impersonation.py:138/176, contact_impersonation.py:169/224) with admin+target+ip. §4a finding was stale. No work needed.
+   - ⏳ **D-1 audit-logs FE page** — building now (agent): `/system-management/audit-logs` on the existing `GET /api/v1/audit/` API + sidebar entry + vitest.
+   - ⬜ **D-2 bulk-action UI — RE-SCOPED**: the audit assumed bulk endpoints exist; they DON'T. email-outbox/scheduled-tasks have only PER-ROW actions (retry/cancel/run-now); import-logs/respond-outbox are read-only. Real work = build NEW BE bulk endpoints (e.g. email-outbox bulk retry/cancel) THEN wire FE bars. Own focused pass.
+4. **Phase 4 (E) — PARTIAL:**
+   - ✅ **E-1 lint guard** `4a113b8c0` — `no-restricted-syntax` (warn) bans new `.json().catch` + native `confirm()`; URLSearchParams left out (not cleanly lintable).
+   - ⬜ **E-2 DOMPurify** — 12 of 14 `dangerouslySetInnerHTML` render user/external HTML (chat message.text, ticket/notes/email bodies) and need sanitizing; 2 are safe (layout script, recharts styles). Needs a new runtime dep (`isomorphic-dompurify`) → own PR so the `npm install` doesn't disrupt a running dev server.
+   - ⬜ **E broad refactor** — 229 `.json().catch` + 54 `URLSearchParams` sites: opportunistic on-touch (decided), lint now surfaces new ones.
+Each phase: implement → pytest/vitest/playwright per three-phase rule → browser-verify → deploy.
+
+## Remaining scoped follow-ups (precise)
+- **D-1 finish**: commit + browser-verify the audit page.
+- **D-2**: new BE bulk endpoints (email-outbox bulk retry/cancel first) + FE bulk-action bar + tests.
+- **E-2**: add `isomorphic-dompurify`, a shared `sanitizeHtml()` helper, apply to the 12 user-HTML sinks; leave layout.tsx + chart.tsx.
+- **Browser-verify** all FE changes (C2, C4, D-1) from the worktree on a spare port, then push/merge the branch.
