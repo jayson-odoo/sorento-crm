@@ -20,6 +20,16 @@ import ComplaintLinkAttachmentBrowserDialog from '@/app/(protected)/complaint-ma
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 interface PurchaseRequestAttachmentsSectionProps {
   requestId: string;
@@ -33,6 +43,7 @@ export default function PurchaseRequestAttachmentsSection({
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
+  const [unlinkTarget, setUnlinkTarget] = useState<{ id: string; name: string } | null>(null);
   const deleteMutation = useDeletePurchaseRequestAttachment();
 
   const attachments = useMemo(
@@ -149,7 +160,9 @@ export default function PurchaseRequestAttachmentsSection({
                           <Button
                             variant="destructive"
                             size="sm"
-                            onClick={() => deleteMutation.mutate(link.id)}
+                            onClick={() =>
+                              setUnlinkTarget({ id: link.id, name: displayName })
+                            }
                             disabled={deleteMutation.isPending}
                           >
                             <Trash2 className="size-4" />
@@ -171,6 +184,35 @@ export default function PurchaseRequestAttachmentsSection({
         items={previewItems}
         startIndex={previewIndex}
       />
+      <AlertDialog
+        open={!!unlinkTarget}
+        onOpenChange={(o) => {
+          if (!o) setUnlinkTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unlink attachment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the link between{' '}
+              <strong>{unlinkTarget?.name}</strong> and this purchase request. The
+              file itself is not deleted. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (unlinkTarget) deleteMutation.mutate(unlinkTarget.id);
+                setUnlinkTarget(null);
+              }}
+            >
+              Unlink
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {linkDialogOpen && (
         <ComplaintLinkAttachmentBrowserDialog
           open={linkDialogOpen}
