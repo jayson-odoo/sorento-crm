@@ -1,7 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, FileQuestion, LoaderCircle } from 'lucide-react';
+import {
+  Download,
+  ExternalLink,
+  FileQuestion,
+  LoaderCircle,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -64,6 +71,7 @@ export default function AttachmentPreviewModal({
 }: AttachmentPreviewModalProps) {
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(startIndex);
+  const [zoom, setZoom] = useState(1);
 
   useEffect(() => {
     if (!api) return;
@@ -75,18 +83,35 @@ export default function AttachmentPreviewModal({
     };
   }, [api]);
 
+  // Reset zoom whenever the visible slide changes.
+  useEffect(() => {
+    setZoom(1);
+  }, [current]);
+
+  const zoomBy = useCallback((factor: number) => {
+    setZoom((z) => Math.min(5, Math.max(0.25, +(z * factor).toFixed(2))));
+  }, []);
+
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'ArrowRight') api?.scrollNext();
       else if (e.key === 'ArrowLeft') api?.scrollPrev();
+      else if (e.key === '+' || e.key === '=') zoomBy(1.25);
+      else if (e.key === '-') zoomBy(0.8);
     },
-    [api],
+    [api, zoomBy],
   );
 
   // Remount on each open so opts.startIndex is honoured and heavy content is
   // freed when closed.
   if (!open || items.length === 0) return null;
   const activeItem = items[current] ?? items[0];
+  const activeIsImage = kindOf(activeItem?.name ?? '') === 'image';
+  // Open-in-new-tab target: the cacheable CDN url if we have one, else the
+  // same-origin download route.
+  const openUrl = activeItem?.url?.startsWith('http')
+    ? activeItem.url
+    : activeItem?.downloadUrl;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -103,14 +128,51 @@ export default function AttachmentPreviewModal({
               {current + 1} / {items.length}
             </p>
           </div>
-          {activeItem?.downloadUrl && (
-            <Button variant="outline" size="sm" asChild>
-              <a href={activeItem.downloadUrl} download={activeItem.name}>
-                <Download className="size-4 mr-1" />
-                Download
-              </a>
-            </Button>
-          )}
+          <div className="flex shrink-0 items-center gap-2">
+            {activeIsImage && (
+              <div className="flex items-center rounded-md border">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="px-2"
+                  onClick={() => zoomBy(0.8)}
+                  disabled={zoom <= 0.25}
+                  aria-label="Zoom out"
+                >
+                  <ZoomOut className="size-4" />
+                </Button>
+                <span className="w-11 text-center text-xs tabular-nums text-muted-foreground">
+                  {Math.round(zoom * 100)}%
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="px-2"
+                  onClick={() => zoomBy(1.25)}
+                  disabled={zoom >= 5}
+                  aria-label="Zoom in"
+                >
+                  <ZoomIn className="size-4" />
+                </Button>
+              </div>
+            )}
+            {openUrl && (
+              <Button variant="outline" size="sm" asChild>
+                <a href={openUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="size-4 mr-1" />
+                  Open
+                </a>
+              </Button>
+            )}
+            {activeItem?.downloadUrl && (
+              <Button variant="outline" size="sm" asChild>
+                <a href={activeItem.downloadUrl} download={activeItem.name}>
+                  <Download className="size-4 mr-1" />
+                  Download
+                </a>
+              </Button>
+            )}
+          </div>
         </DialogHeader>
 
         <Carousel
@@ -122,7 +184,12 @@ export default function AttachmentPreviewModal({
             {items.map((item, i) => (
               <CarouselItem key={item.id} className="basis-full pl-0">
                 <div className="flex max-h-[80vh] min-h-[60vh] items-center justify-center overflow-auto bg-muted/20 p-3">
-                  <PreviewSlide item={item} isActive={i === current} />
+                  <PreviewSlide
+                    item={item}
+                    isActive={i === current}
+                    zoom={i === current ? zoom : 1}
+                    onWheelZoom={zoomBy}
+                  />
                 </div>
               </CarouselItem>
             ))}
@@ -147,9 +214,13 @@ export default function AttachmentPreviewModal({
 function PreviewSlide({
   item,
   isActive,
+  zoom,
+  onWheelZoom,
 }: {
   item: AttachmentPreviewItem;
   isActive: boolean;
+  zoom: number;
+  onWheelZoom: (factor: number) => void;
 }) {
   const kind = kindOf(item.name);
   // <img>/<video>/<iframe> can't send an auth header, so they can only render a
@@ -166,7 +237,15 @@ function PreviewSlide({
         alt={item.name}
         loading="lazy"
         decoding="async"
-        className="max-h-[78vh] w-auto object-contain"
+        onWheel={(e) => {
+          // Ctrl/Cmd + wheel zooms; plain wheel pans via the overflow container.
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            onWheelZoom(e.deltaY < 0 ? 1.1 : 0.9);
+          }
+        }}
+        style={{ transform: `scale(${zoom})`, transformOrigin: 'center' }}
+        className="max-h-[78vh] w-auto max-w-full object-contain transition-transform"
       />
     ) : (
       <PreviewFallback item={item} reason="This attachment has no previewable URL." />
