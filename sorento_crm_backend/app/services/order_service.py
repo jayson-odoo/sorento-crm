@@ -1120,8 +1120,29 @@ class OrderService:
         self.db.add(order)
         self.db.commit()
         self.db.refresh(order)
+
+        # Complaint <-> DO auto-fulfilment on CREATE: a DO born with a Remarks CS
+        # reference (optionally already delivered/cancelled) must link + (re)fulfil
+        # immediately, mirroring update_order. Only run when there's something to
+        # link — a blank Remarks CS on a fresh order can't affect any complaint.
+        # Best-effort — never fail the create.
+        if (order.remarks_cs or "").strip():
+            try:
+                from app.services.complaint_fulfilment_service import (
+                    ComplaintFulfilmentService,
+                )
+
+                ComplaintFulfilmentService(self.db).apply_for_orders(
+                    [{"order": order, "old_remarks": None}]
+                )
+                self._attach_remarks_cs_locked(order)
+            except Exception:
+                logger.exception(
+                    "Order %s: complaint fulfilment recompute failed after create",
+                    order.id,
+                )
         return order
-    
+
     def update_order(self, order_id: str, order_data: OrderUpdate, updated_by: str):
         """Update an order."""
         order = self.get_order(order_id)

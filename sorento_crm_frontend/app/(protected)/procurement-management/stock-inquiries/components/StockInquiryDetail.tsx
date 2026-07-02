@@ -303,7 +303,9 @@ export default function StockInquiryDetail({
               Edit purchasing response
             </Button>
           )}
-          {inquiry.status === 'pending_purchasing' && canPurchasingReject && (
+          {(inquiry.status === 'pending_purchasing' ||
+            inquiry.status === 'responded') &&
+            canPurchasingReject && (
             <Button
               variant="outline"
               size="sm"

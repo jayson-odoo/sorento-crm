@@ -3720,9 +3720,9 @@ class StockInquiryService:
         """Move inquiry from pending_purchasing to rejected."""
         from datetime import datetime, timezone
         inquiry = self.get_inquiry(inquiry_id)
-        if inquiry.status != "pending_purchasing":
+        if inquiry.status not in ("pending_purchasing", "responded"):
             from app.services.error_handler import handle_validation_error
-            raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_purchasing.")
+            raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_purchasing or responded.")
         inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
         reason_text = (reason or "").strip()
         if not reason_text:
@@ -3755,8 +3755,9 @@ class StockInquiryService:
             respond_user_id_fallback=respond_user_id_fallback or user_id,
             extra_context_vars=pur_reject_extra_vars,
         )
+        prior_status = inquiry.status
         inquiry.status = "rejected"
-        inquiry.rejected_from = "pending_purchasing"
+        inquiry.rejected_from = prior_status
         inquiry.rejection_reason = reason_text
         inquiry.rejected_at = datetime.now(timezone.utc).replace(tzinfo=None)
         inquiry.rejected_by = user_id

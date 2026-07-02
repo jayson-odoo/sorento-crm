@@ -36,6 +36,14 @@ class _AssignRequest(BaseModel):
     redirect_assignments: bool = False
 
 
+class _NominateRequest(BaseModel):
+    coverer_id: str
+    expires_at: Optional[datetime] = None
+    # True = auto-assign my future SLA tasks to the coverer (redirect; sole coverer).
+    # False = notify-only: the coverer is notified and takes over manually.
+    redirect_assignments: bool = False
+
+
 @router.get("/")
 async def list_my_coverage(
     current_user: dict = Depends(get_current_user),
@@ -69,6 +77,56 @@ async def subscribe_coverage(
             "id": str(sub.id),
             "target_user_id": str(sub.target_user_id),
             "is_active": bool(sub.is_active),
+            "redirect_assignments": bool(getattr(sub, "redirect_assignments", False)),
+            "expires_at": (
+                getattr(sub, "expires_at").isoformat()
+                if getattr(sub, "expires_at", None)
+                else None
+            ),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/for-me")
+async def list_coverage_for_me(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List colleagues who cover me (subscriptions where I'm the covered party)."""
+    try:
+        data = CoverageSubscriptionService(db).list_coverage_for_me(current_user["id"])
+        return {"data": data, "empty": len(data) == 0}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/nominate", status_code=201)
+async def nominate_coverer(
+    payload: _NominateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Self-service: nominate a scope-B colleague to cover ME while I'm away.
+
+    No ``manage_team`` permission required — the coverer just has to be in my
+    teams (∪ child teams). Upsert keyed by (coverer, me): re-posting updates the
+    expiry + mode. The coverer is notified best-effort."""
+    try:
+        sub = CoverageSubscriptionService(db).nominate_coverer(
+            current_user["id"],
+            payload.coverer_id,
+            payload.expires_at,
+            redirect_assignments=payload.redirect_assignments,
+        )
+        return {
+            "id": str(sub.id),
+            "subscriber_id": str(sub.subscriber_id),
+            "target_user_id": str(sub.target_user_id),
             "redirect_assignments": bool(getattr(sub, "redirect_assignments", False)),
             "expires_at": (
                 getattr(sub, "expires_at").isoformat()

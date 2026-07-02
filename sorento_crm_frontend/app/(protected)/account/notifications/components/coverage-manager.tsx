@@ -42,7 +42,9 @@ import { cn } from '@/lib/utils';
 import { useVisibleUsers } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import {
   useAssignCoverage,
+  useCoverageForMe,
   useMyCoverage,
+  useNominateCoverage,
   useRevokeCoverageById,
   useSubscribeCoverage,
   useTeamCoverage,
@@ -80,7 +82,9 @@ interface Row {
    * sr-only so the page snapshot the AI assistant reads is unambiguous about who covers
    * whom vs who assigned it — the compact "name → name" row flattens that distinction. */
   summary: string | null;
-  source: 'mine' | 'team';
+  /** 'mine' = I'm the coverer (self endpoint); 'team' = HoD-managed row; 'for-me' =
+   * a colleague covers me (revoke by id, edit via nominate). */
+  source: 'mine' | 'team' | 'for-me';
 }
 
 interface PickerProps {
@@ -148,13 +152,21 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
   // colleagues they personally cover.
   const teamQuery = useTeamCoverage(canManageTeam);
   const myQuery = useMyCoverage();
-  const listLoading = canManageTeam ? teamQuery.isLoading : myQuery.isLoading;
-  const listError = (canManageTeam ? teamQuery.error : myQuery.error) as Error | null;
+  // Non-managers also see who covers THEM (self-nominated or HoD-arranged). Managers
+  // already see for-me rows inside their team-scope view, so skip the extra fetch.
+  const forMeQuery = useCoverageForMe(!canManageTeam);
+  const listLoading = canManageTeam
+    ? teamQuery.isLoading
+    : myQuery.isLoading || forMeQuery.isLoading;
+  const listError = (canManageTeam
+    ? teamQuery.error
+    : myQuery.error || forMeQuery.error) as Error | null;
 
   const subscribe = useSubscribeCoverage();
   const update = useUpdateCoverage();
   const unsubscribe = useUnsubscribeCoverage();
   const assign = useAssignCoverage();
+  const nominate = useNominateCoverage();
   const revoke = useRevokeCoverageById();
 
   const [covererId, setCovererId] = useState(ME);
@@ -182,7 +194,7 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
         source: 'team' as const,
       }));
     }
-    return (myQuery.data ?? []).map((c) => ({
+    const mine: Row[] = (myQuery.data ?? []).map((c) => ({
       id: c.id,
       covererId: myId ?? ME,
       covererName: 'You',
@@ -195,26 +207,50 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
       summary: c.summary ?? null,
       source: 'mine' as const,
     }));
-  }, [canManageTeam, teamQuery.data, myQuery.data, myId]);
+    // Colleagues who cover ME (self-nominated or HoD-arranged). Shown so I can see +
+    // cancel my own cover. De-dupe against `mine` by id (a self-cover can't be both).
+    const seen = new Set(mine.map((r) => r.id));
+    const forMe: Row[] = (forMeQuery.data ?? [])
+      .filter((c) => !seen.has(c.id))
+      .map((c) => ({
+        id: c.id,
+        covererId: c.subscriber_id,
+        covererName: c.subscriber_name ?? '—',
+        isMeCoverer: false,
+        coveredId: myId ?? ME,
+        coveredName: 'You',
+        redirect: c.redirect_assignments,
+        expiresAt: c.expires_at,
+        assignedByName: c.assigned_by_hod ? c.assigned_by_name ?? 'a manager' : null,
+        summary: c.summary ?? null,
+        source: 'for-me' as const,
+      }));
+    return [...mine, ...forMe];
+  }, [canManageTeam, teamQuery.data, myQuery.data, forMeQuery.data, myId]);
 
-  // Coverer options: "You" first, then scope-B colleagues (managers only).
+  // Coverer options: "You" first, then scope-B colleagues. Everyone can pick a
+  // colleague now — a non-manager doing so can only cover THEMSELVES (self-nominate).
   const covererOptions = useMemo(() => {
     const me = { id: ME, label: 'You' };
-    if (!canManageTeam) return [me];
     return [me, ...visibleUsers.map((u) => ({ id: u.id, label: u.name || u.email }))];
-  }, [canManageTeam, visibleUsers]);
+  }, [visibleUsers]);
 
-  // Covered options: scope-B colleagues, never the chosen coverer.
+  // Covered options: scope-B colleagues, never the chosen coverer. "You" is offered
+  // when the coverer is someone else (a colleague covering me). A non-manager who
+  // picked a colleague as coverer may ONLY cover themselves.
   const resolvedCovererId = covererId === ME ? myId : covererId;
-  const coveredOptions = useMemo(
-    () =>
-      visibleUsers
-        .filter((u) => u.id !== resolvedCovererId)
-        .map((u) => ({ id: u.id, label: u.name || u.email })),
-    [visibleUsers, resolvedCovererId],
+  const coveredOptions = useMemo(() => {
+    const me = myId ? [{ id: myId, label: 'You' }] : [];
+    if (!canManageTeam && covererId !== ME) return me;
+    const colleagues = visibleUsers
+      .filter((u) => u.id !== resolvedCovererId)
+      .map((u) => ({ id: u.id, label: u.name || u.email }));
+    // Offer "You" as the covered party only when a colleague is the coverer.
+    return covererId !== ME ? [...me, ...colleagues] : colleagues;
+  }, [canManageTeam, covererId, visibleUsers, resolvedCovererId, myId],
   );
 
-  const adding = subscribe.isPending || assign.isPending;
+  const adding = subscribe.isPending || assign.isPending || nominate.isPending;
 
   const resetForm = () => {
     setCovererId(ME);
@@ -227,11 +263,19 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
     if (!targetId) return;
     const expiresIso = expiresAt ? new Date(expiresAt).toISOString() : undefined;
     if (covererId === ME) {
+      // I cover a colleague.
       subscribe.mutate(
         { targetUserId: targetId, expiresAt: expiresIso, redirectAssignments: redirect },
         { onSuccess: resetForm },
       );
+    } else if (targetId === myId) {
+      // A colleague covers ME — self-service nominate (no manager permission needed).
+      nominate.mutate(
+        { covererId, expiresAt: expiresIso, redirectAssignments: redirect },
+        { onSuccess: resetForm },
+      );
     } else {
+      // Manager arranging cover between two other people.
       assign.mutate(
         { covererId, targetUserId: targetId, expiresAt: expiresIso, redirectAssignments: redirect },
         { onSuccess: resetForm },
@@ -250,11 +294,16 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
   };
   const handleSaveEdit = (r: Row) => {
     const expiresIso = editDate ? new Date(editDate).toISOString() : undefined;
-    // Route the upsert: my own coverage uses the self endpoint; a manager editing
-    // someone else's coverage re-assigns through the manage endpoint.
+    // Route the upsert: my own coverage uses the self endpoint; coverage OF me
+    // re-nominates (self-service); a manager editing someone else's re-assigns.
     if (r.isMeCoverer) {
       update.mutate(
         { targetUserId: r.coveredId, expiresAt: expiresIso, redirectAssignments: editRedirect },
+        { onSuccess: cancelEdit },
+      );
+    } else if (r.source === 'for-me') {
+      nominate.mutate(
+        { covererId: r.covererId, expiresAt: expiresIso, redirectAssignments: editRedirect },
         { onSuccess: cancelEdit },
       );
     } else {
@@ -274,10 +323,12 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
     if (!removeTarget) return;
     const r = removeTarget;
     const onSuccess = () => setRemoveTarget(null);
-    if (r.source === 'team') {
-      revoke.mutate(r.id, { onSuccess });
-    } else {
+    // 'mine' = I'm the coverer → delete by (me, target). 'team'/'for-me' = revoke by
+    // row id (deactivate_by_id permits the coverer, the covered party, or a HoD).
+    if (r.source === 'mine') {
       unsubscribe.mutate(r.coveredId, { onSuccess });
+    } else {
+      revoke.mutate(r.id, { onSuccess });
     }
   };
 
@@ -291,22 +342,19 @@ export function CoverageManager({ canManageTeam }: { canManageTeam: boolean }) {
         <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3 sm:flex-row sm:items-end">
           <div className="flex-1 space-y-1.5">
             <Label>Coverer</Label>
-            {canManageTeam ? (
-              <Picker
-                value={covererId}
-                onChange={(id) => {
-                  setCovererId(id);
-                  if (id === targetId) setTargetId('');
-                }}
-                options={covererOptions}
-                placeholder="Who covers"
-                disabled={usersLoading || adding}
-              />
-            ) : (
-              <div className="flex h-9 items-center rounded-md border bg-background px-3 text-sm text-muted-foreground">
-                You
-              </div>
-            )}
+            <Picker
+              value={covererId}
+              onChange={(id) => {
+                setCovererId(id);
+                // Reset the covered party when it clashes with the new coverer, or
+                // when a non-manager switches to a colleague-coverer (then only
+                // "You" is valid as the covered party).
+                if (id === targetId || (!canManageTeam && id !== ME)) setTargetId('');
+              }}
+              options={covererOptions}
+              placeholder="Who covers"
+              disabled={usersLoading || adding}
+            />
           </div>
           <div className="hidden shrink-0 pb-2 text-muted-foreground sm:block">
             <ArrowRight className="size-4" />
