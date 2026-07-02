@@ -19,6 +19,9 @@ import {
 import { linkStockInquiryAttachment } from '../services/stockInquiryService';
 import type { StockInquiryAttachment } from '../types/stockInquiry.types';
 import ComplaintLinkAttachmentBrowserDialog from '@/app/(protected)/complaint-management/complaints/components/ComplaintLinkAttachmentBrowserDialog';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 
 interface StockInquiryAttachmentsSectionProps {
   inquiryId: string;
@@ -30,6 +33,8 @@ export default function StockInquiryAttachmentsSection({
   attachments: attachmentsFromInquiry = [],
 }: StockInquiryAttachmentsSectionProps) {
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(0);
   const deleteMutation = useDeleteStockInquiryAttachment();
 
   const attachments = useMemo(
@@ -38,6 +43,25 @@ export default function StockInquiryAttachmentsSection({
         (link) => link.file_name != null || link.file_url != null,
       ),
     [attachmentsFromInquiry],
+  );
+
+  const previewItems = useMemo<AttachmentPreviewItem[]>(
+    () =>
+      attachments.map((link) => {
+        const name = link.original_filename ?? link.file_name ?? 'Unnamed file';
+        const cdn = link.file_url?.startsWith('http') ? link.file_url : undefined;
+        const download = link.attachment_id
+          ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
+          : undefined;
+        return {
+          id: link.id,
+          name,
+          url: cdn ?? '',
+          downloadUrl: download ?? cdn,
+          sizeBytes: link.file_size_bytes,
+        };
+      }),
+    [attachments],
   );
 
   const linkedAttachmentIds = useMemo(
@@ -84,15 +108,9 @@ export default function StockInquiryAttachmentsSection({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {attachments.map((link) => {
+                {attachments.map((link, idx) => {
                   const displayName =
                     link.original_filename ?? link.file_name ?? 'Unnamed file';
-                  const previewUrl =
-                    link.file_url?.startsWith('http') === true
-                      ? link.file_url
-                      : link.attachment_id
-                        ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
-                        : link.file_url ?? '#';
                   return (
                     <TableRow key={link.id}>
                       <TableCell className="font-medium" title={displayName}>
@@ -106,22 +124,23 @@ export default function StockInquiryAttachmentsSection({
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-2">
-                          <Button variant="outline" size="sm" asChild>
-                            <a
-                              href={previewUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              <ExternalLink className="size-4" />
-                              View
-                            </a>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setPreviewIndex(idx);
+                              setPreviewOpen(true);
+                            }}
+                          >
+                            <ExternalLink className="size-4" />
+                            View
                           </Button>
                           <Button variant="outline" size="sm" asChild>
                             <a
                               href={
                                 link.attachment_id
                                   ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
-                                  : previewUrl
+                                  : (link.file_url ?? '#')
                               }
                               download={displayName}
                             >
@@ -148,6 +167,12 @@ export default function StockInquiryAttachmentsSection({
           </div>
         )}
       </CardContent>
+      <AttachmentPreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        items={previewItems}
+        startIndex={previewIndex}
+      />
       {linkDialogOpen && (
         <ComplaintLinkAttachmentBrowserDialog
           open={linkDialogOpen}
