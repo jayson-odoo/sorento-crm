@@ -25,6 +25,31 @@ import {
 } from '@/components/ui/carousel';
 import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/api';
+import { toast } from 'sonner';
+
+/**
+ * Download via the authenticated same-origin route. A plain `<a href download>`
+ * to /download sends no auth header → 401 ("File wasn't available on site"), so
+ * fetch the bytes through apiFetch and save the resulting blob.
+ */
+async function downloadItem(item: AttachmentPreviewItem) {
+  if (!item.downloadUrl) return;
+  try {
+    const resp = await apiFetch(item.downloadUrl);
+    if (!resp.ok) throw new Error('Download failed');
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = item.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch {
+    toast.error(`Could not download ${item.name}`);
+  }
+}
 
 /**
  * One previewable file. `url` is the stable, cacheable CDN URL (for
@@ -92,6 +117,21 @@ export default function AttachmentPreviewModal({
     setZoom((z) => Math.min(5, Math.max(0.25, +(z * factor).toFixed(2))));
   }, []);
 
+  // Editable zoom percentage. Keep a text draft so the user can type freely,
+  // committing (clamped 25–500%) on Enter/blur.
+  const [zoomText, setZoomText] = useState('100');
+  useEffect(() => {
+    setZoomText(String(Math.round(zoom * 100)));
+  }, [zoom]);
+  const commitZoomText = useCallback(() => {
+    const pct = parseInt(zoomText, 10);
+    if (!Number.isNaN(pct)) {
+      setZoom(Math.min(5, Math.max(0.25, pct / 100)));
+    } else {
+      setZoomText(String(Math.round(zoom * 100)));
+    }
+  }, [zoomText, zoom]);
+
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'ArrowRight') api?.scrollNext();
@@ -141,9 +181,28 @@ export default function AttachmentPreviewModal({
                 >
                   <ZoomOut className="size-4" />
                 </Button>
-                <span className="w-11 text-center text-xs tabular-nums text-muted-foreground">
-                  {Math.round(zoom * 100)}%
-                </span>
+                <div className="flex items-center">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={zoomText}
+                    onChange={(e) =>
+                      setZoomText(e.target.value.replace(/[^0-9]/g, '').slice(0, 3))
+                    }
+                    onBlur={commitZoomText}
+                    onKeyDown={(e) => {
+                      // Don't let the modal's arrow/+/- shortcuts fire while typing.
+                      e.stopPropagation();
+                      if (e.key === 'Enter') {
+                        commitZoomText();
+                        (e.target as HTMLInputElement).blur();
+                      }
+                    }}
+                    aria-label="Zoom percentage"
+                    className="w-8 bg-transparent text-right text-xs tabular-nums text-muted-foreground outline-none"
+                  />
+                  <span className="pr-1 text-xs text-muted-foreground">%</span>
+                </div>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -165,11 +224,13 @@ export default function AttachmentPreviewModal({
               </Button>
             )}
             {activeItem?.downloadUrl && (
-              <Button variant="outline" size="sm" asChild>
-                <a href={activeItem.downloadUrl} download={activeItem.name}>
-                  <Download className="size-4 mr-1" />
-                  Download
-                </a>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => downloadItem(activeItem)}
+              >
+                <Download className="size-4 mr-1" />
+                Download
               </Button>
             )}
           </div>
@@ -300,11 +361,9 @@ function PreviewFallback({
       <FileQuestion className="size-10 text-muted-foreground/50" />
       <p className="text-sm text-muted-foreground">{reason}</p>
       {item.downloadUrl && (
-        <Button variant="outline" size="sm" asChild>
-          <a href={item.downloadUrl} download={item.name}>
-            <Download className="size-4 mr-1" />
-            Download to view
-          </a>
+        <Button variant="outline" size="sm" onClick={() => downloadItem(item)}>
+          <Download className="size-4 mr-1" />
+          Download to view
         </Button>
       )}
     </div>
@@ -337,10 +396,14 @@ function ExcelSlide({ item }: { item: AttachmentPreviewItem }) {
     const XLSX = xlsxRef.current;
     if (!wb || !XLSX) return;
     const ws = wb.Sheets[name];
+    // raw:false → return each cell's FORMATTED text (the `.w` value), so date
+    // cells show as "21/04/2026" instead of their serial number (e.g. 46133),
+    // and numbers keep their display format.
     const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, {
       header: 1,
       blankrows: false,
       defval: '',
+      raw: false,
     });
     const trimmed = aoa
       .slice(0, MAX_ROWS)
@@ -362,7 +425,7 @@ function ExcelSlide({ item }: { item: AttachmentPreviewItem }) {
         if (!resp.ok) throw new Error('Failed to load spreadsheet.');
         const buf = await resp.arrayBuffer();
         const XLSX = await import('xlsx');
-        const wb = XLSX.read(new Uint8Array(buf), { type: 'array' });
+        const wb = XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true });
         if (cancelled) return;
         xlsxRef.current = XLSX;
         wbRef.current = wb;
@@ -390,11 +453,9 @@ function ExcelSlide({ item }: { item: AttachmentPreviewItem }) {
         <FileQuestion className="size-10 text-muted-foreground/50" />
         <p className="text-sm text-muted-foreground">{error}</p>
         {item.downloadUrl && (
-          <Button variant="outline" size="sm" asChild>
-            <a href={item.downloadUrl} download={item.name}>
-              <Download className="size-4 mr-1" />
-              Download instead
-            </a>
+          <Button variant="outline" size="sm" onClick={() => downloadItem(item)}>
+            <Download className="size-4 mr-1" />
+            Download instead
           </Button>
         )}
       </div>

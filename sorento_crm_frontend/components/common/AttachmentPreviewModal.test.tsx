@@ -97,8 +97,13 @@ describe('AttachmentPreviewModal', () => {
     expect(el.getAttribute('src')).toBe('https://cdn.example.com/photo.jpg');
     expect(el.getAttribute('loading')).toBe('lazy');
     expect(screen.getByText('1 / 2')).toBeTruthy();
-    const dl = screen.getByRole('link', { name: /download/i }) as HTMLAnchorElement;
-    expect(dl.getAttribute('href')).toBe(img.downloadUrl);
+    expect(screen.getByRole('button', { name: /download/i })).toBeTruthy();
+  });
+
+  it('lets the user type a zoom percentage', () => {
+    render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[img]} />);
+    const input = screen.getByLabelText('Zoom percentage') as HTMLInputElement;
+    expect(input.value).toBe('100');
   });
 
   it('mounts a <video> for the active video slide', () => {
