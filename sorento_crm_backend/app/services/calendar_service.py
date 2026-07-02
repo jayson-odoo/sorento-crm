@@ -311,11 +311,13 @@ class CalendarService:
         if hours is None or hours <= 0:
             return start_utc.astimezone(timezone.utc).replace(tzinfo=None)
 
-        # Sub-day SLAs (e.g. warehouse 0.5h / 1h) are wall-clock: the working-days
-        # model (24h = one business day) rounds anything under ~12h to zero days and
-        # loses the deadline entirely. Below one day, add the literal duration.
+        # Sub-day SLAs (e.g. 3h response) advance on the *working-hours* clock:
+        # the working-days model (24h = one business day) rounds anything under ~12h
+        # to zero days and loses the deadline entirely. Below one day, count only
+        # hours inside the configured work window (skipping nights/weekends/holidays)
+        # so a 3h SLA opened at 17:42 spills into the next morning, not to 20:42.
         if float(hours) < 24.0:
-            return (start_utc + timedelta(hours=float(hours))).astimezone(timezone.utc).replace(tzinfo=None)
+            return self.add_working_hours(start_value, hours, tz=tz)
 
         days = int(round(float(hours) / 24.0))
         local = start_utc.astimezone(tz)
