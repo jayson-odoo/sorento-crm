@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { ChevronDown, Download, ExternalLink, Eye, Link2, LoaderCircleIcon, Plus, RefreshCw, SlidersHorizontal, Trash2, Unlink } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
@@ -45,6 +45,9 @@ import type { Attachment } from '../types/attachment.types';
 import type { LinkedEntityRef } from '../types/attachment.types';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import AttachmentDeleteDialog from './attachment-delete-dialog';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 import ManageFieldLinksDialog from './ManageFieldLinksDialog';
 import EditAttachmentTypeDialog from './EditAttachmentTypeDialog';
 import {
@@ -844,13 +847,6 @@ interface AttachmentDetailModalProps {
   onAttachmentChange?: (id: string) => void;
 }
 
-function getPreviewUrl(attachment: Attachment): string {
-  const fp = attachment.file_path || '';
-  if (fp.startsWith('http://') || fp.startsWith('https://')) return fp;
-  if (typeof window === 'undefined') return '';
-  return `${window.location.origin}/api/v1/resource-management/attachments/${attachment.id}/download`;
-}
-
 export default function AttachmentDetailModal({
   open,
   onOpenChange,
@@ -860,6 +856,7 @@ export default function AttachmentDetailModal({
 }: AttachmentDetailModalProps) {
   const queryClient = useQueryClient();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [descriptionEdit, setDescriptionEdit] = useState<string | null>(null);
   const [accessLevelsEdit, setAccessLevelsEdit] = useState<string[] | null>(null);
   const [editAttachmentTypeOpen, setEditAttachmentTypeOpen] = useState(false);
@@ -913,9 +910,27 @@ export default function AttachmentDetailModal({
     }
   };
 
-  const handlePreview = (att: Attachment) => {
-    window.open(getPreviewUrl(att), '_blank', 'noopener,noreferrer');
+  const handlePreview = () => {
+    setPreviewOpen(true);
   };
+
+  const previewItems = useMemo<AttachmentPreviewItem[]>(() => {
+    if (!attachment) return [];
+    const fp = attachment.file_path || '';
+    const cdn = fp.startsWith('http') ? fp : '';
+    return [
+      {
+        id: attachment.id,
+        name: attachment.original_filename,
+        url: cdn,
+        downloadUrl:
+          typeof window !== 'undefined'
+            ? `/api/v1/resource-management/attachments/${attachment.id}/download`
+            : undefined,
+        sizeBytes: attachment.file_size_bytes,
+      },
+    ];
+  }, [attachment]);
 
   const handleClose = () => {
     onOpenChange(false);
@@ -955,8 +970,8 @@ export default function AttachmentDetailModal({
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => handlePreview(attachment)}
-                    title="Preview in new tab"
+                    onClick={handlePreview}
+                    title="Preview"
                   >
                     <Eye className="size-4" />
                     Preview
@@ -1213,6 +1228,12 @@ export default function AttachmentDetailModal({
           </div>
         </DialogContent>
       </Dialog>
+
+      <AttachmentPreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        items={previewItems}
+      />
 
       {attachment && (
         <AttachmentDeleteDialog

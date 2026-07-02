@@ -1,6 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Download, Eye, RefreshCw, Trash2, ExternalLink } from 'lucide-react';
@@ -176,6 +179,7 @@ export default function AttachmentDetail({
   const router = useRouter();
   const queryClient = useQueryClient();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [descriptionEdit, setDescriptionEdit] = useState<string | null>(null);
   const [accessLevelsEdit, setAccessLevelsEdit] = useState<string[] | null>(null);
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
@@ -193,6 +197,24 @@ export default function AttachmentDetail({
     enabled: !!attachmentId,
     retry: 1,
   });
+
+  const previewItems = useMemo<AttachmentPreviewItem[]>(() => {
+    if (!attachment) return [];
+    const fp = attachment.file_path || '';
+    const cdn = fp.startsWith('http') ? fp : '';
+    return [
+      {
+        id: attachment.id,
+        name: attachment.original_filename,
+        url: cdn,
+        downloadUrl:
+          typeof window !== 'undefined'
+            ? `/api/v1/resource-management/attachments/${attachment.id}/download`
+            : undefined,
+        sizeBytes: attachment.file_size_bytes,
+      },
+    ];
+  }, [attachment]);
 
   const formatFileSize = (bytes: number | null | undefined) => {
     if (!bytes) return '-';
@@ -256,17 +278,7 @@ export default function AttachmentDetail({
         </div>
         <div className="flex gap-2">
           <AttachmentNavigation attachmentId={attachmentId} />
-          <Button
-            variant="outline"
-            onClick={() => {
-              const fp = attachment.file_path || '';
-              const url =
-                fp.startsWith('http://') || fp.startsWith('https://')
-                  ? fp
-                  : `${typeof window !== 'undefined' ? window.location.origin : ''}/api/v1/resource-management/attachments/${attachment.id}/download`;
-              window.open(url, '_blank', 'noopener,noreferrer');
-            }}
-          >
+          <Button variant="outline" onClick={() => setPreviewOpen(true)}>
             <Eye className="size-4" />
             Preview
           </Button>
@@ -469,6 +481,12 @@ export default function AttachmentDetail({
         onOpenChange={setDeleteDialogOpen}
         attachment={attachment}
         permanent={attachment.is_deleted}
+      />
+
+      <AttachmentPreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        items={previewItems}
       />
     </div>
   );
