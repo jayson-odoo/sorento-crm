@@ -65,6 +65,50 @@ export const EVENT_TYPE_OPTIONS = [
   { value: 'extend', label: 'Extend' },
 ];
 
+/**
+ * Human label for the Duration column, per event type.
+ * - extend: `duration` is WORKING DAYS added, and from_time is the PREVIOUS (future)
+ *   due — so event_at - from_time would be negative. Show "+N working day(s)".
+ * - response/resolution: elapsed time from from_time (initiated_at) to event_at.
+ * - escalation/assign/adjust/reassignment: no meaningful elapsed span -> em dash.
+ */
+export function formatEventDuration(log: {
+  event_type?: string | null;
+  from_time?: Date | string | null;
+  event_at?: Date | string | null;
+  duration?: number | null;
+}): string {
+  const eventType = (log.event_type ?? '').toLowerCase();
+
+  if (eventType === 'extend') {
+    if (log.duration !== null && log.duration !== undefined) {
+      const days = Number(log.duration);
+      return `+${days} working day${days === 1 ? '' : 's'}`;
+    }
+    return '-';
+  }
+
+  if (log.from_time && log.event_at) {
+    const fromTime = parseDateTimeAsUTC(log.from_time);
+    const eventAt = parseDateTimeAsUTC(log.event_at);
+    const diff = eventAt.getTime() - fromTime.getTime();
+    if (diff >= 0) return formatDuration(diff);
+  }
+
+  // Stored-duration fallback (hours) for response/resolution rows lacking from_time.
+  if (
+    eventType !== 'escalation' &&
+    eventType !== 'assign' &&
+    eventType !== 'adjust' &&
+    eventType !== 'reassignment' &&
+    log.duration !== null &&
+    log.duration !== undefined
+  ) {
+    return formatDuration(log.duration * 3600 * 1000);
+  }
+  return '-';
+}
+
 interface EventLogTableProps {
   trackingId: string;
   agentCode?: string | null;
@@ -202,22 +246,7 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
       {
         accessorKey: 'duration',
         header: ({ column }) => <DataGridColumnHeader title="Duration" column={column} />,
-        cell: ({ row }) => {
-          const log = row.original;
-          // Recalculate duration from from_time and event_at (both stored as UTC in DB)
-          if (log.from_time && log.event_at) {
-            const fromTime = parseDateTimeAsUTC(log.from_time);
-            const eventAt = parseDateTimeAsUTC(log.event_at);
-            const diff = eventAt.getTime() - fromTime.getTime();
-            return formatDuration(diff);
-          }
-          // Fallback to stored duration if from_time is not available
-          if (log.duration !== null && log.duration !== undefined) {
-            // duration is in hours, convert to milliseconds for formatDuration
-            return formatDuration(log.duration * 3600 * 1000);
-          }
-          return '-';
-        },
+        cell: ({ row }) => formatEventDuration(row.original),
         size: 120,
       },
       {

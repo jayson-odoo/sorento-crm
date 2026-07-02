@@ -332,13 +332,19 @@ class FormSLAOrchestrator:
             try:
                 due = tracker.due_at
                 due_resolution = tracker.due_at_resolution
-                # Escalation is gated purely on the current tier's clock (now > due_at,
-                # where due_at = current_tier_started_at + working(response_hours)).
-                # Each escalation resets that clock, so this is self-idempotent across
-                # ticks and progresses every tier (TCK-28 — removed the buggy
-                # escalated_at guard that froze rows at tier 2).
-                overdue = (due is not None and due < now) or (
-                    due_resolution is not None and due_resolution < now
+                # Split-clock breach rule (mirrors conversation SLA list_due_escalations):
+                # the response clock STOPS on response, so once responded the response
+                # due_at must NOT gate escalation — only the resolution clock does. Without
+                # this guard a responded-on-time tracker whose response due_at has since
+                # lapsed keeps escalating (and extend, which only moves due_at_resolution,
+                # can't stop it). Pre-response -> response clock; post-response -> resolution.
+                # Each escalation resets both clocks, so this stays self-idempotent across
+                # ticks and progresses every tier (TCK-28 — removed the buggy escalated_at
+                # guard that froze rows at tier 2).
+                responded = bool(getattr(tracker, "is_responded", False))
+                overdue = (
+                    (not responded and due is not None and due < now)
+                    or (due_resolution is not None and due_resolution < now)
                 )
                 if not overdue:
                     continue
@@ -1052,19 +1058,22 @@ class FormSLAOrchestrator:
         triggered_by_id: Optional[str] = None,
     ) -> None:
         from app.schemas.sla import ConversationSLAEventLogCreate
-        from app.services.sla_service import ConversationSLATrackingService
+        from app.services.sla_service import ConversationSLATrackingService, _to_aware_utc
 
         try:
+            # create_event_log treats NAIVE datetimes as Malaysia time (UTC+8); our
+            # columns store naive UTC. Wrap in _to_aware_utc so event_at / due_at land
+            # as true UTC instead of being shifted -8h (mirrors extend_tracking).
             ConversationSLATrackingService(self.db).create_event_log(
                 ConversationSLAEventLogCreate(
                     sla_tracking_id=tracker_id,
                     event_type=event_type,
                     from_tier=from_tier,
                     to_tier=to_tier,
-                    event_at=_utc_naive_now(),
+                    event_at=_to_aware_utc(_utc_naive_now()),
                     reason=reason,
                     assigned_to_id=assigned_to_id,
-                    due_at=due_at,
+                    due_at=_to_aware_utc(due_at) if isinstance(due_at, datetime) else due_at,
                     trigger=trigger,
                     triggered_by_id=triggered_by_id,
                 )
