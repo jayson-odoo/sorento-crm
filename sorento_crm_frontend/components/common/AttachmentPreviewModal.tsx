@@ -244,7 +244,7 @@ export default function AttachmentPreviewModal({
           <CarouselContent className="ml-0">
             {items.map((item, i) => (
               <CarouselItem key={item.id} className="basis-full pl-0">
-                <div className="flex max-h-[80vh] min-h-[60vh] items-center justify-center overflow-auto bg-muted/20 p-3">
+                <div className="flex max-h-[80vh] min-h-[60vh] items-start justify-center overflow-auto bg-muted/20 p-3">
                   <PreviewSlide
                     item={item}
                     isActive={i === current}
@@ -306,7 +306,7 @@ function PreviewSlide({
           }
         }}
         style={{ transform: `scale(${zoom})`, transformOrigin: 'center' }}
-        className="max-h-[78vh] w-auto max-w-full object-contain transition-transform"
+        className="my-auto max-h-[78vh] w-auto max-w-full object-contain transition-transform"
       />
     ) : (
       <PreviewFallback item={item} reason="This attachment has no previewable URL." />
@@ -357,7 +357,7 @@ function PreviewFallback({
   reason: string;
 }) {
   return (
-    <div className="flex flex-col items-center gap-3 py-12 text-center">
+    <div className="my-auto flex flex-col items-center gap-3 py-12 text-center">
       <FileQuestion className="size-10 text-muted-foreground/50" />
       <p className="text-sm text-muted-foreground">{reason}</p>
       {item.downloadUrl && (
@@ -449,7 +449,7 @@ function ExcelSlide({ item }: { item: AttachmentPreviewItem }) {
   if (loading) return <SlideSpinner />;
   if (error) {
     return (
-      <div className="flex flex-col items-center gap-3 py-12 text-center">
+      <div className="my-auto flex flex-col items-center gap-3 py-12 text-center">
         <FileQuestion className="size-10 text-muted-foreground/50" />
         <p className="text-sm text-muted-foreground">{error}</p>
         {item.downloadUrl && (
