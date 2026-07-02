@@ -415,7 +415,14 @@ def get_activity_feed(
             "actor_id": str(r.user_id) if r.user_id else None,
             "actor_name": actor_names.get(str(r.user_id)) if r.user_id else "System",
             "actor_avatar_url": None,
-            "changed_at": r.changed_at.isoformat() if r.changed_at else None,
+            # changed_at is stored naive UTC — emit with a 'Z' so the browser
+            # parses it as UTC (else it's read as local time and shows ~8h off in
+            # MYT). The FE date helpers render it in Asia/Kuala_Lumpur.
+            "changed_at": (
+                (r.changed_at.isoformat() + "Z")
+                if r.changed_at and r.changed_at.tzinfo is None
+                else (r.changed_at.isoformat() if r.changed_at else None)
+            ),
             "description": r.description,
             "summary": _summary(r.action, r.description, changes),
             "changes": changes,

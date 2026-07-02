@@ -88,30 +88,37 @@ export function actionMeta(action: ActivityAction): {
   }
 }
 
-function startOfDay(d: Date): number {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-}
+// Activity timeline is Malaysia-time based (day grouping + labels), regardless
+// of the viewer's browser timezone.
+const MALAYSIA_TZ = 'Asia/Kuala_Lumpur';
 
+/** YYYY-MM-DD for the instant in Malaysia time — the day-bucket key + day math. */
 function dayKey(d: Date): string {
-  const y = d.getFullYear();
-  const m = `${d.getMonth() + 1}`.padStart(2, '0');
-  const day = `${d.getDate()}`.padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  // en-CA formats as YYYY-MM-DD.
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: MALAYSIA_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
 }
 
 const DAY_MONTH_YEAR = new Intl.DateTimeFormat('en-GB', {
+  timeZone: MALAYSIA_TZ,
   day: 'numeric',
   month: 'short',
   year: 'numeric',
 });
 
-const WEEKDAY = new Intl.DateTimeFormat('en-GB', { weekday: 'long' });
+const WEEKDAY = new Intl.DateTimeFormat('en-GB', { timeZone: MALAYSIA_TZ, weekday: 'long' });
 
-/** "Today", "Yesterday", "Monday", or "28 Jun 2026" for older dates. */
+/** "Today", "Yesterday", "Monday", or "28 Jun 2026" — all in Malaysia time. */
 export function dayLabel(d: Date): string {
-  const today = startOfDay(new Date());
-  const target = startOfDay(d);
-  const diffDays = Math.round((today - target) / (24 * 60 * 60 * 1000));
+  // Diff the two MYT calendar-day keys (parsed as UTC midnight, so DST-free math).
+  const diffDays = Math.round(
+    (Date.parse(dayKey(new Date()) + 'T00:00:00Z') - Date.parse(dayKey(d) + 'T00:00:00Z')) /
+      (24 * 60 * 60 * 1000),
+  );
   if (diffDays === 0) return 'Today';
   if (diffDays === 1) return 'Yesterday';
   if (diffDays > 1 && diffDays < 7) return WEEKDAY.format(d);
