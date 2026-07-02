@@ -5,6 +5,9 @@ import type { PaginationState, SortingState } from '@tanstack/react-table';
 export type KpiScope = 'all' | 'conversation' | 'form';
 export type KpiView = 'all' | 'responded' | 'resolved' | 'pending' | 'responded_open';
 export type KpiState = 'all' | 'within' | 'overdue';
+// "Escalating by when" filter on the tasks list. overdue = escalation clock
+// already past; Nh = next escalation fires within N hours.
+export type KpiEscWindow = 'all' | 'overdue' | '1h' | '4h' | '24h';
 
 // Optional inclusive date window (ISO `YYYY-MM-DD`). When omitted the backend
 // aggregates over all time. The home-dashboard embed passes a bounded window;
@@ -77,6 +80,7 @@ export interface KpiTaskRow {
   current_tier_started_at: string | null;
   response_due: string | null;
   resolution_due: string | null;
+  escalates_at: string | null;
   assignee_id: string | null;
   assignee_name: string;
   response_time_hours: number | null;
@@ -127,6 +131,7 @@ export async function getKpiTasks(
   view: KpiView = 'all',
   state: KpiState = 'all',
   window?: KpiWindow,
+  escWindow: KpiEscWindow = 'all',
 ): Promise<{ data: KpiTaskRow[]; total: number }> {
   const params = buildDataGridParams(
     {
@@ -135,7 +140,7 @@ export async function getKpiTasks(
       sorting,
       searchQuery: '',
     },
-    { scope, view, state, ...windowExtra(window) },
+    { scope, view, state, esc_window: escWindow, ...windowExtra(window) },
   );
   const r = await apiFetch(`${BASE}/tasks?${params.toString()}`);
   if (!r.ok) throw new Error('Failed to load tasks');
