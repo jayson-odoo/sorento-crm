@@ -244,6 +244,100 @@ class CoverageSubscriptionService:
         self._notify_coverer_assigned(coverer, target, expires_at, actor_id)
         return sub
 
+    def nominate_coverer(
+        self,
+        target_id: str,
+        coverer_id: str,
+        expires_at: Optional[datetime] = None,
+        redirect_assignments: bool = False,
+    ) -> NotificationSubscription:
+        """Self-service: I (``target_id``) nominate ``coverer_id`` to cover ME while
+        I'm away. No ``manage_team`` permission required — the coverer must simply be
+        in my scope-B. Mirrors :meth:`assign_coverage` with the actor covering
+        themselves; the coverer is notified best-effort."""
+        target_id = str(target_id)
+        coverer_id = str(coverer_id)
+        if coverer_id == target_id:
+            raise handle_validation_error("You cannot nominate yourself as your own coverer.")
+        coverer = self.db.query(User).filter(User.id == coverer_id).first()
+        if not coverer:
+            raise handle_not_found("User", coverer_id)
+        if coverer_id not in self._visible_member_ids(target_id):
+            raise handle_validation_error(
+                "You can only nominate a coverer in your teams or their child teams."
+            )
+        sub = self._upsert(
+            coverer_id,
+            target_id,
+            expires_at=expires_at,
+            redirect_assignments=redirect_assignments,
+            created_by_id=target_id,
+        )
+        target = self.db.query(User).filter(User.id == target_id).first()
+        self._notify_coverer_assigned(coverer, target, expires_at, target_id)
+        return sub
+
+    def list_coverage_for_me(self, user_id: str) -> list[dict]:
+        """Active + inactive subscriptions where I am the COVERED party (colleagues
+        who cover me). Complements :meth:`list_my_subscriptions` (targets I cover)."""
+        user_id = str(user_id)
+        rows = (
+            self.db.query(NotificationSubscription)
+            .filter(NotificationSubscription.target_user_id == user_id)
+            .all()
+        )
+        lookup_ids = {str(r.subscriber_id) for r in rows}
+        lookup_ids.add(user_id)
+        for r in rows:
+            if getattr(r, "created_by_id", None):
+                lookup_ids.add(str(r.created_by_id))
+        name_by_id: dict = {}
+        if lookup_ids:
+            for u in self.db.query(User).filter(User.id.in_(lookup_ids)).all():
+                name_by_id[str(u.id)] = (u.name or u.email or "").strip() or None
+        covered_name = name_by_id.get(user_id)
+        out = []
+        for r in rows:
+            created_by = str(r.created_by_id) if getattr(r, "created_by_id", None) else None
+            # "Arranged by someone else" = a HoD set it up (created_by != the covered me).
+            assigned_by_name = (
+                name_by_id.get(created_by)
+                if created_by and created_by != user_id
+                else None
+            )
+            coverer_name = name_by_id.get(str(r.subscriber_id))
+            out.append(
+                {
+                    "id": str(r.id),
+                    "subscriber_id": str(r.subscriber_id),
+                    "subscriber_name": coverer_name,
+                    "target_user_id": user_id,
+                    "target_user_name": covered_name,
+                    "is_active": bool(r.is_active),
+                    "redirect_assignments": bool(getattr(r, "redirect_assignments", False)),
+                    "expires_at": (
+                        getattr(r, "expires_at").isoformat()
+                        if getattr(r, "expires_at", None)
+                        else None
+                    ),
+                    "created_at": (
+                        getattr(r, "created_at").isoformat()
+                        if getattr(r, "created_at", None)
+                        else None
+                    ),
+                    "assigned_by_hod": bool(created_by and created_by != user_id),
+                    "assigned_by_name": assigned_by_name,
+                    **coverage_role_view(
+                        coverer_name=coverer_name,
+                        covers_for_name=covered_name,
+                        assigned_by_name=assigned_by_name,
+                        expires_at=getattr(r, "expires_at", None),
+                        redirect_assignments=bool(getattr(r, "redirect_assignments", False)),
+                    ),
+                }
+            )
+        return out
+
     def _upsert(
         self,
         subscriber_id: str,
@@ -457,8 +551,9 @@ class CoverageSubscriptionService:
     ) -> None:
         """Hard-delete a specific subscription (ADR: DELETE = hard delete).
 
-        Allowed when the actor is the coverer (owns it), OR ``can_manage`` and both
-        endpoints are within the actor's scope-B (HoD revoking team coverage)."""
+        Allowed when the actor is the coverer (owns it), the actor is the covered
+        party (cancelling cover they arranged for themselves), OR ``can_manage`` and
+        both endpoints are within the actor's scope-B (HoD revoking team coverage)."""
         actor_id = str(actor_id)
         sub = (
             self.db.query(NotificationSubscription)
@@ -468,7 +563,8 @@ class CoverageSubscriptionService:
         if not sub:
             raise handle_not_found("Coverage subscription", str(subscription_id))
         is_owner = str(sub.subscriber_id) == actor_id
-        if not is_owner:
+        is_covered = str(sub.target_user_id) == actor_id
+        if not (is_owner or is_covered):
             scope = self._visible_member_ids(actor_id) if can_manage else set()
             if not (
                 can_manage

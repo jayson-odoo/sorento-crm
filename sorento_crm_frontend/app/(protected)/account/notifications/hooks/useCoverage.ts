@@ -2,14 +2,17 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   assignCoverage,
+  getCoverageForMe,
   getMyCoverage,
   getTeamCoverage,
+  nominateCoverer,
   revokeCoverageById,
   subscribeCoverage,
   unsubscribeCoverage,
 } from '../services/coverageService';
 
 const COVERAGE_KEY = ['coverage-subscriptions'];
+const FOR_ME_COVERAGE_KEY = ['coverage-for-me'];
 const TEAM_COVERAGE_KEY = ['team-coverage-subscriptions'];
 
 export function useMyCoverage() {
@@ -52,6 +55,35 @@ export function useUpdateCoverage() {
       toast.success('Coverage updated.');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to update coverage'),
+  });
+}
+
+export function useCoverageForMe(enabled = true) {
+  return useQuery({
+    queryKey: FOR_ME_COVERAGE_KEY,
+    queryFn: () => getCoverageForMe(),
+    staleTime: 1000 * 30,
+    enabled,
+  });
+}
+
+interface NominateCoverageVars {
+  covererId: string;
+  expiresAt?: string;
+  redirectAssignments?: boolean;
+}
+
+export function useNominateCoverage() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ covererId, expiresAt, redirectAssignments }: NominateCoverageVars) =>
+      nominateCoverer(covererId, expiresAt, redirectAssignments),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: FOR_ME_COVERAGE_KEY });
+      queryClient.invalidateQueries({ queryKey: TEAM_COVERAGE_KEY });
+      toast.success('Coverer nominated.');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to nominate coverer'),
   });
 }
 
@@ -107,6 +139,7 @@ export function useRevokeCoverageById() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: TEAM_COVERAGE_KEY });
       queryClient.invalidateQueries({ queryKey: COVERAGE_KEY });
+      queryClient.invalidateQueries({ queryKey: FOR_ME_COVERAGE_KEY });
       toast.success('Coverage revoked.');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to revoke coverage'),

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 
 import { CoverageManager } from './coverage-manager';
-import type { CoverageSub, TeamCoverageSub } from '../services/coverageService';
+import type { CoverageSub, CoverageForMeSub, TeamCoverageSub } from '../services/coverageService';
 
 // cmdk needs ResizeObserver + scrollIntoView, absent in jsdom.
 class RO {
@@ -15,19 +15,23 @@ if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => 
 
 const useMyCoverage = vi.fn();
 const useTeamCoverage = vi.fn();
+const useCoverageForMe = vi.fn();
 const subscribeMutate = vi.fn();
 const updateMutate = vi.fn();
 const unsubscribeMutate = vi.fn();
 const assignMutate = vi.fn();
+const nominateMutate = vi.fn();
 const revokeMutate = vi.fn();
 
 vi.mock('../hooks/useCoverage', () => ({
   useMyCoverage: (...a: unknown[]) => useMyCoverage(...a),
   useTeamCoverage: (...a: unknown[]) => useTeamCoverage(...a),
+  useCoverageForMe: (...a: unknown[]) => useCoverageForMe(...a),
   useSubscribeCoverage: () => ({ mutate: subscribeMutate, isPending: false }),
   useUpdateCoverage: () => ({ mutate: updateMutate, isPending: false }),
   useUnsubscribeCoverage: () => ({ mutate: unsubscribeMutate, isPending: false }),
   useAssignCoverage: () => ({ mutate: assignMutate, isPending: false }),
+  useNominateCoverage: () => ({ mutate: nominateMutate, isPending: false }),
   useRevokeCoverageById: () => ({ mutate: revokeMutate, isPending: false }),
 }));
 
@@ -57,6 +61,19 @@ const mySub: CoverageSub = {
   created_at: new Date().toISOString(),
 };
 
+const forMeSub: CoverageForMeSub = {
+  id: 'fm1',
+  subscriber_id: 'u-alice',
+  subscriber_name: 'Alice',
+  target_user_id: 'u-me',
+  target_user_name: 'You',
+  is_active: true,
+  redirect_assignments: true,
+  expires_at: null,
+  created_at: new Date().toISOString(),
+  assigned_by_hod: false,
+};
+
 const teamSub: TeamCoverageSub = {
   id: 'tc1',
   subscriber_id: 'u-alice',
@@ -72,35 +89,59 @@ const teamSub: TeamCoverageSub = {
 };
 
 beforeEach(() => {
-  [useMyCoverage, useTeamCoverage, subscribeMutate, updateMutate, unsubscribeMutate, assignMutate, revokeMutate].forEach(
-    (m) => m.mockReset(),
-  );
+  [
+    useMyCoverage,
+    useTeamCoverage,
+    useCoverageForMe,
+    subscribeMutate,
+    updateMutate,
+    unsubscribeMutate,
+    assignMutate,
+    nominateMutate,
+    revokeMutate,
+  ].forEach((m) => m.mockReset());
   useMyCoverage.mockReturnValue({ data: [], isLoading: false, error: null });
   useTeamCoverage.mockReturnValue({ data: [], isLoading: false, error: null });
+  useCoverageForMe.mockReturnValue({ data: [], isLoading: false, error: null });
 });
 
 describe('CoverageManager — non-manager', () => {
-  it('coverer is fixed to "You" (no coverer picker)', () => {
+  it('has both a coverer and a covered picker (coverer defaults to "You")', () => {
     render(<CoverageManager canManageTeam={false} />);
-    // Only ONE combobox (the "Covers for" picker); coverer is a static "You".
-    expect(screen.getAllByRole('combobox')).toHaveLength(1);
+    // Coverer picker (You + colleagues) + covered picker.
+    expect(screen.getAllByRole('combobox')).toHaveLength(2);
     expect(screen.getByText('Coverer')).toBeInTheDocument();
   });
 
-  it('Add posts self-service subscribe with the chosen target', async () => {
+  it('coverer=You + a target posts self-service subscribe', async () => {
     render(<CoverageManager canManageTeam={false} />);
-    fireEvent.click(screen.getByRole('combobox'));
+    // Coverer stays "You" (default). Pick the covered colleague in the 2nd picker.
+    fireEvent.click(screen.getAllByRole('combobox')[1]);
     fireEvent.click(await screen.findByText('Bob'));
     fireEvent.click(screen.getByRole('button', { name: /^Add$/i }));
     await waitFor(() => expect(subscribeMutate).toHaveBeenCalled());
     expect(subscribeMutate.mock.calls[0][0]).toMatchObject({ targetUserId: 'u-bob', redirectAssignments: true });
     expect(assignMutate).not.toHaveBeenCalled();
+    expect(nominateMutate).not.toHaveBeenCalled();
+  });
+
+  it('coverer=colleague covering ME posts self-service nominate', async () => {
+    render(<CoverageManager canManageTeam={false} />);
+    // Pick coverer = Alice; the covered party auto-limits to "You".
+    fireEvent.click(screen.getAllByRole('combobox')[0]);
+    fireEvent.click(await screen.findByText('Alice'));
+    fireEvent.click(screen.getAllByRole('combobox')[1]);
+    fireEvent.click(await screen.findByText('You'));
+    fireEvent.click(screen.getByRole('button', { name: /^Add$/i }));
+    await waitFor(() => expect(nominateMutate).toHaveBeenCalled());
+    expect(nominateMutate.mock.calls[0][0]).toMatchObject({ covererId: 'u-alice', redirectAssignments: true });
+    expect(assignMutate).not.toHaveBeenCalled();
+    expect(subscribeMutate).not.toHaveBeenCalled();
   });
 
   it('lists my coverage as "You → target" and delete uses unsubscribe', async () => {
     useMyCoverage.mockReturnValue({ data: [mySub], isLoading: false, error: null });
     render(<CoverageManager canManageTeam={false} />);
-    // The row renders "You → Bob" (assert via the row's remove control).
     const removeBtn = screen.getByRole('button', { name: /Remove You covering Bob/i });
     expect(removeBtn).toBeInTheDocument();
     fireEvent.click(removeBtn);
@@ -108,6 +149,19 @@ describe('CoverageManager — non-manager', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /^Remove$/i }));
     await waitFor(() => expect(unsubscribeMutate).toHaveBeenCalled());
     expect(unsubscribeMutate.mock.calls[0][0]).toBe('u-bob'); // by target id
+  });
+
+  it('lists coverage OF me as "coverer → You" and delete revokes by id', async () => {
+    useCoverageForMe.mockReturnValue({ data: [forMeSub], isLoading: false, error: null });
+    render(<CoverageManager canManageTeam={false} />);
+    const removeBtn = screen.getByRole('button', { name: /Remove Alice covering You/i });
+    expect(removeBtn).toBeInTheDocument();
+    fireEvent.click(removeBtn);
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Remove$/i }));
+    await waitFor(() => expect(revokeMutate).toHaveBeenCalled());
+    expect(revokeMutate.mock.calls[0][0]).toBe('fm1'); // by subscription id
+    expect(unsubscribeMutate).not.toHaveBeenCalled();
   });
 });
 

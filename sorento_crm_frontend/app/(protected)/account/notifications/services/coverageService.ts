@@ -86,6 +86,59 @@ export async function subscribeCoverage(
   return response.json();
 }
 
+/** A row where I am the COVERED party: a colleague covers me. */
+export interface CoverageForMeSub {
+  id: string;
+  subscriber_id: string;
+  subscriber_name: string | null;
+  target_user_id: string;
+  target_user_name: string | null;
+  is_active: boolean;
+  redirect_assignments: boolean;
+  expires_at: string | null;
+  created_at: string;
+  assigned_by_hod: boolean;
+  assigned_by_name?: string | null;
+  coverer_name?: string | null;
+  covers_for_name?: string | null;
+  coverage_mode?: string | null;
+  summary?: string | null;
+}
+
+/** List the colleagues who cover me (I'm the covered party). */
+export async function getCoverageForMe(): Promise<CoverageForMeSub[]> {
+  const response = await apiFetch(`${BASE}/for-me`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load coverage for me'));
+  }
+  const body = await response.json();
+  return Array.isArray(body?.data) ? (body.data as CoverageForMeSub[]) : [];
+}
+
+/**
+ * Self-service: nominate a scope-B colleague to cover ME while I'm away.
+ * No manager permission required. Upserts on (coverer, me).
+ */
+export async function nominateCoverer(
+  covererId: string,
+  expiresAt?: string,
+  redirectAssignments = false,
+): Promise<{ id: string }> {
+  const response = await apiFetch(`${BASE}/nominate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      coverer_id: covererId,
+      redirect_assignments: redirectAssignments,
+      ...(expiresAt ? { expires_at: expiresAt } : {}),
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to nominate coverer'));
+  }
+  return response.json();
+}
+
 /** Stop covering for a colleague. */
 export async function unsubscribeCoverage(targetUserId: string): Promise<void> {
   const response = await apiFetch(`${BASE}/${targetUserId}`, { method: 'DELETE' });
