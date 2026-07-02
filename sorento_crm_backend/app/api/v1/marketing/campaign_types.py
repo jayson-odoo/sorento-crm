@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.marketing_service import CampaignTypeService
 from app.schemas.marketing import CampaignTypeCreate, CampaignTypeUpdate, CampaignTypeResponse
@@ -37,6 +38,7 @@ async def get_campaign_type(
 ):
     """Get a single campaign type by ID."""
     try:
+        validate_uuid_path(type_id, resource="Campaign Type")
         service = CampaignTypeService(db)
         campaign_type = service.get_campaign_type(type_id)
         return campaign_type
@@ -72,6 +74,7 @@ async def update_campaign_type(
 ):
     """Update a campaign type."""
     try:
+        validate_uuid_path(type_id, resource="Campaign Type")
         service = CampaignTypeService(db)
         campaign_type = service.update_campaign_type(type_id, type_data)
         return campaign_type
@@ -89,9 +92,9 @@ async def delete_campaign_type(
 ):
     """Delete a campaign type."""
     try:
+        validate_uuid_path(type_id, resource="Campaign Type")
         service = CampaignTypeService(db)
-        # Implement delete logic
-        return {"message": "Campaign type deleted successfully"}
+        return service.delete_campaign_type(type_id)
     except HTTPException:
         raise
     except Exception as e:

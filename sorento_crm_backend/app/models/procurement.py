@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 
 class Supplier(Base):
     __tablename__ = "suppliers"
-    
+    __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     supplier_code = Column(String(50), unique=True, nullable=False)
     supplier_name = Column(String(255), nullable=False)

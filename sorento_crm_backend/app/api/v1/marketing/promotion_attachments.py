@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from typing import Any, Optional
 
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.marketing_service import PromotionAttachmentService
 from app.services.uuid_list_param import parse_uuid_list
@@ -138,6 +139,7 @@ async def get_promotion_attachment(
 ):
     """Get a single promotion attachment by ID."""
     try:
+        validate_uuid_path(promotion_attachment_id, resource="Promotion Attachment")
         service = PromotionAttachmentService(db)
         promotion_attachment = service.get_promotion_attachment(promotion_attachment_id)
         return _promotion_attachment_to_response(promotion_attachment)
@@ -174,6 +176,7 @@ async def update_promotion_attachment(
 ):
     """Update a promotion attachment relationship."""
     try:
+        validate_uuid_path(promotion_attachment_id, resource="Promotion Attachment")
         service = PromotionAttachmentService(db)
         promotion_attachment = service.update_promotion_attachment(promotion_attachment_id, promotion_attachment_data)
         return _promotion_attachment_to_response(promotion_attachment)
@@ -191,6 +194,7 @@ async def delete_promotion_attachment(
 ):
     """Delete a promotion attachment relationship."""
     try:
+        validate_uuid_path(promotion_attachment_id, resource="Promotion Attachment")
         service = PromotionAttachmentService(db)
         service.delete_promotion_attachment(promotion_attachment_id)
         return {"message": "Promotion attachment deleted successfully"}

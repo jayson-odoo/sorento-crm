@@ -279,6 +279,7 @@ export default function StockInquiryDetail({
                     setRejectDialogOpen(true);
                   }}
                   data-guide-target="procurement.stock-inquiries.reject-button"
+                  className="text-destructive border-destructive/40 hover:bg-destructive/10"
                 >
                   <XCircle className="size-4 mr-1" />
                   Reject
@@ -316,6 +317,7 @@ export default function StockInquiryDetail({
                 setRejectDialogOpen(true);
               }}
               data-guide-target="procurement.stock-inquiries.reject-button"
+              className="text-destructive border-destructive/40 hover:bg-destructive/10"
             >
               <XCircle className="size-4 mr-1" />
               Reject

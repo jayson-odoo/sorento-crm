@@ -226,6 +226,7 @@ async def update_form(
 ):
     """Update a form."""
     try:
+        validate_uuid_path(form_id, resource="Form")
         service = FormService(db)
         form = service.update_form(form_id, form_data)
         return form
@@ -259,6 +260,7 @@ async def delete_form(
 ):
     """Delete a form (cascades to sections, fields, versions, submissions)."""
     try:
+        validate_uuid_path(form_id, resource="Form")
         service = FormService(db)
         return service.delete_form(form_id)
     except HTTPException:

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user
 from app.services.user_service import AccessAgentService
 from app.schemas.user import (
@@ -99,6 +100,7 @@ async def get_access_agent(
 ):
     """Get a single access agent by ID."""
     try:
+        validate_uuid_path(agent_id, resource="Access Agent")
         service = AccessAgentService(db)
         agent_dict = service.get_agent(agent_id)
         # Convert dict to response model
@@ -135,6 +137,7 @@ async def update_access_agent(
 ):
     """Update an access agent."""
     try:
+        validate_uuid_path(agent_id, resource="Access Agent")
         service = AccessAgentService(db)
         agent = service.update_agent(agent_id, agent_data)
         return agent
@@ -152,6 +155,7 @@ async def delete_access_agent(
 ):
     """Delete an access agent."""
     try:
+        validate_uuid_path(agent_id, resource="Access Agent")
         service = AccessAgentService(db)
         service.delete_agent(agent_id)
         return {"message": "Access agent deleted successfully"}
@@ -169,6 +173,7 @@ async def get_agent_teams(
 ):
     """List assignments with team name, members, last assigned and next in line (round-robin state)."""
     try:
+        validate_uuid_path(agent_id, resource="Access Agent")
         service = AccessAgentService(db)
         assignments = service.list_agent_teams_with_round_robin_state(agent_id)
         return {"assignments": assignments}
@@ -185,6 +190,7 @@ async def set_agent_teams(
 ):
     """Set the team assignments for this agent (replaces existing). Body: assignments=[{code, team_id, tier?}]."""
     try:
+        validate_uuid_path(agent_id, resource="Access Agent")
         service = AccessAgentService(db)
         if body.assignments is not None:
             payload = [{"code": a.code, "team_id": a.team_id, "tier": getattr(a, "tier", None), "policy_id": getattr(a, "policy_id", None), "notify_on_extension": getattr(a, "notify_on_extension", True)} for a in body.assignments]
@@ -212,6 +218,7 @@ async def get_contact_access_agents(
 ):
     """List contact access entries for an agent."""
     try:
+        validate_uuid_path(agent_id, resource="Access Agent")
         service = AccessAgentService(db)
         accesses = service.list_contact_accesses(agent_id)
         return [ContactAgentAccessResponse.model_validate(access) for access in accesses]
@@ -235,6 +242,7 @@ async def create_contact_access_agent(
 ):
     """Create a contact access entry for an agent."""
     try:
+        validate_uuid_path(agent_id, resource="Access Agent")
         service = AccessAgentService(db)
         return service.create_contact_access(agent_id, contact_data)
     except HTTPException:
@@ -256,6 +264,7 @@ async def update_contact_access_agent(
 ):
     """Update a contact access entry."""
     try:
+        validate_uuid_path(agent_id, resource="Access Agent")
         service = AccessAgentService(db)
         return service.update_contact_access(contact_id, contact_data)
     except HTTPException:
@@ -273,6 +282,7 @@ async def delete_contact_access_agent(
 ):
     """Delete a contact access entry."""
     try:
+        validate_uuid_path(agent_id, resource="Access Agent")
         service = AccessAgentService(db)
         service.delete_contact_access(contact_id)
         return {"message": "Contact access deleted successfully"}
@@ -309,6 +319,7 @@ async def sync_contact_name(
 ):
     """Sync contact name from Respond.io for a contact access entry."""
     try:
+        validate_uuid_path(agent_id, resource="Access Agent")
         service = AccessAgentService(db)
         return service.sync_contact_name(contact_id)
     except HTTPException:

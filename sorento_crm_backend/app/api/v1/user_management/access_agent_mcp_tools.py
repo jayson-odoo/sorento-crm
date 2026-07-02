@@ -25,6 +25,7 @@ from app.services.access_agent_mcp_tool_service import (
     set_tool_bindings_for_agent,
     set_tools_for_agent,
 )
+from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter()
 
@@ -36,6 +37,7 @@ def get_access_agent_mcp_tools(
     _: dict = Depends(get_current_user_or_api_key),
 ) -> list[McpToolForAgentOut]:
     """Return active MCP tools owned by this access agent (Phase 2)."""
+    validate_uuid_path(agent_id, resource="Access Agent")
     rows = list_tools_for_agent(db, agent_id)
     return [McpToolForAgentOut.model_validate(r) for r in rows]
 
@@ -48,6 +50,7 @@ def set_access_agent_mcp_tools(
     _: dict = Depends(get_current_user_or_api_key),
 ) -> list[McpToolForAgentOut]:
     """Replace this agent's legacy (team_id NULL) MCP tool ownership set."""
+    validate_uuid_path(agent_id, resource="Access Agent")
     set_tools_for_agent(db, agent_id, list(payload.tool_ids))
     db.commit()
     rows = list_tools_for_agent(db, agent_id)
@@ -62,6 +65,7 @@ def get_access_agent_mcp_tool_bindings(
     db: Session = Depends(get_db),
     _: dict = Depends(get_current_user_or_api_key),
 ) -> list[McpToolBindingOut]:
+    validate_uuid_path(agent_id, resource="Access Agent")
     rows = list_tool_bindings_for_agent(db, agent_id)
     return [McpToolBindingOut.model_validate(r) for r in rows]
 
@@ -76,6 +80,7 @@ def set_access_agent_mcp_tool_bindings(
     _: dict = Depends(get_current_user_or_api_key),
 ) -> list[McpToolBindingOut]:
     """Replace this agent's full tool/team binding set in one transaction."""
+    validate_uuid_path(agent_id, resource="Access Agent")
     set_tool_bindings_for_agent(
         db,
         agent_id,

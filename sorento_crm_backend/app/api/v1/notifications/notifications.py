@@ -5,6 +5,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.config import settings as app_settings
+from app.services.uuid_path_param import validate_uuid_path
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.notification_service import NotificationService
@@ -274,6 +275,7 @@ async def mark_read(
     """Mark a single notification as read."""
     _require_notifications_enabled()
     try:
+        validate_uuid_path(notification_id, resource="Notification")
         service = NotificationService(db)
         n = service.mark_read(notification_id, current_user["id"])
         if not n:
@@ -296,6 +298,7 @@ async def mark_unread(
     """Mark a single notification as unread (clear read status)."""
     _require_notifications_enabled()
     try:
+        validate_uuid_path(notification_id, resource="Notification")
         service = NotificationService(db)
         n = service.mark_unread(notification_id, current_user["id"])
         if not n:
@@ -337,6 +340,7 @@ async def archive_notification(
     """Archive a single notification."""
     _require_notifications_enabled()
     try:
+        validate_uuid_path(notification_id, resource="Notification")
         service = NotificationService(db)
         n = service.archive(notification_id, current_user["id"])
         if not n:
@@ -425,6 +429,7 @@ async def delete_notification(
     """Permanently delete a single notification."""
     _require_notifications_enabled()
     try:
+        validate_uuid_path(notification_id, resource="Notification")
         service = NotificationService(db)
         ok = service.delete(notification_id, current_user["id"])
         if not ok:
@@ -454,6 +459,7 @@ async def resolve_notification(
     """Mark a notification as resolved (for actionable items)."""
     _require_notifications_enabled()
     try:
+        validate_uuid_path(notification_id, resource="Notification")
         service = NotificationService(db)
         n = service.resolve(notification_id, current_user["id"])
         if not n:

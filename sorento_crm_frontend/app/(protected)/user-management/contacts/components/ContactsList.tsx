@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { extractApiError } from '@/lib/api-client';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -98,13 +99,8 @@ export default function ContactsList() {
     [pageContacts, rowSelection],
   );
 
-  async function contactSyncErrorMessage(response: Response): Promise<string> {
-    const err = await response.json().catch(() => ({} as Record<string, unknown>));
-    const d = err.detail as Record<string, unknown> | string | undefined;
-    if (d && typeof d === 'object' && d.message != null) return String(d.message);
-    if (typeof d === 'string') return d;
-    if (err.message != null) return String(err.message);
-    return `Sync failed (${response.status})`;
+  function contactSyncErrorMessage(response: Response): Promise<string> {
+    return extractApiError(response, `Sync failed (${response.status})`);
   }
 
   const syncContactMutation = useMutation({

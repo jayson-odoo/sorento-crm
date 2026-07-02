@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import { toast } from 'sonner';
 import type { RespondContact } from '../types/contact.types';
 
@@ -36,13 +37,7 @@ export default function ContactDeleteDialog({
         method: 'DELETE',
       });
       if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        const message =
-          (error.detail && typeof error.detail === 'object' && error.detail.message) ||
-          (typeof error.detail === 'string' ? error.detail : null) ||
-          error.message ||
-          'Failed to delete contact';
-        throw new Error(message);
+        throw new Error(await extractApiError(response, 'Failed to delete contact'));
       }
     },
     onSuccess: (_, contactId) => {

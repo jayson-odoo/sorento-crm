@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { sanitizedHtml } from '@/lib/sanitize';
 import {
   ColumnDef,
   PaginationState,
@@ -45,8 +46,16 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { Eye, RotateCcw, Ban, Search, X } from 'lucide-react';
+import { Eye, RotateCcw, Ban, Search, X, ChevronDown, Download } from 'lucide-react';
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  useBulkCancelEmailOutbox,
+  useBulkRetryEmailOutbox,
   useCancelEmailOutboxRow,
   useEmailOutbox,
   useEmailOutboxRow,
@@ -73,6 +82,11 @@ export default function EmailOutboxList() {
   const detailQuery = useEmailOutboxRow(detailId);
   const retryMut = useRetryEmailOutboxRow();
   const cancelMut = useCancelEmailOutboxRow();
+  const bulkRetryMut = useBulkRetryEmailOutbox();
+  const bulkCancelMut = useBulkCancelEmailOutbox();
+  const selectedIds = Object.keys(rowSelection);
+  const bulkPending = bulkRetryMut.isPending || bulkCancelMut.isPending;
+  const clearSelection = () => setRowSelection({});
 
   const columns = useMemo<ColumnDef<EmailOutboxRow>[]>(
     () => [
@@ -244,6 +258,36 @@ export default function EmailOutboxList() {
         <CardHeader className="block">
           <DataGridListToolbar
             table={table}
+            bulkActionsSlot={({ openExport }) => (
+              // Consolidated "Action ▾" dropdown in the base toolbar's bulk strip
+              // (reuses DataGridListToolbar; Export lives inside via openExport).
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5" disabled={bulkPending}>
+                    Action
+                    <ChevronDown className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem
+                    disabled={bulkPending}
+                    onClick={() => bulkRetryMut.mutate(selectedIds, { onSuccess: clearSelection })}
+                  >
+                    <RotateCcw className="size-4 me-2" /> Retry selected
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={bulkPending}
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => bulkCancelMut.mutate(selectedIds, { onSuccess: clearSelection })}
+                  >
+                    <Ban className="size-4 me-2" /> Cancel selected
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={openExport}>
+                    <Download className="size-4 me-2" /> Export
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
             searchSlot={
               <div className="relative">
                 <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />
@@ -376,7 +420,7 @@ export default function EmailOutboxList() {
                   {detail.body_html ? (
                     <div
                       className="prose prose-sm dark:prose-invert max-w-none"
-                      dangerouslySetInnerHTML={{ __html: detail.body_html }}
+                      dangerouslySetInnerHTML={sanitizedHtml(detail.body_html)}
                     />
                   ) : (
                     <pre className="whitespace-pre-wrap">{detail.body_text || '-'}</pre>

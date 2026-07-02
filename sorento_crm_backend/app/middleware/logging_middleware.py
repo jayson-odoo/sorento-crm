@@ -1,10 +1,11 @@
 """Logging middleware for API requests."""
 import time
+import uuid
 import logging
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 from app.services.logging import log_api_request
-from app.audit_context import set_audit_context
+from app.audit_context import set_audit_context, set_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -17,13 +18,20 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         # Set audit context so automatic audit logging has at least IP (user_id set by auth deps)
         ip = request.client.host if request.client else None
         set_audit_context(None, ip)
+        # Correlation id for this request (honour an inbound X-Trace-Id if present,
+        # else mint one). Copied onto every audit row written during the request.
+        trace_id = request.headers.get("X-Trace-Id") or uuid.uuid4().hex[:16]
+        set_trace_id(trace_id)
 
         # Skip logging for health check and docs
         if request.url.path in ["/health", "/docs", "/redoc", "/openapi.json"]:
-            return await call_next(request)
-        
+            response = await call_next(request)
+            response.headers["X-Trace-Id"] = trace_id
+            return response
+
         # Process request
         response = await call_next(request)
+        response.headers["X-Trace-Id"] = trace_id
         
         # Calculate duration
         process_time = time.time() - start_time

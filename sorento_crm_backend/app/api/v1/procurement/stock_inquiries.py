@@ -7,6 +7,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.procurement_service import StockInquiryService
 from app.schemas.procurement import (
@@ -126,6 +127,7 @@ async def get_stock_inquiry(
 ):
     """Get a single stock inquiry by ID."""
     try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         service = StockInquiryService(db)
         return service.get_inquiry_for_response(
             inquiry_id,
@@ -148,6 +150,7 @@ async def get_stock_inquiry_conversation(
 ):
     """Get Respond.io conversation messages for this stock inquiry (contact from respond_inbox_url)."""
     try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         from app.services.integration_service import RespondClient
         from app.models.access import RespondContact
         service = StockInquiryService(db)
@@ -215,6 +218,7 @@ async def link_attachment_to_stock_inquiry(
 ):
     """Link an existing attachment to a stock inquiry."""
     try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         service = StockInquiryService(db)
         created_by = (current_user.get("id") or None) if isinstance(current_user.get("id"), str) and len(str(current_user.get("id"))) == 36 else None
         link = service.link_attachment_to_inquiry(
@@ -242,6 +246,7 @@ async def get_or_create_stock_inquiry_view_link(
 ):
     """Get or create a shareable view link for this stock inquiry (no login required to view)."""
     try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         service = StockInquiryService(db)
         service.get_inquiry(inquiry_id)  # ensure exists and user can access
         token = service.get_or_create_view_token(inquiry_id)
@@ -316,6 +321,7 @@ async def update_stock_inquiry(
 ):
     """Update a stock inquiry."""
     try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         service = StockInquiryService(db)
         inquiry = service.update_inquiry(inquiry_id, inquiry_data)
         db.commit()
@@ -336,6 +342,7 @@ async def update_stock_inquiry_and_reply(
 ):
     """Update inquiry and send message via Respond.io from Chat Records. SLA/status move to responded only when status is pending_purchasing or responded; other statuses only send and record last_responded."""
     try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = StockInquiryService(db)
         inquiry = service.update_inquiry_and_reply(
@@ -361,6 +368,7 @@ async def submit_stock_inquiry_for_project_sales(
 ):
     """Move stock inquiry from new to pending_project_sales."""
     try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         service = StockInquiryService(db)
         inquiry = service.submit_inquiry_for_project_sales(inquiry_id)
         return inquiry
@@ -378,6 +386,7 @@ async def project_sales_approve_stock_inquiry(
 ):
     """Move stock inquiry from pending_project_sales to pending_purchasing."""
     try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         service = StockInquiryService(db)
         user_id = (current_user or {}).get("id")
         respond_user_id = (
@@ -407,6 +416,7 @@ async def project_sales_reject_stock_inquiry(
 ):
     """Move stock inquiry from pending_project_sales to rejected."""
     try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         service = StockInquiryService(db)
         reason = body.reason if body else None
         user_id = (current_user or {}).get("id")
@@ -438,6 +448,7 @@ async def purchasing_reject_stock_inquiry(
 ):
     """Move stock inquiry from pending_purchasing to rejected."""
     try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         service = StockInquiryService(db)
         reason = body.reason if body else None
         user_id = (current_user or {}).get("id")
@@ -469,6 +480,7 @@ async def reopen_stock_inquiry(
 ):
     """Move stock inquiry from rejected to pending_project_sales."""
     try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         service = StockInquiryService(db)
         reason = body.reason if body else None
         user_id = (current_user or {}).get("id")
@@ -504,6 +516,7 @@ async def delete_stock_inquiry(
 ):
     """Delete a stock inquiry."""
     try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         service = StockInquiryService(db)
         return service.delete_inquiry(inquiry_id)
     except HTTPException:

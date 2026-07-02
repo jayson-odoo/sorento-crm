@@ -17,6 +17,19 @@ import { useDeleteComplaintAttachment } from '../hooks/useComplaints';
 import ComplaintLinkAttachmentBrowserDialog from './ComplaintLinkAttachmentBrowserDialog';
 import { linkComplaintAttachment } from '../services/complaintService';
 import type { ComplaintAttachment } from '../types/complaint.types';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 interface ComplaintManualAttachmentsSectionProps {
   complaintId: string;
@@ -29,6 +42,9 @@ export default function ComplaintManualAttachmentsSection({
   attachments: attachmentsFromComplaint = [],
 }: ComplaintManualAttachmentsSectionProps) {
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const [unlinkTarget, setUnlinkTarget] = useState<{ id: string; name: string } | null>(null);
   const deleteMutation = useDeleteComplaintAttachment();
 
   const attachments = useMemo(
@@ -37,6 +53,25 @@ export default function ComplaintManualAttachmentsSection({
         (link) => link.file_name != null || link.file_url != null,
       ),
     [attachmentsFromComplaint],
+  );
+
+  const previewItems = useMemo<AttachmentPreviewItem[]>(
+    () =>
+      attachments.map((link) => {
+        const name = link.original_filename ?? link.file_name ?? 'Unnamed file';
+        const cdn = link.file_url?.startsWith('http') ? link.file_url : undefined;
+        const download = link.attachment_id
+          ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
+          : undefined;
+        return {
+          id: link.id,
+          name,
+          url: cdn ?? '',
+          downloadUrl: download ?? cdn,
+          sizeBytes: link.file_size_bytes,
+        };
+      }),
+    [attachments],
   );
 
   const linkedAttachmentIds = useMemo(
@@ -83,15 +118,9 @@ export default function ComplaintManualAttachmentsSection({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {attachments.map((link) => {
+                {attachments.map((link, idx) => {
                   const displayName =
                     link.original_filename ?? link.file_name ?? 'Unnamed file';
-                  const previewUrl =
-                    link.file_url?.startsWith('http') === true
-                      ? link.file_url
-                      : link.attachment_id
-                        ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
-                        : link.file_url ?? '#';
                   return (
                     <TableRow key={link.id}>
                       <TableCell className="font-medium" title={displayName}>
@@ -105,22 +134,23 @@ export default function ComplaintManualAttachmentsSection({
                       </TableCell>
                       <TableCell>
                         <div className="flex gap-2">
-                          <Button variant="outline" size="sm" asChild>
-                            <a
-                              href={previewUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              <ExternalLink className="size-4" />
-                              View
-                            </a>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setPreviewIndex(idx);
+                              setPreviewOpen(true);
+                            }}
+                          >
+                            <ExternalLink className="size-4" />
+                            View
                           </Button>
                           <Button variant="outline" size="sm" asChild>
                             <a
                               href={
                                 link.attachment_id
                                   ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
-                                  : previewUrl
+                                  : (link.file_url ?? '#')
                               }
                               download={displayName}
                             >
@@ -131,7 +161,9 @@ export default function ComplaintManualAttachmentsSection({
                           <Button
                             variant="destructive"
                             size="sm"
-                            onClick={() => deleteMutation.mutate(link.id)}
+                            onClick={() =>
+                              setUnlinkTarget({ id: link.id, name: displayName })
+                            }
                             disabled={deleteMutation.isPending}
                           >
                             <Trash2 className="size-4" />
@@ -147,6 +179,41 @@ export default function ComplaintManualAttachmentsSection({
           </div>
         )}
       </CardContent>
+      <AttachmentPreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        items={previewItems}
+        startIndex={previewIndex}
+      />
+      <AlertDialog
+        open={!!unlinkTarget}
+        onOpenChange={(o) => {
+          if (!o) setUnlinkTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unlink attachment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the link between{' '}
+              <strong>{unlinkTarget?.name}</strong> and this complaint. The file
+              itself is not deleted. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (unlinkTarget) deleteMutation.mutate(unlinkTarget.id);
+                setUnlinkTarget(null);
+              }}
+            >
+              Unlink
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {linkDialogOpen && (
         <ComplaintLinkAttachmentBrowserDialog
           open={linkDialogOpen}

@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user
 from app.services.order_service import CustomerService
 from app.schemas.order import CustomerCreate, CustomerUpdate, CustomerResponse
@@ -75,6 +76,7 @@ async def get_customer(
 ):
     """Get a single customer by ID."""
     try:
+        validate_uuid_path(customer_id, resource="Customer")
         service = CustomerService(db)
         customer = service.get_customer(customer_id)
         return customer
@@ -110,6 +112,7 @@ async def update_customer(
 ):
     """Update a customer."""
     try:
+        validate_uuid_path(customer_id, resource="Customer")
         service = CustomerService(db)
         customer = service.update_customer(customer_id, customer_data)
         return customer
@@ -127,6 +130,7 @@ async def delete_customer(
 ):
     """Delete a customer."""
     try:
+        validate_uuid_path(customer_id, resource="Customer")
         service = CustomerService(db)
         # Implement delete logic
         return {"message": "Customer deleted successfully"}

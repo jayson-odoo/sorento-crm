@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, B
 from sqlalchemy.orm import Session
 from typing import Optional, Union, List, Any
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.complaints_service import ComplaintService
 from app.services.integration_service import IntegrationLogService
@@ -306,6 +307,7 @@ async def link_attachment_to_complaint(
 ):
     """Link an existing attachment to a complaint (complaint_attachments table)."""
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         service = ComplaintService(db)
         created_by = (current_user.get("id") or None) if isinstance(current_user.get("id"), str) and len(str(current_user.get("id"))) == 36 else None
         link = service.link_attachment_to_complaint(
@@ -330,6 +332,7 @@ async def get_complaint_conversation(
 ):
     """Get Respond.io conversation messages for this complaint (contact from respond_inbox_url)."""
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         from app.services.integration_service import RespondClient
         from app.models.access import RespondContact
 
@@ -419,6 +422,7 @@ async def get_complaint(
 ):
     """Get a single complaint by ID."""
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         service = ComplaintService(db)
         return service.get_complaint_for_response(
             complaint_id,
@@ -444,6 +448,7 @@ async def get_or_create_complaint_view_link(
 ):
     """Get or create a shareable view link for this complaint (no login required to view)."""
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         service = ComplaintService(db)
         service.get_complaint(complaint_id)  # ensure exists and user can access
         token = service.get_or_create_view_token(complaint_id)
@@ -1082,6 +1087,7 @@ async def sync_complaint_assignee(
 ):
     """Sync assignee from Respond.io: fetch contact by complaint's contact_id, get assignee, match to CRM user by respond_user_id, update complaint.assigned_to."""
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         service = ComplaintService(db)
         result = service.sync_assignee_from_respond(complaint_id)
         return result
@@ -1101,6 +1107,7 @@ async def update_complaint(
 ):
     """Update a complaint."""
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         service = ComplaintService(db)
         service.update_complaint(complaint_id, complaint_data)
         db.commit()
@@ -1120,6 +1127,7 @@ async def approve_complaint(
 ):
     """Mark complaint as approved and notify the contact via Respond.io."""
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = ComplaintService(db)
         service.decide_complaint(
@@ -1147,6 +1155,7 @@ async def reject_complaint(
 ):
     """Mark complaint as rejected (with mandatory reason) and notify the contact via Respond.io."""
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = ComplaintService(db)
         service.decide_complaint(
@@ -1179,6 +1188,7 @@ async def process_complaint_by_cs(
     sends a status-update message (+ optional note) to the contact via Respond.io.
     """
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = ComplaintService(db)
         service.mark_processed_by_cs(
@@ -1209,6 +1219,7 @@ async def close_complaint(
     and sends a status-update message (+ optional note) to the contact via Respond.io.
     """
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = ComplaintService(db)
         service.close_complaint(
@@ -1243,6 +1254,7 @@ async def export_complaint_pdf(
     from app.tasks.export_tasks import generate_complaint_pdf
 
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         service = ComplaintService(db)
         complaint = service.get_complaint(complaint_id)  # 404 if missing
 
@@ -1283,6 +1295,7 @@ async def notify_complaint_root_cause(
 ):
     """Send a Respond.io update message announcing the complaint's root cause."""
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = ComplaintService(db)
         service.notify_root_cause_to_salesperson(
@@ -1307,6 +1320,7 @@ async def notify_complaint_resolution(
 ):
     """Send a Respond.io update message announcing the complaint's resolution."""
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = ComplaintService(db)
         service.notify_resolution_to_salesperson(
@@ -1332,6 +1346,7 @@ async def update_complaint_and_reply(
 ):
     """Update complaint, send technical team response to customer via Respond.io, and mark SLA as responded."""
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = ComplaintService(db)
         service.update_complaint_and_reply(
@@ -1357,6 +1372,7 @@ async def delete_complaint(
 ):
     """Delete a complaint."""
     try:
+        validate_uuid_path(complaint_id, resource="Complaint")
         service = ComplaintService(db)
         service.delete_complaint(complaint_id)
         return {"message": "Complaint deleted successfully"}

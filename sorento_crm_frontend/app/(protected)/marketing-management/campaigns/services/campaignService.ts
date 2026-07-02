@@ -2,8 +2,12 @@ import { apiFetch } from '@/lib/api';
 import type { Campaign, CampaignFormData, CampaignDetail, CampaignType } from '../types/campaign.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
-export async function getCampaigns(params: DataGridApiFetchParams & { campaign_type_id?: string; status?: string; date_from?: string; date_to?: string; budget_min?: number; budget_max?: number }): Promise<DataGridApiResponse<Campaign>> {
-  const { pageIndex, pageSize, sorting, searchQuery, campaign_type_id, status, date_from, date_to, budget_min, budget_max } = params;
+// NOTE: only `status` is filterable server-side. The campaign_type/date/budget
+// filter params the FE used to send were never honoured by `list_campaigns`
+// (dead controls) and were removed — re-add here AND in the BE service together
+// if real type/date/budget filtering is wanted (see PLAN-fix-security-cluster C2).
+export async function getCampaigns(params: DataGridApiFetchParams & { status?: string }): Promise<DataGridApiResponse<Campaign>> {
+  const { pageIndex, pageSize, sorting, searchQuery, status } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -11,12 +15,7 @@ export async function getCampaigns(params: DataGridApiFetchParams & { campaign_t
     limit: String(pageSize),
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
-    ...(campaign_type_id ? { campaign_type_id } : {}),
     ...(status ? { status } : {}),
-    ...(date_from ? { date_from } : {}),
-    ...(date_to ? { date_to } : {}),
-    ...(budget_min ? { budget_min: String(budget_min) } : {}),
-    ...(budget_max ? { budget_max: String(budget_max) } : {}),
   });
   const response = await apiFetch(`/api/v1/marketing/campaigns?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch campaigns');

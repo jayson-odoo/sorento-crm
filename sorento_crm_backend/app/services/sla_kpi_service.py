@@ -11,7 +11,7 @@ not N+1). escalation manual/auto split comes from event_log.trigger.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from statistics import median
 from typing import Any, Optional
 
@@ -298,6 +298,37 @@ def kpi_leaderboard(db: Session, *, scope="all", date_from=None, date_to=None,
     ]
 
 
+def _escalates_at_expr():
+    """When the next auto-escalation clock expires for an OPEN tracker.
+
+    Open + not-yet-responded -> the response clock (due_at) is what escalates.
+    Open + responded, not resolved -> the resolution clock (due_at_resolution).
+    Resolved -> NULL (nothing left to escalate). Mirrors the breach detection in
+    sla_service.list_due_escalations; there is no stored "next escalation" column.
+    """
+    T = ConversationSLATracking
+    return case(
+        (T.is_resolved.is_(True), None),
+        (T.is_responded.is_(False), T.due_at),
+        else_=T.due_at_resolution,
+    )
+
+
+# FE column accessorKey -> sortable SQL. Computed keys (assignee_name, *_met,
+# escalates_at) are handled specially in kpi_tasks; the rest map to a plain column.
+_TASK_SORT_COLUMNS = {
+    "source_entity_type": ConversationSLATracking.source_entity_type,
+    "current_tier": ConversationSLATracking.current_tier,
+    "current_tier_started_at": ConversationSLATracking.current_tier_started_at,
+    "response_due": ConversationSLATracking.due_at,
+    "resolution_due": ConversationSLATracking.due_at_resolution,
+    "response_time_hours": ConversationSLATracking.response_time,
+    "resolution_time_hours": ConversationSLATracking.resolution_duration,
+}
+
+_ESC_WINDOW_HOURS = {"1h": 1, "4h": 4, "24h": 24}
+
+
 def _task_view_conditions(view: str, state: str, now):
     """Card-driven drilldown filters for the task list.
 
@@ -341,14 +372,49 @@ def _task_view_conditions(view: str, state: str, now):
 
 def kpi_tasks(db: Session, *, scope="all", date_from=None, date_to=None,
               entity_type=None, assignee_id=None, view="all", state="all",
+              sort=None, dir="desc", esc_window="all",
               page=1, limit=25) -> dict[str, Any]:
+    T = ConversationSLATracking
     now = _now()
     conds = _base_filters(scope, date_from, date_to, entity_type, assignee_id)
     conds += _task_view_conditions(view, state, now)
-    base = db.query(ConversationSLATracking).filter(*conds)
+
+    esc_expr = _escalates_at_expr()
+    # "Escalating by when" filter: restrict to OPEN trackers whose next-escalation
+    # clock falls in the window. `overdue` = already past due (escalation imminent
+    # / firing); Nh = due within the next N hours.
+    if esc_window and esc_window != "all":
+        conds += [T.is_resolved.is_(False), esc_expr.isnot(None)]
+        if esc_window == "overdue":
+            conds.append(esc_expr < now)
+        elif esc_window in _ESC_WINDOW_HOURS:
+            conds += [esc_expr >= now, esc_expr <= now + timedelta(hours=_ESC_WINDOW_HOURS[esc_window])]
+
+    base = db.query(T).filter(*conds)
     total = base.count()
+
+    # Sort: whitelisted column, computed expr, or joined assignee name. Falls back
+    # to initiated_at desc. Deterministic tie-breaker on id keeps pagination stable.
+    q = base
+    order_col = None
+    if sort == "assignee_name":
+        q = q.outerjoin(User, T.assigned_to_id == User.id)
+        order_col = func.coalesce(User.name, User.email)
+    elif sort == "escalates_at":
+        order_col = esc_expr
+    elif sort == "response_met":
+        order_col = _response_met_expr()
+    elif sort == "resolution_met":
+        order_col = _resolution_met_expr()
+    elif sort in _TASK_SORT_COLUMNS:
+        order_col = _TASK_SORT_COLUMNS[sort]
+
+    if order_col is not None:
+        primary = order_col.desc() if str(dir).lower() == "desc" else order_col.asc()
+    else:
+        primary = T.initiated_at.desc()
     rows = (
-        base.order_by(ConversationSLATracking.initiated_at.desc())
+        q.order_by(primary, T.id.asc())
         .offset((page - 1) * limit)
         .limit(limit)
         .all()
@@ -379,6 +445,12 @@ def kpi_tasks(db: Session, *, scope="all", date_from=None, date_to=None,
     def _iso(dt):
         return dt.isoformat() if dt is not None else None
 
+    def _escalates_at(t):
+        # Same rule as _escalates_at_expr, in Python for the payload.
+        if t.is_resolved:
+            return None
+        return t.due_at if not t.is_responded else t.due_at_resolution
+
     data = []
     for t in rows:
         e = esc_map.get(str(t.id), {})
@@ -390,6 +462,7 @@ def kpi_tasks(db: Session, *, scope="all", date_from=None, date_to=None,
             "current_tier_started_at": _iso(t.current_tier_started_at),
             "response_due": _iso(t.due_at),
             "resolution_due": _iso(t.due_at_resolution),
+            "escalates_at": _iso(_escalates_at(t)),
             "assignee_id": t.assigned_to_id,
             "assignee_name": names.get(t.assigned_to_id) or "—",
             "response_time_hours": float(t.response_time) if t.response_time is not None else None,

@@ -2,6 +2,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user
 from app.services.user_service import TeamService
 from app.schemas.user import TeamCreate, TeamUpdate, TeamResponse, TeamMemberResponse
@@ -31,6 +32,7 @@ async def get_team(
 ):
     """Get a team by ID."""
     try:
+        validate_uuid_path(team_id, resource="Team")
         service = TeamService(db)
         return service.get_team_view(team_id)
     except HTTPException:
@@ -62,6 +64,7 @@ async def update_team(
 ):
     """Update a team."""
     try:
+        validate_uuid_path(team_id, resource="Team")
         service = TeamService(db)
         return service.update_team(team_id, data)
     except HTTPException:
@@ -78,6 +81,7 @@ async def delete_team(
 ):
     """Delete a team."""
     try:
+        validate_uuid_path(team_id, resource="Team")
         service = TeamService(db)
         service.delete_team(team_id)
         return {"message": "Team deleted"}
@@ -95,6 +99,7 @@ async def list_team_members(
 ):
     """List members of a team."""
     try:
+        validate_uuid_path(team_id, resource="Team")
         service = TeamService(db)
         return service.list_team_members(team_id)
     except HTTPException:
@@ -113,6 +118,7 @@ async def add_team_member(
     """Add a user to a team. Body: { "user_id": "<id>", "sort_order": optional int,
     "include_in_round_robin": optional bool (default true) }."""
     try:
+        validate_uuid_path(team_id, resource="Team")
         user_id = body.get("user_id")
         if not user_id:
             raise HTTPException(status_code=400, detail="user_id is required")
@@ -141,6 +147,7 @@ async def update_team_member(
     """Update a team member. Body: { "include_in_round_robin": optional bool,
     "sort_order": optional int }."""
     try:
+        validate_uuid_path(team_id, resource="Team")
         service = TeamService(db)
         return service.update_team_member(
             team_id,
@@ -163,6 +170,7 @@ async def remove_team_member(
 ):
     """Remove a user from a team."""
     try:
+        validate_uuid_path(team_id, resource="Team")
         service = TeamService(db)
         service.remove_team_member(team_id, user_id)
         return {"message": "Member removed"}

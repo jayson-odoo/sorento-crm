@@ -187,6 +187,55 @@ def test_tasks_view_state_filter_reconciles_with_cards(db, seed):
     assert kpi.kpi_tasks(db, scope="all", view="pending")["total"] == a["stage_pending"]
 
 
+def test_tasks_escalates_at_payload(db, seed):
+    by_id = {r["tracking_id"]: r for r in kpi.kpi_tasks(db, scope="all")["data"]}
+    # T1 resolved -> nothing left to escalate.
+    assert by_id[seed["t1"]]["escalates_at"] is None
+    # T2 responded, unresolved -> escalates on the resolution clock.
+    t2 = by_id[seed["t2"]]
+    assert t2["escalates_at"] is not None
+    assert t2["escalates_at"] == t2["resolution_due"]
+
+
+def test_tasks_esc_window_overdue(db, seed):
+    # T2's resolution clock is 1h in the past -> overdue catches it; T1 (resolved) excluded.
+    overdue = kpi.kpi_tasks(db, scope="form", esc_window="overdue")
+    assert {r["tracking_id"] for r in overdue["data"]} == {seed["t2"]}
+    # A tight future window excludes the already-overdue T2.
+    assert kpi.kpi_tasks(db, scope="form", esc_window="1h")["total"] == 0
+
+
+def test_tasks_esc_window_future(db, seed):
+    now = datetime.utcnow()
+    pid = db.query(SLAPolicy).first().id
+    tid = str(uuid.uuid4())
+    # Pending (unresponded) row escalating on the response clock 2h out.
+    db.add(ConversationSLATracking(
+        id=tid, policy_id=pid, current_tier=1,
+        source_entity_type="complaint", source_entity_id="c9",
+        initiated_at=now, current_tier_started_at=now,
+        due_at=now + timedelta(hours=2), is_responded=False, is_resolved=False,
+    ))
+    db.commit()
+    assert tid in {r["tracking_id"] for r in kpi.kpi_tasks(db, scope="form", esc_window="4h")["data"]}
+    assert tid not in {r["tracking_id"] for r in kpi.kpi_tasks(db, scope="form", esc_window="1h")["data"]}
+
+
+def test_tasks_sort_response_time(db, seed):
+    # response_time: T3=1.0, T1=2.0, T2=8.0 (all scope). Sort maps FE key -> column.
+    asc = [r["response_time_hours"] for r in kpi.kpi_tasks(db, scope="all", sort="response_time_hours", dir="asc")["data"]]
+    assert asc == [1.0, 2.0, 8.0]
+    desc = [r["response_time_hours"] for r in kpi.kpi_tasks(db, scope="all", sort="response_time_hours", dir="desc")["data"]]
+    assert desc == [8.0, 2.0, 1.0]
+
+
+def test_tasks_sort_assignee_name(db, seed):
+    # Joined-name sort: Alice (T1,T2) before Bob (T3) ascending.
+    names = [r["assignee_name"] for r in kpi.kpi_tasks(db, scope="all", sort="assignee_name", dir="asc")["data"]]
+    assert names == sorted(names)
+    assert names[0] == "Alice" and names[-1] == "Bob"
+
+
 def test_leaderboard(db, seed):
     lb = {r["assignee_id"]: r for r in kpi.kpi_leaderboard(db, scope="form")}
     assert lb[seed["u1"]]["total"] == 2

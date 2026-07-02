@@ -1,15 +1,38 @@
 """Suppliers API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from typing import Optional, List, Any
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user
 from app.services.procurement_service import SupplierService
 from app.schemas.procurement import SupplierCreate, SupplierUpdate, SupplierResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
+from app.services.bulk_update_registry import MAX_BULK_IDS, run_bulk_update
 
 router = APIRouter()
+
+
+class BulkUpdateRequest(BaseModel):
+    """Whitelisted bulk-edit request. `field` is validated against the suppliers
+    bulk-update whitelist server-side; `value` is coerced/allow-listed per field."""
+
+    ids: List[str] = Field(..., min_length=1, max_length=MAX_BULK_IDS)
+    field: str
+    value: Any = None
+
+
+class BulkUpdateSkipped(BaseModel):
+    id: str
+    label: str
+    reason: str
+
+
+class BulkUpdateResponse(BaseModel):
+    updated: int
+    skipped: List[BulkUpdateSkipped]
 
 
 @router.get("/", response_model=ListResponse[SupplierResponse])
@@ -101,6 +124,7 @@ async def get_supplier(
 ):
     """Get a single supplier by ID."""
     try:
+        validate_uuid_path(supplier_id, resource="Supplier")
         service = SupplierService(db)
         supplier = service.get_supplier(supplier_id)
         return supplier
@@ -127,6 +151,35 @@ async def create_supplier(
         raise handle_internal_error(str(e))
 
 
+@router.post("/bulk-update", response_model=BulkUpdateResponse)
+async def bulk_update_suppliers(
+    payload: BulkUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Bulk-edit a single whitelisted field across selected suppliers.
+
+    Runs every selected id through the normal ``SupplierService.update_supplier``
+    path (so validation + `__audit_track__` audit rows fire per row). A field not
+    on the whitelist, or a value not allowed for it, is a 400. Rows that can't be
+    updated (e.g. not found) come back in ``skipped`` with a human reason; the
+    rest commit. Partial success, not all-or-nothing.
+    """
+    try:
+        return run_bulk_update(
+            db,
+            "suppliers",
+            payload.ids,
+            payload.field,
+            payload.value,
+            current_user,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.put("/{supplier_id}", response_model=SupplierResponse)
 async def update_supplier(
     supplier_id: str,
@@ -136,6 +189,7 @@ async def update_supplier(
 ):
     """Update a supplier."""
     try:
+        validate_uuid_path(supplier_id, resource="Supplier")
         service = SupplierService(db)
         supplier = service.update_supplier(supplier_id, supplier_data)
         return supplier
@@ -153,6 +207,7 @@ async def delete_supplier(
 ):
     """Delete a supplier."""
     try:
+        validate_uuid_path(supplier_id, resource="Supplier")
         service = SupplierService(db)
         # Implement delete logic
         return {"message": "Supplier deleted successfully"}

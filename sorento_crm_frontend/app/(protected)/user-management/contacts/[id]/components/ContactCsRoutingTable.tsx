@@ -1,6 +1,7 @@
 'use client';
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { extractApiError } from '@/lib/api-client';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
 import {
@@ -91,8 +92,7 @@ export default function ContactCsRoutingTable({ contactId }: { contactId: string
         },
       );
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || err.message || 'Failed to save pin');
+        throw new Error(await extractApiError(res, 'Failed to save pin'));
       }
     },
     onSuccess: () => {

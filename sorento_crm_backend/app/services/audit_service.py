@@ -113,6 +113,8 @@ def log_audit(
     Args:
         skip_flush: If True, don't flush (useful when already inside a flush operation).
     """
+    from app.audit_context import get_trace_id
+
     entry = AuditLog(
         entity_type=entity_type,
         entity_id=entity_id,
@@ -122,6 +124,7 @@ def log_audit(
         new_values=new_values,
         description=description,
         ip_address=ip_address,
+        trace_id=get_trace_id(),
     )
     db.add(entry)
     if not skip_flush:
@@ -135,6 +138,7 @@ def list_audit_logs(
     entity_id: Optional[str] = None,
     user_id: Optional[str] = None,
     action: Optional[str] = None,
+    trace_id: Optional[str] = None,
     page: int = 1,
     limit: int = 50,
 ) -> tuple[list[AuditLog], int]:
@@ -148,6 +152,8 @@ def list_audit_logs(
         q = q.filter(AuditLog.user_id == user_id)
     if action:
         q = q.filter(AuditLog.action == action.upper())
+    if trace_id:
+        q = q.filter(AuditLog.trace_id == trace_id)
     q = q.order_by(AuditLog.changed_at.desc())
     total = q.count()
     offset = (page - 1) * limit

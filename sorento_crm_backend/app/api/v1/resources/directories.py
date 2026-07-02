@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import cast
 
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.resources_service import AttachmentDirectoryService, AttachmentService
 from app.schemas.resources import (
@@ -81,6 +82,7 @@ async def get_directory(
 ):
     """Get a single directory by ID."""
     try:
+        validate_uuid_path(directory_id, resource="Attachment Directory")
         service = AttachmentDirectoryService(db)
         return service.get_directory(directory_id)
     except HTTPException:
@@ -114,6 +116,7 @@ async def update_directory(
 ):
     """Update a directory."""
     try:
+        validate_uuid_path(directory_id, resource="Attachment Directory")
         service = AttachmentDirectoryService(db)
         return service.update_directory(directory_id, data)
     except HTTPException:
@@ -131,6 +134,7 @@ async def move_directory(
 ):
     """Reparent and reorder a folder. Used by drag-and-drop: drop on folder = nest, drop between = reorder."""
     try:
+        validate_uuid_path(directory_id, resource="Attachment Directory")
         service = AttachmentDirectoryService(db)
         return service.move_directory(directory_id, data.parent_id, data.position)
     except HTTPException:
@@ -147,6 +151,7 @@ async def delete_directory(
 ):
     """Soft-delete a directory, its subfolders, and archive all attachments in them. Can be restored from Trash."""
     try:
+        validate_uuid_path(directory_id, resource="Attachment Directory")
         dir_service = AttachmentDirectoryService(db)
         dir_ids = dir_service.get_descendant_directory_ids(directory_id)
         attachment_service = AttachmentService(db)
@@ -170,6 +175,7 @@ async def restore_directory(
 ):
     """Restore a deleted directory, its subfolders, and all attachments in them."""
     try:
+        validate_uuid_path(directory_id, resource="Attachment Directory")
         service = AttachmentDirectoryService(db)
         result = service.restore_directory(directory_id)
         return {
@@ -191,6 +197,7 @@ async def permanent_delete_directory(
 ):
     """Permanently delete a directory in Trash and all its contents. Cannot be undone."""
     try:
+        validate_uuid_path(directory_id, resource="Attachment Directory")
         service = AttachmentDirectoryService(db)
         result = service.permanent_delete_directory(directory_id, deleted_by=current_user["id"])
         return {

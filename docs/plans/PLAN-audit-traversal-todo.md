@@ -1,7 +1,9 @@
 # PLAN — Codebase + UI Audit & Guide Traversal (TODO master list)
 
-**Status:** IN PROGRESS — started 2026-06-29, autonomous /loop session.
+**Status:** IN PROGRESS — started 2026-06-29, autonomous /loop session. Last reconcile 2026-06-30 vs `main` HEAD `551dc4012`.
 **Owner:** Claude (autonomous, user on the road ~1h+).
+
+> **2026-06-30 reconcile** — **Plan-1 landed in main** (`609d90786` "repair broken Create flows + lookup-403 + campaign status casing"). NOW DONE: 3 broken Create buttons, lookup-403 blast radius, campaign status casing, BE 500-on-bad-UUID (UUIDPath validator), campaign list status filter. **STILL OPEN:** marketing DELETE no-op stub (confirmed still `# Implement delete logic`), AWS key rotation, rate-limiting + object-level-authz security plans, 12 module guides push, Workstream 4/5 roadmaps. Items below marked accordingly.
 
 Three workstreams from the user's brief:
 
@@ -27,15 +29,17 @@ These are IN MAIN (origin/main `c68969b11`, deployed) — DONE, do not re-do:
 - UI: demo mega-nav + dead footer links removed (`1602d2a20`) · redundant header breadcrumb removed (`56b2b48fe`).
 - Guides-sync forbid-list safeguard (`7f5d9f67b`). Inventory/delivery/product/sla + getting-started guides PUSHED to Outline.
 
-⬜ STILL OPEN (NOT in main — documented/planned only): everything in the 🔴/🟠/🟡 lists below + the AWS key ROTATION (untrack shipped, rotation pending) + the 12 NEW module guides (on branch `docs/user-guides-data-analysis-uncovered-modules`, not pushed). Audit docs + 2 fix plans also live on that branch, not main.
+✅ ALSO NOW IN MAIN (Plan-1, `609d90786`): 3 broken Create buttons (forms/campaigns `new/page.tsx` added; stock-batches button reworked in `BatchesList.tsx`) · lookup-403 fix (`lookup.py` authz) · campaign status casing · BE 500-on-bad-UUID → `UUIDPath` validator (`uuid_path_param.py`, applied to forms/stock-batches/campaigns) · campaign list status filter wired. Tests added.
+
+⬜ STILL OPEN (NOT in main — documented/planned only): marketing DELETE no-op stub · the rest of the 🟠/🟡 lists below + AWS key ROTATION (untrack shipped, rotation pending) + the 12 NEW module guides (on branch `docs/user-guides-data-analysis-uncovered-modules`, not pushed) + Workstream 4/5 roadmaps. Audit docs + 2 fix plans also live on that branch, not main.
 
 **🔴 YOUR ACTION (can't be done by me):**
 1. **Rotate the AWS CloudFront key** + purge `private_key.pem` from git history (`RUNBOOK-purge-private-key-from-git-history.md`). The committed key is live until rotated.
 
 **🔴 TOP BUGS TO FIX (need a grilled+approved plan first):**
-2. **3 broken Create buttons** — Campaign / Form / Stock-Batch (`/…/new` page missing → falls to `[id]` → BE 500 → "not found"). Create is DEAD for these 3. + BE returns 500 (not 404/422) on non-UUID id. (§ top of Workstream-2.)
-3. **Lookup-permission 403 = HIGH, broad blast radius** — `/lookup/by-binding` requires `master_data.lookup_sets.view`, NOT granted to users who can use the forms. Breaks dropdowns + spams console + shows "Permission required" toast across **Forms, Complaints (create), Purchase Requests (create/edit/list/detail)** — via shared `components/common/LookupBoundField.tsx`. A complaint creator may be unable to submit. Fix: grant lookup-read implicitly with parent-resource access; stop the 4× retry. (§1f #9.)
-4. **Marketing DELETE is a no-op stub — ✅CONFIRMED, TWO endpoints**: `delete_campaign` (`marketing/campaigns.py:83`) AND `delete_campaign_type` (`marketing/campaign_types.py:85`) both `# Implement delete logic` then `return {"message":"...deleted successfully"}` — return success, delete NOTHING. Violates ADR hard-delete; user thinks it deleted but it didn't.
+2. ✅ **DONE (Plan-1, main `609d90786`)** — 3 broken Create buttons + BE 500-on-bad-UUID. forms/campaigns got `new/page.tsx`; stock-batches button reworked; `UUIDPath` validator returns 422 not 500. (§ top of Workstream-2.)
+3. ✅ **DONE (Plan-1, main `609d90786`)** — lookup-403 blast radius. `/lookup/by-binding` authz relaxed (`lookup.py`), test `test_lookup_public_api_authz.py`. (§1f #9.)
+4. ⬜ **STILL OPEN — Marketing DELETE is a no-op stub — ✅CONFIRMED still present, TWO endpoints**: `delete_campaign` (`marketing/campaigns.py:85`) AND `delete_campaign_type` (`marketing/campaign_types.py`) both `# Implement delete logic` then `return {"message":"...deleted successfully"}` — return success, delete NOTHING. Violates ADR hard-delete; user thinks it deleted but it didn't. (Plan-1 did NOT touch this.)
 
 **🟠 SECURITY phase-2 (VERIFY each first — phase-1 had a false alarm):**
 5. **✅CONFIRMED** no rate-limit on `/auth/reset-password` (auth.py:212) + `/auth/signup` (auth.py:143) — `login` HAS `login_throttle` (auth.py:44-97), these two don't. Signup 409s on existing email → enumeration. Portal OTP (enum+DOS) still to confirm. Bundle into one "rate-limiting" plan (reuse `login_throttle`).
@@ -54,7 +58,7 @@ These are IN MAIN (origin/main `c68969b11`, deployed) — DONE, do not re-do:
 - [ ] **Attachment-create perm gap** (`resources/attachments.py:700` requires `resource.attachments.upload`) — a complaint-creator can't attach a photo. Tie upload to parent-entity permission (sibling of the lookup-403 "gate too tight" class).
 - [ ] **Migrate simple Create/Edit to ADR modal-default** — consistency pass across the ~16 page-based create/edit siblings (deferred from Bug-A1 which chose pages for now).
 - [ ] **Adopt `UUIDPath` validator across ALL `{id}` detail GETs** — full sweep (Bug-A2 applied it only to campaigns/forms/stock-batches in-scope).
-- [ ] **Campaign list: type/date/budget filters still dead** — `get_campaigns` route + `list_campaigns` service only wire `status` now (Plan-1 A5). The FE sends `campaign_type_id`/`date_from`/`date_to`/`budget_min/max` but route ignores them. Wire or remove the controls.
+- [ ] **Campaign list: type/date/budget filters still dead** — `status` filter ✅ wired (Plan-1 A5, `test_campaign_list_status_filter.py`), but FE still sends `campaign_type_id`/`date_from`/`date_to`/`budget_min/max` which the route ignores. Wire or remove the controls. (STILL OPEN.)
 
 ## Workstream 1 — Codebase audit
 
@@ -146,7 +150,7 @@ NOTE: a `ticket-management` module exists in FE (not in sidebar menu.config) —
 ### 1g. Bugs found while fact-checking guides (agent, 2026-06-30) — verify before fix
 
 **Likely real bugs / dead UI:**
-- [ ] **Marketing Campaign DELETE is a no-op stub** — `delete_campaign` returns success WITHOUT deleting. Violates ADR hard-delete standard. (Notable — silent data-non-deletion.)
+- [ ] **Marketing Campaign DELETE is a no-op stub** — ⬜ STILL OPEN (re-confirmed 2026-06-30: `marketing/campaigns.py:85` + `campaign_types.py` still `# Implement delete logic` → return success WITHOUT deleting). Plan-1 did NOT touch it. Violates ADR hard-delete standard. (Notable — silent data-non-deletion.)
 - [x] **Campaign status casing — FIXED (Plan-1) — audit was INVERTED.** Ground truth: DB CHECK constraint `marketing_campaigns_status_check` enforces **lowercase** (planning/active/completed/cancelled). The model's uppercase `CampaignStatus` enum was the wrong artifact (its default would violate the constraint). Canonicalized everything to lowercase: enum values, schema validator (coerce+enum-validate), list filter (now actually applied — was ignored entirely at the service), FE types/labels. Browser-verified create→stored `planning`→badge "Planning"→filter works.
 - [ ] **Email Outbox "Deferred" filter is dead** — FE + model docstring list `deferred`, but the drainer never writes it (rate-limited rows stay `pending`). Filter always returns 0.
 - [ ] **Stock Inquiry "Updated" status filter** (`updated`) — no backend writer; vestigial option.
@@ -174,12 +178,12 @@ NOTE: a `ticket-management` module exists in FE (not in sidebar menu.config) —
 **MEDIUM (verify):**
 - [ ] OTP code hashed with **plain SHA256** (`portal_service.py:87`) — 6-digit space → rainbow-table-trivial on DB breach. Use bcrypt/pbkdf2 (codebase already bcrypts passwords).
 - [ ] Impersonation token: excluded from sliding renewal but **no audit log** of slides/access (`portal_service.py:349-357`); set short hard expiry on impersonation start.
-- [ ] **Lookup permission inconsistency — ELEVATE TO HIGH** (`lookup.py:16-52` requires `master_data.lookup_sets.view`). Beyond the Forms filter: it **breaks CREATE forms**. Verified on **Create Complaint** (`/complaint-management/complaints/new`) at mobile — ALL 4 lookup dropdowns 403 (`complaint_type`, `customer_type`, `defects_discovered`, `within_warranty`), 16 console errors (×4 retries each), and a confusing toast **"Permission required: master_data.lookup_sets.view"**. The Customer Type / Within Warranty selects stay EMPTY → if required, a user who can reach Create Complaint CANNOT complete it. Fix: grant lookup-read implicitly to anyone who can view/create the parent resource (or make the FE degrade), AND stop the 4× retry spam.
+- [x] ✅ **DONE (Plan-1, main `609d90786`)** **Lookup permission inconsistency** (`lookup.py` authz relaxed, test `test_lookup_public_api_authz.py`). Was HIGH — broke CREATE forms. Verified on **Create Complaint** (`/complaint-management/complaints/new`) at mobile — ALL 4 lookup dropdowns 403 (`complaint_type`, `customer_type`, `defects_discovered`, `within_warranty`), 16 console errors (×4 retries each), and a confusing toast **"Permission required: master_data.lookup_sets.view"**. The Customer Type / Within Warranty selects stay EMPTY → if required, a user who can reach Create Complaint CANNOT complete it. Fix: grant lookup-read implicitly to anyone who can view/create the parent resource (or make the FE degrade), AND stop the 4× retry spam.
 - [ ] **Attachment-create permission gap** (`resources/attachments.py:700` requires `resource.attachments.upload`) → a user who can create a complaint can't attach a photo (the 403 I hit in the upload test). Tie to parent-entity permission.
 
 **LOW:** portal `slug-info` leaks name + masked phone (`portal.py:169`) enabling OTP spam; OTP 6-digit entropy (mitigated by caps).
 
-**NOTE:** these are AGENT findings — confirm each against code (grill) before implementing; bundle the rate-limiting ones (auth reset/signup/portal-OTP) into one "rate-limiting" plan, the authz ones (presigned/portal-attachment) into an "object-level authz" plan.
+**NOTE:** these are AGENT findings — confirm each against code (grill) before implementing. ➡️ **NOW FOLDED INTO `docs/plans/PLAN-fix-security-cluster.md`** (master fix cluster: A rate-limiting · B object-authz · C bounded bugs · D admin-QoL · E FE refactors). Grill-first, awaiting user sign-off on the consolidated agenda there.
 
 ### 1d. Cross-cutting CRITICALs found during traversal
 
@@ -196,17 +200,17 @@ NOTE: a `ticket-management` module exists in FE (not in sidebar menu.config) —
 
 ---
 
-## 🔴 HIGH BUG (found in sweep 2026-06-30) — 3 broken "Create" buttons + BE 500-on-bad-UUID
+## ✅ RESOLVED (Plan-1, main `609d90786`) — 3 broken "Create" buttons + BE 500-on-bad-UUID
 
 **Browser-confirmed (Campaigns):** clicking **Create Campaign** → `/marketing-management/campaigns/new` renders "Campaign not found"; network shows `GET /api/v1/marketing/campaigns/new` → **500** (×2). Create flow is DEAD.
 
 **Root cause:** the list "Create" button `router.push('/…/new')` but there is **no `new/page.tsx`** for that resource, so Next falls through to `[id]/page.tsx` with `id="new"`, which fetches `GET /…/{id}` → backend can't parse "new" as UUID → 500 → FE shows not-found.
 
 **Systemic scan (grep of all `push('…/new')` vs presence of `new/page.tsx`):** 3 BROKEN, 14 OK.
-- [ ] **`/forms-management/forms/new`** — `FormsList.tsx:266` — Create Form broken (no `new/` page).
-- [ ] **`/inventory-management/stock-batches/new`** — `BatchesList.tsx:231` — Create Batch broken (matches earlier inventory-guide finding).
-- [ ] **`/marketing-management/campaigns/new`** — `CampaignsList.tsx:222` — Create Campaign broken (browser-confirmed).
-- [ ] **BE defensive bug:** `GET /api/v1/marketing/campaigns/{id}` (and likely other detail GETs) returns **500** for a non-UUID id — should be 404/422. Masks the above + leaks an error. Harden id parsing across detail endpoints.
+- [x] **`/forms-management/forms/new`** — ✅ `new/page.tsx` added (Plan-1).
+- [x] **`/inventory-management/stock-batches/new`** — ✅ `BatchesList.tsx` reworked (button no longer dead-ends to broken `new` route).
+- [x] **`/marketing-management/campaigns/new`** — ✅ `new/page.tsx` + `CampaignForm.tsx` added (Plan-1).
+- [x] **BE defensive bug:** ✅ `UUIDPath` validator (`uuid_path_param.py`) → non-UUID id now 422, not 500. Applied to forms/stock-batches/campaigns. ⬜ FULL sweep across ALL `{id}` GETs still open (see backlog).
 - Fix options (need grilled+approved plan): add the missing `new/page.tsx` create pages (match the 14 working ones), OR switch these creates to the modal-default per ADR CRUD-UX standard (campaign/form/batch may be simple enough for a modal). Either way also fix the BE 500→404/422.
 - OK (have `new/page.tsx`): complaints, warehouses, promotions, products, UoM, customers, order-statuses, orders, grn, packing-lists, spo-allocations, stock-inquiries, suppliers, sla-policies.
 
@@ -268,7 +272,7 @@ Pages to sweep (from `config/menu.config.tsx`). Desktop 1400px + mobile ~375px. 
 
 **Forms Management → Forms `/forms-management/forms` (desktop + mobile) — list ✅ CLEAN, but 403-lookup noise.**
 - List renders fine (Form Code/Name/Type/Purpose/Language), truncation OK, mobile collapses cleanly. Header fix confirmed (no top breadcrumb on mobile either).
-- [ ] **4× `403 Forbidden` on load** from `GET /api/v1/lookup/by-binding?table=forms&column=form_type` — the form_type filter's lookup options are RBAC-forbidden for this user. Page still works (filter just won't populate), but: (a) is the lookup-binding permission supposed to be denied to users who CAN view forms? mismatch; (b) FE retries it 4× and spams console errors instead of degrading gracefully (hide/disable the filter or show "unavailable"). NOT caused by Item-2 lookup change (that was query internals; this is the endpoint's auth guard). Recommend: align the lookup permission with form-view, AND make the FE filter degrade gracefully on 403.
+- [x] ✅ **DONE (Plan-1)** — **4× `403 Forbidden` on load** from `GET /api/v1/lookup/by-binding?table=forms&column=form_type` — lookup authz relaxed (same fix as §1f). ⬜ FE graceful-degrade on 403 (stop 4× retry spam) — verify whether Plan-1 also addressed the retry, else keep as minor open. Page still works (filter just won't populate), but: (a) is the lookup-binding permission supposed to be denied to users who CAN view forms? mismatch; (b) FE retries it 4× and spams console errors instead of degrading gracefully (hide/disable the filter or show "unavailable"). NOT caused by Item-2 lookup change (that was query internals; this is the endpoint's auth guard). Recommend: align the lookup permission with form-view, AND make the FE filter degrade gracefully on 403.
 - Note: "Create Form" here is one of the 3 KNOWN-BROKEN creates (already logged).
 
 **Create Complaint `/complaint-management/complaints/new` (mobile 390) — page-based create, scroll ✅.**
@@ -299,7 +303,7 @@ Existing (department how-to): purchasing, warehouse, marketing, project-sales-ad
 - [x] **Remaining module guides** ✅ 12 files on branch `docs/user-guides-data-analysis-uncovered-modules`: procurement (data-analysis + manage-suppliers + review-grn), marketing/data-analysis, complaints/data-analysis, user-management (data-analysis + manage-users-and-roles + manage-teams), system-management (data-analysis + troubleshoot-failed-notifications). NOT pushed to Outline (user-gated) — review the bugs they surfaced (§1g) then push. NOTE: on a separate branch, not main.
 
 **Bugs surfaced by guide agents (verify + fix):**
-- [ ] **Stock Batches "Create Batch" → `/stock-batches/new` has NO page implemented** (404/blank). Either build the page or hide the button (batches come from import pipeline today).
+- [x] ✅ **DONE (Plan-1)** — **Stock Batches "Create Batch"** broken route fixed via `BatchesList.tsx` rework (button no longer dead-ends to broken `new` route).
 - [ ] **Customers list Status filter** sends `status` param but `GET /order-management/customers` ignores it (only page/limit/query/sort/dir; search matches code+name only) — dead filter control. Either wire BE or remove control.
 - [ ] order-statuses search + Final-status filter are client-side only (no server filter) — fine for small sets, note.
 - [ ] AI assistant can't read Customers master (route uses `get_current_user` only, no API key) — customer analytics come from `/orders/debtors` aggregation. Confirm intended; may want API-key access for assistant.

@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_optional
 from app.models.order import OrderStatus
 from app.services.order_service import OrderStatusService
@@ -82,6 +83,7 @@ async def get_order_status(
 ):
     """Get a single order status by ID."""
     try:
+        validate_uuid_path(status_id, resource="Order Status")
         service = OrderStatusService(db)
         status = service.get_order_status(status_id)
         return status
@@ -117,6 +119,7 @@ async def update_order_status(
 ):
     """Update an order status."""
     try:
+        validate_uuid_path(status_id, resource="Order Status")
         service = OrderStatusService(db)
         status = service.update_order_status(status_id, status_data)
         return status
@@ -134,6 +137,7 @@ async def delete_order_status(
 ):
     """Delete an order status."""
     try:
+        validate_uuid_path(status_id, resource="Order Status")
         service = OrderStatusService(db)
         # Implement delete logic
         return {"message": "Order status deleted successfully"}

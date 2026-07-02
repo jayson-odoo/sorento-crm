@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.inventory_service import StorageZoneService
 from app.schemas.inventory import StorageZoneCreate, StorageZoneUpdate, StorageZoneResponse, StorageZoneTreeItem
@@ -52,6 +53,7 @@ async def get_storage_zone(
 ):
     """Get a single storage zone by ID."""
     try:
+        validate_uuid_path(zone_id, resource="Storage Zone")
         service = StorageZoneService(db)
         zone = service.get_zone(zone_id)
         return zone
@@ -87,6 +89,7 @@ async def update_storage_zone(
 ):
     """Update a storage zone."""
     try:
+        validate_uuid_path(zone_id, resource="Storage Zone")
         service = StorageZoneService(db)
         zone = service.update_zone(zone_id, zone_data)
         return zone
@@ -104,6 +107,7 @@ async def delete_storage_zone(
 ):
     """Delete a storage zone."""
     try:
+        validate_uuid_path(zone_id, resource="Storage Zone")
         service = StorageZoneService(db)
         # Implement delete logic
         return {"message": "Storage zone deleted successfully"}

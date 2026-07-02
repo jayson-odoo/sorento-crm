@@ -38,6 +38,7 @@ import {
   type KpiScope,
   type KpiView,
   type KpiState,
+  type KpiEscWindow,
   type KpiTaskRow,
   type KpiWindow,
 } from './slaKpiService';
@@ -78,6 +79,27 @@ function taskHref(t: KpiTaskRow): string {
 const fmtPct = (v: number | null) => (v == null ? '—' : `${v}%`);
 const fmtHrs = (v: number | null) => (v == null ? '—' : `${v}h`);
 const fmtDate = (v: string | null) => (v ? formatDateTime(parseDateTimeAsUTC(v)) : '—');
+
+// Escalation timestamp + a relative hint ("in 42m" / "overdue 3h") so a sysadmin
+// can eyeball how imminent the outgoing escalation is. null = resolved, nothing
+// left to escalate.
+function fmtEscalates(v: string | null): { text: string; overdue: boolean } {
+  if (!v) return { text: '—', overdue: false };
+  const due = parseDateTimeAsUTC(v).getTime();
+  const diffMin = Math.round((due - Date.now()) / 60000);
+  const overdue = diffMin < 0;
+  const abs = Math.abs(diffMin);
+  const rel = abs < 60 ? `${abs}m` : abs < 1440 ? `${Math.round(abs / 60)}h` : `${Math.round(abs / 1440)}d`;
+  return { text: `${formatDateTime(parseDateTimeAsUTC(v))} (${overdue ? `overdue ${rel}` : `in ${rel}`})`, overdue };
+}
+
+const ESC_WINDOW_OPTIONS: { value: KpiEscWindow; label: string }[] = [
+  { value: 'all', label: 'Escalation: any' },
+  { value: 'overdue', label: 'Escalation: overdue' },
+  { value: '1h', label: 'Escalation: ≤ 1h' },
+  { value: '4h', label: 'Escalation: ≤ 4h' },
+  { value: '24h', label: 'Escalation: ≤ 24h' },
+];
 
 type TaskFilter = { view: KpiView; state: KpiState };
 
@@ -220,20 +242,21 @@ function filterLabel(f: TaskFilter): string {
 function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter: TaskFilter; onClear: () => void; window?: KpiWindow }) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
+  const [escWindow, setEscWindow] = useState<KpiEscWindow>('all');
   const cardRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
-  const isFiltered = filter.view !== 'all';
+  const isFiltered = filter.view !== 'all' || escWindow !== 'all';
 
   // Reset to first page whenever the card-driven filter changes, and bring the
   // table into view so the drilldown result is visible after a click.
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
     if (isFiltered) cardRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-  }, [filter.view, filter.state, isFiltered]);
+  }, [filter.view, filter.state, escWindow, isFiltered]);
 
   const tasksQ = useQuery({
-    queryKey: ['kpi-tasks', scope, windowKey(window), filter.view, filter.state, pagination.pageIndex, pagination.pageSize, sorting],
-    queryFn: () => getKpiTasks(scope, pagination, sorting, filter.view, filter.state, window),
+    queryKey: ['kpi-tasks', scope, windowKey(window), filter.view, filter.state, escWindow, pagination.pageIndex, pagination.pageSize, sorting],
+    queryFn: () => getKpiTasks(scope, pagination, sorting, filter.view, filter.state, window, escWindow),
     staleTime: KPI_STALE_MS,
   });
 
@@ -287,6 +310,19 @@ function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter
           return <span className="truncate block" title={v}>{v}</span>;
         },
         size: 160,
+      },
+      {
+        accessorKey: 'escalates_at',
+        header: ({ column }) => <DataGridColumnHeader title="Escalates at" column={column} />,
+        cell: ({ row }) => {
+          const { text, overdue } = fmtEscalates(row.original.escalates_at);
+          return (
+            <span className={`truncate block ${overdue ? 'text-destructive font-medium' : ''}`} title={text}>
+              {text}
+            </span>
+          );
+        },
+        size: 220,
       },
       {
         accessorKey: 'response_time_hours',
@@ -353,17 +389,29 @@ function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter
         <CardHeader className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <CardTitle className="text-base">Tasks</CardTitle>
-            {isFiltered ? (
+            {filter.view !== 'all' ? (
               <Badge variant="secondary" className="font-normal">{filterLabel(filter)}</Badge>
             ) : (
               <span className="text-xs text-muted-foreground">Click a card or bar segment above to filter</span>
             )}
           </div>
-          {isFiltered ? (
-            <Button variant="outline" size="sm" className="h-8 shrink-0" onClick={onClear}>
-              <X className="size-3.5" /> Clear filter
-            </Button>
-          ) : null}
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Select value={escWindow} onValueChange={(v) => setEscWindow(v as KpiEscWindow)}>
+              <SelectTrigger className="h-8 w-[190px]" size="sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {ESC_WINDOW_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {isFiltered ? (
+              <Button variant="outline" size="sm" className="h-8" onClick={() => { setEscWindow('all'); onClear(); }}>
+                <X className="size-3.5" /> Clear filter
+              </Button>
+            ) : null}
+          </div>
         </CardHeader>
         <CardTable>
           <ScrollArea>

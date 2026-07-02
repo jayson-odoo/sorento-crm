@@ -9,6 +9,7 @@ import uuid
 
 class Form(Base):
     __tablename__ = "forms"
+    __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     code = Column(String(100), unique=True, nullable=False)

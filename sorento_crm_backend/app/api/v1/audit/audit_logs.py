@@ -30,6 +30,7 @@ async def get_audit_logs(
     entity_id: Optional[str] = Query(None, description="Filter by entity id"),
     user_id: Optional[str] = Query(None),
     action: Optional[str] = Query(None, description="INSERT, UPDATE, or DELETE"),
+    trace_id: Optional[str] = Query(None, description="Filter by request correlation id (groups a multi-row change)"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -42,6 +43,7 @@ async def get_audit_logs(
         entity_id=entity_id,
         user_id=user_id,
         action=action,
+        trace_id=trace_id,
         page=page,
         limit=limit,
     )

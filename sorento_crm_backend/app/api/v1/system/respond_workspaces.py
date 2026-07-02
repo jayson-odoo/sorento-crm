@@ -17,6 +17,7 @@ from app.schemas.respond_workspace import (
     RespondWorkspaceUpdate,
 )
 from app.services.respond_workspace_service import RespondWorkspaceService
+from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter(prefix="/respond-workspaces", tags=["respond-workspaces"])
 
@@ -48,6 +49,7 @@ def get_workspace(
     _user: dict = Depends(require_permission("system.respond_workspaces.view")),
     db: Session = Depends(get_db),
 ):
+    validate_uuid_path(workspace_id, resource="Respond Workspace")
     svc = RespondWorkspaceService(db)
     row = svc.get(workspace_id)
     if not row:
@@ -74,6 +76,7 @@ def update_workspace(
     _user: dict = Depends(require_permission("system.respond_workspaces.edit")),
     db: Session = Depends(get_db),
 ):
+    validate_uuid_path(workspace_id, resource="Respond Workspace")
     svc = RespondWorkspaceService(db)
     row = svc.update(workspace_id, data)
     return svc.to_response_dict(row)
@@ -85,6 +88,7 @@ def delete_workspace(
     _user: dict = Depends(require_permission("system.respond_workspaces.delete")),
     db: Session = Depends(get_db),
 ):
+    validate_uuid_path(workspace_id, resource="Respond Workspace")
     svc = RespondWorkspaceService(db)
     svc.delete(workspace_id)
     return None

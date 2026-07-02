@@ -15,6 +15,7 @@
  *   </EntityActivitiesLayout>
  */
 import { useEffect, useState, type ReactNode } from 'react';
+import { sanitizedHtml } from '@/lib/sanitize';
 import { Activity, FileText, MessageSquare, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -326,7 +327,7 @@ function ActivitiesTab({
               ) : it.body_html ? (
                 <div
                   className="text-sm prose prose-sm max-w-none"
-                  dangerouslySetInnerHTML={{ __html: it.body_html }}
+                  dangerouslySetInnerHTML={sanitizedHtml(it.body_html)}
                 />
               ) : (
                 <div className="text-sm whitespace-pre-wrap">{it.body_text ?? ''}</div>
@@ -436,7 +437,7 @@ function NotesTab({
               {n.body_html ? (
                 <div
                   className="text-sm prose prose-sm max-w-none"
-                  dangerouslySetInnerHTML={{ __html: n.body_html }}
+                  dangerouslySetInnerHTML={sanitizedHtml(n.body_html)}
                 />
               ) : (
                 <div className="text-sm whitespace-pre-wrap">{n.body_text ?? ''}</div>

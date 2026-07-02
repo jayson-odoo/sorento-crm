@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState, type ReactNode } from 'react';
+import { sanitizedHtml } from '@/lib/sanitize';
 import {
   ColumnDef,
   PaginationState,
@@ -288,7 +289,7 @@ export default function OutgoingMailsList() {
             {contentMail?.body?.startsWith('<') ? (
               <div
                 className="prose prose-sm dark:prose-invert max-w-none"
-                dangerouslySetInnerHTML={{ __html: contentMail.body }}
+                dangerouslySetInnerHTML={sanitizedHtml(contentMail.body)}
               />
             ) : (
               <div className="whitespace-pre-wrap break-words font-sans">

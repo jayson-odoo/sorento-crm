@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.lookup import (
@@ -62,6 +63,7 @@ async def get_set(
 ):
     from fastapi import HTTPException
     try:
+        validate_uuid_path(set_id, resource="Lookup Set")
         return _set_to_response(db, LookupSetService(db).get(set_id))
     except HTTPException:
         raise
@@ -78,6 +80,7 @@ async def update_set(
 ):
     from fastapi import HTTPException
     try:
+        validate_uuid_path(set_id, resource="Lookup Set")
         return _set_to_response(db, LookupSetService(db).update(set_id, data))
     except HTTPException:
         raise
@@ -93,6 +96,7 @@ async def delete_set(
 ):
     from fastapi import HTTPException
     try:
+        validate_uuid_path(set_id, resource="Lookup Set")
         return LookupSetService(db).delete(set_id)
     except HTTPException:
         raise
@@ -129,6 +133,7 @@ async def list_options(
     db: Session = Depends(get_db),
 ):
     try:
+        validate_uuid_path(set_id, resource="Lookup Set")
         return LookupOptionService(db).list(set_id, page=page, limit=limit)
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -143,6 +148,7 @@ async def create_option(
 ):
     from fastapi import HTTPException
     try:
+        validate_uuid_path(set_id, resource="Lookup Set")
         return LookupOptionService(db).create(set_id, data)
     except HTTPException:
         raise
@@ -160,6 +166,7 @@ async def update_option(
 ):
     from fastapi import HTTPException
     try:
+        validate_uuid_path(set_id, resource="Lookup Set")
         return LookupOptionService(db).update(option_id, data)
     except HTTPException:
         raise
@@ -176,6 +183,7 @@ async def delete_option(
 ):
     from fastapi import HTTPException
     try:
+        validate_uuid_path(set_id, resource="Lookup Set")
         return LookupOptionService(db).delete(option_id)
     except HTTPException:
         raise
@@ -192,6 +200,7 @@ async def list_bindings(
     db: Session = Depends(get_db),
 ):
     try:
+        validate_uuid_path(set_id, resource="Lookup Set")
         rows = LookupBindingService(db).list_for_set(set_id)
         return [_binding_with_labels(b) for b in rows]
     except Exception as e:
@@ -207,6 +216,7 @@ async def add_binding(
 ):
     from fastapi import HTTPException
     try:
+        validate_uuid_path(set_id, resource="Lookup Set")
         b = LookupBindingService(db).create(set_id, data)
         return _binding_with_labels(b)
     except HTTPException:
@@ -224,6 +234,7 @@ async def remove_binding(
 ):
     from fastapi import HTTPException
     try:
+        validate_uuid_path(set_id, resource="Lookup Set")
         return LookupBindingService(db).delete(binding_id)
     except HTTPException:
         raise

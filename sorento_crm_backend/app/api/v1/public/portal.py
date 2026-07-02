@@ -24,6 +24,7 @@ from fastapi import (
     HTTPException,
     Path,
     Query,
+    Request,
     UploadFile,
     status,
 )
@@ -100,7 +101,25 @@ class TokenResponse(BaseModel):
 
 
 @router.post("/request-otp", response_model=OtpResponse)
-def portal_request_otp(payload: OtpRequestPayload, db: Session = Depends(get_db)):
+def portal_request_otp(payload: OtpRequestPayload, request: Request, db: Session = Depends(get_db)):
+    # Per-IP global limit on this unauthenticated endpoint — the per-contact
+    # cooldown/cap in PortalService can't stop an attacker fanning out across many
+    # contact_ids to enumerate or to DOS the Respond.io send queue. Fail-open.
+    from app.config import settings as app_settings
+    from app.services import rate_limit
+
+    ip = request.client.host if request.client else None
+    gate = rate_limit.hit(
+        "portal_otp", ip,
+        limit=app_settings.rate_limit_portal_otp_max,
+        window_seconds=app_settings.rate_limit_portal_otp_window_seconds,
+    )
+    if not gate.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests. Please try again shortly.",
+            headers={"Retry-After": str(gate.retry_after_seconds or app_settings.rate_limit_portal_otp_window_seconds)},
+        )
     return PortalService(db).request_otp(payload.contact_id, payload.space_id)
 
 

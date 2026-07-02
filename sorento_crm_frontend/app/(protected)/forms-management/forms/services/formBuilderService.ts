@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type { FormSection, FormField } from '../types/form.types';
 
 export async function createFormSection(formId: string, sectionName: string, sectionOrder: number): Promise<FormSection> {
@@ -8,8 +9,7 @@ export async function createFormSection(formId: string, sectionName: string, sec
     body: JSON.stringify({ section_name: sectionName, section_order: sectionOrder }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to create form section' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to create form section'));
   }
   return response.json();
 }
@@ -21,8 +21,7 @@ export async function updateFormSection(sectionId: string, data: Partial<{ secti
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to update form section' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to update form section'));
   }
   return response.json();
 }
@@ -30,8 +29,7 @@ export async function updateFormSection(sectionId: string, data: Partial<{ secti
 export async function deleteFormSection(sectionId: string): Promise<void> {
   const response = await apiFetch(`/api/v1/forms-management/form-sections/${sectionId}`, { method: 'DELETE' });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to delete form section' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to delete form section'));
   }
 }
 
@@ -42,8 +40,7 @@ export async function createFormField(sectionId: string, fieldData: Partial<Form
     body: JSON.stringify(fieldData),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to create form field' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to create form field'));
   }
   return response.json();
 }
@@ -55,8 +52,7 @@ export async function updateFormField(fieldId: string, fieldData: Partial<FormFi
     body: JSON.stringify(fieldData),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to update form field' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to update form field'));
   }
   return response.json();
 }
@@ -64,8 +60,7 @@ export async function updateFormField(fieldId: string, fieldData: Partial<FormFi
 export async function deleteFormField(fieldId: string): Promise<void> {
   const response = await apiFetch(`/api/v1/forms-management/form-fields/${fieldId}`, { method: 'DELETE' });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to delete form field' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to delete form field'));
   }
 }
 
@@ -76,8 +71,7 @@ export async function reorderFormSections(formId: string, sectionOrders: Array<{
     body: JSON.stringify({ section_orders: sectionOrders }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to reorder form sections' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to reorder form sections'));
   }
 }
 
@@ -88,7 +82,6 @@ export async function reorderFormFields(sectionId: string, fieldOrders: Array<{ 
     body: JSON.stringify({ field_orders: fieldOrders }),
   });
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: 'Failed to reorder form fields' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to reorder form fields'));
   }
 }

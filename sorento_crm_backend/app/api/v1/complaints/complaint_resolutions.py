@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.services.complaint_master_data_service import ComplaintResolutionService
 from app.schemas.complaint_master_data import (
@@ -60,6 +61,7 @@ async def get_complaint_resolution(
     db: Session = Depends(get_db),
 ):
     try:
+        validate_uuid_path(resolution_id, resource="Complaint Resolution")
         service = ComplaintResolutionService(db)
         return service.get_resolution(resolution_id)
     except HTTPException:
@@ -91,6 +93,7 @@ async def update_complaint_resolution(
     db: Session = Depends(get_db),
 ):
     try:
+        validate_uuid_path(resolution_id, resource="Complaint Resolution")
         service = ComplaintResolutionService(db)
         return service.update_resolution(resolution_id, payload)
     except HTTPException:
@@ -106,6 +109,7 @@ async def delete_complaint_resolution(
     db: Session = Depends(get_db),
 ):
     try:
+        validate_uuid_path(resolution_id, resource="Complaint Resolution")
         service = ComplaintResolutionService(db)
         return service.delete_resolution(resolution_id)
     except HTTPException:

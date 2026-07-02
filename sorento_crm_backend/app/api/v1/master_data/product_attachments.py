@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
+from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.services.product_service import ProductAttachmentService
 from app.services.uuid_list_param import parse_uuid_list
@@ -74,6 +75,7 @@ async def get_product_attachment(
 ):
     """Get a single product attachment by ID."""
     try:
+        validate_uuid_path(product_attachment_id, resource="Product Attachment")
         service = ProductAttachmentService(db)
         product_attachment = service.get_product_attachment(product_attachment_id)
         return product_attachment
@@ -137,6 +139,7 @@ async def update_product_attachment(
 ):
     """Update a product attachment relationship."""
     try:
+        validate_uuid_path(product_attachment_id, resource="Product Attachment")
         service = ProductAttachmentService(db)
         product_attachment = service.update_product_attachment(product_attachment_id, product_attachment_data)
         return product_attachment
@@ -154,6 +157,7 @@ async def delete_product_attachment(
 ):
     """Delete a product attachment relationship."""
     try:
+        validate_uuid_path(product_attachment_id, resource="Product Attachment")
         service = ProductAttachmentService(db)
         service.delete_product_attachment(product_attachment_id)
         return {"message": "Product attachment deleted successfully"}

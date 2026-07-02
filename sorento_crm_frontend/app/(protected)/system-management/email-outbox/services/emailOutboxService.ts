@@ -36,3 +36,30 @@ export async function cancelEmailOutboxRow(id: string): Promise<EmailOutboxRow> 
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to cancel outbox row'));
   return response.json();
 }
+
+export interface BulkOutboxResult {
+  requested: number;
+  succeeded: number;
+  failed: number;
+  failed_ids: string[];
+}
+
+export async function bulkRetryEmailOutbox(row_ids: string[]): Promise<BulkOutboxResult> {
+  const response = await apiFetch('/api/v1/system/email-outbox/bulk-retry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ row_ids }),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to retry selected rows'));
+  return response.json();
+}
+
+export async function bulkCancelEmailOutbox(row_ids: string[]): Promise<BulkOutboxResult> {
+  const response = await apiFetch('/api/v1/system/email-outbox/bulk-cancel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ row_ids }),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to cancel selected rows'));
+  return response.json();
+}
