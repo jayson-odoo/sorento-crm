@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, Loader2 } from 'lucide-react';
+import Link from 'next/link';
+import { ChevronDown, ExternalLink, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,7 +10,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import {
   Select,
   SelectContent,
@@ -195,18 +195,19 @@ export default function AIAssistantSettingsForm() {
         </div>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-2 rounded-md border border-dashed p-3">
         <Label>System prompt</Label>
         <p className="text-xs text-muted-foreground">
-          Use the toolbar to format the prompt. Formatting is stripped to plain text before being sent to
-          the LLM, so what you see here is just for readability. Leave blank to use the built-in default.
+          The system prompt now lives in the versioned prompt registry as{' '}
+          <span className="font-mono">agent_system</span> — editable, diffable, and publishable without a
+          redeploy. This field is deprecated.
         </p>
-        <RichTextEditor
-          value={systemPrompt}
-          onChange={setSystemPrompt}
-          minHeight={280}
-          placeholder="Describe the assistant's role, rules, and form-collection choreography..."
-        />
+        <Button asChild variant="outline" size="sm">
+          <Link href="/system-management/ai-assistant/prompts/agent_system" data-testid="agent-system-link">
+            Edit in Prompts → agent_system
+            <ExternalLink className="size-4" />
+          </Link>
+        </Button>
       </div>
 
       <div className="space-y-2">

@@ -4,15 +4,33 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission
 from app.models.access import RespondContact
-from app.models.ai_assistant import AIAssistantMessage, AIAssistantUsageLog
+from app.models.ai_assistant import (
+    AIAssistantConversation,
+    AIAssistantMessage,
+    AIAssistantUsageLog,
+)
 from app.models.user import User
+from app.schemas.ai_prompt import (
+    DryRunRequest,
+    DryRunResponse,
+    DryRunToolCall,
+    PromptKeySummary,
+    PromptVersionDetail,
+    PromptVersionsResponse,
+    SaveVersionRequest,
+    SetLabelRequest,
+    SetLabelResponse,
+)
+from app.services.ai_prompt_registry import PROMPT_KEYS
+from app.services.ai_prompt_service import AIPromptRegistryError, AIPromptService
 from app.schemas.ai_assistant import (
     AIAssistantConfigResponse,
     AIAssistantConfigUpdate,
@@ -187,6 +205,176 @@ def send_ai_assistant_message(
         created_at=conv.created_at,
         updated_at=conv.updated_at,
         messages=[_message_to_response(r) for r in rows],
+    )
+
+
+# --- Prompt registry --------------------------------------------------------
+
+
+def _ensure_known_prompt(name: str) -> None:
+    if name not in PROMPT_KEYS:
+        raise HTTPException(status_code=404, detail=f"Unknown prompt key '{name}'.")
+
+
+@router.get("/ai-assistant/prompts", response_model=list[PromptKeySummary])
+def list_ai_assistant_prompts(
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    return [PromptKeySummary(**row) for row in AIPromptService(db).list_keys()]
+
+
+@router.get("/ai-assistant/prompts/{name}/versions", response_model=PromptVersionsResponse)
+def get_ai_assistant_prompt_versions(
+    name: str,
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    _ensure_known_prompt(name)
+    return PromptVersionsResponse(**AIPromptService(db).get_versions(name))
+
+
+@router.get(
+    "/ai-assistant/prompts/{name}/versions/{version}",
+    response_model=PromptVersionDetail,
+)
+def get_ai_assistant_prompt_version(
+    name: str,
+    version: int,
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    _ensure_known_prompt(name)
+    return PromptVersionDetail(**AIPromptService(db).get_version(name, version))
+
+
+@router.post(
+    "/ai-assistant/prompts/{name}/versions",
+    response_model=PromptVersionDetail,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_ai_assistant_prompt_version(
+    name: str,
+    payload: SaveVersionRequest,
+    response: Response,
+    user: dict = Depends(require_permission("system.ai_assistant_settings.edit")),
+    db: Session = Depends(get_db),
+):
+    _ensure_known_prompt(name)
+    try:
+        row = AIPromptService(db).save_version(
+            name,
+            template=payload.template,
+            commit_message=payload.commit_message,
+            user_id=str(user["id"]),
+        )
+    except AIPromptRegistryError as exc:
+        # Contract §8b: 422 { error, unknown_tokens, missing_vars } at top level.
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={
+                "error": exc.error,
+                "unknown_tokens": exc.unknown_tokens,
+                "missing_vars": exc.missing_vars,
+            },
+        )
+    response.status_code = status.HTTP_201_CREATED
+    return PromptVersionDetail(**row)
+
+
+@router.post("/ai-assistant/prompts/{name}/labels", response_model=SetLabelResponse)
+def set_ai_assistant_prompt_label(
+    name: str,
+    payload: SetLabelRequest,
+    user: dict = Depends(require_permission("system.ai_assistant_settings.edit")),
+    db: Session = Depends(get_db),
+):
+    _ensure_known_prompt(name)
+    labels = AIPromptService(db).set_label(
+        name,
+        label=payload.label,
+        version_id=payload.version_id,
+        user_id=str(user["id"]),
+    )
+    return SetLabelResponse(labels=labels)
+
+
+@router.post("/ai-assistant/prompts/{name}/test", response_model=DryRunResponse)
+def test_ai_assistant_prompt_version(
+    name: str,
+    payload: DryRunRequest,
+    user: dict = Depends(require_permission("system.ai_assistant_settings.edit")),
+    db: Session = Depends(get_db),
+):
+    """Single-message dry-run: run one real assistant turn with ONLY this key
+    overridden to ``version_id`` (rest = production). The throwaway conversation
+    is deleted afterwards so it never pollutes history, and write-capable MCP
+    tools (``*_submit`` / ``*_create`` / ``*_link``) are stripped for the turn so
+    a test can never persist real business data. Dormant key → 400."""
+    _ensure_known_prompt(name)
+    if not PROMPT_KEYS[name].active:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Prompt '{name}' is dormant and has no runtime call site to test.",
+        )
+    # Validate the version belongs to this key before running a real turn.
+    from app.models.ai_prompt import AIPromptVersion
+
+    version = (
+        db.query(AIPromptVersion)
+        .filter(AIPromptVersion.id == payload.version_id, AIPromptVersion.name == name)
+        .first()
+    )
+    if version is None:
+        raise HTTPException(status_code=404, detail="Version not found for this prompt.")
+
+    chat = AIAssistantChatService(db)
+    conv, msg = chat.respond(
+        user_id=str(user["id"]),
+        conversation_id=None,
+        message=payload.message,
+        prompt_overrides={name: payload.version_id},
+        dry_run=True,
+    )
+    meta = msg.metadata_json if isinstance(msg.metadata_json, dict) else {}
+    tool_calls = [
+        DryRunToolCall(name=str(c.get("tool_name") or ""), ok=bool(c.get("ok")))
+        for c in (meta.get("tool_calls") or [])
+        if isinstance(c, dict)
+    ]
+    usage_row = (
+        db.query(AIAssistantUsageLog)
+        .filter(AIAssistantUsageLog.message_id == str(msg.id))
+        .first()
+    )
+    token_usage = {
+        "prompt_tokens": int(usage_row.prompt_tokens or 0) if usage_row else 0,
+        "completion_tokens": int(usage_row.completion_tokens or 0) if usage_row else 0,
+        "total_tokens": int(usage_row.total_tokens or 0) if usage_row else 0,
+    }
+    output = msg.content or ""
+
+    # Cleanup: dry-run is non-persistent. Usage logs reference the conversation
+    # via SET NULL, so delete them explicitly; deleting the conversation cascades
+    # to its messages.
+    try:
+        db.query(AIAssistantUsageLog).filter(
+            AIAssistantUsageLog.conversation_id == str(conv.id)
+        ).delete(synchronize_session=False)
+        conv_row = db.query(AIAssistantConversation).filter(
+            AIAssistantConversation.id == str(conv.id)
+        ).first()
+        if conv_row is not None:
+            db.delete(conv_row)
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    return DryRunResponse(
+        output=output,
+        token_usage=token_usage,
+        tool_calls=tool_calls,
+        used_overrides={name: payload.version_id},
     )
 
 

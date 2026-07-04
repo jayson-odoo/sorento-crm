@@ -750,6 +750,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'system.ai_assistant_settings.view',
           },
           {
+            title: 'Prompts',
+            path: '/system-management/ai-assistant/prompts',
+            permission: 'system.ai_assistant_settings.view',
+          },
+          {
             title: 'Usage',
             path: '/system-management/ai-assistant/usage',
             permission: 'system.ai_assistant_settings.view',

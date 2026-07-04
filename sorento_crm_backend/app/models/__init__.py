@@ -52,6 +52,7 @@ from app.models.ai_assistant import (
     AIAssistantWishlistCluster,
     AIAssistantUnansweredQuery,
 )
+from app.models.ai_prompt import AIPromptVersion, AIPromptLabel
 from app.models.chat_history import ChatHistory
 from app.models.conversation_frame import ConversationFrame
 from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
@@ -168,6 +169,8 @@ __all__ = [
     "AIAssistantUsageLog",
     "AIAssistantWishlistCluster",
     "AIAssistantUnansweredQuery",
+    "AIPromptVersion",
+    "AIPromptLabel",
     "ChatHistory",
     "ConversationFrame",
     "LookupSet",

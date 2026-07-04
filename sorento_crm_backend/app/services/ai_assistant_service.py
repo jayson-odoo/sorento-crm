@@ -32,6 +32,7 @@ from app.schemas.ai_assistant import (
     AIAssistantConfigUpdate,
     PageSnapshotPayload,
 )
+from app.services import ai_prompt_registry
 from app.services.embedding_service import EmbeddingReadService
 from app.services.entity_resolver import ResolutionResult, resolve_references
 from app.services.llm_provider import ChatResult, LLMProvider, get_provider
@@ -87,6 +88,22 @@ def _html_to_text(raw: str | None) -> str:
             continue
         collapsed.append(line)
     return "\n".join(collapsed).strip()
+
+
+# MCP tools that mutate state — suppressed during a prompt dry-run so a test
+# turn can never persist a real complaint / PR / stock inquiry / ticket / link.
+# Matched by name suffix/substring (the catalog names all end in the verb, e.g.
+# `crm_forms_stock_inquiry_submit`, `crm_it_support_ticket_create`,
+# `crm_forms_entity_attachments_link`). Read tools like `crm_portal_link_get`
+# end in `_get`, so a plain `_link` suffix check is safe.
+def _is_write_tool(tool_name: str) -> bool:
+    name = (tool_name or "").lower()
+    return (
+        name.endswith("_submit")
+        or name.endswith("_create")
+        or name.endswith("_link")
+        or "_ticket_create" in name
+    )
 
 
 def _current_date_directive() -> str:
@@ -367,6 +384,26 @@ class AIAssistantChatService:
         self.db = db
         self.cfg = AIAssistantConfigService(db)
         self.gov = AIAssistantGovernanceService(db)
+        # Per-turn prompt-registry state. ``_turn_prompt_versions`` accumulates
+        # one {name, version} entry per resolver-backed LLM call so respond()
+        # can stamp it onto the assistant message's metadata (UAC C2).
+        # ``_prompt_overrides`` maps prompt-key -> version_id for the dry-run
+        # test route (UAC D5); empty for normal chat.
+        self._turn_prompt_versions: list[dict[str, Any]] = []
+        self._prompt_overrides: dict[str, str] = {}
+        # When True (dry-run), write-capable MCP tools are stripped from the turn.
+        self._suppress_write_tools: bool = False
+
+    def _resolve_prompt(self, name: str, **variables: Any) -> str:
+        """Resolve a registered prompt key through the registry, honoring any
+        per-turn dry-run override, and record the used (name, version) for
+        metadata stamping. Never raises on a DB error (falls back)."""
+        override_id = self._prompt_overrides.get(name)
+        text, version = ai_prompt_registry.render(
+            self.db, name, override_version_id=override_id, **variables
+        )
+        self._turn_prompt_versions.append({"name": name, "version": version})
+        return text
 
     def list_conversations(
         self,
@@ -439,8 +476,20 @@ class AIAssistantChatService:
         conversation_id: str | None,
         message: str,
         page_snapshot: PageSnapshotPayload | None = None,
+        prompt_overrides: dict[str, str] | None = None,
+        dry_run: bool = False,
     ) -> tuple[AIAssistantConversation, AIAssistantMessage]:
         request_started = time.perf_counter()
+        # Reset per-turn prompt-registry state. Overrides (dry-run) apply for
+        # THIS turn only and are never persisted onto a conversation.
+        self._turn_prompt_versions = []
+        self._prompt_overrides = dict(prompt_overrides or {})
+        # Dry-run safety: a prompt test must never persist real business data.
+        # Even though the throwaway conversation is deleted afterwards, a crafted
+        # message (all fields + a CONFIRM keyword) could otherwise drive a
+        # `*_submit` / `*_create` MCP tool to write a real complaint/PR/ticket
+        # that survives cleanup. Suppress write-capable tools for the turn.
+        self._suppress_write_tools = bool(dry_run)
         if not settings.ai_assistant_enabled:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AI assistant feature is disabled")
         config = self.cfg.get()
@@ -498,6 +547,8 @@ class AIAssistantChatService:
                 "tool_calls": [],
                 "suggestions": [],
                 "deterministic": "capability_overview",
+                # No LLM prompt used on the deterministic short-circuit.
+                "prompt_versions": [],
             }
             assistant_msg = self.append_message(
                 conv.id, "assistant", capability_text, metadata_json=capability_meta
@@ -603,6 +654,15 @@ class AIAssistantChatService:
             enabled_tools=list(config.enabled_tools or []),
             top_k=max(1, int(getattr(settings, "ai_assistant_rag_top_k", 3))),
         )
+        if self._suppress_write_tools:
+            before = len(selected_tools)
+            selected_tools = [t for t in selected_tools if not _is_write_tool(str(t.get("tool_name") or ""))]
+            sources = [s for s in sources if not _is_write_tool(str(s.get("title") or ""))]
+            if before != len(selected_tools):
+                logger.info(
+                    "AI assistant dry-run suppressed %s write tool(s)",
+                    before - len(selected_tools),
+                )
         rag_ms = (time.perf_counter() - rag_started) * 1000
         logger.info(
             "AI assistant RAG phase finished conversation_id=%s selected_tools=%s elapsed_ms=%.1f",
@@ -740,6 +800,10 @@ class AIAssistantChatService:
             "tool_calls": [{"tool_name": c.tool_name, "ok": c.ok} for c in tool_calls],
             "entity_resolution": resolution.as_dict(),
             "suggestions": suggestions,
+            # UAC C2: one entry per resolver-backed LLM call this turn
+            # (reformulator + router + agent_system/synthesizer as applicable).
+            # ``version`` is null when the hardcoded fallback was used.
+            "prompt_versions": list(self._turn_prompt_versions),
         }
         if page_snapshot is not None:
             assistant_snapshot_meta: dict[str, Any] = {
@@ -828,21 +892,11 @@ class AIAssistantChatService:
             if not text_piece:
                 continue
             convo_lines.append(f"{msg.role}: {text_piece[:500]}")
-        system = (
-            "You are a query reformulator. Rewrite the latest user turn into a single, "
-            "self-contained natural-language question that preserves all important entities "
-            "(ids, codes, dates, names) from the prior conversation.\n"
-            "- Resolve pronouns/ellipsis using the history.\n"
-            "- Expand common CRM abbreviations on first mention so downstream RAG can match: "
-            "DO -> delivery order, GRN -> goods received note, SPO -> supplier purchase order, "
-            "PO -> purchase order, SO -> sales order, PR -> purchase request, SKU -> product. "
-            "Keep the original abbreviation alongside the expansion (e.g. 'delivery order (DO)').\n"
-            "- Keep it concise (<= 2 sentences).\n"
-            "- If the turn names a relative date/period (today, last week, this "
-            "month, etc.), rewrite it as the absolute calendar date(s) so "
-            "downstream tools filter the right range.\n"
-            "- Do not answer the question. Output plain text only, no quotes, no prefix.\n\n"
-            + _current_date_directive()
+        # Prompt sourced from the registry (``reformulator`` key); the string
+        # above now lives as that key's fallback. ``{{current_date}}`` is
+        # substituted with the live date directive.
+        system = self._resolve_prompt(
+            "reformulator", current_date=_current_date_directive()
         )
         user_block = (
             "Conversation so far (may be empty):\n"
@@ -1150,13 +1204,15 @@ class AIAssistantChatService:
             err_log = [MCPToolCallResult("provider_error", False, str(exc))]
             return self._deterministic_fallback(err_log), err_log, token_usage
 
-        system = _html_to_text(config.system_prompt or "").strip() or self._default_system_prompt()
-        # Always append the user-guide protocol so admins who set a custom
-        # system_prompt still get the search-then-read-then-answer behavior
-        # for how-to questions. Idempotent: skipped when the protocol header
-        # is already in the prompt.
+        # System prompt is sourced from the prompt registry (SoT). The deprecated
+        # ``config.system_prompt`` column is no longer read (UAC C3). The former
+        # ``_default_system_prompt()`` text is the ``agent_system`` fallback; the
+        # answer policy (former user-guide protocol) is the ``synthesizer`` key,
+        # appended idempotently so it isn't duplicated when a custom agent_system
+        # already carries the header.
+        system = self._resolve_prompt("agent_system")
         if "USER GUIDE PROTOCOL" not in system:
-            system = system.rstrip() + "\n\n" + self._user_guide_protocol_addendum()
+            system = system.rstrip() + "\n\n" + self._resolve_prompt("synthesizer")
         source_context = "\n".join(
             [f"- {s.get('title')}: {str(s.get('why_selected') or '')[:200]}" for s in sources]
         )
@@ -1471,176 +1527,19 @@ class AIAssistantChatService:
         return self._deterministic_fallback(tool_calls_log), tool_calls_log, token_usage
 
     def _default_system_prompt(self) -> str:
-        return (
-            "ROLE\n"
-            "You are the centralized Sorento AI Orchestrator.\n"
-            "You coordinate Tool RAG, MCP tools, Contextual Memory, and Calculator.\n"
-            "You are orchestration-only. Do not encode business rules here; enforce via MCP/backend outputs.\n\n"
-            "ALLOWED TOOLS\n"
-            "Only call the MCP tools bound to this request. Do not invent tools.\n"
-            "Use MCP as source of truth for business data and constraints.\n\n"
-            "CRITICAL DATA RULES\n"
-            "Always use this turn's MCP results for factual answers.\n"
-            "Never hallucinate entities, ids, statuses, quantities, prices, dates, states, or links.\n"
-            "Use minimum tools needed (typically 0-2).\n\n"
-            "GENERAL FLOW\n"
-            "Resolve intent -> decide whether any bound tool is needed -> call with minimal args -> synthesize.\n"
-            "For general list/catalog questions, pass only pagination (page, limit) and no free-text search.\n"
-            "Ask one short clarification only when blocked by a missing required parameter.\n\n"
-            "FORM SUBMISSION PROTOCOL (applies to every `crm_forms_*_submit` tool)\n"
-            "When the user's request matches a form-submission tool (stock inquiry, "
-            "complaint, purchase request, sponsorship form), you MUST guide them "
-            "through the form with this choreography:\n"
-            "1) On the FIRST turn that you detect the form intent, DO NOT call the "
-            "submit tool. Instead, read the tool's docstring to learn its REQUIRED "
-            "and OPTIONAL fields (including any nested line-item fields), and reply "
-            "with the full field list. Tell the user they can answer everything in "
-            "one message or one field at a time. Example opener:\n"
-            "   \"To file a <form title>, I need the following details. You can "
-            "answer everything at once or one item at a time.\"\n"
-            "   Then list every field under two headings: 'Required' and "
-            "'Optional', one line per field, using the labels from the tool "
-            "docstring. If the tool has line items, list the line-item fields "
-            "under a 'Line items' subsection.\n"
-            "2) On EVERY subsequent turn in the same form flow, parse any fields "
-            "the user just supplied, MERGE them into the running form state, and "
-            "reply with a reflection block shaped exactly like this:\n"
-            "     Captured so far:\n"
-            "       - <Field label>: <value>\n"
-            "       ...\n"
-            "     Still needed:\n"
-            "       - <Field label> [required|optional]\n"
-            "       ...\n"
-            "     Validation issues (if any):\n"
-            "       - <field>: <short reason>\n"
-            "   Then ask only for the still-needed REQUIRED fields.\n"
-            "3) Once all REQUIRED fields are valid, you MUST send one FINAL summary "
-            "for user review and ask them to edit anything if needed. Do NOT submit "
-            "on that same turn unless the CURRENT user message already contained an "
-            "explicit confirmation keyword.\n"
-            "4) NEVER call the submit tool until (a) every REQUIRED header field is "
-            "filled, (b) at least one complete line item exists when the tool has "
-            "line items, and (c) the user's CURRENT message explicitly contains "
-            "one of: CONFIRM, OK, OKAY, YES, CORRECT (case-insensitive).\n"
-            "5) When you do submit, pass ONE argument `payload_json` shaped per the "
-            "tool's docstring. For stock inquiry, purchase request, and complaint submit tools, "
-            "the backend requires `\"user_confirmed\": true` in that JSON (only on the confirm turn). "
-            "After success, briefly acknowledge the submission "
-            "and ALWAYS include the returned public `view_url` so the user can open "
-            "the record without logging in. For complaints, offer optional photos/videos via "
-            "`crm_forms_entity_attachments_link` after submission.\n"
-            "Attachments are OPTIONAL. Never block complaint submission due to missing attachments. "
-            "Do NOT call `crm_forms_entity_attachments_link` unless the user explicitly asks to "
-            "attach files or provides file URL/path content.\n"
-            "6) If the user says 'new <form>', 'start over', or changes to a "
-            "different form, clear the in-memory form state and restart at step 1.\n"
-            "7) For complaint forms only: BEFORE collecting complaint fields, make "
-            "sure a delivery-order number is identified. If not, ask for customer, "
-            "product, and ORDER DATE range, use the order-lookup tools to find "
-            "matching DOs, present them as a numbered list, and let the user pick "
-            "by number. Only then start step 1 for the complaint form.\n"
-            "If the user already selected an order in the UI/chat and it appears in "
-            "Resolved references as entity_type=customer_order, treat its canonical_code "
-            "as the selected delivery order number and DO NOT ask for delivery order "
-            "number again.\n"
-            "8) Complaint DO date parsing rules: if user gives a month-only period "
-            "(e.g. 'February 2026'), convert it to full month range automatically "
-            "(2026-02-01 to 2026-02-28, or 29 for leap year) and continue without "
-            "asking leap-year clarification. Ask clarification only when month/year "
-            "is missing or ambiguous.\n"
-            "9) Complaint DO matching rules: partial text is valid. Use case-insensitive "
-            "partial matching (`query`) for debtor/customer and product terms; do not "
-            "require exact full debtor name or exact product code when user provides "
-            "partial values.\n\n"
-            "USER GUIDE PROTOCOL (applies to `user_guides_read`)\n"
-            "When the user asks a how-to / process question — phrasings like 'how do I…', "
-            "'how to…', 'where do I…', 'what's the process for…', 'steps to…', 'guide me on…', "
-            "or any request for instructions on a CRM action (uploading a packing list, "
-            "submitting a stock inquiry, sending a purchase request for approval, flowing a "
-            "stock inquiry to purchasing, approving via email link, OTP / portal access, etc.) "
-            "— follow this exact flow:\n"
-            "1) Call `user_guides_read` ONCE with the user's question verbatim as `query`. The "
-            "tool searches Outline and returns the full markdown body of the best match in a "
-            "single round trip. There is no separate search tool — do NOT try to call "
-            "`user_guides_search`.\n"
-            "2) If the response contains `\"code\": \"NO_MATCH\"` or `\"code\": \"OUTLINE_ERROR\"`, "
-            "tell the user no guide matches and ask them to rephrase. Do NOT invent steps.\n"
-            "3) Otherwise read the returned markdown and ANSWER THE USER directly with concrete "
-            "steps. Quote the exact UI labels from the guide in **bold** (button names, dialog "
-            "titles, page names) so the user can find them in the UI. Use a short numbered list "
-            "when the guide describes steps.\n"
-            "3a) PRESERVE INLINE MARKDOWN LINKS from the guide verbatim. When the guide body "
-            "contains a markdown link like `[**Resource Management → Files**](/resource-management/attachment-directories)`, "
-            "your reply MUST keep the WHOLE markdown link — square brackets, label, parens, "
-            "URL, all of it — exactly as written. Do NOT unwrap it to plain bold. Do NOT replace "
-            "it with the label only. Do NOT replace it with the URL only. Do NOT move the URL "
-            "to a separate sentence. The frontend renders these inline markdown links as "
-            "clickable shortcuts to the actual CRM page; that is the primary value to the user.\n"
-            "    EXAMPLE — guide says:\n"
-            "      `1. Open [**Resource Management → Files**](/resource-management/attachment-directories) (URL: \\`/resource-management/attachment-directories\\`).`\n"
-            "    Your reply must say (label-with-link kept intact):\n"
-            "      `1. Open [**Resource Management → Files**](/resource-management/attachment-directories) in the left menu.`\n"
-            "    NOT (link dropped, BAD):\n"
-            "      `1. Open Resource Management → Files in your CRM.`\n"
-            "    NOT (link separated, BAD):\n"
-            "      `1. Open Resource Management → Files. Link: /resource-management/attachment-directories`\n"
-            "3b) Do NOT just paste the doc URL on its own and tell the user to go read it — the "
-            "user came here to avoid that. Do NOT append a 'Full guide: <doc URL>' line either; "
-            "the inline links inside the steps are sufficient. Keep the response tight: short "
-            "intro line, numbered steps, optional one-line caveat. No raw URLs at the bottom.\n"
-            "4) If the first call's `alternative_titles` shows another guide that more directly "
-            "matches the user's intent (e.g. a flow that spans rep portal + admin review + "
-            "manager approval), call `user_guides_read` again with that guide's id and "
-            "synthesize a single coherent answer.\n"
-            "5) Never invent UI labels, button names, dialog titles, or routes that aren't in "
-            "the guide body. If the guide doesn't cover a step the user asked about, say so.\n"
-        )
+        """DEPRECATED shim. The ReAct core prompt now lives in the prompt
+        registry as the ``agent_system`` key (and the answer policy as
+        ``synthesizer``); this method is kept only as a DB-unreachable fallback
+        equivalent and delegates to the single source in
+        ``app.services.ai_prompt_registry``."""
+        base = ai_prompt_registry.PROMPT_KEYS["agent_system"].fallback()
+        policy = ai_prompt_registry.PROMPT_KEYS["synthesizer"].fallback()
+        return base.rstrip() + "\n\n" + policy
 
     def _user_guide_protocol_addendum(self) -> str:
-        return (
-            "USER GUIDE PROTOCOL (applies to `user_guides_read`)\n"
-            "When the user asks a how-to / process question — phrasings like 'how do I…', "
-            "'how to…', 'where do I…', 'what's the process for…', 'steps to…', 'guide me on…', "
-            "or any request for instructions on a CRM action (uploading a packing list, "
-            "submitting a stock inquiry, sending a purchase request for approval, flowing a "
-            "stock inquiry to purchasing, approving via email link, OTP / portal access, etc.) "
-            "— follow this exact flow:\n"
-            "1) Call `user_guides_read` ONCE with the user's question verbatim as `query`. The "
-            "tool searches Outline and returns the full markdown body of the best match in a "
-            "single round trip. There is no separate search tool — do NOT try to call "
-            "`user_guides_search`.\n"
-            "2) If the response contains `\"code\": \"NO_MATCH\"` or `\"code\": \"OUTLINE_ERROR\"`, "
-            "tell the user no guide matches and ask them to rephrase. Do NOT invent steps.\n"
-            "3) Otherwise read the returned markdown and ANSWER THE USER directly with concrete "
-            "steps. Quote the exact UI labels from the guide in **bold** (button names, dialog "
-            "titles, page names) so the user can find them in the UI. Use a short numbered list "
-            "when the guide describes steps.\n"
-            "3a) PRESERVE INLINE MARKDOWN LINKS from the guide verbatim. When the guide body "
-            "contains a markdown link like `[**Resource Management → Files**](/resource-management/attachment-directories)`, "
-            "your reply MUST keep the WHOLE markdown link — square brackets, label, parens, "
-            "URL, all of it — exactly as written. Do NOT unwrap it to plain bold. Do NOT replace "
-            "it with the label only. Do NOT replace it with the URL only. Do NOT move the URL "
-            "to a separate sentence. The frontend renders these inline markdown links as "
-            "clickable shortcuts to the actual CRM page; that is the primary value to the user.\n"
-            "    EXAMPLE — guide says:\n"
-            "      `1. Open [**Resource Management → Files**](/resource-management/attachment-directories) (URL: \\`/resource-management/attachment-directories\\`).`\n"
-            "    Your reply must say (label-with-link kept intact):\n"
-            "      `1. Open [**Resource Management → Files**](/resource-management/attachment-directories) in the left menu.`\n"
-            "    NOT (link dropped, BAD):\n"
-            "      `1. Open Resource Management → Files in your CRM.`\n"
-            "    NOT (link separated, BAD):\n"
-            "      `1. Open Resource Management → Files. Link: /resource-management/attachment-directories`\n"
-            "3b) Do NOT just paste the doc URL on its own and tell the user to go read it — the "
-            "user came here to avoid that. Do NOT append a 'Full guide: <doc URL>' line either; "
-            "the inline links inside the steps are sufficient. Keep the response tight: short "
-            "intro line, numbered steps, optional one-line caveat. No raw URLs at the bottom.\n"
-            "4) If the first call's `alternative_titles` shows another guide that more directly "
-            "matches the user's intent (e.g. a flow that spans rep portal + admin review + "
-            "manager approval), call `user_guides_read` again with that guide's id and "
-            "synthesize a single coherent answer.\n"
-            "5) Never invent UI labels, button names, dialog titles, or routes that aren't in "
-            "the guide body. If the guide doesn't cover a step the user asked about, say so.\n"
-        )
+        """DEPRECATED shim — the answer policy is now the ``synthesizer`` key.
+        Delegates to the single source in ``app.services.ai_prompt_registry``."""
+        return ai_prompt_registry.PROMPT_KEYS["synthesizer"].fallback()
 
     def intent_is_record_class(
         self, message: str, *, has_record_context: bool = True
@@ -1676,33 +1575,9 @@ class AIAssistantChatService:
         api_key = config.api_key_ciphertext or settings.openai_api_key
         if not api_key:
             return False
-        system = (
-            "You classify a single user message from an in-app assistant. The user is "
-            "viewing ONE specific record (a case/form) on screen, and most of their "
-            "questions are about THAT open record.\n"
-            "Answer YES when the message asks about the specific record in front of them — "
-            "its subject/summary/details, its current state, who acted on it, when, why it "
-            "is in this state, how long something took, its SLA, or what to do next on it. "
-            "Words like 'this', 'it', 'now', or naming the record's type ('this complaint') "
-            "signal the open record. A question about who approved/handled/decided 'this' "
-            "record, or what its reason/status/next step is, is YES.\n"
-            "Answer NO only when the message is clearly NOT about the one open record: a "
-            "catalog/data lookup across many records (products, promotions, orders, stock, "
-            "customers, shipments), a definition of a term, or how a feature works in "
-            "general (a how-to / process-in-general question).\n"
-            "A procedural question SCOPED TO THE OPEN RECORD is YES — its process flow, how "
-            "it works, its stages, or what to do next, when phrased about 'this' or 'here'. "
-            "The SAME question asked generally or about a named type WITHOUT 'this' (e.g. "
-            "'for a complaint', 'in general') is NO.\n"
-            "Tie-breaker: if it could plausibly be about the open record, answer YES.\n"
-            "Examples — YES: 'who handled this?' / 'what stage is it at?' / 'give me the "
-            "gist of this case' / 'what do I do next here?' / 'what is the process flow for "
-            "this?' / 'how does this work?'. "
-            "NO: 'list all open complaints' / 'how does the approval step work in general?' "
-            "/ 'what is the process flow for a complaint?' / 'what does resolved mean?' / "
-            "'which products are on promotion?'.\n"
-            "Respond with exactly one word: YES or NO."
-        )
+        # Prompt sourced from the registry (``router`` key); the classifier
+        # string now lives as that key's fallback.
+        system = self._resolve_prompt("router")
         # Retry transient provider errors: a swallowed error here flips the route
         # to the agent loop and produces a wrong answer for a real record question
         # (observed in end-to-end). Only a persistent failure defaults to False.
@@ -1773,9 +1648,11 @@ class AIAssistantChatService:
             record_ctx.get("entity_type", ""), record_ctx.get("entity_type", "record")
         )
         cur_status = (record_ctx.get("current_state") or {}).get("status", "current")
-        system = _html_to_text(config.system_prompt or "").strip() or self._default_system_prompt()
+        # Registry-sourced system prompt (SoT); ``config.system_prompt`` ignored
+        # (UAC C3). agent_system + synthesizer (former user-guide protocol).
+        system = self._resolve_prompt("agent_system")
         if "USER GUIDE PROTOCOL" not in system:
-            system = system.rstrip() + "\n\n" + self._user_guide_protocol_addendum()
+            system = system.rstrip() + "\n\n" + self._resolve_prompt("synthesizer")
         system = (
             system.rstrip()
             + "\n\n" + _current_date_directive()
