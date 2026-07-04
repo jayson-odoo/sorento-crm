@@ -488,6 +488,12 @@ class TokenResolution:
     token: str
     matches: list[ResolvedEntity] = field(default_factory=list)
     ambiguous: bool = False  # True when we found multiple candidates but picked none
+    # Fuzzy trigram "did you mean" neighbours for a token that produced NO exact/
+    # prefix/embedding match. Purely entity-level (NOT domain-data-gated — that is
+    # the list tools' job): "SRTKT71SX unknown → did you mean SRTKT71SS?". Emitted
+    # so callers get a suggestion inline without a second neighbour lookup. Never
+    # populated when `matches` is non-empty; does not affect `resolved`.
+    alternatives: list[ResolvedEntity] = field(default_factory=list)
 
     @property
     def resolved(self) -> bool:
@@ -610,6 +616,18 @@ class ResolutionResult:
                             "display": m.display,
                         }
                         for m in tr.matches
+                    ],
+                    "alternatives": [
+                        {
+                            "entity_type": a.entity_type,
+                            "canonical_code": a.canonical_code,
+                            "uuid": a.uuid,
+                            "match_field": a.match_field,
+                            "match_tier": a.match_tier,
+                            "similarity": a.similarity,
+                            "display": a.display,
+                        }
+                        for a in tr.alternatives
                     ],
                 }
                 for tr in self.resolutions
@@ -2273,6 +2291,12 @@ TRGM_LIMIT = 15
 # nothing and n8n says "no similar products with stock". Tunable — adjust on replay.
 SUGGEST_FLOOR = 0.40
 
+# Entity types `_trgm_lookup` can probe. Used as the default scope for resolve
+# "did you mean" alternatives when the caller passed no entity-type whitelist.
+_ALL_TRGM_TYPES = frozenset({"product", "customer", "customer_order", "promotion", "transporter"})
+# Max fuzzy alternatives surfaced per unresolved token (keep the suggestion tight).
+_ALTERNATIVES_CAP = 5
+
 
 def _trgm_lookup(
     db: Session,
@@ -3107,6 +3131,10 @@ class IntersectionResolutionResult:
     intersection: list[ResolvedEntity]
     elapsed_ms: float
     match_mode: str = "and"
+    # Fuzzy "did you mean" neighbours when the intersection is empty (union of the
+    # tokens' trigram neighbours, deduped). Same entity-level, non-domain-gated
+    # semantics as the OR-mode per-token alternatives.
+    alternatives: list[ResolvedEntity] = field(default_factory=list)
 
     @property
     def empty(self) -> bool:
@@ -3142,6 +3170,18 @@ class IntersectionResolutionResult:
             "by_entity_type": by_type,
             "empty": self.empty,
             "unresolved_tokens": list(self.tokens) if self.empty else [],
+            "alternatives": [
+                {
+                    "entity_type": a.entity_type,
+                    "canonical_code": a.canonical_code,
+                    "uuid": a.uuid,
+                    "match_field": a.match_field,
+                    "match_tier": a.match_tier,
+                    "similarity": a.similarity,
+                    "display": a.display,
+                }
+                for a in self.alternatives
+            ],
         }
 
 
@@ -3202,11 +3242,33 @@ def resolve_references_intersection(
             continue
         hits.extend(rows)
 
+    # No intersection → offer fuzzy "did you mean" neighbours (union across tokens,
+    # deduped, capped). Best-effort; pg_trgm absence / probe error never fails AND.
+    alternatives: list[ResolvedEntity] = []
+    if not hits:
+        seen: set[tuple[str, str]] = set()
+        scope = allowed if allowed is not None else _ALL_TRGM_TYPES
+        for tok in clean_tokens:
+            try:
+                for h in _trgm_lookup(db, tok, scope):
+                    if (h.similarity or 0.0) < SUGGEST_FLOOR:
+                        continue
+                    key = (h.entity_type, h.canonical_code or "")
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    alternatives.append(h)
+            except Exception:
+                logger.exception("AND-mode alternatives trgm lookup failed for token=%s", tok)
+        alternatives.sort(key=lambda e: (bool(e.display.get("is_variant")), e.similarity or 0.0), reverse=True)
+        alternatives = alternatives[:_ALTERNATIVES_CAP]
+
     elapsed = (time.perf_counter() - t0) * 1000.0
     return IntersectionResolutionResult(
         tokens=clean_tokens,
         intersection=hits,
         elapsed_ms=elapsed,
+        alternatives=alternatives,
     )
 
 
@@ -3482,6 +3544,24 @@ def resolve_references(
         for t in tokens
     ]
     resolutions.extend(freeword_resolutions)
+
+    # Fuzzy "did you mean" alternatives for tokens that matched NOTHING. Trigram
+    # neighbours only (entity-level, no domain-data gate); best-effort so a missing
+    # pg_trgm (e.g. sqlite tests) or a probe error never fails resolution. Capped
+    # and floored to keep the surface tight and relevant.
+    for tr in resolutions:
+        if tr.matches:
+            continue
+        tok_types = _types_for(tr.token)
+        if tok_types is not None and not tok_types:
+            continue
+        try:
+            hits = _trgm_lookup(db, tr.token, tok_types if tok_types is not None else _ALL_TRGM_TYPES)
+        except Exception:
+            logger.exception("resolve alternatives trgm lookup failed for token=%s", tr.token)
+            hits = []
+        tr.alternatives = [h for h in hits if (h.similarity or 0.0) >= SUGGEST_FLOOR][:_ALTERNATIVES_CAP]
+
     final_tokens = list(tokens) + [r.token for r in freeword_resolutions]
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
     return ResolutionResult(tokens=final_tokens, resolutions=resolutions, elapsed_ms=elapsed_ms)

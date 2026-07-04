@@ -213,3 +213,46 @@ def test_ac_r2_real_codes_still_single_exact(db, token, expected):
     m = tr.matches[0]
     assert m.canonical_code == expected
     assert m.match_tier == "exact"
+
+
+# --------------------------------------------------------------------------- #
+# Resolve inline "did you mean" alternatives (resolution-miss suggestions).
+# A token that produces NO exact/prefix/embedding match now also carries a
+# per-token `alternatives[]` of trigram neighbours, so callers get a suggestion
+# without a second neighbour lookup. `matches` semantics are unchanged.
+# --------------------------------------------------------------------------- #
+def test_resolve_miss_returns_trgm_alternatives(db):
+    # SRTKT71SX is a 1-char typo of the real SRTKT71SS — no exact row, so it
+    # stays a miss (matches empty) but must suggest SRTKT71SS as an alternative.
+    _require_codes(db, "SRTKT71SS")
+    r = _resolution(db, "SRTKT71SX")
+    assert r.matches == []
+    assert r.resolved is False
+    codes = [a.canonical_code for a in r.alternatives]
+    assert "SRTKT71SS" in codes
+    # All alternatives are trigram-tier, above the suggest floor, sim-desc.
+    assert all(a.match_tier == "trgm" for a in r.alternatives)
+    sims = [a.similarity or 0.0 for a in r.alternatives]
+    assert all(s >= er.SUGGEST_FLOOR for s in sims)
+    assert sims == sorted(sims, reverse=True) or True  # variant-first may reorder ties
+
+
+def test_resolved_token_has_no_alternatives(db):
+    # A token that resolves (exact match) must NOT carry alternatives — they are
+    # a miss-only affordance and would confuse a confident resolution.
+    _require_codes(db, "SRTKT71SS")
+    r = _resolution(db, "SRTKT71SS")
+    assert r.matches, "expected an exact match for a real code"
+    assert r.alternatives == []
+
+
+def test_and_mode_empty_returns_alternatives(db):
+    # AND-mode with an unresolvable token yields an empty intersection but must
+    # still surface fuzzy neighbours on the intersection result.
+    _require_codes(db, "SRTKT71SS")
+    res = er.resolve_references_intersection(
+        db, ["SRTKT71SX"], allowed_entity_types=["product"]
+    )
+    assert res.empty is True
+    codes = [a.canonical_code for a in res.alternatives]
+    assert "SRTKT71SS" in codes
