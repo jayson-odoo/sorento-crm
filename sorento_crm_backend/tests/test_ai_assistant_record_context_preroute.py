@@ -19,8 +19,6 @@ Mirrors the stub wiring in ``test_ai_assistant_usage.py``.
 """
 from __future__ import annotations
 
-import os
-
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import JSONB
@@ -44,8 +42,36 @@ from app.schemas.ai_assistant import (
     PageEntityRef,
     PageSnapshotPayload,
 )
+from app.schemas.ai_semantic_parser import (
+    ParseEntities,
+    ParseResult,
+    ParseSignals,
+)
 from app.services.ai_assistant_service import AIAssistantChatService
 from app.services.entity_resolver import ResolutionResult
+
+
+def _parse(
+    intent: str,
+    *,
+    targets_open_record: bool = False,
+    confidence: float = 0.9,
+    is_write_intent: bool = False,
+) -> ParseResult:
+    """Build a ParseResult driving a deterministic route. Routing tests assert
+    on the ParseResult we construct (routing is a pure switch on it), NOT on how
+    the LLM would classify a literal sentence — see feedback_no_overfit_llm_nlp.
+    """
+    return ParseResult(
+        standalone_query="standalone",
+        intent=intent,  # type: ignore[arg-type]
+        confidence=confidence,
+        entities=ParseEntities(),
+        signals=ParseSignals(
+            targets_open_record=targets_open_record,
+            is_write_intent=is_write_intent,
+        ),
+    )
 
 
 @compiles(JSONB, "sqlite")  # type: ignore[misc]
@@ -113,10 +139,10 @@ _USAGE = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 def chat_service(db_session: Session, monkeypatch) -> AIAssistantChatService:
     """Chat service with every external dependency stubbed OFFLINE.
 
-    The record-class branch (classifier verdict, RBAC check, assembler, prose
-    render) is stubbed so routing tests are deterministic and make no network
-    calls. Individual tests override ``intent_is_record_class`` to drive the
-    fork either way.
+    The Semantic Parser (``_parse_turn``), RBAC check, assembler and prose
+    render are stubbed so routing tests are deterministic and make no network
+    calls. Individual tests override ``_parse_turn`` to return a ``ParseResult``
+    whose intent drives the deterministic router either way.
     """
     svc = AIAssistantChatService(db_session)
     cfg = svc.cfg.get()
@@ -132,7 +158,8 @@ def chat_service(db_session: Session, monkeypatch) -> AIAssistantChatService:
         permission_slugs=["system.ai_assistant_chat.use"],
         enabled_modules=[],
     )
-    svc._reformulate_query = lambda *, config, history, user_message: user_message  # type: ignore[assignment]
+    # Default parse → unknown (agent loop). Each test overrides for its route.
+    svc._parse_turn = lambda **_k: _parse("unknown")  # type: ignore[assignment]
     svc._rag_select_tools = lambda *, standalone_query, enabled_tools, top_k: ([], [])  # type: ignore[assignment]
     svc._generate_suggestions = lambda **_k: []  # type: ignore[assignment]
 
@@ -196,7 +223,9 @@ def _no_entity_snapshot() -> PageSnapshotPayload:
 def test_record_class_with_entity_bypasses_agent_loop(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
-    chat_service.intent_is_record_class = lambda _m, **_k: True  # type: ignore[assignment]
+    chat_service._parse_turn = lambda **_k: _parse(  # type: ignore[assignment]
+        "record_question", targets_open_record=True
+    )
     agent = _Spy(("should-not-run", [], _USAGE))
     render = _Spy(("grounded answer from facts", [], _USAGE))
     chat_service._run_agent_loop = agent  # type: ignore[assignment]
@@ -220,7 +249,7 @@ def test_record_class_with_entity_bypasses_agent_loop(
 def test_catalog_question_with_entity_uses_agent_loop(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
-    chat_service.intent_is_record_class = lambda _m, **_k: False  # type: ignore[assignment]
+    chat_service._parse_turn = lambda **_k: _parse("data_query")  # type: ignore[assignment]
     agent = _Spy(("active promos: ...", [], _USAGE))
     render = _Spy(("should-not-run", [], _USAGE))
     chat_service._run_agent_loop = agent  # type: ignore[assignment]
@@ -244,8 +273,10 @@ def test_catalog_question_with_entity_uses_agent_loop(
 def test_record_phrasing_without_entity_uses_agent_loop(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
-    # Even if the classifier would say record-class, no entity → no assembler.
-    chat_service.intent_is_record_class = lambda _m, **_k: True  # type: ignore[assignment]
+    # Even if the parser says record_question, no entity → no assembler.
+    chat_service._parse_turn = lambda **_k: _parse(  # type: ignore[assignment]
+        "record_question", targets_open_record=True
+    )
     agent = _Spy(("...", [], _USAGE))
     render = _Spy(("should-not-run", [], _USAGE))
     chat_service._run_agent_loop = agent  # type: ignore[assignment]
@@ -279,7 +310,9 @@ def test_rbac_denied_degrades_to_agent_loop(
             return False
 
     monkeypatch.setattr(svc_module, "UserPermissionService", _DenyPerm)
-    chat_service.intent_is_record_class = lambda _m, **_k: True  # type: ignore[assignment]
+    chat_service._parse_turn = lambda **_k: _parse(  # type: ignore[assignment]
+        "record_question", targets_open_record=True
+    )
     agent = _Spy(("...", [], _USAGE))
     render = _Spy(("should-not-run", [], _USAGE))
     chat_service._run_agent_loop = agent  # type: ignore[assignment]
@@ -310,7 +343,9 @@ def test_bubble_path_never_writes_contact_session_vars(
         "bubble service imported the n8n session-var writer — isolation breach"
     )
 
-    chat_service.intent_is_record_class = lambda _m, **_k: True  # type: ignore[assignment]
+    chat_service._parse_turn = lambda **_k: _parse(  # type: ignore[assignment]
+        "record_question", targets_open_record=True
+    )
     chat_service._render_record_answer = _Spy(("ans", [], _USAGE))  # type: ignore[assignment]
     chat_service._run_agent_loop = _Spy(("ans", [], _USAGE))  # type: ignore[assignment]
 
@@ -332,7 +367,9 @@ def test_bubble_path_never_writes_contact_session_vars(
 def test_what_should_i_do_now_takes_record_path(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
-    chat_service.intent_is_record_class = lambda _m, **_k: True  # type: ignore[assignment]
+    chat_service._parse_turn = lambda **_k: _parse(  # type: ignore[assignment]
+        "record_question", targets_open_record=True
+    )
     agent = _Spy(("generic advice", [], _USAGE))
     render = _Spy(("state-grounded next step", [], _USAGE))
     chat_service._run_agent_loop = agent  # type: ignore[assignment]
@@ -352,171 +389,46 @@ def test_what_should_i_do_now_takes_record_path(
     )
 
 
-# ===========================================================================
-# UAC3c — skip the record-context classifier when no record is open
-# ===========================================================================
-# The classifier (`intent_is_record_class`) is a cheap-but-real LLM round-trip.
-# It is only meaningful when a record is open on the page; on dashboard /
-# settings / list pages there is nothing to short-circuit to, so it must NOT be
-# invoked at all (no LLM call). These tests pin both halves: skip when there is
-# no record context, invoke (unchanged behavior) when a record is present.
-
-
-class _CountingClassifier:
-    """Wraps a fixed verdict and records how many times it was invoked."""
-
-    def __init__(self, verdict: bool):
-        self.calls = 0
-        self.last_kwargs: dict | None = None
-        self._verdict = verdict
-
-    def __call__(self, message, **kwargs):  # noqa: ANN001
-        self.calls += 1
-        self.last_kwargs = kwargs
-        return self._verdict
-
-
-# --- UAC3c.1 — no record context (no entity) → classifier NOT invoked --------
-def test_classifier_not_invoked_without_entity(
+# --- Capability confidence floor (code-review fix) ---------------------------
+# The capability short-circuit serves a static catalog with NO answer-LLM. Unlike
+# the old tight keyword allowlist, the parser is probabilistic — so a LOW-confidence
+# "capability" guess must NOT hijack a real question. It must fall through to the
+# agent loop. A HIGH-confidence capability is served deterministically.
+def test_low_confidence_capability_falls_through_to_agent(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
-    classifier = _CountingClassifier(True)
-    chat_service.intent_is_record_class = classifier  # type: ignore[assignment]
-    agent = _Spy(("normal-path answer", [], _USAGE))
-    render = _Spy(("should-not-run", [], _USAGE))
+    chat_service._parse_turn = lambda **_k: _parse("capability", confidence=0.2)  # type: ignore[assignment]
+    agent = _Spy(("real answer", [], _USAGE))
+    served = {"hit": False}
     chat_service._run_agent_loop = agent  # type: ignore[assignment]
-    chat_service._render_record_answer = render  # type: ignore[assignment]
+    chat_service._serve_capability_answer = lambda **_k: served.__setitem__("hit", True)  # type: ignore[assignment]
 
     chat_service.respond(
         user_id=seeded_user,
         conversation_id=None,
-        message="Why was it rejected?",
+        message="what can I do to expedite this?",
         page_snapshot=_no_entity_snapshot(),
     )
 
-    assert classifier.calls == 0, (
-        "with no record on the page the classifier LLM call must be skipped "
-        "entirely (UAC3c.1)"
-    )
-    assert agent.called is True, "no-record pages answer via the normal agent loop"
-    assert render.called is False
+    assert served["hit"] is False, "low-confidence capability must NOT serve the static catalog"
+    assert agent.called is True, "low-confidence capability must fall through to the agent loop"
 
 
-# --- UAC3c.1 — no page_snapshot at all → classifier NOT invoked --------------
-def test_classifier_not_invoked_without_page_snapshot(
+def test_high_confidence_capability_is_served_deterministically(
     seeded_user: str, chat_service: AIAssistantChatService
 ):
-    classifier = _CountingClassifier(True)
-    chat_service.intent_is_record_class = classifier  # type: ignore[assignment]
-    agent = _Spy(("normal-path answer", [], _USAGE))
-    render = _Spy(("should-not-run", [], _USAGE))
-    chat_service._run_agent_loop = agent  # type: ignore[assignment]
-    chat_service._render_record_answer = render  # type: ignore[assignment]
-
-    chat_service.respond(
-        user_id=seeded_user,
-        conversation_id=None,
-        message="What promotions are active right now?",
-        page_snapshot=None,
-    )
-
-    assert classifier.calls == 0
-    assert agent.called is True
-    assert render.called is False
-
-
-# --- UAC3c.2 — record present → classifier IS invoked, behavior unchanged -----
-def test_classifier_invoked_when_record_present(
-    seeded_user: str, chat_service: AIAssistantChatService
-):
-    classifier = _CountingClassifier(True)
-    chat_service.intent_is_record_class = classifier  # type: ignore[assignment]
+    chat_service._parse_turn = lambda **_k: _parse("capability", confidence=0.95)  # type: ignore[assignment]
     agent = _Spy(("should-not-run", [], _USAGE))
-    render = _Spy(("grounded answer from facts", [], _USAGE))
+    served = {"hit": False}
     chat_service._run_agent_loop = agent  # type: ignore[assignment]
-    chat_service._render_record_answer = render  # type: ignore[assignment]
+    chat_service._serve_capability_answer = lambda **_k: served.__setitem__("hit", True) or (None, None)  # type: ignore[assignment]
 
     chat_service.respond(
         user_id=seeded_user,
         conversation_id=None,
-        message="Why was this complaint rejected?",
-        page_snapshot=_complaint_snapshot(),
+        message="what can you help me with?",
+        page_snapshot=_no_entity_snapshot(),
     )
 
-    assert classifier.calls == 1, (
-        "a record open on the page must still be classified (UAC3c.2) — the "
-        "skip must NOT change behavior when a record is present"
-    )
-    assert render.called is True
-    assert agent.called is False
-
-
-# --- UAC3c.1 (function boundary) — has_record_context=False makes NO LLM call -
-def test_intent_is_record_class_skips_provider_without_context(
-    chat_service: AIAssistantChatService, monkeypatch
-):
-    """Defense-in-depth: even called directly, the classifier must not build a
-    provider / fire an LLM call when there is no record context."""
-    import app.services.ai_assistant_service as svc_module
-
-    class _BoomProvider:
-        def __init__(self, *_a, **_k):
-            raise AssertionError("get_provider must not be called when has_record_context=False")
-
-    monkeypatch.setattr(svc_module, "get_provider", _BoomProvider)
-
-    assert chat_service.intent_is_record_class("Why was this rejected?", has_record_context=False) is False
-
-
-# ===========================================================================
-# Classifier-quality eval (live LLM, opt-in) — paraphrase robustness
-# ===========================================================================
-# NOTE (anti-overfit — see memory feedback_no_overfit_llm_nlp):
-# intent_is_record_class is a GENERAL semantic judgment, NOT a keyword
-# whitelist. These cases are ILLUSTRATIVE of a general capability, not an
-# allowlist to match literally — each concept appears in multiple paraphrases
-# plus near-miss negatives, so passing requires genuine generalization. This
-# can only be exercised against a real model, so it is gated behind
-# RUN_LLM_EVALS to keep CI offline. Do NOT make a case pass by special-casing.
-
-_RUN_LLM_EVALS = os.getenv("RUN_LLM_EVALS") == "1"
-
-
-@pytest.mark.skipif(
-    not _RUN_LLM_EVALS,
-    reason="live-LLM classifier eval; set RUN_LLM_EVALS=1 with a configured provider key",
-)
-@pytest.mark.parametrize(
-    "message, expected",
-    [
-        # --- record-fact intent, many phrasings (A1-A4 + taxonomy) ---
-        ("What is this complaint about?", True),
-        ("Give me a summary of this case", True),
-        ("Who approved this complaint?", True),
-        ("Who signed off on it?", True),
-        ("Which manager cleared this one?", True),
-        ("How long did one person take to approve this complaint?", True),
-        ("What was the turnaround time on the approval?", True),
-        ("Why was this rejected?", True),
-        ("What's the reason it got knocked back?", True),
-        ("Where does this stand on the SLA?", True),
-        ("What should I do now?", True),
-        # --- generic procedural (process flow) — NOT this record ---
-        ("What's the process flow for a complaint?", False),
-        ("Walk me through how complaints move through the system", False),
-        # --- catalog / data lookups — NOT record-class ---
-        ("What promotions are active?", False),
-        ("Any deals running right now?", False),
-        ("Show me products from brand X", False),
-        ("When is product ABC arriving?", False),
-        ("How do I upload an attachment?", False),
-        # --- near-miss negatives: record-ish words, not about THIS record ---
-        ("How do I approve a complaint in general?", False),
-        ("What does 'rejected' status mean?", False),
-        ("Can I reject orders in bulk?", False),
-    ],
-)
-def test_intent_is_record_class_generalizes(
-    chat_service: AIAssistantChatService, message: str, expected: bool
-):
-    assert bool(chat_service.intent_is_record_class(message)) is expected
+    assert served["hit"] is True, "high-confidence capability must be served from the catalog"
+    assert agent.called is False, "capability short-circuit must bypass the agent loop"

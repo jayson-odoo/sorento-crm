@@ -42,6 +42,12 @@ from app.services.ai_trace import (
 from app.services.embedding_service import EmbeddingReadService
 from app.services.entity_resolver import ResolutionResult, resolve_references
 from app.services.llm_provider import ChatResult, LLMProvider, get_provider
+from app.schemas.ai_semantic_parser import (
+    PARSE_RESULT_JSON_SCHEMA,
+    PARSE_RESULT_SCHEMA_NAME,
+    ParseResult,
+    fallback_parse,
+)
 from app.services.user_service import UserPermissionService
 
 logger = logging.getLogger(__name__)
@@ -141,6 +147,21 @@ class MCPToolCallResult:
     tool_name: str
     ok: bool
     output: str
+
+
+# Below this parser self-confidence, a non-capability intent is demoted to the
+# agent loop (the safe default) rather than trusting a shaky classification.
+_LOW_CONFIDENCE_FLOOR = 0.4
+
+
+@dataclass
+class _RouteDecision:
+    """Deterministic router output (M0). ``kind`` names the processing branch:
+    ``capability`` (zero-LLM catalog), ``record_answer`` (facts already loaded),
+    or ``agent`` (the tool-using loop). Flags refine the agent branch."""
+    kind: str  # "capability" | "record_answer" | "agent"
+    is_how_to: bool = False   # agent: deterministically pre-fetch the user guide
+    skip_rag: bool = False    # agent: no live data needed → skip tool selection
 
 
 class _TurnToolCache:
@@ -733,64 +754,6 @@ class AIAssistantChatService:
         user_msg = self.append_message(conv.id, "user", message, metadata_json=user_meta or None)
         logger.info("AI assistant user message appended conversation_id=%s", conv.id)
 
-        # Item 4a: deterministic capability answer. "What can you do / what can
-        # this system do / what can you help me with" is answered straight from
-        # the enriched capability catalog — NO LLM round-trip, never
-        # hallucinated. Short-circuits before reformulate / RAG / agent loop.
-        if self._is_capability_question(message):
-            capability_text = self._build_capability_answer()
-            if self._turn_trace is not None:
-                self._turn_trace.add_span(
-                    kind=KIND_CHAIN,
-                    name="capability_answer (deterministic)",
-                    input_json={"message": message[:2000]},
-                    output_json={"content": capability_text[:2000], "deterministic": True},
-                )
-            capability_meta: dict[str, Any] = {
-                "links": self._extract_links_from_text(capability_text),
-                "sources": [],
-                "selected_tools": [],
-                "tool_calls": [],
-                "suggestions": [],
-                "deterministic": "capability_overview",
-                # No LLM prompt used on the deterministic short-circuit.
-                "prompt_versions": [],
-            }
-            assistant_msg = self.append_message(
-                conv.id, "assistant", capability_text, metadata_json=capability_meta
-            )
-            total_ms = (time.perf_counter() - request_started) * 1000
-            try:
-                self.db.add(
-                    AIAssistantUsageLog(
-                        user_id=user_id,
-                        feature="ai_assistant",
-                        conversation_id=str(conv.id),
-                        message_id=str(assistant_msg.id),
-                        model=config.model,
-                        provider=config.provider,
-                        prompt_tokens=0,
-                        completion_tokens=0,
-                        total_tokens=0,
-                        tool_calls_count=0,
-                        response_time_ms=int(total_ms),
-                        was_answered=True,
-                    )
-                )
-                self.db.commit()
-            except Exception:
-                logger.exception("Failed to insert ai_assistant_usage_logs row (capability)")
-                self.db.rollback()
-            self._finalize_trace(assistant_msg, status="ok")
-            logger.info(
-                "AI assistant capability answer served deterministically "
-                "conversation_id=%s assistant_message_id=%s total_elapsed_ms=%.1f",
-                conv.id,
-                assistant_msg.id,
-                total_ms,
-            )
-            return conv, assistant_msg
-
         # Item 3b: turn-scoped, strictly-keyed tool/guide result cache. Created
         # fresh per respond() so it can never outlive the turn or leak across
         # users/threads (key includes user_id + conversation_id + turn_id). The
@@ -817,21 +780,43 @@ class AIAssistantChatService:
             len(auth_ctx.permission_slugs),
         )
 
-        reformulate_started = time.perf_counter()
-        standalone_query = self._reformulate_query(
+        # Semantic Parser (M0): ONE schema-forced LLM call understands the turn
+        # and emits routing parameters. Replaces reformulator + record-class
+        # router + the capability/guide keyword gates.
+        parse_started = time.perf_counter()
+        parse = self._parse_turn(
             config=config,
             history=history_rows,
             user_message=message,
         )
-        reformulate_ms = (time.perf_counter() - reformulate_started) * 1000
+        standalone_query = (parse.standalone_query or "").strip() or message
+        parse_ms = (time.perf_counter() - parse_started) * 1000
         logger.info(
-            "AI assistant query reformulated conversation_id=%s original_len=%s standalone_len=%s elapsed_ms=%.1f standalone=%s",
+            "AI assistant turn parsed conversation_id=%s intent=%s confidence=%.2f "
+            "write=%s domain=%s form_target=%s elapsed_ms=%.1f standalone=%s",
             conv.id,
-            len(message or ""),
-            len(standalone_query or ""),
-            reformulate_ms,
+            parse.intent,
+            parse.confidence,
+            parse.signals.is_write_intent,
+            parse.entities.domain,
+            parse.form_target,
+            parse_ms,
             (standalone_query or "")[:200],
         )
+
+        # Capability intent → deterministic catalog answer, no answer-LLM. Gated
+        # on the confidence floor: unlike the old tight keyword allowlist, the
+        # parser is probabilistic, so a low-confidence "capability" guess must NOT
+        # hijack a real question with the static catalog — let it fall through to
+        # the agent loop (mirrors _route's floor for every other intent).
+        if parse.intent == "capability" and parse.confidence >= _LOW_CONFIDENCE_FLOOR:
+            return self._serve_capability_answer(
+                conv=conv,
+                user_id=user_id,
+                config=config,
+                message=message,
+                request_started=request_started,
+            )
 
         resolve_started = time.perf_counter()
         try:
@@ -857,64 +842,12 @@ class AIAssistantChatService:
             resolve_ms,
         )
 
-        # Augment the query sent to RAG so the tool picker sees entity-type hints.
-        rag_query = standalone_query
-        query_hint = resolution.to_query_hint()
-        if query_hint:
-            rag_query = f"{standalone_query}\n{query_hint}"
-
-        rag_started = time.perf_counter()
-        selected_tools, sources = self._rag_select_tools(
-            standalone_query=rag_query,
-            enabled_tools=list(config.enabled_tools or []),
-            top_k=max(1, int(getattr(settings, "ai_assistant_rag_top_k", 3))),
-        )
-        if self._suppress_write_tools:
-            before = len(selected_tools)
-            selected_tools = [t for t in selected_tools if not _is_write_tool(str(t.get("tool_name") or ""))]
-            sources = [s for s in sources if not _is_write_tool(str(s.get("title") or ""))]
-            if before != len(selected_tools):
-                logger.info(
-                    "AI assistant dry-run suppressed %s write tool(s)",
-                    before - len(selected_tools),
-                )
-        rag_ms = (time.perf_counter() - rag_started) * 1000
-        if self._turn_trace is not None:
-            self._turn_trace.add_span(
-                kind=KIND_RETRIEVER,
-                name="rag_select_tools",
-                query=rag_query,
-                documents=[
-                    {
-                        "id": str(s.get("tool_name") or s.get("title") or ""),
-                        "content": str(s.get("why_selected") or s.get("title") or ""),
-                        "score": s.get("score"),
-                    }
-                    for s in (sources or [])
-                ],
-                top_k=max(1, int(getattr(settings, "ai_assistant_rag_top_k", 3))),
-                output_json={"selected_tools": [t.get("tool_name") for t in selected_tools]},
-                latency_ms=int(rag_ms),
-            )
-        logger.info(
-            "AI assistant RAG phase finished conversation_id=%s selected_tools=%s elapsed_ms=%.1f",
-            conv.id,
-            len(selected_tools),
-            rag_ms,
-        )
-
-        # Deterministic pre-route (PLAN Q6): when the user is viewing a specific
-        # record AND the question is record-class, bypass the agent loop and
-        # answer from the deterministic assembler. RBAC parity with the HTTP
-        # route is enforced inline (§3.5) since this is an internal service call
-        # without the FastAPI dependency. Any failure degrades to the agent loop.
         # Assemble the record context whenever the user is viewing a permitted
-        # record — REGARDLESS of the classifier. The classifier only decides
-        # whether to short-circuit (render) or fall through to the agent loop;
-        # either way the facts are injected, so transient classifier noise can
-        # never produce an ungrounded hallucination for a record-ish question.
+        # record — REGARDLESS of the route. The facts are injected into either
+        # branch, so a record-ish agent turn is still grounded. RBAC parity with
+        # the HTTP route is enforced inline (§3.5) since this is an internal
+        # service call without the FastAPI dependency.
         record_ctx = None
-        is_record_class = False
         if page_snapshot is not None and page_snapshot.entity is not None:
             from app.services.record_context_service import (
                 RecordContextService,
@@ -944,24 +877,87 @@ class AIAssistantChatService:
                     "Record-context assembly failed; falling back to agent loop"
                 )
                 record_ctx = None
-            if record_ctx is not None:
-                # Classify on the ORIGINAL message, not the reformulated
-                # standalone_query: reformulation can hallucinate unrelated
-                # context (e.g. expanding "this" into "the delivery order") which
-                # would mis-route a record question into the agent loop. The
-                # user's own words carry the intent; the render path resolves
-                # specifics from the injected facts.
-                #
-                # UAC3c: the classifier LLM call runs ONLY inside this branch —
-                # i.e. only when a record was actually assembled for the page.
-                # No record context (dashboard/settings/list pages) => we never
-                # get here, so no classifier call / LLM round-trip is made.
-                is_record_class = self.intent_is_record_class(
-                    message, has_record_context=True
+
+        # Deterministic router — pure switch on the parser's params (no LLM).
+        # Replaces the record-class classifier + guide keyword gate.
+        route = self._route(parse, record_available=record_ctx is not None)
+        if self._turn_trace is not None:
+            self._turn_trace.add_span(
+                kind=KIND_CHAIN,
+                name="route",
+                input_json={
+                    "intent": parse.intent,
+                    "confidence": parse.confidence,
+                    "targets_open_record": parse.signals.targets_open_record,
+                    "record_available": record_ctx is not None,
+                },
+                output_json={
+                    "kind": route.kind,
+                    "is_how_to": route.is_how_to,
+                    "skip_rag": route.skip_rag,
+                },
+            )
+        logger.info(
+            "AI assistant route decided conversation_id=%s intent=%s kind=%s is_how_to=%s skip_rag=%s",
+            conv.id,
+            parse.intent,
+            route.kind,
+            route.is_how_to,
+            route.skip_rag,
+        )
+
+        # RAG tool selection — only for the agent branch that needs live data
+        # (skipped for record_answer, smalltalk, definition).
+        selected_tools: list[dict[str, Any]] = []
+        sources: list[dict[str, Any]] = []
+        if route.kind == "agent" and not route.skip_rag:
+            # Augment the query so the tool picker sees entity-type hints.
+            rag_query = standalone_query
+            query_hint = resolution.to_query_hint()
+            if query_hint:
+                rag_query = f"{standalone_query}\n{query_hint}"
+            rag_started = time.perf_counter()
+            selected_tools, sources = self._rag_select_tools(
+                standalone_query=rag_query,
+                enabled_tools=list(config.enabled_tools or []),
+                top_k=max(1, int(getattr(settings, "ai_assistant_rag_top_k", 3))),
+            )
+            if self._suppress_write_tools:
+                before = len(selected_tools)
+                selected_tools = [t for t in selected_tools if not _is_write_tool(str(t.get("tool_name") or ""))]
+                sources = [s for s in sources if not _is_write_tool(str(s.get("title") or ""))]
+                if before != len(selected_tools):
+                    logger.info(
+                        "AI assistant dry-run suppressed %s write tool(s)",
+                        before - len(selected_tools),
+                    )
+            rag_ms = (time.perf_counter() - rag_started) * 1000
+            if self._turn_trace is not None:
+                self._turn_trace.add_span(
+                    kind=KIND_RETRIEVER,
+                    name="rag_select_tools",
+                    query=rag_query,
+                    documents=[
+                        {
+                            "id": str(s.get("tool_name") or s.get("title") or ""),
+                            "content": str(s.get("why_selected") or s.get("title") or ""),
+                            "score": s.get("score"),
+                        }
+                        for s in (sources or [])
+                    ],
+                    top_k=max(1, int(getattr(settings, "ai_assistant_rag_top_k", 3))),
+                    output_json={"selected_tools": [t.get("tool_name") for t in selected_tools]},
+                    latency_ms=int(rag_ms),
                 )
+            logger.info(
+                "AI assistant RAG phase finished conversation_id=%s selected_tools=%s elapsed_ms=%.1f",
+                conv.id,
+                len(selected_tools),
+                rag_ms,
+            )
 
         agent_started = time.perf_counter()
-        if record_ctx is not None and is_record_class:
+        if route.kind == "record_answer":
             response_text, tool_calls, token_usage = self._render_record_answer(
                 config=config,
                 history=history_rows,
@@ -985,6 +981,7 @@ class AIAssistantChatService:
                 user_message_id=str(user_msg.id),
                 record_ctx=record_ctx,
                 turn_cache=turn_cache,
+                is_how_to=route.is_how_to,
             )
         agent_ms = (time.perf_counter() - agent_started) * 1000
         logger.info(
@@ -1099,25 +1096,29 @@ class AIAssistantChatService:
 
     # ---------- n8n-style pipeline: reformulate → RAG → agent loop ----------
 
-    def _reformulate_query(
+    def _parse_turn(
         self,
         *,
         config: AIAssistantConfig,
         history: list[AIAssistantMessage],
         user_message: str,
-    ) -> str:
-        """Rewrite the latest user message into a self-contained query using recent history.
+    ) -> ParseResult:
+        """Semantic Parser (M0): the single front-of-pipeline LLM node.
 
-        Mirrors the n8n `sub-query-reformulator` LLM chain: takes a short history window
-        plus the current message and returns a standalone search query for RAG + the agent.
-        Falls back to the raw message if the LLM call fails.
+        Understands the latest turn (with a short history window) and emits a
+        schema-forced ``ParseResult`` — routing PARAMETERS, not prose. Replaces
+        the old reformulator (prose) + record-class router (YES/NO) + the two
+        keyword gates. Provider structured-output guarantees valid JSON; on any
+        failure we retry once, then degrade to ``fallback_parse`` (intent=unknown
+        → agent loop, raw message as the RAG seed). NEVER raises on the hot path.
         """
         raw = (user_message or "").strip()
         if not raw:
-            return raw
+            return fallback_parse(raw)
         api_key = config.api_key_ciphertext or settings.openai_api_key
         if not api_key:
-            return raw
+            return fallback_parse(raw)
+
         turns = max(1, int(getattr(settings, "ai_assistant_reformulator_history_turns", 6)))
         convo_lines: list[str] = []
         for msg in history[-(turns * 2):]:
@@ -1127,60 +1128,107 @@ class AIAssistantChatService:
             if not text_piece:
                 continue
             convo_lines.append(f"{msg.role}: {text_piece[:500]}")
-        # Prompt sourced from the registry (``reformulator`` key); the string
-        # above now lives as that key's fallback. ``{{current_date}}`` is
-        # substituted with the live date directive.
+
         system = self._resolve_prompt(
-            "reformulator", current_date=_current_date_directive()
+            "semantic_parser", current_date=_current_date_directive()
         )
         user_block = (
             "Conversation so far (may be empty):\n"
             f"{chr(10).join(convo_lines) if convo_lines else '(none)'}\n\n"
-            f"Latest user turn:\n{raw}\n\n"
-            "Reformulated standalone query:"
+            f"Latest user turn:\n{raw}"
         )
         messages_in = [
             {"role": "system", "content": system},
             {"role": "user", "content": user_block},
         ]
-        started = time.perf_counter()
-        try:
-            provider = get_provider(config.provider, api_key, config.model)
-            result = provider.chat(
-                messages_in,
-                temperature=0.0,
-                model=config.model,
-                max_tokens=256,
-            )
-            reformulated = (result.content or "").strip().strip('"').strip()
-            if self._turn_trace is not None:
-                self._turn_trace.add_llm_span(
-                    name="reformulator",
-                    model=config.model,
-                    messages_in=messages_in,
-                    result=result,
-                    started_perf=started,
-                    prompt_name="reformulator",
-                    prompt_version=self._prompt_version_for("reformulator"),
+
+        last_exc: Exception | None = None
+        result: ChatResult | None = None
+        started = time.perf_counter()  # first-attempt clock — reused for the error span
+        for _attempt in range(2):
+            started = time.perf_counter()
+            try:
+                provider = get_provider(config.provider, api_key, config.model)
+                result = provider.chat(
+                    messages_in,
                     temperature=0.0,
-                    max_tokens=256,
-                )
-            return reformulated or raw
-        except Exception as exc:
-            logger.exception("AI assistant reformulator failed; using raw user message")
-            if self._turn_trace is not None:
-                self._turn_trace.add_llm_span(
-                    name="reformulator",
                     model=config.model,
-                    messages_in=messages_in,
-                    result=None,
-                    started_perf=started,
-                    prompt_name="reformulator",
-                    prompt_version=self._prompt_version_for("reformulator"),
-                    status="error",
-                    error=str(exc),
+                    max_tokens=512,
+                    json_schema=PARSE_RESULT_JSON_SCHEMA,
+                    json_schema_name=PARSE_RESULT_SCHEMA_NAME,
                 )
-            return raw
+                # Empty/blank content = a failed structured emission (e.g. an
+                # Anthropic max_tokens truncation with no tool_use) → retry rather
+                # than silently validating "{}" into a confident intent=unknown.
+                if not (result.content or "").strip():
+                    raise ValueError("semantic parser returned empty content")
+                parsed = ParseResult.model_validate_json(result.content)
+                if not (parsed.standalone_query or "").strip():
+                    parsed.standalone_query = raw
+                # Stash token usage so callers that don't go through the agent
+                # loop (the capability short-circuit) can bill the parser call.
+                self._parse_token_usage = {
+                    "prompt_tokens": int(getattr(result, "prompt_tokens", 0) or 0),
+                    "completion_tokens": int(getattr(result, "completion_tokens", 0) or 0),
+                    "total_tokens": int(getattr(result, "total_tokens", 0) or 0),
+                }
+                if self._turn_trace is not None:
+                    self._turn_trace.add_llm_span(
+                        name="semantic_parser",
+                        model=config.model,
+                        messages_in=messages_in,
+                        result=result,
+                        started_perf=started,
+                        prompt_name="semantic_parser",
+                        prompt_version=self._prompt_version_for("semantic_parser"),
+                        temperature=0.0,
+                        max_tokens=512,
+                    )
+                return parsed
+            except Exception as exc:  # noqa: BLE001 — parse/provider error, retry then fall back
+                last_exc = exc
+
+        logger.warning("Semantic parser failed after retries; degrading to unknown (%s)", last_exc)
+        if self._turn_trace is not None:
+            self._turn_trace.add_llm_span(
+                name="semantic_parser",
+                model=config.model,
+                messages_in=messages_in,
+                result=result,
+                started_perf=started,  # real elapsed of the last attempt, not ~0ms
+                prompt_name="semantic_parser",
+                prompt_version=self._prompt_version_for("semantic_parser"),
+                status="error",
+                error=str(last_exc),
+            )
+        return fallback_parse(raw)
+
+    def _route(self, parse: ParseResult, *, record_available: bool) -> "_RouteDecision":
+        """Deterministic router — pure switch on the parser's params. No LLM.
+
+        Returns a ``_RouteDecision`` naming which processing branch runs. Low
+        confidence on a non-capability intent demotes to the agent loop (the
+        safe default, mirroring the old classifier's fail-open posture).
+        """
+        intent = parse.intent
+        if intent != "capability" and parse.confidence < _LOW_CONFIDENCE_FLOOR:
+            intent = "unknown"
+
+        if intent == "capability":
+            return _RouteDecision(kind="capability")
+        if intent == "record_question" and parse.signals.targets_open_record and record_available:
+            return _RouteDecision(kind="record_answer")
+        if intent == "how_to":
+            return _RouteDecision(kind="agent", is_how_to=True)
+        if intent == "smalltalk":
+            # Greetings/thanks need no data — skip RAG cost. A mislabelled greeting
+            # losing tools is harmless. (definition is NOT skipped: a term question
+            # mislabelled from a real data lookup, e.g. "what is DO-123?", must
+            # still be able to reach MCP read tools + user_guides_read.)
+            return _RouteDecision(kind="agent", skip_rag=True)
+        # definition / data_query / record_action / form_submit / unknown /
+        # record_question without an open record → agent loop with RAG tools.
+        return _RouteDecision(kind="agent")
 
     def _rag_select_tools(
         self,
@@ -1276,53 +1324,74 @@ class AIAssistantChatService:
             },
         }
 
-    # Cheap gate for "should I deterministically pre-fetch a user guide?".
-    # Targets how-to / explain phrasings. False positives are harmless — the
-    # guide lookup just returns no match and nothing is injected. This is a
-    # retrieval trigger, NOT answer-tuning (the LLM still does the semantic work).
-    _GUIDE_QUESTION_TRIGGERS = (
-        "how do i", "how to", "how can i", "how does", "how should i", "how would i",
-        "what does", "what do the", "what is this", "what is the purpose", "what are the",
-        "what if i", "what happens when i", "explain", "steps to", "steps for",
-        "guide me", "walk me through", "which button", "what button", " for?",
-    )
-
-    def _is_guide_question(self, message: str) -> bool:
-        m = (message or "").strip().lower()
-        if not m:
-            return False
-        return any(t in m for t in self._GUIDE_QUESTION_TRIGGERS)
-
-    # Deterministic "what can the system do?" intent (Item 4a). Tight phrases so
-    # a real data question ("what can I do to expedite order X?") never matches.
-    # When matched, respond() answers from the enriched capability catalog with
-    # NO LLM round-trip — the overview is fully deterministic.
-    _CAPABILITY_QUESTION_TRIGGERS = (
-        "what can you do",
-        "what can you help",
-        "what can the system do",
-        "what can this system do",
-        "what can this crm do",
-        "what can this app do",
-        "what can the assistant do",
-        "what can this assistant do",
-        "what can i ask you",
-        "what can i ask",
-        "what are your capabilities",
-        "what are you capable of",
-        "what do you do",
-        "what kind of questions can",
-        "what questions can i ask",
-        "how can you help me",
-        "what can you help me with",
-        "what else can you do",
-    )
-
-    def _is_capability_question(self, message: str) -> bool:
-        m = (message or "").strip().lower()
-        if not m:
-            return False
-        return any(t in m for t in self._CAPABILITY_QUESTION_TRIGGERS)
+    def _serve_capability_answer(
+        self,
+        *,
+        conv: Any,
+        user_id: str,
+        config: AIAssistantConfig,
+        message: str,
+        request_started: float,
+    ) -> tuple[Any, AIAssistantMessage]:
+        """Deterministic capability answer — routed here when the Semantic Parser
+        classifies ``intent=capability``. Answered straight from the enriched
+        capability catalog: NO answer-LLM round-trip, never hallucinated (the one
+        parser call already ran to classify). Persists the assistant message +
+        usage log and finalizes the trace, mirroring the main path."""
+        capability_text = self._build_capability_answer()
+        if self._turn_trace is not None:
+            self._turn_trace.add_span(
+                kind=KIND_CHAIN,
+                name="capability_answer (deterministic)",
+                input_json={"message": message[:2000]},
+                output_json={"content": capability_text[:2000], "deterministic": True},
+            )
+        capability_meta: dict[str, Any] = {
+            "links": self._extract_links_from_text(capability_text),
+            "sources": [],
+            "selected_tools": [],
+            "tool_calls": [],
+            "suggestions": [],
+            "deterministic": "capability_overview",
+            "prompt_versions": list(self._turn_prompt_versions),
+        }
+        assistant_msg = self.append_message(
+            conv.id, "assistant", capability_text, metadata_json=capability_meta
+        )
+        total_ms = (time.perf_counter() - request_started) * 1000
+        # The answer itself is zero-LLM, but the Semantic Parser call that routed
+        # us here IS billed — count its tokens so capability turns don't undercount.
+        parse_usage = getattr(self, "_parse_token_usage", None) or {}
+        try:
+            self.db.add(
+                AIAssistantUsageLog(
+                    user_id=user_id,
+                    feature="ai_assistant",
+                    conversation_id=str(conv.id),
+                    message_id=str(assistant_msg.id),
+                    model=config.model,
+                    provider=config.provider,
+                    prompt_tokens=int(parse_usage.get("prompt_tokens", 0) or 0),
+                    completion_tokens=int(parse_usage.get("completion_tokens", 0) or 0),
+                    total_tokens=int(parse_usage.get("total_tokens", 0) or 0),
+                    tool_calls_count=0,
+                    response_time_ms=int(total_ms),
+                    was_answered=True,
+                )
+            )
+            self.db.commit()
+        except Exception:
+            logger.exception("Failed to insert ai_assistant_usage_logs row (capability)")
+            self.db.rollback()
+        self._finalize_trace(assistant_msg, status="ok")
+        logger.info(
+            "AI assistant capability answer served deterministically "
+            "conversation_id=%s assistant_message_id=%s total_elapsed_ms=%.1f",
+            conv.id,
+            assistant_msg.id,
+            total_ms,
+        )
+        return conv, assistant_msg
 
     def _build_capability_answer(self) -> str:
         """Render the deterministic capability overview as markdown.
@@ -1403,6 +1472,7 @@ class AIAssistantChatService:
         user_message_id: str | None = None,
         record_ctx: dict[str, Any] | None = None,
         turn_cache: _TurnToolCache | None = None,
+        is_how_to: bool = False,
     ) -> tuple[str, list[MCPToolCallResult], dict[str, int]]:
         """Orchestrator loop: LLM chooses/invokes MCP tools via function-calling, then answers.
 
@@ -1527,7 +1597,8 @@ class AIAssistantChatService:
         # The user's RAW message matches the guides well, so fetch HERE and inject
         # it; the result is added to tool_calls_log so the deep links get
         # re-injected. A miss / error simply injects nothing (harmless).
-        if self._is_guide_question(user_message):
+        # Gated by the Semantic Parser's ``how_to`` intent (was a keyword gate).
+        if is_how_to:
             pf_started = time.perf_counter()
             try:
                 pf = MCPRuntimeClient(
@@ -1917,84 +1988,6 @@ class AIAssistantChatService:
         """DEPRECATED shim — the answer policy is now the ``synthesizer`` key.
         Delegates to the single source in ``app.services.ai_prompt_registry``."""
         return ai_prompt_registry.PROMPT_KEYS["synthesizer"].fallback()
-
-    def intent_is_record_class(
-        self, message: str, *, has_record_context: bool = True
-    ) -> bool:
-        """Semantic classifier: is this a question about the record on screen?
-
-        record-class = a question about the SPECIFIC record/case currently on
-        screen — its state, who acted on it, when, why, how long, its SLA, or
-        what to do next on it.  NOT record-class = general catalog/data lookups
-        (products, promotions, orders, stock), definitions, or how-the-feature-
-        works-in-general.
-
-        Implemented as a single cheap LLM call (general NLP judgment, NOT
-        keyword matching — per the PLAN anti-overfit rule). Returns ``False`` on
-        any provider error / missing key so we never wrongly hijack the agent
-        loop (safe default = fall through).
-
-        UAC3c — record-context gate: classifying "is this about the open
-        record?" is only meaningful when a record is actually open on the page.
-        With no record context (dashboard / settings / list pages) there is
-        nothing to short-circuit to, so ``has_record_context=False`` skips the
-        LLM round-trip entirely (no provider call). The hot-path caller in
-        ``respond()`` already only reaches this with a successfully-assembled
-        ``record_ctx``; enforcing the skip here too makes a wasted classifier
-        call structurally impossible even if the call site is later refactored.
-        """
-        if not has_record_context:
-            return False
-        raw = (message or "").strip()
-        if not raw:
-            return False
-        config = self.cfg.get()
-        api_key = config.api_key_ciphertext or settings.openai_api_key
-        if not api_key:
-            return False
-        # Prompt sourced from the registry (``router`` key); the classifier
-        # string now lives as that key's fallback.
-        system = self._resolve_prompt("router")
-        # Retry transient provider errors: a swallowed error here flips the route
-        # to the agent loop and produces a wrong answer for a real record question
-        # (observed in end-to-end). Only a persistent failure defaults to False.
-        last_exc: Exception | None = None
-        messages_in = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": raw[:1000]},
-        ]
-        for _attempt in range(2):
-            started = time.perf_counter()
-            try:
-                provider = get_provider(config.provider, api_key, config.model)
-                result = provider.chat(
-                    messages_in,
-                    temperature=0.0,
-                    model=config.model,
-                    max_tokens=4,
-                )
-                verdict = (result.content or "").strip().upper()
-                if self._turn_trace is not None:
-                    self._turn_trace.add_llm_span(
-                        name="router (record-classifier)",
-                        model=config.model,
-                        messages_in=messages_in,
-                        result=result,
-                        started_perf=started,
-                        prompt_name="router",
-                        prompt_version=self._prompt_version_for("router"),
-                        temperature=0.0,
-                        max_tokens=4,
-                    )
-                return verdict.startswith("YES")
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-        logger.warning(
-            "intent_is_record_class classifier failed after retries; defaulting "
-            "to False (%s)",
-            last_exc,
-        )
-        return False
 
     def _render_record_answer(
         self,

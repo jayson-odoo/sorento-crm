@@ -89,10 +89,11 @@ def seeded(db: Session) -> Session:
 # --------------------------------------------------------------------------- #
 
 
-def test_seed_creates_nine_keys_each_v1_with_production_label(seeded: Session):
+def test_seed_creates_ten_keys_each_v1_with_production_label(seeded: Session):
     names = {r.name for r in seeded.query(AIPromptVersion).all()}
     assert names == set(PROMPT_KEYS.keys())
-    assert len(names) == 9
+    # M0 added `semantic_parser` (reformulator/router kept as dormant rows).
+    assert len(names) == len(PROMPT_KEYS) == 10
     for name in PROMPT_KEYS:
         versions = [r.version for r in seeded.query(AIPromptVersion).filter_by(name=name).all()]
         assert versions == [1]
@@ -104,8 +105,8 @@ def test_seed_creates_nine_keys_each_v1_with_production_label(seeded: Session):
 def test_seed_is_idempotent(seeded: Session):
     seed_prompt_registry(seeded.get_bind())
     seed_prompt_registry(seeded.get_bind())
-    assert seeded.query(AIPromptVersion).count() == 9
-    assert seeded.query(AIPromptLabel).count() == 9
+    assert seeded.query(AIPromptVersion).count() == 10
+    assert seeded.query(AIPromptLabel).count() == 10
 
 
 def test_seed_preserves_existing_custom_system_prompt_as_v2(db: Session):
@@ -262,13 +263,17 @@ def test_set_label_reports_production_and_staging(seeded: Session):
 
 def test_list_keys_shape(seeded: Session):
     rows = AIPromptService(seeded).list_keys()
-    assert len(rows) == 9
+    assert len(rows) == 10
     by_name = {r["name"]: r for r in rows}
     assert by_name["agent_system"]["active"] is True
     assert by_name["agent_system"]["production_version"] == 1
     assert by_name["judge"]["active"] is False
     assert by_name["judge"]["activates_in"] == "M3b"
-    assert by_name["reformulator"]["variables"] == ["current_date"]
+    # M0: semantic_parser is now the active front node; reformulator/router dormant.
+    assert by_name["semantic_parser"]["active"] is True
+    assert by_name["semantic_parser"]["variables"] == ["current_date"]
+    assert by_name["reformulator"]["active"] is False
+    assert by_name["router"]["active"] is False
 
 
 # --------------------------------------------------------------------------- #
@@ -338,7 +343,8 @@ def test_respond_stamps_prompt_versions_metadata(wired_chat, seeded: Session):
     versions = (msg.metadata_json or {}).get("prompt_versions")
     assert versions, "prompt_versions must be present and non-empty"
     names = [v["name"] for v in versions]
-    assert "reformulator" in names
+    # M0: the front node is now the Semantic Parser, not the reformulator.
+    assert "semantic_parser" in names
     assert "agent_system" in names
     assert "synthesizer" in names
     for v in versions:
@@ -421,7 +427,7 @@ def test_route_list_prompts_happy(api):
     res = client.get("/api/v1/system/ai-assistant/prompts")
     assert res.status_code == 200, res.text
     body = res.json()
-    assert len(body) == 9
+    assert len(body) == 10
     assert {r["name"] for r in body} == set(PROMPT_KEYS.keys())
 
 

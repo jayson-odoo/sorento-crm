@@ -107,8 +107,14 @@ def chat_service(db_session: Session) -> AIAssistantChatService:
         permission_slugs=["system.ai_assistant_chat.use"],
         enabled_modules=[],
     )
-    # Stub reformulator so it never hits the network.
-    svc._reformulate_query = lambda *, config, history, user_message: user_message  # type: ignore[assignment]
+    # Stub the Semantic Parser so it never hits the network. intent=data_query
+    # routes to the agent loop (which the tests stub), NOT the deterministic
+    # capability short-circuit.
+    from app.schemas.ai_semantic_parser import ParseResult
+
+    svc._parse_turn = lambda **_k: ParseResult(  # type: ignore[assignment]
+        standalone_query="standalone", intent="data_query", confidence=0.9
+    )
     # Stub RAG selector to a no-op.
     svc._rag_select_tools = lambda *, standalone_query, enabled_tools, top_k: ([], [])  # type: ignore[assignment]
     # Stub the entity resolver helper used inside respond().

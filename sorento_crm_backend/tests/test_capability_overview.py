@@ -6,11 +6,14 @@ These are pure-function tests (no LLM, no DB):
   * ``build_novice_capability_overview`` enriches the live catalog and MUST NOT
     leak admin/internal tools, embedding skip-tools, tool slugs, UUIDs, raw
     machine category codes, methods, or API paths (UAC4.2).
-  * ``AIAssistantChatService._is_capability_question`` recognises capability
-    questions and ignores unrelated ones (the trigger that drives the
-    deterministic interception in ``respond()``).
   * ``AIAssistantChatService._build_capability_answer`` renders the overview to
     markdown with NO LLM round-trip (UAC4.1 — deterministic catalog part).
+
+NOTE (M0 semantic-parser revamp): the keyword classifier ``_is_capability_question``
+was DELETED — capability recognition is now the Semantic Parser's ``intent ==
+"capability"`` (tested in ``test_ai_semantic_parser_route.py`` /
+``test_ai_semantic_parser_schema.py``). Only the deterministic catalog BUILDER
+is unchanged and still tested here.
 """
 from __future__ import annotations
 
@@ -79,32 +82,6 @@ def test_overview_skip_tools_are_not_referenced():
     blob = json.dumps(ov)
     for tool in _EMBEDDING_SKIP_TOOLS:
         assert tool not in blob
-
-
-# --------------------------------------------------------------------------
-# Capability-question trigger
-# --------------------------------------------------------------------------
-def test_capability_question_triggers_match():
-    svc = _svc()
-    for q in (
-        "What can you do?",
-        "what can this system do",
-        "What can you help me with?",
-        "What are your capabilities?",
-        "what can i ask you",
-    ):
-        assert svc._is_capability_question(q), q
-
-
-def test_capability_question_ignores_unrelated():
-    svc = _svc()
-    for q in (
-        "List products in category Beverages.",
-        "What is the status of order ORD-12345?",
-        "How do I file a complaint?",
-        "",
-    ):
-        assert not svc._is_capability_question(q), q
 
 
 # --------------------------------------------------------------------------

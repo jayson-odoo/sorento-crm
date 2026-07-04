@@ -63,6 +63,8 @@ class LLMProvider(Protocol):
         max_tokens: Optional[int] = None,
         images: Optional[list[ImagePart]] = None,
         response_format: Optional[dict] = None,
+        json_schema: Optional[dict] = None,
+        json_schema_name: Optional[str] = None,
     ) -> ChatResult: ...
 
     def embed(self, text: str) -> list[float]: ...
@@ -187,6 +189,8 @@ class OpenAIProvider:
         max_tokens: Optional[int] = None,
         images: Optional[list[ImagePart]] = None,
         response_format: Optional[dict] = None,
+        json_schema: Optional[dict] = None,
+        json_schema_name: Optional[str] = None,
     ) -> ChatResult:
         client = self._client()
         outbound_messages = (
@@ -202,7 +206,18 @@ class OpenAIProvider:
             kwargs["tool_choice"] = "auto"
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
-        if response_format is not None:
+        # Structured-output: force a schema-valid JSON object as the response
+        # (OpenAI native strict mode). Takes precedence over response_format.
+        if json_schema is not None:
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": json_schema_name or "structured_result",
+                    "schema": json_schema,
+                    "strict": True,
+                },
+            }
+        elif response_format is not None:
             kwargs["response_format"] = response_format
 
         completion = client.chat.completions.create(**kwargs)
@@ -403,9 +418,60 @@ class AnthropicProvider:
         max_tokens: Optional[int] = None,
         images: Optional[list[ImagePart]] = None,
         response_format: Optional[dict] = None,
+        json_schema: Optional[dict] = None,
+        json_schema_name: Optional[str] = None,
     ) -> ChatResult:
         client = self._client()
         system_text, rest = _split_system_messages(messages)
+        # Structured-output: Anthropic has no response_format=json_schema. Force
+        # a single tool whose input_schema IS the target schema and require it
+        # via tool_choice — the model's tool_use.input is the schema-valid object.
+        # We surface that object as ``content`` (JSON string) so the caller parses
+        # it exactly like the OpenAI path.
+        if json_schema is not None:
+            tool_name = json_schema_name or "structured_result"
+            ant_messages = _convert_messages_to_anthropic(rest)
+            if images:
+                ant_messages = _attach_images_anthropic(ant_messages, images)
+            forced_kwargs: dict[str, Any] = {
+                "model": model or self.default_model,
+                "messages": ant_messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens or 1024,
+                "tools": [{
+                    "name": tool_name,
+                    "description": "Emit the structured result.",
+                    "input_schema": json_schema,
+                }],
+                "tool_choice": {"type": "tool", "name": tool_name},
+            }
+            if system_text:
+                forced_kwargs["system"] = system_text
+            resp = client.messages.create(**forced_kwargs)
+            payload: dict | None = None
+            for block in (getattr(resp, "content", None) or []):
+                if getattr(block, "type", None) == "tool_use":
+                    payload = getattr(block, "input", {}) or {}
+                    break
+            if payload is None:
+                # No tool_use block (e.g. max_tokens truncation / refusal). Raise so
+                # the caller's retry fires instead of silently emitting an empty
+                # object that would validate into a confident default result.
+                raise RuntimeError(
+                    f"forced tool '{tool_name}' produced no tool_use block "
+                    f"(stop_reason={getattr(resp, 'stop_reason', None)})"
+                )
+            usage = getattr(resp, "usage", None)
+            pt = int(getattr(usage, "input_tokens", 0) or 0)
+            ct = int(getattr(usage, "output_tokens", 0) or 0)
+            return ChatResult(
+                content=json.dumps(payload, ensure_ascii=False),
+                prompt_tokens=pt,
+                completion_tokens=ct,
+                total_tokens=pt + ct,
+                tool_calls=[],
+                raw=resp,
+            )
         # Anthropic has no native JSON-mode flag; emulate by appending an
         # explicit instruction to the system prompt. The extract service
         # validates the response is parseable JSON either way.

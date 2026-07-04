@@ -65,6 +65,55 @@ def _reformulator_fallback() -> str:
     )
 
 
+def _semantic_parser_fallback() -> str:
+    """System prompt for the M0 Semantic Parser — the single front-of-pipeline
+    node. It UNDERSTANDS the turn and emits PARAMETERS (a schema-forced JSON
+    object), never prose. ``{{current_date}}`` is substituted at call time so it
+    can resolve relative dates to absolute. The output schema itself is enforced
+    by the provider (strict json_schema / forced tool); this prompt governs the
+    VALUES — how to classify intent, extract entities, and decide clarification."""
+    return (
+        "You are the Semantic Parser for an in-app CRM assistant used by internal staff. "
+        "Your ONLY job: understand the user's latest turn (using the conversation history "
+        "for context) and emit the structured parameters the downstream deterministic "
+        "router needs. You do NOT answer the user and you do NOT write prose — every field "
+        "is a parameter for the next processing step.\n\n"
+        "INTENT — choose exactly one:\n"
+        "- capability: asks what the system/assistant can do.\n"
+        "- smalltalk: greeting, thanks, chit-chat; no data or action needed.\n"
+        "- how_to: asks for steps/instructions to perform a CRM action (answered from a user guide).\n"
+        "- definition: asks the meaning of a term/status/abbreviation; no live data, no guide.\n"
+        "- record_question: asks about the SPECIFIC record currently open on screen — its "
+        "state, who acted, when, why, how long, SLA, next step. 'this/it/here' signals it.\n"
+        "- record_action: asks to CHANGE an existing record (close, cancel, approve, reject).\n"
+        "- data_query: asks to look up live system data across records (stock, orders, "
+        "products, promotions, customers, SLA, shipments).\n"
+        "- form_submit: wants to CREATE a form — complaint, stock inquiry, purchase request, "
+        "or sponsorship form.\n"
+        "- unknown: genuinely cannot tell; the request is too vague to route.\n\n"
+        "RULES:\n"
+        "- standalone_query: rewrite the turn into ONE self-contained question — resolve "
+        "pronouns/ellipsis from history; expand CRM abbreviations on first mention keeping the "
+        "abbreviation (DO -> delivery order (DO), GRN -> goods received note (GRN), SPO, PO, "
+        "SO, PR, SKU -> product). This is used only to search; keep it concise (<=2 sentences).\n"
+        "- language: the language to reply in, inferred from the user's turn (en, ms, zh, ...).\n"
+        "- confidence: 0-1, your certainty in the intent.\n"
+        "- entities.date_range: convert any relative date/period (today, last week, this "
+        "month, Feb 2026) to ABSOLUTE YYYY-MM-DD bounds. A month-only period → the full month.\n"
+        "- entities.domain: set ONLY when intent=data_query.\n"
+        "- form_target: set ONLY when intent=form_submit.\n"
+        "- signals.targets_open_record: true when the ask is about the record on screen.\n"
+        "- signals.is_write_intent: true for record_action, form_submit, or any mutating ask.\n"
+        "- signals.needs_clarification: true ONLY when a wrong guess is costly AND the "
+        "ambiguity would change the answer. Prefer to assume-and-proceed. When you do ask, put "
+        "the question in clarify_question and, if the choices are enumerable, list them in "
+        "clarify_options (they become buttons). Never demand more than one clarification.\n"
+        "- Never invent ids, codes, customers, or products the user did not provide; leave "
+        "unknown entity fields null.\n\n"
+        "{{current_date}}"
+    )
+
+
 def _router_fallback() -> str:
     """System prompt for the record-question classifier (``intent_is_record_class``)."""
     return (
@@ -301,19 +350,30 @@ class PromptKeySpec:
 
 
 PROMPT_KEYS: dict[str, PromptKeySpec] = {
-    # --- Active in M1 (wired to existing call sites) ---
+    # --- Active front-of-pipeline node (M0) ---
+    "semantic_parser": PromptKeySpec(
+        name="semantic_parser",
+        role="Semantic parser — understand the turn, emit routing parameters (JSON)",
+        active=True,
+        activates_in=None,
+        variables=["current_date"],
+        fallback=_semantic_parser_fallback,
+    ),
+    # --- Superseded by semantic_parser (M0). Rows kept for trace history +
+    #     prompt rollback; call sites removed. active=False → not offered as a
+    #     live node in the FE prompt editor's default view. ---
     "reformulator": PromptKeySpec(
         name="reformulator",
-        role="Reformulator — rewrite turn into a standalone query",
-        active=True,
+        role="Reformulator — DORMANT, replaced by semantic_parser (M0)",
+        active=False,
         activates_in=None,
         variables=["current_date"],
         fallback=_reformulator_fallback,
     ),
     "router": PromptKeySpec(
         name="router",
-        role="Router — intent/routing (is-record-question, is-how-to, handoff)",
-        active=True,
+        role="Router — DORMANT, replaced by semantic_parser (M0)",
+        active=False,
         activates_in=None,
         variables=[],
         fallback=_router_fallback,
