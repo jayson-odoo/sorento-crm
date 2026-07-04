@@ -1,8 +1,9 @@
 'use client';
 
 import { Fragment, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { format } from 'date-fns';
-import { CalendarIcon, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { CalendarIcon, ChevronDown, ChevronRight, GitBranch, Loader2 } from 'lucide-react';
 import { DateRange } from 'react-day-picker';
 import { CartesianGrid, Line, LineChart, XAxis, YAxis } from 'recharts';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -461,6 +462,18 @@ export default function AIUsagePage() {
                                     </p>
                                   ) : queryDetail.data ? (
                                     <>
+                                      {q.feature !== 'ai_extract' && q.message_id ? (
+                                        <div>
+                                          <Link
+                                            href={`/system-management/ai-assistant/usage/trace/${encodeURIComponent(q.message_id)}`}
+                                            className="inline-flex items-center gap-1 text-xs font-medium text-primary underline underline-offset-2"
+                                            data-testid="view-trace-link"
+                                          >
+                                            <GitBranch className="size-3" />
+                                            View full trace
+                                          </Link>
+                                        </div>
+                                      ) : null}
                                       <div>
                                         <p className="text-xs font-medium text-muted-foreground">
                                           Reply

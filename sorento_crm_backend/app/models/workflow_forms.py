@@ -69,7 +69,10 @@ class WorkflowFormVersion(Base):
     submissions = relationship("WorkflowSubmission", back_populates="version")
 
     __table_args__ = (
-        Index("ix_workflow_form_versions_definition_id", "definition_id"),
+        # NOTE: definition_id already declares index=True above, which emits an
+        # index named ix_workflow_form_versions_definition_id. Do NOT redeclare
+        # it here — a second Index with the same name makes Base.metadata.create_all
+        # fail ("index ... already exists") on fresh sqlite binds in tests.
         Index(
             "uq_workflow_form_versions_def_ver",
             "definition_id",

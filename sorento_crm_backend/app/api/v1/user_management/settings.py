@@ -64,6 +64,11 @@ class SystemSettingUpdate(BaseModel):
     n8n_stock_inquiry_revise_webhook_url: Optional[str] = None
     purchase_request_default_approver_user_id: Optional[str] = None
     sponsorship_form_default_approver_user_id: Optional[str] = None
+    # AI assistant trace (M2) retention + payload caps.
+    ai_trace_ttl_days: Optional[int] = Field(None, ge=1, le=3650)
+    ai_trace_error_ttl_days: Optional[int] = Field(None, ge=1, le=3650)
+    ai_trace_max_payload_bytes: Optional[int] = Field(None, ge=512, le=1048576)
+    ai_assistant_role_split_enabled: Optional[bool] = None
 
 
 class SmtpTestResult(BaseModel):
@@ -140,6 +145,10 @@ async def get_settings(
                 )
                 if settings
                 else None,
+                "ai_trace_ttl_days": getattr(settings, "ai_trace_ttl_days", 30) if settings else None,
+                "ai_trace_error_ttl_days": getattr(settings, "ai_trace_error_ttl_days", 90) if settings else None,
+                "ai_trace_max_payload_bytes": getattr(settings, "ai_trace_max_payload_bytes", 16384) if settings else None,
+                "ai_assistant_role_split_enabled": getattr(settings, "ai_assistant_role_split_enabled", False) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]

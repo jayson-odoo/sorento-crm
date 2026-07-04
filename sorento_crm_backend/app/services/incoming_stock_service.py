@@ -178,8 +178,8 @@ class IncomingStockService:
 
         product_filters = []
         matched_candidates: list[str] = []
+        resolved_ids: list[str] = []
         if raw_ids:
-            resolved_ids: list[str] = []
             for ident in raw_ids:
                 ids = resolve_identifier(
                     self.db, ident, Product, code_fields=("product_code",)
@@ -246,7 +246,26 @@ class IncomingStockService:
         )
 
         if not rows:
-            return {"data": [], "empty": True, "matched_candidates": matched_candidates}
+            result: dict[str, Any] = {
+                "data": [],
+                "empty": True,
+                "matched_candidates": matched_candidates,
+            }
+            # Data-miss (§3.3): the product resolved but has no incoming rows. Offer
+            # data-bearing variant/neighbour alternatives on the empty path only.
+            # Best-effort: never turn an empty result into a 500 (AC-R1).
+            try:
+                alternatives = self._incoming_entity_alternatives(resolved_ids)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "incoming alternatives probe failed", exc_info=True
+                )
+                alternatives = None
+            if alternatives:
+                result["alternatives"] = alternatives
+                result["relaxed_axis"] = "entity"
+            return result
 
         pairs = [(str(r.shipment_id), str(r.product_id)) for r in rows]
         warehouse_map = self._warehouse_allocations_for(pairs)
@@ -294,6 +313,45 @@ class IncomingStockService:
             "pagination": {"total": len(data), "page": 1, "limit": limit},
             "matched_candidates": matched_candidates,
         }
+
+    def _incoming_entity_alternatives(self, product_ids: list[str]) -> list[dict]:
+        """Data-bearing variant/neighbour alternatives for an empty incoming result.
+
+        Only fires when exactly ONE input product resolved. The has-data gate =
+        product has at least one still-incoming shipment line (`eta row`), regardless
+        of any ETA window the original query applied (a neighbour "has an eta row" per
+        §3.5, so window-narrowing does not gate the substitute).
+        """
+        ids = list(dict.fromkeys(product_ids or []))
+        if len(ids) != 1:
+            return []
+        prod = (
+            self.db.query(Product.product_code)
+            .filter(Product.id == ids[0])
+            .first()
+        )
+        if not prod or not prod.product_code:
+            return []
+
+        def _has_incoming(candidate_ids: list[str]) -> set[str]:
+            if not candidate_ids:
+                return set()
+            rows = (
+                self.db.query(InboundShipmentLine.product_id)
+                .filter(
+                    _still_incoming_filter(),
+                    InboundShipmentLine.product_id.in_(candidate_ids),
+                )
+                .distinct()
+                .all()
+            )
+            return {str(row.product_id) for row in rows}
+
+        from app.services.entity_resolver import find_entity_neighbours_with_data
+
+        return find_entity_neighbours_with_data(
+            self.db, prod.product_code, has_data=_has_incoming
+        )
 
     # ------------------------------------------------------------------
     # Layer 1: shipments (T2)

@@ -10,6 +10,14 @@ export type ProductItemType = 'product' | 'bundle' | 'service' | 'other';
 // Product Status
 export type ProductStatus = 'active' | 'inactive';
 
+// Lightweight reference to a product in the variant graph (parent / child).
+// Only human-readable fields are exposed — never surface the UUID in the UI.
+export interface ProductVariantRef {
+  id: string;
+  product_code: string;
+  product_name: string;
+}
+
 // Product Interface (matches database schema)
 export interface Product {
   id: string;
@@ -41,6 +49,12 @@ export interface Product {
   // Sales tolerance (commercial pricing rules)
   sales_tolerance_type?: string | null;
   sales_tolerance_value?: number | null;
+
+  // Variant graph (self-referential FK, derived in the serializer).
+  // is_variant = has a parent; variant_of = the parent; variants = direct children.
+  is_variant?: boolean;
+  variant_of?: ProductVariantRef | null;
+  variants?: ProductVariantRef[];
 
   // Relations (populated from API)
   category?: ProductCategory;
@@ -298,6 +312,8 @@ export interface ProductListItem {
   brand_name?: string;
   list_price: number;
   is_active: boolean;
+  // True when the product is a variant of another (variant_of_id IS NOT NULL).
+  is_variant?: boolean;
   created_at: Date;
   updated_at?: Date | null;
   category?: ProductCategory;

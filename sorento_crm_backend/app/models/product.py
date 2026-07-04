@@ -102,6 +102,12 @@ class Product(Base):
     description = Column(Text, nullable=True)
     category_id = Column(UUID(as_uuid=False), ForeignKey("product_categories.id"), nullable=False)
     brand_id = Column(UUID(as_uuid=False), ForeignKey("brands.id", ondelete="SET NULL"), nullable=True)
+    # Self-referential variant graph. A variant points at its (longest existing
+    # boundary-prefix) parent product; a base has variant_of_id IS NULL. Deleting
+    # a parent SET-NULLs its children (never blocks) — derivation re-anchors them
+    # to the next existing ancestor. See app/services/variant_link_service.py and
+    # docs/plans/PLAN-suggest-on-miss-variant-graph.md §1.
+    variant_of_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     base_uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id"), nullable=False)
     item_type = Column(String(50), nullable=True)
     list_price = Column(Numeric(12, 2), nullable=False)
@@ -134,6 +140,7 @@ class Product(Base):
 
     category = relationship("ProductCategory", back_populates="products")
     brand = relationship("Brand", back_populates="products")
+    variant_of = relationship("Product", remote_side=[id], backref="variants")
     base_uom = relationship("UnitOfMeasure", back_populates="products", foreign_keys=[base_uom_id])
     product_suppliers = relationship(
         "ProductSupplier",
@@ -167,6 +174,7 @@ class Product(Base):
         Index("ix_products_base_uom_id", "base_uom_id"),
         Index("ix_products_is_active", "is_active"),
         Index("ix_products_product_code", "product_code"),
+        Index("ix_products_variant_of_id", "variant_of_id"),
         Index("ix_products_discontinued_pending", "is_discontinued", "discontinued_notified_at"),
         Index("ix_products_discontinued_notify_batch_id", "discontinued_notify_batch_id"),
     )

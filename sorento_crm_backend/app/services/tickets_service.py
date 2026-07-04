@@ -166,20 +166,31 @@ def _actor_ref(
 
 
 def _generate_ticket_number(db: Session) -> str:
-    """``TCK-YYYY-NNNNNN`` monotonic per year using a simple count + 1.
+    """``TCK-YYYY-NNNNNN`` monotonic per year using MAX(suffix) + 1.
+
+    NOT ``count(*) + 1``: tickets are hard-deleted (project delete standard), which
+    leaves gaps in the sequence. With count-based numbering a delete lowers the
+    count so the next number collides with an existing row (``uq_tickets_ticket_number``
+    → IntegrityError). MAX+1 is stable against deletions. The suffix is fixed-width
+    zero-padded, so the lexicographic MAX of ``ticket_number`` is also the numeric MAX.
 
     A more robust running-number rule via ``DocumentNumberingRule`` can be
     swapped in here without touching callers.
     """
     year = datetime.utcnow().year
     prefix = f"TCK-{year}-"
-    count = (
-        db.query(func.count(Ticket.id))
+    latest = (
+        db.query(func.max(Ticket.ticket_number))
         .filter(Ticket.ticket_number.like(f"{prefix}%"))
         .scalar()
-        or 0
     )
-    return f"{prefix}{int(count) + 1:06d}"
+    last_seq = 0
+    if latest:
+        try:
+            last_seq = int(str(latest)[len(prefix):])
+        except (ValueError, TypeError):
+            last_seq = 0
+    return f"{prefix}{last_seq + 1:06d}"
 
 
 def _visibility_filter(db: Session, current_user: dict):

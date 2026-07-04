@@ -478,6 +478,7 @@ class ProductService:
             }
             if entity_buckets is not None:
                 payload["resolved_entities"] = entity_buckets.as_echo()
+            self._attach_product_alternatives(payload, query)
             return payload
 
         # Get total count
@@ -510,8 +511,67 @@ class ProductService:
         }
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
+        if total == 0:
+            self._attach_product_alternatives(payload, query)
         return payload
-    
+
+    def _attach_product_alternatives(self, payload: dict, input_code: Optional[str]) -> None:
+        """Attach trigram/graph sibling-product alternatives to an empty listing.
+
+        Best-effort (§3.3, entity axis): a suggestion probe must never turn a
+        legitimately-empty listing into a 500 (AC-R1). Only mutates `payload` when
+        real data-bearing neighbours are found.
+        """
+        try:
+            alternatives = self._product_entity_alternatives(input_code)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "product alternatives probe failed", exc_info=True
+            )
+            alternatives = None
+        if alternatives:
+            payload["alternatives"] = alternatives
+            payload["relaxed_axis"] = "entity"
+
+    def _product_entity_alternatives(self, input_code: Optional[str]) -> list[dict]:
+        """Trigram/graph sibling products (existing + priced) for a row-miss.
+
+        Fires on a genuine ``total == 0`` — a `query` code that matched no product
+        row. The neighbour helper's input product does not exist, so it falls to
+        trigram recall (§3.1 "did you mean") over EXISTING siblings. The has-data
+        gate = candidate has a non-null, positive ``list_price`` so a price question
+        gets a priced neighbour.
+
+        Deliberately NOT called when a product resolves but carries ``list_price``
+        0 — that is a field-level miss, and substituting a different SKU's price is
+        misleading (a variant's price is legitimately different). Only the row-miss
+        (nothing matched) path reaches here.
+        """
+        code = (input_code or "").strip()
+        if not code:
+            return []
+
+        def _is_priced(candidate_ids: list[str]) -> set[str]:
+            if not candidate_ids:
+                return set()
+            rows = (
+                self.db.query(Product.id)
+                .filter(
+                    Product.id.in_(candidate_ids),
+                    Product.list_price.isnot(None),
+                    Product.list_price > 0,
+                )
+                .all()
+            )
+            return {str(row.id) for row in rows}
+
+        from app.services.entity_resolver import find_entity_neighbours_with_data
+
+        return find_entity_neighbours_with_data(
+            self.db, code, has_data=_is_priced
+        )
+
     def get_product(self, product_id: str):
         """Get a single product by UUID or product_code (SKU)."""
         resolved_ids = resolve_identifier(
@@ -531,7 +591,32 @@ class ProductService:
         if not product:
             raise handle_not_found("Product", product_id)
         _populate_field_attachments(self.db, [product])
+        self._populate_variant_graph(product)
         return product
+
+    def _populate_variant_graph(self, product) -> None:
+        """Stash the variant-graph refs the detail serializer reads.
+
+        Populates two throwaway instance attrs consumed by ProductResponse via
+        `validation_alias` (`_variant_of_ref`, `_variant_children`) so the schema
+        never touches the SQLAlchemy relationships directly — keeping LIST rows
+        (which never call this) free of variant N+1s. See
+        PLAN-suggest-on-miss-variant-graph.md §1.5.
+        """
+        parent = None
+        if product.variant_of_id:
+            parent = (
+                self.db.query(Product)
+                .filter(Product.id == product.variant_of_id)
+                .first()
+            )
+        product._variant_of_ref = parent
+        product._variant_children = (
+            self.db.query(Product)
+            .filter(Product.variant_of_id == product.id)
+            .order_by(Product.product_code.asc())
+            .all()
+        )
 
     def _system_settings_row(self) -> Optional[SystemSetting]:
         return self.db.query(SystemSetting).first()
@@ -631,6 +716,7 @@ class ProductService:
             changed_fields=["product_code", "product_name", "description", "category_id", "brand_id", "is_active"],
             triggered_by=created_by,
         )
+        self._reconcile_variant_links(product.id)
         return product
     
     def update_product(self, product_id: str, product_data: ProductUpdate, updated_by: str):
@@ -674,24 +760,77 @@ class ProductService:
                 changed_fields=list(update_data.keys()),
                 triggered_by=updated_by,
             )
-        
+            # Re-derive the variant link only when the code (the derivation input)
+            # actually changed — avoids churn on price/description-only edits.
+            if "product_code" in update_data:
+                # Capture existing children BEFORE re-deriving: a rename can break
+                # the old-code prefix match, so each former child must re-derive to
+                # its next ancestor (else it stays mis-linked to us — the FK is
+                # unchanged by a rename). Mirrors delete_product's re-anchor.
+                ex_children = self._variant_child_ids(product.id)
+                self._reconcile_variant_links(product.id)
+                for child_id in ex_children:
+                    self._reconcile_variant_links(child_id)
+
         return product
-    
+
     def delete_product(self, product_id: str):
         """Delete a product."""
         product = self.get_product(product_id)
+        # Capture children BEFORE delete so we can re-anchor them to the next
+        # existing ancestor afterwards (DB ondelete=SET NULL orphans them).
+        ex_children = self._variant_child_ids(product_id)
         self.db.delete(product)
         self.db.commit()
+        for child_id in ex_children:
+            self._reconcile_variant_links(child_id)
         return {"message": "Product deleted successfully"}
+
+    def _reconcile_variant_links(self, code_or_id: str) -> None:
+        """Best-effort post-commit variant-graph reconcile. Never raises — a
+        side effect running AFTER the row committed must not 500 a succeeded op
+        (post-commit side-effect rule, CLAUDE.md)."""
+        try:
+            from app.services.variant_link_service import reconcile_variant_links
+
+            reconcile_variant_links(self.db, code_or_id)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "variant link reconcile failed for %s", code_or_id, exc_info=True
+            )
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+
+    def _variant_child_ids(self, product_id: str) -> List[str]:
+        try:
+            from app.services.variant_link_service import child_ids_of
+
+            return child_ids_of(self.db, product_id)
+        except Exception:
+            return []
 
     def bulk_delete_products(self, product_ids: List[str]):
         """Delete multiple products by ID."""
         if not product_ids:
             return {"message": "No products to delete", "deleted_count": 0}
+        # Capture children of all deleted rows (excluding the deleted set itself)
+        # so survivors re-anchor to their next existing ancestor.
+        ex_children: List[str] = []
+        for pid in product_ids:
+            ex_children.extend(self._variant_child_ids(pid))
+        deleted_set = set(product_ids)
         deleted = self.db.query(Product).filter(Product.id.in_(product_ids)).delete(
             synchronize_session=False
         )
         self.db.commit()
+        for child_id in ex_children:
+            if child_id in deleted_set:
+                continue
+            self._reconcile_variant_links(child_id)
         return {"message": f"Deleted {deleted} product(s)", "deleted_count": deleted}
 
     def _get_default_uom_id(self) -> str:
@@ -1692,6 +1831,10 @@ class ProductAttachmentService:
         if entity_buckets is not None and not entity_buckets.product_codes:
             return empty_payload(entity_buckets, page=page, limit=limit)
 
+        # Track which product(s) the caller scoped to, so an empty result can offer
+        # data-bearing variant/neighbour alternatives (§3.4 M5 entity-axis).
+        _scoped_product_ids: set[str] = set()
+
         q = self.db.query(ProductAttachment).options(
             joinedload(ProductAttachment.product),
             joinedload(ProductAttachment.attachment).joinedload(Attachment.attachment_type)
@@ -1707,6 +1850,12 @@ class ProductAttachmentService:
             q = q.filter(
                 ProductAttachment.product.has(_sa_func.lower(Product.product_code).in_(lowered))
             )
+            code_rows = (
+                self.db.query(Product.id)
+                .filter(_sa_func.lower(Product.product_code).in_(lowered))
+                .all()
+            )
+            _scoped_product_ids.update(str(r[0]) for r in code_rows)
 
         if product_id:
             resolved_product_ids = self._resolve_product_identifiers(product_id)
@@ -1717,12 +1866,14 @@ class ProductAttachmentService:
                     "empty": True,
                 }
             q = q.filter(ProductAttachment.product_id.in_(resolved_product_ids))
+            _scoped_product_ids.update(str(pid) for pid in resolved_product_ids)
 
         if attachment_id:
             q = q.filter(ProductAttachment.attachment_id == attachment_id)
 
         if product_ids:
             q = q.filter(ProductAttachment.product_id.in_(product_ids))
+            _scoped_product_ids.update(str(pid) for pid in product_ids)
         if attachment_ids:
             q = q.filter(ProductAttachment.attachment_id.in_(attachment_ids))
         if attachment_type_ids:
@@ -1764,13 +1915,77 @@ class ProductAttachmentService:
         offset = (page - 1) * limit
         product_attachments = q.offset(offset).limit(limit).all()
 
-        return attach_echo(
-            {
-                "data": product_attachments,
-                "pagination": {"total": total, "page": page, "limit": limit},
-                "empty": total == 0,
-            },
-            entity_buckets,
+        payload = {
+            "data": product_attachments,
+            "pagination": {"total": total, "page": page, "limit": limit},
+            "empty": total == 0,
+        }
+        # Entity-axis relaxation (§3.4 M5): the product resolved but has no
+        # (matching-type) attachment. Offer data-bearing variant/neighbour
+        # products that DO have such an attachment. Only on the empty path — a
+        # non-empty result stays byte-identical (AC-R1).
+        if total == 0:
+            # Best-effort: a suggestion probe must never turn an empty attachment
+            # listing into a 500 (AC-R1).
+            try:
+                alternatives = self._attachment_entity_alternatives(
+                    _scoped_product_ids, attachment_type_ids
+                )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "attachment alternatives probe failed", exc_info=True
+                )
+                alternatives = None
+            if alternatives:
+                payload["alternatives"] = alternatives
+                payload["relaxed_axis"] = "entity"
+
+        return attach_echo(payload, entity_buckets)
+
+    def _attachment_entity_alternatives(
+        self,
+        product_ids: set[str],
+        attachment_type_ids: Optional[list[str]],
+    ) -> list[dict]:
+        """Data-bearing variant/neighbour alternatives for an empty attachment result.
+
+        Only fires when exactly ONE input product resolved. The has-data gate =
+        the candidate product has at least one non-trashed product-attachment,
+        narrowed to ``attachment_type_ids`` when the caller asked for a specific
+        document class (e.g. a certificate). Reuses the shared neighbour helper —
+        no bespoke neighbour ranking here.
+        """
+        ids = list(product_ids or [])
+        if len(ids) != 1:
+            return []
+        prod = (
+            self.db.query(Product.product_code)
+            .filter(Product.id == ids[0])
+            .first()
+        )
+        if not prod or not prod.product_code:
+            return []
+
+        def _has_attachment(candidate_ids: list[str]) -> set:
+            if not candidate_ids:
+                return set()
+            aq = self.db.query(ProductAttachment.product_id).filter(
+                ProductAttachment.product_id.in_(candidate_ids),
+                ProductAttachment.attachment.has(Attachment.is_deleted == False),
+            )
+            if attachment_type_ids:
+                aq = aq.filter(
+                    ProductAttachment.attachment.has(
+                        Attachment.attachment_type_id.in_(attachment_type_ids)
+                    )
+                )
+            return {str(r.product_id) for r in aq.distinct().all()}
+
+        from app.services.entity_resolver import find_entity_neighbours_with_data
+
+        return find_entity_neighbours_with_data(
+            self.db, prod.product_code, has_data=_has_attachment
         )
 
     def get_product_attachment(self, product_attachment_id: str):

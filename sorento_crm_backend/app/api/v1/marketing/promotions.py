@@ -172,6 +172,15 @@ async def get_promotions(
             product_ids=parsed_product_ids,
             attachment_state=attachment_state,
         )
+        # Data-miss path (§3.3): when the service attached `alternatives` /
+        # `relaxed_axis` (empty result only), bypass the strict `ListResponse`
+        # response_model — which would silently drop those keys — and emit the raw
+        # dict. `data` is always [] here, so the with-data path stays byte-identical
+        # (AC-R1).
+        if isinstance(result, dict) and result.get("alternatives"):
+            from fastapi.encoders import jsonable_encoder
+            from fastapi.responses import JSONResponse
+            return JSONResponse(content=jsonable_encoder(result))
         return result
     except HTTPException:
         raise

@@ -1,5 +1,5 @@
 """Product schemas."""
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
@@ -246,9 +246,49 @@ class UnitOfMeasureSimple(BaseModel):
         from_attributes = True
 
 
+class ProductVariantRef(BaseModel):
+    """Lightweight product reference for the variant graph (parent / children).
+
+    Deliberately human-readable: exposes `product_code`/`product_name` so the FE
+    never renders a raw UUID. Used for `ProductResponse.variant_of` and
+    `ProductResponse.variants`.
+    """
+    id: str
+    product_code: str
+    product_name: str
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def _uuid_to_str(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, uuid.UUID):
+            return str(v)
+        return str(v)
+
+    class Config:
+        from_attributes = True
+
+
 class ProductResponse(ProductBase):
     id: str
     is_discontinued: bool = False
+    # --- Variant graph (see PLAN-suggest-on-miss-variant-graph.md §1) ---
+    # `is_variant` is derived from the (always-loaded) `variant_of_id` column, so
+    # it is cheap on LIST rows too (no extra query). `variant_of` / `variants`
+    # are read from stashed attrs populated ONLY by the detail getter
+    # (product_service.get_product); on LIST rows those attrs are absent so the
+    # relationships are never touched (no N+1) and both default to null / [].
+    is_variant: bool = Field(default=False, validation_alias="variant_of_id")
+    variant_of: Optional["ProductVariantRef"] = Field(default=None, validation_alias="_variant_of_ref")
+    variants: List["ProductVariantRef"] = Field(default_factory=list, validation_alias="_variant_children")
+
+    @field_validator("is_variant", mode="before")
+    @classmethod
+    def _coerce_is_variant(cls, v):
+        """`variant_of_id IS NOT NULL` -> is_variant. Serializer reads the column
+        via validation_alias; here we collapse it to a bool."""
+        return v is not None
     created_at: datetime
     updated_at: Optional[datetime] = None
     created_by: Optional[str] = None

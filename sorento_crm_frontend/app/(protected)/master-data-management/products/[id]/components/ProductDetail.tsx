@@ -15,6 +15,7 @@ import ProductAttachmentsTab from '../../components/ProductAttachmentsTab';
 import ProductStockTab from './ProductStockTab';
 import ProductSuppliersTab from './ProductSuppliersTab';
 import ProductPromotionsTab from './ProductPromotionsTab';
+import ProductVariantsTab from './ProductVariantsTab';
 import { useProductAttachmentsByProduct } from '../../../product-attachments/hooks/useProductAttachments';
 import { getPromotionsByProductId } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
 import ProductDeleteDialog from '../../components/product-delete-dialog';
@@ -42,6 +43,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
     enabled: !!productId,
   });
   const promotionsCount = Array.isArray(promotionsData) ? promotionsData.length : 0;
+  const variantsCount = Array.isArray(product?.variants) ? product.variants.length : 0;
 
   const navigationBasePath = '/master-data-management/products';
   const navigationQueryString = searchParams.toString();
@@ -180,6 +182,9 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
               <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
               <TabsTrigger value="promotions">
                 Promotions{promotionsCount ? ` (${promotionsCount})` : ''}
+              </TabsTrigger>
+              <TabsTrigger value="variants">
+                Variants{variantsCount ? ` (${variantsCount})` : ''}
               </TabsTrigger>
               <TabsTrigger value="audit">Audit Trail</TabsTrigger>
             </TabsList>
@@ -364,6 +369,15 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             {/* Tab: Promotions */}
             <TabsContent value="promotions">
               <ProductPromotionsTab productId={productId} listPrice={product.list_price} />
+            </TabsContent>
+
+            {/* Tab: Variants */}
+            <TabsContent value="variants">
+              <ProductVariantsTab
+                productCode={product.product_code}
+                variantOf={product.variant_of}
+                variants={product.variants}
+              />
             </TabsContent>
 
             {/* Tab: Audit Trail */}

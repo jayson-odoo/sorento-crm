@@ -600,6 +600,11 @@ class StockService:
                     "resolved_entities": entity_buckets.as_echo(),
                 }
 
+        # Resolved input product id(s) — used ONLY on the data-miss (empty) path to
+        # find data-bearing variant/neighbour alternatives (§3.3). A non-empty result
+        # never touches this, so the happy path stays byte-identical (AC-R1).
+        resolved_input_product_ids: set[str] = set()
+
         q = self.db.query(Stock).options(
             selectinload(Stock.product),
             selectinload(Stock.warehouse),
@@ -631,13 +636,21 @@ class StockService:
                     "pagination": {"total": 0, "page": page, "limit": limit},
                     "empty": True,
                 }
+            resolved_input_product_ids.add(str(resolved_pid))
             q = q.filter(Stock.product_id == resolved_pid)
 
         if product_ids:
+            resolved_input_product_ids.update(str(pid) for pid in product_ids)
             q = q.filter(Stock.product_id.in_(product_ids))
 
         if entity_buckets is not None and entity_buckets.product_codes:
             lowered = [c.lower() for c in entity_buckets.product_codes]
+            code_id_rows = (
+                self.db.query(Product.id)
+                .filter(func.lower(Product.product_code).in_(lowered))
+                .all()
+            )
+            resolved_input_product_ids.update(str(row.id) for row in code_id_rows)
             q = q.filter(
                 Stock.product.has(func.lower(Product.product_code).in_(lowered))
             )
@@ -742,7 +755,66 @@ class StockService:
         }
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
+        # Data-miss (§3.3): the query resolved to a real product but returned 0 stock
+        # rows. Offer data-bearing variant/neighbour alternatives on the empty path
+        # ONLY — a non-empty result is byte-identical to before (AC-R1).
+        if total == 0:
+            # Best-effort: a suggestion probe must never turn a legitimately-empty
+            # listing into a 500 (AC-R1). The pre-lookup + neighbour query run after
+            # the result is already computed.
+            try:
+                alternatives = self._stock_entity_alternatives(resolved_input_product_ids)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "stock alternatives probe failed", exc_info=True
+                )
+                alternatives = None
+            if alternatives:
+                payload["alternatives"] = alternatives
+                payload["relaxed_axis"] = "entity"
         return payload
+
+    def _stock_entity_alternatives(self, product_ids: set[str]) -> list[dict]:
+        """Data-bearing variant/neighbour alternatives for an empty stock result.
+
+        Only fires when exactly ONE input product resolved (otherwise "which product's
+        neighbours?" is undefined). The has-data gate = product has any active-warehouse
+        stock row with quantity_on_hand > 0, which inherently respects the same
+        SYSTEM_ADJUSTMENT-zero exclusion the listing uses (a system-adjusted-to-0 row is
+        qoh == 0, so excluded).
+        """
+        if len(product_ids) != 1:
+            return []
+        pid = next(iter(product_ids))
+        prod = (
+            self.db.query(Product.product_code)
+            .filter(Product.id == pid)
+            .first()
+        )
+        if not prod or not prod.product_code:
+            return []
+
+        def _has_stock(candidate_ids: list[str]) -> set[str]:
+            if not candidate_ids:
+                return set()
+            rows = (
+                self.db.query(Stock.product_id)
+                .filter(
+                    Stock.product_id.in_(candidate_ids),
+                    Stock.quantity_on_hand > 0,
+                    Stock.warehouse.has(Warehouse.is_active.is_(True)),
+                )
+                .distinct()
+                .all()
+            )
+            return {str(row.product_id) for row in rows}
+
+        from app.services.entity_resolver import find_entity_neighbours_with_data
+
+        return find_entity_neighbours_with_data(
+            self.db, prod.product_code, has_data=_has_stock
+        )
 
     def bulk_delete_stock(self, stock_ids: list[str]) -> dict:
         """Delete multiple stock records by id. Returns deleted_count and message."""

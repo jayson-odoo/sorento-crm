@@ -160,6 +160,60 @@ class QueryDetailResponse(BaseModel):
     tools_used: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class TraceSpanItem(BaseModel):
+    """One pipeline span (M2). Superset of all span-kind fields; unused ones
+    are null for a given kind (LLM vs TOOL vs RETRIEVER etc)."""
+
+    id: str
+    parent_id: Optional[str] = None
+    dotted_order: str = ""
+    span_kind: str
+    name: str = ""
+    input_json: Optional[Any] = None
+    output_json: Optional[Any] = None
+    status: str = "ok"
+    error: Optional[str] = None
+    latency_ms: int = 0
+    # LLM
+    request_model: Optional[str] = None
+    finish_reason: Optional[str] = None
+    invocation_params: Optional[dict[str, Any]] = None
+    tokens_in: int = 0
+    tokens_out: int = 0
+    prompt_name: Optional[str] = None
+    prompt_version: Optional[int] = None
+    # TOOL
+    tool_name: Optional[str] = None
+    tool_call_id: Optional[str] = None
+    tool_args: Optional[Any] = None
+    tool_result: Optional[Any] = None
+    # RETRIEVER
+    query: Optional[str] = None
+    documents: Optional[Any] = None
+    top_k: Optional[int] = None
+
+
+class TraceResponse(BaseModel):
+    """Root trace + ordered span list (M2)."""
+
+    id: str
+    message_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+    status: str = "ok"
+    flagged: bool = False
+    env: Optional[str] = None
+    total_tokens_in: int = 0
+    total_tokens_out: int = 0
+    latency_ms: int = 0
+    span_count: int = 0
+    started_at: Optional[datetime] = None
+    ended_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    spans: list[TraceSpanItem] = Field(default_factory=list)
+
+
 class WishlistClusterItem(BaseModel):
     id: str
     representative_question: str

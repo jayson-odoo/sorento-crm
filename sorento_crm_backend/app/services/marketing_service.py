@@ -614,7 +614,76 @@ class PromotionService:
         }
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
+        # Data-miss (§3.3): the query scoped to a real product (product_ids) but no
+        # promotion — active or inactive — contains it. Offer sibling products that
+        # DO have an active promotion, on the empty path ONLY (a non-empty result,
+        # including the inactive-promo fallback, is byte-identical — AC-R1).
+        if total == 0:
+            try:
+                alternatives = self._promotion_entity_alternatives(set(product_ids or []))
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "promotion alternatives probe failed", exc_info=True
+                )
+                alternatives = None
+            if alternatives:
+                payload["alternatives"] = alternatives
+                payload["relaxed_axis"] = "entity"
         return payload
+
+    def _promotion_entity_alternatives(self, product_ids: set[str]) -> list[dict]:
+        """Data-bearing variant/neighbour alternatives for an empty promotion result.
+
+        Only fires when exactly ONE input product scoped the query (`product_ids`);
+        otherwise "which product's neighbours?" is undefined. The has-data gate =
+        the candidate product appears on at least one ACTIVE-window promotion —
+        ``Promotion.is_active`` AND today within ``[start_date, end_date]`` (or no
+        window) — the same active definition ``_build_promotions_ordered_query``
+        uses. A sibling whose only promo is expired is therefore not offered.
+        """
+        ids = list(dict.fromkeys(product_ids or []))
+        if len(ids) != 1:
+            return []
+        prod = (
+            self.db.query(Product.product_code)
+            .filter(Product.id == ids[0])
+            .first()
+        )
+        if not prod or not prod.product_code:
+            return []
+
+        today = datetime.utcnow().date()
+
+        def _has_active_promo(candidate_ids: list[str]) -> set[str]:
+            if not candidate_ids:
+                return set()
+            is_within_window = and_(
+                Promotion.start_date <= today,
+                Promotion.end_date >= today,
+            )
+            no_window = and_(
+                Promotion.start_date.is_(None),
+                Promotion.end_date.is_(None),
+            )
+            rows = (
+                self.db.query(PromotionProduct.product_id)
+                .join(Promotion, Promotion.id == PromotionProduct.promotion_id)
+                .filter(
+                    PromotionProduct.product_id.in_(candidate_ids),
+                    Promotion.is_active.is_(True),
+                    or_(no_window, is_within_window),
+                )
+                .distinct()
+                .all()
+            )
+            return {str(row.product_id) for row in rows}
+
+        from app.services.entity_resolver import find_entity_neighbours_with_data
+
+        return find_entity_neighbours_with_data(
+            self.db, prod.product_code, has_data=_has_active_promo
+        )
 
     def neighbours(
         self,

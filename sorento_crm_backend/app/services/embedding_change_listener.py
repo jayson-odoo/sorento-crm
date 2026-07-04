@@ -80,9 +80,33 @@ def bulk_enqueue_embedding_events(
     return len(rows)
 
 
+_eq_table_cache: dict[int, bool] = {}
+
+
+def _embedding_queue_exists(bind) -> bool:
+    """Whether `embedding_queue` exists on this bind. The change listeners fire on
+    every tracked write; a sqlite test bind with a subset schema lacks the table
+    and would raise "no such table" on unrelated tests. Prod always has it."""
+    if bind is None:
+        return False
+    key = id(bind.engine if hasattr(bind, "engine") else bind)
+    cached = _eq_table_cache.get(key)
+    if cached is None:
+        from sqlalchemy import inspect as _sa_inspect
+
+        try:
+            cached = _sa_inspect(bind).has_table("embedding_queue")
+        except Exception:
+            cached = False
+        _eq_table_cache[key] = cached
+    return cached
+
+
 def _queue_from_mapper(connection, source_type: str, source_id: str, event_type: str) -> None:
     if source_type in _suppressed_set():
         return
+    if not _embedding_queue_exists(connection):
+        return  # subset schema (e.g. sqlite tests) — nothing to enqueue into
     connection.execute(
         EmbeddingQueue.__table__.insert().values(
             id=str(uuid.uuid4()),

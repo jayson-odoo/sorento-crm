@@ -334,23 +334,25 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         variables=[],
         fallback=_synthesizer_fallback,
     ),
-    # --- Registered but dormant (seed + editable, no call site yet) ---
+    # --- M2.5 role-split nodes (active; call sites gated by the
+    #     ``ai_assistant_role_split_enabled`` system setting) ---
     "planner": PromptKeySpec(
         name="planner",
         role="Planner — decompose task, order tool steps",
-        active=False,
-        activates_in="M2.5",
+        active=True,
+        activates_in=None,
         variables=[],
         fallback=_planner_fallback,
     ),
     "semantic_compressor": PromptKeySpec(
         name="semantic_compressor",
         role="Semantic compressor — raw tool JSON into token-tight sentences",
-        active=False,
-        activates_in="M2.5",
+        active=True,
+        activates_in=None,
         variables=[],
         fallback=_semantic_compressor_fallback,
     ),
+    # --- Registered but dormant (seed + editable, no call site yet) ---
     "validator": PromptKeySpec(
         name="validator",
         role="Validator — confidence-gate the answer before send",

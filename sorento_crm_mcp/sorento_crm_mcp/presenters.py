@@ -83,7 +83,14 @@ _RESULT_TYPE = {
 
 # Passthrough keys preserved from the raw response into the envelope (e.g. the
 # escalation hint attached after sanitize). Kept so render mode loses nothing.
-_PASSTHROUGH_KEYS = ("suggested_escalation", "escalate_team", "escalated_agent", "fallback_used")
+_PASSTHROUGH_KEYS = (
+    "suggested_escalation",
+    "escalate_team",
+    "escalated_agent",
+    "fallback_used",
+    "alternatives",
+    "relaxed_axis",
+)
 
 
 # --------------------------------------------------------------------------

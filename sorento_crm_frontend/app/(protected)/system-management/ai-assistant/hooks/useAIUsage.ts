@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import {
   getQueryDetail,
+  getQueryTrace,
   getRecentQueries,
   getTopContacts,
   getTopUsers,
@@ -64,6 +65,16 @@ export function useQueryDetail(messageId: string | null | undefined) {
     queryFn: () => getQueryDetail(messageId as string),
     enabled: !!messageId,
     staleTime: 5 * 60 * 1000,
+  });
+}
+
+export function useQueryTrace(messageId: string | null | undefined) {
+  return useQuery({
+    queryKey: ['ai-usage-query-trace', messageId],
+    queryFn: () => getQueryTrace(messageId as string),
+    enabled: !!messageId,
+    staleTime: 5 * 60 * 1000,
+    retry: false,
   });
 }
 

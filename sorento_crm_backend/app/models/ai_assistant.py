@@ -74,6 +74,12 @@ class AIAssistantMessage(Base):
     role: Mapped[str] = mapped_column(String(16), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
+    # M2 trace bridge: assistant message -> its per-turn trace (SET NULL so a
+    # swept/expired trace never blocks message reads). Nullable: user messages
+    # and legacy rows have none.
+    trace_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("ai_assistant_traces.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     conversation: Mapped[AIAssistantConversation] = relationship("AIAssistantConversation", back_populates="messages")
@@ -193,4 +199,90 @@ class AIAssistantUnansweredQuery(Base):
         UniqueConstraint("message_id", name="uq_ai_assistant_unanswered_queries_message_id"),
         Index("ix_ai_assistant_unanswered_queries_cluster_id", "cluster_id"),
         Index("ix_ai_assistant_unanswered_queries_created_at", "created_at"),
+    )
+
+
+class AIAssistantTrace(Base):
+    """M2 — one root trace per assistant turn (OTel GenAI-shaped).
+
+    Root of the span tree. Field names mirror `gen_ai.*` semconv so a future
+    OTLP export is a straight field-map (PLAN Q1). Retention swept by the
+    background scheduler (PLAN Q2): `ok` traces past `ai_trace_ttl_days`,
+    `error`/`flagged` past `ai_trace_error_ttl_days`.
+    """
+
+    __tablename__ = "ai_assistant_traces"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    message_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("ai_assistant_messages.id", ondelete="SET NULL"), nullable=True
+    )
+    conversation_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("ai_assistant_conversations.id", ondelete="SET NULL"), nullable=True
+    )
+    user_id: Mapped[str | None] = mapped_column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    total_tokens_in: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    total_tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    total_cost: Mapped[float | None] = mapped_column(Text, nullable=True)  # optional $ stretch (Q8) — kept as text, unused in M2
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="ok")  # ok | error
+    flagged: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")  # thumbs-down / kept-for-review (Q2)
+    env: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    span_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_ai_assistant_traces_message_id", "message_id"),
+        Index("ix_ai_assistant_traces_conversation_id", "conversation_id"),
+        Index("ix_ai_assistant_traces_status_created_at", "status", "created_at"),
+        Index("ix_ai_assistant_traces_created_at", "created_at"),
+    )
+
+
+class AIAssistantSpan(Base):
+    """M2 — one span per pipeline node under a trace (tree via parent_id)."""
+
+    __tablename__ = "ai_assistant_spans"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    trace_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("ai_assistant_traces.id", ondelete="CASCADE"), nullable=False
+    )
+    parent_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), nullable=True)
+    dotted_order: Mapped[str] = mapped_column(Text, nullable=False, server_default="")  # sortable sibling path key
+    span_kind: Mapped[str] = mapped_column(String(16), nullable=False)  # LLM|TOOL|RETRIEVER|EMBEDDING|CHAIN|AGENT|GUARDRAIL|EVALUATOR
+    name: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    input_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    output_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="ok")  # ok | error
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=False), nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # LLM spans
+    request_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    response_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    finish_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    invocation_params: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    tokens_in: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    prompt_name: Mapped[str | None] = mapped_column(String(64), nullable=True)  # M1 bridge
+    prompt_version: Mapped[int | None] = mapped_column(Integer, nullable=True)  # null = fallback used
+    # TOOL spans
+    tool_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tool_call_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    tool_args: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    tool_result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # RETRIEVER spans
+    query: Mapped[str | None] = mapped_column(Text, nullable=True)
+    documents: Mapped[list[Any] | None] = mapped_column(JSONB, nullable=True)  # [{id,content,score}]
+    top_k: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_ai_assistant_spans_trace_id", "trace_id"),
+        Index("ix_ai_assistant_spans_trace_dotted", "trace_id", "dotted_order"),
     )

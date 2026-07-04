@@ -270,6 +270,17 @@ class SystemSetting(Base):
     email_outbox_drain_batch_size = Column(Integer, nullable=False, server_default="20", default=20)
     email_outbox_drain_interval_seconds = Column(Integer, nullable=False, server_default="5", default=5)
 
+    # AI assistant per-turn trace (M2) retention + payload caps. Swept by the
+    # background scheduler: `ok` traces past ttl_days; `error`/`flagged` past
+    # error_ttl_days. Payloads truncated at max_payload_bytes each.
+    ai_trace_ttl_days = Column(Integer, nullable=False, server_default="30", default=30)
+    ai_trace_error_ttl_days = Column(Integer, nullable=False, server_default="90", default=90)
+    ai_trace_max_payload_bytes = Column(Integer, nullable=False, server_default="16384", default=16384)
+    # M2.5 role split: when true, the agent loop runs an explicit planner node up
+    # front and compresses raw tool JSON via the semantic_compressor node before
+    # feeding it back. Default off — behavioral change, opt-in per PLAN Q7.
+    ai_assistant_role_split_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+
 
 class UserQuickAccess(Base):
     """Per-user quick access (pinned menu items and attachment folders) for sidebar."""

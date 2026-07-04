@@ -412,6 +412,14 @@ async def get_orders(
             sort_field=sort or "created_at",
             sort_dir=dir or "asc"
         )
+        # Date-axis relaxation (§3.4): when the service attached `alternatives` /
+        # `relaxed_axis` (only on an empty result), bypass the strict
+        # `ListResponse` response_model — which would silently drop those keys —
+        # and emit the raw dict. `data` is always [] here so encoding is trivial,
+        # and the with-data path stays byte-identical (AC-R1).
+        if isinstance(result, dict) and result.get("alternatives"):
+            from fastapi.encoders import jsonable_encoder
+            return JSONResponse(content=jsonable_encoder(result))
         return result
     except HTTPException:
         raise

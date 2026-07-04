@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot } from '@/components/ui/badge';
+import { ProductTypeBadge } from './ProductTypeBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import {
@@ -399,6 +400,27 @@ const ProductsList = () => {
         },
         enableSorting: true,
         enableHiding: false,
+      },
+      {
+        accessorKey: 'is_variant',
+        id: 'variant_type',
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="Type"
+            visibility={true}
+            column={column}
+          />
+        ),
+        size: 100,
+        cell: ({ row }) => (
+          <ProductTypeBadge isVariant={row.original.is_variant} />
+        ),
+        meta: {
+          headerTitle: 'Type',
+          skeleton: <Skeleton className="w-14 h-7" />,
+        },
+        enableSorting: false,
+        enableHiding: true,
       },
       {
         accessorKey: 'category_name',

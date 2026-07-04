@@ -638,20 +638,25 @@ def _first_nonempty(values: Iterable[Any]) -> Any:
 # Per-entity probes
 # --------------------------------------------------------------------------- #
 def _strip_all_ws(value: str) -> str:
-    """Collapse every whitespace run to empty. For code-style tokens where the
-    agent typed (or the user pasted) a stray space inside what should be one
-    contiguous code — e.g. 'cgb9032b- new' → 'cgb9032b-new'."""
-    return re.sub(r"\s+", "", value or "")
+    """Collapse every dash and whitespace run to empty (§3a dash/ws-insensitive).
+
+    For code-style tokens where the agent typed (or the user pasted) a stray
+    dash or space inside what should be one contiguous code — e.g.
+    'cgb9032b- new' → 'cgb9032bnew', 'srtkt71-ss' → 'srtkt71ss'. So dash and
+    no-dash variants of the same code (`SRTWT7438GM` ≡ `SRTWT7438-GM`) flatten
+    to one form and match exactly. Only `[-\\s]` is stripped; `/ . _` stay
+    significant."""
+    return re.sub(r"[-\s]+", "", value or "")
 
 
 def _ws_insensitive_lower(col):
-    """Postgres expression: `lower(regexp_replace(col, '\\s+', '', 'g'))`.
+    """Postgres expression: `lower(regexp_replace(col, '[-\\s]+', '', 'g'))`.
 
     Pair with python-side `_strip_all_ws(token.lower())` so code-style fields
     (product_code, order_number, shipment_number, supplier_code, ...) match
-    whether either side carries stray whitespace. Cheap on small lookup
-    tables; for large tables consider a functional index if hot."""
-    return func.lower(func.regexp_replace(col, r"\s+", "", "g"))
+    whether either side carries stray dashes or whitespace (§3a). Cheap on
+    small lookup tables; for large tables consider a functional index if hot."""
+    return func.lower(func.regexp_replace(col, r"[-\s]+", "", "g"))
 
 
 def _probe_product(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
@@ -2262,6 +2267,12 @@ def _tier3_embedding_lookup(
 TRGM_THRESHOLD = 0.25
 TRGM_LIMIT = 15
 
+# Substitution floor for the data-miss neighbour helper (§3.3 / §5.4). Higher than
+# the TRGM_THRESHOLD recall floor (0.25): a barely-related in-stock product is a
+# business error, so if the nearest DATA-BEARING neighbour is below this, we return
+# nothing and n8n says "no similar products with stock". Tunable — adjust on replay.
+SUGGEST_FLOOR = 0.40
+
 
 def _trgm_lookup(
     db: Session,
@@ -2280,18 +2291,31 @@ def _trgm_lookup(
 
     if "product" in allowed_entity_types:
         try:
+            # Make the code's TRGM_THRESHOLD (0.25) real for the `%` operator:
+            # its gate reads the `pg_trgm.similarity_threshold` GUC (default 0.3,
+            # which shadows 0.25). SET LOCAL scopes it to this transaction only.
+            db.execute(
+                text("SET LOCAL pg_trgm.similarity_threshold = :t"),
+                {"t": TRGM_THRESHOLD},
+            )
+            # is_variant = candidate (dash/ws-normalized) is a prefix-extension of
+            # the input (normalized). Booleans sort true-first under DESC, so
+            # curated-looking variants (SRTKT71SS, -BL/-GM) beat digit-neighbours
+            # (SRTKT72SS) even when raw similarity ties (§3.2). Self is excluded.
             rows = db.execute(
                 text(
                     """
                     SELECT id, product_code, product_name,
-                           GREATEST(
-                               similarity(product_code, :p),
-                               similarity(product_name, :p),
-                               similarity(COALESCE(description, ''), :p)
-                           ) AS sim
+                           similarity(product_code, :p) AS sim,
+                           (left(lower(regexp_replace(product_code, '[-\\s]', '', 'g')),
+                                 length(lower(regexp_replace(:p, '[-\\s]', '', 'g'))))
+                              = lower(regexp_replace(:p, '[-\\s]', '', 'g')))
+                             AS is_variant
                     FROM products
-                    WHERE (product_code % :p OR product_name % :p OR description % :p)
-                    ORDER BY sim DESC
+                    WHERE product_code % :p
+                      AND lower(regexp_replace(product_code, '[-\\s]', '', 'g'))
+                          <> lower(regexp_replace(:p, '[-\\s]', '', 'g'))
+                    ORDER BY is_variant DESC, sim DESC, product_code
                     LIMIT :n
                     """
                 ),
@@ -2301,6 +2325,7 @@ def _trgm_lookup(
                 sim = float(r.sim or 0.0)
                 if sim < TRGM_THRESHOLD:
                     continue
+                is_variant = bool(r.is_variant)
                 out.append(
                     ResolvedEntity(
                         entity_type="product",
@@ -2309,7 +2334,7 @@ def _trgm_lookup(
                         match_field="product_code",
                         match_tier="trgm",
                         similarity=sim,
-                        display={"product_name": r.product_name},
+                        display={"product_name": r.product_name, "is_variant": is_variant},
                     )
                 )
         except Exception:
@@ -2489,8 +2514,175 @@ def _trgm_lookup(
         except Exception:
             logger.exception("trgm transporter probe failed for phrase=%s", phrase)
 
-    out.sort(key=lambda e: e.similarity or 0.0, reverse=True)
+    # Primary key is the product `is_variant` prefix-boost (§3.2): a candidate
+    # whose normalized code is a prefix-extension of the input beats a mere
+    # digit-neighbour even when raw similarity ties (SRTKT71SS-FRG > SRTKT72SS).
+    # Non-product hits never carry the flag, so this only reorders products.
+    # Secondary key keeps the existing similarity-desc ordering.
+    out.sort(key=lambda e: (bool(e.display.get("is_variant")), e.similarity or 0.0), reverse=True)
     return out[: TRGM_LIMIT * 2]
+
+
+def find_entity_neighbours_with_data(
+    db: Session,
+    product_code: str,
+    *,
+    has_data: Callable[[list[str]], set[str]],
+    limit: int = 3,
+    suggest_floor: float = SUGGEST_FLOOR,
+) -> list[dict[str, Any]]:
+    """Return data-bearing product neighbours for a **data-miss** (§3.3 / §7.2 AC-N2/N3/N4).
+
+    The input product resolved to a real row but the asked domain (stock / eta / ...)
+    returned zero rows. This finds real substitute products the user could ask about
+    instead, but ONLY ones that actually have data in that domain.
+
+    Candidate pool (deduped by product id):
+      (a) stored variant graph — children (``variant_of_id == input.id``) plus
+          siblings sharing the input's parent (``variant_of_id == input.variant_of_id``).
+          These are curated variants; they carry ``is_variant=True``.
+      (b) trigram neighbours via :func:`_trgm_lookup` (recall), where ``is_variant``
+          is the prefix-extension boost from §3.2.
+
+    Ranking: ``is_variant DESC, sim DESC`` (curated variants beat digit-neighbours).
+
+    Gates, applied AFTER ranking and BEFORE the cap so out-of-domain / too-far
+    candidates never consume a top-N slot:
+      * **Has-data gate** (AC-N3) — ``has_data(candidate_ids) -> {ids_with_data}`` is a
+        caller-supplied BATCH predicate (one query, per-domain: only the stock tool
+        knows stock, only incoming knows eta). A candidate absent from the returned set
+        is dropped, even if highly similar. So `8517` no-stock AND `8518` no-stock ⇒
+        `8518` is not returned; the walk continues to the next neighbour WITH stock.
+      * **Distance floor** (AC-N4) — drop candidates with ``sim < suggest_floor``.
+        Graph variants are scored with ``similarity()`` too, so the floor applies
+        UNIFORMLY (a curated variant that is textually far AND is the only data-bearing
+        option still yields ``[]`` — "no similar products with stock").
+
+    Returns up to ``limit`` dicts ``{value, display, id, sim, is_variant}`` (``value`` =
+    the product_code the user should ask about next). Empty list ⇒ caller emits no
+    alternatives.
+    """
+    code = (product_code or "").strip()
+    if not code:
+        return []
+    try:
+        return _find_entity_neighbours_with_data(
+            db, code, has_data=has_data, limit=limit, suggest_floor=suggest_floor
+        )
+    except Exception:
+        # Best-effort enrichment — a suggestion probe must NEVER turn the caller's
+        # (already-committed) empty result into a 500. Includes DBs that can't run
+        # regexp_replace / similarity (e.g. sqlite test fixtures).
+        logger.exception("neighbour suggestion probe failed for code=%s", code)
+        return []
+
+
+def _find_entity_neighbours_with_data(
+    db: Session,
+    code: str,
+    *,
+    has_data: Callable[[list[str]], set[str]],
+    limit: int,
+    suggest_floor: float,
+) -> list[dict[str, Any]]:
+    norm = _strip_all_ws(code.lower())
+    input_row = (
+        db.query(Product.id, Product.product_code, Product.variant_of_id)
+        .filter(_ws_insensitive_lower(Product.product_code) == norm)
+        .first()
+    )
+    input_id = str(input_row.id) if input_row and input_row.id else None
+    parent_id = (
+        str(input_row.variant_of_id)
+        if input_row and input_row.variant_of_id
+        else None
+    )
+
+    # id -> candidate dict. Graph members inserted first so they win on dedupe.
+    candidates: dict[str, dict[str, Any]] = {}
+
+    # (a) Stored variant graph: children of the input + siblings sharing its parent.
+    if input_id:
+        try:
+            graph_rows = db.execute(
+                text(
+                    """
+                    SELECT id, product_code, product_name,
+                           similarity(product_code, :p) AS sim
+                    FROM products
+                    WHERE id <> :pid
+                      AND (variant_of_id = :pid
+                           OR (:parent_id IS NOT NULL AND variant_of_id = :parent_id))
+                    """
+                ),
+                {"p": code, "pid": input_id, "parent_id": parent_id},
+            ).all()
+            for r in graph_rows:
+                cid = str(r.id)
+                candidates[cid] = {
+                    "value": r.product_code,
+                    "display": r.product_name or r.product_code,
+                    "id": cid,
+                    "sim": float(r.sim or 0.0),
+                    "is_variant": True,
+                }
+        except Exception:
+            logger.exception("variant graph neighbour probe failed for code=%s", code)
+
+    # (b) Trigram neighbours (recall; is_variant = §3.2 prefix-extension boost).
+    for ent in _trgm_lookup(db, code, frozenset({"product"})):
+        if ent.entity_type != "product" or not ent.uuid:
+            continue
+        cid = str(ent.uuid)
+        if cid == input_id:
+            continue
+        sim = float(ent.similarity or 0.0)
+        is_variant = bool(ent.display.get("is_variant"))
+        existing = candidates.get(cid)
+        if existing:
+            # Already a graph member — keep the curated is_variant=True, take max sim.
+            existing["sim"] = max(existing["sim"], sim)
+            existing["is_variant"] = existing["is_variant"] or is_variant
+        else:
+            candidates[cid] = {
+                "value": ent.canonical_code,
+                "display": ent.display.get("product_name") or ent.canonical_code,
+                "id": cid,
+                "sim": sim,
+                "is_variant": is_variant,
+            }
+
+    if not candidates:
+        return []
+
+    # Rank: is_variant DESC, sim DESC.
+    ranked = sorted(
+        candidates.values(),
+        key=lambda c: (c["is_variant"], c["sim"]),
+        reverse=True,
+    )
+
+    # HAS-DATA GATE (batch — one query supplied by the caller).
+    try:
+        with_data = has_data([c["id"] for c in ranked]) or set()
+    except Exception:
+        logger.exception("has_data predicate failed for code=%s", code)
+        return []
+    ranked = [c for c in ranked if c["id"] in with_data]
+
+    # DISTANCE FLOOR (uniform — applies to graph variants too).
+    ranked = [c for c in ranked if c["sim"] >= suggest_floor]
+
+    return [
+        {
+            "value": c["value"],
+            "display": c["display"],
+            "id": c["id"],
+            "sim": round(c["sim"], 3),
+            "is_variant": c["is_variant"],
+        }
+        for c in ranked[:limit]
+    ]
 
 
 # --------------------------------------------------------------------------- #

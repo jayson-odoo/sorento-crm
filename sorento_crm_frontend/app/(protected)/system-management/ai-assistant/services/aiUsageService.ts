@@ -156,3 +156,71 @@ export async function getWishlist(limit = 20): Promise<WishlistCluster[]> {
   const res = await apiFetch(`/api/v1/system/ai-assistant/wishlist?${params.toString()}`);
   return unwrap(res, 'Failed to load wishlist.');
 }
+
+// ---- M2 trace ----------------------------------------------------------
+
+export type SpanKind =
+  | 'AGENT'
+  | 'LLM'
+  | 'TOOL'
+  | 'RETRIEVER'
+  | 'CHAIN'
+  | 'GUARDRAIL'
+  | 'EMBEDDING'
+  | 'EVALUATOR';
+
+export interface TraceSpan {
+  id: string;
+  parent_id: string | null;
+  dotted_order: string;
+  span_kind: SpanKind | string;
+  name: string;
+  input_json: unknown;
+  output_json: unknown;
+  status: string;
+  error: string | null;
+  latency_ms: number;
+  // LLM
+  request_model: string | null;
+  finish_reason: string | null;
+  invocation_params: Record<string, unknown> | null;
+  tokens_in: number;
+  tokens_out: number;
+  prompt_name: string | null;
+  prompt_version: number | null;
+  // TOOL
+  tool_name: string | null;
+  tool_call_id: string | null;
+  tool_args: unknown;
+  tool_result: unknown;
+  // RETRIEVER
+  query: string | null;
+  documents: unknown;
+  top_k: number | null;
+}
+
+export interface Trace {
+  id: string;
+  message_id: string | null;
+  conversation_id: string | null;
+  user_id: string | null;
+  session_id: string | null;
+  status: string;
+  flagged: boolean;
+  env: string | null;
+  total_tokens_in: number;
+  total_tokens_out: number;
+  latency_ms: number;
+  span_count: number;
+  started_at: string | null;
+  ended_at: string | null;
+  created_at: string | null;
+  spans: TraceSpan[];
+}
+
+export async function getQueryTrace(messageId: string): Promise<Trace> {
+  const res = await apiFetch(
+    `/api/v1/system/ai-assistant/usage/queries/${encodeURIComponent(messageId)}/trace`,
+  );
+  return unwrap(res, 'Failed to load trace.');
+}

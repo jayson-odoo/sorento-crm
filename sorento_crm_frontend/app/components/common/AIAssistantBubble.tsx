@@ -5,7 +5,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Bot, History, Loader2, Plus, SendHorizonal, X } from 'lucide-react';
+import { Bot, GitBranch, History, Loader2, Plus, SendHorizonal, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -66,6 +66,8 @@ function formatRelativeTime(iso: string): string {
 
 export default function AIAssistantBubble() {
   const canUseAIAssistant = useHasPermission('system.ai_assistant_chat.use');
+  // Admins can jump from any assistant message to its per-turn trace (M2).
+  const canViewTrace = useHasPermission('system.ai_assistant_settings.view');
   const [open, setOpen] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   const [messages, setMessages] = useState<AIAssistantMessage[]>([]);
@@ -568,6 +570,22 @@ export default function AIAssistantBubble() {
                         ) : (
                           <p className="whitespace-pre-wrap">{m.content}</p>
                         )}
+                        {m.role === 'assistant' &&
+                        canViewTrace &&
+                        !m.id.startsWith('temp-') ? (
+                          <div className="mt-1.5 border-t border-border/50 pt-1.5">
+                            <Link
+                              href={`/system-management/ai-assistant/usage/trace/${encodeURIComponent(m.id)}`}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground underline underline-offset-2 hover:text-primary"
+                              data-testid="bubble-view-trace"
+                            >
+                              <GitBranch className="size-3" />
+                              View trace
+                            </Link>
+                          </div>
+                        ) : null}
                         {/* Inline markdown links inside the message body are now the only
                             link surface — the previous "raw URL list" footer was redundant
                             (and confusing when the same URLs were already wrapped in the

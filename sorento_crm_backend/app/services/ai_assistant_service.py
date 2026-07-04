@@ -33,6 +33,12 @@ from app.schemas.ai_assistant import (
     PageSnapshotPayload,
 )
 from app.services import ai_prompt_registry
+from app.services.ai_trace import (
+    KIND_CHAIN,
+    KIND_GUARDRAIL,
+    KIND_RETRIEVER,
+    TurnTrace,
+)
 from app.services.embedding_service import EmbeddingReadService
 from app.services.entity_resolver import ResolutionResult, resolve_references
 from app.services.llm_provider import ChatResult, LLMProvider, get_provider
@@ -393,6 +399,9 @@ class AIAssistantChatService:
         self._prompt_overrides: dict[str, str] = {}
         # When True (dry-run), write-capable MCP tools are stripped from the turn.
         self._suppress_write_tools: bool = False
+        # M2 per-turn trace collector (buffers spans, flushed post-turn).
+        # None outside a respond() turn; deep call sites guard on truthiness.
+        self._turn_trace: TurnTrace | None = None
 
     def _resolve_prompt(self, name: str, **variables: Any) -> str:
         """Resolve a registered prompt key through the registry, honoring any
@@ -404,6 +413,186 @@ class AIAssistantChatService:
         )
         self._turn_prompt_versions.append({"name": name, "version": version})
         return text
+
+    def _prompt_version_for(self, name: str) -> int | None:
+        """Latest resolved version for a prompt key this turn (M2 span bridge).
+        None when the hardcoded fallback was used (registry unreachable)."""
+        for entry in reversed(self._turn_prompt_versions):
+            if entry.get("name") == name:
+                return entry.get("version")
+        return None
+
+    def _trace_payload_cap(self) -> int:
+        """Per-payload truncation cap (bytes) from system_settings; default 16KB.
+        Best-effort — any read failure falls back to the default."""
+        from app.services.ai_trace import DEFAULT_MAX_PAYLOAD_BYTES
+
+        try:
+            from app.models.user import SystemSetting
+
+            row = self.db.query(SystemSetting).order_by(SystemSetting.id.asc()).first()
+            val = getattr(row, "ai_trace_max_payload_bytes", None) if row else None
+            return int(val) if val else DEFAULT_MAX_PAYLOAD_BYTES
+        except Exception:
+            return DEFAULT_MAX_PAYLOAD_BYTES
+
+    def _role_split_enabled(self) -> bool:
+        """M2.5: whether the agent loop runs the explicit planner +
+        semantic_compressor nodes. Off by default (behavioral opt-in, PLAN Q7).
+        Best-effort read of the system_settings singleton."""
+        try:
+            from app.models.user import SystemSetting
+
+            row = self.db.query(SystemSetting).order_by(SystemSetting.id.asc()).first()
+            return bool(getattr(row, "ai_assistant_role_split_enabled", False)) if row else False
+        except Exception:
+            return False
+
+    def _run_planner(
+        self,
+        *,
+        config: AIAssistantConfig,
+        provider: LLMProvider,
+        user_message: str,
+        standalone_query: str,
+        source_context: str,
+    ) -> str | None:
+        """M2.5 planner node: one LLM call that decomposes the request into an
+        ordered tool plan. Returns the plan text (injected into the executor
+        context) or None on failure. Own trace span."""
+        try:
+            system = self._resolve_prompt("planner")
+        except Exception:
+            return None
+        user_block = (
+            f"User request: {user_message}\n"
+            f"Standalone query: {standalone_query}\n"
+            f"Available tools:\n{source_context or 'None'}\n\n"
+            "Output the ordered plan of tool steps (or state that no tool is needed)."
+        )
+        messages_in = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_block},
+        ]
+        started = time.perf_counter()
+        try:
+            result = provider.chat(
+                messages_in, temperature=0.0, model=config.model, max_tokens=512
+            )
+            plan = (result.content or "").strip()
+            if self._turn_trace is not None:
+                self._turn_trace.add_llm_span(
+                    name="planner",
+                    model=config.model,
+                    messages_in=messages_in,
+                    result=result,
+                    started_perf=started,
+                    prompt_name="planner",
+                    prompt_version=self._prompt_version_for("planner"),
+                    temperature=0.0,
+                    max_tokens=512,
+                )
+            return plan or None
+        except Exception as exc:
+            logger.warning("M2.5 planner call failed: %s", exc)
+            if self._turn_trace is not None:
+                self._turn_trace.add_llm_span(
+                    name="planner",
+                    model=config.model,
+                    messages_in=messages_in,
+                    result=None,
+                    started_perf=started,
+                    prompt_name="planner",
+                    prompt_version=self._prompt_version_for("planner"),
+                    status="error",
+                    error=str(exc),
+                )
+            return None
+
+    def _compress_tool_output(
+        self,
+        *,
+        config: AIAssistantConfig,
+        provider: LLMProvider,
+        tool_name: str,
+        raw_output: str,
+    ) -> str:
+        """M2.5 semantic_compressor node: raw tool JSON -> token-tight faithful
+        sentences (Grafana 4x pattern). Returns the compressed text, or the raw
+        output unchanged on failure / when compression is skipped.
+
+        Skipped for ``user_guides_read`` (its markdown carries inline links that
+        MUST reach the model verbatim — compressing would drop the clickable
+        button links). Also skipped for small outputs where compression can't
+        pay for itself. Own trace span when it runs."""
+        # Never compress guide markdown — inline links are load-bearing.
+        if "user_guides_read" in (tool_name or ""):
+            return raw_output
+        # Only worth compressing sizeable data payloads.
+        if len(raw_output or "") < 400:
+            return raw_output
+        try:
+            system = self._resolve_prompt("semantic_compressor")
+        except Exception:
+            return raw_output
+        messages_in = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": f"Tool: {tool_name}\nRaw result:\n{raw_output[:12000]}"},
+        ]
+        started = time.perf_counter()
+        try:
+            result = provider.chat(
+                messages_in, temperature=0.0, model=config.model, max_tokens=768
+            )
+            compressed = (result.content or "").strip()
+            if self._turn_trace is not None:
+                self._turn_trace.add_llm_span(
+                    name=f"semantic_compressor {tool_name}",
+                    model=config.model,
+                    messages_in=messages_in,
+                    result=result,
+                    started_perf=started,
+                    prompt_name="semantic_compressor",
+                    prompt_version=self._prompt_version_for("semantic_compressor"),
+                    temperature=0.0,
+                    max_tokens=768,
+                )
+            return compressed or raw_output
+        except Exception as exc:
+            logger.warning("M2.5 semantic_compressor failed for %s: %s", tool_name, exc)
+            if self._turn_trace is not None:
+                self._turn_trace.add_llm_span(
+                    name=f"semantic_compressor {tool_name}",
+                    model=config.model,
+                    messages_in=messages_in,
+                    result=None,
+                    started_perf=started,
+                    prompt_name="semantic_compressor",
+                    prompt_version=self._prompt_version_for("semantic_compressor"),
+                    status="error",
+                    error=str(exc),
+                )
+            return raw_output
+
+    def _finalize_trace(self, assistant_msg: AIAssistantMessage, *, status: str) -> None:
+        """Flush the buffered turn trace and link it to the assistant message.
+        Best-effort: a trace-write failure must never break a served answer."""
+        trace = self._turn_trace
+        if trace is None:
+            return
+        try:
+            trace_id = trace.flush(self.db, message_id=str(assistant_msg.id), status=status)
+            if trace_id:
+                assistant_msg.trace_id = trace_id
+                self.db.commit()
+        except Exception:
+            logger.exception("AI assistant trace finalize failed (best-effort)")
+            try:
+                self.db.rollback()
+            except Exception:
+                pass
+        finally:
+            self._turn_trace = None
 
     def list_conversations(
         self,
@@ -503,6 +692,16 @@ class AIAssistantChatService:
         )
         conv = self.get_or_create_conversation(user_id, conversation_id, message)
 
+        # M2: start the per-turn trace. session_id = conversation id (multi-turn
+        # grouping). Truncation cap sourced from system_settings (best-effort).
+        self._turn_trace = TurnTrace(
+            user_id=str(user_id) if user_id else None,
+            conversation_id=str(conv.id),
+            session_id=str(conv.id),
+            env=getattr(settings, "environment", None) or getattr(settings, "app_env", None),
+            max_payload_bytes=self._trace_payload_cap(),
+        )
+
         recent_count = (
             self.db.query(AIAssistantMessage.id)
             .filter(
@@ -540,6 +739,13 @@ class AIAssistantChatService:
         # hallucinated. Short-circuits before reformulate / RAG / agent loop.
         if self._is_capability_question(message):
             capability_text = self._build_capability_answer()
+            if self._turn_trace is not None:
+                self._turn_trace.add_span(
+                    kind=KIND_CHAIN,
+                    name="capability_answer (deterministic)",
+                    input_json={"message": message[:2000]},
+                    output_json={"content": capability_text[:2000], "deterministic": True},
+                )
             capability_meta: dict[str, Any] = {
                 "links": self._extract_links_from_text(capability_text),
                 "sources": [],
@@ -575,6 +781,7 @@ class AIAssistantChatService:
             except Exception:
                 logger.exception("Failed to insert ai_assistant_usage_logs row (capability)")
                 self.db.rollback()
+            self._finalize_trace(assistant_msg, status="ok")
             logger.info(
                 "AI assistant capability answer served deterministically "
                 "conversation_id=%s assistant_message_id=%s total_elapsed_ms=%.1f",
@@ -633,6 +840,14 @@ class AIAssistantChatService:
             logger.exception("Entity resolver failed; continuing without resolved references")
             resolution = ResolutionResult(tokens=[], resolutions=[], elapsed_ms=0.0)
         resolve_ms = (time.perf_counter() - resolve_started) * 1000
+        if self._turn_trace is not None:
+            self._turn_trace.add_span(
+                kind=KIND_CHAIN,
+                name="entity_resolution",
+                input_json={"query": f"{message}\n{standalone_query or ''}"[:2000]},
+                output_json=resolution.as_dict(),
+                latency_ms=int(resolve_ms),
+            )
         logger.info(
             "AI assistant entity resolution conversation_id=%s tokens=%s resolved=%s unresolved=%s elapsed_ms=%.1f",
             conv.id,
@@ -664,6 +879,23 @@ class AIAssistantChatService:
                     before - len(selected_tools),
                 )
         rag_ms = (time.perf_counter() - rag_started) * 1000
+        if self._turn_trace is not None:
+            self._turn_trace.add_span(
+                kind=KIND_RETRIEVER,
+                name="rag_select_tools",
+                query=rag_query,
+                documents=[
+                    {
+                        "id": str(s.get("tool_name") or s.get("title") or ""),
+                        "content": str(s.get("why_selected") or s.get("title") or ""),
+                        "score": s.get("score"),
+                    }
+                    for s in (sources or [])
+                ],
+                top_k=max(1, int(getattr(settings, "ai_assistant_rag_top_k", 3))),
+                output_json={"selected_tools": [t.get("tool_name") for t in selected_tools]},
+                latency_ms=int(rag_ms),
+            )
         logger.info(
             "AI assistant RAG phase finished conversation_id=%s selected_tools=%s elapsed_ms=%.1f",
             conv.id,
@@ -853,6 +1085,9 @@ class AIAssistantChatService:
             except Exception:
                 logger.exception("Failed to tag unanswered query message_id=%s", assistant_msg.id)
 
+        # M2: flush the per-turn trace + link it to the assistant message.
+        self._finalize_trace(assistant_msg, status="ok" if was_answered else "error")
+
         logger.info(
             "AI assistant request completed conversation_id=%s assistant_message_id=%s total_elapsed_ms=%.1f was_answered=%s",
             conv.id,
@@ -904,21 +1139,47 @@ class AIAssistantChatService:
             f"Latest user turn:\n{raw}\n\n"
             "Reformulated standalone query:"
         )
+        messages_in = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_block},
+        ]
+        started = time.perf_counter()
         try:
             provider = get_provider(config.provider, api_key, config.model)
             result = provider.chat(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user_block},
-                ],
+                messages_in,
                 temperature=0.0,
                 model=config.model,
                 max_tokens=256,
             )
             reformulated = (result.content or "").strip().strip('"').strip()
+            if self._turn_trace is not None:
+                self._turn_trace.add_llm_span(
+                    name="reformulator",
+                    model=config.model,
+                    messages_in=messages_in,
+                    result=result,
+                    started_perf=started,
+                    prompt_name="reformulator",
+                    prompt_version=self._prompt_version_for("reformulator"),
+                    temperature=0.0,
+                    max_tokens=256,
+                )
             return reformulated or raw
-        except Exception:
+        except Exception as exc:
             logger.exception("AI assistant reformulator failed; using raw user message")
+            if self._turn_trace is not None:
+                self._turn_trace.add_llm_span(
+                    name="reformulator",
+                    model=config.model,
+                    messages_in=messages_in,
+                    result=None,
+                    started_perf=started,
+                    prompt_name="reformulator",
+                    prompt_version=self._prompt_version_for("reformulator"),
+                    status="error",
+                    error=str(exc),
+                )
             return raw
 
     def _rag_select_tools(
@@ -1267,17 +1528,28 @@ class AIAssistantChatService:
         # it; the result is added to tool_calls_log so the deep links get
         # re-injected. A miss / error simply injects nothing (harmless).
         if self._is_guide_question(user_message):
+            pf_started = time.perf_counter()
             try:
                 pf = MCPRuntimeClient(
                     settings.ai_assistant_mcp_url,
                     timeout_seconds=settings.ai_assistant_mcp_timeout_seconds,
                 )
+                pf_args = {"query": user_message, "contact_id": "", "space_id": ""}
                 pf_out = self._cached_tool_call(
                     turn_cache,
                     pf,
                     "user_guides_read",
-                    {"query": user_message, "contact_id": "", "space_id": ""},
+                    pf_args,
                 )
+                if self._turn_trace is not None:
+                    self._turn_trace.add_tool_span(
+                        tool_name="user_guides_read (pre-fetch)",
+                        tool_call_id=None,
+                        args=pf_args,
+                        result_text=pf_out,
+                        started_perf=pf_started,
+                        ok=True,
+                    )
                 # Only inject a REAL guide hit. NO_MATCH / OUTLINE_ERROR are not
                 # flagged by _tool_output_is_error, and injecting them would tell
                 # the model "no guide available" — the opposite of the goal.
@@ -1372,8 +1644,34 @@ class AIAssistantChatService:
         tool_call_budget = max(1, int(getattr(settings, "ai_assistant_tool_call_limit", 3)))
         tool_calls_made = 0
 
+        # M2.5 role split (opt-in): run an explicit planner node up front and
+        # compress raw tool JSON before feeding it back to the executor. Each is
+        # its own prompt key + trace span; the default pipeline is unchanged.
+        role_split = self._role_split_enabled()
+        if role_split:
+            plan = self._run_planner(
+                config=config,
+                provider=provider,
+                user_message=user_message,
+                standalone_query=standalone_query,
+                source_context=source_context,
+            )
+            if plan:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "A planner has decomposed this request into the following ordered "
+                            "tool plan. Follow it unless the tool results tell you otherwise; "
+                            "you may stop early once the goal is reached.\n"
+                            f"--- Plan ---\n{plan}\n--- End plan ---"
+                        ),
+                    }
+                )
+
         for iteration in range(max_iters):
             tools_to_pass = openai_tools if (openai_tools and tool_calls_made < tool_call_budget) else None
+            round_started = time.perf_counter()
             try:
                 result: ChatResult = provider.chat(
                     messages,
@@ -1382,9 +1680,34 @@ class AIAssistantChatService:
                     model=config.model,
                     max_tokens=2048,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.exception("AI assistant agent chat completion failed iteration=%s", iteration)
+                if self._turn_trace is not None:
+                    self._turn_trace.add_llm_span(
+                        name=f"agent_system round {iteration + 1}",
+                        model=config.model,
+                        messages_in=messages,
+                        result=None,
+                        started_perf=round_started,
+                        prompt_name="agent_system",
+                        prompt_version=self._prompt_version_for("agent_system"),
+                        status="error",
+                        error=str(exc),
+                    )
                 break
+
+            if self._turn_trace is not None:
+                self._turn_trace.add_llm_span(
+                    name=f"agent_system round {iteration + 1}",
+                    model=config.model,
+                    messages_in=messages,
+                    result=result,
+                    started_perf=round_started,
+                    prompt_name="agent_system",
+                    prompt_version=self._prompt_version_for("agent_system"),
+                    temperature=float(config.temperature or 0),
+                    max_tokens=2048,
+                )
 
             # Accumulate token usage across every provider call.
             token_usage["prompt_tokens"] += int(result.prompt_tokens or 0)
@@ -1469,12 +1792,34 @@ class AIAssistantChatService:
                     output = json.dumps({"error": "tool_not_available", "tool_name": tool_name})
                     tool_calls_log.append(MCPToolCallResult(tool_name or "unknown", False, output))
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": output})
+                    if self._turn_trace is not None:
+                        self._turn_trace.add_span(
+                            kind=KIND_GUARDRAIL,
+                            name=f"denied tool {tool_name or 'unknown'}",
+                            input_json={"tool_name": tool_name, "args": str_args},
+                            output_json={"error": "tool_not_available"},
+                            status="error",
+                            error="tool_not_available",
+                            tool_name=tool_name or None,
+                            tool_call_id=call_id,
+                        )
                     continue
 
                 if tool_calls_made >= tool_call_budget:
                     output = json.dumps({"error": "tool_call_budget_exceeded"})
                     tool_calls_log.append(MCPToolCallResult(tool_name, False, output))
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": output})
+                    if self._turn_trace is not None:
+                        self._turn_trace.add_span(
+                            kind=KIND_GUARDRAIL,
+                            name=f"denied tool {tool_name} (budget)",
+                            input_json={"tool_name": tool_name, "args": str_args},
+                            output_json={"error": "tool_call_budget_exceeded"},
+                            status="error",
+                            error="tool_call_budget_exceeded",
+                            tool_name=tool_name,
+                            tool_call_id=call_id,
+                        )
                     continue
 
                 logger.info(
@@ -1484,6 +1829,7 @@ class AIAssistantChatService:
                     self._safe_args_for_log(str_args),
                 )
                 call_started = time.perf_counter()
+                is_error = False
                 try:
                     output = self._cached_tool_call(turn_cache, mcp, tool_name, str_args)
                     if tool_name == "user_guides_read":
@@ -1507,16 +1853,47 @@ class AIAssistantChatService:
                             call_ms,
                         )
                         tool_calls_log.append(MCPToolCallResult(tool_name, True, output[:2000]))
+                    if self._turn_trace is not None:
+                        self._turn_trace.add_tool_span(
+                            tool_name=tool_name,
+                            tool_call_id=call_id,
+                            args=str_args,
+                            result_text=output,
+                            started_perf=call_started,
+                            ok=not is_error,
+                            error=error_summary if is_error else None,
+                        )
                 except Exception as exc:
                     logger.exception("AI assistant agent tool call failed tool_name=%s", tool_name)
                     output = json.dumps({"error": "tool_call_failed", "detail": str(exc)})
                     tool_calls_log.append(MCPToolCallResult(tool_name, False, output[:2000]))
+                    if self._turn_trace is not None:
+                        self._turn_trace.add_tool_span(
+                            tool_name=tool_name,
+                            tool_call_id=call_id,
+                            args=str_args,
+                            result_text=output,
+                            started_perf=call_started,
+                            ok=False,
+                            error=str(exc),
+                        )
                 tool_calls_made += 1
+                # M2.5: compress the raw tool JSON into token-tight sentences
+                # before feeding it back to the executor (skips guide markdown +
+                # small payloads + error outputs). Own trace span.
+                fed_back = output
+                if role_split and not is_error:
+                    fed_back = self._compress_tool_output(
+                        config=config,
+                        provider=provider,
+                        tool_name=tool_name,
+                        raw_output=output,
+                    )
                 messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": call_id,
-                        "content": output[:6000],
+                        "content": fed_back[:6000],
                     }
                 )
 
@@ -1582,19 +1959,33 @@ class AIAssistantChatService:
         # to the agent loop and produces a wrong answer for a real record question
         # (observed in end-to-end). Only a persistent failure defaults to False.
         last_exc: Exception | None = None
+        messages_in = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": raw[:1000]},
+        ]
         for _attempt in range(2):
+            started = time.perf_counter()
             try:
                 provider = get_provider(config.provider, api_key, config.model)
                 result = provider.chat(
-                    [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": raw[:1000]},
-                    ],
+                    messages_in,
                     temperature=0.0,
                     model=config.model,
                     max_tokens=4,
                 )
                 verdict = (result.content or "").strip().upper()
+                if self._turn_trace is not None:
+                    self._turn_trace.add_llm_span(
+                        name="router (record-classifier)",
+                        model=config.model,
+                        messages_in=messages_in,
+                        result=result,
+                        started_perf=started,
+                        prompt_name="router",
+                        prompt_version=self._prompt_version_for("router"),
+                        temperature=0.0,
+                        max_tokens=4,
+                    )
                 return verdict.startswith("YES")
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
@@ -1715,6 +2106,7 @@ class AIAssistantChatService:
             # Guide tool unavailable → fact-only answering still works.
             logger.warning("record-answer could not list MCP tools; fact-only mode")
 
+        rr_started = time.perf_counter()
         try:
             result: ChatResult = provider.chat(
                 messages,
@@ -1723,9 +2115,33 @@ class AIAssistantChatService:
                 model=config.model,
                 max_tokens=2048,
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("record-answer initial provider call failed")
+            if self._turn_trace is not None:
+                self._turn_trace.add_llm_span(
+                    name="record_render (initial)",
+                    model=config.model,
+                    messages_in=messages,
+                    result=None,
+                    started_perf=rr_started,
+                    prompt_name="agent_system",
+                    prompt_version=self._prompt_version_for("agent_system"),
+                    status="error",
+                    error=str(exc),
+                )
             return self._deterministic_fallback(tool_calls_log), tool_calls_log, token_usage
+        if self._turn_trace is not None:
+            self._turn_trace.add_llm_span(
+                name="record_render (initial)",
+                model=config.model,
+                messages_in=messages,
+                result=result,
+                started_perf=rr_started,
+                prompt_name="agent_system",
+                prompt_version=self._prompt_version_for("agent_system"),
+                temperature=0.0,
+                max_tokens=2048,
+            )
         token_usage["prompt_tokens"] += int(result.prompt_tokens or 0)
         token_usage["completion_tokens"] += int(result.completion_tokens or 0)
         token_usage["total_tokens"] += int(result.total_tokens or 0)
@@ -1770,6 +2186,7 @@ class AIAssistantChatService:
                     tool_calls_log.append(MCPToolCallResult(name or "unknown", False, output))
                     messages.append({"role": "tool", "tool_call_id": call_id, "content": output})
                     continue
+                rr_tool_started = time.perf_counter()
                 try:
                     output = self._cached_tool_call(turn_cache, mcp, name, str_args)
                     if name == guide_tool_name:
@@ -1778,10 +2195,30 @@ class AIAssistantChatService:
                         output = self._redact_guide_tool_output(output)
                     is_error, _ = self._tool_output_is_error(output)
                     tool_calls_log.append(MCPToolCallResult(name, not is_error, output))
+                    if self._turn_trace is not None:
+                        self._turn_trace.add_tool_span(
+                            tool_name=name,
+                            tool_call_id=call_id,
+                            args=str_args,
+                            result_text=output,
+                            started_perf=rr_tool_started,
+                            ok=not is_error,
+                        )
                 except Exception as exc:
                     output = json.dumps({"error": "tool_call_failed", "detail": str(exc)})
                     tool_calls_log.append(MCPToolCallResult(name, False, output))
+                    if self._turn_trace is not None:
+                        self._turn_trace.add_tool_span(
+                            tool_name=name,
+                            tool_call_id=call_id,
+                            args=str_args,
+                            result_text=output,
+                            started_perf=rr_tool_started,
+                            ok=False,
+                            error=str(exc),
+                        )
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": output})
+            rr_final_started = time.perf_counter()
             try:
                 final = provider.chat(
                     messages, temperature=0.0, model=config.model, max_tokens=2048
@@ -1790,9 +2227,33 @@ class AIAssistantChatService:
                 token_usage["completion_tokens"] += int(final.completion_tokens or 0)
                 token_usage["total_tokens"] += int(final.total_tokens or 0)
                 answer = (final.content or "").strip()
-            except Exception:
+                if self._turn_trace is not None:
+                    self._turn_trace.add_llm_span(
+                        name="record_render (synthesis)",
+                        model=config.model,
+                        messages_in=messages,
+                        result=final,
+                        started_perf=rr_final_started,
+                        prompt_name="synthesizer",
+                        prompt_version=self._prompt_version_for("synthesizer"),
+                        temperature=0.0,
+                        max_tokens=2048,
+                    )
+            except Exception as exc:
                 logger.exception("record-answer follow-up provider call failed")
                 answer = (result.content or "").strip()
+                if self._turn_trace is not None:
+                    self._turn_trace.add_llm_span(
+                        name="record_render (synthesis)",
+                        model=config.model,
+                        messages_in=messages,
+                        result=None,
+                        started_perf=rr_final_started,
+                        prompt_name="synthesizer",
+                        prompt_version=self._prompt_version_for("synthesizer"),
+                        status="error",
+                        error=str(exc),
+                    )
         else:
             answer = (result.content or "").strip()
 

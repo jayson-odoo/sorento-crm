@@ -220,6 +220,21 @@ def _drain_email_outbox_tick():
         logger.error("Email outbox drainer tick failed: %s", e, exc_info=True)
 
 
+def _ai_trace_sweep_tick():
+    """APScheduler tick: delete expired AI assistant traces (M2 retention).
+    Owns its own DB session; sweep is best-effort and never raises."""
+    try:
+        from app.services.ai_trace import sweep_expired_traces
+
+        db = SessionLocal()
+        try:
+            sweep_expired_traces(db)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error("AI trace sweep tick failed: %s", e, exc_info=True)
+
+
 def _run_queue_jobs_impl(queue_name: str, max_jobs_per_run: int) -> dict:
     """Generic queue processor used by scheduled task heartbeat."""
     return run_sync_rq_jobs(queue_name, max_jobs_per_run)
@@ -318,9 +333,20 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # AI assistant trace retention sweep (M2): daily. Deletes ok traces past
+    # ai_trace_ttl_days and error/flagged past ai_trace_error_ttl_days.
+    scheduler.add_job(
+        _ai_trace_sweep_tick,
+        trigger=IntervalTrigger(hours=24),
+        id="ai_trace_sweep",
+        name="AI assistant trace retention sweep",
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info(
-        "Scheduler started: scheduled tasks heartbeat (every 10s), email outbox drainer (every %ds)",
+        "Scheduler started: scheduled tasks heartbeat (every 10s), email outbox drainer "
+        "(every %ds), AI trace sweep (daily)",
         max(1, drain_seconds),
     )
     return scheduler

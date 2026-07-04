@@ -15,6 +15,8 @@ from app.models.access import RespondContact
 from app.models.ai_assistant import (
     AIAssistantConversation,
     AIAssistantMessage,
+    AIAssistantSpan,
+    AIAssistantTrace,
     AIAssistantUsageLog,
 )
 from app.models.user import User
@@ -44,6 +46,8 @@ from app.schemas.ai_assistant import (
     TestConnectionResponse,
     TopContactItem,
     TopUserItem,
+    TraceResponse,
+    TraceSpanItem,
     UsageByDayItem,
     UsageSummaryResponse,
     WishlistClusterItem,
@@ -669,6 +673,86 @@ def usage_query_detail(
         metadata_json=meta,
         usage=usage_dict,
         tools_used=tools_used,
+    )
+
+
+@router.get(
+    "/ai-assistant/usage/queries/{message_id}/trace",
+    response_model=TraceResponse,
+)
+def usage_query_trace(
+    message_id: str,
+    _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
+    db: Session = Depends(get_db),
+):
+    """M2 — full per-turn trace (root + ordered span tree) for an assistant
+    message. Admin-only. 404 when the turn has no trace (e.g. legacy rows or a
+    swept/expired trace)."""
+    trace = (
+        db.query(AIAssistantTrace)
+        .filter(AIAssistantTrace.message_id == message_id)
+        .order_by(AIAssistantTrace.created_at.desc())
+        .first()
+    )
+    if not trace:
+        # Fall back to the message.trace_id link (covers SET NULL-detached rows).
+        msg = db.query(AIAssistantMessage).filter(AIAssistantMessage.id == message_id).first()
+        if msg and getattr(msg, "trace_id", None):
+            trace = db.query(AIAssistantTrace).filter(AIAssistantTrace.id == msg.trace_id).first()
+    if not trace:
+        raise HTTPException(status_code=404, detail="No trace for this message")
+
+    spans = (
+        db.query(AIAssistantSpan)
+        .filter(AIAssistantSpan.trace_id == trace.id)
+        .order_by(AIAssistantSpan.dotted_order.asc())
+        .all()
+    )
+    return TraceResponse(
+        id=str(trace.id),
+        message_id=str(trace.message_id) if trace.message_id else None,
+        conversation_id=str(trace.conversation_id) if trace.conversation_id else None,
+        user_id=str(trace.user_id) if trace.user_id else None,
+        session_id=trace.session_id,
+        status=trace.status,
+        flagged=bool(trace.flagged),
+        env=trace.env,
+        total_tokens_in=int(trace.total_tokens_in or 0),
+        total_tokens_out=int(trace.total_tokens_out or 0),
+        latency_ms=int(trace.latency_ms or 0),
+        span_count=int(trace.span_count or 0),
+        started_at=trace.started_at,
+        ended_at=trace.ended_at,
+        created_at=trace.created_at,
+        spans=[
+            TraceSpanItem(
+                id=str(s.id),
+                parent_id=str(s.parent_id) if s.parent_id else None,
+                dotted_order=s.dotted_order or "",
+                span_kind=s.span_kind,
+                name=s.name or "",
+                input_json=s.input_json,
+                output_json=s.output_json,
+                status=s.status,
+                error=s.error,
+                latency_ms=int(s.latency_ms or 0),
+                request_model=s.request_model,
+                finish_reason=s.finish_reason,
+                invocation_params=s.invocation_params,
+                tokens_in=int(s.tokens_in or 0),
+                tokens_out=int(s.tokens_out or 0),
+                prompt_name=s.prompt_name,
+                prompt_version=s.prompt_version,
+                tool_name=s.tool_name,
+                tool_call_id=s.tool_call_id,
+                tool_args=s.tool_args,
+                tool_result=s.tool_result,
+                query=s.query,
+                documents=s.documents,
+                top_k=s.top_k,
+            )
+            for s in spans
+        ],
     )
 
 

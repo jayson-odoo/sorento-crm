@@ -10,6 +10,7 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import AIAssistantSettingsForm from './components/AIAssistantSettingsForm';
+import TraceSettingsCard from './components/TraceSettingsCard';
 
 export const metadata: Metadata = {
   title: 'AI assistant',
@@ -43,6 +44,7 @@ export default function AIAssistantPage() {
       </Container>
       <Container className="space-y-4">
         <AIAssistantSettingsForm />
+        <TraceSettingsCard />
       </Container>
     </>
   );

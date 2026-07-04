@@ -20,8 +20,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
 import { Container } from '@/components/common/container';
+import { SearchableTextarea } from '@/components/common/find-in-text/SearchableTextarea';
 import {
   usePromptVersion,
   usePromptVersions,
@@ -327,7 +327,7 @@ export function PromptDetail({ name }: { name: string }) {
               </Button>
             </CardHeader>
             <CardContent className="space-y-3">
-              <Textarea
+              <SearchableTextarea
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 className="min-h-[320px] font-mono text-xs"

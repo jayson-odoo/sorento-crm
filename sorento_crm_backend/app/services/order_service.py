@@ -34,6 +34,12 @@ from app.services.entity_resolver import (
 logger = logging.getLogger(__name__)
 
 
+# Date-axis relaxation cap (§3.4). When a customer-scoped delivery query returns
+# zero DOs on the asked date, surface at most this many nearest DISTINCT delivery
+# dates (either side of the asked date) that DO have a DO for the same scope.
+DATE_RELAX_LIMIT = 3
+
+
 class OrderService:
     """Service for order operations."""
     
@@ -90,6 +96,14 @@ class OrderService:
         _customer_uuid_filter = list(customer_ids) if customer_ids else None
         _product_uuid_filter = list(product_ids) if product_ids else None
         _transporter_uuid_filter = list(transporter_ids) if transporter_ids else None
+
+        # Date-axis relaxation (§3.4) bookkeeping. `_customer_scoped` gates the
+        # nearest-date probe so we never dump every customer's dates on an empty
+        # result; `_asked_delivery_date` is the date we measure distance from.
+        _customer_scoped = bool(_customer_uuid_filter) or bool(
+            (customer_query or "").strip()
+        )
+        _asked_delivery_date = actual_delivery_date_from or actual_delivery_date_to
 
         q = self.db.query(Order).filter(Order.deleted_at.is_(None))
 
@@ -179,6 +193,7 @@ class OrderService:
                     "empty": True,
                 }
             filters.append(Order.customer_id.in_(customer_ids))
+            _customer_scoped = True
 
         status_ids = resolve_identifier(
             self.db,
@@ -209,18 +224,22 @@ class OrderService:
         elif hadd == "no":
             filters.append(Order.actual_delivery_date.is_(None))
 
+        # Date-range clauses are tracked apart from entity/scope clauses so the
+        # date-axis relaxation (§3.4) can rebuild a customer-scoped query with the
+        # date constraint dropped when the asked date yields zero DOs.
+        date_range_filters: list[Any] = []
         if order_date_from is not None:
-            filters.append(Order.order_date >= order_date_from)
+            date_range_filters.append(Order.order_date >= order_date_from)
 
         if order_date_to is not None:
-            filters.append(Order.order_date <= order_date_to)
+            date_range_filters.append(Order.order_date <= order_date_to)
 
         if actual_delivery_date_from is not None:
-            filters.append(Order.actual_delivery_date >= actual_delivery_date_from)
+            date_range_filters.append(Order.actual_delivery_date >= actual_delivery_date_from)
 
         if actual_delivery_date_to is not None:
-            filters.append(Order.actual_delivery_date <= actual_delivery_date_to)
-        
+            date_range_filters.append(Order.actual_delivery_date <= actual_delivery_date_to)
+
         query_filter = None
         if query and (query := (query or "").strip()):
             term = f"%{query}%"
@@ -313,15 +332,22 @@ class OrderService:
         if entity_buckets is not None and entity_buckets.has_resolved_filter:
             entity_clauses = self._build_entity_filter_clauses(entity_buckets)
             filters.extend(entity_clauses)
+            if (
+                entity_buckets.debtor_names
+                or entity_buckets.customer_names
+                or entity_buckets.customer_codes
+            ):
+                _customer_scoped = True
 
         if advanced_filter_clause is not None:
             filters.append(advanced_filter_clause)
 
-        base_q = q.filter(and_(*filters)) if filters else q
+        all_filters = filters + date_range_filters
+        base_q = q.filter(and_(*all_filters)) if all_filters else q
         q = base_q.filter(query_filter) if query_filter is not None else base_q
-        
+
         total = q.count()
-        if query_filter is not None and total == 0 and filters:
+        if query_filter is not None and total == 0 and all_filters:
             # General fallback: if text query yields nothing but structured filters exist,
             # prioritize structured filters instead of returning a false empty result.
             q = base_q
@@ -412,7 +438,86 @@ class OrderService:
         }
         if entity_buckets is not None:
             payload["resolved_entities"] = entity_buckets.as_echo()
+        # Date-axis relaxation (§3.4): the customer (and any product/status scope)
+        # resolved but had zero DOs on the asked delivery date. Offer the nearest
+        # delivery dates that DO carry a DO for the same scope. Only on the empty
+        # path — a non-empty result stays byte-identical (AC-R1).
+        if total == 0 and _asked_delivery_date is not None and _customer_scoped:
+            alternatives = self._nearest_delivery_date_alternatives(
+                scope_filters=filters,
+                asked_date=_asked_delivery_date,
+            )
+            if alternatives:
+                payload["alternatives"] = alternatives
+                payload["relaxed_axis"] = "date"
         return payload
+
+    def _nearest_delivery_date_alternatives(
+        self,
+        *,
+        scope_filters: list[Any],
+        asked_date: datetime,
+        limit: int = DATE_RELAX_LIMIT,
+    ) -> list[dict[str, Any]]:
+        """Nearest-date substitutes for an empty customer-scoped delivery query (§3.4).
+
+        `scope_filters` are the non-date entity/scope clauses already built for the
+        main query (customer / product / status / transporter), so the substitute
+        dates stay within the SAME scope the user asked about — only the date axis
+        is relaxed. Rows are ranked by absolute distance from ``asked_date`` (either
+        side) and deduped to at most ``limit`` DISTINCT delivery dates. Best-effort:
+        a probe failure never turns the already-computed empty result into a 500.
+        """
+        try:
+            from datetime import date as _date
+            from sqlalchemy import Date
+
+            # `asked_date` arrives as a query-param string ("2026-04-05") or a
+            # date/datetime. Normalize to a python date; Postgres cannot resolve
+            # `timestamp - '<string>'` (it collapses to date-date=integer and then
+            # `extract(epoch FROM integer)` errors). Cast the column to DATE and
+            # subtract dates -> integer day-distance, which is all we need to rank.
+            if isinstance(asked_date, str):
+                asked = _date.fromisoformat(asked_date[:10])
+            elif isinstance(asked_date, datetime):
+                asked = asked_date.date()
+            else:
+                asked = asked_date
+            distance = func.abs(func.cast(Order.actual_delivery_date, Date) - asked)
+            rows = (
+                self.db.query(Order.actual_delivery_date, Order.order_number)
+                .filter(
+                    Order.deleted_at.is_(None),
+                    Order.actual_delivery_date.isnot(None),
+                    *scope_filters,
+                )
+                .order_by(distance.asc(), Order.actual_delivery_date.asc())
+                .limit(limit * 5)
+                .all()
+            )
+            alternatives: list[dict[str, Any]] = []
+            seen: set[str] = set()
+            for adate, order_number in rows:
+                if adate is None:
+                    continue
+                # Column is DateTime but some rows deserialize as date; normalize.
+                key = (adate.date() if isinstance(adate, datetime) else adate).isoformat()
+                if key in seen:
+                    continue
+                seen.add(key)
+                alternatives.append(
+                    {
+                        "value": key,
+                        "display": f"{key} (DO {order_number})" if order_number else key,
+                        "order_number": order_number,
+                    }
+                )
+                if len(alternatives) >= limit:
+                    break
+            return alternatives
+        except Exception:
+            logger.exception("nearest-delivery-date probe failed")
+            return []
 
     def _build_entity_filter_clauses(
         self,
