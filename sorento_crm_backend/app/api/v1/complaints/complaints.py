@@ -384,12 +384,24 @@ def _resolve_complaint_chat_contact(db: Session, complaint_id: str):
     return identifier, getattr(complaint, "contact_id", None)
 
 
+def _build_complaint_chat_context(db: Session, complaint_id: str) -> dict:
+    """Template context (portal_url / view_url) for a complaint chat send."""
+    service = ComplaintService(db)
+    complaint = service.get_complaint(complaint_id)
+    return {
+        "portal_url": service._complaint_portal_or_view_url(complaint, str(complaint_id)),
+        "view_url": (service._build_complaint_view_url(str(complaint_id)) or "").strip(),
+    }
+
+
 from app.api.v1._respond_chat_template_routes import build_chat_template_router
 
 router.include_router(
     build_chat_template_router(
         business_table="complaints",
         resolver=_resolve_complaint_chat_contact,
+        chat_use_case="complaint_chat",
+        context_builder=_build_complaint_chat_context,
     )
 )
 

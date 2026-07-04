@@ -1725,3 +1725,36 @@ async def get_sla_tracking_record(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+def _resolve_sla_conversation_contact(db: Session, tracking_id: str):
+    """(respond_io identifier, internal respond_contact_id) for a conversation SLA
+    tracking. Identifier is the linked RespondContact's respond_io_id (not the
+    internal UUID) — see CLAUDE.md respond_contact_id ≠ respond_io_id."""
+    tracking = (
+        db.query(ConversationSLATracking)
+        .filter(ConversationSLATracking.id == str(tracking_id))
+        .first()
+    )
+    if tracking is None:
+        return None, None
+    respond_contact_id = getattr(tracking, "respond_contact_id", None)
+    identifier = None
+    contact = getattr(tracking, "contact", None)
+    if contact is not None:
+        identifier = (str(getattr(contact, "respond_io_id", "") or "").strip()) or None
+    return identifier, (str(respond_contact_id) if respond_contact_id else None)
+
+
+# Conversation SLA is form-less: no view-link, no prefill buttons. It inherits the
+# same shared smart-send route as the entity chat panels via conversation_chat.
+from app.api.v1._respond_chat_template_routes import build_chat_template_router
+
+router.include_router(
+    build_chat_template_router(
+        business_table="conversation_sla_tracking",
+        resolver=_resolve_sla_conversation_contact,
+        chat_use_case="conversation_chat",
+        context_builder=None,
+    )
+)

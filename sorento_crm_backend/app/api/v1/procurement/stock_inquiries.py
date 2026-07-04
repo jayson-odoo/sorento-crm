@@ -536,11 +536,23 @@ def _resolve_stock_inquiry_chat_contact(db: Session, inquiry_id: str):
     return identifier, getattr(inquiry, "contact_id", None)
 
 
+def _build_stock_inquiry_chat_context(db: Session, inquiry_id: str) -> dict:
+    """Template context (portal_url / view_url) for a stock-inquiry chat send."""
+    service = StockInquiryService(db)
+    inquiry = service.get_inquiry(inquiry_id)
+    return {
+        "portal_url": service._stock_inquiry_portal_or_view_url(inquiry, str(inquiry_id)),
+        "view_url": (service._build_stock_inquiry_view_url(str(inquiry_id)) or "").strip(),
+    }
+
+
 from app.api.v1._respond_chat_template_routes import build_chat_template_router
 
 router.include_router(
     build_chat_template_router(
         business_table="stock_inquiries",
         resolver=_resolve_stock_inquiry_chat_contact,
+        chat_use_case="stock_inquiry_chat",
+        context_builder=_build_stock_inquiry_chat_context,
     )
 )

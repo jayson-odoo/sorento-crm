@@ -105,3 +105,84 @@ describe('SetDefaultTemplateDialog — dynamic URL button', () => {
     expect(body.param_mapping['1']).toBe('contact_name');
   });
 });
+
+// --- Chat reply templates: `message` mapping enforcement (UAC-21) ------------
+
+const CHAT_TEMPLATE: WhatsAppTemplate = {
+  id: 'tpl-chat',
+  respond_template_id: 'rt-chat',
+  name: 'chat_reply',
+  language: 'en',
+  category: 'UTILITY',
+  status: 'approved',
+  body_text: 'Message from {{1}}: {{2}}',
+  param_count: 2,
+  has_url_button: false,
+  button_url_base: null,
+  button_text: null,
+  channel_name: 'WA',
+  synced_at: '2026-06-24T00:00:00Z',
+};
+
+// Every slot mapped, but NONE mapped to `message`.
+const CHAT_CURRENT_NO_MESSAGE: TemplateDefault = {
+  use_case: 'complaint_chat',
+  template_id: 'tpl-chat',
+  template_name: 'chat_reply',
+  template_status: 'approved',
+  param_mapping: { '1': 'contact_name', '2': 'sender_name' } as TemplateDefault['param_mapping'],
+  is_valid: false,
+};
+
+function renderChatDialog(current: TemplateDefault | null) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <SetDefaultTemplateDialog
+        useCase="complaint_chat"
+        current={current}
+        open
+        onOpenChange={() => {}}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+describe('SetDefaultTemplateDialog — chat message enforcement', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (listApprovedTemplates as any).mockResolvedValue([CHAT_TEMPLATE]);
+    (setTemplateDefault as any).mockResolvedValue({});
+    // Radix Select calls these on open; jsdom does not implement them.
+    Element.prototype.scrollIntoView = vi.fn();
+    (Element.prototype as any).hasPointerCapture = vi.fn();
+    (Element.prototype as any).setPointerCapture = vi.fn();
+    (Element.prototype as any).releasePointerCapture = vi.fn();
+  });
+
+  it('disables Save + shows chat-message-required when no slot maps to message', async () => {
+    renderChatDialog(CHAT_CURRENT_NO_MESSAGE);
+    expect(await screen.findByText('Message from {{1}}: {{2}}')).toBeInTheDocument();
+
+    expect(screen.getByTestId('chat-message-required')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save default/i })).toBeDisabled();
+  });
+
+  it('enables Save once a slot is remapped to message', async () => {
+    renderChatDialog(CHAT_CURRENT_NO_MESSAGE);
+    await screen.findByText('Message from {{1}}: {{2}}');
+
+    // Slot {{2}} currently shows "Sender name"; remap it to "Full update message".
+    // Radix Select opens on pointerdown (not click) — dispatch it on that trigger.
+    const slot2 = screen
+      .getAllByRole('combobox')
+      .find((el) => el.textContent?.includes('Sender name'))!;
+    fireEvent.pointerDown(slot2, { button: 0, ctrlKey: false, pointerType: 'mouse' });
+    fireEvent.click(await screen.findByRole('option', { name: 'Full update message' }));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId('chat-message-required')).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole('button', { name: /save default/i })).toBeEnabled();
+  });
+});

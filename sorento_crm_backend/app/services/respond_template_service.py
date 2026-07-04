@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.respond_template import (
+    CHAT_TEMPLATE_USE_CASES,
     TEMPLATE_DEFAULT_USE_CASES,
     RespondChannel,
     RespondMessageTemplate,
@@ -81,6 +82,10 @@ PARAM_VARIABLES = (
     # SLA takeover: the initiator (teammate who started the takeover) — the
     # "Requested by" line in the takeover-pending template.
     "initiator",
+    # Sender name — the staff member who replied. Runtime-filled from the logged-in
+    # user's ``users.name`` (falls back to "Customer Service" for API-key/system
+    # principals). Used by the chat reply templates so the contact knows who replied.
+    "sender_name",
 )
 
 # Use cases whose template MUST map a slot to a specific variable, or the message
@@ -492,6 +497,15 @@ def set_default(
     if required_var and required_var not in mapping.values():
         raise handle_validation_error(
             f"The '{use_case}' template must map a parameter to '{required_var}'."
+        )
+
+    # Chat reply templates carry the admin's typed message in a body param — a
+    # default with no slot mapped to ``message`` would drop the reply entirely.
+    # ``sender_name`` unmapped is allowed (it only labels who replied), so do NOT
+    # hard-fail on it here (the FE surfaces a soft warning).
+    if use_case in CHAT_TEMPLATE_USE_CASES and "message" not in mapping.values():
+        raise handle_validation_error(
+            "Chat templates must map a parameter to the typed message (variable: message)."
         )
 
     row = (

@@ -59,6 +59,11 @@ export type UseCase =
   | 'stock_inquiry'
   | 'purchase_request'
   | 'sponsorship_form'
+  | 'complaint_chat'
+  | 'stock_inquiry_chat'
+  | 'purchase_request_chat'
+  | 'sponsorship_form_chat'
+  | 'conversation_chat'
   | 'portal_otp'
   | 'sla_daily_summary'
   | 'sla_assignment'
@@ -71,6 +76,7 @@ export type UseCase =
 
 export type ParamVariable =
   | 'contact_name'
+  | 'sender_name'
   | 'entity_number'
   | 'status'
   | 'reason'
@@ -160,7 +166,13 @@ export interface SyncResult {
   channels: number;
 }
 
-export const USE_CASES: { key: UseCase; label: string; description: string }[] = [
+export const USE_CASES: {
+  key: UseCase;
+  label: string;
+  description: string;
+  /** 'update' = status-update templates (existing); 'chat' = free-text chat-reply templates. */
+  group?: 'update' | 'chat';
+}[] = [
   {
     key: 'complaint',
     label: 'Complaint',
@@ -180,6 +192,41 @@ export const USE_CASES: { key: UseCase; label: string; description: string }[] =
     key: 'sponsorship_form',
     label: 'Sponsorship Form',
     description: 'Approval updates sent to the sponsorship applicant.',
+  },
+  {
+    key: 'complaint_chat',
+    label: 'Complaint — Chat Reply',
+    description:
+      'Free-text chat reply to the complainant when their 24h window is closed. Map a parameter to "Full update message" (the typed text) and, ideally, "Sender name".',
+    group: 'chat',
+  },
+  {
+    key: 'stock_inquiry_chat',
+    label: 'Stock Inquiry — Chat Reply',
+    description:
+      'Free-text chat reply to the inquiring contact when their 24h window is closed. Map a parameter to "Full update message" and, ideally, "Sender name".',
+    group: 'chat',
+  },
+  {
+    key: 'purchase_request_chat',
+    label: 'Purchase Request — Chat Reply',
+    description:
+      'Free-text chat reply to the requester when their 24h window is closed. Map a parameter to "Full update message" and, ideally, "Sender name".',
+    group: 'chat',
+  },
+  {
+    key: 'sponsorship_form_chat',
+    label: 'Sponsorship Form — Chat Reply',
+    description:
+      'Free-text chat reply to the sponsorship applicant when their 24h window is closed. Map a parameter to "Full update message" and, ideally, "Sender name".',
+    group: 'chat',
+  },
+  {
+    key: 'conversation_chat',
+    label: 'Conversation SLA — Chat Reply',
+    description:
+      'Free-text chat reply to a Respond contact from the Conversation SLA panel when their 24h window is closed. Map a parameter to "Full update message" and, ideally, "Sender name". No view link.',
+    group: 'chat',
   },
   {
     key: 'portal_otp',
@@ -239,6 +286,7 @@ export const USE_CASES: { key: UseCase; label: string; description: string }[] =
 
 export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: string }[] = [
   { key: 'contact_name', label: 'Contact name', description: 'WhatsApp contact display name' },
+  { key: 'sender_name', label: 'Sender name', description: 'Staff member who sent the reply (logged-in user; "Customer Service" for system sends)' },
   { key: 'entity_number', label: 'Entity number', description: 'e.g. CMP-2606-0012 / RMA-PS2605-0017' },
   { key: 'status', label: 'Status', description: 'New status of the record (approved, rejected…)' },
   { key: 'reason', label: 'Reason', description: 'Decision reason when present' },
@@ -286,6 +334,7 @@ const ENTITY_CHAT_BASE: Record<string, string> = {
   stock_inquiry: '/api/v1/procurement/stock-inquiries',
   purchase_request: '/api/v1/procurement/purchase-requests',
   sponsorship_form: '/api/v1/procurement/purchase-requests',
+  conversation_sla: '/api/v1/sla-management/conversation-sla-tracking',
 };
 
 function chatBase(entityType: string): string {
@@ -369,6 +418,133 @@ export async function sendTemplateMessage(
   );
   await jsonOrThrow(res, 'Failed to send template');
   return { ok: true };
+}
+
+export interface ChatTemplateSlot {
+  variable: string | null;
+  /** Resolved value for non-message slots; null for the editable message slot. */
+  value: string | null;
+  editable: boolean;
+}
+
+export interface ChatTemplatePreview {
+  configured: boolean;
+  reason?: string;
+  settings_url?: string;
+  template_name?: string;
+  body_text?: string;
+  slots?: Record<string, ChatTemplateSlot>;
+}
+
+/** Describe the form's *_chat template so the composer can render it inline with a
+ * fill-in field for the message (out-of-window). DB-only on the backend — no send. */
+export async function getChatTemplatePreview(
+  entityType: string,
+  entityId: string,
+): Promise<ChatTemplatePreview> {
+  const res = await apiFetch(
+    `${chatBase(entityType)}/${encodeURIComponent(entityId)}/conversation/chat-template`,
+  );
+  return jsonOrThrow<ChatTemplatePreview>(res, 'Failed to load chat template');
+}
+
+export interface SendMessageResult {
+  /** 'text' = plain typed text delivered (in-window); 'template' = *_chat template delivered (out-of-window). */
+  sent_as: 'text' | 'template';
+  /** What the contact actually received (typed text, or the rendered template body with params filled). */
+  rendered_text: string;
+  /** true when the typed text was flattened (newlines/tabs/space-runs collapsed, or truncated) to fit the template param. */
+  flattened: boolean;
+  window_state: WindowState;
+}
+
+/** Thrown when an out-of-window chat send has no configured `*_chat` template for the form. */
+export class NoChatTemplateError extends Error {
+  readonly code = 'no_chat_template';
+  readonly settingsUrl: string;
+  constructor(message: string, settingsUrl: string) {
+    super(message);
+    this.name = 'NoChatTemplateError';
+    this.settingsUrl = settingsUrl;
+  }
+}
+
+/**
+ * Pure chat-window send. Backend decides plain-vs-template by the 24h window:
+ * in-window -> raw typed text; out-of-window -> the form's `*_chat` template with
+ * {{sender_name}} (logged-in user) + the typed text (flattened into `message`).
+ * Never mutates the entity. Synchronous; returns what was delivered.
+ */
+export async function sendConversationMessage(
+  entityType: string,
+  entityId: string,
+  text: string,
+): Promise<SendMessageResult> {
+  const res = await apiFetch(
+    `${chatBase(entityType)}/${encodeURIComponent(entityId)}/conversation/send-message`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    },
+  );
+  if (!res.ok) {
+    // Surface the "no chat template configured" case as a typed error the composer can act on.
+    let body: unknown = null;
+    try {
+      body = await res.clone().json();
+    } catch {
+      /* fall through to extractApiError */
+    }
+    const code = extractErrorCode(body);
+    if (code === 'no_chat_template') {
+      const settingsUrl = extractSettingsUrl(body) ?? '/integration-management/whatsapp-templates';
+      throw new NoChatTemplateError(
+        extractApiErrorMessage(body) ?? 'No chat reply template configured for this form.',
+        settingsUrl,
+      );
+    }
+    throw new Error(await extractApiError(res, 'Failed to send message'));
+  }
+  return (await res.json()) as SendMessageResult;
+}
+
+/** Pull an error_code out of the various shapes the backend error handler may emit. */
+function extractErrorCode(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null;
+  const b = body as Record<string, unknown>;
+  const detail = b.detail as Record<string, unknown> | undefined;
+  return (
+    (typeof b.code === 'string' && b.code) ||
+    (typeof b.error_code === 'string' && b.error_code) ||
+    (detail && typeof detail.code === 'string' && detail.code) ||
+    null
+  );
+}
+
+function extractSettingsUrl(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null;
+  const b = body as Record<string, unknown>;
+  // Backend AppException carries the settings URL in `detail` (a plain path string).
+  if (typeof b.settings_url === 'string') return b.settings_url;
+  if (typeof b.detail === 'string' && b.detail.startsWith('/')) return b.detail;
+  const detail = b.detail as Record<string, unknown> | undefined;
+  if (detail && typeof detail === 'object') {
+    if (typeof detail.settings_url === 'string') return detail.settings_url;
+  }
+  return null;
+}
+
+function extractApiErrorMessage(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null;
+  const b = body as Record<string, unknown>;
+  const detail = b.detail as Record<string, unknown> | undefined;
+  return (
+    (typeof b.message === 'string' && b.message) ||
+    (detail && typeof detail.message === 'string' && detail.message) ||
+    (typeof b.detail === 'string' && (b.detail as string)) ||
+    null
+  );
 }
 
 /** Render a template body with params filled; unfilled params stay as {{n}}. */

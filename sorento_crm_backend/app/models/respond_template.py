@@ -74,6 +74,28 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # 24h window is closed (the usual case). Map params to ``discontinued_count`` +
     # ``discontinued_link`` (deep link to the product list filtered to that batch).
     "product_discontinued",
+    # Chat reply templates (PLAN-unified-conversation-composer-smart-send). Sent when
+    # an admin types a free message in an entity's chat composer while the contact's
+    # 24h window is CLOSED — the typed text is wrapped into these per-form templates
+    # carrying ``sender_name`` (the replying staff) + ``message`` (the typed text).
+    # Distinct from the status-update templates above so the wording reads as a human
+    # reply, not a status change. Each MUST map a slot to ``message`` (enforced in
+    # set_default). ``conversation_chat`` is the form-less variant for conversation SLA.
+    "complaint_chat",
+    "stock_inquiry_chat",
+    "purchase_request_chat",
+    "sponsorship_form_chat",
+    "conversation_chat",
+)
+
+# Chat reply use cases — a *_chat / conversation_chat default MUST map a slot to the
+# ``message`` variable (the typed text) or the reply loses its whole point.
+CHAT_TEMPLATE_USE_CASES = (
+    "complaint_chat",
+    "stock_inquiry_chat",
+    "purchase_request_chat",
+    "sponsorship_form_chat",
+    "conversation_chat",
 )
 
 

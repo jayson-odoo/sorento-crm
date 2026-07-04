@@ -582,6 +582,8 @@ def send_text_or_template(
             "response": response,
             "window_state": window,
             "request_payload": text_payload,
+            # What the contact actually received (in-window free text).
+            "rendered_text": out_text,
         }
 
     try:
@@ -611,11 +613,19 @@ def send_text_or_template(
                 "template",
             )
         raise
+    # Render the template body with the resolved params, so callers can echo the
+    # exact message the contact received (params filled) — same render as the
+    # manual-template path (render_filled_body over {{n}} slots).
+    from app.services.respond_chat_template_service import render_filled_body
+
+    _body_text = (result.get("request_payload") or {}).get("message", {}).get("body_text") or ""
+    rendered_text = render_filled_body(_body_text, result["params"])
     return {
         "sent_as": "template",
         "response": result["response"],
         "window_state": window,
         "template_name": result["template_name"],
+        "rendered_text": rendered_text,
         "request_payload": {
             "message": {
                 "type": "whatsapp_template",

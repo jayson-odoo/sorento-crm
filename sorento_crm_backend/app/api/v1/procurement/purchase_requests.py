@@ -677,11 +677,32 @@ def _resolve_purchase_request_chat_contact(db: Session, request_id: str):
     return identifier, getattr(header, "contact_id", None)
 
 
+def _resolve_purchase_request_chat_use_case(db: Session, request_id: str) -> str:
+    """Sponsorship-form rows ride the PR panel + PurchaseRequestHeader but need
+    their own chat template use case; everything else is a purchase request."""
+    header = PurchaseRequestService(db).get_request(request_id)
+    if (getattr(header, "request_type", None) or "") == "sponsorship_form":
+        return "sponsorship_form_chat"
+    return "purchase_request_chat"
+
+
+def _build_purchase_request_chat_context(db: Session, request_id: str) -> dict:
+    """Template context (portal_url / view_url) for a PR / sponsorship chat send."""
+    service = PurchaseRequestService(db)
+    header = service.get_request(request_id)
+    return {
+        "portal_url": service._purchase_request_portal_or_view_url(header, str(request_id)),
+        "view_url": (service._build_request_view_url(str(request_id)) or "").strip(),
+    }
+
+
 from app.api.v1._respond_chat_template_routes import build_chat_template_router
 
 router.include_router(
     build_chat_template_router(
         business_table="purchase_requests",
         resolver=_resolve_purchase_request_chat_contact,
+        chat_use_case_resolver=_resolve_purchase_request_chat_use_case,
+        context_builder=_build_purchase_request_chat_context,
     )
 )

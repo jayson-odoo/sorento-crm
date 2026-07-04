@@ -1,0 +1,248 @@
+import React from 'react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import SharedConversationComposer from './SharedConversationComposer';
+
+// Keep the real module (so NoChatTemplateError stays the SAME class the composer
+// catches with `instanceof`) but stub the network functions.
+vi.mock('@/services/whatsappTemplateService', async () => {
+  const actual = await vi.importActual<
+    typeof import('@/services/whatsappTemplateService')
+  >('@/services/whatsappTemplateService');
+  return {
+    ...actual,
+    getWindowState: vi.fn(),
+    sendConversationMessage: vi.fn(),
+    getChatTemplatePreview: vi.fn(),
+    listApprovedTemplates: vi.fn().mockResolvedValue([]),
+  };
+});
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+import {
+  getWindowState,
+  sendConversationMessage,
+  getChatTemplatePreview,
+  NoChatTemplateError,
+} from '@/services/whatsappTemplateService';
+import { toast } from 'sonner';
+
+// jsdom does not implement scrollIntoView (guard per CLAUDE.md).
+if (!(Element.prototype as any).scrollIntoView) {
+  (Element.prototype as any).scrollIntoView = vi.fn();
+}
+
+function renderComposer(
+  props: Partial<React.ComponentProps<typeof SharedConversationComposer>> = {},
+) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <SharedConversationComposer
+        entityType="complaint"
+        entityId="c1"
+        canReply
+        {...props}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+const OPEN = { open: true, last_incoming_at: null, checked_at: '2026-07-01T00:00:00Z' };
+const CLOSED = { open: false, last_incoming_at: null, checked_at: '2026-07-01T00:00:00Z' };
+
+// Out-of-window template preview: the `*_chat` template rendered inline with a
+// fill-in field. Slot "1" resolves to the sender name (read-only); slot "2" is
+// the editable message field.
+const PREVIEW_CONFIGURED = {
+  configured: true,
+  template_name: 't',
+  body_text: 'Hi {{1}}: {{2}}',
+  slots: {
+    '1': { variable: 'sender_name', value: 'Admin', editable: false },
+    '2': { variable: 'message', value: null, editable: true },
+  },
+};
+
+const PREVIEW_UNCONFIGURED = {
+  configured: false,
+  settings_url: '/integration-management/whatsapp-templates',
+};
+
+describe('SharedConversationComposer', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (getWindowState as any).mockResolvedValue(OPEN);
+    (getChatTemplatePreview as any).mockResolvedValue(PREVIEW_CONFIGURED);
+    (sendConversationMessage as any).mockResolvedValue({
+      sent_as: 'text',
+      rendered_text: 'hi there',
+      flattened: false,
+      window_state: OPEN,
+    });
+  });
+
+  // ----------------------------------------------------------------- in-window
+
+  it('in-window: plain textbox present; preview query disabled (not called)', async () => {
+    (getWindowState as any).mockResolvedValue(OPEN);
+    renderComposer();
+
+    await waitFor(() => expect(getWindowState).toHaveBeenCalled());
+    expect(screen.getByPlaceholderText('Type your message...')).toBeInTheDocument();
+    // Window open -> the template preview query is disabled and never fires.
+    expect(getChatTemplatePreview).not.toHaveBeenCalled();
+    // No template-mode surface in-window.
+    expect(screen.queryByTestId('composer-template-mode')).not.toBeInTheDocument();
+  });
+
+  it('in-window: typing + Enter (no shift) sends via the API', async () => {
+    (getWindowState as any).mockResolvedValue(OPEN);
+    renderComposer();
+
+    await waitFor(() => expect(getWindowState).toHaveBeenCalled());
+    const textarea = screen.getByPlaceholderText('Type your message...');
+    fireEvent.change(textarea, { target: { value: 'hello' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+
+    await waitFor(() =>
+      expect(sendConversationMessage).toHaveBeenCalledWith('complaint', 'c1', 'hello'),
+    );
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Message sent'));
+  });
+
+  it('in-window: clicking Send sends via the API', async () => {
+    (getWindowState as any).mockResolvedValue(OPEN);
+    renderComposer();
+
+    await waitFor(() => expect(getWindowState).toHaveBeenCalled());
+    fireEvent.change(screen.getByPlaceholderText('Type your message...'), {
+      target: { value: 'hey there' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() =>
+      expect(sendConversationMessage).toHaveBeenCalledWith('complaint', 'c1', 'hey there'),
+    );
+  });
+
+  // ---------------------------------------------------- out-of-window: template
+
+  it('out-of-window: renders the template inline with a fill-in field and no plain textbox', async () => {
+    (getWindowState as any).mockResolvedValue(CLOSED);
+    (getChatTemplatePreview as any).mockResolvedValue(PREVIEW_CONFIGURED);
+    renderComposer();
+
+    expect(await screen.findByTestId('composer-template-mode')).toBeInTheDocument();
+    expect(screen.getByTestId('template-message-field')).toBeInTheDocument();
+    // The plain in-window textbox is NOT rendered in template mode.
+    expect(screen.queryByPlaceholderText('Type your message...')).not.toBeInTheDocument();
+    // Resolved non-message value shown read-only in the preview.
+    expect(screen.getByText('Admin')).toBeInTheDocument();
+    expect(getChatTemplatePreview).toHaveBeenCalledWith('complaint', 'c1');
+  });
+
+  it('out-of-window: a newline in the message field shows the flatten warning; a single line does not', async () => {
+    (getWindowState as any).mockResolvedValue(CLOSED);
+    (getChatTemplatePreview as any).mockResolvedValue(PREVIEW_CONFIGURED);
+    renderComposer();
+
+    const field = await screen.findByTestId('template-message-field');
+
+    fireEvent.change(field, { target: { value: 'line one\nline two' } });
+    expect(screen.getByTestId('flatten-warning')).toBeInTheDocument();
+
+    fireEvent.change(field, { target: { value: 'one line' } });
+    expect(screen.queryByTestId('flatten-warning')).not.toBeInTheDocument();
+  });
+
+  it('out-of-window: clicking Send sends the field text via the API', async () => {
+    (getWindowState as any).mockResolvedValue(CLOSED);
+    (getChatTemplatePreview as any).mockResolvedValue(PREVIEW_CONFIGURED);
+    (sendConversationMessage as any).mockResolvedValue({
+      sent_as: 'template',
+      rendered_text: 'Hi Admin: my reply',
+      flattened: false,
+      window_state: CLOSED,
+    });
+    renderComposer();
+
+    const field = await screen.findByTestId('template-message-field');
+    fireEvent.change(field, { target: { value: 'my reply' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() =>
+      expect(sendConversationMessage).toHaveBeenCalledWith('complaint', 'c1', 'my reply'),
+    );
+  });
+
+  // ------------------------------------------------ out-of-window: no template
+
+  it('out-of-window, no template configured: shows the notice UPFRONT with a settings link (before any send)', async () => {
+    (getWindowState as any).mockResolvedValue(CLOSED);
+    (getChatTemplatePreview as any).mockResolvedValue(PREVIEW_UNCONFIGURED);
+    renderComposer();
+
+    const notice = await screen.findByTestId('no-chat-template-notice');
+    expect(notice).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: /configure a chat reply template/i });
+    expect(link).toHaveAttribute('href', '/integration-management/whatsapp-templates');
+    // Shown upfront — no send was attempted.
+    expect(sendConversationMessage).not.toHaveBeenCalled();
+  });
+
+  it('send-time fallback: a NoChatTemplateError surfaces the notice', async () => {
+    (getWindowState as any).mockResolvedValue(CLOSED);
+    (getChatTemplatePreview as any).mockResolvedValue(PREVIEW_CONFIGURED);
+    (sendConversationMessage as any).mockRejectedValue(
+      new NoChatTemplateError(
+        'No chat reply template configured for this form.',
+        '/integration-management/whatsapp-templates',
+      ),
+    );
+    renderComposer();
+
+    const field = await screen.findByTestId('template-message-field');
+    fireEvent.change(field, { target: { value: 'hi' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    const notice = await screen.findByTestId('no-chat-template-notice');
+    expect(notice).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: /configure a chat reply template/i });
+    expect(link).toHaveAttribute('href', '/integration-management/whatsapp-templates');
+  });
+
+  // --------------------------------------------------------------- mode gating
+
+  it('conversation mode hides entity-only affordances', async () => {
+    renderComposer({
+      mode: 'conversation',
+      onGetViewLink: async () => 'https://x/link',
+      useResponseText: 'canned reply',
+    });
+    await waitFor(() => expect(getWindowState).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: /attach view link/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /use response/i })).not.toBeInTheDocument();
+  });
+
+  it('entity mode renders the view-link + use-response affordances', async () => {
+    renderComposer({
+      mode: 'entity',
+      onGetViewLink: async () => 'https://x/link',
+      useResponseText: 'canned reply',
+    });
+    expect(await screen.findByRole('button', { name: /attach view link/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /use response/i })).toBeInTheDocument();
+  });
+
+  it('when !canReply, renders the not-available message and no composer', () => {
+    renderComposer({ canReply: false, notAvailableMessage: 'No conversation linked here.' });
+    expect(screen.getByText('No conversation linked here.')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Type your message...')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('composer-template-mode')).not.toBeInTheDocument();
+  });
+});

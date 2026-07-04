@@ -31,11 +31,25 @@ class TemplateMessageSendRequest(BaseModel):
     params: dict[str, str] = Field(default_factory=dict)
 
 
+class ChatMessageSendRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+
+
 def build_chat_template_router(
     *,
     business_table: str,
     resolver: ChatContactResolver,
+    chat_use_case: Optional[str] = None,
+    chat_use_case_resolver: Optional[Callable[[Session, str], str]] = None,
+    context_builder: Optional[Callable[[Session, str], dict]] = None,
 ) -> APIRouter:
+    """Reusable window-state + manual-template + smart-send routes for a chat panel.
+
+    ``chat_use_case`` is the ``*_chat`` / ``conversation_chat`` template use case for
+    the pure smart-send route. ``chat_use_case_resolver`` overrides it per entity
+    (e.g. purchase_request vs sponsorship_form on a single mount). ``context_builder``
+    supplies extra template context (portal_url / view_url) per entity.
+    """
     router = APIRouter()
 
     @router.get("/{entity_id}/conversation/window-state")
@@ -83,5 +97,75 @@ def build_chat_template_router(
             "template_name": result["template_name"],
             "rendered_body": result["rendered_body"],
         }
+
+    @router.get("/{entity_id}/conversation/chat-template")
+    def chat_template(
+        entity_id: str,
+        db: Session = Depends(get_db),
+        current_user: dict = Depends(get_current_user),
+    ):
+        """Describe the form's chat template so the composer can render it inline
+        with a fill-in field for the message. DB-only (no Respond.io call)."""
+        use_case = (
+            chat_use_case_resolver(db, entity_id)
+            if chat_use_case_resolver is not None
+            else chat_use_case
+        )
+        if not use_case:
+            return {"configured": False, "reason": "not_supported"}
+        identifier, respond_contact_id = resolver(db, entity_id)
+        if not identifier:
+            return {"configured": False, "reason": "no_contact"}
+        sender_name = (current_user.get("name") or "").strip() or "Customer Service"
+        from app.services.respond_chat_template_service import get_chat_template_preview
+
+        return get_chat_template_preview(
+            db,
+            identifier=identifier,
+            respond_contact_id=respond_contact_id,
+            chat_use_case=use_case,
+            sender_name=sender_name,
+            entity_id=str(entity_id),
+            context_builder=context_builder,
+        )
+
+    @router.post("/{entity_id}/conversation/send-message")
+    def send_message(
+        entity_id: str,
+        body: ChatMessageSendRequest,
+        db: Session = Depends(get_db),
+        current_user: dict = Depends(get_current_user),
+    ):
+        """Pure smart chat send: in-window plain text, out-of-window ``*_chat``
+        template with the sender's name. Never mutates the entity."""
+        use_case = (
+            chat_use_case_resolver(db, entity_id)
+            if chat_use_case_resolver is not None
+            else chat_use_case
+        )
+        if not use_case:
+            raise handle_validation_error("Chat send not configured for this entity.")
+        identifier, respond_contact_id = resolver(db, entity_id)
+        if not identifier:
+            raise handle_validation_error(
+                "No Respond.io contact linked; cannot send a message."
+            )
+        sender_name = (current_user.get("name") or "").strip() or "Customer Service"
+        from app.services.respond_chat_template_service import send_chat_message_for
+
+        # Pass the context_builder callable through — send_chat_message_for invokes it
+        # lazily + guarded, and ONLY on the out-of-window (template) path.
+        return send_chat_message_for(
+            db,
+            identifier=identifier,
+            respond_contact_id=respond_contact_id,
+            text=body.text,
+            chat_use_case=use_case,
+            business_table=business_table,
+            business_id=str(entity_id),
+            sender_name=sender_name,
+            created_by=str(current_user.get("id") or "") or None,
+            context_builder=context_builder,
+        )
 
     return router

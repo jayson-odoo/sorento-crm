@@ -13,7 +13,10 @@ import {
   getOutgoingBubbleClass,
   getOutgoingSenderLabel,
 } from '@/lib/respondIoOutgoingMessage';
+import { useQueryClient } from '@tanstack/react-query';
 import { useSlaTrackingConversation } from '../hooks/useConversationSLATracking';
+import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
+import { invalidateConversationWindow } from '@/components/common/conversation/useConversationWindowState';
 
 interface SlaTrackingConversationPanelProps {
   trackingId: string;
@@ -26,6 +29,14 @@ export default function SlaTrackingConversationPanel({
   respondInboxUrl,
   showAsPopup = false,
 }: SlaTrackingConversationPanelProps) {
+  // A Respond contact is linked when we have an inbox URL for the conversation.
+  const canReply = Boolean(respondInboxUrl);
+  const queryClient = useQueryClient();
+
+  const handleRefresh = () => {
+    void refetch();
+    invalidateConversationWindow(queryClient, 'conversation_sla', trackingId);
+  };
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { data, isLoading, refetch, isRefetching } = useSlaTrackingConversation(trackingId, {
     limit: 50,
@@ -69,7 +80,7 @@ export default function SlaTrackingConversationPanel({
             size="icon"
             className="shrink-0"
             disabled={isRefetching}
-            onClick={() => refetch()}
+            onClick={handleRefresh}
             aria-label="Refresh messages"
           >
             <RefreshCw className={`size-4 ${isRefetching ? 'animate-spin' : ''}`} />
@@ -133,26 +144,36 @@ export default function SlaTrackingConversationPanel({
           </div>
         )}
 
-        <div className="rounded-md border border-dashed bg-muted/30 p-3">
-          <p className="text-sm text-muted-foreground">
-            Replies — including files and images — are sent from Respond. Open the conversation
-            there to respond to the customer.
-          </p>
-          {respondInboxUrl ? (
+        <SharedConversationComposer
+          entityType="conversation_sla"
+          entityId={trackingId}
+          canReply={canReply}
+          mode="conversation"
+          onSent={() => {
+            void refetch();
+            window.setTimeout(() => {
+              void refetch();
+            }, 1600);
+          }}
+          notAvailableMessage="No Respond conversation link available for this contact."
+        />
+
+        {respondInboxUrl && (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-dashed bg-muted/30 px-3 py-2">
+            <p className="text-xs text-muted-foreground">
+              To send files or images, open the conversation in Respond.
+            </p>
             <Button
-              className="mt-2"
+              variant="outline"
               size="sm"
+              className="shrink-0"
               onClick={() => window.open(respondInboxUrl, '_blank', 'noopener,noreferrer')}
             >
               <ExternalLink className="size-4" />
               Open in Respond
             </Button>
-          ) : (
-            <p className="mt-2 text-xs text-muted-foreground">
-              No Respond conversation link available for this contact.
-            </p>
-          )}
-        </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

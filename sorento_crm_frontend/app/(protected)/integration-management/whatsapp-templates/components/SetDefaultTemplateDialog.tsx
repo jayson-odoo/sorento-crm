@@ -95,7 +95,12 @@ export default function SetDefaultTemplateDialog({
     !selected?.has_url_button ||
     selected.button_is_copy_code ||
     Boolean(mapping[BUTTON_URL_KEY]);
-  const canSave = Boolean(templateId) && allMapped && buttonMapped && !isSaving;
+  // Chat reply templates MUST carry the typed message somewhere (variable: message).
+  const isChat = useCase.endsWith('_chat');
+  const messageMapped = paramKeys.some((k) => mapping[k] === 'message');
+  const senderMapped = paramKeys.some((k) => mapping[k] === 'sender_name');
+  const chatOk = !isChat || (Boolean(selected) && messageMapped);
+  const canSave = Boolean(templateId) && allMapped && buttonMapped && chatOk && !isSaving;
 
   const useCaseLabel = USE_CASES.find((u) => u.key === useCase)?.label ?? useCase;
 
@@ -184,6 +189,18 @@ export default function SetDefaultTemplateDialog({
               {!allMapped && (
                 <p className="text-xs text-muted-foreground">
                   Map every placeholder before saving.
+                </p>
+              )}
+              {isChat && allMapped && !messageMapped && (
+                <p className="text-xs text-destructive" data-testid="chat-message-required">
+                  A chat reply template must map one placeholder to{' '}
+                  <span className="font-medium">Full update message</span> (the typed text).
+                </p>
+              )}
+              {isChat && messageMapped && !senderMapped && (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Tip: map a placeholder to <span className="font-medium">Sender name</span> so the
+                  contact knows who replied.
                 </p>
               )}
             </div>
