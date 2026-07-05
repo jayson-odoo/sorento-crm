@@ -325,6 +325,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/user-management/contact-access-types',
       },
       {
+        title: 'Market Segments',
+        path: '/user-management/market-segments',
+      },
+      {
         title: 'Account',
         path: '/user-management/account',
         permission: 'user_management.account.view',
@@ -1173,6 +1177,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Contact Access Types',
         path: '/user-management/contact-access-types',
+      },
+      {
+        title: 'Market Segments',
+        path: '/user-management/market-segments',
       },
       {
         title: 'Account',

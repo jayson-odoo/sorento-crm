@@ -338,7 +338,21 @@ async def post_next_assignee(
                 detail=f"preferred_assignee_id={preferred_id!r} is not a member of the resolved team.",
             )
     else:
-        result = service.get_next_assignee(agent_id, team_id)
+        # Opt-in market-segment scoping. Absent contact_id -> call with the original
+        # arity -> pure round-robin on the '' cursor, byte-identical to prior behaviour.
+        contact_segments: Optional[set[str]] = None
+        contact_ref = body.get("contact_id") or body.get("respond_io_id")
+        if contact_ref is not None and str(contact_ref).strip():
+            from app.services.market_segment_service import MarketSegmentService
+
+            resolved = MarketSegmentService(db).resolve_contact_segments(
+                str(contact_ref).strip(), body.get("space_id")
+            )
+            contact_segments = resolved or None
+        if contact_segments:
+            result = service.get_next_assignee(agent_id, team_id, contact_segments)
+        else:
+            result = service.get_next_assignee(agent_id, team_id)
     if result is None:
         raise HTTPException(
             status_code=404,

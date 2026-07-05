@@ -117,6 +117,75 @@ respond_contact_access_types = Table(
 )
 
 
+class MarketSegment(Base):
+    """Configurable catalog of market segments (retail / project) for CS routing.
+
+    A respond contact carries the segment(s) it belongs to; a team membership
+    carries the segment(s) that member serves. team-members / next-assignee
+    intersect the two to route a conversation to the right customer-service pool.
+    Admin-manageable (add / rename / activate / reorder) via Settings.
+    """
+    __tablename__ = "market_segments"
+
+    code = Column(String(50), primary_key=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    sort_order = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_market_segments_is_active", "is_active"),
+    )
+
+
+# Many-to-many: a respond contact belongs to zero+ market segments. Empty = the
+# contact matches every member (minimum configuration).
+respond_contact_market_segments = Table(
+    "respond_contact_market_segments",
+    Base.metadata,
+    Column(
+        "contact_id",
+        Text,
+        ForeignKey("respond_contacts.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "segment_code",
+        String(50),
+        ForeignKey("market_segments.code", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("created_at", DateTime(timezone=False), server_default=func.now(), nullable=False),
+    Index("ix_respond_contact_market_segments_contact_id", "contact_id"),
+    Index("ix_respond_contact_market_segments_segment_code", "segment_code"),
+)
+
+
+# Many-to-many: a team membership serves zero+ market segments. Empty = the
+# member serves every contact (untagged member = serves all).
+team_member_market_segments = Table(
+    "team_member_market_segments",
+    Base.metadata,
+    Column(
+        "team_member_id",
+        UUID(as_uuid=False),
+        ForeignKey("team_members.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "segment_code",
+        String(50),
+        ForeignKey("market_segments.code", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("created_at", DateTime(timezone=False), server_default=func.now(), nullable=False),
+    Index("ix_team_member_market_segments_team_member_id", "team_member_id"),
+    Index("ix_team_member_market_segments_segment_code", "segment_code"),
+)
+
+
 class RespondContact(Base):
     __tablename__ = "respond_contacts"
 
@@ -150,6 +219,13 @@ class RespondContact(Base):
         "ContactAccessType",
         secondary=respond_contact_access_types,
         order_by="ContactAccessType.sort_order, ContactAccessType.code",
+    )
+    # Many-to-many: contact ↔ market segments (retail / project). Empty = matches
+    # every CS member (minimum config). Configured per contact in the FE.
+    market_segments = relationship(
+        "MarketSegment",
+        secondary=respond_contact_market_segments,
+        order_by="MarketSegment.sort_order, MarketSegment.code",
     )
     workspace = relationship("RespondWorkspace", back_populates="respond_contacts")
 
@@ -310,6 +386,13 @@ class TeamMember(Base):
 
     team = relationship("Team", back_populates="members")
     user = relationship("User", backref="team_memberships")
+    # Many-to-many: this membership ↔ market segments it serves. Empty = serves
+    # every contact (untagged member = serves all).
+    market_segments = relationship(
+        "MarketSegment",
+        secondary=team_member_market_segments,
+        order_by="MarketSegment.sort_order, MarketSegment.code",
+    )
 
     __table_args__ = (
         Index("ix_team_members_team_id", "team_id"),
@@ -375,11 +458,15 @@ class AgentTeamRoundRobinCursor(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="CASCADE"), nullable=False)
     team_id = Column(UUID(as_uuid=False), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
+    # Market-segment discriminator for the rotation. '' = the legacy / no-segment
+    # cursor (used when next-assignee gets no contact_id — unchanged behaviour).
+    # Non-empty = sorted '|'-joined contact segment codes (e.g. 'project|retail').
+    segment_key = Column(String(120), nullable=False, server_default=text("''"))
     last_assigned_user_id = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     __table_args__ = (
-        Index("ix_agent_team_round_robin_cursors_agent_team", "agent_id", "team_id", unique=True),
+        Index("ix_agent_team_rr_cursors_agent_team_segment", "agent_id", "team_id", "segment_key", unique=True),
     )
 
 

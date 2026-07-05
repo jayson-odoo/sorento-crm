@@ -6,6 +6,7 @@ from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import get_current_user
 from app.services.user_service import TeamService
 from app.schemas.user import TeamCreate, TeamUpdate, TeamResponse, TeamMemberResponse
+from app.schemas.market_segment import MarketSegmentCodesUpdate
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -174,6 +175,53 @@ async def remove_team_member(
         service = TeamService(db)
         service.remove_team_member(team_id, user_id)
         return {"message": "Member removed"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{team_id}/members/{user_id}/market-segments")
+async def get_team_member_market_segments(
+    team_id: str,
+    user_id: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """List the market segments (retail / project) this member serves. Empty = serves all."""
+    try:
+        validate_uuid_path(team_id, resource="Team")
+        from app.services.market_segment_service import MarketSegmentService
+
+        return {
+            "codes": MarketSegmentService(db).get_member_segment_codes_by_team_user(
+                team_id, user_id
+            )
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/{team_id}/members/{user_id}/market-segments")
+async def set_team_member_market_segments(
+    team_id: str,
+    user_id: str,
+    payload: MarketSegmentCodesUpdate,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Replace the segments this member serves (empty = clear → serves all)."""
+    try:
+        validate_uuid_path(team_id, resource="Team")
+        from app.services.market_segment_service import MarketSegmentService
+
+        return {
+            "codes": MarketSegmentService(db).set_member_segments_by_team_user(
+                team_id, user_id, payload.codes
+            )
+        }
     except HTTPException:
         raise
     except Exception as e:

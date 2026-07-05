@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.api.v1.external.next_assignee import _resolve_round_robin_team_id
+from app.services.market_segment_service import MarketSegmentService
 from app.services.user_service import AccessAgentService
 
 router = APIRouter()
@@ -24,6 +25,17 @@ async def get_team_members(
     agent_code: Optional[str] = Query(None),
     agent_id: Optional[str] = Query(None),
     tier: Optional[int] = Query(None),
+    contact_id: Optional[str] = Query(
+        None,
+        description="Respond.io contact id (respond_io_id). When set, the roster is "
+        "filtered to members serving the contact's market segment(s) (retail / project); "
+        "untagged members serve all. Omit / unknown contact / untagged contact = full roster.",
+    ),
+    space_id: Optional[str] = Query(
+        None,
+        description="Respond.io space id (respond_workspaces.space_id) — optional, "
+        "disambiguates contact_id across workspaces.",
+    ),
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
@@ -32,6 +44,8 @@ async def get_team_members(
 
     Query (team): team_id, or team_code (+ tier when the same team_code spans SLA tiers).
     Query (agent): agent_id or agent_code — required to resolve a team_code via the agent link.
+    Query (segment): contact_id (respond_io_id) [+ space_id] to filter by the contact's
+    market segment(s). No filter when omitted / contact unknown / contact untagged.
 
     Response: [{user_id, name, respond_user_id, email, sort_order}] (active users only).
     """
@@ -59,5 +73,16 @@ async def get_team_members(
     resolved_team_id = _resolve_round_robin_team_id(
         service, str(resolved_agent_id).strip() if resolved_agent_id else "", body
     )
+
+    # Opt-in market-segment filter. Unknown/untagged contact -> empty set -> no filter.
+    # No contact_id -> call with the original arity (byte-identical to prior behaviour).
+    if contact_id and contact_id.strip():
+        contact_segments = MarketSegmentService(db).resolve_contact_segments(
+            contact_id, space_id
+        )
+        if contact_segments:
+            return service.list_active_team_members_detail(
+                resolved_team_id, contact_segments
+            )
 
     return service.list_active_team_members_detail(resolved_team_id)

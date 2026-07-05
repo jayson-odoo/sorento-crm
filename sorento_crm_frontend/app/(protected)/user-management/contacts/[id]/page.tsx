@@ -31,6 +31,7 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import ContactAccessAgentsTable from './components/ContactAccessAgentsTable';
 import ContactCsRoutingTable from './components/ContactCsRoutingTable';
+import ContactMarketSegmentSection from './components/ContactMarketSegmentSection';
 import ContactEditDialog from './components/ContactEditDialog';
 import ContactDeleteDialog from '../components/ContactDeleteDialog';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';
@@ -248,6 +249,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
                   <p className="font-medium text-muted-foreground">None assigned</p>
                 )}
               </div>
+              <ContactMarketSegmentSection contactId={id} />
               <div>
                 <p className="text-sm text-muted-foreground">Respond.io ID</p>
                 <p className="font-medium font-mono text-sm">{contact.respond_io_id ?? <span className="text-muted-foreground">—</span>}</p>

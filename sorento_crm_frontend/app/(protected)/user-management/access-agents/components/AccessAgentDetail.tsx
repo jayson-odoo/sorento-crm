@@ -24,6 +24,7 @@ import { formatDate } from '@/lib/helpers';
 import AccessAgentDeleteDialog from './access-agent-delete-dialog';
 import ContactAccessAgentsTable from './ContactAccessAgentsTable';
 import AccessAgentNavigation from './AccessAgentNavigation';
+import MemberMarketSegmentEditor from './MemberMarketSegmentEditor';
 import type { AgentTeamMemberInfo, AgentTeamAssignment } from '../services/accessAgentService';
 
 interface AccessAgentDetailProps {
@@ -407,6 +408,7 @@ export default function AccessAgentDetail({ accessAgentId }: AccessAgentDetailPr
                                         <TeamMemberRespondIoButton member={member} />
                                       </div>
                                       <div className="flex items-center gap-2 shrink-0">
+                                        <MemberMarketSegmentEditor teamId={a.team_id} userId={member.id} />
                                         {excluded && (
                                           <Badge variant="outline" className="text-xs text-muted-foreground">
                                             Excluded from round robin

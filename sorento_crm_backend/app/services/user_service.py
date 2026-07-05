@@ -1410,13 +1410,29 @@ class AccessAgentService:
         self.db.refresh(access)
         return access
     
-    def get_next_assignee(self, agent_id: str, team_id: str) -> Optional[dict]:
+    def get_next_assignee(
+        self,
+        agent_id: str,
+        team_id: str,
+        contact_segments: Optional[set[str]] = None,
+    ) -> Optional[dict]:
         """
         Return the next assignee for (agent_id, team_id) using round-robin.
         Uses SELECT ... FOR UPDATE on the cursor for concurrency safety.
         Returns dict with id, email, name or None if no eligible members.
+
+        ``contact_segments`` (opt-in): when a non-empty set is passed, the round-robin
+        pool is restricted to members whose served segments intersect it, plus untagged
+        members (serve all). The rotation then uses a segment-scoped cursor
+        (``segment_key`` = sorted '|'-joined codes) so each segment rotates independently.
+        When ``None`` / empty (the normal path, incl. every non-CS agent), the pool and
+        the ``segment_key=''`` cursor are exactly as before — no behaviour change.
+        An empty filtered pool falls back to the full team on the '' cursor.
         """
         from sqlalchemy import and_
+        from sqlalchemy.orm import selectinload
+
+        from app.services.market_segment_service import segment_key_for
         # Check agent is linked to this team
         link = (
             self.db.query(AgentTeam)
@@ -1434,25 +1450,42 @@ class AccessAgentService:
         # include_in_round_robin=false are skipped for AUTO distribution (manual
         # takeover/reassign can still target them). All members excluded -> treated
         # the same as an empty team (no eligible assignee), no silent misassign.
-        members = (
+        members_q = (
             self.db.query(TeamMember)
             .filter(
                 TeamMember.team_id == team_id,
                 TeamMember.include_in_round_robin.is_(True),
             )
             .order_by(TeamMember.sort_order.asc().nullslast(), TeamMember.user_id.asc())
-            .all()
         )
+        # Only eager-load / touch segments when a filter is requested, so the
+        # normal RR path never queries team_member_market_segments (no regression).
+        if contact_segments:
+            members_q = members_q.options(selectinload(TeamMember.market_segments))
+        members = members_q.all()
         if not members:
             return None
+        # Opt-in segment scoping. Empty/absent -> '' cursor + full pool (unchanged).
+        segment_key = ""
+        if contact_segments:
+            pool = [
+                m
+                for m in members
+                if not m.market_segments
+                or {str(s.code) for s in m.market_segments} & contact_segments
+            ]
+            if pool:  # empty pool -> fall back to full team on the '' cursor
+                members = pool
+                segment_key = segment_key_for(contact_segments)
         user_ids = [_rr_user_id_key(m.user_id) for m in members]
-        # Get or create cursor and lock it
+        # Get or create cursor and lock it (scoped by segment_key)
         cursor = (
             self.db.query(AgentTeamRoundRobinCursor)
             .filter(
                 and_(
                     AgentTeamRoundRobinCursor.agent_id == agent_id,
                     AgentTeamRoundRobinCursor.team_id == team_id,
+                    AgentTeamRoundRobinCursor.segment_key == segment_key,
                 )
             )
             .with_for_update()
@@ -1462,6 +1495,7 @@ class AccessAgentService:
             cursor = AgentTeamRoundRobinCursor(
                 agent_id=agent_id,
                 team_id=team_id,
+                segment_key=segment_key,
                 last_assigned_user_id=None,
             )
             self.db.add(cursor)
@@ -1488,13 +1522,23 @@ class AccessAgentService:
             "respond_user_id": user.respond_user_id,
         }
 
-    def list_active_team_members_detail(self, team_id: str) -> list[dict]:
+    def list_active_team_members_detail(
+        self, team_id: str, contact_segments: Optional[set[str]] = None
+    ) -> list[dict]:
         """
         Active members of a team joined to User, ordered by sort_order, user_id.
         Returns [{user_id, name, respond_user_id, email, sort_order}] for n8n (so it can
         store ids/names and later pass a preferred_assignee_id to next-assignee).
+
+        When ``contact_segments`` is a non-empty set, the roster is filtered to members
+        whose served market segments intersect it — plus untagged members (no segments =
+        serves all). If that filter yields nobody, fall back to the full active roster so
+        a conversation always resolves to someone. ``None`` / empty set = no filter
+        (byte-identical to the pre-segment behaviour).
         """
-        rows = (
+        from sqlalchemy.orm import selectinload
+
+        query = (
             self.db.query(TeamMember, User)
             .join(User, User.id == TeamMember.user_id)
             .filter(
@@ -1502,8 +1546,22 @@ class AccessAgentService:
                 User.status == UserStatus.ACTIVE.value,
             )
             .order_by(TeamMember.sort_order.asc().nullslast(), TeamMember.user_id.asc())
-            .all()
         )
+        # Only touch the segment relationship when a filter is actually requested,
+        # so the no-filter path is byte-identical to the pre-segment behaviour and
+        # never queries team_member_market_segments.
+        if contact_segments:
+            query = query.options(selectinload(TeamMember.market_segments))
+        rows = query.all()
+        if contact_segments:
+            filtered = [
+                (member, user)
+                for member, user in rows
+                if not member.market_segments
+                or {str(s.code) for s in member.market_segments} & contact_segments
+            ]
+            if filtered:  # empty -> fall back to the full roster (never return nobody)
+                rows = filtered
         return [
             {
                 "user_id": user.id,

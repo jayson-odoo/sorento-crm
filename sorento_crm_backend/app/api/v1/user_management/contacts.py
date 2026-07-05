@@ -13,6 +13,7 @@ from app.services.contact_service import ContactService
 from app.services.portal_service import PortalService
 from app.schemas.user import RespondContactResponse, RespondContactCreate, RespondContactUpdate, ContactAgentAccessResponse
 from app.schemas.common import ListResponse
+from app.schemas.market_segment import MarketSegmentCodesUpdate
 from app.services.error_handler import handle_internal_error, handle_not_found
 
 logger = logging.getLogger(__name__)
@@ -393,6 +394,43 @@ async def delete_contact_cs_routing(
 
         CsRoutingService(db).delete(contact_id, use_case)
         return None
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{contact_id}/market-segments")
+async def get_contact_market_segments(
+    contact_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """List a contact's assigned market segments (retail / project). Empty = matches all CS members."""
+    try:
+        from app.services.market_segment_service import MarketSegmentService
+
+        return {"codes": MarketSegmentService(db).get_contact_segment_codes(contact_id)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/{contact_id}/market-segments")
+async def set_contact_market_segments(
+    contact_id: str,
+    payload: MarketSegmentCodesUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Replace a contact's market segments with the supplied set (empty = clear → matches all)."""
+    try:
+        from app.services.market_segment_service import MarketSegmentService
+
+        return {
+            "codes": MarketSegmentService(db).set_contact_segments(contact_id, payload.codes)
+        }
     except HTTPException:
         raise
     except Exception as e:
