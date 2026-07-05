@@ -6,7 +6,12 @@ from sqlalchemy.orm import Session
 from typing import Optional, Union, List, Any
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
-from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
+from app.dependencies import (
+    get_current_user,
+    get_current_user_or_api_key,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.services.complaints_service import ComplaintService
 from app.services.integration_service import IntegrationLogService
 from app.services.order_service import OrderService
@@ -258,6 +263,56 @@ async def get_complaint_neighbours(
             status=status,
             sort_field=sort or "complaint_date",
             sort_dir=dir or "asc",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/analytics")
+async def get_complaint_analytics(
+    metric: str = Query("count", description="Aggregate to compute. Only 'count' is supported."),
+    group_by: str = Query(
+        "none",
+        description="Bucket results by: status | product | month | none (single overall count).",
+    ),
+    status: Optional[str] = Query(
+        None,
+        description="Exact complaint status filter (e.g. approved, processed_by_cs, closed).",
+    ),
+    date_field: str = Query(
+        "complaint_date",
+        description=(
+            "Which timestamp the date window + month grouping apply to: "
+            "complaint_date (when raised) or resolved_at (when resolved). "
+            "For 'complaints resolved in <period>' pass date_field=resolved_at with "
+            "date_from/date_to — resolved rows have resolved_at set, so no status filter is needed."
+        ),
+    ),
+    date_from: Optional[str] = Query(
+        None, description="Window start (inclusive). Accepts YYYY-MM-DD, DD/MM/YYYY, or 'YYYY-MM'."
+    ),
+    date_to: Optional[str] = Query(None, description="Window end (inclusive). Same formats as date_from."),
+    limit: int = Query(50, ge=1, le=500, description="Max number of ranked group rows to return."),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Aggregate complaints (count), optionally bucketed by status / product / month.
+
+    Serves 'which product has the most complaints' (group_by=product, ranked desc)
+    and 'how many complaints were resolved last month' (date_field=resolved_at + window).
+    """
+    try:
+        service = ComplaintService(db)
+        return service.complaint_analytics(
+            metric=metric,
+            group_by=group_by,
+            status=status,
+            date_field=date_field,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
         )
     except HTTPException:
         raise
@@ -1222,7 +1277,7 @@ async def close_complaint(
     complaint_id: str,
     payload: ComplaintFinalizeRequest,
     request: Request,
-    current_user: dict = Depends(require_permission("complaint_management.complaints.close")),
+    current_user: dict = Depends(require_permission_with_api_key("complaint_management.complaints.close")),
     db: Session = Depends(get_db),
 ):
     """Close an approved complaint that can't be resolved (status='closed').

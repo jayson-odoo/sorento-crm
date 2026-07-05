@@ -12,6 +12,17 @@ export interface AIAssistantMessage {
     sources?: Array<{ title?: string }>;
     selected_tools?: Array<{ tool_name?: string }>;
     suggestions?: string[];
+    // M3a Clarifier: enumerable options rendered as clickable chips; a click
+    // sends the option text as the next turn.
+    clarify?: { options?: string[] };
+    // M3a Write-confirm: a pending write awaiting explicit Confirm/Cancel. Only
+    // status === 'pending' renders the buttons; confirmed/cancelled/denied/failed
+    // are terminal (buttons hidden).
+    pending_confirmation?: {
+      tool_name?: string;
+      status?: 'pending' | 'confirmed' | 'cancelled' | 'denied' | 'failed';
+      summary?: string;
+    };
   };
   created_at: string;
 }
@@ -52,6 +63,7 @@ export async function sendAIAssistantMessage(
   message: string,
   conversationId?: string,
   pageSnapshot?: AIPageSnapshot | null,
+  confirmAction?: 'confirm' | 'cancel',
 ) {
   const r = await apiFetch('/api/v1/system/ai-assistant/chat', {
     method: 'POST',
@@ -60,6 +72,7 @@ export async function sendAIAssistantMessage(
       message,
       conversation_id: conversationId || null,
       page_snapshot: pageSnapshot ?? null,
+      confirm_action: confirmAction ?? null,
     }),
   });
   if (!r.ok) {

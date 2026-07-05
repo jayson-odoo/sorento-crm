@@ -100,3 +100,37 @@ Grounding facts: **no user-feedback signal exists** (only a deterministic `was_a
 ## 10. Non-goals
 - Multi-tenant per-tenant eval isolation (until real tenancy lands).
 - Fine-tuning / model training — this is prompt + retrieval tuning only.
+
+## 11. UAC — acceptance surface (the "satisfactory answers" bar)
+
+Measured by the self-challenge harness (`sorento_crm_backend/scripts/ai_self_challenge.py`) over the acceptance question bank (§12). "Satisfactory" per category:
+
+| # | Category | UAC |
+|---|---|---|
+| **U1** | how_to | Answer quotes concrete steps from the matched Outline guide with **bold UI labels + inline FE route links preserved**; no invented labels; if no guide matches → say so + (U8) offer to route, never hallucinate steps. |
+| **U2** | data lookup | Binds the correct data tool (K=1), returns **real rows from this turn's tool call** (no invented ids/qtys/dates); names→UUIDs coerced so no INVALID_UUID. |
+| **U3** | analytical/aggregate | Binds an **aggregation** tool (not a plain list), returns a **computed** number (count/sum/avg/rank) grounded in tool output — never the LLM eyeballing a truncated list. |
+| **U4** | capability / how-to-use | Deterministic catalog answer (zero answer-LLM), grouped module→what-you-can-do→example questions. |
+| **U5** | definition | Correct plain-language meaning; no fabricated system behaviour. |
+| **U6** | vague / edge | Parser flags `needs_clarification` → **ONE** clarifying question; enumerable → FE chips; max one round then best-assumption answer. Never guesses when a wrong guess is costly. |
+| **U7** | write (create/mutate) | `is_write_intent` → **confirmation gate**: agent halts on the flagged tool, FE Confirm/Cancel buttons, submit ONLY after explicit confirm. No accidental writes. |
+| **U8** | any grounded answer | Validator faithfulness check: unsupported claims → hedge + point to verify/guide; genuine system problem → offer IT-support ticket. (Tuned via M3b before it gates.) |
+| **U9** | missing capability | If no tool/guide can answer, the gap is **filled** (build the tool / write+push the guide), not papered over with a vague reply. |
+| **U10** | every turn | Full M2 trace (parser → route → resolve → tool(s) → answer); tool errors surfaced, not silently swallowed. |
+
+**Coverage rule (per user):** the bank must span how-to, data, analytical, how-to-use, definition, vague→clarify, and write→confirm — with **paraphrase variety per category** (not one canonical phrasing; anti-overfit). Re-run the harness after every gap-fill; a category regresses = blocker.
+
+## 12. Acceptance question bank (living)
+
+Seeded from `scripts/ai_self_challenge.py` `BANK` (33 Qs at baseline). Expand toward ~60+ with paraphrases and multi-turn flows. Categories + example spread:
+- **how_to (≥8):** upload packing list; submit stock inquiry; send PR for approval; approve via email link; attach photo to complaint; OTP portal access; replace product attachment; flow a stock inquiry to purchasing.
+- **data (≥8):** promotions now; Hanlim orders 2026; incoming shipments this month; DOs for X last month; stock on hand for <sku>; open complaints; order status <code>; who handled complaint <code>.
+- **analytical (≥8):** total order value 2026 for X; avg delivery time; top N customers by order count; product with most complaints; complaints resolved last month; orders per month trend; revenue by customer; complaint rate by product.
+- **how_to_use/capability (≥3):** what can you do; what can I ask; I'm new, how do I use this.
+- **definition (≥4):** what does <status> mean; what is a GRN; DO vs SO; what is an SPO.
+- **vague→clarify (≥5):** do the thing; show me the stuck one; the hanlim one; what about last month; close it.
+- **write→confirm (≥5):** file a complaint about <x>; raise a stock inquiry; submit a PR; close complaint <code>; cancel order <code>.
+- **multi-turn (≥3):** clarify→answer; form field-by-field→confirm→submit; data→drill-down follow-up.
+
+## 13. Progress log
+- **2026-07-05:** Harness + 33-Q bank built. Baseline run → gap map. **M3a Clarifier** BE live (parser `needs_clarification`→ one question + chips, one-round cap; 2 pytest, live-verified). Capability gaps closed: `crm_complaints_list` MCP tool (U2 "open complaints"), top-customers RAG fix. Order+complaint **analytics tools** in build (U3). Uncommitted.

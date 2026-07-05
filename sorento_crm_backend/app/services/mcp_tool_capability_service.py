@@ -902,6 +902,60 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "delivery order search",
         ),
     ),
+    "crm_order_analytics": ToolIntent(
+        category="order_enquiries",
+        intent=(
+            "Compute an AGGREGATE over customer sales orders — total order value / revenue, average "
+            "delivery time, or order count — optionally grouped by customer, product, or month."
+        ),
+        description=(
+            "ANALYTICAL / AGGREGATION tool for orders. Returns a computed number (or ranked buckets), "
+            "NOT a list of order rows — use it whenever the user asks for a SUM, TOTAL, AVERAGE, COUNT "
+            "or REVENUE figure rather than to see the underlying orders. "
+            "metric=total_value sums orders.total_amount (the money value / revenue of orders); "
+            "metric=avg_delivery_days averages (actual_delivery_date - order_date) in days (delivery "
+            "time / lead time / how long orders take to deliver); metric=count counts matching orders. "
+            "group_by=customer|product|month|none buckets the result (default none = one overall figure); "
+            "group_by=product uses per-product line revenue for total_value. Filter by customer_ids "
+            "(canonical customer UUIDs — the customer name/debtor is resolved to a UUID upstream), "
+            "product_ids / product_code, and a date_from/date_to window over order_date (a bare year "
+            "like '2026', a 'YYYY-MM' month, or YYYY-MM-DD). This is the correct tool for 'total order "
+            "value for customer X', 'how much did X spend', 'average delivery time', 'how long do our "
+            "orders take to deliver', 'revenue this year', 'monthly sales totals'. For LISTING the "
+            "actual orders (order status, delivery date of a specific DO) use "
+            "crm_order_management_orders_list instead."
+        ),
+        typical_user_questions=(
+            "What is the total order value in 2026 for Hanlim?",
+            "How much did Hanlim buy from us this year?",
+            "What is our total revenue from orders this year?",
+            "Sum of all orders for customer ABC in 2025.",
+            "What is the average delivery time for Hanlim orders?",
+            "On average how long do our orders take to deliver?",
+            "What's the mean delivery lead time for this customer?",
+            "How many orders did we get in February 2026?",
+            "Total sales value by customer.",
+            "Break down revenue by month for 2026.",
+            "Which customer spent the most this year?",
+            "Average delivery days per product.",
+            "What is the total value of orders containing product SCBD701?",
+        ),
+        aliases=(
+            "total order value",
+            "sum of orders",
+            "order revenue",
+            "total revenue",
+            "average delivery time",
+            "avg delivery days",
+            "delivery lead time",
+            "how long to deliver",
+            "order count total",
+            "sales total by customer",
+            "revenue by month",
+            "order aggregates",
+            "order analytics",
+        ),
+    ),
     # ==================================================================
     # INCOMING STOCK — user-facing tools (redacted, business-rule compliant).
     # These are the PRIMARY tools for user enquiries about incoming stock. They hide
@@ -1501,8 +1555,14 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description=(
             "Distinct customers/debtors derived from orders.debtor_name (the customers master table is not "
             "actively used by the business — the real customer identity is the debtor on each order). "
-            "Each row returns debtor_name, debtor_code, and order_count, deduplicated by debtor_name "
-            "(case-insensitive trim). `query` is a case-insensitive partial match on debtor_name OR debtor_code. "
+            "Each row returns debtor_name, debtor_code, and order_count (how many orders that customer "
+            "placed), deduplicated by debtor_name (case-insensitive trim). "
+            "THIS TOOL AGGREGATES AND RANKS CUSTOMERS BY ORDER COUNT — it is the correct tool (NOT the "
+            "orders list) for 'top customers', 'top 5 / top N customers by order count', 'busiest "
+            "customers', 'which customers have the most orders', 'rank customers by orders', 'customer "
+            "order counts', 'who orders the most'. To get the top N, pass sort=order_count with dir=desc "
+            "and limit=N. "
+            "`query` is a case-insensitive partial match on debtor_name OR debtor_code. "
             "Sort options: debtor_name, debtor_code, order_count. Use this BEFORE calling "
             "`crm_commercial_projects_create_smart` to cross-check whether a customer already exists and prevent "
             "1-2 char typo duplicates. External AI/MCP callers are HARD-CAPPED at limit=10 server-side."
@@ -1514,6 +1574,12 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Show clients by name or code.",
             "Who are our customers?",
             "Top customers by order count.",
+            "Who are the top 5 customers by order count?",
+            "Which customers have the most orders?",
+            "Show me our busiest customers.",
+            "Rank customers by number of orders.",
+            "Who orders from us the most?",
+            "Customer order counts, highest first.",
             "Search debtors by name.",
             "Find customer V BATH MARKETING.",
         ),
@@ -1525,6 +1591,12 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "search debtors",
             "list debtors",
             "who are our customers",
+            "top customers",
+            "top customers by order count",
+            "busiest customers",
+            "customers by order count",
+            "rank customers by orders",
+            "customer order counts",
         ),
     ),
     "crm_master_customers_get": ToolIntent(
@@ -1536,6 +1608,113 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Open this developer record.",
         ),
         aliases=("get customer by id", "customer detail", "developer detail"),
+    ),
+    # ==================================================================
+    # COMPLAINTS — customer complaint / defect / warranty enquiries
+    # ==================================================================
+    "crm_complaints_list": ToolIntent(
+        category="general_enquiries.complaint",
+        intent="List, search and filter customer complaints (defect reports, product quality issues, warranty claims) by status, assignee, customer or product.",
+        description=(
+            "PRIMARY TOOL for reading customer complaints. Lists / searches complaint records "
+            "(defect reports, product quality issues, warranty claims) with pagination, status "
+            "filter, assignee filter, free-text search and sorting. Each row returns "
+            "complaint_number, complaint_date, delivery_order_number, customer_name, product_code / "
+            "product_type, defect_description, status, assigned_to_name, root_cause_name and "
+            "resolution_name.\n\n"
+            "Use for 'show me open complaints', 'list complaints', 'unresolved / pending complaints', "
+            "'recent complaints', 'complaints about <customer>', 'complaints for product <code>', "
+            "'complaint status', 'how many complaints do we have'. All filters are OPTIONAL — call "
+            "with none to get the newest complaints page.\n\n"
+            "`status` is an EXACT single value; known statuses are draft, submitted, new, responded, "
+            "updated, approved, rejected, processed_by_cs, fulfilled, closed. There is NO combined "
+            "'open' status: for open / unresolved complaints either omit status (list all, newest "
+            "first via sort=complaint_date&dir=desc) or pass one concrete in-progress status — "
+            "closed / fulfilled are the terminal states. `query` is a free-text LIKE over "
+            "complaint_number, delivery_order_number, customer_name, contact_person, product_code, "
+            "product_type, complaint_type, defect_description, salesperson and project_title, so use "
+            "it for 'complaints about ACME' or 'complaints for SKU CB600'. `assigned_to` filters by "
+            "the assignee's respond_user_id (or __unassigned__). Sort keys: complaint_date, "
+            "created_at, delivery_order_number, customer_name, product_code, salesperson, "
+            "assigned_to, status."
+        ),
+        typical_user_questions=(
+            "Show me open complaints.",
+            "List all complaints.",
+            "Any unresolved / pending complaints?",
+            "Show recent complaints.",
+            "What complaints do we have this month?",
+            "How many complaints are still open?",
+            "Complaints about ACME Sdn Bhd.",
+            "Any complaints for product code CB600?",
+            "Show complaints assigned to me.",
+            "What is the status of complaint CMP-20260504-0004?",
+            "List rejected / approved / fulfilled complaints.",
+            "Which complaints are waiting on CS?",
+        ),
+        aliases=(
+            "complaints list",
+            "open complaints",
+            "unresolved complaints",
+            "pending complaints",
+            "recent complaints",
+            "customer complaints",
+            "defect reports",
+            "warranty claims",
+            "complaint status",
+            "complaints by customer",
+            "complaints by product",
+        ),
+    ),
+    "crm_complaint_analytics": ToolIntent(
+        category="general_enquiries.complaint",
+        intent=(
+            "Compute complaint COUNTS in aggregate — total, or ranked by product / status / month — "
+            "e.g. which product has the most complaints, or how many complaints were resolved last month."
+        ),
+        description=(
+            "ANALYTICAL / AGGREGATION tool for complaints. Returns COUNTS (a single number or ranked "
+            "buckets), NOT a list of complaint rows — use it whenever the user asks 'how many "
+            "complaints', a ranking, or a per-product / per-status / per-month breakdown, rather than to "
+            "see the complaints themselves. "
+            "group_by=product ranks products by number of complaints (descending) — the top row answers "
+            "'which product has the most complaints' / 'most complained-about product' / 'complaints by "
+            "product'. group_by=status and group_by=month give status and monthly breakdowns. "
+            "date_field selects which date the window and monthly grouping use: complaint_date (when the "
+            "complaint was raised, default) or resolved_at (when it was resolved). For 'how many "
+            "complaints were resolved last month / in <period>' pass date_field=resolved_at with a "
+            "date_from/date_to window (resolved rows have resolved_at set — do NOT filter status=resolved, "
+            "there is no such status). status filters an exact complaint status; date_from/date_to accept "
+            "YYYY-MM-DD, DD/MM/YYYY, or 'YYYY-MM'. For LISTING complaints (with defect text, assignee, "
+            "status of a specific complaint) use crm_complaints_list instead."
+        ),
+        typical_user_questions=(
+            "Which product has the most complaints?",
+            "What is the most complained-about product?",
+            "Rank products by number of complaints.",
+            "Break down complaints by product.",
+            "How many complaints were resolved last month?",
+            "Count of complaints resolved in June 2026.",
+            "How many complaints did we get this month?",
+            "How many complaints in total?",
+            "Complaints by status — how many in each state?",
+            "Monthly complaint counts for this year.",
+            "Which product gets complained about the most?",
+            "How many complaints were closed last month?",
+        ),
+        aliases=(
+            "complaints by product",
+            "most complaints",
+            "most complained product",
+            "count complaints",
+            "complaints resolved",
+            "complaints resolved last month",
+            "complaint count",
+            "complaints by status",
+            "complaints by month",
+            "complaint analytics",
+            "rank products by complaints",
+        ),
     ),
     # ==================================================================
     # USER GUIDES (Outline-backed how-to retrieval)
@@ -1626,6 +1805,128 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "report bug",
             "open support request",
             "log complaint with IT",
+        ),
+    ),
+    # ==================================================================
+    # RECORD ACTIONS — staff write tools (assistant gates each with a confirm)
+    # ==================================================================
+    "crm_complaint_close": ToolIntent(
+        category="complaint.record_action",
+        intent=(
+            "Close / resolve / finalise a complaint — set its status to closed "
+            "and end its customer-service SLA stage."
+        ),
+        description=(
+            "Close (resolve / finalise) a complaint so it is no longer open. "
+            "Sets the complaint status to 'closed', closes the CS SLA stage, and "
+            "notifies the contact. Used when the user asks to close, resolve, "
+            "finalise, or shut a specific complaint by its code or number."
+        ),
+        typical_user_questions=(
+            "Close complaint C-1042.",
+            "Mark this complaint as resolved.",
+            "Resolve complaint C-2001 for me.",
+            "Finalise the complaint.",
+            "Shut this complaint down.",
+            "Can you close the complaint we're looking at?",
+            "Set the complaint to closed.",
+            "We're done with this complaint, close it.",
+        ),
+        aliases=(
+            "close complaint",
+            "resolve complaint",
+            "mark complaint resolved",
+            "finalise complaint",
+            "shut complaint",
+        ),
+    ),
+    "crm_order_cancel": ToolIntent(
+        category="order.record_action",
+        intent=(
+            "Cancel an order / delivery order — mark it cancelled and re-evaluate "
+            "any complaints linked to it."
+        ),
+        description=(
+            "Cancel a sales order or delivery order, marking it as cancelled. "
+            "Used when the user asks to cancel, void, or call off a specific "
+            "order or DO by its order number."
+        ),
+        typical_user_questions=(
+            "Cancel order SO-1001.",
+            "Cancel this DO.",
+            "Void the order.",
+            "Call off order 12345.",
+            "Please cancel this delivery order.",
+            "Cancel the order we're viewing.",
+            "Scrap this order.",
+            "Mark the order as cancelled.",
+        ),
+        aliases=(
+            "cancel order",
+            "cancel delivery order",
+            "void order",
+            "call off order",
+            "cancel DO",
+        ),
+    ),
+    "crm_purchase_request_approve": ToolIntent(
+        category="purchase_request.record_action",
+        intent=(
+            "Approve a purchase request or sponsorship form that is pending "
+            "approval — record an in-system approval decision."
+        ),
+        description=(
+            "Approve a pending purchase request (PR) or sponsorship form, "
+            "identical to clicking Approve on the form or the emailed approval "
+            "link. Used when the user asks to approve, sign off, or OK a specific "
+            "PR / sponsorship form by its number."
+        ),
+        typical_user_questions=(
+            "Approve PR-88.",
+            "Approve the purchase request.",
+            "Approve the sponsorship form.",
+            "Sign off PR-102 for me.",
+            "OK the purchase request.",
+            "Give approval to this PR.",
+            "Approve the request we're looking at.",
+            "Go ahead and approve the PR.",
+        ),
+        aliases=(
+            "approve purchase request",
+            "approve PR",
+            "approve sponsorship form",
+            "sign off PR",
+            "approve the request",
+        ),
+    ),
+    "crm_purchase_request_reject": ToolIntent(
+        category="purchase_request.record_action",
+        intent=(
+            "Reject a purchase request or sponsorship form that is pending "
+            "approval — record an in-system rejection decision."
+        ),
+        description=(
+            "Reject a pending purchase request (PR) or sponsorship form, "
+            "identical to clicking Reject on the form or the emailed approval "
+            "link. Used when the user asks to reject, decline, turn down, or "
+            "refuse a specific PR / sponsorship form by its number."
+        ),
+        typical_user_questions=(
+            "Reject PR-88.",
+            "Decline the purchase request.",
+            "Turn down the sponsorship form.",
+            "Do not approve PR-102.",
+            "Refuse this purchase request.",
+            "Reject the request we're looking at.",
+            "Deny the PR.",
+            "Reject this sponsorship form.",
+        ),
+        aliases=(
+            "reject purchase request",
+            "reject PR",
+            "decline purchase request",
+            "turn down sponsorship form",
+            "deny PR",
         ),
     ),
 }

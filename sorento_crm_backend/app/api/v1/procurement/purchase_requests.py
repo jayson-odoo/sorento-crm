@@ -7,7 +7,12 @@ from pydantic import BaseModel
 
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
-from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
+from app.dependencies import (
+    get_current_user,
+    get_current_user_or_api_key,
+    require_permission,
+    require_permission_with_api_key,
+)
 from app.services.procurement_service import PurchaseRequestService
 from app.schemas.procurement import (
     PurchaseRequestHeaderCreate,
@@ -332,7 +337,7 @@ async def set_pending_approval(
 async def reject_submitted_purchase_request(
     request_id: str,
     body: RejectSubmittedRequest,
-    current_user: dict = Depends(require_permission("procurement.purchase_requests.send_for_approval")),
+    current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.send_for_approval")),
     db: Session = Depends(get_db),
 ):
     """Reject a submitted PR / sponsorship form before sending for approval. Sends a Respond.io update message to the contact with the rejection reason. Same permission as Send for Approval."""
@@ -369,7 +374,7 @@ class ApprovalDecisionRequest(BaseModel):
 async def decide_purchase_request_approval(
     request_id: str,
     body: ApprovalDecisionRequest,
-    current_user: dict = Depends(require_permission("procurement.purchase_requests.send_for_approval")),
+    current_user: dict = Depends(require_permission_with_api_key("procurement.purchase_requests.send_for_approval")),
     db: Session = Depends(get_db),
 ):
     """Approve or reject a PR / sponsorship form IN-SYSTEM (the form's Approve/Reject

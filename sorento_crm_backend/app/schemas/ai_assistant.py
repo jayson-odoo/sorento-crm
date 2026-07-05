@@ -57,6 +57,10 @@ class AIAssistantMessageCreate(BaseModel):
     conversation_id: Optional[str] = None
     message: str = Field(..., min_length=1)
     page_snapshot: Optional[PageSnapshotPayload] = None
+    # M3a write-confirmation: set by the FE Confirm/Cancel buttons rendered on a
+    # pending-write assistant message. "confirm" executes the stored write;
+    # "cancel" drops it. None = a normal turn.
+    confirm_action: Optional[Literal["confirm", "cancel"]] = None
 
 
 class AIAssistantMessageResponse(BaseModel):

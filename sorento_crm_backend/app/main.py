@@ -254,6 +254,17 @@ async def startup_event():
     except Exception as e:
         logging.error(f"IT support bootstrap failed at startup: {str(e)}", exc_info=True)
 
+    try:
+        from app.database import SessionLocal
+        from app.services import record_action_bootstrap
+        _db = SessionLocal()
+        try:
+            record_action_bootstrap.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Record-action bootstrap failed at startup: {str(e)}", exc_info=True)
+
     # AI assistant wishlist clustering — register the callable so ops can wire
     # it to the existing background scheduler (or cron). We do not schedule it
     # by default to avoid surprise traffic on environments without an OpenAI

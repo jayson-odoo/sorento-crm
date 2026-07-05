@@ -416,6 +416,195 @@ class ComplaintService:
             q = q.order_by(sort_column.asc(), Complaint.id.asc())
         return q
 
+    # ------------------------------------------------------------------ #
+    # Aggregation / analytics
+    # ------------------------------------------------------------------ #
+    ANALYTICS_GROUP_BY = ("status", "product", "month", "none")
+    ANALYTICS_DATE_FIELDS = ("complaint_date", "resolved_at")
+
+    def complaint_analytics(
+        self,
+        *,
+        metric: str = "count",
+        group_by: str = "none",
+        status: Optional[str] = None,
+        date_field: str = "complaint_date",
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        limit: int = 50,
+    ) -> dict:
+        """Count complaints, optionally bucketed by status / product / month.
+
+        Serves 'which product has the most complaints' (group_by=product, ranked
+        desc) and 'how many complaints were resolved last month' (date_field=
+        resolved_at + a date window — resolved rows have resolved_at set, so no
+        status filter is needed). ``date_field`` selects which timestamp the
+        date window and grouping-by-month apply to.
+        """
+        from datetime import datetime as _dt, date as _date
+        from app.services.error_handler import AppException
+        from fastapi import status as _http
+
+        metric = (metric or "count").strip().lower()
+        if metric != "count":
+            raise AppException(
+                status_code=_http.HTTP_422_UNPROCESSABLE_ENTITY,
+                message=f"Unknown metric {metric!r}. Only 'count' is supported.",
+                code="INVALID_METRIC",
+            )
+        group_by = (group_by or "none").strip().lower() or "none"
+        if group_by not in self.ANALYTICS_GROUP_BY:
+            raise AppException(
+                status_code=_http.HTTP_422_UNPROCESSABLE_ENTITY,
+                message=(
+                    f"Unknown group_by {group_by!r}. Use one of: "
+                    + ", ".join(self.ANALYTICS_GROUP_BY)
+                ),
+                code="INVALID_GROUP_BY",
+            )
+        date_field = (date_field or "complaint_date").strip().lower()
+        if date_field not in self.ANALYTICS_DATE_FIELDS:
+            raise AppException(
+                status_code=_http.HTTP_422_UNPROCESSABLE_ENTITY,
+                message=(
+                    f"Unknown date_field {date_field!r}. Use one of: "
+                    + ", ".join(self.ANALYTICS_DATE_FIELDS)
+                ),
+                code="INVALID_DATE_FIELD",
+            )
+        try:
+            limit = max(1, min(int(limit), 500))
+        except (TypeError, ValueError):
+            limit = 50
+
+        import re as _re
+
+        def _parse(value: Optional[str], *, is_end: bool = False):
+            s = (value or "").strip()
+            if not s:
+                return None
+            # Bare 4-digit year → whole-year window bound.
+            if _re.fullmatch(r"\d{4}", s):
+                return _dt(int(s), 12, 31) if is_end else _dt(int(s), 1, 1)
+            for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%d-%m-%Y", "%Y-%m"):
+                try:
+                    return _dt.strptime(s, fmt)
+                except ValueError:
+                    continue
+            try:
+                return _dt.fromisoformat(s.rstrip("Z"))
+            except ValueError:
+                return None
+
+        dt_from = _parse(date_from)
+        dt_to = _parse(date_to, is_end=True)
+
+        col = getattr(Complaint, date_field)
+        q = self.db.query(Complaint)
+        if status and status.strip():
+            q = q.filter(func.lower(Complaint.status) == status.strip().lower())
+        # resolved_at scoping implies the complaint was actually resolved.
+        if date_field == "resolved_at":
+            q = q.filter(Complaint.resolved_at.isnot(None))
+        if dt_from is not None:
+            q = q.filter(col >= dt_from)
+        if dt_to is not None:
+            # complaint_date is a DATE column, resolved_at a TIMESTAMP; SQLAlchemy
+            # compares a datetime against either fine. `_parse` already resolves a
+            # bare 'YYYY-MM' to the first of the month for the lower bound; callers
+            # pass an explicit end date for inclusive upper windows.
+            q = q.filter(col <= dt_to)
+
+        rows = q.all()
+        total = len(rows)
+
+        def _month_key(value) -> str:
+            if value is None:
+                return "(no date)"
+            if isinstance(value, (_dt, _date)):
+                return value.strftime("%Y-%m")
+            return str(value)[:7] or "(no date)"
+
+        groups: list[dict] = []
+        if group_by == "none":
+            groups.append(
+                {
+                    "group_key": "all",
+                    "group_label": "All complaints",
+                    "metric": "count",
+                    "value": total,
+                }
+            )
+        else:
+            buckets: dict[str, dict] = {}
+
+            def _bump(key: str, label: str):
+                b = buckets.setdefault(key, {"label": label, "count": 0})
+                b["count"] += 1
+
+            for c in rows:
+                if group_by == "status":
+                    key = (c.status or "(none)").strip().lower() or "(none)"
+                    _bump(key, c.status or "(none)")
+                elif group_by == "month":
+                    val = getattr(c, date_field, None)
+                    _bump(_month_key(val), _month_key(val))
+                else:  # product — one complaint may cover several product codes
+                    codes = self._complaint_product_codes(c)
+                    for code in codes or ["(unspecified)"]:
+                        k = code.strip() or "(unspecified)"
+                        _bump(k.lower(), k)
+            for key, b in buckets.items():
+                groups.append(
+                    {
+                        "group_key": key,
+                        "group_label": b["label"],
+                        "metric": "count",
+                        "value": b["count"],
+                    }
+                )
+
+        groups.sort(key=lambda g: g["value"], reverse=True)
+        groups = groups[:limit]
+
+        return {
+            "metric": "count",
+            "group_by": group_by,
+            "date_field": date_field,
+            "filters": {
+                "status": status or None,
+                "date_from": dt_from.isoformat() if dt_from else None,
+                "date_to": dt_to.isoformat() if dt_to else None,
+            },
+            "groups": groups,
+            "total": {
+                "group_key": "__all__",
+                "group_label": "All complaints",
+                "metric": "count",
+                "value": total,
+            },
+            "empty": total == 0,
+        }
+
+    def _complaint_product_codes(self, complaint) -> list[str]:
+        """Distinct product codes for a complaint (product lines first, then the
+        denormalised CSV product_code column)."""
+        codes: list[str] = []
+        seen: set[str] = set()
+        for line in getattr(complaint, "product_lines", None) or []:
+            code = (getattr(line, "product_code", None) or "").strip()
+            if code and code.lower() not in seen:
+                seen.add(code.lower())
+                codes.append(code)
+        if not codes:
+            raw = (getattr(complaint, "product_code", None) or "").strip()
+            for piece in raw.split(","):
+                code = piece.strip()
+                if code and code.lower() not in seen:
+                    seen.add(code.lower())
+                    codes.append(code)
+        return codes
+
     def neighbours(
         self,
         complaint_id: str,

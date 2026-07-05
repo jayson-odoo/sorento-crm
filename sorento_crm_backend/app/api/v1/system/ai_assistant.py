@@ -201,6 +201,7 @@ def send_ai_assistant_message(
         conversation_id=payload.conversation_id,
         message=payload.message,
         page_snapshot=payload.page_snapshot,
+        confirm_action=payload.confirm_action,
     )
     rows = chat.list_messages(str(conv.id), str(user["id"]))
     return AIAssistantConversationResponse(

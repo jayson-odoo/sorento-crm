@@ -17,6 +17,7 @@ import httpx
 from fastapi import HTTPException, status
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.config import settings
 from app.models.ai_assistant import (
@@ -37,6 +38,7 @@ from app.services.ai_trace import (
     KIND_CHAIN,
     KIND_GUARDRAIL,
     KIND_RETRIEVER,
+    KIND_TOOL,
     TurnTrace,
 )
 from app.services.embedding_service import EmbeddingReadService
@@ -108,14 +110,21 @@ def _html_to_text(raw: str | None) -> str:
 # `crm_forms_stock_inquiry_submit`, `crm_it_support_ticket_create`,
 # `crm_forms_entity_attachments_link`). Read tools like `crm_portal_link_get`
 # end in `_get`, so a plain `_link` suffix check is safe.
+#
+# Mutating verbs any write tool name ends in. MUST stay in sync with the
+# write-confirm gate — a record-action tool (e.g. crm_complaint_close,
+# crm_purchase_request_approve) whose suffix is missing here would execute
+# WITHOUT confirmation. Read tools end in _list/_get/_dashboard/_summary/etc.,
+# never these, so the suffix match cannot gate a read.
+_WRITE_TOOL_SUFFIXES = (
+    "_submit", "_create", "_link", "_close", "_cancel",
+    "_approve", "_reject", "_update", "_delete", "_add", "_send",
+)
+
+
 def _is_write_tool(tool_name: str) -> bool:
     name = (tool_name or "").lower()
-    return (
-        name.endswith("_submit")
-        or name.endswith("_create")
-        or name.endswith("_link")
-        or "_ticket_create" in name
-    )
+    return name.endswith(_WRITE_TOOL_SUFFIXES) or "_ticket_create" in name
 
 
 def _current_date_directive() -> str:
@@ -162,6 +171,64 @@ class _RouteDecision:
     kind: str  # "capability" | "record_answer" | "agent"
     is_how_to: bool = False   # agent: deterministically pre-fetch the user guide
     skip_rag: bool = False    # agent: no live data needed → skip tool selection
+
+
+# MCP tools intake UUIDs, but the LLM reliably passes the entity NAME/code it was
+# shown (e.g. customer_ids=["HANLIM TRADING SDN BHD"] → backend 400 INVALID_UUID).
+# The entity resolver already mapped those names → UUIDs this turn, so we
+# deterministically substitute them into these UUID-intake params at dispatch
+# rather than hoping the model copies a UUID. Maps param name → resolver
+# entity_type. Keep in sync with the tools' `<entity>_ids` filter params.
+_UUID_PARAM_ENTITY_TYPES: dict[str, str] = {
+    "customer_ids": "customer",
+    "customer_id": "customer",
+    "product_ids": "product",
+    "product_id": "product",
+    "transporter_ids": "transporter",
+    "transporter_id": "transporter",
+    "order_ids": "customer_order",
+    "order_id": "customer_order",
+    "warehouse_ids": "warehouse",
+    "warehouse_id": "warehouse",
+    "supplier_ids": "supplier",
+    "supplier_id": "supplier",
+    "promotion_ids": "promotion",
+    "promotion_id": "promotion",
+}
+
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _norm_entity_key(value: str) -> str:
+    """Normalize a name/code for matching against resolver output: lowercase +
+    collapse internal whitespace. Kept deliberately light so exact debtor names
+    (which the resolver stores verbatim) match — no dash/punctuation stripping
+    that could merge two distinct account names."""
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
+def _coerce_arg_to_list(raw: Any) -> list[str]:
+    """Normalize a tool-arg value into a list of scalar strings. Handles a real
+    list, a JSON-array string (``'["a","b"]'``), a CSV string, or a scalar."""
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [str(x) for x in raw if x is not None]
+    s = str(raw).strip()
+    if not s:
+        return []
+    if s.startswith("[") and s.endswith("]"):
+        try:
+            parsed = json.loads(s)
+            if isinstance(parsed, list):
+                return [str(x) for x in parsed if x is not None]
+        except Exception:
+            pass
+    if "," in s:
+        return [p.strip() for p in s.split(",") if p.strip()]
+    return [s]
 
 
 class _TurnToolCache:
@@ -688,12 +755,20 @@ class AIAssistantChatService:
         page_snapshot: PageSnapshotPayload | None = None,
         prompt_overrides: dict[str, str] | None = None,
         dry_run: bool = False,
+        confirm_action: str | None = None,
     ) -> tuple[AIAssistantConversation, AIAssistantMessage]:
         request_started = time.perf_counter()
         # Reset per-turn prompt-registry state. Overrides (dry-run) apply for
         # THIS turn only and are never persisted onto a conversation.
         self._turn_prompt_versions = []
         self._prompt_overrides = dict(prompt_overrides or {})
+        # M3a write-confirmation gate state (reset per turn). ``_pending_confirmation``
+        # is set by the agent loop when it wants to run a write tool. The agent loop
+        # ALWAYS gates writes (this stays False for it) — a Confirm click executes the
+        # stored call directly via ``_resolve_pending_confirmation``, never by
+        # re-running the loop, so a stale/duplicate confirm can never write un-gated.
+        self._pending_confirmation: dict[str, Any] | None = None
+        self._writes_confirmed = False
         # Dry-run safety: a prompt test must never persist real business data.
         # Even though the throwaway conversation is deleted afterwards, a crafted
         # message (all fields + a CONFIRM keyword) could otherwise drive a
@@ -753,6 +828,22 @@ class AIAssistantChatService:
 
         user_msg = self.append_message(conv.id, "user", message, metadata_json=user_meta or None)
         logger.info("AI assistant user message appended conversation_id=%s", conv.id)
+
+        # M3a write-confirmation resume: the user clicked Confirm/Cancel on a prior
+        # pending write. Look up the stored call on the last assistant message and
+        # either execute it (confirm) or drop it (cancel). No parse/agent loop.
+        if confirm_action in ("confirm", "cancel"):
+            pending = self._load_pending_confirmation(conv.id)
+            if pending is not None:
+                return self._resolve_pending_confirmation(
+                    conv=conv,
+                    user_id=user_id,
+                    config=config,
+                    pending=pending,
+                    action=confirm_action,
+                    request_started=request_started,
+                )
+            # No pending call found (stale click) → fall through to a normal turn.
 
         # Item 3b: turn-scoped, strictly-keyed tool/guide result cache. Created
         # fresh per respond() so it can never outlive the turn or leak across
@@ -815,6 +906,24 @@ class AIAssistantChatService:
                 user_id=user_id,
                 config=config,
                 message=message,
+                request_started=request_started,
+            )
+
+        # M3a Clarifier: when the parser flags the turn as too ambiguous to answer
+        # well (a wrong guess would be costly AND ambiguity changes the answer), ask
+        # ONE question with enumerable options as chips instead of guessing. Max one
+        # round — if the previous assistant turn already clarified, proceed with the
+        # best assumption rather than looping.
+        if (
+            parse.signals.needs_clarification
+            and (parse.signals.clarify_question or parse.signals.clarify_options)
+            and not self._already_clarified(history_rows)
+        ):
+            return self._serve_clarify(
+                conv=conv,
+                user_id=user_id,
+                config=config,
+                parse=parse,
                 request_started=request_started,
             )
 
@@ -994,6 +1103,16 @@ class AIAssistantChatService:
             turn_cache.live_calls,
             turn_cache.hits,
         )
+        # M3a write-confirmation gate: the agent loop halted because it wanted to
+        # run a write tool. Persist the pending call on the assistant message and
+        # return a Confirm/Cancel prompt instead of executing anything.
+        if self._pending_confirmation is not None:
+            return self._serve_pending_confirmation(
+                conv=conv,
+                config=config,
+                pending=self._pending_confirmation,
+                request_started=request_started,
+            )
         # Post-process: when the agent rephrased a how-to answer and dropped
         # inline markdown links from the guide, re-wrap any bold menu paths
         # with their canonical FE route links. Cheap deterministic safety net
@@ -1267,25 +1386,34 @@ class AIAssistantChatService:
             allowed = set(enabled_tools)
             candidates = [c for c in candidates if str(c.get("tool_name")) in allowed]
             logger.info("AI assistant candidates filtered by enabled tools remaining=%s", len(candidates))
+        # Deterministic single-tool resolution (K=top_k, default 1): the top-`top_k`
+        # candidates are BOUND to the agent; each carries is_current=True.
         selected_tools = candidates[:top_k]
+        for c in selected_tools:
+            c["is_current"] = True
         logger.info(
             "AI assistant selected tools=%s",
             [
                 {
                     "tool_name": c.get("tool_name"),
                     "score": c.get("score"),
+                    "is_current": c.get("is_current"),
                     "missing_params": c.get("missing_params") or [],
                     "why_selected": (str(c.get("why_selected") or "")[:120]),
                 }
                 for c in selected_tools
             ],
         )
+        # Sources describe ONLY the bound tool(s) — they are injected into the
+        # agent prompt, so listing unbound runners-up here would advertise tools
+        # the agent can't call. Each bound source is is_current=True.
         sources = [
             {
                 "title": c.get("tool_name"),
                 "chunk_text": c.get("chunk_text"),
                 "score": c.get("score"),
                 "why_selected": c.get("why_selected"),
+                "is_current": True,
             }
             for c in selected_tools
         ]
@@ -1393,6 +1521,454 @@ class AIAssistantChatService:
         )
         return conv, assistant_msg
 
+    def _already_clarified(self, history: list[AIAssistantMessage]) -> bool:
+        """True if the most recent assistant turn was itself a clarifying question.
+        Enforces the one-round cap — after we've already asked, we answer with the
+        best assumption rather than looping on ambiguity."""
+        for msg in reversed(history):
+            if msg.role != "assistant":
+                continue
+            meta = msg.metadata_json or {}
+            return bool(meta.get("clarify"))
+        return False
+
+    def _serve_clarify(
+        self,
+        *,
+        conv: Any,
+        user_id: str,
+        config: AIAssistantConfig,
+        parse: ParseResult,
+        request_started: float,
+    ) -> tuple[Any, AIAssistantMessage]:
+        """M3a Clarifier — ask ONE clarifying question instead of guessing. The
+        parser already decided (needs_clarification) and produced the question +
+        any enumerable options; we just render them. Enumerable options become FE
+        chips (metadata.clarify.options); free-form ambiguity is a plain question.
+        No agent loop, no data tools. Mirrors the capability short-circuit's
+        persist/usage-log/trace-finalize."""
+        question = (parse.signals.clarify_question or "").strip() or (
+            "Could you give me a bit more detail so I can help accurately?"
+        )
+        options = [o for o in (parse.signals.clarify_options or []) if str(o).strip()]
+        if self._turn_trace is not None:
+            self._turn_trace.add_span(
+                kind=KIND_CHAIN,
+                name="clarify (ask-vs-guess)",
+                input_json={"intent": parse.intent, "confidence": parse.confidence},
+                output_json={"question": question, "options": options},
+            )
+        clarify_meta: dict[str, Any] = {
+            "links": [],
+            "sources": [],
+            "selected_tools": [],
+            "tool_calls": [],
+            "suggestions": [],
+            # FE renders these as clickable chips; a click sends the option text as
+            # the next user turn. Empty options → plain follow-up question.
+            "clarify": {"options": options},
+            "prompt_versions": list(self._turn_prompt_versions),
+        }
+        assistant_msg = self.append_message(
+            conv.id, "assistant", question, metadata_json=clarify_meta
+        )
+        total_ms = (time.perf_counter() - request_started) * 1000
+        parse_usage = getattr(self, "_parse_token_usage", None) or {}
+        try:
+            self.db.add(
+                AIAssistantUsageLog(
+                    user_id=user_id,
+                    feature="ai_assistant",
+                    conversation_id=str(conv.id),
+                    message_id=str(assistant_msg.id),
+                    model=config.model,
+                    provider=config.provider,
+                    prompt_tokens=int(parse_usage.get("prompt_tokens", 0) or 0),
+                    completion_tokens=int(parse_usage.get("completion_tokens", 0) or 0),
+                    total_tokens=int(parse_usage.get("total_tokens", 0) or 0),
+                    tool_calls_count=0,
+                    response_time_ms=int(total_ms),
+                    # A clarifying question is a valid, intentional turn — not a
+                    # failure to answer.
+                    was_answered=True,
+                )
+            )
+            self.db.commit()
+        except Exception:
+            logger.exception("Failed to insert ai_assistant_usage_logs row (clarify)")
+            self.db.rollback()
+        self._finalize_trace(assistant_msg, status="ok")
+        logger.info(
+            "AI assistant clarifying question served conversation_id=%s options=%s",
+            conv.id,
+            len(options),
+        )
+        return conv, assistant_msg
+
+    # ------------------------------------------------------------------ #
+    # M3a write-confirmation gate                                         #
+    # ------------------------------------------------------------------ #
+    _CONFIRM_META_KEY = "pending_confirmation"
+
+    def _log_short_turn_usage(
+        self,
+        *,
+        conv: Any,
+        user_id: str,
+        config: AIAssistantConfig,
+        assistant_msg: AIAssistantMessage,
+        request_started: float,
+        tool_calls_count: int = 0,
+    ) -> None:
+        """Usage-log a non-agent turn (clarify/confirm/cancel). Bills only the
+        parser tokens spent this turn; best-effort like the clarify path."""
+        total_ms = (time.perf_counter() - request_started) * 1000
+        parse_usage = getattr(self, "_parse_token_usage", None) or {}
+        try:
+            self.db.add(
+                AIAssistantUsageLog(
+                    user_id=user_id,
+                    feature="ai_assistant",
+                    conversation_id=str(conv.id),
+                    message_id=str(assistant_msg.id),
+                    model=config.model,
+                    provider=config.provider,
+                    prompt_tokens=int(parse_usage.get("prompt_tokens", 0) or 0),
+                    completion_tokens=int(parse_usage.get("completion_tokens", 0) or 0),
+                    total_tokens=int(parse_usage.get("total_tokens", 0) or 0),
+                    tool_calls_count=tool_calls_count,
+                    response_time_ms=int(total_ms),
+                    was_answered=True,
+                )
+            )
+            self.db.commit()
+        except Exception:
+            logger.exception("Failed to insert ai_assistant_usage_logs row (short turn)")
+            self.db.rollback()
+
+    _WRITE_ACTION_VERBS = (
+        "submit", "create", "close", "cancel", "approve", "reject",
+        "link", "update", "delete", "add", "send",
+    )
+    # Real-user permission required to CONFIRM each write tool (checked against the
+    # actual logged-in user before dispatch — see _resolve_pending_confirmation).
+    # Keep in sync with the wrapped endpoints' own permission deps. Absent tool =
+    # no extra permission (e.g. anyone may raise a support ticket).
+    _WRITE_TOOL_PERMISSIONS = {
+        "crm_complaint_close": "complaint_management.complaints.close",
+        "crm_purchase_request_approve": "procurement.purchase_requests.send_for_approval",
+        "crm_purchase_request_reject": "procurement.purchase_requests.send_for_approval",
+        # crm_order_cancel: no extra permission — `update_order` (the UI cancel
+        # path) is gated only by authentication, so requiring more here would make
+        # chat stricter than the UI. The Confirm click is the gate.
+    }
+    # Args that are plumbing, not user intent — never shown in a confirm summary.
+    _WRITE_INTERNAL_ARGS = frozenset({
+        "page", "limit", "sort", "dir", "space_id", "contact_id", "message_id",
+        "actor_user_id", "source_channel", "source_conversation_id",
+        "source_message_id", "payload_json",
+    })
+
+    def _summarize_write(self, tool_name: str, args: dict[str, Any]) -> str:
+        """Human verb+object+label summary of a pending write, for the confirm
+        prompt. Deterministic — never an LLM call. Derives the action verb from the
+        tool-name suffix, and a human label from a nested payload_json title (or the
+        first meaningful top-level arg), truncated and stripped of plumbing keys."""
+        name = tool_name.replace("crm_", "")
+        verb = "run"
+        for v in self._WRITE_ACTION_VERBS:
+            if name.endswith(f"_{v}") or name == v:
+                verb = v
+                name = name[: -(len(v) + 1)] if name != v else ""
+                break
+        obj = name.replace("_", " ").strip()
+
+        # Prefer a title/name/subject from a nested payload_json blob.
+        payload = args.get("payload_json") if isinstance(args, dict) else None
+        pj: dict[str, Any] = {}
+        if isinstance(payload, str):
+            try:
+                pj = json.loads(payload)
+            except Exception:
+                pj = {}
+        elif isinstance(payload, dict):
+            pj = payload
+        label = ""
+        for key in ("title", "name", "subject", "summary"):
+            if pj.get(key):
+                label = str(pj[key])
+                break
+        if not label:
+            parts = [
+                f"{k}={str(v)[:50]}"
+                for k, v in (args or {}).items()
+                if k not in self._WRITE_INTERNAL_ARGS and v not in (None, "", [])
+            ]
+            label = ", ".join(parts[:3])
+        label = (label[:80] + "…") if len(label) > 80 else label
+        head = f"{verb} {obj}".strip() or tool_name
+        return head + (f": {label}" if label else "")
+
+    def _serve_pending_confirmation(
+        self,
+        *,
+        conv: Any,
+        config: AIAssistantConfig,
+        pending: dict[str, Any],
+        request_started: float,
+    ) -> tuple[Any, AIAssistantMessage]:
+        """Render a Confirm/Cancel prompt for a halted write tool. The stored call
+        lives in metadata.pending_confirmation; the FE renders two buttons that
+        re-POST the same conversation with confirm_action=confirm|cancel. No write
+        happens here — only on an explicit later Confirm."""
+        summary = pending.get("summary") or "this action"
+        question = (
+            f"Just to confirm — you want me to **{summary}**?\n\n"
+            "This will change data in the system. Click **Confirm** to proceed or "
+            "**Cancel** to stop."
+        )
+        if self._turn_trace is not None:
+            self._turn_trace.add_span(
+                kind=KIND_GUARDRAIL,
+                name="write-confirm prompt",
+                input_json={"tool_name": pending.get("tool_name")},
+                output_json={"summary": summary},
+            )
+        meta: dict[str, Any] = {
+            "links": [],
+            "sources": [],
+            "selected_tools": [],
+            "tool_calls": [],
+            "suggestions": [],
+            self._CONFIRM_META_KEY: {
+                "tool_name": pending.get("tool_name"),
+                "args": pending.get("args") or {},
+                "summary": summary,
+                "status": "pending",
+            },
+            "prompt_versions": list(self._turn_prompt_versions),
+        }
+        assistant_msg = self.append_message(conv.id, "assistant", question, metadata_json=meta)
+        self._log_short_turn_usage(
+            conv=conv,
+            user_id=str(conv.user_id),
+            config=config,
+            assistant_msg=assistant_msg,
+            request_started=request_started,
+        )
+        self._finalize_trace(assistant_msg, status="ok")
+        logger.info(
+            "AI assistant write-confirm prompt served conversation_id=%s tool=%s",
+            conv.id,
+            pending.get("tool_name"),
+        )
+        return conv, assistant_msg
+
+    def _load_pending_confirmation(self, conversation_id: str) -> dict[str, Any] | None:
+        """Find the most recent assistant turn carrying an UNRESOLVED pending write.
+        Returns the stored call (+ the message id) or None. Only the latest
+        assistant message counts — an older pending that was superseded by a normal
+        turn is not resumable."""
+        last_assistant = (
+            self.db.query(AIAssistantMessage)
+            .filter(
+                AIAssistantMessage.conversation_id == conversation_id,
+                AIAssistantMessage.role == "assistant",
+            )
+            .order_by(AIAssistantMessage.created_at.desc())
+            .first()
+        )
+        if last_assistant is None:
+            return None
+        pc = (last_assistant.metadata_json or {}).get(self._CONFIRM_META_KEY)
+        if pc and pc.get("status") == "pending":
+            return {**pc, "_message_id": str(last_assistant.id)}
+        return None
+
+    def _mark_confirmation_resolved(self, message_id: str | None, status: str) -> None:
+        """Flip the stored pending call's status so a repeated Confirm/Cancel click
+        can't re-fire the write (idempotency backstop for the gate)."""
+        if not message_id:
+            return
+        try:
+            msg = (
+                self.db.query(AIAssistantMessage)
+                .filter(AIAssistantMessage.id == message_id)
+                .first()
+            )
+            if msg is None:
+                return
+            meta = dict(msg.metadata_json or {})
+            pc = dict(meta.get(self._CONFIRM_META_KEY) or {})
+            pc["status"] = status
+            meta[self._CONFIRM_META_KEY] = pc
+            msg.metadata_json = meta
+            flag_modified(msg, "metadata_json")
+            self.db.commit()
+        except Exception:
+            logger.exception("Failed to mark write-confirmation resolved message_id=%s", message_id)
+            self.db.rollback()
+
+    def _resolve_pending_confirmation(
+        self,
+        *,
+        conv: Any,
+        user_id: str,
+        config: AIAssistantConfig,
+        pending: dict[str, Any],
+        action: str,
+        request_started: float,
+    ) -> tuple[Any, AIAssistantMessage]:
+        """Confirm → execute the stored write via MCP and report the result.
+        Cancel → drop it. Either way the original prompt is marked resolved first
+        so a double-click cannot double-write."""
+        tool_name = str(pending.get("tool_name") or "")
+        args = pending.get("args") or {}
+        summary = pending.get("summary") or tool_name
+        # Resolve the original prompt BEFORE doing the write, so a concurrent
+        # duplicate click sees status!=pending and no-ops in _load_pending.
+        self._mark_confirmation_resolved(pending.get("_message_id"), action)
+
+        if action == "cancel":
+            answer = "Okay — cancelled. I won't make that change. Anything else I can help with?"
+            if self._turn_trace is not None:
+                self._turn_trace.add_span(
+                    kind=KIND_GUARDRAIL,
+                    name="write-confirm cancelled",
+                    input_json={"tool_name": tool_name},
+                    output_json={"status": "cancelled"},
+                )
+            meta: dict[str, Any] = {
+                "links": [], "sources": [], "selected_tools": [], "tool_calls": [],
+                "suggestions": [],
+                self._CONFIRM_META_KEY: {"tool_name": tool_name, "status": "cancelled"},
+                "prompt_versions": list(self._turn_prompt_versions),
+            }
+            assistant_msg = self.append_message(conv.id, "assistant", answer, metadata_json=meta)
+            self._log_short_turn_usage(
+                conv=conv, user_id=user_id, config=config,
+                assistant_msg=assistant_msg, request_started=request_started,
+            )
+            self._finalize_trace(assistant_msg, status="ok")
+            logger.info("AI assistant write cancelled conversation_id=%s tool=%s", conv.id, tool_name)
+            return conv, assistant_msg
+
+        # action == "confirm".
+        # Real-user RBAC gate (defense-in-depth): the write DISPATCHES through the
+        # MCP as the shared act-as principal, so we verify the ACTUAL logged-in user
+        # holds the action's permission before executing — a low-privilege assistant
+        # user must not be able to trigger an admin-level write via chat.
+        required_perm = self._WRITE_TOOL_PERMISSIONS.get(tool_name)
+        if required_perm:
+            from app.services.user_service import UserPermissionService
+
+            if not UserPermissionService(self.db).check_user_has_permission(user_id, required_perm):
+                if self._turn_trace is not None:
+                    self._turn_trace.add_span(
+                        kind=KIND_GUARDRAIL,
+                        name=f"write denied (permission): {tool_name}",
+                        input_json={"tool_name": tool_name, "required": required_perm},
+                        output_json={"status": "denied"},
+                        status="error",
+                        error="permission_denied",
+                    )
+                answer = (
+                    f"You don't have permission to **{summary}**. This action needs the "
+                    f"`{required_perm}` permission — please ask an administrator, and nothing "
+                    "was changed."
+                )
+                meta = {
+                    "links": [], "sources": [], "selected_tools": [], "tool_calls": [],
+                    "suggestions": [],
+                    self._CONFIRM_META_KEY: {"tool_name": tool_name, "status": "denied"},
+                    "prompt_versions": list(self._turn_prompt_versions),
+                }
+                assistant_msg = self.append_message(conv.id, "assistant", answer, metadata_json=meta)
+                self._log_short_turn_usage(
+                    conv=conv, user_id=user_id, config=config,
+                    assistant_msg=assistant_msg, request_started=request_started,
+                )
+                self._finalize_trace(assistant_msg, status="ok")
+                logger.info(
+                    "AI assistant write DENIED (permission) conversation_id=%s tool=%s user=%s perm=%s",
+                    conv.id, tool_name, user_id, required_perm,
+                )
+                return conv, assistant_msg
+
+        # execute the stored call.
+        mcp = MCPRuntimeClient(
+            settings.ai_assistant_mcp_url,
+            timeout_seconds=settings.ai_assistant_mcp_timeout_seconds,
+        )
+        call_started = time.perf_counter()
+        try:
+            output = mcp.call_tool(tool_name, args=args)
+            is_error, error_summary = self._tool_output_is_error(output)
+        except Exception as exc:  # noqa: BLE001
+            output, is_error, error_summary = str(exc), True, str(exc)
+            logger.exception("AI assistant confirmed write failed tool=%s", tool_name)
+        call_ms = (time.perf_counter() - call_started) * 1000
+
+        if self._turn_trace is not None:
+            self._turn_trace.add_span(
+                kind=KIND_TOOL,
+                name=f"confirmed write {tool_name}",
+                input_json={"tool_name": tool_name, "args": self._safe_args_for_log(args)},
+                output_json={"output": output[:2000]},
+                status="error" if is_error else "ok",
+                error=error_summary if is_error else None,
+                tool_name=tool_name,
+                latency_ms=int(call_ms),
+            )
+
+        if is_error:
+            answer = (
+                f"I tried to **{summary}** but it didn't go through: {error_summary}. "
+                "Nothing was changed. Want me to try again, or adjust the details?"
+            )
+        else:
+            answer = self._phrase_write_result(summary, output)
+        meta = {
+            "links": [], "sources": [], "selected_tools": [],
+            "tool_calls": [{"tool_name": tool_name, "ok": not is_error}],
+            "suggestions": [],
+            self._CONFIRM_META_KEY: {
+                "tool_name": tool_name,
+                "status": "failed" if is_error else "confirmed",
+            },
+            "prompt_versions": list(self._turn_prompt_versions),
+        }
+        assistant_msg = self.append_message(conv.id, "assistant", answer, metadata_json=meta)
+        self._log_short_turn_usage(
+            conv=conv, user_id=user_id, config=config,
+            assistant_msg=assistant_msg, request_started=request_started,
+            tool_calls_count=1,
+        )
+        self._finalize_trace(assistant_msg, status="error" if is_error else "ok")
+        logger.info(
+            "AI assistant confirmed write executed conversation_id=%s tool=%s ok=%s",
+            conv.id, tool_name, not is_error,
+        )
+        return conv, assistant_msg
+
+    def _phrase_write_result(self, summary: str, output: str) -> str:
+        """Deterministic success phrasing for a completed write. Surfaces an id /
+        reference from the tool output when present, without an LLM call."""
+        ref = None
+        try:
+            data = json.loads(output) if isinstance(output, str) else output
+            if isinstance(data, dict):
+                for key in ("reference", "ref", "number", "code", "id", "ticket_id", "url", "link"):
+                    if data.get(key):
+                        ref = data[key]
+                        break
+        except Exception:
+            ref = None
+        base = f"Done — I've completed: **{summary}**."
+        if ref:
+            base += f"\n\nReference: `{ref}`"
+        return base
+
     def _build_capability_answer(self) -> str:
         """Render the deterministic capability overview as markdown.
 
@@ -1455,6 +2031,95 @@ class AIAssistantChatService:
         return turn_cache.get_or_call(
             tool_name, args, lambda: client.call_tool(tool_name, args=args)
         )
+
+    def _build_uuid_lookup(
+        self, resolution: "ResolutionResult | None"
+    ) -> dict[str, dict[str, list[str]]]:
+        """Index this turn's resolution as ``{entity_type: {norm_key: [uuid, ...]}}``.
+
+        Keys are every human string the resolver knows for a match — its
+        ``canonical_code`` plus any string values in ``display`` (e.g. debtor_name,
+        debtor_code) — so whichever label the LLM echoed back into a tool arg maps
+        to the UUID. A name that matched several rows (the 5 HANLIM accounts) keeps
+        ALL their UUIDs, so an ambiguous name expands to every matching id."""
+        out: dict[str, dict[str, list[str]]] = {}
+        if resolution is None or not getattr(resolution, "resolutions", None):
+            return out
+        for tr in resolution.resolutions:
+            for m in tr.matches:
+                if not m.uuid:
+                    continue
+                bucket = out.setdefault(m.entity_type, {})
+                keys = [m.canonical_code or ""]
+                keys += [v for v in (m.display or {}).values() if isinstance(v, str)]
+                for key in keys:
+                    nk = _norm_entity_key(key)
+                    if not nk:
+                        continue
+                    lst = bucket.setdefault(nk, [])
+                    if m.uuid not in lst:
+                        lst.append(m.uuid)
+        return out
+
+    def _coerce_uuid_args(
+        self, args: dict[str, Any], resolution: "ResolutionResult | None"
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Substitute resolver UUIDs into UUID-intake params before dispatch.
+
+        For each ``_UUID_PARAM_ENTITY_TYPES`` param present, every non-UUID value is
+        looked up in this turn's resolution (``_build_uuid_lookup``); on a miss we
+        do ONE focused ``resolve_references`` on that value (reusing the resolve
+        endpoint, per the design) filtered to the param's entity type. Values that
+        still don't resolve are passed through unchanged so the backend surfaces a
+        clear error rather than us silently dropping a filter. Returns the coerced
+        args plus a list of substitutions made (for the trace)."""
+        if not args:
+            return args, []
+        turn_map = self._build_uuid_lookup(resolution)
+        subs: list[dict[str, Any]] = []
+        out = dict(args)
+        for param, entity_type in _UUID_PARAM_ENTITY_TYPES.items():
+            if param not in out:
+                continue
+            values = _coerce_arg_to_list(out[param])
+            if not values:
+                continue
+            bucket = turn_map.get(entity_type, {})
+            new_vals: list[str] = []
+            changed = False
+            for v in values:
+                sv = v.strip()
+                if not sv or _UUID_RE.match(sv):
+                    new_vals.append(sv)
+                    continue
+                uuids = bucket.get(_norm_entity_key(sv))
+                if not uuids:
+                    uuids = self._resolve_value_to_uuids(sv, entity_type)
+                if uuids:
+                    new_vals.extend(uuids)
+                    changed = True
+                    subs.append({"param": param, "value": sv, "resolved_uuids": uuids})
+                else:
+                    new_vals.append(sv)  # unresolved → let the backend report it
+            if changed:
+                seen: set[str] = set()
+                out[param] = [x for x in new_vals if not (x in seen or seen.add(x))]
+        return out, subs
+
+    def _resolve_value_to_uuids(self, value: str, entity_type: str) -> list[str]:
+        """Fallback: resolve a single name/code to UUIDs of ``entity_type`` by
+        reusing ``resolve_references``. Best-effort — any failure yields []."""
+        try:
+            res = resolve_references(self.db, value)
+        except Exception:
+            logger.exception("uuid-arg fallback resolve failed value=%s", value[:80])
+            return []
+        uuids: list[str] = []
+        for tr in res.resolutions:
+            for m in tr.matches:
+                if m.entity_type == entity_type and m.uuid and m.uuid not in uuids:
+                    uuids.append(m.uuid)
+        return uuids
 
     def _run_agent_loop(
         self,
@@ -1825,6 +2490,25 @@ class AIAssistantChatService:
                 parsed_args = call.get("arguments") or {}
                 if not isinstance(parsed_args, dict):
                     parsed_args = {}
+                # Deterministically map name/code → UUID for UUID-intake params, so
+                # a tool call the LLM built with the entity NAME it was shown does
+                # not 400 with INVALID_UUID. Reuses this turn's resolution.
+                parsed_args, uuid_subs = self._coerce_uuid_args(parsed_args, resolution)
+                if uuid_subs:
+                    logger.info(
+                        "AI assistant coerced %s name→uuid arg(s) for tool=%s: %s",
+                        len(uuid_subs),
+                        tool_name,
+                        [s["value"] for s in uuid_subs],
+                    )
+                    if self._turn_trace is not None:
+                        self._turn_trace.add_span(
+                            kind=KIND_CHAIN,
+                            name="resolve_tool_uuids",
+                            input_json={"tool_name": tool_name, "substitutions": uuid_subs},
+                            output_json={"args": parsed_args},
+                            tool_name=tool_name or None,
+                        )
                 str_args = {
                     k: (v if isinstance(v, str) else json.dumps(v))
                     for k, v in parsed_args.items()
@@ -1892,6 +2576,33 @@ class AIAssistantChatService:
                             tool_call_id=call_id,
                         )
                     continue
+
+                # M3a write-confirmation gate: a write tool must NOT execute
+                # without explicit user confirmation. On first encounter, persist
+                # the pending call and halt the whole loop so respond() renders
+                # Confirm/Cancel. Suppressed dry-run tools never reach here (they
+                # are stripped from the bound tool set), but this is the real
+                # enforcement point regardless of RAG binding.
+                if _is_write_tool(tool_name) and not self._writes_confirmed:
+                    self._pending_confirmation = {
+                        "tool_name": tool_name,
+                        "args": str_args,
+                        "summary": self._summarize_write(tool_name, str_args),
+                    }
+                    if self._turn_trace is not None:
+                        self._turn_trace.add_span(
+                            kind=KIND_GUARDRAIL,
+                            name=f"write-confirm required: {tool_name}",
+                            input_json={"tool_name": tool_name, "args": self._safe_args_for_log(str_args)},
+                            output_json={"pending_confirmation": True},
+                            tool_name=tool_name,
+                            tool_call_id=call_id,
+                        )
+                    logger.info(
+                        "AI assistant halted write tool for confirmation tool_name=%s",
+                        tool_name,
+                    )
+                    return "", tool_calls_log, token_usage
 
                 logger.info(
                     "AI assistant agent calling MCP tool iteration=%s tool_name=%s args=%s",

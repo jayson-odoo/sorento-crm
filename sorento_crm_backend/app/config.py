@@ -112,8 +112,11 @@ class Settings(BaseSettings):
     ai_assistant_mcp_url: str = "http://localhost:8765/mcp"
     ai_assistant_mcp_timeout_seconds: int = 20
     ai_assistant_tool_call_limit: int = 3
-    # RAG: how many MCP tool candidates to expose to the agent per turn (n8n parity).
-    ai_assistant_rag_top_k: int = 3
+    # RAG: how many MCP tools to BIND to the agent per turn. Default 1 —
+    # deterministic single-tool resolution (the parser already fixes intent+domain,
+    # so the top-1 candidate is the tool; the runners-up are kept in the trace as
+    # is_current=false for visibility but are not bound). Raise to expose more.
+    ai_assistant_rag_top_k: int = 1
     # Agent loop: max tool-calling iterations before forcing a final answer.
     ai_assistant_agent_max_iterations: int = 6
     # Reformulator: include the last N history messages (user+assistant) as context.

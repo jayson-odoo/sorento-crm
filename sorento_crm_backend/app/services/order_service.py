@@ -7,7 +7,7 @@ from io import BytesIO
 from datetime import datetime
 
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_, and_, func, exists
+from sqlalchemy import or_, and_, func, exists, false
 from decimal import Decimal
 from app.models.order import Order, OrderStatus, Customer, OrderLine, Transporter
 from app.models.product import Product
@@ -39,6 +39,14 @@ logger = logging.getLogger(__name__)
 # dates (either side of the asked date) that DO have a DO for the same scope.
 DATE_RELAX_LIMIT = 3
 
+# Canonical "handed to the customer" status codes. Mirrors
+# ComplaintFulfilmentService.DELIVERED_STATUS_CODES — an order counts as
+# delivered ONLY when its status is one of these AND actual_delivery_date is set
+# (a Status alone without a date, or a date under a non-delivered status like
+# "New Order", does NOT count as delivered). Drives the `order_status`
+# outstanding/delivered bucket filter.
+DELIVERED_STATUS_CODES = ("delivered", "completed")
+
 
 class OrderService:
     """Service for order operations."""
@@ -56,6 +64,7 @@ class OrderService:
         transporter_query: Optional[str] = None,
         customer_id: Optional[str] = None,
         order_status_id: Optional[str] = None,
+        order_status: Optional[str] = None,
         has_order_lines: Optional[str] = None,
         has_actual_delivery_date: Optional[str] = None,
         order_date_from: Optional[datetime] = None,
@@ -211,6 +220,40 @@ class OrderService:
                     "empty": True,
                 }
             filters.append(Order.order_status_id.in_(status_ids))
+
+        # Semantic outstanding/delivered bucket (CRM-003). Distinct from the exact
+        # `order_status_id` match above and AND'd with it. Delivered predicate is the
+        # canonical one: a delivered/completed status code AND a set actual_delivery_date
+        # (so a "New Order" with a stray delivery date reads as outstanding, not
+        # delivered). Outstanding = the null-safe negation.
+        bucket = (order_status or "").strip().lower()
+        if bucket in ("outstanding", "delivered"):
+            delivered_status_ids = [
+                s.id
+                for s in self.db.query(OrderStatus.id)
+                .filter(func.lower(OrderStatus.status_code).in_(DELIVERED_STATUS_CODES))
+                .all()
+            ]
+            if not delivered_status_ids:
+                # No delivered/completed statuses configured: nothing is delivered.
+                if bucket == "delivered":
+                    filters.append(false())
+                # outstanding → everything qualifies; add no filter.
+            elif bucket == "delivered":
+                filters.append(
+                    and_(
+                        Order.order_status_id.in_(delivered_status_ids),
+                        Order.actual_delivery_date.is_not(None),
+                    )
+                )
+            else:  # outstanding = NOT delivered (null-safe)
+                filters.append(
+                    or_(
+                        Order.order_status_id.is_(None),
+                        Order.order_status_id.not_in(delivered_status_ids),
+                        Order.actual_delivery_date.is_(None),
+                    )
+                )
 
         hol = (has_order_lines or "").strip().lower()
         if hol == "yes":
@@ -657,6 +700,7 @@ class OrderService:
         query: Optional[str] = None,
         customer_id: Optional[str] = None,
         order_status_id: Optional[str] = None,
+        order_status: Optional[str] = None,
         has_order_lines: Optional[str] = None,
         has_actual_delivery_date: Optional[str] = None,
         order_date_from: Optional[datetime] = None,
@@ -695,6 +739,7 @@ class OrderService:
             query=query,
             customer_id=customer_id,
             order_status_id=order_status_id,
+            order_status=order_status,
             has_order_lines=has_order_lines,
             has_actual_delivery_date=has_actual_delivery_date,
             order_date_from=order_date_from,
@@ -716,6 +761,304 @@ class OrderService:
         # default-sorted set so prev/next still works and total reflects all orders.
         unfiltered_ids = self.list_orders(ids_only=True)
         return compute_neighbours(unfiltered_ids, current_id)
+
+    # ------------------------------------------------------------------ #
+    # Aggregation / analytics
+    # ------------------------------------------------------------------ #
+    ANALYTICS_METRICS = ("count", "total_value", "avg_delivery_days")
+    ANALYTICS_GROUP_BY = ("customer", "product", "month", "none")
+
+    def order_analytics(
+        self,
+        *,
+        metric: str,
+        group_by: str = "none",
+        customer_ids: Optional[list[str]] = None,
+        product_ids: Optional[list[str]] = None,
+        product_code: Optional[str] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None,
+        limit: int = 50,
+    ) -> dict:
+        """Compute an aggregate metric over customer sales orders.
+
+        metric:
+          - count             → number of matching orders
+          - total_value       → SUM(orders.total_amount) (order-level revenue);
+                                 when group_by=product it is the per-product line
+                                 revenue (SUM of the matching order lines' totals)
+          - avg_delivery_days → AVG(actual_delivery_date - order_date) in days,
+                                 over orders that have BOTH dates set.
+
+        group_by buckets the result by customer (debtor_name), product
+        (product_code), calendar month (order_date YYYY-MM), or none (single
+        overall figure). Returns ranked group rows + an order-level overall total.
+        Only aggregates are exposed — never per-order pricing / cost fields.
+        """
+        from app.services.error_handler import AppException
+        from fastapi import status as _status
+
+        metric = (metric or "").strip().lower()
+        if metric not in self.ANALYTICS_METRICS:
+            raise AppException(
+                status_code=_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                message=(
+                    f"Unknown metric {metric!r}. Use one of: "
+                    + ", ".join(self.ANALYTICS_METRICS)
+                ),
+                code="INVALID_METRIC",
+            )
+        group_by = (group_by or "none").strip().lower() or "none"
+        if group_by not in self.ANALYTICS_GROUP_BY:
+            raise AppException(
+                status_code=_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                message=(
+                    f"Unknown group_by {group_by!r}. Use one of: "
+                    + ", ".join(self.ANALYTICS_GROUP_BY)
+                ),
+                code="INVALID_GROUP_BY",
+            )
+        try:
+            limit = max(1, min(int(limit), 500))
+        except (TypeError, ValueError):
+            limit = 50
+
+        customer_ids = list(customer_ids) if customer_ids else None
+        product_ids = list(product_ids) if product_ids else None
+        product_code = (product_code or "").strip() or None
+
+        def _apply_order_filters(q):
+            q = q.filter(Order.deleted_at.is_(None))
+            if customer_ids:
+                # Mirror list_orders: Order.customer_id IN (...) OR legacy
+                # debtor_name match for historical rows with NULL customer_id.
+                names_subq = (
+                    self.db.query(Customer.customer_name)
+                    .filter(Customer.id.in_(customer_ids))
+                    .subquery()
+                )
+                q = q.filter(
+                    or_(
+                        Order.customer_id.in_(customer_ids),
+                        func.lower(func.btrim(Order.debtor_name)).in_(
+                            self.db.query(
+                                func.lower(func.btrim(names_subq.c.customer_name))
+                            )
+                        ),
+                    )
+                )
+            if product_ids or product_code:
+                line_conds = []
+                if product_ids:
+                    line_conds.append(OrderLine.product_id.in_(product_ids))
+                if product_code:
+                    like = f"%{product_code.lower()}%"
+                    line_conds.append(
+                        OrderLine.product.has(func.lower(Product.product_code).like(like))
+                    )
+                q = q.filter(Order.lines.any(or_(*line_conds)))
+            if date_from is not None:
+                q = q.filter(Order.order_date >= date_from)
+            if date_to is not None:
+                q = q.filter(Order.order_date <= date_to)
+            return q
+
+        # Order value = header total_amount when set, else the sum of the order's
+        # line totals. In this dataset orders.total_amount is 0 across the board —
+        # the real monetary value lives on the order lines — so we coalesce to the
+        # line sum to return a truthful figure (spec said SUM(total_amount); the
+        # header is unpopulated, so this is the honest equivalent).
+        line_sum_subq = (
+            self.db.query(
+                OrderLine.order_id.label("oid"),
+                func.sum(
+                    func.coalesce(OrderLine.total_including_tax, OrderLine.total, 0)
+                ).label("lsum"),
+            )
+            .group_by(OrderLine.order_id)
+            .subquery()
+        )
+
+        # ---- order-level overall totals (grouping-independent, distinct orders)
+        overall_rows = _apply_order_filters(
+            self.db.query(
+                Order.id,
+                Order.debtor_name,
+                Order.order_date,
+                Order.total_amount,
+                Order.actual_delivery_date,
+                func.coalesce(line_sum_subq.c.lsum, 0).label("line_sum"),
+            ).outerjoin(line_sum_subq, line_sum_subq.c.oid == Order.id)
+        ).all()
+
+        def _order_value(row) -> float:
+            header = float(row.total_amount or 0)
+            return header if header else float(row.line_sum or 0)
+
+        def _day_diff(order_date, delivery_date) -> Optional[float]:
+            if order_date is None or delivery_date is None:
+                return None
+            try:
+                return (delivery_date - order_date).total_seconds() / 86400.0
+            except (TypeError, AttributeError):
+                return None
+
+        def _metric_value(order_total_sum, order_count, day_diffs, line_total_sum):
+            if metric == "count":
+                return order_count
+            if metric == "total_value":
+                base = line_total_sum if group_by == "product" else order_total_sum
+                return round(float(base or 0), 2)
+            # avg_delivery_days
+            vals = [d for d in day_diffs if d is not None]
+            if not vals:
+                return None
+            return round(sum(vals) / len(vals), 2)
+
+        overall_total_amount = sum((_order_value(r) for r in overall_rows), 0.0)
+        overall_day_diffs = [
+            _day_diff(r.order_date, r.actual_delivery_date) for r in overall_rows
+        ]
+        overall_value = _metric_value(
+            overall_total_amount, len(overall_rows), overall_day_diffs, overall_total_amount
+        )
+        overall = {
+            "group_key": "__all__",
+            "group_label": "All orders",
+            "metric": metric,
+            "value": overall_value,
+            "order_count": len(overall_rows),
+        }
+
+        # ---- grouped rows
+        groups: list[dict] = []
+        if group_by == "product":
+            like = f"%{product_code.lower()}%" if product_code else None
+            pq = (
+                self.db.query(
+                    Product.product_code.label("product_code"),
+                    Product.product_name.label("product_name"),
+                    Order.id.label("order_id"),
+                    Order.total_amount.label("total_amount"),
+                    Order.order_date.label("order_date"),
+                    Order.actual_delivery_date.label("actual_delivery_date"),
+                    func.coalesce(
+                        OrderLine.total_including_tax, OrderLine.total, 0
+                    ).label("line_total"),
+                )
+                .join(OrderLine, OrderLine.order_id == Order.id)
+                .join(Product, Product.id == OrderLine.product_id)
+                .filter(Order.deleted_at.is_(None))
+            )
+            if customer_ids:
+                names_subq = (
+                    self.db.query(Customer.customer_name)
+                    .filter(Customer.id.in_(customer_ids))
+                    .subquery()
+                )
+                pq = pq.filter(
+                    or_(
+                        Order.customer_id.in_(customer_ids),
+                        func.lower(func.btrim(Order.debtor_name)).in_(
+                            self.db.query(
+                                func.lower(func.btrim(names_subq.c.customer_name))
+                            )
+                        ),
+                    )
+                )
+            # Product filter applied to the joined line directly so only matching
+            # product lines are grouped (not every product on a matching order).
+            if product_ids:
+                pq = pq.filter(OrderLine.product_id.in_(product_ids))
+            if like:
+                pq = pq.filter(func.lower(Product.product_code).like(like))
+            if date_from is not None:
+                pq = pq.filter(Order.order_date >= date_from)
+            if date_to is not None:
+                pq = pq.filter(Order.order_date <= date_to)
+
+            buckets: dict[str, dict] = {}
+            for r in pq.all():
+                key = r.product_code or "(unknown)"
+                b = buckets.setdefault(
+                    key,
+                    {
+                        "label": (
+                            f"{r.product_code} — {r.product_name}"
+                            if r.product_name
+                            else (r.product_code or "(unknown)")
+                        ),
+                        "orders": {},
+                        "line_total": 0.0,
+                    },
+                )
+                b["orders"][r.order_id] = _day_diff(
+                    r.order_date, r.actual_delivery_date
+                )
+                b["line_total"] += float(r.line_total or 0)
+            for key, b in buckets.items():
+                groups.append(
+                    {
+                        "group_key": key,
+                        "group_label": b["label"],
+                        "metric": metric,
+                        "value": _metric_value(
+                            0.0, len(b["orders"]), list(b["orders"].values()), b["line_total"]
+                        ),
+                        "order_count": len(b["orders"]),
+                    }
+                )
+        elif group_by == "none":
+            groups.append({**overall, "group_key": "all", "group_label": "All orders"})
+        else:
+            buckets: dict[str, dict] = {}
+            for r in overall_rows:
+                if group_by == "customer":
+                    label = (r.debtor_name or "(no customer)").strip() or "(no customer)"
+                    key = label.lower()
+                else:  # month
+                    key = r.order_date.strftime("%Y-%m") if r.order_date else "(no date)"
+                    label = key
+                b = buckets.setdefault(
+                    key, {"label": label, "total_amount": 0.0, "day_diffs": [], "count": 0}
+                )
+                b["total_amount"] += _order_value(r)
+                b["day_diffs"].append(_day_diff(r.order_date, r.actual_delivery_date))
+                b["count"] += 1
+            for key, b in buckets.items():
+                groups.append(
+                    {
+                        "group_key": key,
+                        "group_label": b["label"],
+                        "metric": metric,
+                        "value": _metric_value(
+                            b["total_amount"], b["count"], b["day_diffs"], b["total_amount"]
+                        ),
+                        "order_count": b["count"],
+                    }
+                )
+
+        # Rank: highest value first (None sinks to the bottom); cap to `limit`.
+        groups.sort(
+            key=lambda g: (g["value"] is not None, g["value"] if g["value"] is not None else 0),
+            reverse=True,
+        )
+        groups = groups[:limit]
+
+        return {
+            "metric": metric,
+            "group_by": group_by,
+            "filters": {
+                "customer_ids": customer_ids,
+                "product_ids": product_ids,
+                "product_code": product_code,
+                "date_from": date_from.isoformat() if date_from else None,
+                "date_to": date_to.isoformat() if date_to else None,
+            },
+            "groups": groups,
+            "total": overall,
+            "empty": len(overall_rows) == 0,
+        }
 
     def list_orders_by_product(
         self,

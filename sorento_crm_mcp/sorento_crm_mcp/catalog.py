@@ -338,13 +338,18 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • `customer_ids` — customers (Order.customer_id, falls back to debtor_name for legacy rows)\n"
             "  • `product_ids` — orders containing any of these products\n"
             "  • `transporter_ids` — transporters (Order.transporter_id, text fallback for legacy rows)\n"
-            "Date window: actual_delivery_date_from / actual_delivery_date_to."
+            "Date window: actual_delivery_date_from / actual_delivery_date_to.\n"
+            "DELIVERY BUCKET: `order_status` = 'outstanding' | 'delivered' (omit for all). "
+            "'outstanding' = NOT yet delivered (New Order, Processing, In Transit, Cancelled, or a "
+            "delivery date under a non-delivered status); 'delivered' = status delivered/completed AND "
+            "actual_delivery_date set. Use for 'outstanding/pending/undelivered orders', 'belum hantar', "
+            "'not delivered yet'. AND'd with the other filters."
         ),
         "/api/v1/order-management/orders",
         (),
         (
             "page", "limit", "order_ids", "customer_ids", "product_ids", "transporter_ids",
-            "actual_delivery_date_from", "actual_delivery_date_to", "sort", "dir",
+            "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "sort", "dir",
         ),
         domain="orders",
         related_tools=("crm_order_management_orders_by_product_list",),
@@ -370,6 +375,35 @@ CATALOG: tuple[ToolSpec, ...] = (
         ),
         domain="orders",
         related_tools=("crm_order_management_orders_list", "crm_incoming_stock_by_product"),
+        escalation_team="sales",
+    ),
+    ToolSpec(
+        "crm_order_analytics",
+        (
+            "AGGREGATE / ANALYTICAL tool for customer sales orders — computes a single "
+            "number (or ranked buckets), NOT a row list. Use this (NOT crm_order_management_orders_list) "
+            "whenever the user asks for a TOTAL, SUM, AVERAGE, COUNT or REVENUE figure:\n"
+            "  • 'total order value' / 'sum of orders' / 'total revenue' / 'how much did X buy' → "
+            "metric=total_value (SUM of order total_amount)\n"
+            "  • 'average delivery time' / 'how long to deliver' / 'avg delivery days / lead time' → "
+            "metric=avg_delivery_days (AVG of actual_delivery_date - order_date, in days)\n"
+            "  • 'how many orders' / 'order count' → metric=count\n\n"
+            "metric (REQUIRED): count | total_value | avg_delivery_days.\n"
+            "group_by (optional): customer | product | month | none (default none = one overall figure).\n"
+            "FILTER BY UUID: `customer_ids` (canonical customer UUIDs — pass the customer's name/debtor, "
+            "it is resolved to a UUID upstream), `product_ids` (canonical product UUIDs), or `product_code` "
+            "(partial). `date_from` / `date_to` scope by order_date (e.g. a year '2026', 'YYYY-MM', or "
+            "YYYY-MM-DD). Returns ranked `groups` [{group_key, group_label, metric, value}] plus an overall "
+            "`total`. Exposes ONLY computed aggregates — never per-order cost/invoice pricing."
+        ),
+        "/api/v1/order-management/orders/analytics",
+        (),
+        (
+            "metric", "group_by", "customer_ids", "product_ids", "product_code",
+            "date_from", "date_to", "limit",
+        ),
+        domain="orders",
+        related_tools=("crm_order_management_orders_list", "crm_master_customers_list"),
         escalation_team="sales",
     ),
     # --- incoming-stock ---
@@ -522,9 +556,16 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_master_customers_list",
         (
-            "List / search distinct customers, deduplicated by debtor_name aggregated from the orders table "
-            "(the customers master table is not used by the business — real customer identity lives on "
-            "orders.debtor_name / debtor_code). Each row returns debtor_name, debtor_code, order_count. "
+            "List / search / RANK distinct customers, deduplicated by debtor_name aggregated from the orders "
+            "table (the customers master table is not used by the business — real customer identity lives on "
+            "orders.debtor_name / debtor_code). Each row returns debtor_name, debtor_code AND order_count "
+            "(the number of orders that customer placed).\n\n"
+            "THIS TOOL AGGREGATES AND RANKS CUSTOMERS BY ORDER COUNT — use it (NOT the orders list) for "
+            "'top customers', 'top 5 / top N customers by order count', 'busiest customers', 'which "
+            "customers have the most orders', 'rank customers by orders', 'customer order counts', "
+            "'who orders the most'. Pass `sort=order_count` with `dir=desc` and `limit=N` to get the top N. "
+            "For plain discovery ('list customers', 'find customer ABC', 'do we already have this "
+            "developer') sort by debtor_name.\n\n"
             "FILTER BY UUID: `customer_ids` (canonical customer UUIDs, csv / JSON / repeated) filters the "
             "source orders by Order.customer_id before aggregation. External AI/MCP callers are HARD-CAPPED "
             "at limit=20 server-side. Sort: debtor_name | debtor_code | order_count."
@@ -532,6 +573,62 @@ CATALOG: tuple[ToolSpec, ...] = (
         "/api/v1/order-management/orders/debtors",
         (),
         ("page", "limit", "customer_ids", "sort", "dir"),
+    ),
+    # --- complaints ---
+    ToolSpec(
+        "crm_complaints_list",
+        (
+            "List customer complaints (defect reports, product quality issues, warranty "
+            "claims) with pagination, status filter, assignee filter and sorting. "
+            "PRIMARY TOOL for 'show me open complaints', 'list complaints', 'unresolved / pending "
+            "complaints', 'recent complaints', 'complaints assigned to <agent>', "
+            "'complaint status'. "
+            "Each row returns complaint_number, complaint_date, delivery_order_number, customer_name, "
+            "product_code / product_type, defect_description, status, assigned_to_name, root_cause_name "
+            "and resolution_name.\n\n"
+            "ALL FILTERS OPTIONAL — call with none to get the newest complaints page.\n"
+            "  • `status` — EXACT single complaint status. Known values: draft, submitted, new, "
+            "responded, updated, approved, rejected, processed_by_cs, fulfilled, closed. There is NO "
+            "combined 'open' value: for 'open / unresolved complaints' either omit status (list all "
+            "newest-first) or pass one concrete in-progress status; closed / fulfilled are the terminal "
+            "states.\n"
+            "  • `assigned_to` — respond_user_id of the assignee (or `__unassigned__` for unassigned).\n"
+            "SORT KEYS: complaint_date, created_at, delivery_order_number, customer_name, product_code, "
+            "salesperson, assigned_to, status; combine with dir=asc|desc (use sort=complaint_date&dir=desc "
+            "for the most recent complaints first)."
+        ),
+        "/api/v1/complaints-management/complaints/",
+        (),
+        ("page", "limit", "assigned_to", "status", "sort", "dir"),
+        module="complaints",
+        domain="complaints",
+        escalation_team="support",
+    ),
+    ToolSpec(
+        "crm_complaint_analytics",
+        (
+            "AGGREGATE / ANALYTICAL tool for complaints — returns COUNTS (a single number or ranked "
+            "buckets), NOT a row list. Use this (NOT crm_complaints_list) whenever the user asks 'how "
+            "many complaints', 'which product has the most complaints', 'complaints by product / status "
+            "/ month', or 'how many complaints were resolved in <period>'.\n\n"
+            "metric: count (only supported value).\n"
+            "group_by (optional): status | product | month | none (default none = one overall count). "
+            "For 'which product has the most complaints' pass group_by=product — rows are ranked by count "
+            "descending, so the first group is the answer.\n"
+            "date_field (optional): complaint_date (when raised, default) or resolved_at (when resolved). "
+            "For 'complaints resolved last month / in <period>' pass date_field=resolved_at with "
+            "`date_from`/`date_to` — do NOT pass status=resolved (there is no such status; resolved_at "
+            "being set already means resolved).\n"
+            "`status` filters an exact complaint status (approved, processed_by_cs, closed, ...). "
+            "`date_from` / `date_to` accept YYYY-MM-DD, DD/MM/YYYY, or 'YYYY-MM'. Returns ranked `groups` "
+            "[{group_key, group_label, metric, value}] plus an overall `total`."
+        ),
+        "/api/v1/complaints-management/complaints/analytics",
+        (),
+        ("metric", "group_by", "status", "date_field", "date_from", "date_to", "limit"),
+        module="complaints",
+        domain="complaints",
+        escalation_team="support",
     ),
     # ===== User-guides (Outline-backed how-to retrieval) =====
     ToolSpec(
@@ -572,5 +669,88 @@ CATALOG: tuple[ToolSpec, ...] = (
         method="POST",
         body_params=("payload_json", "message_id"),
         module="tickets",
+    ),
+    # ===== Record actions (staff write tools; assistant gates with a confirm) =====
+    # These wrap existing internal-staff CRM endpoints. Registered by a dedicated
+    # handler in `record_actions.py` (external=True) so the fixed decision field
+    # (close / cancel / action=approved|rejected) is injected server-side and the
+    # caller only supplies the entity UUID + an optional note. Names carry the
+    # write-verb suffix so the in-app assistant's write-confirmation gate halts
+    # them until the user explicitly confirms.
+    ToolSpec(
+        "crm_complaint_close",
+        (
+            "Close (resolve / finalise) a complaint that can't be actioned further — sets the complaint "
+            "status to 'closed', closes its customer-service SLA stage, and sends a status-update message "
+            "to the contact. INVOCATION: pass `complaint_id` (canonical complaint UUID; the assistant "
+            "resolves a complaint code such as C-1042 to its UUID before calling). Optionally pass `note` — "
+            "a short closing remark shown to the contact. USE when the user says 'close complaint', 'mark "
+            "complaint resolved', 'finalise this complaint', 'shut the complaint'. This is a WRITE action; "
+            "the assistant asks the user to confirm before it runs."
+        ),
+        "/api/v1/complaints-management/complaints/{complaint_id}/close",
+        ("complaint_id",),
+        (),
+        method="POST",
+        body_params=("note",),
+        module="complaints",
+        external=True,
+        domain="complaints",
+    ),
+    ToolSpec(
+        "crm_order_cancel",
+        (
+            "Cancel a sales order / delivery order — marks the order as cancelled (is_cancelled=true), "
+            "which also unlinks and re-evaluates any complaints tied to it. INVOCATION: pass `order_id` "
+            "(canonical order UUID; the assistant resolves an order number to its UUID). Optionally pass "
+            "`reason` — a short remark stored on the order. USE when the user says 'cancel order', 'cancel "
+            "this DO', 'void the order', 'call off the order'. WRITE action; the assistant confirms first."
+        ),
+        "/api/v1/order-management/orders/{order_id}/cancel",
+        ("order_id",),
+        (),
+        method="POST",
+        body_params=("reason",),
+        module="order",
+        external=True,
+        domain="orders",
+    ),
+    ToolSpec(
+        "crm_purchase_request_approve",
+        (
+            "Approve a purchase request or sponsorship form that is pending approval — records an in-system "
+            "approval decision (identical to clicking Approve on the form or the emailed approval link): "
+            "advances the status, sends notifications, and fires the approval automation. INVOCATION: pass "
+            "`purchase_request_id` (canonical PR UUID; the assistant resolves a PR number such as PR-88). "
+            "Optionally pass `comments`. USE when the user says 'approve PR', 'approve the purchase request', "
+            "'approve the sponsorship form', 'sign off the PR'. WRITE action; the assistant confirms first."
+        ),
+        "/api/v1/procurement/purchase-requests/{purchase_request_id}/approval-decision",
+        ("purchase_request_id",),
+        (),
+        method="POST",
+        body_params=("comments",),
+        module="procurement",
+        external=True,
+        domain="procurement",
+    ),
+    ToolSpec(
+        "crm_purchase_request_reject",
+        (
+            "Reject a purchase request or sponsorship form that is pending approval — records an in-system "
+            "rejection decision (identical to clicking Reject on the form or the emailed approval link). "
+            "INVOCATION: pass `purchase_request_id` (canonical PR UUID; the assistant resolves a PR number "
+            "such as PR-88). Optionally pass `reason` — the rejection comment. USE when the user says "
+            "'reject PR', 'decline the purchase request', 'turn down the sponsorship form', 'do not approve "
+            "PR'. WRITE action; the assistant confirms first."
+        ),
+        "/api/v1/procurement/purchase-requests/{purchase_request_id}/approval-decision",
+        ("purchase_request_id",),
+        (),
+        method="POST",
+        body_params=("reason",),
+        module="procurement",
+        external=True,
+        domain="procurement",
     ),
 )

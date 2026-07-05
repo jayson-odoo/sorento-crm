@@ -236,7 +236,7 @@ export default function AIAssistantBubble() {
   );
 
   const sendText = useCallback(
-    async (text: string) => {
+    async (text: string, confirmAction?: 'confirm' | 'cancel') => {
       const trimmed = text.trim();
       if (!trimmed || isSending) return;
       setInput('');
@@ -251,7 +251,7 @@ export default function AIAssistantBubble() {
       setIsSending(true);
       try {
         const snapshot = getPageSnapshot();
-        const conv = await sendAIAssistantMessage(trimmed, conversationId, snapshot);
+        const conv = await sendAIAssistantMessage(trimmed, conversationId, snapshot, confirmAction);
         setConversationId(conv.id);
         setMessages(conv.messages || []);
       } catch (err) {
@@ -350,6 +350,22 @@ export default function AIAssistantBubble() {
   const onSuggestionClick = async (s: string) => {
     setInput(s);
     await sendText(s);
+  };
+
+  // M3a Clarifier: clicking an option chip answers the clarifying question by
+  // sending the option text as the next turn.
+  const onClarifyOptionClick = async (opt: string) => {
+    await sendText(opt);
+  };
+
+  // M3a Write-confirm: Confirm executes the pending write; Cancel drops it. The
+  // message text is cosmetic — the backend keys off confirm_action + the stored
+  // pending call on the prior assistant message.
+  const onConfirmWrite = async () => {
+    await sendText('Confirm', 'confirm');
+  };
+  const onCancelWrite = async () => {
+    await sendText('Cancel', 'cancel');
   };
 
   if (!canUseAIAssistant) return null;
@@ -501,7 +517,7 @@ export default function AIAssistantBubble() {
                       ) : null}
                     </div>
                   ) : null}
-                  {sortedMessages.map((m) => (
+                  {sortedMessages.map((m, mIdx) => (
                     <div
                       key={m.id}
                       ref={(node) => {
@@ -584,6 +600,59 @@ export default function AIAssistantBubble() {
                               <GitBranch className="size-3" />
                               View trace
                             </Link>
+                          </div>
+                        ) : null}
+                        {/* M3a Clarifier — enumerable options as clickable chips.
+                            Only on the latest assistant turn (an older clarify is
+                            superseded once answered). */}
+                        {m.role === 'assistant' &&
+                        mIdx === sortedMessages.length - 1 &&
+                        !isSending &&
+                        (m.metadata_json?.clarify?.options?.length ?? 0) > 0 ? (
+                          <div
+                            className="mt-2 flex flex-wrap gap-2"
+                            data-testid="clarify-options"
+                          >
+                            {m.metadata_json?.clarify?.options?.map((opt, i) => (
+                              <button
+                                key={`${i}-${opt}`}
+                                type="button"
+                                onClick={() => onClarifyOptionClick(opt)}
+                                className="rounded-full border bg-secondary px-3 py-1 text-xs hover:bg-secondary/80"
+                                title={opt}
+                              >
+                                {opt}
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                        {/* M3a Write-confirm — Confirm/Cancel for a pending write.
+                            Only status === 'pending' on the latest turn shows buttons;
+                            confirmed/cancelled/denied/failed are terminal. */}
+                        {m.role === 'assistant' &&
+                        mIdx === sortedMessages.length - 1 &&
+                        !isSending &&
+                        m.metadata_json?.pending_confirmation?.status === 'pending' ? (
+                          <div
+                            className="mt-2 flex gap-2"
+                            data-testid="write-confirm-actions"
+                          >
+                            <button
+                              type="button"
+                              onClick={onConfirmWrite}
+                              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                              data-testid="write-confirm-btn"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              type="button"
+                              onClick={onCancelWrite}
+                              className="rounded-md border bg-background px-3 py-1.5 text-xs font-medium hover:bg-muted"
+                              data-testid="write-cancel-btn"
+                            >
+                              Cancel
+                            </button>
                           </div>
                         ) : null}
                         {/* Inline markdown links inside the message body are now the only

@@ -398,8 +398,15 @@ def require_any_permission(permission_slugs: List[str]):
 
 def require_permission_with_api_key(permission_slug: str):
     """
-    Same as require_permission but allows X-API-Key (with act-as user) for GET-style automation.
-    Use only on read endpoints; keep writes on require_permission + get_current_user.
+    Same as require_permission but allows X-API-Key (with act-as user) for automation.
+    The permission is still enforced against the resolved (act-as) user.
+
+    Primarily for read endpoints. It is also used on a small set of AI-assistant
+    write actions (complaint close, PR approve/reject) where execution runs as the
+    act-as principal — those paths ALSO enforce the actual end-user's permission at
+    the assistant layer (`_WRITE_TOOL_PERMISSIONS` in ai_assistant_service), so the
+    check is applied twice. Do not add it to a write endpoint without that second,
+    real-user gate.
     """
 
     def _require(

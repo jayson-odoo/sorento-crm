@@ -4,6 +4,7 @@ import re
 from datetime import datetime, time
 
 from fastapi import APIRouter, Depends, Query, HTTPException, status, UploadFile, File, Body, Request
+from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -333,6 +334,18 @@ async def get_orders(
     ),
     customer_id: Optional[str] = Query(None),
     order_status_id: Optional[str] = Query(None),
+    order_status: Optional[str] = Query(
+        None,
+        description=(
+            "Delivery bucket filter: 'outstanding' = orders NOT yet delivered, "
+            "'delivered' = orders already delivered, omit/null = no filter (all). "
+            "Delivered means the order's status is delivered/completed AND its "
+            "actual_delivery_date is set; everything else (New Order, Processing, "
+            "In Transit, Cancelled, or a delivery date under a non-delivered status) "
+            "is outstanding. Use for 'outstanding/pending/undelivered orders', "
+            "'belum hantar', 'not delivered yet'. AND'd with the other filters."
+        ),
+    ),
     has_order_lines: Optional[str] = Query(
         None,
         description="Filter by lines: 'yes' = at least one line, 'no' = no lines, omit = all",
@@ -403,6 +416,7 @@ async def get_orders(
             transporter_query=transporter_query,
             customer_id=customer_id,
             order_status_id=order_status_id,
+            order_status=order_status,
             has_order_lines=has_order_lines,
             has_actual_delivery_date=has_actual_delivery_date,
             order_date_from=_parse_flex_date(order_date_from),
@@ -653,6 +667,7 @@ async def get_order_neighbours(
     query: Optional[str] = Query(None),
     customer_id: Optional[str] = Query(None),
     order_status_id: Optional[str] = Query(None),
+    order_status: Optional[str] = Query(None),
     has_order_lines: Optional[str] = Query(None),
     has_actual_delivery_date: Optional[str] = Query(None),
     order_date_from: Optional[str] = Query(None),
@@ -681,6 +696,7 @@ async def get_order_neighbours(
             query=query,
             customer_id=customer_id,
             order_status_id=order_status_id,
+            order_status=order_status,
             has_order_lines=has_order_lines,
             has_actual_delivery_date=has_actual_delivery_date,
             order_date_from=_parse_flex_date(order_date_from),
@@ -692,6 +708,80 @@ async def get_order_neighbours(
             transporter_query=transporter_query,
             sort_field=sort or "created_at",
             sort_dir=dir or "asc",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/analytics")
+async def get_order_analytics(
+    metric: str = Query(
+        ...,
+        description=(
+            "Aggregate to compute. One of: count (number of orders), "
+            "total_value (SUM of order total_amount = revenue), "
+            "avg_delivery_days (AVG of actual_delivery_date - order_date, in days, "
+            "over orders that have both dates)."
+        ),
+    ),
+    group_by: str = Query(
+        "none",
+        description="Bucket results by: customer | product | month | none (single overall figure).",
+    ),
+    customer_ids: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Filter by customer UUIDs (csv/JSON/repeated). Matches Order.customer_id "
+            "IN (...) with a legacy debtor_name fallback. Pass the resolved customer "
+            "UUID — free-text names are coerced to UUIDs upstream."
+        ),
+    ),
+    product_ids: Optional[list[str]] = Query(
+        None,
+        description="Filter to orders containing any of these product UUIDs (csv/JSON/repeated).",
+    ),
+    product_code: Optional[str] = Query(
+        None,
+        description="Partial product-code filter (case-insensitive) as an alternative to product_ids.",
+    ),
+    date_from: Optional[str] = Query(
+        None,
+        description=(
+            "Order date from (inclusive). Accepts YYYY-MM-DD, DD/MM/YYYY, DD-MM-YYYY, "
+            "YYYY/MM/DD, ISO datetime, 'YYYY-MM', 'MM/YYYY', or 'Month YYYY'."
+        ),
+    ),
+    date_to: Optional[str] = Query(
+        None,
+        description="Order date to (inclusive). Same flexible formats as date_from.",
+    ),
+    limit: int = Query(50, ge=1, le=500, description="Max number of ranked group rows to return."),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Aggregate customer sales orders (count / total revenue / average delivery days).
+
+    Returns ranked group rows plus an order-level overall total. Exposes ONLY the
+    computed aggregates — never per-order cost/invoice pricing.
+    """
+    try:
+        service = OrderService(db)
+        # Accept a bare 4-digit year ("2026") for a whole-year window.
+        _df = re.fullmatch(r"\s*(\d{4})\s*", date_from or "")
+        _dt = re.fullmatch(r"\s*(\d{4})\s*", date_to or "")
+        date_from_s = f"{_df.group(1)}-01-01" if _df else date_from
+        date_to_s = f"{_dt.group(1)}-12-31" if _dt else date_to
+        return service.order_analytics(
+            metric=metric,
+            group_by=group_by,
+            customer_ids=parse_uuid_list(customer_ids, param_name="customer_ids"),
+            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+            product_code=product_code,
+            date_from=_parse_flex_date(date_from_s),
+            date_to=_parse_flex_date(date_to_s, end_of_day=True),
+            limit=limit,
         )
     except HTTPException:
         raise
@@ -764,6 +854,39 @@ async def update_order(
     try:
         service = OrderService(db)
         order = service.update_order(order_id, order_data, current_user["id"])
+        return order
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+class OrderCancelRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+@router.post("/{order_id}/cancel", response_model=OrderResponse)
+async def cancel_order(
+    order_id: str,
+    body: OrderCancelRequest = Body(default_factory=OrderCancelRequest),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Cancel an order (sets is_cancelled=true, optional reason → remarks).
+
+    Narrow, single-purpose alternative to the broad PUT so automation / the AI
+    assistant (X-API-Key act-as principal) can cancel without a wide edit grant —
+    orders have no per-field edit permission, so this matches update_order's
+    auth-only gate. Delegates to OrderService.update_order so the SAME
+    complaint (un)link + re-fulfilment re-evaluation runs on cancel; only sets
+    remarks when a reason is supplied (exclude_unset preserves existing remarks).
+    """
+    try:
+        fields: dict = {"is_cancelled": True}
+        if body and body.reason:
+            fields["remarks"] = body.reason
+        service = OrderService(db)
+        order = service.update_order(order_id, OrderUpdate(**fields), current_user["id"])
         return order
     except HTTPException:
         raise

@@ -432,3 +432,61 @@ def test_high_confidence_capability_is_served_deterministically(
 
     assert served["hit"] is True, "high-confidence capability must be served from the catalog"
     assert agent.called is False, "capability short-circuit must bypass the agent loop"
+
+
+# --- M3a Clarifier: ask-vs-guess -------------------------------------------
+# When the parser flags needs_clarification with a question/options, respond()
+# must ask (persist a clarify turn with chips) and NOT run the agent loop. After
+# one clarify round it must proceed with the best assumption (no infinite loop).
+def _clarify_parse(options):
+    return ParseResult(
+        standalone_query="standalone",
+        intent="unknown",
+        confidence=0.2,
+        entities=ParseEntities(),
+        signals=ParseSignals(
+            needs_clarification=True,
+            clarify_question="Which record do you mean?",
+            clarify_options=list(options),
+        ),
+    )
+
+
+def test_ambiguous_turn_asks_clarifying_question_with_chips(
+    seeded_user: str, chat_service: AIAssistantChatService
+):
+    chat_service._parse_turn = lambda **_k: _clarify_parse(["Product", "Customer"])  # type: ignore[assignment]
+    agent = _Spy(("should-not-run", [], _USAGE))
+    chat_service._run_agent_loop = agent  # type: ignore[assignment]
+
+    _conv, msg = chat_service.respond(
+        user_id=seeded_user,
+        conversation_id=None,
+        message="the hanlim one",
+        page_snapshot=None,
+    )
+
+    meta = msg.metadata_json or {}
+    assert meta.get("clarify", {}).get("options") == ["Product", "Customer"], "chips must be surfaced"
+    assert "Which record" in (msg.content or ""), "the clarifying question is the answer text"
+    assert agent.called is False, "an ambiguous turn must clarify, not run the agent loop"
+
+
+def test_second_ambiguous_turn_does_not_loop_clarifying(
+    seeded_user: str, chat_service: AIAssistantChatService
+):
+    # Turn 1: clarify. Turn 2 (same conversation, still ambiguous): must proceed
+    # to the agent loop with the best assumption — one clarify round max.
+    chat_service._parse_turn = lambda **_k: _clarify_parse(["Product", "Customer"])  # type: ignore[assignment]
+    agent = _Spy(("best-assumption answer", [], _USAGE))
+    chat_service._run_agent_loop = agent  # type: ignore[assignment]
+
+    conv, _msg1 = chat_service.respond(
+        user_id=seeded_user, conversation_id=None, message="the hanlim one", page_snapshot=None
+    )
+    assert agent.called is False  # first turn clarified
+
+    chat_service.respond(
+        user_id=seeded_user, conversation_id=str(conv.id), message="still vague", page_snapshot=None
+    )
+    assert agent.called is True, "after one clarify round, a still-vague turn must answer with best assumption"
