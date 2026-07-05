@@ -256,3 +256,36 @@ def test_and_mode_empty_returns_alternatives(db):
     assert res.empty is True
     codes = [a.canonical_code for a in res.alternatives]
     assert "SRTKT71SS" in codes
+
+
+# --------------------------------------------------------------------------- #
+# fallback_to_all_types must NOT surface raw `attachment` (file) entities unless
+# the caller explicitly whitelisted `attachment`. A caller resolving product /
+# attachment_type wants a product + a type; a raw file row can't be a product_id
+# and just pollutes (e.g. "WC 8609" -> a photo whose name contains "8609").
+# --------------------------------------------------------------------------- #
+def test_fallback_excludes_raw_attachment_unless_whitelisted(db):
+    from app.api.v1.system.references import _resolve_input
+
+    # Control: caller whitelists `attachment` → the file DOES resolve. Also proves
+    # the sample data ("WC 8609"→a MWC8609 file) exists in this DB; skip if not.
+    ctrl = _resolve_input(
+        db, "", ["WC 8609"], match_mode="or",
+        allowed_entity_types=["attachment"], fallback_to_all_types=True,
+    )
+    ctrl_types = {m["entity_type"] for r in ctrl.get("resolutions", []) for m in r.get("matches", [])}
+    if "attachment" not in ctrl_types:
+        pytest.skip("WC 8609 attachment sample not present in DB")
+
+    # product + attachment_type whitelist + fallback → raw attachment must NOT leak.
+    res = _resolve_input(
+        db, "", ["WC 8609"], match_mode="and",
+        allowed_entity_types=["product", "attachment_type"], fallback_to_all_types=True,
+    )
+    leaked = [
+        m["canonical_code"]
+        for r in res.get("resolutions", [])
+        for m in r.get("matches", [])
+        if m["entity_type"] == "attachment"
+    ]
+    assert leaked == [], f"raw attachment leaked into fallback: {leaked}"

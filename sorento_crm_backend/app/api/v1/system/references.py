@@ -1195,10 +1195,25 @@ def _resolve_input(
     # handles the "no promo found → suggest brand-scoped products" path, so
     # this branch fires for non-promotion hints or callers that didn't ask for
     # promotion-domain at all.
+    #
+    # Raw `attachment` (file) entities are EXCLUDED from this expansion unless the
+    # caller explicitly whitelisted `attachment`. A caller resolving product /
+    # attachment_type wants a product + a type to query attachments BY downstream;
+    # a raw attachment-file row can't be used as a product_id and just pollutes —
+    # e.g. "WC 8609" (no product hit) would otherwise resolve to a photo file
+    # `MWC8609-RL.jpg` whose name contains "8609", drowning the real intent. Files
+    # stay reachable for callers that ask for them (whitelist `attachment`, or the
+    # resource_attachment domain).
+    caller_types = {(t or "").strip().lower() for t in (allowed_entity_types or [])}
+    fb_allowed = (
+        None
+        if "attachment" in caller_types
+        else sorted(_RESOLVER_ENTITY_TYPES - {"attachment"})
+    )
     fb_raw = resolve_references(
         db,
         unresolved,
-        allowed_entity_types=None,
+        allowed_entity_types=fb_allowed,
         cross_type_expand=True,
     ).as_dict()
     fb = _apply_promotion_access_levels_filter(db, fb_raw, access_levels)
