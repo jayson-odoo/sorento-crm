@@ -23,6 +23,16 @@ class ChatHistoryMessageIngestRequest(BaseModel):
         description="Numbered-options result set sent in this message "
         "(idx/uuid/label/...), referencable later via conversation-variables.",
     )
+    reply_to_message_id: Optional[str] = Field(
+        None,
+        max_length=64,
+        description="Incoming quote-reply only: respond.io message id of the "
+        "replied-to message. Matches the `message_id` of the earlier outgoing "
+        "row. Null for normal (non-reply) messages.",
+    )
+    reply_to_message: Optional[str] = Field(
+        None, description="Incoming quote-reply only: text of the replied-to message."
+    )
 
 
 class ChatHistoryMessageIngestResponse(BaseModel):
@@ -49,6 +59,8 @@ class ChatHistoryMessageItem(BaseModel):
     type: str
     message_id: Optional[str] = None
     result: Optional[list[dict[str, Any]]] = None
+    reply_to_message_id: Optional[str] = None
+    reply_to_message: Optional[str] = None
 
 
 class ChatHistoryMessagesResponse(BaseModel):

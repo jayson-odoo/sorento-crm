@@ -156,6 +156,74 @@ def test_ingest_without_message_id_and_result_back_compat(client, db):
     assert row.result is None
 
 
+# ------------------------------------------------- reply-to (CRM-002)
+
+
+def test_ingest_incoming_persists_reply_to(client, db):
+    """Incoming quote-reply carries reply_to_message_id/message onto the row."""
+    payload = _ingest_payload(
+        type="incoming",
+        message="All",
+        message_id=None,
+        result=None,
+        reply_to_message_id=MESSAGE_ID,
+        reply_to_message="menu text the user replied to",
+    )
+    r = client.post("/api/v1/external/chat-history/messages", json=payload)
+    assert r.status_code == 201
+
+    row = db.query(ChatHistory).filter(ChatHistory.id == r.json()["id"]).one()
+    assert row.reply_to_message_id == MESSAGE_ID
+    assert row.reply_to_message == "menu text the user replied to"
+
+
+def test_ingest_non_reply_stores_null_reply_to(client, db):
+    """Normal (non-reply) incoming message defaults reply_to columns to NULL."""
+    payload = _ingest_payload(type="incoming", message="hi", message_id=None, result=None)
+    r = client.post("/api/v1/external/chat-history/messages", json=payload)
+    assert r.status_code == 201
+
+    row = db.query(ChatHistory).filter(ChatHistory.id == r.json()["id"]).one()
+    assert row.reply_to_message_id is None
+    assert row.reply_to_message is None
+
+
+def test_reply_to_references_outgoing_message_id(client, db):
+    """reply_to_message_id equals the message_id of an existing outgoing row (AC3)."""
+    client.post("/api/v1/external/chat-history/messages", json=_ingest_payload())  # outgoing MESSAGE_ID
+    reply = _ingest_payload(
+        type="incoming", message="5", message_id=None, result=None,
+        reply_to_message_id=MESSAGE_ID, reply_to_message=None,
+    )
+    rid = client.post("/api/v1/external/chat-history/messages", json=reply).json()["id"]
+
+    reply_row = db.query(ChatHistory).filter(ChatHistory.id == rid).one()
+    outgoing = (
+        db.query(ChatHistory)
+        .filter(ChatHistory.contact_id == RESPOND_IO_ID, ChatHistory.type == "outgoing")
+        .one()
+    )
+    assert reply_row.reply_to_message_id == outgoing.message_id
+
+
+def test_messages_read_returns_reply_to(client):
+    client.post(
+        "/api/v1/external/chat-history/messages",
+        json=_ingest_payload(
+            type="incoming", message="All", message_id=None, result=None,
+            reply_to_message_id=MESSAGE_ID, reply_to_message="quoted",
+        ),
+    )
+    r = client.post(
+        "/api/v1/external/chat-history",
+        json={"channel": "whatsapp", "contact_id": RESPOND_IO_ID, "limit": 10, "order": "asc"},
+    )
+    assert r.status_code == 200
+    msg = r.json()["messages"][0]
+    assert msg["reply_to_message_id"] == MESSAGE_ID
+    assert msg["reply_to_message"] == "quoted"
+
+
 # ---------------------------------------------------------------- read
 
 

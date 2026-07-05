@@ -59,10 +59,10 @@ def ingest_chat_message(
         """
         INSERT INTO chat_histories (
             channel, contact_id, phone_number, message, sent_at, first_name, last_name, type,
-            message_id, result
+            message_id, result, reply_to_message_id, reply_to_message
         ) VALUES (
             :channel, :contact_id, :phone_number, :message, :sent_at, :first_name, :last_name, :type,
-            :message_id, :result
+            :message_id, :result, :reply_to_message_id, :reply_to_message
         )
         RETURNING id
         """
@@ -86,6 +86,8 @@ def ingest_chat_message(
                 "type": payload.type,
                 "message_id": payload.message_id,
                 "result": json.dumps(payload.result) if payload.result is not None else None,
+                "reply_to_message_id": payload.reply_to_message_id,
+                "reply_to_message": payload.reply_to_message,
             },
         )
         message_id = result.scalar_one()
@@ -147,7 +149,7 @@ def get_chat_history_messages(
     query = text(
         """
         SELECT id, channel, contact_id, phone_number, message, sent_at, first_name, last_name, type,
-               message_id, result
+               message_id, result, reply_to_message_id, reply_to_message
         FROM chat_histories
         WHERE channel = :channel
           AND contact_id = :contact_id
@@ -181,6 +183,8 @@ def get_chat_history_messages(
             type=row.type,
             message_id=row.message_id,
             result=_coerce_result_list(row.result),
+            reply_to_message_id=row.reply_to_message_id,
+            reply_to_message=row.reply_to_message,
         )
         for row in rows
     ]

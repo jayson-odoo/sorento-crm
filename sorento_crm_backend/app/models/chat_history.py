@@ -23,6 +23,11 @@ class ChatHistory(Base):
     # message the user replied to, not only the latest one.
     message_id = Column(String(64), nullable=True)
     result = Column(JSONB, nullable=True)
+    # Set on incoming rows when the user quote-replied to an older message.
+    # `reply_to_message_id` matches the `message_id` of that earlier outgoing row,
+    # so the chatbot can resolve the pick against its stored `result` set.
+    reply_to_message_id = Column(String(64), nullable=True)
+    reply_to_message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
@@ -34,5 +39,11 @@ class ChatHistory(Base):
             "contact_id",
             "message_id",
             postgresql_where=message_id.isnot(None),
+        ),
+        Index(
+            "ix_chat_histories_contact_reply_to",
+            "contact_id",
+            "reply_to_message_id",
+            postgresql_where=reply_to_message_id.isnot(None),
         ),
     )
