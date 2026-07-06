@@ -2939,19 +2939,31 @@ class ConversationSLATrackingService:
         Step 3 — None: unknown user, or a manager of some other team set (ambiguous).
         """
         import logging
-        from app.models.access import AgentTeam, TeamMember
+        from app.models.access import AccessAgent, AgentTeam, TeamMember
+        from app.services.form_sla_service import form_sla_agent_codes
 
         uid = (user_id or "").strip()
         if not uid:
             return None
 
-        tier1_links = (
+        # Only CONVERSATION-SLA agents' tier-1 links participate in derivation.
+        # Form-SLA agents route via FormSLAConfig stages, so a user may sit in
+        # many form tier-1 teams; counting them here would falsely read as
+        # "multiple tier-1 teams" and abort derivation (plan decision 3c —
+        # conversation scope only). Mirrors the relaxed membership invariant.
+        form_codes = form_sla_agent_codes(self.db)
+        tier1_q = (
             self.db.query(AgentTeam)
             .join(TeamMember, TeamMember.team_id == AgentTeam.team_id)
             .filter(TeamMember.user_id == uid, AgentTeam.tier == 1)
-            .order_by(AgentTeam.code.asc(), AgentTeam.agent_id.asc())
-            .all()
         )
+        if form_codes:
+            tier1_q = tier1_q.join(
+                AccessAgent, AccessAgent.id == AgentTeam.agent_id
+            ).filter(AccessAgent.code.notin_(form_codes))
+        tier1_links = tier1_q.order_by(
+            AgentTeam.code.asc(), AgentTeam.agent_id.asc()
+        ).all()
         distinct_teams = {str(l.team_id) for l in tier1_links}
         if len(distinct_teams) > 1:
             # Team-level invariant violated (config predates enforcement) — ambiguous.

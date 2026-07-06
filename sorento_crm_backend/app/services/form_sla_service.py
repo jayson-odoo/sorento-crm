@@ -38,6 +38,26 @@ FORM_SLA_TYPES = (
 )
 
 
+def form_sla_agent_codes(db: Session) -> set[str]:
+    """Agent codes that own a form-SLA pipeline (any row in form_sla_configs).
+
+    Data-driven classifier: an AccessAgent is a FORM-SLA agent iff its code
+    appears in form_sla_configs.agent_code — its routing is driven by
+    FormSLAConfig stages, never by assignee→team membership derivation. Every
+    other agent is a CONVERSATION-SLA agent (routing derived from the assignee's
+    tier-1 team membership).
+
+    Used by the tier-1 membership invariant + assignee-team derivation so a user
+    may sit in many form-SLA tier-1 teams but at most one CONVERSATION-SLA tier-1
+    team (the only case where derivation would be ambiguous).
+    """
+    return {
+        code
+        for (code,) in db.query(FormSLAConfig.agent_code).distinct().all()
+        if code
+    }
+
+
 def _utc_naive_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 

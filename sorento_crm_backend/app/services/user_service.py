@@ -1798,6 +1798,8 @@ class AccessAgentService:
         """
         import logging
 
+        from app.services.form_sla_service import form_sla_agent_codes
+
         logger = logging.getLogger(__name__)
         tier1_assignments: list[tuple[str, str]] = []  # (code, team_id)
         for a in assignments:
@@ -1808,6 +1810,14 @@ class AccessAgentService:
             if code and team_id and tier == 1:
                 tier1_assignments.append((code, str(team_id)))
         if not tier1_assignments:
+            return
+
+        # Only CONVERSATION-SLA agents' tier-1 links count (see membership-invariant
+        # docstring). If THIS agent owns a form-SLA pipeline, its tier-1 links never
+        # constrain membership — skip the whole check.
+        form_codes = form_sla_agent_codes(self.db)
+        this_agent = self.db.query(AccessAgent).filter(AccessAgent.id == agent_id).first()
+        if this_agent and form_codes and this_agent.code in form_codes:
             return
 
         # member user_ids per tier-1 team in this payload
@@ -1827,18 +1837,23 @@ class AccessAgentService:
         all_user_ids = {u for users in members_by_team.values() for u in users}
         other_links = []
         if all_user_ids:
-            other_links = (
+            other_links_q = (
                 self.db.query(TeamMember.user_id, AgentTeam.agent_id, AgentTeam.code, AgentTeam.team_id, Team.name)
                 .join(AgentTeam, AgentTeam.team_id == TeamMember.team_id)
                 .join(Team, Team.id == AgentTeam.team_id)
+                .join(AccessAgent, AccessAgent.id == AgentTeam.agent_id)
                 .filter(
                     TeamMember.user_id.in_(all_user_ids),
                     AgentTeam.tier == 1,
                     AgentTeam.agent_id != agent_id,
                     AgentTeam.team_id.notin_(team_ids),
                 )
-                .all()
             )
+            # A conflict against a FORM-SLA agent's tier-1 team must NOT block —
+            # only conversation-SLA tier-1 membership is unique.
+            if form_codes:
+                other_links_q = other_links_q.filter(AccessAgent.code.notin_(form_codes))
+            other_links = other_links_q.all()
         conflict_by_user: dict[str, tuple[str, str, str]] = {}
         for uid, other_agent_id, code, _tid, team_name in other_links:
             conflict_by_user.setdefault(str(uid), (str(other_agent_id), str(code), str(team_name)))
@@ -2285,30 +2300,45 @@ class TeamService:
     def _validate_tier1_membership_invariant(self, team_id: str, user_id: str) -> None:
         """
         Tier-1 membership invariant (PLAN-sla-assignee-team-derivation), TEAM-level: a user
-        may belong to at most ONE team that is linked at tier 1 (under any agent), so
-        assignee-driven routing derivation is unambiguous. The same team being linked at
-        tier 1 under many agents is fine (shared executive pools) — derivation prefers the
-        tracking's current agent and falls back to the deterministic first link.
+        may belong to at most ONE team that is linked at tier 1 under a CONVERSATION-SLA
+        agent, so assignee-driven routing derivation is unambiguous. FORM-SLA agents
+        (their code owns rows in form_sla_configs) route via FormSLAConfig stages, not
+        membership derivation, so their tier-1 teams do NOT count — a user may sit in many
+        form-SLA tier-1 teams plus at most one conversation-SLA tier-1 team. The same team
+        linked at tier 1 under many agents is fine (shared executive pools) — derivation
+        prefers the tracking's current agent and falls back to the deterministic first link.
         """
-        new_links = (
+        from app.services.form_sla_service import form_sla_agent_codes
+
+        form_codes = form_sla_agent_codes(self.db)
+
+        # Does the target team have a CONVERSATION-SLA tier-1 link? A team linked
+        # at tier 1 ONLY under form-SLA agents can never conflict.
+        new_links_q = (
             self.db.query(AgentTeam)
+            .join(AccessAgent, AccessAgent.id == AgentTeam.agent_id)
             .filter(AgentTeam.team_id == team_id, AgentTeam.tier == 1)
-            .all()
         )
-        if not new_links:
+        if form_codes:
+            new_links_q = new_links_q.filter(AccessAgent.code.notin_(form_codes))
+        if not new_links_q.first():
             return
 
-        existing = (
+        # Other tier-1 teams the user is in that carry a CONVERSATION-SLA link.
+        existing_q = (
             self.db.query(AgentTeam, Team.name)
             .join(TeamMember, TeamMember.team_id == AgentTeam.team_id)
             .join(Team, Team.id == AgentTeam.team_id)
+            .join(AccessAgent, AccessAgent.id == AgentTeam.agent_id)
             .filter(
                 TeamMember.user_id == user_id,
                 AgentTeam.tier == 1,
                 AgentTeam.team_id != team_id,
             )
-            .all()
         )
+        if form_codes:
+            existing_q = existing_q.filter(AccessAgent.code.notin_(form_codes))
+        existing = existing_q.all()
         if not existing:
             return
 

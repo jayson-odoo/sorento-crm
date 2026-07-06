@@ -41,10 +41,19 @@ def _chain(all_result=None, first_result=None) -> MagicMock:
     q.join.return_value = q
     q.filter.return_value = q
     q.order_by.return_value = q
+    q.distinct.return_value = q
     q.with_for_update.return_value = q
     q.all.return_value = all_result if all_result is not None else []
     q.first.return_value = first_result
     return q
+
+
+def _form_codes(*codes) -> MagicMock:
+    """Mock for form_sla_agent_codes' query: db.query(FormSLAConfig.agent_code)
+    .distinct().all() -> rows of (code,). Empty = no form-SLA agents, so the
+    conversation/form split is a no-op and behaviour matches the pre-relaxation
+    global invariant."""
+    return _chain(all_result=[(c,) for c in codes])
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +63,10 @@ def _chain(all_result=None, first_result=None) -> MagicMock:
 def test_derive_tier1_member_returns_their_team_set():
     """Step 1: tier-1 membership anywhere wins, cross-agent included."""
     mock_db = MagicMock()
-    mock_db.query.side_effect = [_chain(all_result=[_link("agent-b", "set_b", "team-b1")])]
+    mock_db.query.side_effect = [
+        _form_codes(),
+        _chain(all_result=[_link("agent-b", "set_b", "team-b1")]),
+    ]
     service = ConversationSLATrackingService(mock_db)
 
     derived = service.derive_team_for_assignee(
@@ -73,25 +85,48 @@ def test_derive_multiple_tier1_teams_is_ambiguous():
     """Invariant-violating config (user in two tier-1-linked TEAMS) → None, never a guess."""
     mock_db = MagicMock()
     mock_db.query.side_effect = [
+        _form_codes(),
         _chain(all_result=[
             _link("agent-a", "set_a", "team-a1"),
             _link("agent-b", "set_b", "team-b1"),
-        ])
+        ]),
     ]
     service = ConversationSLATrackingService(mock_db)
 
     assert service.derive_team_for_assignee("user-x") is None
 
 
+def test_derive_excludes_form_tier1_teams_no_false_ambiguity():
+    """New relaxation: with form-SLA agents present, the tier-1 probe filters them
+    out (AccessAgent.code NOT IN form_codes). A user in one form tier-1 team + one
+    conversation tier-1 team resolves to the CONVERSATION team, not None."""
+    mock_db = MagicMock()
+    mock_db.query.side_effect = [
+        _form_codes("purchase_request", "complaint"),
+        # DB already filtered form links → only the conversation tier-1 link remains
+        _chain(all_result=[_link("agent-conv", "set_conv", "team-conv")]),
+    ]
+    service = ConversationSLATrackingService(mock_db)
+
+    derived = service.derive_team_for_assignee("user-shared")
+    assert derived == {
+        "agent_id": "agent-conv",
+        "team_set_code": "set_conv",
+        "tier": 1,
+        "team_id": "team-conv",
+    }
+
+
 def test_derive_shared_pool_team_prefers_current_agent():
     """Same team linked tier-1 under many agents → keep tracking's current agent."""
     mock_db = MagicMock()
     mock_db.query.side_effect = [
+        _form_codes(),
         _chain(all_result=[
             _link("agent-b", "customer_service", "team-cs"),
             _link("agent-c", "customer_service", "team-cs"),
             _link("agent-a", "customer_service_c", "team-cs"),
-        ])
+        ]),
     ]
     service = ConversationSLATrackingService(mock_db)
 
@@ -111,10 +146,11 @@ def test_derive_shared_pool_team_falls_back_to_first_link():
     """Current agent not among the team's tier-1 links → deterministic first link."""
     mock_db = MagicMock()
     mock_db.query.side_effect = [
+        _form_codes(),
         _chain(all_result=[
             _link("agent-b", "customer_service", "team-cs"),
             _link("agent-c", "customer_service", "team-cs"),
-        ])
+        ]),
     ]
     service = ConversationSLATrackingService(mock_db)
 
@@ -134,6 +170,7 @@ def test_derive_tier2_member_scoped_to_current_team_set():
     """Step 2: no tier-1 membership; tier-2/3 lookup scoped to the tracking's current set."""
     mock_db = MagicMock()
     mock_db.query.side_effect = [
+        _form_codes(),
         _chain(all_result=[]),  # no tier-1 links
         _chain(first_result=_link("agent-a", "set_a", "team-a2", tier=2)),
     ]
@@ -154,7 +191,7 @@ def test_derive_tier2_member_scoped_to_current_team_set():
 def test_derive_tier23_without_current_context_returns_none():
     """Step 3: manager without tier-1 membership and no current team context → None."""
     mock_db = MagicMock()
-    mock_db.query.side_effect = [_chain(all_result=[])]
+    mock_db.query.side_effect = [_form_codes(), _chain(all_result=[])]
     service = ConversationSLATrackingService(mock_db)
 
     assert service.derive_team_for_assignee("user-mgr") is None
@@ -162,7 +199,11 @@ def test_derive_tier23_without_current_context_returns_none():
 
 def test_derive_unknown_user_returns_none():
     mock_db = MagicMock()
-    mock_db.query.side_effect = [_chain(all_result=[]), _chain(first_result=None)]
+    mock_db.query.side_effect = [
+        _form_codes(),
+        _chain(all_result=[]),
+        _chain(first_result=None),
+    ]
     service = ConversationSLATrackingService(mock_db)
 
     assert (
@@ -390,7 +431,8 @@ def test_apply_missing_policy_tier_keeps_clocks_but_fixes_routing():
 
 def test_add_member_to_unlinked_team_passes():
     mock_db = MagicMock()
-    mock_db.query.side_effect = [_chain(all_result=[])]  # team has no tier-1 links
+    # form-codes probe, then new-team tier-1 link probe (.first() → None)
+    mock_db.query.side_effect = [_form_codes(), _chain(first_result=None)]
     service = TeamService(mock_db)
 
     service._validate_tier1_membership_invariant("team-x", "user-1")  # no raise
@@ -405,8 +447,9 @@ def test_add_member_already_in_other_tier1_team_rejected():
     agent = MagicMock()
     agent.code = "order_enquiries"
     mock_db.query.side_effect = [
-        _chain(all_result=[_link("agent-b", "set_b", "team-b1")]),   # new team's tier-1 links
-        _chain(all_result=[(existing_link, "Team A1")]),             # user's existing tier-1 links
+        _form_codes(),                                               # form-SLA agent codes
+        _chain(first_result=_link("agent-b", "set_b", "team-b1")),  # new team has a conv tier-1 link
+        _chain(all_result=[(existing_link, "Team A1")]),            # user's other conv tier-1 links
         _chain(first_result=user),                                   # User
         _chain(first_result=agent),                                  # AccessAgent
     ]
@@ -426,8 +469,9 @@ def test_add_member_same_set_passes():
     """User's only tier-1 set is the same (agent, code) as the new team's — allowed."""
     mock_db = MagicMock()
     mock_db.query.side_effect = [
-        _chain(all_result=[_link("agent-a", "set_a", "team-a1")]),
-        _chain(all_result=[]),  # no other tier-1 membership
+        _form_codes(),
+        _chain(first_result=_link("agent-a", "set_a", "team-a1")),  # new team conv tier-1 link
+        _chain(all_result=[]),  # no OTHER tier-1 membership
     ]
     service = TeamService(mock_db)
 
@@ -438,15 +482,41 @@ def test_add_member_to_shared_pool_team_passes():
     """Same team linked at tier 1 under multiple agents (shared pool) — members allowed."""
     mock_db = MagicMock()
     mock_db.query.side_effect = [
-        _chain(all_result=[
-            _link("agent-a", "customer_service", "team-x"),
-            _link("agent-b", "customer_service", "team-x"),
-        ]),
+        _form_codes(),
+        _chain(first_result=_link("agent-a", "customer_service", "team-x")),  # conv tier-1 link
         _chain(all_result=[]),  # no membership in another tier-1-linked team
     ]
     service = TeamService(mock_db)
 
     service._validate_tier1_membership_invariant("team-x", "user-1")  # no raise
+
+
+def test_add_member_to_form_only_tier1_team_passes():
+    """New relaxation: a team linked at tier 1 ONLY under FORM-SLA agents never conflicts.
+    The new-team conv-tier-1 probe returns None (filtered out), so we return early."""
+    mock_db = MagicMock()
+    mock_db.query.side_effect = [
+        _form_codes("purchase_request", "complaint"),
+        _chain(first_result=None),  # no CONVERSATION tier-1 link on this team
+    ]
+    service = TeamService(mock_db)
+
+    service._validate_tier1_membership_invariant("team-pr", "user-1")  # no raise
+
+
+def test_add_member_conv_tier1_allowed_despite_existing_form_tier1(monkeypatch):
+    """New relaxation: user already in a FORM-SLA tier-1 team may still join a
+    CONVERSATION tier-1 team — the existing-links probe excludes form agents, so
+    it finds nothing to conflict with."""
+    mock_db = MagicMock()
+    mock_db.query.side_effect = [
+        _form_codes("purchase_request"),
+        _chain(first_result=_link("agent-conv", "set_conv", "team-conv")),  # new team conv link
+        _chain(all_result=[]),  # existing CONVERSATION tier-1 links (form ones excluded) → none
+    ]
+    service = TeamService(mock_db)
+
+    service._validate_tier1_membership_invariant("team-conv", "user-1")  # no raise
 
 
 def test_add_team_member_runs_invariant_check():
@@ -472,6 +542,8 @@ def test_set_agent_teams_tier1_conflict_rejected():
     agent = MagicMock()
     agent.code = "general_enquiries"
     mock_db.query.side_effect = [
+        _form_codes(),                               # form-SLA agent codes
+        _chain(first_result=None),                   # this_agent (conversation → not skipped)
         _chain(all_result=[("team-a1", "user-1")]),  # members of the tier-1 team in payload
         # user's membership in a DIFFERENT tier-1-linked team under another agent
         _chain(all_result=[("user-1", "agent-b", "set_b", "team-b1", "Team B1")]),
@@ -501,9 +573,28 @@ def test_set_agent_teams_no_tier1_assignments_skips_validation():
     mock_db.query.assert_not_called()
 
 
+def test_set_agent_teams_form_agent_skips_validation():
+    """New relaxation: linking teams under a FORM-SLA agent never constrains
+    membership — the whole check short-circuits after the agent-type probe."""
+    mock_db = MagicMock()
+    form_agent = MagicMock()
+    form_agent.code = "purchase_request"
+    mock_db.query.side_effect = [
+        _form_codes("purchase_request", "complaint"),
+        _chain(first_result=form_agent),  # this_agent IS a form-SLA agent → skip
+    ]
+    service = AccessAgentService(mock_db)
+
+    service._validate_tier1_invariant_for_assignments(
+        "agent-pr", [{"code": "customer_service", "team_id": "team-pr", "tier": 1}]
+    )  # no raise, no member/other-link queries
+
+
 def test_set_agent_teams_clean_config_passes():
     mock_db = MagicMock()
     mock_db.query.side_effect = [
+        _form_codes(),                               # form-SLA agent codes
+        _chain(first_result=None),                   # this_agent (conversation)
         _chain(all_result=[("team-a1", "user-1")]),  # members
         _chain(all_result=[]),                       # no other tier-1 links
         _chain(all_result=[]),                       # no cross-tier reuse
