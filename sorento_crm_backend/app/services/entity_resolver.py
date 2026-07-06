@@ -1393,35 +1393,10 @@ def _prefix_probe_product(db: Session, token: str) -> list[ResolvedEntity]:
             .all()
         )
         tier = "substring"
-    if not rows:
-        # Name-search fallback for free-text product phrases ("basin",
-        # "kitchen sink", "matte black bathtub"). Code-only matching above
-        # misses these because the token isn't a SKU. AND across words, OR
-        # across columns. Single words must be ≥4 chars (filters short noise
-        # like "the" / "and"); multi-word phrases keep the ≥3 cutoff per word.
-        # Caller intent (e.g. brand / category hint) flows through the
-        # `_TIER2_PROBES` filter, so this only fires when the agent asked for
-        # product candidates.
-        if " " in token:
-            words = [w for w in token.split() if len(w) >= 3]
-            min_words = 2
-        else:
-            words = [token] if len(token) >= 4 else []
-            min_words = 1
-        if len(words) >= min_words:
-            q = db.query(
-                Product.id, Product.product_code, Product.product_name, Product.is_active
-            )
-            for w in words:
-                ws = f"%{w}%"
-                q = q.filter(
-                    or_(
-                        Product.product_name.ilike(ws),
-                        Product.description.ilike(ws),
-                    )
-                )
-            rows = q.limit(PREFIX_LIMIT).all()
-            tier = "word"
+    # Product resolution is CODE-ONLY by design: exact/prefix/substring probes
+    # (and the trgm fallback) all match on product_code. Name/description
+    # free-text matching was intentionally removed — a phrase like "basin" is
+    # not a product identifier, so it must not resolve to a specific SKU.
     return [
         ResolvedEntity(
             entity_type="product",

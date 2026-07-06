@@ -438,7 +438,6 @@ def _stock(rows: list[dict], b: _Builder) -> None:
                 ("Warehouse", wh_name if _filled(wh_name) else "—"),
                 ("System Location", sysloc if _filled(sysloc) else "—"),
                 ("Quantity On Hand", qoh if qoh is not None else "—"),
-                ("Last Updated", s.get("updated_at") or "—"),
             ],
             discontinued=is_discontinued,
         )
