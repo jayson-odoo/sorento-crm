@@ -399,6 +399,63 @@ def _build_product_resolutions_from_promotions(
     return list(by_product.values())
 
 
+def _build_promotions_for_products(
+    db: Session, product_uuids: set[str], allowed_access_codes: set[str] | None
+) -> list[dict[str, Any]]:
+    """Reverse membership walk: promotions that CONTAIN the given product UUIDs.
+
+    The description-text probe (`_resolve_promotion_ids_for_token`) can't find a
+    promo from a product SKU — a SKU never appears in the promo description. When
+    the token already resolved to product(s), this walks `promotion_products`
+    backward so `domain_hint=promotion` can still answer "the promo for X".
+
+    Surfaces INACTIVE promos too, flagged `display.is_active`, so an expired promo
+    reads as "exists but expired" instead of a blank. When `allowed_access_codes`
+    is non-empty, filters by `Promotion.access_levels` intersection (mirrors the
+    description probe's gating).
+    """
+    if not product_uuids:
+        return []
+    rows = (
+        db.query(
+            Promotion.id,
+            Promotion.description,
+            Promotion.is_active,
+            Promotion.access_levels,
+            Product.product_code,
+        )
+        .join(PromotionProduct, PromotionProduct.promotion_id == Promotion.id)
+        .join(Product, Product.id == PromotionProduct.product_id)
+        .filter(PromotionProduct.product_id.in_(product_uuids))
+        .all()
+    )
+    by_promo: dict[str, dict[str, Any]] = {}
+    for pid, desc, is_active, levels, code in rows:
+        if allowed_access_codes:
+            if not isinstance(levels, list) or not allowed_access_codes.intersection(levels):
+                continue
+        key = str(pid)
+        entry = by_promo.setdefault(
+            key,
+            {
+                "entity_type": "promotion",
+                "canonical_code": key,
+                "uuid": key,
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": None,
+                "display": {
+                    "description": desc,
+                    "is_active": bool(is_active),
+                    "products": [],
+                },
+            },
+        )
+        if code not in entry["display"]["products"]:
+            entry["display"]["products"].append(code)
+    return list(by_promo.values())
+
+
 def _translate_access_names_to_codes(
     db: Session, names: list[str] | None
 ) -> set[str]:
@@ -586,15 +643,40 @@ def _expand_products_via_promotions(
             kept_existing_promos = [
                 m for m in existing if m.get("entity_type") == "promotion"
             ]
+            # The resolved products are KEPT — a product SKU must still resolve
+            # under domain_hint=promotion (the expander used to wipe them, so a
+            # valid SKU returned empty just because it wasn't a promo name).
+            kept_products = [
+                m for m in existing if m.get("entity_type") == "product"
+            ]
             new_promo_matches = [
                 m for m in promo_matches if str(m.get("uuid")) not in existing_promo_uuids
             ]
 
+            # Reverse membership: promotions that CONTAIN the resolved products.
+            # This is how "check the promo for <SKU>" gets answered — the SKU
+            # can't match a promo description, so walk promotion_products back.
+            product_uuids = {
+                str(m.get("uuid")) for m in kept_products if m.get("uuid")
+            }
+            seen_promo_uuids = existing_promo_uuids | {
+                str(m.get("uuid")) for m in new_promo_matches
+            }
+            member_promo_matches = [
+                m
+                for m in _build_promotions_for_products(
+                    db, product_uuids, allowed_codes or None
+                )
+                if str(m.get("uuid")) not in seen_promo_uuids
+            ]
+
             # Promo-first short-circuit: when any promotion matches exist
-            # (existing or synthesized), DON'T expand to through-promotion
-            # products. domain_hint=promotion makes promotion the answer the
-            # caller wants — product enumeration would be noise.
-            has_promo = bool(kept_existing_promos or new_promo_matches)
+            # (existing, name-synthesized, or via product membership), DON'T
+            # enumerate through-promotion products — the caller's products are
+            # already kept above, and enumeration would be noise.
+            has_promo = bool(
+                kept_existing_promos or new_promo_matches or member_promo_matches
+            )
             if has_promo:
                 product_matches: list[dict[str, Any]] = []
             elif promo_ids and wants_products:
@@ -612,9 +694,20 @@ def _expand_products_via_promotions(
             else:
                 product_matches = []
 
+            # Dedup through-promo products against the ones we already kept.
+            kept_product_uuids = {
+                str(m.get("uuid")) for m in kept_products if m.get("uuid")
+            }
+            product_matches = [
+                m for m in product_matches
+                if str(m.get("uuid")) not in kept_product_uuids
+            ]
+
             new_matches = (
                 kept_existing_promos
                 + new_promo_matches
+                + member_promo_matches
+                + kept_products
                 + product_matches
                 + kept_other
             )
@@ -657,11 +750,30 @@ def _expand_products_via_promotions(
         kept_existing_promos = [
             m for m in existing_inter if m.get("entity_type") == "promotion"
         ]
+        # Keep resolved products (see OR-branch rationale) and walk membership.
+        kept_products = [
+            m for m in existing_inter if m.get("entity_type") == "product"
+        ]
         new_promo_matches = [
             m for m in promo_matches if str(m.get("uuid")) not in existing_promo_uuids
         ]
+        inter_product_uuids = {
+            str(m.get("uuid")) for m in kept_products if m.get("uuid")
+        }
+        inter_seen_promo_uuids = existing_promo_uuids | {
+            str(m.get("uuid")) for m in new_promo_matches
+        }
+        member_promo_matches = [
+            m
+            for m in _build_promotions_for_products(
+                db, inter_product_uuids, allowed_codes or None
+            )
+            if str(m.get("uuid")) not in inter_seen_promo_uuids
+        ]
         # Same promo-first short-circuit as the OR-mode branch above.
-        has_promo = bool(kept_existing_promos or new_promo_matches)
+        has_promo = bool(
+            kept_existing_promos or new_promo_matches or member_promo_matches
+        )
         if has_promo:
             product_matches = []
         elif union_promos and wants_products:
@@ -696,9 +808,18 @@ def _expand_products_via_promotions(
                                 product_matches.append(m)
         else:
             product_matches = []
+        inter_kept_uuids = {
+            str(m.get("uuid")) for m in kept_products if m.get("uuid")
+        }
+        product_matches = [
+            m for m in product_matches
+            if str(m.get("uuid")) not in inter_kept_uuids
+        ]
         new_intersection = (
             kept_existing_promos
             + new_promo_matches
+            + member_promo_matches
+            + kept_products
             + product_matches
             + kept_other
         )
