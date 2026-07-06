@@ -1,11 +1,23 @@
 'use client';
 
+import { Fragment, forwardRef, type ReactNode, type Ref } from 'react';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { FileText, Folder } from 'lucide-react';
+import { ContextMenu, ContextMenuContent, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import DriveImageThumbnail from './DriveImageThumbnail';
 import { isFileItem, type DriveItem } from '../../attachments/services/driveService';
+
+function setRefs<T>(...refs: Array<Ref<T> | undefined>) {
+  return (el: T | null) => {
+    for (const ref of refs) {
+      if (!ref) continue;
+      if (typeof ref === 'function') ref(el);
+      else (ref as { current: T | null }).current = el;
+    }
+  };
+}
 
 const DND_ID_ATTACHMENT_PREFIX = 'attachment-';
 // Distinct from the tree's `folder-` ids (must match DND_ID_GRID_FOLDER_PREFIX
@@ -22,15 +34,7 @@ function itemLabel(item: DriveItem): string {
     : item.name;
 }
 
-function DriveCard({
-  item,
-  selected,
-  draggable,
-  currentDirectoryId,
-  selectedIds,
-  onOpen,
-  onToggleSelect,
-}: {
+interface DriveCardProps {
   item: DriveItem;
   selected: boolean;
   draggable: boolean;
@@ -38,7 +42,28 @@ function DriveCard({
   selectedIds: string[];
   onOpen: (item: DriveItem) => void;
   onToggleSelect: (id: string, next: boolean) => void;
-}) {
+}
+
+/**
+ * A single grid card. forwardRef + `...rest` spread so the Radix
+ * `ContextMenuTrigger asChild` can inject its ref + onContextMenu/onPointer*
+ * handlers onto the root div, giving cards the same right-click / long-press
+ * menu as list rows (and suppressing the native browser context menu).
+ */
+const DriveCard = forwardRef<HTMLDivElement, DriveCardProps>(function DriveCard(
+  props,
+  radixRef
+) {
+  const {
+    item,
+    selected,
+    draggable,
+    currentDirectoryId,
+    selectedIds,
+    onOpen,
+    onToggleSelect,
+    ...rest
+  } = props as DriveCardProps & Record<string, unknown>;
   const isFolder = item.kind === 'folder';
   const dndId = isFolder
     ? `${DND_ID_GRID_FOLDER_PREFIX}${item.id}`
@@ -71,16 +96,20 @@ function DriveCard({
     disabled: !isFolder,
   });
 
-  const setRef = (el: HTMLElement | null) => {
-    setDragRef(el);
-    if (isFolder) setDropRef(el);
-  };
+  const setRef = setRefs<HTMLElement>(
+    (el) => {
+      setDragRef(el);
+      if (isFolder) setDropRef(el);
+    },
+    radixRef as Ref<HTMLElement>
+  );
 
   return (
     <div
       ref={setRef}
       {...(draggable ? attributes : {})}
       {...(draggable ? listeners : {})}
+      {...rest}
       data-testid={`drive-card-${item.kind}`}
       className={cn(
         'group relative flex flex-col rounded-lg border bg-card text-left transition-colors',
@@ -130,7 +159,7 @@ function DriveCard({
       </button>
     </div>
   );
-}
+});
 
 /**
  * Grid/card view for the Unified Drive (UAC A4). Renders the SAME folders+files
@@ -144,6 +173,7 @@ export default function DriveGridView({
   currentDirectoryId,
   onOpen,
   onToggleSelect,
+  renderRowContextMenu,
 }: {
   items: DriveItem[];
   selectedIds: string[];
@@ -151,6 +181,8 @@ export default function DriveGridView({
   currentDirectoryId: string | null;
   onOpen: (item: DriveItem) => void;
   onToggleSelect: (id: string, next: boolean) => void;
+  /** Builds the right-click / long-press context-menu items per card. */
+  renderRowContextMenu?: (item: DriveItem) => ReactNode;
 }) {
   if (items.length === 0) {
     return (
@@ -164,18 +196,29 @@ export default function DriveGridView({
   const selectedSet = new Set(selectedIds);
   return (
     <div className="grid grid-cols-2 gap-3 p-1 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
-      {items.map((item) => (
-        <DriveCard
-          key={`${item.kind}-${item.id}`}
-          item={item}
-          selected={selectedSet.has(item.id)}
-          draggable={draggable}
-          currentDirectoryId={currentDirectoryId}
-          selectedIds={selectedIds}
-          onOpen={onOpen}
-          onToggleSelect={onToggleSelect}
-        />
-      ))}
+      {items.map((item) => {
+        const card = (
+          <DriveCard
+            item={item}
+            selected={selectedSet.has(item.id)}
+            draggable={draggable}
+            currentDirectoryId={currentDirectoryId}
+            selectedIds={selectedIds}
+            onOpen={onOpen}
+            onToggleSelect={onToggleSelect}
+          />
+        );
+        const key = `${item.kind}-${item.id}`;
+        if (!renderRowContextMenu) return <Fragment key={key}>{card}</Fragment>;
+        return (
+          <ContextMenu key={key}>
+            <ContextMenuTrigger asChild>{card}</ContextMenuTrigger>
+            <ContextMenuContent className="w-52">
+              {renderRowContextMenu(item)}
+            </ContextMenuContent>
+          </ContextMenu>
+        );
+      })}
     </div>
   );
 }

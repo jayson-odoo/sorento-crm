@@ -108,4 +108,17 @@ describe('DriveGridView', () => {
     renderGrid({ items: [] });
     expect(screen.getByText(/this folder is empty/i)).toBeInTheDocument();
   });
+
+  it('right-click opens the per-card context menu (parity with list view)', () => {
+    const renderRowContextMenu = vi.fn((item: DriveItem) => (
+      <div role="menuitem">Menu for {item.id}</div>
+    ));
+    renderGrid({ renderRowContextMenu });
+    const card = screen.getAllByTestId('drive-card-file')[0];
+    fireEvent.contextMenu(card);
+    expect(renderRowContextMenu).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'file-1', kind: 'file' })
+    );
+    expect(screen.getByText('Menu for file-1')).toBeInTheDocument();
+  });
 });

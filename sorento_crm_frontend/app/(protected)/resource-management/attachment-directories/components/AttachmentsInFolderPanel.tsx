@@ -1287,6 +1287,7 @@ export default function AttachmentsInFolderPanel({
                       if (!item) return;
                       setRowSelection((prev) => ({ ...prev, [`${item.kind}-${id}`]: next }));
                     }}
+                    renderRowContextMenu={renderRowContextMenu}
                   />
                 )}
               </div>
