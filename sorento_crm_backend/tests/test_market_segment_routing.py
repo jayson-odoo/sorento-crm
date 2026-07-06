@@ -164,6 +164,30 @@ def test_roster_empty_match_falls_back_to_all(db):
     assert got == {m["B"]}
 
 
+def test_escalation_assignee_segment_scoped(db):
+    """Conversation-SLA escalation RR obeys the contact's segment: a retail contact
+    only ever escalates to retail-or-untagged members; unfiltered reaches everyone."""
+    from app.services.sla_service import ConversationSLATrackingService
+
+    agent_id, _team_id, m = _scenario(db, {"A": ["retail"], "B": ["project"], "C": []})
+    svc = ConversationSLATrackingService(db)
+
+    def pick(contact_segments):
+        return svc.get_escalation_assignee_for_tier(
+            None, 1, TEAM_SET,
+            agent_id_override=agent_id,
+            contact_segments=contact_segments,
+        )["id"]
+
+    retail_picks = {pick({"retail"}) for _ in range(6)}
+    assert retail_picks <= {m["A"], m["C"]}   # retail + untagged only
+    assert m["B"] not in retail_picks         # project member excluded
+
+    # None -> unfiltered RR over the whole tier team (regression: reaches project too).
+    all_picks = {pick(None) for _ in range(9)}
+    assert m["B"] in all_picks
+
+
 # ---------------------------------------------------------------- D: team-members endpoint
 
 def _tm(client, agent_code, **q):

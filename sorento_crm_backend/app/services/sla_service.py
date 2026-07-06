@@ -2028,12 +2028,19 @@ class ConversationSLATrackingService:
         team_set_code: Optional[str] = None,
         agent_code_override: Optional[str] = None,
         agent_id_override: Optional[str] = None,
+        contact_segments: Optional[set] = None,
     ) -> dict:
         """
         Resolve the next assignee for escalation to the given tier using agent tier-team and round-robin.
         Uses only that tier's round-robin cursor (no dependency on the previous tier's assignee).
         Priority: agent_id_override (UUID FK) > agent_code_override > source_entity_type mapping.
         Returns dict with id, email, name, respond_user_id. Raises if agent or tier team not configured.
+
+        contact_segments: the contact's market segment codes (retail / project). When
+        non-empty, the tier's round-robin pool is filtered to members serving those
+        segments (members with a matching segment OR no segment set = serves all), and
+        the cursor is segment-scoped. Empty / None -> unfiltered (round-robin over the
+        whole tier team on the legacy cursor) — byte-identical to prior behaviour.
         """
         from app.services.user_service import AccessAgentService
         from app.models.access import AccessAgent
@@ -2074,7 +2081,12 @@ class ConversationSLATrackingService:
                 f"No team assigned for agent '{agent_code}' with tier {target_tier}{suffix}. "
                 f"Add a Team Assignment with Tier = {target_tier} for this agent."
             )
-        assignee = agent_svc.get_next_assignee(agent_id, team_id)
+        # Opt-in segment filter: pass through only when the contact carries segment(s).
+        # Empty / None -> original arity so the no-filter RR path stays byte-identical.
+        if contact_segments:
+            assignee = agent_svc.get_next_assignee(agent_id, team_id, contact_segments)
+        else:
+            assignee = agent_svc.get_next_assignee(agent_id, team_id)
         if not assignee:
             raise handle_validation_error(
                 f"No assignee in team for agent '{agent_code}' tier {target_tier}. Ensure the team has members."

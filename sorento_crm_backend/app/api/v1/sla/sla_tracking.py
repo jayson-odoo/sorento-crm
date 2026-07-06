@@ -909,11 +909,20 @@ async def escalate_sla_tracking_integration(
             or None
         )
         resolved_agent_id = getattr(tracking, "agent_id", None) or None
+        # Segment-scoped escalation: round-robin only among the tier's members serving
+        # the contact's market segment(s) (retail / project); untagged contact -> empty
+        # set -> unfiltered RR over the whole tier team (unchanged).
+        from app.services.market_segment_service import MarketSegmentService
+
+        contact_segments = MarketSegmentService(db).resolve_segments_for_contact_id(
+            internal_contact_id
+        )
         assignee = service.get_escalation_assignee_for_tier(
             getattr(tracking, "source_entity_type", None),
             target_tier,
             resolved_team_set_code,
             agent_id_override=resolved_agent_id,
+            contact_segments=contact_segments,
         )
 
         # Assignee is passed into the service so the escalation event log (written inside
@@ -1089,11 +1098,19 @@ async def escalate_conversation_sla_tracking(
     # Resolve the new-tier assignee BEFORE escalating so the event log records the
     # correct assignee (mirrors POST /integration/escalate). Raises 422 with a clear
     # message when the agent / tier team / membership is not configured.
+    # Segment-scoped like the integration route: RR only among tier members serving the
+    # contact's market segment(s); untagged contact -> unfiltered (unchanged).
+    from app.services.market_segment_service import MarketSegmentService
+
+    contact_segments = MarketSegmentService(db).resolve_segments_for_contact_id(
+        str(contact_id)
+    )
     assignee = service.get_escalation_assignee_for_tier(
         getattr(tracking, "source_entity_type", None),
         target_tier,
         getattr(tracking, "team_set_code", None) or None,
         agent_id_override=getattr(tracking, "agent_id", None) or None,
+        contact_segments=contact_segments,
     )
     tracking = service.escalate_tracking(
         respond_contact_id=str(contact_id),

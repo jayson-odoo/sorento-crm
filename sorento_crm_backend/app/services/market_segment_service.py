@@ -78,6 +78,23 @@ class MarketSegmentService:
             return set()
         return {str(s.code) for s in contact.market_segments}
 
+    def resolve_segments_for_contact_id(self, contact_id: Optional[str]) -> set[str]:
+        """Segment codes for an INTERNAL respond_contacts.id (empty set on miss).
+
+        Lenient sibling of ``resolve_contact_segments`` (which takes respond_io_id):
+        routing / escalation must never break on a missing contact, so a bad / null
+        id yields ``set()`` (= no filter), never raises.
+        """
+        cid = (contact_id or "").strip()
+        if not cid:
+            return set()
+        contact = (
+            self.db.query(RespondContact).filter(RespondContact.id == cid).first()
+        )
+        if contact is None:
+            return set()
+        return {str(s.code) for s in contact.market_segments}
+
     # ------------------------------------------------------------------ catalog
 
     def list_segments(self, active_only: bool = False) -> list[MarketSegment]:
