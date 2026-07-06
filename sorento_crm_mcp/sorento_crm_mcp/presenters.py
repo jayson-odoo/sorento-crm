@@ -538,8 +538,12 @@ def present_response(tool_name: str, raw: str) -> str:
         builder = _BUILDERS.get(tool_name, _generic)
         builder(rows, b)
 
-    # de-dupe attachments by (url, filename) and repair the filename segment of
-    # the URL (sanitizers may carry a CDN path whose last segment differs).
+    # de-dupe attachments by (url, filename). The `url` is the DB `file_path` and is
+    # the ONLY resolvable object key — return it verbatim. Do NOT rewrite its last
+    # segment from `filename` (the editable `stored_filename`): the stored/display
+    # name often differs from the real key (parens/spaces sanitized at upload), so
+    # patching it in produced URLs that 404 (e.g. a promotion whose stored_filename
+    # kept "(CABANA) … END USER.pdf" while the object key is "CABANA … END USER.pdf").
     seen: set[tuple[Any, Any]] = set()
     attachments: list[dict[str, Any]] = []
     for a in b.attachments:
@@ -547,10 +551,6 @@ def present_response(tool_name: str, raw: str) -> str:
         if sig in seen:
             continue
         seen.add(sig)
-        if a.get("url") and a.get("filename"):
-            i = a["url"].rfind("/")
-            if i != -1:
-                a = {**a, "url": a["url"][: i + 1] + a["filename"]}
         attachments.append(a)
 
     has_result = bool(b.items or attachments or b.action_links)

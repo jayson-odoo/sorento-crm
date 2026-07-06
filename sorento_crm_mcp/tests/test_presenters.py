@@ -80,6 +80,28 @@ def test_promotions_header_only_with_pdf():
     assert any(a["filename"] == "Promo.pdf" for a in out["attachments"])
 
 
+def test_attachment_url_is_file_path_verbatim_not_stored_filename():
+    """The attachment `url` must be the DB `file_path` object key exactly — never
+    reconstructed from `stored_filename` (the editable display name often differs
+    from the real key, which produced 404-ing URLs). See presenters de-dupe block."""
+    real_key = "http://cdn/promotion/id/CABANA NEW ARRIVAL END USER.pdf"
+    out = env("crm_marketing_promotions_list", {
+        "data": [{
+            "description": "Promo", "start_date": "2026-05-08", "end_date": "2026-08-08",
+            "attachments": [{"attachment": {
+                "original_filename": "CABANA NEW ARRIVAL (END USER).pdf",
+                "stored_filename": "(CABANA) NEW ARRIVAL END USER.pdf",
+                "file_path": real_key,
+                "mime_type": "application/pdf",
+            }}],
+        }],
+    })
+    a = out["attachments"][0]
+    assert a["url"] == real_key                                   # url untouched
+    assert a["filename"] == "(CABANA) NEW ARRIVAL END USER.pdf"   # display keeps stored_filename
+    assert a["url"].endswith("CABANA NEW ARRIVAL END USER.pdf")   # NOT the (CABANA) key
+
+
 def test_products_item_plus_nested_attachments():
     out = env("crm_master_products_list", {
         "data": [{
