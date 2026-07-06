@@ -2279,6 +2279,10 @@ class OrderService:
                             "data": row_data,
                         })
                         mapped.pop("remarks_cs", None)
+                    # Upsert customer/transporter master rows from the debtor /
+                    # transporter text so the FKs stay populated on import too
+                    # (parity with update_order). Idempotent.
+                    mapped = self._sync_order_master_refs(mapped)
                     for key, value in mapped.items():
                         if key != "order_number":
                             setattr(existing_order, key, value)
@@ -2298,6 +2302,10 @@ class OrderService:
                     mapped["created_by"] = user_id
                     if new_status_id:
                         mapped["order_status_id"] = new_status_id
+                    # Upsert customer/transporter master rows from the debtor /
+                    # transporter text so the FKs stay populated on import too
+                    # (parity with create_order). Idempotent.
+                    mapped = self._sync_order_master_refs(mapped)
                     order = Order(**mapped)
                     self.db.add(order)
                     created += 1
@@ -2357,6 +2365,9 @@ class OrderService:
                         mapped["actual_delivery_date"] = datetime.combine(d, dt_time.min)
                     delivery_date = mapped["actual_delivery_date"]
 
+                # Overall Tracking sheet carries the transporter text — upsert the
+                # transporter master row + FK here (parity with update_order). Idempotent.
+                mapped = self._sync_order_master_refs(mapped)
                 for key, value in mapped.items():
                     if key != "order_number":
                         setattr(order, key, value)
