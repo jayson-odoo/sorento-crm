@@ -242,6 +242,50 @@ def test_incoming_empty_no_alternatives_for_unresolved(db):
 
 
 # --------------------------------------------------------------------------- #
+# Unified incoming-list tool (crm_incoming_stock_list) — same data-miss probe
+# --------------------------------------------------------------------------- #
+def test_incoming_list_empty_with_alternatives(db):
+    from app.services.incoming_stock_service import IncomingStockService
+
+    _require_codes(db, "CB889SS-GM", "CB889SS-GM-DIY")
+    res = IncomingStockService(db).incoming_list(product_ids=["CB889SS-GM"], limit=10)
+    assert res["empty"] is True
+    if not res.get("alternatives"):
+        pytest.skip("CB889SS-GM-DIY has no open incoming line in this DB")
+    assert res.get("relaxed_axis") == "entity"
+    assert any(a["value"] == "CB889SS-GM-DIY" for a in res["alternatives"])
+
+
+def test_incoming_list_no_alternatives_for_unresolved(db):
+    from app.services.incoming_stock_service import IncomingStockService
+
+    res = IncomingStockService(db).incoming_list(
+        product_ids=["ZZZ-NOT-A-REAL-CODE-9999"], limit=10
+    )
+    assert res["empty"] is True
+    assert "alternatives" not in res  # resolution miss, not a data miss
+
+
+# --------------------------------------------------------------------------- #
+# Parent / base product is now included in the variant-graph pool
+# --------------------------------------------------------------------------- #
+def test_parent_base_included_in_neighbours(db):
+    from app.models.product import Product
+
+    _require_codes(db, "SRTWC8066", "SRTWC8066-SC")
+    # Precondition: SRTWC8066-SC is stored as a variant of the base SRTWC8066.
+    child = db.query(Product).filter(Product.product_code == "SRTWC8066-SC").first()
+    base = db.query(Product).filter(Product.product_code == "SRTWC8066").first()
+    if not (child and base and str(child.variant_of_id) == str(base.id)):
+        pytest.skip("SRTWC8066-SC is not linked to base SRTWC8066 in this DB")
+
+    # Querying from the CHILD, its parent/base must be offered as an alternative.
+    out = find_entity_neighbours_with_data(db, "SRTWC8066-SC", has_data=_all_data, limit=10)
+    values = [a["value"] for a in out]
+    assert "SRTWC8066" in values, "parent/base should be a suggested alternative"
+
+
+# --------------------------------------------------------------------------- #
 # HTTP route: response_model bypass + auth denial
 # --------------------------------------------------------------------------- #
 def _api_key():
