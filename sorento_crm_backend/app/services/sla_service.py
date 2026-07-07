@@ -2874,6 +2874,7 @@ class ConversationSLATrackingService:
             (tracking.assigned_user.name or tracking.assigned_user.email)
             if tracking.assigned_user else (tracking.assigned_to or None)
         )
+        original_assignee_id = getattr(tracking, "assigned_to_id", None)
         original_tier = tracking.current_tier
 
         assignee_id = (assignee_respond_user_id or "").strip()
@@ -2894,6 +2895,20 @@ class ConversationSLATrackingService:
             )
 
         tracking = self.get_tracking(tracking_id)
+
+        # Notify the NEW assignee (in-app + email/WhatsApp per their toggles), same as
+        # auto-assign on create. Only on a genuine change to a real user — unassign and
+        # re-setting the same person carry no new assignment. Best-effort (never raises);
+        # the occurrence-keyed event_type dedups a no-op repeat at the same tier clock.
+        new_assignee_id = getattr(tracking, "assigned_to_id", None)
+        if new_assignee_id and str(new_assignee_id) != str(original_assignee_id or ""):
+            # Per-action occurrence (microsecond) so A→B→A re-notifies: a same-team
+            # reassign does NOT restart the tier clock, so the default tier-start key
+            # would collide with the earlier A→ notification and dedup the send away.
+            self._notify_assignment_on_create(
+                tracking, occurrence=int(_now_utc().timestamp() * 1_000_000)
+            )
+
         phone = None
         if tracking.contact:
             phone = (getattr(tracking.contact, "phone_number", None) or "").strip()
@@ -3397,6 +3412,7 @@ class ConversationSLATrackingService:
             self.db.commit()
             self.db.refresh(existing)
             self._write_assign_event_log(existing, covered_for_id=coverage_covered_for_id)
+            self._notify_assignment_on_create(existing)
             self._fan_out_assignment_coverage(existing)
             setattr(existing, "_overwrote_resolved", True)
             return existing
@@ -3411,6 +3427,7 @@ class ConversationSLATrackingService:
         self.db.commit()
         self.db.refresh(tracking)
         self._write_assign_event_log(tracking, covered_for_id=coverage_covered_for_id)
+        self._notify_assignment_on_create(tracking)
         self._fan_out_assignment_coverage(tracking)
         return tracking
 
@@ -3465,6 +3482,92 @@ class ConversationSLATrackingService:
                 "tracking exists without its initial assign log.",
                 getattr(tracking, "id", None),
                 exc_info=True,
+            )
+
+    def _notify_assignment_on_create(
+        self,
+        tracking: ConversationSLATracking,
+        *,
+        occurrence: Optional[int] = None,
+    ) -> None:
+        """Notify the PRIMARY assignee that a conversation SLA was assigned to them on
+        create/overwrite. Conversation create previously delegated the assignee notify to
+        n8n/Respond; the CRM now owns it so it fires regardless of the routing channel.
+
+        In-app always; email/WhatsApp gated by the recipient's own assignment toggles
+        (notify_email_on_assignment / notify_whatsapp_on_assignment) — same matrix as
+        reassign/escalate. Best-effort: the tracking row is already committed, so a
+        failure here must never fail the create (n8n would get a 500 for a create that
+        succeeded, and its retry takes the idempotent path which never re-notifies).
+        Coverage subscribers are handled separately by _fan_out_assignment_coverage.
+
+        ``occurrence`` overrides the dedup-key suffix (event_type ``assigned:<occ>``).
+        Create/overwrite pass None → the key derives from the tier-clock start, so a
+        repeat inbound at the same clock dedups. Manual reassign passes the per-action
+        change moment so re-assigning back to a prior assignee (A→B→A) still notifies —
+        the tier clock does NOT restart on a same-team reassign, so a tier-start key
+        would collide with the earlier A→ notification and silently drop the send."""
+        import logging
+
+        log = logging.getLogger(__name__)
+        try:
+            assignee_id = getattr(tracking, "assigned_to_id", None)
+            if not assignee_id:
+                return
+            from app.config import settings
+            from app.services.notification_service import NotificationService
+            from app.services.form_sla_service import build_sla_whatsapp_data
+
+            base_url = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+            detail = (
+                f"{base_url}/sla-management/conversation-sla-tracking/{tracking.id}"
+                if base_url
+                else ""
+            )
+            ref = (self._resolve_my_pending_references([tracking]) or {}).get(
+                str(tracking.id)
+            ) or "an SLA task"
+
+            title = "An SLA task was assigned to you"
+            body = f"{ref} has been assigned to you."
+            if detail:
+                body += f"\n\nOpen: {detail}"
+            data = {
+                "tracking_id": str(tracking.id),
+                **build_sla_whatsapp_data(self.db, tracking, str(assignee_id), body),
+            }
+            # Distinct event_type PER assignment occurrence: the tracking id is reused
+            # across conversations (overwrite-resolved), and the dedup key is
+            # (user, source_type, source_id, event_type). A static "assigned" would
+            # stale-dedup and NEVER re-notify on a fresh conversation reusing the row.
+            # Key off the assignment start time (reset on each new conversation); the
+            # email-key resolver strips the numeric suffix so it stays a registered key.
+            if occurrence is not None:
+                occ = occurrence
+            else:
+                started = (
+                    getattr(tracking, "current_tier_started_at", None)
+                    or getattr(tracking, "initiated_at", None)
+                )
+                occ = int(started.timestamp()) if isinstance(started, datetime) else 0
+            NotificationService(self.db).create_with_channel_preferences(
+                user_id=str(assignee_id),
+                type="conversation_sla",
+                title=title,
+                body=body,
+                data=data,
+                source_entity_type="conversation_sla_tracking",
+                source_entity_id=str(tracking.id),
+                event_type=f"assigned:{occ}",
+                send_in_app=True,
+                send_email=True,
+                send_whatsapp=True,
+                email_pref_attr="notify_email_on_assignment",
+                whatsapp_pref_attr="notify_whatsapp_on_assignment",
+            )
+        except Exception as e:  # noqa: BLE001 — best-effort; row already committed
+            log.warning(
+                "assignment notify failed for %s: %s", getattr(tracking, "id", "?"), e
             )
 
     def _fan_out_assignment_coverage(self, tracking: ConversationSLATracking) -> None:

@@ -1,0 +1,283 @@
+"""Conversation-SLA create notifies the PRIMARY assignee (CRM owns it, not n8n).
+
+Regression pin: conversation create used to delegate the assignee notification to
+n8n/Respond, so the per-user assignment toggles in Settings never fired for a
+conversation SLA. `ConversationSLATrackingService.create_tracking` now calls
+`_notify_assignment_on_create` on the new-row AND overwrite-resolved paths (NOT the
+idempotent already_active path), mirroring the form-SLA assignment matrix.
+
+This pins:
+  1. New-row notifies the primary assignee: one `conversation_sla` Notification keyed
+     (source_entity_type="conversation_sla_tracking", source_entity_id=<tracking>,
+     event_type="assigned:<occ>"), with in_app + email deliveries (email pref default).
+  2. Idempotent-active does NOT re-notify (repeat inbound on the open conversation).
+  3. Overwrite-resolved (fresh conversation reusing the row) with a DIFFERENT start
+     time re-notifies — the occurrence-suffixed event_type dodges stale dedup on the
+     reused tracking id.
+  4. Per-user gate: notify_email_on_assignment=False => in_app only, NO email delivery.
+
+Run:
+    venv/bin/pytest tests/test_conversation_sla_assignment_notify.py -q
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.database import Base
+from app.models.access import AccessAgent, AgentTeam, RespondContact
+from app.models.lookup import LookupBinding  # validator listener checks this table
+from app.models.notification import (
+    Notification,
+    NotificationDelivery,
+    NotificationSubscription,
+)
+from app.models.sla import (
+    ConversationSLAEventLog,
+    ConversationSLATracking,
+    SLAPolicy,
+    SLAPolicyTier,
+)
+from app.models.user import User
+from app.schemas.sla import ConversationSLATrackingCreate
+from app.services.sla_service import ConversationSLATrackingService
+
+PHONE = "+60123456789"
+SOURCE = "conversation_sla_tracking"
+
+
+@pytest.fixture
+def db(monkeypatch):
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    from sqlalchemy.dialects.postgresql import JSONB
+    from sqlalchemy.types import JSON as GenericJSON
+
+    for table in (RespondContact.__table__, Notification.__table__):
+        for col in list(table.columns):
+            if isinstance(col.type, JSONB):
+                col.type = GenericJSON()
+                col.server_default = None
+
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            SLAPolicy.__table__,
+            SLAPolicyTier.__table__,
+            ConversationSLATracking.__table__,
+            ConversationSLAEventLog.__table__,
+            RespondContact.__table__,
+            AccessAgent.__table__,
+            AgentTeam.__table__,  # empty -> resolve_policy_id_for None -> policy_id fallback
+            User.__table__,
+            NotificationSubscription.__table__,
+            Notification.__table__,
+            NotificationDelivery.__table__,
+            LookupBinding.__table__,
+        ],
+    )
+
+    # No Redis in the unit harness; the notify's last step enqueues a delivery job.
+    # create_with_channel_preferences swallows enqueue errors, but stub anyway so the
+    # test never depends on a broker.
+    import app.services.queue_service as queue_service
+
+    monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: None)
+
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    s = SessionLocal()
+    try:
+        yield s
+    finally:
+        s.close()
+
+
+def _seed(db, *, email_on_assignment: bool = True) -> dict:
+    policy_id = str(uuid.uuid4())
+    db.add(SLAPolicy(id=policy_id, code="NORMAL", name="Normal"))
+    db.add(
+        SLAPolicyTier(
+            id=str(uuid.uuid4()),
+            policy_id=policy_id,
+            tier_level=1,
+            tier_name="Tier 1",
+            response_hours=4,
+            resolution_hours=24,
+        )
+    )
+    contact_id = str(uuid.uuid4())
+    db.add(
+        RespondContact(
+            id=contact_id, phone_number=PHONE, name="Test Contact", session_vars={}
+        )
+    )
+    db.add(AccessAgent(id=str(uuid.uuid4()), code="AG1", name="Agent Chain"))
+    assignee_id = str(uuid.uuid4())
+    db.add(
+        User(
+            id=assignee_id,
+            email="agent1@test.com",
+            name="Agent One",
+            respond_user_id="900001",
+            notify_email_on_assignment=email_on_assignment,
+        )
+    )
+    db.commit()
+    return {
+        "policy_id": policy_id,
+        "contact_id": contact_id,
+        "assignee_id": assignee_id,
+    }
+
+
+def _payload(seed, *, message_id=None, started_at=None) -> ConversationSLATrackingCreate:
+    return ConversationSLATrackingCreate(
+        policy_id=seed["policy_id"],  # fallback: no AgentTeam binding seeded
+        current_tier=1,
+        assigned_to_id=seed["assignee_id"],
+        agent_code="AG1",
+        team_set_code="TS1",
+        contact_phone_number=PHONE,
+        message_id=message_id,
+        current_tier_started_at=started_at,
+        initiated_at=started_at,
+    )
+
+
+def _assignee_notes(db, assignee_id) -> list[Notification]:
+    return (
+        db.query(Notification)
+        .filter(
+            Notification.user_id == assignee_id,
+            Notification.source_entity_type == SOURCE,
+        )
+        .order_by(Notification.event_type.asc())
+        .all()
+    )
+
+
+def _deliveries(db, note_id) -> list[NotificationDelivery]:
+    return (
+        db.query(NotificationDelivery)
+        .filter(NotificationDelivery.notification_id == note_id)
+        .all()
+    )
+
+
+# --------------------------------------------------------------------------
+# 1. New-row notifies the primary assignee (in-app + email)
+# --------------------------------------------------------------------------
+
+def test_new_row_notifies_primary_assignee(db, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "frontend_base_url", "https://crm.example.com")
+    seed = _seed(db)
+    service = ConversationSLATrackingService(db)
+
+    t0 = datetime(2026, 6, 1, 8, 0, 0)
+    tracking = service.create_tracking(_payload(seed, message_id=111, started_at=t0))
+
+    notes = _assignee_notes(db, seed["assignee_id"])
+    assert len(notes) == 1, "primary assignee should get exactly one assignment note"
+    note = notes[0]
+    assert note.type == "conversation_sla"
+    assert note.source_entity_id == str(tracking.id)
+    assert note.event_type == f"assigned:{int(t0.timestamp())}"
+    # Worded "to you" (assignee), deep-links to the detail page (not the takeover widget).
+    assert "assigned to you" in (note.body or "")
+    assert f"/sla-management/conversation-sla-tracking/{tracking.id}" in (note.body or "")
+    channels = {d.channel for d in _deliveries(db, note.id)}
+    assert "in_app" in channels
+    assert "email" in channels
+
+
+# --------------------------------------------------------------------------
+# 2. Idempotent-active does NOT re-notify
+# --------------------------------------------------------------------------
+
+def test_idempotent_active_does_not_renotify(db):
+    seed = _seed(db)
+    service = ConversationSLATrackingService(db)
+
+    first = service.create_tracking(_payload(seed, message_id=111))
+    assert len(_assignee_notes(db, seed["assignee_id"])) == 1
+
+    # Repeat inbound on the still-open conversation -> idempotent return, no notify.
+    second = service.create_tracking(_payload(seed, message_id=222))
+    assert str(second.id) == str(first.id)
+    assert bool(getattr(second, "_already_active", False)) is True
+
+    assert len(_assignee_notes(db, seed["assignee_id"])) == 1, (
+        "idempotent-active path must not re-notify the assignee"
+    )
+
+
+# --------------------------------------------------------------------------
+# 3. Overwrite-resolved (fresh conversation) re-notifies via occurrence key
+# --------------------------------------------------------------------------
+
+def test_overwrite_resolved_renotifies_new_occurrence(db):
+    seed = _seed(db)
+    service = ConversationSLATrackingService(db)
+
+    t0 = datetime(2026, 6, 1, 8, 0, 0)
+    first = service.create_tracking(_payload(seed, message_id=111, started_at=t0))
+    assert len(_assignee_notes(db, seed["assignee_id"])) == 1
+
+    first.is_resolved = True
+    first.resolved_at = datetime(2026, 6, 1, 10, 0, 0)
+    db.commit()
+
+    t1 = datetime(2026, 6, 2, 8, 0, 0)  # different occurrence
+    second = service.create_tracking(_payload(seed, message_id=222, started_at=t1))
+    assert str(second.id) == str(first.id)
+    assert bool(getattr(second, "_overwrote_resolved", False)) is True
+
+    notes = _assignee_notes(db, seed["assignee_id"])
+    assert len(notes) == 2, "overwrite-resolved must re-notify (new occurrence)"
+    assert {n.event_type for n in notes} == {
+        f"assigned:{int(t0.timestamp())}",
+        f"assigned:{int(t1.timestamp())}",
+    }
+
+
+def test_same_occurrence_dedups_to_one(db):
+    """Overwrite-resolved with the SAME start time = same occurrence key => one note."""
+    seed = _seed(db)
+    service = ConversationSLATrackingService(db)
+
+    t0 = datetime(2026, 6, 1, 8, 0, 0)
+    first = service.create_tracking(_payload(seed, message_id=111, started_at=t0))
+    first.is_resolved = True
+    db.commit()
+    service.create_tracking(_payload(seed, message_id=222, started_at=t0))
+
+    notes = _assignee_notes(db, seed["assignee_id"])
+    assert len(notes) == 1, "same-occurrence start-time must dedup to one note"
+
+
+# --------------------------------------------------------------------------
+# 4. Per-user email toggle gates the email channel
+# --------------------------------------------------------------------------
+
+def test_email_toggle_off_suppresses_email_delivery(db):
+    seed = _seed(db, email_on_assignment=False)
+    service = ConversationSLATrackingService(db)
+
+    service.create_tracking(_payload(seed, message_id=111))
+
+    notes = _assignee_notes(db, seed["assignee_id"])
+    assert len(notes) == 1, "in-app note still created regardless of email toggle"
+    channels = {d.channel for d in _deliveries(db, notes[0].id)}
+    assert "in_app" in channels
+    assert "email" not in channels, "email toggle off must suppress the email delivery"
