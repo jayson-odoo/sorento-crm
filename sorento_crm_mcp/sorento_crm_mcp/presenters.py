@@ -27,6 +27,7 @@ the AI assistant (which still reads raw) is not affected until it migrates.
 from __future__ import annotations
 
 import json
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 # Tools that support `view=render`. Used by server._compile_tool to inject the
@@ -107,6 +108,25 @@ def _money(v: Any) -> str | None:
         return f"MYR {float(v):.2f}"
     except (TypeError, ValueError):
         return f"MYR {v}"
+
+
+def _qty(v: Any) -> Any:
+    """Render a quantity compactly — drop a meaningless fractional part.
+
+    ``2.0000`` -> ``"2"``, ``2.5000`` -> ``"2.5"``, ``2.125`` -> ``"2.125"``.
+    Non-numeric / None passes through unchanged. Decimal (not float) so we never
+    introduce binary artefacts on an already-clean value.
+    """
+    if v is None:
+        return v
+    try:
+        d = Decimal(str(v))
+    except (InvalidOperation, TypeError, ValueError):
+        return v
+    if d == d.to_integral_value():
+        return str(d.to_integral_value())
+    s = format(d, "f")  # fixed-point, never exponent notation
+    return s.rstrip("0").rstrip(".") if "." in s else s
 
 
 def _dims(o: dict) -> str | None:
@@ -196,7 +216,7 @@ def _orders_list(rows: list[dict], b: _Builder) -> None:
             w = lines[0].get("warehouse") or {}
             wh = w.get("warehouse_code")
         prods = ", ".join(
-            f"{(l.get('product') or {}).get('product_code') or l.get('product_code')} ({l.get('quantity')})"
+            f"{(l.get('product') or {}).get('product_code') or l.get('product_code')} ({_qty(l.get('quantity'))})"
             for l in lines
         )
         b.item(
@@ -220,7 +240,7 @@ def _orders_list(rows: list[dict], b: _Builder) -> None:
 def _orders_by_product(rows: list[dict], b: _Builder) -> None:
     for o in rows:
         prods = ", ".join(
-            f"{m.get('product_code')} ({m.get('quantity')})"
+            f"{m.get('product_code')} ({_qty(m.get('quantity'))})"
             + (f" @ {m.get('warehouse_code')}" if _filled(m.get("warehouse_code")) else "")
             for m in (o.get("matched_products") or [])
         )

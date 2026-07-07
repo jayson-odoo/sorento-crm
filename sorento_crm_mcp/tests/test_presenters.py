@@ -33,6 +33,35 @@ def test_orders_list_one_item_per_order_products_inline():
     assert out["has_result"] is True
 
 
+def test_orders_list_quantity_trailing_zeros_truncated():
+    """A whole-number decimal qty (2.0000) renders as an int; a real fraction keeps its digits."""
+    out = env("crm_order_management_orders_list", {
+        "data": [{
+            "order_number": "X1",
+            "lines": [
+                {"quantity": "2.0000", "product": {"product_code": "AAA"}},
+                {"quantity": "2.5000", "product": {"product_code": "BBB"}},
+                {"quantity": "1.125", "product": {"product_code": "CCC"}},
+            ],
+        }],
+    })
+    fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert fields["Products"] == "AAA (2), BBB (2.5), CCC (1.125)"
+
+
+def test_orders_by_product_quantity_trailing_zeros_truncated():
+    out = env("crm_order_management_orders_by_product_list", {
+        "data": [{
+            "order_number": "X2",
+            "matched_products": [
+                {"product_code": "AAA", "quantity": "3.0000", "warehouse_code": "BRW"},
+            ],
+        }],
+    })
+    fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert fields["Products"] == "AAA (3) @ BRW"
+
+
 def test_incoming_list_one_item_per_line_with_attachment():
     out = env("crm_incoming_stock_list", {
         "data": [{
