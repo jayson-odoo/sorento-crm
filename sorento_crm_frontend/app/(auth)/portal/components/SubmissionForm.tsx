@@ -781,6 +781,24 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         }
       : null;
 
+  // Purchasing / technical response shown at top for salesperson once responded. Hidden when empty.
+  const responseInfo = (() => {
+    if (kind === 'stock_inquiry') {
+      const v = ((detail?.purchasing_response as string | null | undefined) ?? '').trim();
+      return v ? { label: 'Comment / reply by purchasing', value: v } : null;
+    }
+    if (kind === 'complaint') {
+      let v = ((detail?.technical_team_response as string | null | undefined) ?? '').trim();
+      // Strip legacy composed customer message so only technician wording shows (matches CRM).
+      if (v.startsWith('There has been an update regarding your complaint')) {
+        const idx = v.lastIndexOf(': ');
+        if (idx !== -1) v = v.slice(idx + 2).trim();
+      }
+      return v ? { label: 'Technical team response', value: v } : null;
+    }
+    return null;
+  })();
+
   return (
     <div className="min-h-screen max-w-7xl mx-auto px-4 py-6 space-y-4">
       <div className="flex items-center justify-between">
@@ -818,6 +836,13 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
           <p className="font-medium">Rejection reason</p>
           <p>{detail.rejection_reason}</p>
+        </div>
+      )}
+
+      {responseInfo && (
+        <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm">
+          <p className="font-medium text-emerald-700 dark:text-emerald-400">{responseInfo.label}</p>
+          <p className="mt-1 whitespace-pre-wrap text-foreground">{responseInfo.value}</p>
         </div>
       )}
 

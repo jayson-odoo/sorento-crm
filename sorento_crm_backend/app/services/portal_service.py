@@ -1439,6 +1439,7 @@ class PortalService:
                 "contact_number": row.contact_number,
                 "customer_address": row.customer_address,
                 "project_title": row.project_title,
+                "technical_team_response": row.technical_team_response,
             }
         )
         return base
@@ -1474,6 +1475,7 @@ class PortalService:
                 "delivery_date": row.delivery_date,
                 "remark": row.remark,
                 "additional_remark": row.additional_remark,
+                "purchasing_response": row.purchasing_response,
             }
         )
         return base
