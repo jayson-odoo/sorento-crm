@@ -72,16 +72,20 @@ def main() -> int:
     db = SessionLocal()
     try:
         rows = db.execute(
-            text("SELECT id, product_code, variant_of_id FROM products")
+            text("SELECT id, product_code, variant_of_id, variant_link_manual FROM products")
         ).fetchall()
         current = {r[0]: r[2] for r in rows}
         code_by_id = {r[0]: r[1] for r in rows}
+        # Manually-curated rows are STICKY (D1): never overwrite their variant_of_id.
+        # They still act as candidate parents in `derive_parents` (they're in `rows`),
+        # only their own value is protected — a re-run reports 0 changes for them.
+        manual_ids = {r[0] for r in rows if r[3]}
         derived = derive_parents([(r[0], r[1]) for r in rows])
 
         changes = {
             pid: parent
             for pid, parent in derived.items()
-            if parent != current.get(pid)
+            if pid not in manual_ids and parent != current.get(pid)
         }
 
         if not args.dry_run:

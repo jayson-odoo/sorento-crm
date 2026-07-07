@@ -55,6 +55,10 @@ export interface Product {
   is_variant?: boolean;
   variant_of?: ProductVariantRef | null;
   variants?: ProductVariantRef[];
+  // True when the variant link was hand-curated (auto-reconcile skips it).
+  variant_link_manual?: boolean;
+  // Number of direct child variants.
+  variant_child_count?: number;
 
   // Relations (populated from API)
   category?: ProductCategory;
@@ -314,6 +318,10 @@ export interface ProductListItem {
   is_active: boolean;
   // True when the product is a variant of another (variant_of_id IS NOT NULL).
   is_variant?: boolean;
+  // Human-readable parent reference (null for base products).
+  variant_of?: ProductVariantRef | null;
+  // Number of direct child variants.
+  variant_child_count?: number;
   created_at: Date;
   updated_at?: Date | null;
   category?: ProductCategory;

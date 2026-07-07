@@ -282,6 +282,12 @@ class ProductResponse(ProductBase):
     is_variant: bool = Field(default=False, validation_alias="variant_of_id")
     variant_of: Optional["ProductVariantRef"] = Field(default=None, validation_alias="_variant_of_ref")
     variants: List["ProductVariantRef"] = Field(default_factory=list, validation_alias="_variant_children")
+    # Manual-curation flag (plain column; cheap on list rows). Detail page reads it
+    # for the "Manual" badge + Reset-to-auto button.
+    variant_link_manual: bool = False
+    # Direct-child count. On list rows populated by two bounded IN-queries (no N+1);
+    # on detail rows set from the loaded children by `_populate_variant_graph`.
+    variant_child_count: int = Field(default=0, validation_alias="_variant_child_count")
 
     @field_validator("is_variant", mode="before")
     @classmethod

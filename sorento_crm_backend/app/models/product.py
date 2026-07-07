@@ -1,5 +1,5 @@
 """Product management models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Numeric, Integer, Index
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Numeric, Integer, Index, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -108,6 +108,11 @@ class Product(Base):
     # to the next existing ancestor. See app/services/variant_link_service.py and
     # docs/plans/PLAN-suggest-on-miss-variant-graph.md §1.
     variant_of_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
+    # Manual-curation flag. When true, the auto-derivation (reconcile_variant_links /
+    # _adopt_orphans / backfill) must NOT re-derive or re-point this row's variant
+    # link — a hand-set parent (or hand-cleared link) is sticky until "reset to auto"
+    # clears the flag. See docs/plans/PLAN-variant-manual-curation.md.
+    variant_link_manual = Column(Boolean, nullable=False, server_default="false", default=False)
     base_uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id"), nullable=False)
     item_type = Column(String(50), nullable=True)
     list_price = Column(Numeric(12, 2), nullable=False)
@@ -175,6 +180,11 @@ class Product(Base):
         Index("ix_products_is_active", "is_active"),
         Index("ix_products_product_code", "product_code"),
         Index("ix_products_variant_of_id", "variant_of_id"),
+        Index(
+            "ix_products_variant_link_manual",
+            "variant_link_manual",
+            postgresql_where=text("variant_link_manual = true"),
+        ),
         Index("ix_products_discontinued_pending", "is_discontinued", "discontinued_notified_at"),
         Index("ix_products_discontinued_notify_batch_id", "discontinued_notify_batch_id"),
     )

@@ -5,12 +5,14 @@
  */
 
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type {
   Product,
   ProductFormData,
   ProductFilters,
   ProductApiResponse,
   ProductDetail,
+  ProductVariantRef,
   PriceHistory,
 } from '../types/product.types';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
@@ -22,6 +24,8 @@ export interface GetProductsParams extends DataGridApiFetchParams {
   price_min?: number;
   price_max?: number;
   item_type?: string;
+  /** Filter by position in the variant graph. Default 'all' (no filter). */
+  variant_filter?: 'base' | 'variant' | 'all';
   /** Deep link from a "products discontinued" notification — show only that batch. */
   discontinued_batch_id?: string;
 }
@@ -61,6 +65,7 @@ export async function getProducts(
     price_min,
     price_max,
     item_type,
+    variant_filter,
     discontinued_batch_id,
   } = params;
 
@@ -78,6 +83,7 @@ export async function getProducts(
     ...(price_min ? { price_min: String(price_min) } : {}),
     ...(price_max ? { price_max: String(price_max) } : {}),
     ...(item_type ? { item_type } : {}),
+    ...(variant_filter && variant_filter !== 'all' ? { variant_filter } : {}),
     ...(discontinued_batch_id ? { discontinued_batch_id } : {}),
   });
 
@@ -170,6 +176,101 @@ export async function updateProduct(
   }
 
   return response.json();
+}
+
+/**
+ * Set / change a product's variant parent (manual curation).
+ * Reused by "Add variant" (attach a child): call with the CHILD's id and the
+ * parent's id. `parentId` accepts a UUID or product_code; the backend resolves
+ * it and enforces self/cycle rules (surfaced as 400s).
+ */
+export async function setVariantParent(
+  productId: string,
+  parentId: string,
+): Promise<ProductDetail> {
+  const response = await apiFetch(
+    `/api/v1/master-data/products/${productId}/variant-parent`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parent_id: parentId }),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to set variant parent'));
+  }
+
+  return response.json();
+}
+
+/**
+ * Unlink a product from its variant parent (manual curation).
+ * Reused by "Remove variant": call with the CHILD's id.
+ */
+export async function unlinkVariant(productId: string): Promise<ProductDetail> {
+  const response = await apiFetch(
+    `/api/v1/master-data/products/${productId}/variant-parent`,
+    {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to unlink variant'));
+  }
+
+  return response.json();
+}
+
+/**
+ * Reset a manually-curated product back to automatic variant derivation.
+ */
+export async function resetVariantAuto(productId: string): Promise<ProductDetail> {
+  const response = await apiFetch(
+    `/api/v1/master-data/products/${productId}/variant-reset`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to reset variant link'));
+  }
+
+  return response.json();
+}
+
+/**
+ * Product options for the variant-parent / add-child combobox.
+ * Maps the shared `/select` endpoint to human-readable refs (no UUID in the UI).
+ */
+export async function getProductsForVariantSelect(
+  query?: string,
+): Promise<ProductVariantRef[]> {
+  const queryParams = new URLSearchParams(query ? { query } : {});
+  const response = await apiFetch(
+    `/api/v1/master-data/products/select?${queryParams.toString()}`,
+    {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to fetch products'));
+  }
+
+  const body = await response.json();
+  const rows: Array<{ id: string; product_code: string; product_name: string }> =
+    body?.data ?? [];
+  return rows.map((p) => ({
+    id: p.id,
+    product_code: p.product_code,
+    product_name: p.product_name,
+  }));
 }
 
 /**

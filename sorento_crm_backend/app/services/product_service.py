@@ -113,7 +113,7 @@ from app.schemas.product import (
     BrandCreate, BrandUpdate, UnitOfMeasureCreate, UnitOfMeasureUpdate,
     ProductAttachmentCreate, ProductAttachmentUpdate
 )
-from app.services.error_handler import handle_not_found, handle_conflict
+from app.services.error_handler import handle_not_found, handle_conflict, AppException
 from app.schemas.common import PaginationResponse
 from app.models.user import SystemSetting
 from app.services.embedding_events import publish_embedding_event
@@ -155,6 +155,7 @@ class ProductService:
         entity_buckets: Optional[Any] = None,
         product_ids: Optional[list[str]] = None,
         discontinued_batch_id: Optional[str] = None,
+        variant_filter: Optional[str] = None,
     ):
         """Build the filtered + sorted products query shared by ``list_products``
         and ``neighbours`` so the two can never drift.
@@ -203,6 +204,12 @@ class ProductService:
 
         if status and status != "all":
             filters.append(Product.is_active == (status == "active"))
+
+        # Base / Variant / All variant-graph filter.
+        if variant_filter == "base":
+            filters.append(Product.variant_of_id.is_(None))
+        elif variant_filter == "variant":
+            filters.append(Product.variant_of_id.isnot(None))
 
         if item_type:
             filters.append(Product.item_type == item_type)
@@ -416,6 +423,7 @@ class ProductService:
         entities: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
         discontinued_batch_id: Optional[str] = None,
+        variant_filter: Optional[str] = None,
     ):
         """List products with filtering and pagination.
 
@@ -469,6 +477,7 @@ class ProductService:
             entity_buckets=entity_buckets,
             product_ids=product_ids,
             discontinued_batch_id=discontinued_batch_id,
+            variant_filter=variant_filter,
         )
         if q is self._EMPTY_RESULT:
             payload = {
@@ -499,6 +508,7 @@ class ProductService:
             .all()
         )
         _populate_field_attachments(self.db, products)
+        self._populate_list_variant_fields(products)
 
         payload = {
             "data": products,
@@ -611,12 +621,159 @@ class ProductService:
                 .first()
             )
         product._variant_of_ref = parent
-        product._variant_children = (
+        children = (
             self.db.query(Product)
             .filter(Product.variant_of_id == product.id)
             .order_by(Product.product_code.asc())
             .all()
         )
+        product._variant_children = children
+        product._variant_child_count = len(children)
+
+    def set_variant_parent(self, product_id: str, parent_id: str, updated_by: str):
+        """Manually set/change a product's variant parent (D1 — sticky override).
+
+        Sets ``variant_of_id`` + ``variant_link_manual = True`` so auto-derivation
+        never re-points it. Rejects self-parent and cycles (walking the chosen
+        parent's ancestor chain). Returns the ORM product so the route serializes
+        the full variant graph. Also the "attach a child" path: call this with the
+        child's id and ``parent_id`` = this product.
+        """
+        product = self.get_product(product_id)  # 404 if the product is unknown
+        if not parent_id or not str(parent_id).strip():
+            raise AppException(
+                status_code=400, message="parent_id is required", code="VALIDATION_ERROR"
+            )
+        resolved = resolve_identifier(
+            self.db, parent_id, Product, code_fields=("product_code",)
+        )
+        parent = None
+        if resolved:
+            parent = self.db.query(Product).filter(Product.id.in_(resolved)).first()
+        if parent is None:
+            raise AppException(
+                status_code=404, message="Parent product not found", code="NOT_FOUND"
+            )
+        if parent.id == product.id:
+            raise AppException(
+                status_code=400,
+                message="A product cannot be a variant of itself",
+                code="VALIDATION_ERROR",
+            )
+        # Cycle check — walk the chosen parent's ancestor chain via variant_of_id.
+        # If `product` is encountered, linking would create a cycle. Visited-set
+        # guards against a pre-existing cycle looping forever.
+        visited: set[str] = set()
+        cursor = parent
+        while cursor is not None:
+            if cursor.id == product.id:
+                raise AppException(
+                    status_code=400,
+                    message="Cannot set parent: this would create a variant cycle",
+                    code="VALIDATION_ERROR",
+                )
+            if cursor.id in visited:
+                break
+            visited.add(cursor.id)
+            if not cursor.variant_of_id:
+                break
+            cursor = (
+                self.db.query(Product)
+                .filter(Product.id == cursor.variant_of_id)
+                .first()
+            )
+        product.variant_of_id = parent.id
+        product.variant_link_manual = True
+        product.updated_by = updated_by
+        product.updated_at = datetime.utcnow()
+        self.db.commit()
+        self.db.refresh(product)
+        _populate_field_attachments(self.db, [product])
+        self._populate_variant_graph(product)
+        return product
+
+    def unlink_variant(self, product_id: str, updated_by: str):
+        """Manually unlink a product from its parent (D1 — sticky override).
+
+        Nulls ``variant_of_id`` and sets ``variant_link_manual = True`` so
+        auto-reconcile will not re-link it. Also the "remove a child" path: call
+        with the child's id. Returns the ORM product.
+        """
+        product = self.get_product(product_id)  # 404 if the product is unknown
+        product.variant_of_id = None
+        product.variant_link_manual = True
+        product.updated_by = updated_by
+        product.updated_at = datetime.utcnow()
+        self.db.commit()
+        self.db.refresh(product)
+        _populate_field_attachments(self.db, [product])
+        self._populate_variant_graph(product)
+        return product
+
+    def reset_variant_auto(self, product_id: str):
+        """Clear the manual override and re-derive this row's link from its code.
+
+        Commits the flag clear first so the reset always persists even when the
+        subsequent derivation yields no change, then runs the best-effort reconcile
+        (which re-derives this row's parent AND adopts its orphans, committing its
+        own unit of work). Never 500s a succeeded reset. Returns the ORM product.
+        """
+        product = self.get_product(product_id)  # 404 if the product is unknown
+        product.variant_link_manual = False
+        product.updated_at = datetime.utcnow()
+        self.db.commit()
+        self._reconcile_variant_links(product.id)
+        self.db.refresh(product)
+        _populate_field_attachments(self.db, [product])
+        self._populate_variant_graph(product)
+        return product
+
+    def _populate_list_variant_fields(self, products: Iterable[Product]) -> None:
+        """Stash per-list-row variant fields WITHOUT N+1 (two bounded IN-queries).
+
+        Mirrors :func:`_populate_field_attachments`: after the page rows are
+        fetched, one query resolves parent refs (human-readable "Variant of"
+        column) and one aggregates direct-child counts. The detail path uses
+        :meth:`_populate_variant_graph` instead. Read by ``ProductResponse`` via
+        the ``_variant_of_ref`` / ``_variant_child_count`` validation aliases.
+        """
+        rows = list(products)
+        # Defaults so the schema serializes cleanly on the base / childless path.
+        for p in rows:
+            try:
+                p._variant_of_ref = None
+                p._variant_child_count = 0
+            except Exception:
+                pass
+        page_ids = [str(p.id) for p in rows if getattr(p, "id", None)]
+        if not page_ids:
+            return
+
+        # 1) Parent refs — one IN-query over just the parents referenced on this page.
+        parent_ids = {
+            str(p.variant_of_id) for p in rows if getattr(p, "variant_of_id", None)
+        }
+        if parent_ids:
+            parents = (
+                self.db.query(Product)
+                .filter(Product.id.in_(parent_ids))
+                .all()
+            )
+            parent_by_id = {str(pr.id): pr for pr in parents}
+            for p in rows:
+                if getattr(p, "variant_of_id", None):
+                    p._variant_of_ref = parent_by_id.get(str(p.variant_of_id))
+
+        # 2) Direct-child counts — one grouped IN-query keyed on this page's ids.
+        counts = (
+            self.db.query(Product.variant_of_id, func.count(Product.id))
+            .filter(Product.variant_of_id.in_(page_ids))
+            .group_by(Product.variant_of_id)
+            .all()
+        )
+        count_by_id = {str(pid): int(c) for pid, c in counts}
+        for p in rows:
+            p._variant_child_count = count_by_id.get(str(p.id), 0)
 
     def _system_settings_row(self) -> Optional[SystemSetting]:
         return self.db.query(SystemSetting).first()
