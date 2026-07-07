@@ -5,14 +5,14 @@ NOT re-derive or re-point that row's variant link. The partial index keeps the
 "skip manual" scans cheap on a large products table.
 
 Revision ID: 268_variant_link_manual
-Revises: 267_health_alert_state_and_tasks
+Revises: 264_drop_stale_rr_cursor_unique
 """
 from alembic import op
 import sqlalchemy as sa
 
 
 revision = "268_variant_link_manual"
-down_revision = "267_health_alert_state_and_tasks"
+down_revision = "264_drop_stale_rr_cursor_unique"
 branch_labels = None
 depends_on = None
 
