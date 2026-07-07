@@ -2537,8 +2537,9 @@ def find_entity_neighbours_with_data(
     instead, but ONLY ones that actually have data in that domain.
 
     Candidate pool (deduped by product id):
-      (a) stored variant graph — children (``variant_of_id == input.id``) plus
-          siblings sharing the input's parent (``variant_of_id == input.variant_of_id``).
+      (a) stored variant graph — children (``variant_of_id == input.id``),
+          siblings sharing the input's parent (``variant_of_id == input.variant_of_id``),
+          and the input's own parent / base product (``id == input.variant_of_id``).
           These are curated variants; they carry ``is_variant=True``.
       (b) trigram neighbours via :func:`_trgm_lookup` (recall), where ``is_variant``
           is the prefix-extension boost from §3.2.
@@ -2600,7 +2601,8 @@ def _find_entity_neighbours_with_data(
     # id -> candidate dict. Graph members inserted first so they win on dedupe.
     candidates: dict[str, dict[str, Any]] = {}
 
-    # (a) Stored variant graph: children of the input + siblings sharing its parent.
+    # (a) Stored variant graph: children of the input, siblings sharing its parent,
+    #     and the input's own parent (the base product) when it is itself a variant.
     if input_id:
         try:
             graph_rows = db.execute(
@@ -2611,7 +2613,8 @@ def _find_entity_neighbours_with_data(
                     FROM products
                     WHERE id <> :pid
                       AND (variant_of_id = :pid
-                           OR (:parent_id IS NOT NULL AND variant_of_id = :parent_id))
+                           OR (:parent_id IS NOT NULL AND variant_of_id = :parent_id)
+                           OR (:parent_id IS NOT NULL AND id = :parent_id))
                     """
                 ),
                 {"p": code, "pid": input_id, "parent_id": parent_id},

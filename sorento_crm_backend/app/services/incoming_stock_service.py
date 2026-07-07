@@ -546,11 +546,28 @@ class IncomingStockService:
             .all()
         )
         if not ship_rows:
-            return {
+            result: dict[str, Any] = {
                 "data": [],
                 "empty": True,
                 "pagination": {"total": 0, "page": page, "limit": limit},
             }
+            # Data-miss (§3.3): a product resolved but nothing is incoming for it.
+            # Offer data-bearing variant/neighbour alternatives — same probe the
+            # by-product tool uses. Product-driven query only; best-effort (AC-R1:
+            # never turn an empty result into a 500).
+            if resolved_pids:
+                try:
+                    alternatives = self._incoming_entity_alternatives(resolved_pids)
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "incoming-list alternatives probe failed", exc_info=True
+                    )
+                    alternatives = None
+                if alternatives:
+                    result["alternatives"] = alternatives
+                    result["relaxed_axis"] = "entity"
+            return result
         page_ship_ids = [str(s.id) for s in ship_rows]
 
         # Step 2: still-incoming lines for the paged shipments (same product filter).
