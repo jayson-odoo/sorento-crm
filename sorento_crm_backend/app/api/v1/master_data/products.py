@@ -100,6 +100,11 @@ def get_products(
         None,
         description="Maximum value (mm) for ANY of length/width/height.",
     ),
+    variant_filter: Optional[str] = Query(
+        "all",
+        pattern="^(base|variant|all)$",
+        description="Variant-graph filter: base (no parent) | variant (has parent) | all.",
+    ),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -140,6 +145,7 @@ def get_products(
             height_max=height_max,
             any_dimension_min=any_dimension_min,
             any_dimension_max=any_dimension_max,
+            variant_filter=variant_filter,
             sort_field=sort or "created_at",
             sort_dir=dir or "asc"
         )
@@ -370,6 +376,72 @@ async def delete_product(
         service = ProductService(db)
         result = service.delete_product(product_id)
         return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+class _VariantParentBody(BaseModel):
+    parent_id: Optional[str] = None
+
+
+@router.put("/{product_id}/variant-parent", response_model=ProductResponse)
+async def set_variant_parent(
+    product_id: str,
+    body: _VariantParentBody,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Manually set/change a product's variant parent (sticky override).
+
+    Also the "attach a child" path: call with the child's id and the parent's
+    code/UUID in the body. `product_id` and `parent_id` both accept a UUID or a
+    product_code.
+    """
+    try:
+        service = ProductService(db)
+        return service.set_variant_parent(product_id, body.parent_id, current_user["id"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/{product_id}/variant-parent", response_model=ProductResponse)
+async def unlink_variant(
+    product_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Manually unlink a product from its variant parent (sticky override).
+
+    Also the "remove a child" path: call with the child's id. `product_id`
+    accepts a UUID or a product_code.
+    """
+    try:
+        service = ProductService(db)
+        return service.unlink_variant(product_id, current_user["id"])
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{product_id}/variant-reset", response_model=ProductResponse)
+async def reset_variant_auto(
+    product_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Reset a manually-curated variant link back to auto-derivation.
+
+    Clears `variant_link_manual` and re-derives the link from the product code.
+    `product_id` accepts a UUID or a product_code.
+    """
+    try:
+        service = ProductService(db)
+        return service.reset_variant_auto(product_id)
     except HTTPException:
         raise
     except Exception as e:

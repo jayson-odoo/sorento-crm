@@ -108,6 +108,9 @@ const ProductsList = () => {
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedBrand, setSelectedBrand] = useState<string | null>(null);
   const [selectedStatus, setSelectedStatus] = useState<string | null>('all');
+  const [selectedVariantFilter, setSelectedVariantFilter] = useState<
+    'base' | 'variant' | 'all'
+  >('all');
 
   const {
     filters,
@@ -197,10 +200,12 @@ const ProductsList = () => {
     selectedCategory,
     selectedBrand,
     selectedStatus,
+    selectedVariantFilter,
   }: DataGridApiFetchParams & {
     selectedCategory: string | null;
     selectedBrand: string | null;
     selectedStatus: string | null;
+    selectedVariantFilter: 'base' | 'variant' | 'all';
   }): Promise<DataGridApiResponse<ProductListItem>> => {
     const sortField = sorting?.[0]?.id || '';
     const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
@@ -219,6 +224,9 @@ const ProductsList = () => {
       ...(selectedStatus && selectedStatus !== 'all'
         ? { status: selectedStatus as 'active' | 'inactive' }
         : { status: 'all' }),
+      ...(selectedVariantFilter && selectedVariantFilter !== 'all'
+        ? { variant_filter: selectedVariantFilter }
+        : {}),
       ...(discontinuedBatchId ? { discontinued_batch_id: discontinuedBatchId } : {}),
     };
 
@@ -235,6 +243,7 @@ const ProductsList = () => {
       selectedCategory,
       selectedBrand,
       selectedStatus,
+      selectedVariantFilter,
       advancedFilter,
       discontinuedBatchId,
     ],
@@ -265,6 +274,7 @@ const ProductsList = () => {
         selectedCategory,
         selectedBrand,
         selectedStatus,
+        selectedVariantFilter,
       });
     },
     staleTime: Infinity,
@@ -292,11 +302,17 @@ const ProductsList = () => {
     setPagination({ ...pagination, pageIndex: 0 });
   };
 
+  const handleVariantFilterSelection = (value: string) => {
+    setSelectedVariantFilter(value as 'base' | 'variant' | 'all');
+    setPagination({ ...pagination, pageIndex: 0 });
+  };
+
   const handleClearFilters = () => {
     clearFilters();
     setSelectedCategory(null);
     setSelectedBrand(null);
     setSelectedStatus('all');
+    setSelectedVariantFilter('all');
     setAdvancedFilter(null);
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   };
@@ -418,6 +434,59 @@ const ProductsList = () => {
         meta: {
           headerTitle: 'Type',
           skeleton: <Skeleton className="w-14 h-7" />,
+        },
+        enableSorting: false,
+        enableHiding: true,
+      },
+      {
+        accessorKey: 'variant_of',
+        id: 'variant_of',
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="Variant of"
+            visibility={true}
+            column={column}
+          />
+        ),
+        size: 160,
+        cell: ({ row }) => {
+          const parent = row.original.variant_of;
+          if (!parent) {
+            return <span className="text-muted-foreground">—</span>;
+          }
+          return (
+            <div
+              className="truncate text-sm"
+              title={`${parent.product_code} — ${parent.product_name}`}
+            >
+              {parent.product_code}
+            </div>
+          );
+        },
+        meta: {
+          headerTitle: 'Variant of',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
+        enableSorting: false,
+        enableHiding: true,
+      },
+      {
+        accessorKey: 'variant_child_count',
+        id: 'variant_child_count',
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="Variants"
+            visibility={true}
+            column={column}
+          />
+        ),
+        size: 90,
+        cell: ({ row }) => (
+          <div className="text-sm">{row.original.variant_child_count ?? 0}</div>
+        ),
+        meta: {
+          headerTitle: 'Variants',
+          skeleton: <Skeleton className="h-4 w-8" />,
         },
         enableSorting: false,
         enableHiding: true,
@@ -662,7 +731,8 @@ const ProductsList = () => {
   const simpleFiltersActiveCount =
     (selectedCategory && selectedCategory !== 'all' ? 1 : 0) +
     (selectedBrand && selectedBrand !== 'all' ? 1 : 0) +
-    (selectedStatus && selectedStatus !== 'all' ? 1 : 0);
+    (selectedStatus && selectedStatus !== 'all' ? 1 : 0) +
+    (selectedVariantFilter && selectedVariantFilter !== 'all' ? 1 : 0);
 
   const getExportPayload = () => ({
     filter: advancedFilter ?? undefined,
@@ -781,7 +851,21 @@ const ProductsList = () => {
                       <SelectItem value="inactive">Inactive</SelectItem>
                     </SelectContent>
                   </Select>
-                  {hasActiveFilters && (
+                  <Select
+                    onValueChange={handleVariantFilterSelection}
+                    value={selectedVariantFilter}
+                    disabled={isLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Variant" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All products</SelectItem>
+                      <SelectItem value="base">Base only</SelectItem>
+                      <SelectItem value="variant">Variants only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {(hasActiveFilters || simpleFiltersActiveCount > 0) && (
                     <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">
                       Clear Filters
                     </Button>

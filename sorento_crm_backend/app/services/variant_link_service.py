@@ -119,6 +119,7 @@ def _adopt_orphans(db: Session, parent: Product) -> int:
             WHERE id <> :self_id
               AND length({n_norm}) > :nlen
               AND left({n_norm}, :nlen) = :norm_me
+              AND variant_link_manual = false
             """
         ),
         {"self_id": parent.id, "norm_me": norm_me, "nlen": len(norm_me)},
@@ -158,10 +159,15 @@ def reconcile_variant_links(db: Session, code_or_id: str) -> dict:
     if product is None:
         return {"found": False, "self_changed": False, "orphans_adopted": 0}
 
-    derived_parent = _derive_parent_id(db, product.id, product.product_code)
-    self_changed = product.variant_of_id != derived_parent
-    if self_changed:
-        product.variant_of_id = derived_parent
+    # D1 — a manually-curated row's OWN parent is sticky: never re-derive it.
+    # (It still acts as a legitimate parent for auto children below.)
+    if not getattr(product, "variant_link_manual", False):
+        derived_parent = _derive_parent_id(db, product.id, product.product_code)
+        self_changed = product.variant_of_id != derived_parent
+        if self_changed:
+            product.variant_of_id = derived_parent
+    else:
+        derived_parent, self_changed = product.variant_of_id, False
 
     orphans = _adopt_orphans(db, product)
 

@@ -23,6 +23,9 @@ import {
   bulkUpdateProducts,
   bulkDeleteProducts,
   getPriceHistory,
+  setVariantParent,
+  unlinkVariant,
+  resetVariantAuto,
   PRODUCT_NEIGHBOURS_PATH,
   type GetProductsParams,
 } from '../services/productService';
@@ -50,6 +53,7 @@ export function useProducts(params: GetProductsParams) {
       params.price_min,
       params.price_max,
       params.item_type,
+      params.variant_filter,
       params.discontinued_batch_id,
     ],
     queryFn: () => getProducts(params),
@@ -161,6 +165,85 @@ export function useUpdateProduct() {
     },
     onError: (error: Error) => {
       toast.error(error.message || 'Failed to update product', {
+        position: 'top-center',
+      });
+    },
+  });
+}
+
+/**
+ * Hook for setting / changing a product's variant parent (manual curation).
+ *
+ * Reused for "Add variant" (attach a child): call with the CHILD's id as
+ * `productId` and the current product's id as `parentId` — both ids are
+ * invalidated so the parent detail's Variants list refreshes.
+ */
+export function useSetVariantParent() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ productId, parentId }: { productId: string; parentId: string }) =>
+      setVariantParent(productId, parentId),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      queryClient.invalidateQueries({ queryKey: ['product', variables.productId] });
+      if (variables.parentId) {
+        queryClient.invalidateQueries({ queryKey: ['product', variables.parentId] });
+      }
+      toast.success('Variant parent updated', { position: 'top-center' });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to set variant parent', {
+        position: 'top-center',
+      });
+    },
+  });
+}
+
+/**
+ * Hook for unlinking a product from its variant parent (manual curation).
+ *
+ * Reused for "Remove variant" (detach a child): call with the CHILD's id as
+ * `productId` and the current product's id as `parentId` so the parent detail's
+ * Variants list refreshes.
+ */
+export function useUnlinkVariant() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ productId }: { productId: string; parentId?: string }) =>
+      unlinkVariant(productId),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      queryClient.invalidateQueries({ queryKey: ['product', variables.productId] });
+      if (variables.parentId) {
+        queryClient.invalidateQueries({ queryKey: ['product', variables.parentId] });
+      }
+      toast.success('Variant unlinked', { position: 'top-center' });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to unlink variant', {
+        position: 'top-center',
+      });
+    },
+  });
+}
+
+/**
+ * Hook for resetting a manually-curated product back to automatic derivation.
+ */
+export function useResetVariantAuto() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ productId }: { productId: string }) => resetVariantAuto(productId),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['products'] });
+      queryClient.invalidateQueries({ queryKey: ['product', variables.productId] });
+      toast.success('Reset to auto-linking', { position: 'top-center' });
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || 'Failed to reset variant link', {
         position: 'top-center',
       });
     },

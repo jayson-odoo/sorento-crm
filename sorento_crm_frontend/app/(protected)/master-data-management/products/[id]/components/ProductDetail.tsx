@@ -374,9 +374,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             {/* Tab: Variants */}
             <TabsContent value="variants">
               <ProductVariantsTab
+                productId={product.id}
                 productCode={product.product_code}
                 variantOf={product.variant_of}
                 variants={product.variants}
+                variantLinkManual={product.variant_link_manual}
               />
             </TabsContent>
 
