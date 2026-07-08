@@ -2782,7 +2782,10 @@ def _and_max_tier_filter(base_query, counts):
 
 
 def _and_probe_product(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
-    blob = _concat_ws(Product.product_code, Product.product_name, Product.description)
+    # Product resolution is CODE-ONLY by design (see _prefix_probe_product): a token
+    # must hit product_code, never product_name/description. A description cross-ref
+    # like "USED FOR SRTWC6015-RL-UF" must NOT resolve that row for token SRTWC6015.
+    blob = Product.product_code
     counts = _and_token_match_counts(blob, tokens)
     base = db.query(Product.id, Product.product_code, Product.product_name, Product.is_active)
     tier = _and_max_tier_filter(base, counts)
