@@ -671,7 +671,11 @@ def build_context_vars(
         logger.exception("build_context_vars: contact lookup failed")
 
     try:
-        if use_case == "complaint":
+        # The chat panels use ``<base>_chat`` use cases (stock_inquiry_chat, …) but
+        # the entity lookup keys off the base name — normalize so a chat template's
+        # {{entity_number}} etc. resolves the same as the status-update send.
+        entity_use_case = use_case[:-5] if use_case.endswith("_chat") else use_case
+        if entity_use_case == "complaint":
             from app.models.complaints import Complaint
 
             row = db.query(Complaint).filter(Complaint.id == business_id).first()
@@ -687,7 +691,7 @@ def build_context_vars(
                 vars_out["project"] = row.project_title
                 vars_out["customer"] = row.customer_name
                 vars_out["delivery_order"] = row.delivery_order_number
-        elif use_case == "stock_inquiry":
+        elif entity_use_case == "stock_inquiry":
             from app.models.procurement import StockInquiry
 
             row = db.query(StockInquiry).filter(StockInquiry.id == business_id).first()
@@ -701,7 +705,7 @@ def build_context_vars(
                 vars_out["customer"] = row.project_customer
                 vars_out["project"] = row.project_name
                 vars_out["product_code"] = row.product_code
-        elif use_case in ("purchase_request", "sponsorship_form"):
+        elif entity_use_case in ("purchase_request", "sponsorship_form"):
             from app.models.procurement import PurchaseRequestHeader
 
             row = (

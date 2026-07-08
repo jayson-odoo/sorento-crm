@@ -249,6 +249,81 @@ def send_stock_inquiry_respond_message(
 
 
 # ---------------------------------------------------------------------------
+# Manual chat-panel sends (complaint / stock inquiry / purchase request /
+# conversation-SLA chat window). Decouple the Respond.io HTTP call from the
+# request so a 4xx/5xx (e.g. a 401 on a bad workspace key) lands in the Respond
+# outbox instead of the operator's face. Both delegate to the shared
+# respond_chat_template_service, which writes the integration_log outbox on
+# success AND failure and re-raises so RQ records the job FAILED. The in-request
+# route runs the DB-only prechecks (precheck_*), so fixable input errors still
+# surface inline; only the delivery is async here.
+# ---------------------------------------------------------------------------
+
+
+def deliver_chat_message(
+    identifier: str,
+    respond_contact_id: Optional[str],
+    text: str,
+    chat_use_case: str,
+    business_table: str,
+    business_id: str,
+    sender_name: str,
+    crm_sender_user_id: Optional[str],
+    precomputed_context: Optional[dict] = None,
+) -> dict:
+    """Worker-side smart chat send (in-window raw text, out-of-window ``*_chat``
+    template). ``precomputed_context`` carries the entity's portal/view-link vars
+    resolved in-request (a callable can't cross the RQ boundary)."""
+    from app.database import SessionLocal
+    from app.services.respond_chat_template_service import send_chat_message_for
+
+    db = SessionLocal()
+    try:
+        return send_chat_message_for(
+            db,
+            identifier=identifier,
+            respond_contact_id=respond_contact_id,
+            text=text,
+            chat_use_case=chat_use_case,
+            business_table=business_table,
+            business_id=business_id,
+            sender_name=sender_name,
+            created_by=crm_sender_user_id,
+            context_builder=None,
+            precomputed_context=precomputed_context or {},
+        )
+    finally:
+        db.close()
+
+
+def deliver_manual_template(
+    identifier: str,
+    template_id: str,
+    params: dict,
+    business_table: str,
+    business_id: str,
+    crm_sender_user_id: Optional[str],
+) -> dict:
+    """Worker-side manual approved-template send by id + positional params."""
+    from app.database import SessionLocal
+    from app.services.respond_chat_template_service import send_manual_template_for
+
+    db = SessionLocal()
+    try:
+        return send_manual_template_for(
+            db,
+            identifier=identifier,
+            template_id=template_id,
+            params=params,
+            business_table=business_table,
+            business_id=business_id,
+            created_by=crm_sender_user_id,
+        )
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # Conversation lifecycle ops (close / reassign) for conversation-SLA actions.
 # Unlike the message sends above these are NOT 24h-window-aware — they act on the
 # conversation object itself. Each writes a Respond outbox row (integration_logs)

@@ -59,6 +59,75 @@ def render_filled_body(body_text: str, parameters: List[str]) -> str:
     return rendered
 
 
+def precheck_manual_template(
+    db: Session,
+    *,
+    template_id: str,
+    params: Dict[str, str],
+) -> Dict[str, Any]:
+    """DB-only validation for a manual template send, run in-request BEFORE the
+    async worker send. Surfaces fixable input errors inline (template not found /
+    not approved / missing params) instead of burying them in the outbox.
+
+    Returns ``{template_name, parameters, rendered_body}``. Never calls Respond.io.
+    The worker (``send_manual_template_for``) re-validates cheaply before sending.
+    """
+    from app.models.respond_template import RespondMessageTemplate
+
+    template = (
+        db.query(RespondMessageTemplate)
+        .filter(RespondMessageTemplate.id == template_id)
+        .first()
+    )
+    if template is None:
+        raise handle_not_found("Template", template_id)
+    parameters = _validate_and_resolve_params(template, params)
+    return {
+        "template_name": template.name,
+        "parameters": parameters,
+        "rendered_body": render_filled_body(template.body_text, parameters),
+    }
+
+
+def precheck_chat_send(
+    db: Session,
+    *,
+    identifier: str,
+    respond_contact_id: Optional[str],
+    chat_use_case: str,
+) -> Dict[str, Any]:
+    """DB-only pre-send checks for the async smart chat send, run in-request BEFORE
+    enqueuing the worker so ``sent_as`` (text vs template) is known optimistically and
+    the ``no_chat_template`` case still surfaces inline. Never calls Respond.io.
+
+    Returns ``{sent_as, window_state}``. Raises ``AppException`` 422
+    (``no_chat_template``) when the window is closed and no valid ``*_chat`` default is
+    configured (mirrors the guard ``send_chat_message_for`` raises out-of-window).
+    """
+    from app.services.error_handler import AppException
+    from app.services.respond_messaging_service import get_window_state
+    from app.services.respond_template_service import get_default_row, serialize_default
+
+    window = get_window_state(db, identifier, respond_contact_id=respond_contact_id)
+    window_state = {
+        "open": window.get("open"),
+        "last_incoming_at": window.get("last_incoming_at"),
+        "checked_at": window.get("checked_at"),
+    }
+    if window.get("open"):
+        return {"sent_as": "text", "window_state": window_state}
+
+    serialized = serialize_default(chat_use_case, get_default_row(db, chat_use_case))
+    if not serialized.get("is_valid"):
+        raise AppException(
+            status_code=422,
+            message="No chat reply template configured for this form.",
+            detail="/integration-management/whatsapp-templates",
+            code="no_chat_template",
+        )
+    return {"sent_as": "template", "window_state": window_state}
+
+
 def send_manual_template_for(
     db: Session,
     *,
@@ -217,7 +286,17 @@ def get_chat_template_preview(
         except Exception:
             logger.exception("chat-template preview context_builder failed for %s", entity_id)
             extra_context = {}
+    # Row-derived vars (entity_number, status, customer, project, …) so a mapped
+    # placeholder like {{entity_number}} renders its real value in the inline
+    # preview — same resolution the actual send uses. build_context_vars never
+    # raises (missing → "-"). Chat-specific vars below override any collision.
+    from app.services.respond_messaging_service import build_context_vars
+
+    base_context = build_context_vars(
+        db, use_case=chat_use_case, business_id=str(entity_id), identifier=identifier
+    )
     context: Dict[str, Any] = {
+        **base_context,
         "sender_name": sender_name,
         "contact_name": contact_name,
         **extra_context,
@@ -252,6 +331,7 @@ def send_chat_message_for(
     sender_name: str,
     created_by: Optional[str] = None,
     context_builder: Optional[Callable[[Session, str], Dict[str, Any]]] = None,
+    precomputed_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Pure smart chat send: in-window the RAW typed text (verbatim, formatting
     preserved), out-of-window the form's ``*_chat`` WhatsApp template carrying
@@ -369,11 +449,15 @@ def send_chat_message_for(
     sanitized = sanitize_param(text)
     flattened = sanitized != stripped
 
-    # Entity context (portal/view link) is only needed for the template — build it
+    # Entity context (portal/view link) is only needed for the template. When the
+    # caller already resolved it in-request (the async path pre-builds it so a
+    # callable need not cross the RQ boundary), use that verbatim; otherwise build it
     # lazily here, guarded, so a builder error degrades to no-link instead of 500ing
     # the send. (In-window sends never pay this cost.)
     extra_context: Dict[str, Any] = {}
-    if context_builder is not None:
+    if precomputed_context is not None:
+        extra_context = precomputed_context
+    elif context_builder is not None:
         try:
             extra_context = context_builder(db, business_id) or {}
         except Exception:
@@ -382,7 +466,17 @@ def send_chat_message_for(
             )
             extra_context = {}
 
+    # Row-derived vars (entity_number, status, customer, project, …) so a mapped
+    # placeholder like {{entity_number}} renders its real value on the send — not
+    # just the chat-specific message/sender. build_context_vars never raises
+    # (missing → "-"). The chat-specific vars below override any collision.
+    from app.services.respond_messaging_service import build_context_vars
+
+    base_context = build_context_vars(
+        db, use_case=chat_use_case, business_id=business_id, identifier=identifier
+    )
     context_vars: Dict[str, Any] = {
+        **base_context,
         "message": sanitized,
         "sender_name": sender_name,
         "contact_name": contact_name,
