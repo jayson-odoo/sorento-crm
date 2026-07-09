@@ -587,7 +587,7 @@ const ProductsList = () => {
           return (
             <Badge
               variant={isActive ? 'success' : 'secondary'}
-              appearance="ghost"
+              appearance="light"
             >
               <BadgeDot />
               {isActive ? 'Active' : 'Inactive'}
@@ -598,6 +598,36 @@ const ProductsList = () => {
         meta: {
           headerTitle: 'Status',
           skeleton: <Skeleton className="w-14 h-7" />,
+        },
+        enableSorting: true,
+        enableHiding: true,
+      },
+      {
+        accessorKey: 'is_discontinued',
+        id: 'is_discontinued',
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="Discontinued"
+            visibility={true}
+            column={column}
+          />
+        ),
+        cell: ({ row }) => {
+          const isDiscontinued = row.original.is_discontinued;
+          return (
+            <Badge
+              variant={isDiscontinued ? 'destructive' : 'secondary'}
+              appearance="light"
+            >
+              <BadgeDot />
+              {isDiscontinued ? 'Discontinued' : 'Available'}
+            </Badge>
+          );
+        },
+        size: 130,
+        meta: {
+          headerTitle: 'Discontinued',
+          skeleton: <Skeleton className="w-20 h-7" />,
         },
         enableSorting: true,
         enableHiding: true,

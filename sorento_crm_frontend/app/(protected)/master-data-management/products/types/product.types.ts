@@ -316,6 +316,8 @@ export interface ProductListItem {
   brand_name?: string;
   list_price: number;
   is_active: boolean;
+  // Discontinued flag (independent of is_active). Surfaced by ProductResponse.
+  is_discontinued?: boolean;
   // True when the product is a variant of another (variant_of_id IS NOT NULL).
   is_variant?: boolean;
   // Human-readable parent reference (null for base products).
