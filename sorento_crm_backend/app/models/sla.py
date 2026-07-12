@@ -97,6 +97,13 @@ class ConversationSLATracking(Base):
     # is the immutable trail; these are fast-read for soft-limit checks + row chip.
     extension_count = Column(Integer, nullable=False, server_default=text("0"), default=0)
     extension_days_total = Column(Numeric(10, 2), nullable=False, server_default=text("0"), default=0)
+    # Handling lock (PLAN-form-handling-lock). Once a FORM tracker is escalated
+    # (current_tier > 1) the state-changing CTAs disable for everyone until an
+    # eligible team-chain member claims the lock here. Separate from assigned_to_id:
+    # claiming never reassigns and never de-escalates. NULL = unclaimed. Reset to NULL
+    # on every re-escalation. Never set for conversation-SLA (n8n) rows.
+    handled_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    handled_at = Column(DateTime(timezone=False), nullable=True)
 
     policy = relationship("SLAPolicy", back_populates="tracking")
     event_logs = relationship(
@@ -122,6 +129,7 @@ class ConversationSLATracking(Base):
             "source_entity_type",
             "source_entity_id",
         ),
+        Index("ix_conversation_sla_tracking_handled_by_id", "handled_by_id"),
     )
 
 
@@ -207,6 +215,13 @@ class ConversationSLAEventLog(Base):
         Index("ix_conversation_sla_event_log_event_type", "event_type"),
         Index("ix_conversation_sla_event_log_assigned_to_id", "assigned_to_id"),
     )
+
+
+# Handling-lock event_type values on ConversationSLAEventLog (PLAN-form-handling-lock).
+# assigned_to_id = the handler at the time, triggered_by_id = the actor, reason = context.
+HANDLING_CLAIMED = "handling_claimed"
+HANDLING_TAKEN_OVER = "handling_taken_over"
+HANDLING_RELEASED = "handling_released"
 
 
 # Takeover request lifecycle statuses (see PLAN-takeover-cooldown).

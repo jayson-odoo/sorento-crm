@@ -62,6 +62,10 @@ export interface User {
   notify_email_on_deadline_extended?: boolean | null;
   notifyWhatsappOnDeadlineExtended?: boolean | null;
   notify_whatsapp_on_deadline_extended?: boolean | null;
+  notifyEmailOnHandling?: boolean | null;
+  notify_email_on_handling?: boolean | null;
+  notifyWhatsappOnHandling?: boolean | null;
+  notify_whatsapp_on_handling?: boolean | null;
   /** Product-discontinued batch notification opt-in (admin-configured). */
   notifyEmailOnProductDiscontinued?: boolean | null;
   notify_email_on_product_discontinued?: boolean | null;

@@ -51,6 +51,7 @@ export interface Complaint {
   created_at?: string | null;
   assigned_to?: string | null;
   assigned_to_name?: string | null;
+  handled_by_name?: string | null;
   root_cause_id?: string | null;
   resolution_id?: string | null;
   root_cause_name?: string | null;

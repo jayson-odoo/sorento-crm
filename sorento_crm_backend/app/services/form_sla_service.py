@@ -137,6 +137,52 @@ def _fmt_due(due_at) -> Optional[str]:
         return str(due_at)
 
 
+# Per-stage human action verbs for the escalation reason, keyed by
+# (source_entity_type, team_set_code) — the same pair that uniquely identifies a
+# form-SLA stage. `response` is the action that stops the response clock
+# (respond_event); `resolution` is the action that resolves the stage
+# (resolve_event). Stages where a single action satisfies both clocks omit
+# `response` (any breach maps to `resolution`). Grounded in form_sla_configs.
+_STAGE_ACTION_LABELS: dict[tuple[str, str], dict[str, str]] = {
+    ("complaint", "complaint"): {
+        "response": "submit the technical team response",
+        "resolution": "approve or reject",
+    },
+    ("complaint", "customer_service"): {"resolution": "process the complaint (CS)"},
+    ("stock_inquiry", "project_sales"): {
+        "resolution": "approve (send to purchasing) or reject",
+    },
+    ("stock_inquiry", "purchasing"): {
+        "response": "send the purchasing response",
+        "resolution": "respond or decide on purchasing",
+    },
+    ("purchase_request", "project_sales"): {"resolution": "send the request for approval"},
+    ("purchase_request", "project_sales_manager"): {"resolution": "approve or reject"},
+    ("purchase_request", "customer_service"): {"resolution": "process the request (CS)"},
+    # SF mirrors PR in prod (main stage resolves on send_for_approval, no response
+    # clock; the approve/reject happens at the project_sales_manager stage).
+    ("sponsorship_form", "project_sales"): {"resolution": "send the form for approval"},
+    ("sponsorship_form", "project_sales_manager"): {"resolution": "approve or reject"},
+    ("sponsorship_form", "customer_service"): {"resolution": "process the form (CS)"},
+    ("ticket", "it_admin"): {
+        "response": "respond to the ticket",
+        "resolution": "resolve the ticket",
+    },
+}
+
+
+def _stage_action_verb(
+    source_entity_type: Optional[str], team_set_code: Optional[str], clock: str
+) -> Optional[str]:
+    """Human verb for the breached action of a stage. `clock` in {response, resolution}.
+    Falls back to the resolution verb when the stage has no distinct response action
+    (response == resolution), then to None so callers can use a generic phrase."""
+    actions = _STAGE_ACTION_LABELS.get((str(source_entity_type or ""), str(team_set_code or "")))
+    if not actions:
+        return None
+    return actions.get(clock) or actions.get("resolution") or actions.get("response")
+
+
 def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
     """Build a frontend deep link for the form's detail page (consumed by notification UI)."""
     if source_entity_type == "stock_inquiry":
@@ -368,10 +414,13 @@ class FormSLAOrchestrator:
                 )
                 if not overdue:
                     continue
+                # Build the WHO-missed-WHAT-by-WHEN reason from the tracker's current
+                # (about-to-fail) state BEFORE _escalate_tracker reassigns + resets clocks.
+                reason = self._build_overdue_reason(tracker, now)
                 self._escalate_tracker(
                     tracker,
                     trigger="auto",
-                    reason="Response/resolution overdue",
+                    reason=reason,
                     now=now,
                 )
                 escalated_count += 1
@@ -461,6 +510,10 @@ class FormSLAOrchestrator:
         tracker.assigned_to = (
             str(assignee.get("respond_user_id")) if assignee.get("respond_user_id") else None
         )
+        # Handling-lock reset (PLAN-form-handling-lock Q5c): a new tier means everyone
+        # must re-claim. Clear any lock held on the prior tier.
+        tracker.handled_by_id = None
+        tracker.handled_at = None
         self.db.flush()
 
         log_reason = reason
@@ -504,6 +557,46 @@ class FormSLAOrchestrator:
         if cfg is None:
             return True
         return bool(getattr(cfg, "notify_on_escalation", True))
+
+    def _build_overdue_reason(
+        self, tracker: ConversationSLATracking, now: datetime
+    ) -> str:
+        """Rich auto-escalation reason naming WHO missed WHICH action by WHEN.
+
+        Reads the tracker's split clocks + its stage's action verbs so the banner
+        says e.g. "Baser did not approve or reject by 10 Jul 2026, 9:00 AM
+        (resolution overdue)" instead of the ambiguous "Response/resolution overdue".
+        Called BEFORE `_escalate_tracker` mutates the tracker, so `assigned_to_id`
+        and the due timestamps still reflect the tier that just failed.
+        """
+        from app.models.user import User as _User
+
+        responded = bool(getattr(tracker, "is_responded", False))
+        due_resp = getattr(tracker, "due_at", None)
+        due_reso = getattr(tracker, "due_at_resolution", None)
+        s_type = getattr(tracker, "source_entity_type", None)
+        team = getattr(tracker, "team_set_code", None)
+        actions = _STAGE_ACTION_LABELS.get((str(s_type or ""), str(team or "")), {})
+        # Split-clock: pre-response failures are a response breach only when the stage
+        # HAS a distinct response action; otherwise (response == resolution) any breach
+        # is a resolution breach. Post-response failures are always resolution.
+        if (not responded) and ("response" in actions) and due_resp is not None and due_resp < now:
+            clock, due = "response", due_resp
+        else:
+            clock, due = "resolution", due_reso or due_resp
+
+        verb = _stage_action_verb(s_type, team, clock) or "act on this form"
+
+        who = None
+        if getattr(tracker, "assigned_to_id", None):
+            u = self.db.query(_User).filter(_User.id == str(tracker.assigned_to_id)).first()
+            if u:
+                who = (u.name or u.email or "").strip() or None
+
+        due_str = _fmt_due(due)
+        subject = who or "The assignee"
+        by = f" by {due_str}" if due_str else ""
+        return f"{subject} did not {verb}{by} ({clock} overdue)"
 
     def escalate_form_tracking(
         self,

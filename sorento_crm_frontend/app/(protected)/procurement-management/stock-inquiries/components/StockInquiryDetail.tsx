@@ -7,6 +7,9 @@ import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
+import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
+import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
+import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { Button } from '@/components/ui/button';
@@ -96,6 +99,16 @@ export default function StockInquiryDetail({
     enabled: !!isValidId,
   });
   const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
+  // Handling-lock ("I'm handling this") — live off the form-SLA handling tracker query.
+  const handlingLock = useHandlingLock({
+    sourceEntityType: 'stock_inquiry',
+    sourceEntityId: isValidId ? inquiryId : null,
+    entityKey: inquiry?.updated_at,
+  });
+  const businessCtasEnabled = handlingLock.businessCtasEnabled;
+  const lockedCtaTitle = !businessCtasEnabled
+    ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'} — take over to act`
+    : undefined;
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
@@ -243,8 +256,11 @@ export default function StockInquiryDetail({
           )}
         </div>
         <div className="flex items-center gap-2 flex-wrap sm:justify-end">
-          {/* Workflow actions: visible next to header */}
-          {inquiry.status === 'new' && canSubmitForProjectSales && (
+          {/* Workflow actions: HIDDEN (not disabled) while the handling lock is held
+              by someone else / unclaimed — keeps the header uncluttered. When the lock
+              does not bite (tier 1, flag off, or I hold it) businessCtasEnabled is true
+              and they render on their normal status+permission gates. */}
+          {businessCtasEnabled && inquiry.status === 'new' && canSubmitForProjectSales && (
             <Button
               variant="primary"
               size="sm"
@@ -254,7 +270,7 @@ export default function StockInquiryDetail({
               {submitForProjectSalesMutation.isPending ? 'Submitting…' : 'Submit for project sales'}
             </Button>
           )}
-          {inquiry.status === 'pending_project_sales' && (
+          {businessCtasEnabled && inquiry.status === 'pending_project_sales' && (
             <>
               {canProjectSalesApprove && (
                 <Button
@@ -287,8 +303,9 @@ export default function StockInquiryDetail({
               )}
             </>
           )}
-          {(inquiry.status === 'pending_purchasing' ||
-            inquiry.status === 'responded') && (
+          {businessCtasEnabled &&
+            (inquiry.status === 'pending_purchasing' ||
+              inquiry.status === 'responded') && (
             <Button
               // Pending purchasing = the purchasing response is the next action →
               // primary CTA; once responded it's a secondary edit.
@@ -304,8 +321,9 @@ export default function StockInquiryDetail({
               Edit purchasing response
             </Button>
           )}
-          {(inquiry.status === 'pending_purchasing' ||
-            inquiry.status === 'responded') &&
+          {businessCtasEnabled &&
+            (inquiry.status === 'pending_purchasing' ||
+              inquiry.status === 'responded') &&
             canPurchasingReject && (
             <Button
               variant="outline"
@@ -323,7 +341,7 @@ export default function StockInquiryDetail({
               Reject
             </Button>
           )}
-          {inquiry.status === 'rejected' && canReopen && (
+          {businessCtasEnabled && inquiry.status === 'rejected' && canReopen && (
             <Button
               variant="outline"
               size="sm"
@@ -364,6 +382,10 @@ export default function StockInquiryDetail({
               </DropdownMenuItem>
             )}
             <SlaExtendMenuItem activeTracker={activeTracker} onSelect={() => setExtendOpen(true)} />
+            <HandlingLockReleaseMenuItem
+              state={handlingLock.state}
+              onRelease={handlingLock.release}
+            />
             {inquiry.respond_inbox_url && (
               <DropdownMenuItem onClick={() => setConversationSheetOpen(true)}>
                 <MessageSquare className="size-4" />
@@ -407,7 +429,8 @@ export default function StockInquiryDetail({
                 View in system
               </DropdownMenuItem>
             )}
-            {inquiry.respond_inbox_url &&
+            {businessCtasEnabled &&
+              inquiry.respond_inbox_url &&
               (inquiry.status === 'pending_purchasing' ||
                 inquiry.status === 'responded') && (
                 <DropdownMenuItem
@@ -445,6 +468,13 @@ export default function StockInquiryDetail({
           <StockInquiryNavigation inquiryId={inquiryId} />
         </div>
       </div>
+
+      <HandlingLockBanner
+        state={handlingLock.state}
+        tracker={handlingLock.tracker}
+        onClaim={handlingLock.claim}
+        onTakeOver={handlingLock.takeOver}
+      />
 
       {/* Reject dialog */}
       <Dialog
@@ -660,8 +690,10 @@ export default function StockInquiryDetail({
                   disabled={
                     updateInquiryMutation.isPending ||
                     openingReplySheet ||
-                    updateAndReplyMutation.isPending
+                    updateAndReplyMutation.isPending ||
+                    !businessCtasEnabled
                   }
+                  title={lockedCtaTitle}
                   onClick={async () => {
                     setOpeningReplySheet(true);
                     try {

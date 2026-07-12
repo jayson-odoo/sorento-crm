@@ -227,6 +227,7 @@ class ComplaintResponse(ComplaintBase):
     resolved_at: Optional[datetime] = None
     resolved_by: Optional[str] = None
     assigned_to_name: Optional[str] = None
+    handled_by_name: Optional[str] = None
     root_cause_id: Optional[str] = None
     resolution_id: Optional[str] = None
     root_cause_name: Optional[str] = None

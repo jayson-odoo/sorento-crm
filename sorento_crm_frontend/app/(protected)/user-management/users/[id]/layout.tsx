@@ -122,6 +122,8 @@ export default function UserLayout({
         notifyWhatsappOnEscalation: data.notify_whatsapp_on_escalation ?? data.notifyWhatsappOnEscalation ?? false,
         notifyEmailOnDeadlineExtended: data.notify_email_on_deadline_extended ?? data.notifyEmailOnDeadlineExtended ?? true,
         notifyWhatsappOnDeadlineExtended: data.notify_whatsapp_on_deadline_extended ?? data.notifyWhatsappOnDeadlineExtended ?? false,
+        notifyEmailOnHandling: data.notify_email_on_handling ?? data.notifyEmailOnHandling ?? true,
+        notifyWhatsappOnHandling: data.notify_whatsapp_on_handling ?? data.notifyWhatsappOnHandling ?? false,
         notifyEmailOnProductDiscontinued: data.notify_email_on_product_discontinued ?? data.notifyEmailOnProductDiscontinued ?? false,
         notifyWhatsappOnProductDiscontinued: data.notify_whatsapp_on_product_discontinued ?? data.notifyWhatsappOnProductDiscontinued ?? false,
         superiorId: data.superior_id || data.superiorId,

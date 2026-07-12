@@ -291,6 +291,7 @@ class ComplaintService:
         *,
         view_url_override: Optional[str] = None,
         assigned_to_name_override=_UNSET,
+        handled_by_name_override=_UNSET,
         last_responded_by_name_override=_UNSET,
     ) -> dict:
         """Serialize complaint with attachments from generic entity_attachment_links table.
@@ -334,6 +335,13 @@ class ComplaintService:
                 data["assigned_to_name"] = self._resolve_user_display_name(data["assigned_to"])
             else:
                 data["assigned_to_name"] = None
+        # handled_by_id lives on the active SLA tracker (the form-handling-lock
+        # holder), not on the complaint row, so only the batched override path
+        # can populate it. Detail path has no tracker batch -> stays None.
+        if handled_by_name_override is not _UNSET:
+            data["handled_by_name"] = handled_by_name_override
+        else:
+            data["handled_by_name"] = None
         rc = getattr(complaint, "root_cause", None)
         data["root_cause_name"] = getattr(rc, "name", None) if rc is not None else None
         res = getattr(complaint, "resolution", None)
@@ -708,6 +716,8 @@ class ComplaintService:
                 wanted_user_ids.add(str(t.assigned_to_id))
             if getattr(t, "assigned_to", None):
                 wanted_user_ids.add(str(t.assigned_to))
+            if getattr(t, "handled_by_id", None):
+                wanted_user_ids.add(str(t.handled_by_id))
         user_name_map = self._batch_user_display_names(wanted_user_ids)
 
         def _assigned_name(complaint) -> Optional[str]:
@@ -723,6 +733,12 @@ class ComplaintService:
                 return user_name_map.get(str(complaint.assigned_to))
             return None
 
+        def _handled_name(complaint) -> Optional[str]:
+            tracker = sla_tracker_map.get(str(complaint.id))
+            if tracker is not None and getattr(tracker, "handled_by_id", None):
+                return user_name_map.get(str(tracker.handled_by_id))
+            return None
+
         complaint_data = [
             self._serialize_complaint(
                 complaint,
@@ -730,6 +746,7 @@ class ComplaintService:
                 print_count=print_map.get(str(complaint.id), 0),
                 view_url_override=view_url_map.get(str(complaint.id)),
                 assigned_to_name_override=_assigned_name(complaint),
+                handled_by_name_override=_handled_name(complaint),
                 last_responded_by_name_override=(
                     user_name_map.get(str(complaint.last_responded_by))
                     if getattr(complaint, "last_responded_by", None)

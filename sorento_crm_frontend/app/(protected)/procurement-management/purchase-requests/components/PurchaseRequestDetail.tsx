@@ -43,7 +43,8 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePurchaseRequest } from '../hooks/usePurchaseRequests';
-import { formatDate } from '@/lib/helpers';
+import { formatDate, formatCurrency } from '@/lib/helpers';
+import { useCurrencyFormat } from '@/hooks/useCurrencyFormat';
 import PurchaseRequestDeleteDialog from './purchase-request-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
 import PurchaseRequestNavigation from './PurchaseRequestNavigation';
@@ -55,6 +56,9 @@ import { sendApprovalLink, setPendingApproval, getUsersForApproverSelect, getOrC
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
+import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
+import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
+import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { ArrowUpCircle, ThumbsUp, ThumbsDown } from 'lucide-react';
@@ -139,6 +143,16 @@ export default function PurchaseRequestDetail({
     enabled: !!isValidId,
   });
   const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
+  // Handling-lock ("I'm handling this") — live off the form-SLA handling tracker query.
+  // Gate on the ACTIVE tracker's form type (purchase_request vs sponsorship_form), not a
+  // hardcoded name — this component serves both.
+  const handlingLock = useHandlingLock({
+    sourceEntityType: requestTypeForNav,
+    sourceEntityId: isValidId ? requestId : null,
+    entityKey: request?.updated_at,
+  });
+  const businessCtasEnabled = handlingLock.businessCtasEnabled;
+  const currencyFormat = useCurrencyFormat();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
   const [approverUserId, setApproverUserId] = useState<string>('');
@@ -363,7 +377,11 @@ export default function PurchaseRequestDetail({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          {showPrimaryChangeToPending && (
+          {/* Business CTAs HIDE (not disable) while the handling lock is held by
+              someone else / unclaimed — keeps the header uncluttered. When the lock
+              does not bite (tier 1, flag off, or I hold it) businessCtasEnabled is
+              true and they render on their normal status+permission gates. */}
+          {businessCtasEnabled && showPrimaryChangeToPending && (
             <Button
               disabled={changeToPending.running}
               onClick={() => changeToPending.run()}
@@ -373,7 +391,7 @@ export default function PurchaseRequestDetail({
               {changeToPending.running ? 'Updating…' : 'Change to pending approval'}
             </Button>
           )}
-          {showRejectSubmitted && (
+          {businessCtasEnabled && showRejectSubmitted && (
             <Button
               variant="outline"
               className="border-destructive text-destructive hover:bg-destructive/10"
@@ -393,7 +411,7 @@ export default function PurchaseRequestDetail({
               optional external fallback under the gear ("Copy approval link"). */}
           {/* In-system approver decision — same effect as the emailed approval link,
               so the approver can decide without leaving the system. */}
-          {isPendingApproval && canSendForApproval && (
+          {businessCtasEnabled && isPendingApproval && canSendForApproval && (
             <>
               <Button
                 data-guide-target="procurement.purchase-requests.approve-button"
@@ -431,7 +449,7 @@ export default function PurchaseRequestDetail({
               </Button>
             </>
           )}
-          {showCsActions && canProcess && (
+          {businessCtasEnabled && showCsActions && canProcess && (
             <Button
               disabled={finalizing}
               className="bg-emerald-600 text-white hover:bg-emerald-700"
@@ -458,7 +476,11 @@ export default function PurchaseRequestDetail({
               </DropdownMenuItem>
             )}
             <SlaExtendMenuItem activeTracker={activeTracker} onSelect={() => setExtendOpen(true)} />
-            {showCsActions && canClose && (
+            <HandlingLockReleaseMenuItem
+              state={handlingLock.state}
+              onRelease={handlingLock.release}
+            />
+            {businessCtasEnabled && showCsActions && canClose && (
               <DropdownMenuItem
                 disabled={finalizing}
                 onClick={() => {
@@ -566,6 +588,7 @@ export default function PurchaseRequestDetail({
                   <ScrollText className="size-4" />
                   Chat records
                 </DropdownMenuItem>
+                {businessCtasEnabled && (
                 <DropdownMenuItem
                   disabled={openingReplySheet}
                   onClick={async (e) => {
@@ -581,6 +604,7 @@ export default function PurchaseRequestDetail({
                   <Send className="size-4" />
                   {openingReplySheet ? 'Opening…' : 'Update & Reply'}
                 </DropdownMenuItem>
+                )}
               </>
             )}
           </DetailActionsMenu>
@@ -602,6 +626,13 @@ export default function PurchaseRequestDetail({
           </Button>
         </div>
       </div>
+
+      <HandlingLockBanner
+        state={handlingLock.state}
+        tracker={handlingLock.tracker}
+        onClaim={handlingLock.claim}
+        onTakeOver={handlingLock.takeOver}
+      />
 
       <Dialog open={approvalDialogOpen} onOpenChange={setApprovalDialogOpen}>
         <DialogContent className="sm:max-w-md">
@@ -1096,8 +1127,8 @@ export default function PurchaseRequestDetail({
                             <TableHead className="w-12">NO.</TableHead>
                             <TableHead>Item Code</TableHead>
                             <TableHead className="w-24">Qty</TableHead>
-                            <TableHead className="w-28">U/P</TableHead>
-                            <TableHead className="w-28">Total</TableHead>
+                            <TableHead className="w-28 text-right">U/P</TableHead>
+                            <TableHead className="w-28 text-right">Total</TableHead>
                             <TableHead>Remark</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -1107,11 +1138,11 @@ export default function PurchaseRequestDetail({
                               <TableCell>{idx + 1}</TableCell>
                               <TableCell>{line.item_code ?? '—'}</TableCell>
                               <TableCell>{line.quantity ?? '—'}</TableCell>
-                              <TableCell>
-                                {line.unit_price != null ? Number(line.unit_price).toLocaleString() : '—'}
+                              <TableCell className="text-right">
+                                {line.unit_price != null ? formatCurrency(line.unit_price, currencyFormat) : '—'}
                               </TableCell>
-                              <TableCell>
-                                {line.total != null ? Number(line.total).toLocaleString() : '—'}
+                              <TableCell className="text-right">
+                                {line.total != null ? formatCurrency(line.total, currencyFormat) : '—'}
                               </TableCell>
                               <TableCell>{line.remark ?? '—'}</TableCell>
                             </TableRow>
@@ -1121,7 +1152,7 @@ export default function PurchaseRequestDetail({
                       {request.grand_total != null && (
                         <div className="mt-4 flex justify-end">
                           <p className="text-sm font-semibold">
-                            Grand Total: {Number(request.grand_total).toLocaleString()}
+                            Grand Total: {formatCurrency(request.grand_total, currencyFormat)}
                           </p>
                         </div>
                       )}

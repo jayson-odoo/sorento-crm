@@ -167,6 +167,8 @@ class UserBase(BaseModel):
     notify_whatsapp_on_product_discontinued: Optional[bool] = False
     notify_email_on_deadline_extended: Optional[bool] = True
     notify_whatsapp_on_deadline_extended: Optional[bool] = False
+    notify_email_on_handling: Optional[bool] = True
+    notify_whatsapp_on_handling: Optional[bool] = False
 
     @field_validator("contact_number", mode="before")
     @classmethod
@@ -205,6 +207,8 @@ class UserUpdate(BaseModel):
     notify_whatsapp_on_product_discontinued: Optional[bool] = None
     notify_email_on_deadline_extended: Optional[bool] = None
     notify_whatsapp_on_deadline_extended: Optional[bool] = None
+    notify_email_on_handling: Optional[bool] = None
+    notify_whatsapp_on_handling: Optional[bool] = None
 
     @field_validator("email", mode="before")
     @classmethod

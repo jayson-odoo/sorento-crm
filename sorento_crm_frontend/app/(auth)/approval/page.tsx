@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateTimeInMalaysia, formatCurrency } from '@/lib/helpers';
 import { AlertCircle, CheckCircle, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -336,8 +336,8 @@ function ApprovalContent() {
                         <TableHead className="w-10">NO.</TableHead>
                         <TableHead>Item Code</TableHead>
                         <TableHead className="w-20">Qty</TableHead>
-                        <TableHead className="w-24">U/P</TableHead>
-                        <TableHead className="w-24">Total</TableHead>
+                        <TableHead className="w-24 text-right">U/P</TableHead>
+                        <TableHead className="w-24 text-right">Total</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -346,8 +346,8 @@ function ApprovalContent() {
                           <TableCell>{idx + 1}</TableCell>
                           <TableCell className="font-medium">{line.item_code ?? '—'}</TableCell>
                           <TableCell>{line.quantity != null ? String(line.quantity) : '—'}</TableCell>
-                          <TableCell>{line.unit_price != null ? String(line.unit_price) : '—'}</TableCell>
-                          <TableCell>{line.total != null ? String(line.total) : '—'}</TableCell>
+                          <TableCell className="text-right">{line.unit_price != null ? formatCurrency(line.unit_price) : '—'}</TableCell>
+                          <TableCell className="text-right">{line.total != null ? formatCurrency(line.total) : '—'}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -355,7 +355,7 @@ function ApprovalContent() {
                 </div>
                 {summary.grand_total != null && (
                   <div className="mt-4 flex justify-end">
-                    <p className="text-sm font-semibold">Grand Total: {String(summary.grand_total)}</p>
+                    <p className="text-sm font-semibold">Grand Total: {formatCurrency(summary.grand_total)}</p>
                   </div>
                 )}
               </div>

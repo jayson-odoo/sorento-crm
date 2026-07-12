@@ -70,6 +70,14 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # to ``contact_name`` (recipient) + ``message`` at minimum; ``entity_number`` /
     # ``resolve_due_at`` / ``reason`` when the template carries them.
     "sla_deadline_extended",  # -> next-tier assignee: "the deadline for X was extended"
+    # Form handling-lock (PLAN-form-handling-lock). Sent when an escalated form is
+    # claimed / taken over / released. Recipients per the notify matrix (affected
+    # parties minus the actor). Each maps params to ``contact_name`` (recipient) +
+    # ``handler_name`` (who holds/held the lock) + ``message`` at minimum. Out-of-window
+    # skips until an admin maps an approved template; in-window sends the real text.
+    "sla_handling_claimed",     # -> assignee + other eligible members: "X is now handling this"
+    "sla_handling_taken_over",  # -> displaced holder: "X took over handling"
+    "sla_handling_released",    # -> eligible pool: "handling released — open again"
     # Product discontinued — batch notification to subscribed staff. Sent when their
     # 24h window is closed (the usual case). Map params to ``discontinued_count`` +
     # ``discontinued_link`` (deep link to the product list filtered to that batch).

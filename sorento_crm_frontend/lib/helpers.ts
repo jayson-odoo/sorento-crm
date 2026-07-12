@@ -134,6 +134,41 @@ export function formatDate(input: Date | string | number): string {
 }
 
 /**
+ * Format a money amount with exactly 2 decimal places and thousands separators.
+ * Standard across all form line-item views (unit price / total / grand total).
+ * Returns '—' for null/undefined/NaN so callers can drop their own guards.
+ */
+export function formatMoney2dp(
+  value: number | string | null | undefined,
+  fallback = '—',
+): string {
+  if (value == null || value === '') return fallback;
+  const num = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(num)) return fallback;
+  return num.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+/**
+ * Format a money amount with the system currency format (e.g. "RM {value}").
+ * `format` is the `currencyFormat` system setting — pass it from `useCurrencyFormat()`
+ * on protected pages; the default matches the shipped setting so public/token pages
+ * (which cannot read the settings endpoint) still render "RM 400.00".
+ * Returns `fallback` for null/undefined/NaN.
+ */
+export function formatCurrency(
+  value: number | string | null | undefined,
+  format = 'RM {value}',
+  fallback = '—',
+): string {
+  const amount = formatMoney2dp(value, '');
+  if (!amount) return fallback;
+  return (format || 'RM {value}').replace('{value}', amount);
+}
+
+/**
  * Parse a value to a Date; returns null if invalid or missing.
  * Use for API values that may be null, undefined, or malformed.
  */

@@ -1,5 +1,49 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type { ConversationSLATrackingDetail } from '@/app/(protected)/sla-management/conversation-sla-tracking/types/conversationSLATracking.types';
+
+/* -------------------------------------------------------------------------------------
+ * "I'm handling this" handling-lock (PLAN-form-handling-lock.md §8) — LIVE (Phase 2).
+ *
+ * The lock is a SEPARATE field (`handled_by_id`) from the assignee and is distinct from
+ * the existing reassign-`takeover`. It only bites while a FORM-SLA tracker is escalated
+ * (`current_tier > 1`) AND the per-form feature flag is on. The active-tracker read
+ * (`getFormHandlingTrackers`) also returns viewer-scoped inputs the FE state resolver
+ * needs: `flag_enabled`, `viewer_eligible`, `viewer_is_admin`.
+ *
+ * All routes are form-SLA scoped under /api/v1/sla-management/form-sla-tracking:
+ *
+ *   GET  ?source_entity_type=<type>&source_entity_id=<id>
+ *     res:  200 { data: FormHandlingTracker[] }  (active/unresolved stage rows)
+ *
+ *   POST .../{tracking_id}/claim
+ *     req:  {}                              (actor from auth principal)
+ *     res:  200 { handled_by_id, handled_by_name, handled_at, ... }
+ *     guard: flag on for source_entity_type; tracker is form + escalated + unresolved;
+ *            actor in the escalation team-chain; atomic UPDATE ... WHERE handled_by_id IS NULL.
+ *     errors: 409 already claimed; 403 not eligible / not escalated / flag off.
+ *
+ *   POST .../{tracking_id}/take-over
+ *     req:  { expected_handler_id: string }  (optimistic-concurrency guard — ALWAYS the
+ *                                             current holder's id; 409 if null/omitted)
+ *     res:  200 { handled_by_id (=actor), handled_by_name, handled_at, previous_handler_id }
+ *     guard: same eligibility; conditional UPDATE ... WHERE handled_by_id = expected_handler_id.
+ *     errors: 409 optimistic mismatch (lock moved); 403 not eligible.
+ *
+ *   POST .../{tracking_id}/release
+ *     req:  {}
+ *     res:  200 { handled_by_id: null, ... }
+ *     guard: actor == current handled_by_id (holder-only; admin must take-over then act).
+ *     errors: 403 non-holder.
+ *
+ * BUSINESS-CTA GUARD (server-side, every approve/reject/process/close/submit/reopen route):
+ *   - flag off for type OR tracker not escalated → allow (today's behaviour).
+ *   - else require actor.id == handled_by_id OR (actor admin/superadmin AND handled_by_id IS NULL).
+ *   - else 403 "This form is being handled by <name>. Take over to act."
+ *
+ * PR/SF share a FE component — gate on the ACTIVE tracker's `source_entity_type`, not a
+ * hardcoded form name. The BE re-checks every guard server-side (never trust the FE).
+ * ----------------------------------------------------------------------------------- */
 
 export type FormSLASourceType =
   | 'stock_inquiry'
@@ -52,6 +96,97 @@ export async function escalateFormTracking(
     },
   );
   if (!r.ok) throw new Error(await _readError(r));
+  return r.json();
+}
+
+/**
+ * Active form-SLA stage row enriched with the handling-lock + viewer-scoped fields the
+ * FE state resolver needs. Returned by GET /form-sla-tracking?source_entity_type&source_entity_id.
+ */
+export interface FormHandlingTracker {
+  tracking_id: string;
+  current_tier: number;
+  due_at: string | null;
+  due_at_resolution: string | null;
+  is_resolved: boolean;
+  assigned_to_id: string | null;
+  assigned_to_name: string | null;
+  source_entity_type: FormSLASourceType;
+  source_entity_id: string;
+  escalation_reason: string | null;
+  /** The active handler lock. NULL = unclaimed. */
+  handled_by_id: string | null;
+  handled_by_name: string | null;
+  handled_at: string | null;
+  /** Per-form feature flag; the FE hides the whole lock UI when off. */
+  flag_enabled: boolean;
+  /** Viewer is a member of this tracker's escalation team-chain. */
+  viewer_eligible?: boolean;
+  /** Viewer is admin/superadmin. */
+  viewer_is_admin?: boolean;
+  /** Only present on a take-over response. */
+  previous_handler_id?: string | null;
+}
+
+/**
+ * Active (unresolved) handling-lock stage rows for a form entity. The active stage is the
+ * first `is_resolved === false` row. Carries `flag_enabled` / `viewer_eligible` /
+ * `viewer_is_admin` — the inputs `resolveHandlingLockState` cannot compute client-side.
+ */
+export async function getFormHandlingTrackers(
+  sourceEntityType: FormSLASourceType,
+  sourceEntityId: string,
+): Promise<FormHandlingTracker[]> {
+  const sp = new URLSearchParams({
+    source_entity_type: sourceEntityType,
+    source_entity_id: sourceEntityId,
+  });
+  const r = await apiFetch(
+    `/api/v1/sla-management/form-sla-tracking?${sp.toString()}`,
+  );
+  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load handling status'));
+  const body = await r.json();
+  return (body?.data ?? []) as FormHandlingTracker[];
+}
+
+/** Claim the handling lock ("I'm handling this"). 409 if already held; 403 if not eligible. */
+export async function claimHandling(trackingId: string): Promise<FormHandlingTracker> {
+  const r = await apiFetch(
+    `/api/v1/sla-management/form-sla-tracking/${trackingId}/claim`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+  );
+  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to claim handling'));
+  return r.json();
+}
+
+/**
+ * Take over the handling lock from the current holder. `expectedHandlerId` MUST be the
+ * current holder's id (optimistic-concurrency guard) — the backend 409s on mismatch or
+ * when it is null/omitted, so callers always pass the tracker's current `handled_by_id`.
+ */
+export async function takeOverHandling(
+  trackingId: string,
+  expectedHandlerId: string | null,
+): Promise<FormHandlingTracker> {
+  const r = await apiFetch(
+    `/api/v1/sla-management/form-sla-tracking/${trackingId}/take-over`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expected_handler_id: expectedHandlerId }),
+    },
+  );
+  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to take over handling'));
+  return r.json();
+}
+
+/** Release the handling lock. Holder-only (403 otherwise). */
+export async function releaseHandling(trackingId: string): Promise<FormHandlingTracker> {
+  const r = await apiFetch(
+    `/api/v1/sla-management/form-sla-tracking/${trackingId}/release`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+  );
+  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to release handling'));
   return r.json();
 }
 

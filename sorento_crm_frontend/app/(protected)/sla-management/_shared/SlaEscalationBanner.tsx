@@ -24,7 +24,9 @@ export function SlaEscalationBanner({
   const clean = reason.replace(/^(manual|auto)(\s+escalation)?:?\s*/i, '').trim() || reason.trim();
   const meta = [
     typeof tier === 'number' ? `tier ${tier}` : null,
-    assignee ? `assigned to ${assignee}` : null,
+    // "now assigned to" — the current tier owner. The reason text names WHO missed
+    // the action at the prior tier, so this must read as the new owner, not the failer.
+    assignee ? `now assigned to ${assignee}` : null,
   ].filter(Boolean).join(' · ');
   return (
     <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200">

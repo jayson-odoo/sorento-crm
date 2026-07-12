@@ -2334,17 +2334,52 @@ class ConversationSLATrackingService:
         return warnings
 
     def _assert_can_extend(self, tracking: ConversationSLATracking, actor_user_id: str) -> None:
-        """Gating for extend: assignee-only (conversation AND form SLA — consistent),
-        unresolved, has a resolution deadline. 403 for non-assignee, 422 otherwise."""
+        """Gating for extend: assignee-only by default (conversation AND form SLA),
+        unresolved, has a resolution deadline. 403 for non-assignee, 422 otherwise.
+
+        Handling-lock override (PLAN-form-handling-lock Q5a): when the tracker is an
+        escalated FORM tracker AND the lock is enabled for its type, extend is gated on
+        the current HANDLER instead of the assignee (the assignee may not hold the lock).
+        Not escalated / flag off / conversation SLA -> unchanged assignee-only.
+        """
         from app.services.error_handler import AppException
 
-        assignee = getattr(tracking, "assigned_to_id", None)
-        if assignee is None or str(assignee) != str(actor_user_id):
-            raise AppException(
-                status_code=403,
-                message="Only the current assignee can extend this SLA deadline.",
-                code="FORBIDDEN",
-            )
+        s_type = str(getattr(tracking, "source_entity_type", "") or "")
+        escalated = int(getattr(tracking, "current_tier", 1) or 1) > 1
+        handler_gated = False
+        if escalated and s_type:
+            from app.services.form_sla_service import FORM_SLA_TYPES
+
+            if s_type in FORM_SLA_TYPES:
+                from app.services.handling_lock_service import is_handling_lock_enabled
+
+                handler_gated = is_handling_lock_enabled(self.db, s_type)
+
+        if handler_gated:
+            handler = getattr(tracking, "handled_by_id", None)
+            is_holder = handler is not None and str(handler) == str(actor_user_id)
+            if not is_holder:
+                # Mirror the CTA guard: an admin/superadmin may act on an UNCLAIMED
+                # escalated tracker; a held lock blocks even admin.
+                from app.services.handling_lock_service import _actor_is_admin
+
+                admin_on_unclaimed = handler is None and _actor_is_admin(
+                    self.db, str(actor_user_id)
+                )
+                if not admin_on_unclaimed:
+                    raise AppException(
+                        status_code=403,
+                        message="Only the current handler can extend this SLA deadline.",
+                        code="FORBIDDEN",
+                    )
+        else:
+            assignee = getattr(tracking, "assigned_to_id", None)
+            if assignee is None or str(assignee) != str(actor_user_id):
+                raise AppException(
+                    status_code=403,
+                    message="Only the current assignee can extend this SLA deadline.",
+                    code="FORBIDDEN",
+                )
         if bool(getattr(tracking, "is_resolved", False)):
             raise AppException(
                 status_code=422,

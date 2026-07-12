@@ -107,6 +107,8 @@ const UserProfileEditDialog = ({
       notify_whatsapp_on_escalation: Boolean(user?.notifyWhatsappOnEscalation),
       notify_email_on_deadline_extended: user?.notifyEmailOnDeadlineExtended ?? true,
       notify_whatsapp_on_deadline_extended: Boolean(user?.notifyWhatsappOnDeadlineExtended),
+      notify_email_on_handling: user?.notifyEmailOnHandling ?? true,
+      notify_whatsapp_on_handling: Boolean(user?.notifyWhatsappOnHandling),
       notify_email_on_product_discontinued: Boolean(user?.notifyEmailOnProductDiscontinued),
       notify_whatsapp_on_product_discontinued: Boolean(user?.notifyWhatsappOnProductDiscontinued),
     },
@@ -143,6 +145,8 @@ const UserProfileEditDialog = ({
       notify_whatsapp_on_escalation: Boolean(user.notifyWhatsappOnEscalation),
       notify_email_on_deadline_extended: user.notifyEmailOnDeadlineExtended ?? true,
       notify_whatsapp_on_deadline_extended: Boolean(user.notifyWhatsappOnDeadlineExtended),
+      notify_email_on_handling: user.notifyEmailOnHandling ?? true,
+      notify_whatsapp_on_handling: Boolean(user.notifyWhatsappOnHandling),
       notify_email_on_product_discontinued: Boolean(user.notifyEmailOnProductDiscontinued),
       notify_whatsapp_on_product_discontinued: Boolean(user.notifyWhatsappOnProductDiscontinued),
     });
@@ -240,6 +244,8 @@ const UserProfileEditDialog = ({
       profileData.notify_whatsapp_on_escalation = Boolean(values.notify_whatsapp_on_escalation);
       profileData.notify_email_on_deadline_extended = Boolean(values.notify_email_on_deadline_extended);
       profileData.notify_whatsapp_on_deadline_extended = Boolean(values.notify_whatsapp_on_deadline_extended);
+      profileData.notify_email_on_handling = Boolean(values.notify_email_on_handling);
+      profileData.notify_whatsapp_on_handling = Boolean(values.notify_whatsapp_on_handling);
       profileData.notify_email_on_product_discontinued = Boolean(values.notify_email_on_product_discontinued);
       profileData.notify_whatsapp_on_product_discontinued = Boolean(values.notify_whatsapp_on_product_discontinued);
 
@@ -691,6 +697,8 @@ const UserProfileEditDialog = ({
               { name: 'notify_whatsapp_on_escalation', label: 'WhatsApp on escalation', hint: 'Needs a linked WhatsApp contact.' },
               { name: 'notify_email_on_deadline_extended', label: 'Email on deadline extended', hint: 'Emailed when an assignee extends a resolution deadline and you are the next escalation tier.' },
               { name: 'notify_whatsapp_on_deadline_extended', label: 'WhatsApp on deadline extended', hint: 'Needs a linked WhatsApp contact.' },
+              { name: 'notify_email_on_handling', label: 'Email on handling', hint: 'Emailed when a handling lock is claimed / taken over / released on a form you are eligible for.' },
+              { name: 'notify_whatsapp_on_handling', label: 'WhatsApp on handling', hint: 'Needs a linked WhatsApp contact.' },
               { name: 'notify_email_on_product_discontinued', label: 'Email on products discontinued', hint: 'Emailed when products are newly discontinued (batched).' },
               { name: 'notify_whatsapp_on_product_discontinued', label: 'WhatsApp on products discontinued', hint: 'Needs a linked WhatsApp contact.' },
             ] as const).map((t) => (

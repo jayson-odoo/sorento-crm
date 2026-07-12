@@ -29,6 +29,7 @@ from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.procurement import ViewLinkRequest, ViewLinkResponse
 from app.services.error_handler import handle_internal_error
+from app.services.handling_lock_service import assert_can_act_on_form
 from app.config import settings as app_settings
 from app.modules.runtime.guards import require_public_view_links_enabled
 
@@ -1193,6 +1194,7 @@ async def approve_complaint(
     db: Session = Depends(get_db),
 ):
     """Mark complaint as approved and notify the contact via Respond.io."""
+    assert_can_act_on_form(db, complaint_id, current_user, source_entity_type="complaint")
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
@@ -1221,6 +1223,7 @@ async def reject_complaint(
     db: Session = Depends(get_db),
 ):
     """Mark complaint as rejected (with mandatory reason) and notify the contact via Respond.io."""
+    assert_can_act_on_form(db, complaint_id, current_user, source_entity_type="complaint")
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
@@ -1254,6 +1257,7 @@ async def process_complaint_by_cs(
     Sets status='processed_by_cs', closes the customer-service form-SLA stage, and
     sends a status-update message (+ optional note) to the contact via Respond.io.
     """
+    assert_can_act_on_form(db, complaint_id, current_user, source_entity_type="complaint")
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
@@ -1285,6 +1289,7 @@ async def close_complaint(
     Not a CS-processed completion, but closes the customer-service form-SLA stage
     and sends a status-update message (+ optional note) to the contact via Respond.io.
     """
+    assert_can_act_on_form(db, complaint_id, current_user, source_entity_type="complaint")
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
@@ -1414,6 +1419,7 @@ async def update_complaint_and_reply(
     """Update complaint, send technical team response to customer via Respond.io, and mark SLA as responded."""
     try:
         validate_uuid_path(complaint_id, resource="Complaint")
+        assert_can_act_on_form(db, complaint_id, current_user, source_entity_type="complaint")
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = ComplaintService(db)
         service.update_complaint_and_reply(

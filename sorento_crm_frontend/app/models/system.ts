@@ -81,6 +81,10 @@ export interface SystemSetting {
   // that receive the replacement-DO-delivered notification.
   complaintDoDeliveredNotifyTiers: string;
 
+  // Form handling-lock ("I'm handling this"): the source_entity_types the per-form lock
+  // is enabled for (e.g. ["complaint", "stock_inquiry"]). Empty = lock off everywhere.
+  handlingLockEnabledTypes: string[];
+
   smtp?: {
     smtp_host?: string | null;
     smtp_port?: string | null;

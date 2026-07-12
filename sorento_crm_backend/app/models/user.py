@@ -66,6 +66,12 @@ class User(Base):
     # assignment/escalation toggle defaults). In-app always fires.
     notify_email_on_deadline_extended = Column(Boolean, default=True, nullable=False, server_default="true")
     notify_whatsapp_on_deadline_extended = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Form handling-lock notification opt-ins (PLAN-form-handling-lock). Recipients are
+    # the affected parties (assignee / other eligible members / displaced holder) minus
+    # the actor. Email defaults on; WhatsApp off (mirrors the assignment defaults). In-app
+    # always fires for non-actor recipients.
+    notify_email_on_handling = Column(Boolean, default=True, nullable=False, server_default="true")
+    notify_whatsapp_on_handling = Column(Boolean, default=False, nullable=False, server_default="false")
 
     role_assignments = relationship("UserRoleAssignment", back_populates="user", cascade="all, delete-orphan")
     system_logs = relationship("SystemLog", back_populates="user")
@@ -280,6 +286,12 @@ class SystemSetting(Base):
     # front and compresses raw tool JSON via the semantic_compressor node before
     # feeding it back. Default off — behavioral change, opt-in per PLAN Q7.
     ai_assistant_role_split_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+
+    # Form handling-lock (PLAN-form-handling-lock): CSV of the source_entity_types the
+    # lock is enabled for (e.g. "complaint,purchase_request"). Empty = off for every form
+    # = today's status+permission-only gating. Read via
+    # handling_lock_service.is_handling_lock_enabled.
+    handling_lock_enabled_types = Column(Text, nullable=True, server_default="")
 
 
 class UserQuickAccess(Base):
