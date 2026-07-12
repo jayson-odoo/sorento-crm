@@ -2620,15 +2620,59 @@ class StockInquiryService:
         total = q.count()
         offset = (page - 1) * limit
         inquiries = q.offset(offset).limit(limit).all()
-        
+        self._attach_sla_handlers(inquiries)
+
         from app.schemas.common import PaginationResponse
-        
+
         return {
             "data": inquiries,
             "pagination": PaginationResponse(total=total, page=page, limit=limit),
             "empty": total == 0
         }
-    
+
+    def _attach_sla_handlers(self, items) -> None:
+        """Set `handled_by_name` on each inquiry from the latest unresolved form-SLA
+        tracker. `handled_by_id` is the form-handling-lock holder (separate from the
+        assignee); it lives on the tracker, not the stock_inquiry row. Batched per page.
+        """
+        ids = [str(getattr(i, "id", "")) for i in items if getattr(i, "id", None)]
+        if not ids:
+            return
+        from app.models.sla import ConversationSLATracking
+        from app.models.user import User
+
+        rows = (
+            self.db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.source_entity_type == "stock_inquiry",
+                ConversationSLATracking.source_entity_id.in_(ids),
+                ConversationSLATracking.is_resolved.is_(False),
+            )
+            .order_by(
+                ConversationSLATracking.source_entity_id,
+                ConversationSLATracking.initiated_at.desc(),
+            )
+            .all()
+        )
+        latest: dict = {}
+        for r in rows:
+            latest.setdefault(r.source_entity_id, r)  # first per id = latest (desc order)
+        uids = {
+            getattr(r, "handled_by_id", None)
+            for r in latest.values()
+            if getattr(r, "handled_by_id", None)
+        }
+        users = (
+            {u.id: u for u in self.db.query(User).filter(User.id.in_(uids)).all()}
+            if uids
+            else {}
+        )
+        for it in items:
+            tracker = latest.get(str(it.id))
+            hid = getattr(tracker, "handled_by_id", None) if tracker else None
+            user = users.get(hid) if hid else None
+            setattr(it, "handled_by_name", (user.name or user.email) if user else None)
+
     def get_inquiry(
         self,
         inquiry_id: str,
@@ -5610,9 +5654,11 @@ class PurchaseRequestService:
         }
 
     def _attach_sla_assignees(self, items) -> None:
-        """Set `assigned_to_id` / `assigned_to_name` on each header from the latest
-        unresolved form-SLA tracker (project-sales pre-approval, CS post-approval).
-        Mirrors complaint's `_latest_unresolved_sla_assignee_name`, batched per page.
+        """Set `assigned_to_id` / `assigned_to_name` / `handled_by_name` on each
+        header from the latest unresolved form-SLA tracker (project-sales
+        pre-approval, CS post-approval). `handled_by_name` is the form-handling-lock
+        holder (separate from the assignee). Mirrors complaint's
+        `_latest_unresolved_sla_assignee_name`, batched per page.
         """
         ids = [str(getattr(i, "id", "")) for i in items if getattr(i, "id", None)]
         if not ids:
@@ -5639,17 +5685,28 @@ class PurchaseRequestService:
         for r in rows:
             latest.setdefault(r.source_entity_id, r)  # first per id = latest (desc order)
         uids = {r.assigned_to_id for r in latest.values() if r.assigned_to_id}
+        uids |= {
+            getattr(r, "handled_by_id", None)
+            for r in latest.values()
+            if getattr(r, "handled_by_id", None)
+        }
         users = (
             {u.id: u for u in self.db.query(User).filter(User.id.in_(uids)).all()}
             if uids
             else {}
         )
+
+        def _name(uid):
+            user = users.get(uid) if uid else None
+            return (user.name or user.email) if user else None
+
         for it in items:
             tracker = latest.get(str(it.id))
             aid = tracker.assigned_to_id if tracker else None
-            user = users.get(aid) if aid else None
+            hid = getattr(tracker, "handled_by_id", None) if tracker else None
             setattr(it, "assigned_to_id", aid)
-            setattr(it, "assigned_to_name", (user.name or user.email) if user else None)
+            setattr(it, "assigned_to_name", _name(aid))
+            setattr(it, "handled_by_name", _name(hid))
 
     def get_request(
         self,

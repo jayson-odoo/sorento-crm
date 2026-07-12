@@ -25,6 +25,8 @@ export const UserProfileSchema = z.object({
   notify_whatsapp_on_escalation: z.boolean().optional(),
   notify_email_on_deadline_extended: z.boolean().optional(),
   notify_whatsapp_on_deadline_extended: z.boolean().optional(),
+  notify_email_on_handling: z.boolean().optional(),
+  notify_whatsapp_on_handling: z.boolean().optional(),
   notify_email_on_product_discontinued: z.boolean().optional(),
   notify_whatsapp_on_product_discontinued: z.boolean().optional(),
 });

@@ -658,6 +658,7 @@ class StockInquiryResponse(StockInquiryBase):
     reopened_at: Optional[datetime] = None
     reopened_by: Optional[str] = None
     reopened_by_name: Optional[str] = None
+    handled_by_name: Optional[str] = None  # form-handling-lock holder display name
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     attachments: Optional[List[StockInquiryAttachmentResponse]] = []
@@ -801,6 +802,7 @@ class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
     respond_inbox_url: Optional[str] = None
     assigned_to_id: Optional[str] = None  # latest unresolved form-SLA assignee (users.id)
     assigned_to_name: Optional[str] = None  # resolved display name
+    handled_by_name: Optional[str] = None  # form-handling-lock holder display name
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -832,6 +834,7 @@ class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     approver_display_name: Optional[str] = None  # Resolved from User when approver_user_id is set
     assigned_to_id: Optional[str] = None  # latest unresolved form-SLA assignee (users.id)
     assigned_to_name: Optional[str] = None  # resolved display name
+    handled_by_name: Optional[str] = None  # form-handling-lock holder display name
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     lines: Optional[List[PurchaseRequestLineResponse]] = []

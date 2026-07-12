@@ -72,6 +72,9 @@ export type UseCase =
   | 'sla_takeover_pending'
   | 'sla_task_moved'
   | 'sla_takeover_cancelled'
+  | 'sla_handling_claimed'
+  | 'sla_handling_taken_over'
+  | 'sla_handling_released'
   | 'product_discontinued';
 
 export type ParamVariable =
@@ -99,7 +102,8 @@ export type ParamVariable =
   | 'view_url'
   | 'project'
   | 'product_code'
-  | 'initiator';
+  | 'initiator'
+  | 'handler_name';
 
 export interface WhatsAppTemplate {
   id: string;
@@ -277,6 +281,24 @@ export const USE_CASES: {
       'Sent to the initiator when their takeover is rejected by the owner or voided (task resolved / reassigned / escalated). Map params to "Contact name" and "Full update message" at minimum.',
   },
   {
+    key: 'sla_handling_claimed',
+    label: 'SLA Handling — Claimed',
+    description:
+      'Sent to the assignee and other eligible team members when someone claims handling of an escalated form ("I\'m handling this"). Map params to "Contact name" (the recipient) and "Handler name" (who claimed) at minimum; add "Entity number" / "Full update message" when the template carries them.',
+  },
+  {
+    key: 'sla_handling_taken_over',
+    label: 'SLA Handling — Taken Over',
+    description:
+      'Sent to the displaced holder when a teammate takes over handling of the form. Map params to "Contact name" (the displaced holder) and "Handler name" (who took over) at minimum; add "Entity number" / "Full update message".',
+  },
+  {
+    key: 'sla_handling_released',
+    label: 'SLA Handling — Unclaimed',
+    description:
+      'Sent to eligible team members when the current holder unclaims a form (open to handle again). Map params to "Contact name" (the recipient) and "Handler name" (who unclaimed) at minimum; add "Entity number" / "Full update message".',
+  },
+  {
     key: 'product_discontinued',
     label: 'Product Discontinued',
     description:
@@ -303,6 +325,7 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'system_url', label: 'System URL', description: 'CRM base URL (e.g. https://fe-sorento.foundryx.my)' },
   { key: 'respond_due_at', label: 'Respond by', description: 'SLA response deadline (KL wall time)' },
   { key: 'resolve_due_at', label: 'Resolve by', description: 'SLA resolution deadline (KL wall time)' },
+  { key: 'handler_name', label: 'Handler name', description: 'Staff member who claimed / took over / unclaimed the form handling lock' },
   { key: 'form_url', label: 'Form link', description: 'Opens the form record (or the Respond inbox for ticket/conversation) — same as clicking the task' },
   { key: 'customer', label: 'Customer name', description: 'Customer name on the record (complaint / purchase request)' },
   { key: 'project', label: 'Project name', description: 'Project name/title on the record (complaint / purchase request)' },

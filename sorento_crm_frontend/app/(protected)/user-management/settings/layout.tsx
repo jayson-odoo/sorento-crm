@@ -68,6 +68,9 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
       (raw.n8n_stock_inquiry_revise_webhook_url as string | null) ?? null,
     complaintDoDeliveredNotifyTiers:
       (raw.complaint_do_delivered_notify_tiers as string) ?? '1,2',
+    handlingLockEnabledTypes: Array.isArray(raw.handling_lock_enabled_types)
+      ? (raw.handling_lock_enabled_types as string[])
+      : [],
     smtp: raw.smtp as SystemSetting['smtp'] ?? null,
   } as SystemSetting;
 }
@@ -127,6 +130,7 @@ function createDefaultSettings(): SystemSetting {
     notifySystemErrorWeb: false,
     notifySystemErrorRoleIds: [],
     complaintDoDeliveredNotifyTiers: '1,2',
+    handlingLockEnabledTypes: [],
     smtp: null,
   };
 }

@@ -30,6 +30,7 @@ from app.schemas.procurement import (
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
+from app.services.handling_lock_service import assert_can_act_on_form
 from app.config import settings
 from app.modules.runtime.guards import require_public_view_links_enabled
 
@@ -277,6 +278,7 @@ async def update_purchase_request_and_reply(
     Either send reply_message or set request_number to auto-send 'Your request has been assigned form number: X'."""
     try:
         validate_uuid_path(request_id, resource="Request")
+        assert_can_act_on_form(db, request_id, current_user)
         respond_user_id = _respond_user_id_from_current_user(current_user)
         service = PurchaseRequestService(db)
         header = service.update_request_and_reply(
@@ -312,6 +314,7 @@ async def set_pending_approval(
     """Set request to pending approval (e.g. from draft or to resend after approved). Clears previous approval data."""
     import logging
     logger = logging.getLogger(__name__)
+    assert_can_act_on_form(db, request_id, current_user)
     try:
         validate_uuid_path(request_id, resource="Request")
         service = PurchaseRequestService(db)
@@ -341,6 +344,7 @@ async def reject_submitted_purchase_request(
     db: Session = Depends(get_db),
 ):
     """Reject a submitted PR / sponsorship form before sending for approval. Sends a Respond.io update message to the contact with the rejection reason. Same permission as Send for Approval."""
+    assert_can_act_on_form(db, request_id, current_user)
     try:
         validate_uuid_path(request_id, resource="Request")
         service = PurchaseRequestService(db)
@@ -381,6 +385,7 @@ async def decide_purchase_request_approval(
     buttons), as an alternative to the emailed approval link. Behaves identically to
     the public approval submit: same status transition, notifications, form-SLA event,
     and approval automation. Requires the request to be pending approval."""
+    assert_can_act_on_form(db, request_id, current_user)
     try:
         validate_uuid_path(request_id, resource="Request")
         from app.models.user import User
@@ -429,6 +434,7 @@ async def process_request_by_cs(
     Sets status='processed_by_cs', closes the customer-service form-SLA stage, and
     sends a status-update message (+ optional note) to the contact via Respond.io.
     """
+    assert_can_act_on_form(db, request_id, current_user)
     try:
         validate_uuid_path(request_id, resource="Request")
         respond_user_id = _respond_user_id_from_current_user(current_user)
@@ -458,6 +464,7 @@ async def close_request_by_cs(
     Closes the customer-service form-SLA stage and sends a status-update message
     (+ optional note) to the contact via Respond.io.
     """
+    assert_can_act_on_form(db, request_id, current_user)
     try:
         validate_uuid_path(request_id, resource="Request")
         respond_user_id = _respond_user_id_from_current_user(current_user)

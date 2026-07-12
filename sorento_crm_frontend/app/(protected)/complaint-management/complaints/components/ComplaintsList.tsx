@@ -240,6 +240,20 @@ export default function ComplaintsList() {
         meta: { headerTitle: 'Assigned To', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
+        accessorKey: 'handled_by_name',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Handled By" column={column} />
+        ),
+        cell: ({ row }) => (
+          <span className="truncate" title={row.original.handled_by_name ?? undefined}>
+            {row.original.handled_by_name ?? '-'}
+          </span>
+        ),
+        size: 160,
+        enableSorting: false,
+        meta: { headerTitle: 'Handled By', skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         accessorKey: 'attachments',
         header: ({ column }) => (
           <DataGridColumnHeader title="Attachments" column={column} />

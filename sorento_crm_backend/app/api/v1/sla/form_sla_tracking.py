@@ -21,6 +21,12 @@ from app.services.form_sla_service import (
     FormEscalationBlocked,
     FORM_SLA_TYPES,
 )
+from app.services.handling_lock_service import (
+    HandlingLockService,
+    is_handling_lock_enabled,
+    _is_eligible,
+    _actor_is_admin,
+)
 
 router = APIRouter()
 
@@ -32,8 +38,22 @@ def _assignee_name(db: Session, user_id: Optional[str]) -> Optional[str]:
     return (u.name or u.email) if u else None
 
 
-def _serialize(db: Session, t: ConversationSLATracking) -> dict:
-    return {
+def _serialize(
+    db: Session,
+    t: ConversationSLATracking,
+    viewer_user_id: Optional[str] = None,
+    *,
+    flag_enabled: Optional[bool] = None,
+    viewer_is_admin: Optional[bool] = None,
+) -> dict:
+    """Serialize a form tracker for the FE resolver.
+
+    ``flag_enabled`` (per-type) and ``viewer_is_admin`` (per-viewer) are
+    request-constant; the list endpoint computes them ONCE and passes them in to
+    avoid a per-row singleton read + role query. When omitted (single-row mutation
+    responses) they're computed here.
+    """
+    out = {
         "tracking_id": str(t.id),
         "current_tier": t.current_tier,
         "due_at": t.due_at,
@@ -44,7 +64,26 @@ def _serialize(db: Session, t: ConversationSLATracking) -> dict:
         "source_entity_type": t.source_entity_type,
         "source_entity_id": t.source_entity_id,
         "escalation_reason": t.escalation_reason,
+        # Handling lock (PLAN-form-handling-lock). NULL handled_by_id = unclaimed.
+        "handled_by_id": t.handled_by_id,
+        "handled_by_name": _assignee_name(db, t.handled_by_id),
+        "handled_at": t.handled_at,
+        # Per-form feature flag; FE hides the whole lock UI when off.
+        "flag_enabled": (
+            flag_enabled
+            if flag_enabled is not None
+            else is_handling_lock_enabled(db, t.source_entity_type)
+        ),
     }
+    # Viewer-scoped inputs the FE state resolver needs but can't compute itself.
+    if viewer_user_id:
+        out["viewer_eligible"] = _is_eligible(db, t, viewer_user_id)
+        out["viewer_is_admin"] = (
+            viewer_is_admin
+            if viewer_is_admin is not None
+            else _actor_is_admin(db, viewer_user_id)
+        )
+    return out
 
 
 @router.get("")
@@ -67,7 +106,22 @@ async def get_form_tracking(
         .order_by(ConversationSLATracking.initiated_at.desc())
         .all()
     )
-    return {"data": [_serialize(db, t) for t in rows]}
+    viewer_id = current_user.get("id")
+    # Request-constant: all rows share source_entity_type; admin-ness is per-viewer.
+    flag_enabled = is_handling_lock_enabled(db, source_entity_type)
+    viewer_is_admin = _actor_is_admin(db, viewer_id) if viewer_id else False
+    return {
+        "data": [
+            _serialize(
+                db,
+                t,
+                viewer_user_id=viewer_id,
+                flag_enabled=flag_enabled,
+                viewer_is_admin=viewer_is_admin,
+            )
+            for t in rows
+        ]
+    }
 
 
 class _EscalateRequest(BaseModel):
@@ -94,3 +148,50 @@ async def escalate_form_tracking(
     except FormEscalationBlocked as exc:
         raise HTTPException(status_code=422, detail=exc.message)
     return _serialize(db, tracker)
+
+
+class _TakeOverRequest(BaseModel):
+    # Optimistic-concurrency guard: the holder the client believes is current.
+    expected_handler_id: Optional[str] = None
+
+
+@router.post("/{tracking_id}/claim")
+async def claim_form_handling(
+    tracking_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Claim the handling lock ("I'm handling this") on an escalated form tracker.
+
+    Eligibility is team-chain membership (no RBAC slug); the service enforces flag-on +
+    escalated + unresolved + eligible, then atomically claims (409 if already held).
+    """
+    tracker = HandlingLockService(db).claim_handling(tracking_id, current_user)
+    return _serialize(db, tracker, viewer_user_id=current_user.get("id"))
+
+
+@router.post("/{tracking_id}/take-over")
+async def take_over_form_handling(
+    tracking_id: str,
+    payload: _TakeOverRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Take over the handling lock from the current holder (optimistic; 409 on mismatch)."""
+    tracker = HandlingLockService(db).take_over_handling(
+        tracking_id, current_user, payload.expected_handler_id
+    )
+    out = _serialize(db, tracker, viewer_user_id=current_user.get("id"))
+    out["previous_handler_id"] = getattr(tracker, "_previous_handler_id", None)
+    return out
+
+
+@router.post("/{tracking_id}/release")
+async def release_form_handling(
+    tracking_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Release the handling lock (holder only). Opens the form for anyone eligible."""
+    tracker = HandlingLockService(db).release_handling(tracking_id, current_user)
+    return _serialize(db, tracker, viewer_user_id=current_user.get("id"))

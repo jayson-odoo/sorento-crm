@@ -7,6 +7,9 @@ import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, X
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
+import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
+import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
+import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -115,6 +118,13 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
     enabled: !!isValidId,
   });
   const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
+  // Handling-lock ("I'm handling this") — live off the form-SLA handling tracker query.
+  const handlingLock = useHandlingLock({
+    sourceEntityType: 'complaint',
+    sourceEntityId: isValidId ? complaintId : null,
+    entityKey: complaint?.status,
+  });
+  const businessCtasEnabled = handlingLock.businessCtasEnabled;
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
   const [editTechnicalResponseOpen, setEditTechnicalResponseOpen] = useState(false);
@@ -222,23 +232,29 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           )}
         </div>
         <div className="flex gap-2 flex-wrap items-center justify-end">
-          <Button
-            // Submitted = the technical team's response is the next action, so make
-            // it the primary CTA; otherwise it's a secondary edit.
-            variant={complaint.status === 'submitted' ? 'primary' : 'outline'}
-            size="sm"
-            data-guide-target="complaint-management.complaints.tech-team.edit-response"
-            onClick={() => {
-              setEditTechnicalResponseValue(
-                displayComplaintTechnicalResponse(complaint.technical_team_response ?? ''),
-              );
-              setEditTechnicalResponseOpen(true);
-            }}
-          >
-            <Edit className="size-4 mr-1" />
-            Edit technical team response
-          </Button>
-          {complaint.status === 'responded' && canApprove && (
+          {/* Business CTAs hide (not disable) while the handling lock is held by
+              someone else / unclaimed — keeps the header uncluttered. When the
+              lock does not bite (tier 1, flag off, or I hold it) businessCtasEnabled
+              is true and they render on their normal status+permission gates. */}
+          {businessCtasEnabled && (
+            <Button
+              // Submitted = the technical team's response is the next action, so make
+              // it the primary CTA; otherwise it's a secondary edit.
+              variant={complaint.status === 'submitted' ? 'primary' : 'outline'}
+              size="sm"
+              data-guide-target="complaint-management.complaints.tech-team.edit-response"
+              onClick={() => {
+                setEditTechnicalResponseValue(
+                  displayComplaintTechnicalResponse(complaint.technical_team_response ?? ''),
+                );
+                setEditTechnicalResponseOpen(true);
+              }}
+            >
+              <Edit className="size-4 mr-1" />
+              Edit technical team response
+            </Button>
+          )}
+          {businessCtasEnabled && complaint.status === 'responded' && canApprove && (
             <Button
               size="sm"
               data-guide-target="complaint-management.complaints.tech-team.approve"
@@ -249,7 +265,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               Approve
             </Button>
           )}
-          {complaint.status === 'responded' && canReject && (
+          {businessCtasEnabled && complaint.status === 'responded' && canReject && (
             <Button
               variant="outline"
               size="sm"
@@ -265,7 +281,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               Reject
             </Button>
           )}
-          {complaint.status === 'approved' && canProcess && (
+          {businessCtasEnabled && complaint.status === 'approved' && canProcess && (
             <Button
               size="sm"
               disabled={processComplaintMutation.isPending}
@@ -312,7 +328,11 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               activeTracker={activeTracker}
               onSelect={() => setExtendOpen(true)}
             />
-            {complaint.status === 'approved' && canClose && (
+            <HandlingLockReleaseMenuItem
+              state={handlingLock.state}
+              onRelease={handlingLock.release}
+            />
+            {businessCtasEnabled && complaint.status === 'approved' && canClose && (
               <DropdownMenuItem
                 disabled={closeComplaintMutation.isPending}
                 onClick={() => {
@@ -404,6 +424,13 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           <ComplaintNavigation complaintId={complaintId} />
         </div>
       </div>
+
+      <HandlingLockBanner
+        state={handlingLock.state}
+        tracker={handlingLock.tracker}
+        onClaim={handlingLock.claim}
+        onTakeOver={handlingLock.takeOver}
+      />
 
       {complaint && (
         <ComplaintDeleteDialog
@@ -1016,20 +1043,22 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           <div>
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm text-muted-foreground">Technical Team Response</p>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setEditTechnicalResponseValue(
-                    displayComplaintTechnicalResponse(complaint.technical_team_response ?? ''),
-                  );
-                  setEditTechnicalResponseOpen(true);
-                }}
-                aria-label="Edit technical team response"
-              >
-                <Edit className="size-4" />
-                Edit
-              </Button>
+              {businessCtasEnabled && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setEditTechnicalResponseValue(
+                      displayComplaintTechnicalResponse(complaint.technical_team_response ?? ''),
+                    );
+                    setEditTechnicalResponseOpen(true);
+                  }}
+                  aria-label="Edit technical team response"
+                >
+                  <Edit className="size-4" />
+                  Edit
+                </Button>
+              )}
             </div>
             <p className="font-medium whitespace-pre-wrap">
               {displayComplaintTechnicalResponse(complaint.technical_team_response) || '-'}

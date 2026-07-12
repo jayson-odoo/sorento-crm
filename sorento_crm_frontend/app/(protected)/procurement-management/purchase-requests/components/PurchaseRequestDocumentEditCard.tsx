@@ -1,7 +1,8 @@
 'use client';
 
 import type { UseFormReturn, FieldArrayWithId } from 'react-hook-form';
-import { formatDate } from '@/lib/helpers';
+import { formatDate, formatCurrency } from '@/lib/helpers';
+import { useCurrencyFormat } from '@/hooks/useCurrencyFormat';
 import { Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -85,6 +86,7 @@ export function PurchaseRequestDocumentEditCard({
   sponsorshipLineGrandTotal,
 }: Props) {
   const { control } = form;
+  const currencyFormat = useCurrencyFormat();
   const typeLabel =
     REQUEST_TYPE_LABELS[request.request_type ?? ''] ?? request.request_type ?? 'Request';
 
@@ -601,7 +603,7 @@ export function PurchaseRequestDocumentEditCard({
             {isSponsorship && (
               <div className="mt-3 flex justify-end border-t border-border pt-3">
                 <p className="text-sm font-semibold tabular-nums">
-                  Grand Total: {sponsorshipLineGrandTotal.toLocaleString()}
+                  Grand Total: {formatCurrency(sponsorshipLineGrandTotal, currencyFormat)}
                 </p>
               </div>
             )}

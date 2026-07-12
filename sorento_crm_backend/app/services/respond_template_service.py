@@ -82,6 +82,9 @@ PARAM_VARIABLES = (
     # SLA takeover: the initiator (teammate who started the takeover) — the
     # "Requested by" line in the takeover-pending template.
     "initiator",
+    # Form handling-lock: the staff member who currently holds (or just claimed /
+    # released) the "I'm handling this" lock. Used by the sla_handling_* templates.
+    "handler_name",
     # Sender name — the staff member who replied. Runtime-filled from the logged-in
     # user's ``users.name`` (falls back to "Customer Service" for API-key/system
     # principals). Used by the chat reply templates so the contact knows who replied.

@@ -69,6 +69,9 @@ class SystemSettingUpdate(BaseModel):
     ai_trace_error_ttl_days: Optional[int] = Field(None, ge=1, le=3650)
     ai_trace_max_payload_bytes: Optional[int] = Field(None, ge=512, le=1048576)
     ai_assistant_role_split_enabled: Optional[bool] = None
+    # Form handling-lock (PLAN-form-handling-lock): the source_entity_types the lock is
+    # enabled for. Stored as CSV; accepted/returned as a list. Empty = off everywhere.
+    handling_lock_enabled_types: Optional[list[str]] = None
 
 
 class SmtpTestResult(BaseModel):
@@ -149,6 +152,15 @@ async def get_settings(
                 "ai_trace_error_ttl_days": getattr(settings, "ai_trace_error_ttl_days", 90) if settings else None,
                 "ai_trace_max_payload_bytes": getattr(settings, "ai_trace_max_payload_bytes", 16384) if settings else None,
                 "ai_assistant_role_split_enabled": getattr(settings, "ai_assistant_role_split_enabled", False) if settings else None,
+                "handling_lock_enabled_types": (
+                    [
+                        t.strip()
+                        for t in str(getattr(settings, "handling_lock_enabled_types", "") or "").split(",")
+                        if t.strip()
+                    ]
+                    if settings
+                    else []
+                ),
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
@@ -190,6 +202,20 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                 update_data[col] = uid_clean
             else:
                 update_data[col] = None
+
+    # Handling-lock enabled types: accept a list, persist as a de-duped CSV of valid
+    # form types (mirrors the singleton gotcha — the generic setattr loop below would
+    # otherwise write a Python list into a Text column).
+    if "handling_lock_enabled_types" in update_data:
+        from app.services.form_sla_service import FORM_SLA_TYPES
+
+        raw = update_data["handling_lock_enabled_types"] or []
+        seen: list[str] = []
+        for t in raw:
+            t = str(t).strip()
+            if t in FORM_SLA_TYPES and t not in seen:
+                seen.append(t)
+        update_data["handling_lock_enabled_types"] = ",".join(seen)
 
     for key, value in update_data.items():
         setattr(settings, key, value)
