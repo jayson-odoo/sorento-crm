@@ -80,9 +80,8 @@ export async function exportPurchaseRequestToExcel(request: PurchaseRequest): Pr
     ['#', 'Item Code', 'Qty', 'Remark'],
   ];
 
-  // Emit every line; pad to at least 20 rows to preserve the printed-form layout.
-  const prRowCount = Math.max(lines.length, 20);
-  for (let i = 0; i < prRowCount; i++) {
+  // Emit exactly the line items — no blank padding rows.
+  for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     aoa.push([
       i + 1,
@@ -151,9 +150,8 @@ export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Pr
   ];
 
   let grandTotal = 0;
-  // Emit every line; pad to at least 13 rows to preserve the printed-form layout.
-  const sponsorshipRowCount = Math.max(lines.length, 13);
-  for (let i = 0; i < sponsorshipRowCount; i++) {
+  // Emit exactly the line items — no blank padding rows.
+  for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const qty = line != null && line.quantity != null ? Number(line.quantity) : 0;
     const unitPrice = line != null && line.unit_price != null ? Number(line.unit_price) : 0;
