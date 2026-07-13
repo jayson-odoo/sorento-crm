@@ -25,6 +25,8 @@ async def get_integration_logs(
     integration_channel: Optional[str] = Query(None),
     business_table: Optional[str] = Query(None),
     business_id: Optional[str] = Query(None),
+    created_from: Optional[datetime] = Query(None, description="Filter created_at >= (ISO); e.g. 24h drill-down"),
+    created_to: Optional[datetime] = Query(None, description="Filter created_at <= (ISO)"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -38,7 +40,9 @@ async def get_integration_logs(
             status=status,
             integration_channel=integration_channel,
             business_table=business_table,
-            business_id=business_id
+            business_id=business_id,
+            created_from=created_from,
+            created_to=created_to,
         )
         logger.info(f"Successfully retrieved {len(result.get('data', []))} integration logs")
         return result
@@ -144,25 +148,14 @@ async def update_integration_log_status(
             processed_at=datetime.utcnow() if update_data.status in ["success", "failed"] else None
         )
 
-        updated = service.update_integration_log(log_id, update_payload)
+        service.update_integration_log(log_id, update_payload)
 
-        bid = str(getattr(updated, "id", "") or "")
-        ext_ref = getattr(updated, "external_reference", None)
-        ext_ref_s = str(ext_ref) if ext_ref is not None else None
-
-        service.create_integration_log(
-            IntegrationLogCreate(
-                integration_channel="integration_log_update",
-                business_table="integration_log",
-                business_id=bid,
-                external_reference=ext_ref_s,
-                direction="inbound",
-                endpoint=str(request.url),
-                http_method="POST",
-                status="success"
-            ),
-            request_payload_dict=update_data.model_dump(exclude_unset=True)
-        )
+        # NOTE: we deliberately do NOT write a secondary `integration_log_update`
+        # meta-log here. It previously recorded only "n8n hit the callback endpoint"
+        # with a hardcoded status="success", so the System Health dashboard row was
+        # structurally blind (always N/N, 0 failed) and doubled log volume. The real
+        # outcome is already persisted on the original log above (its `status` is set
+        # from the callback body — success OR failed). See PLAN-system-health-observability WS1a.
 
         return {"status": "success", "message": "Integration log updated successfully."}
     except HTTPException:

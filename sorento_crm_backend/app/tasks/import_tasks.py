@@ -21,6 +21,7 @@ from app.services.order_service import OrderService
 from app.services.product_service import ProductService
 from app.services.import_log_service import ImportLogService
 from app.services.job_service import JobService
+from app.services.audit_service import log_import_audit
 from app.services.procurement_service import (
     SPOAllocationService,
     PickingHeaderService,
@@ -65,6 +66,45 @@ def _is_macos_metadata_path(normalized_path: str) -> bool:
     if parts and parts[-1].strip().startswith("._"):
         return True
     return False
+
+
+def _write_import_audit(
+    db,
+    *,
+    entity_type: str,
+    label: str,
+    row_count: int,
+    user_id: Optional[str],
+    entity_id: Optional[str],
+    status: str = "success",
+) -> None:
+    """Coarse per-job import audit at the job boundary. Best-effort (post-commit
+    side effect): a failure here must NEVER break the import, so we swallow and
+    warn. Bulk imports bypass the ORM audit listener, so this is the only audit
+    row an import job produces. Commits the audit row on the same session AFTER
+    the import data (and the ImportJob status) have already committed."""
+    try:
+        log_import_audit(
+            db,
+            entity_type=entity_type,
+            label=label,
+            row_count=row_count,
+            user_id=user_id,
+            entity_id=entity_id,
+            status=status,
+        )
+        db.commit()
+    except Exception:
+        logger.warning(
+            "Import audit write failed (entity_type=%s, entity_id=%s)",
+            entity_type,
+            entity_id,
+            exc_info=True,
+        )
+        try:
+            db.rollback()
+        except Exception:
+            pass
 
 
 def _json_safe(value):
@@ -125,12 +165,30 @@ def process_stock_import(db_job_id: str, stock_data: list, user_id: str):
             skipped_rows=result['skipped'],
             processed_rows=len(stock_data)
         )
-        
+
         logger.info(f"Stock import job {job.job_id} completed successfully")
-        
+        _write_import_audit(
+            db,
+            entity_type="inbound_shipment",
+            label=f"Stock import {job.filename or ''}".strip(),
+            row_count=result['created'] + result['updated'],
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="partial" if result['errors'] else "success",
+        )
+
     except Exception as e:
         logger.error(f"Stock import job {job.job_id} failed: {str(e)}", exc_info=True)
         job_service.fail_job(job_id_str, str(e))
+        _write_import_audit(
+            db,
+            entity_type="inbound_shipment",
+            label=f"Stock import {job.filename or ''}".strip(),
+            row_count=0,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="failed",
+        )
     finally:
         db.close()
 
@@ -178,10 +236,28 @@ def process_warehouse_import(db_job_id: str, warehouses_data: list, user_id: str
         )
 
         logger.info(f"Warehouse import job {job.job_id} completed successfully")
+        _write_import_audit(
+            db,
+            entity_type="warehouse",
+            label=f"Warehouse import {job.filename or ''}".strip(),
+            row_count=result["created"] + result["updated"],
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="partial" if result["errors"] else "success",
+        )
 
     except Exception as e:
         logger.error(f"Warehouse import job {job.job_id} failed: {str(e)}", exc_info=True)
         job_service.fail_job(job_id_str, str(e))
+        _write_import_audit(
+            db,
+            entity_type="warehouse",
+            label=f"Warehouse import {job.filename or ''}".strip(),
+            row_count=0,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="failed",
+        )
     finally:
         db.close()
 
@@ -239,9 +315,27 @@ def process_product_import(db_job_id: str, products_data: list, user_id: str):
             "Product import job %s completed: created=%s, updated=%s, errors=%s",
             job_id_str, result['created'], result['updated'], len(result['errors']),
         )
+        _write_import_audit(
+            db,
+            entity_type="product",
+            label=f"Product import {job.filename or ''}".strip(),
+            row_count=result['created'] + result['updated'],
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="partial" if result['errors'] else "success",
+        )
     except Exception as e:
         logger.error("Product import job %s failed: %s", job.job_id, str(e), exc_info=True)
         job_service.fail_job(job_id_str, str(e))
+        _write_import_audit(
+            db,
+            entity_type="product",
+            label=f"Product import {job.filename or ''}".strip(),
+            row_count=0,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="failed",
+        )
     finally:
         db.close()
 
@@ -318,7 +412,17 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
         if warnings:
             for i, warn in enumerate(warnings[:3]):
                 logger.warning("Order tracking import job %s warning [%s]: row=%s %s", job_id_str, i + 1, warn.get('row'), warn.get('warning'))
-        
+
+        _write_import_audit(
+            db,
+            entity_type="order",
+            label=f"Order tracking import {job.filename or ''}".strip(),
+            row_count=successful_rows,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="partial" if failed_count else "success",
+        )
+
     except Exception as e:
         logger.error("Order tracking import job %s failed: %s", job_id_str, str(e), exc_info=True)
         db.rollback()
@@ -345,6 +449,15 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
             )
         except Exception:
             pass
+        _write_import_audit(
+            db,
+            entity_type="order",
+            label=f"Order tracking import {job.filename or ''}".strip(),
+            row_count=0,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="failed",
+        )
     finally:
         db.close()
 
@@ -418,6 +531,10 @@ def process_attachment_bulk_import(
         return
 
     job_id_str: str = str(job.job_id)
+    # Attachment is __audit_track__; suppress the per-row ORM audit for this bulk
+    # job (no request actor here → would log N rows as "System"). One coarse,
+    # correctly-attributed job row is written at completion instead.
+    db.info["skip_audit_entity_types"] = {"attachment"}
     try:
         dir_service = AttachmentDirectoryService(db)
         attachment_service = AttachmentService(db)
@@ -755,6 +872,17 @@ def process_attachment_bulk_import(
             processed_rows=processed,
             total_rows=total_files,
         )
+        # Coarse job-level audit: one correctly-attributed row for the whole ZIP
+        # (per-row attachment audit is suppressed above for this bulk job).
+        _write_import_audit(
+            db,
+            entity_type="attachment",
+            label="Attachment bulk import (ZIP)",
+            row_count=successful,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="partial" if failed else "success",
+        )
         logger.info(
             "Attachment bulk import job %s completed: %s files, %s created, %s failed, %s skipped",
             job_id_str, processed, successful, failed, skipped,
@@ -1071,9 +1199,27 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
             "SPO import job %s completed: %s data rows, %s ok, %s failed, %s skipped",
             job_id_str, total_data_rows, successful, failed, total_skipped,
         )
+        _write_import_audit(
+            db,
+            entity_type="spo",
+            label=f"SPO import {filename or ''}".strip(),
+            row_count=successful,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="partial" if failed else "success",
+        )
     except Exception as e:
         logger.exception("SPO import job %s failed", job_id_str)
         job_service.fail_job(job_id_str, str(e))
+        _write_import_audit(
+            db,
+            entity_type="spo",
+            label=f"SPO import {filename or ''}".strip(),
+            row_count=0,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="failed",
+        )
     finally:
         db.close()
 
@@ -1485,9 +1631,27 @@ def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, 
             "GRN listing import job %s completed: %s ok, %s failed, %s skipped",
             job_id_str, result["successful"], result["failed"], result["skipped"],
         )
+        _write_import_audit(
+            db,
+            entity_type="grn",
+            label=f"GRN listing import {filename or ''}".strip(),
+            row_count=result["successful"],
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="partial" if result["failed"] else "success",
+        )
     except Exception as e:
         logger.exception("GRN listing import job %s failed", job_id_str)
         job_service.fail_job(job_id_str, str(e))
+        _write_import_audit(
+            db,
+            entity_type="grn",
+            label=f"GRN listing import {filename or ''}".strip(),
+            row_count=0,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="failed",
+        )
     finally:
         db.close()
 
@@ -1860,9 +2024,27 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             total_rows=total_data_rows,
         )
         logger.info("GRN lines import job %s completed: %s ok, %s failed", job_id_str, successful, failed)
+        _write_import_audit(
+            db,
+            entity_type="grn",
+            label=f"GRN lines import {filename or ''}".strip(),
+            row_count=successful,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="partial" if failed else "success",
+        )
     except Exception as e:
         logger.exception("GRN lines import job %s failed", job_id_str)
         job_service.fail_job(job_id_str, str(e))
+        _write_import_audit(
+            db,
+            entity_type="grn",
+            label=f"GRN lines import {filename or ''}".strip(),
+            row_count=0,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="failed",
+        )
     finally:
         db.close()
 
@@ -2225,8 +2407,26 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
             total_rows=total_data_rows,
         )
         logger.info("Delivery order detail import job %s completed: %s ok, %s failed, %s skipped", job_id_str, successful, failed, skipped)
+        _write_import_audit(
+            db,
+            entity_type="picking",
+            label=f"DO detail import {filename or ''}".strip(),
+            row_count=successful,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="partial" if failed else "success",
+        )
     except Exception as e:
         logger.exception("Delivery order detail import job %s failed", job_id_str)
         job_service.fail_job(job_id_str, str(e))
+        _write_import_audit(
+            db,
+            entity_type="picking",
+            label=f"DO detail import {filename or ''}".strip(),
+            row_count=0,
+            user_id=user_id,
+            entity_id=job_id_str,
+            status="failed",
+        )
     finally:
         db.close()

@@ -18,6 +18,16 @@ vi.mock('../hooks/useAuditLogs', () => ({
   useAuditLogs: (...a: unknown[]) => useAuditLogs(...a),
 }));
 
+// The date-range drill-down added useRouter/usePathname/useSearchParams to the
+// component; without this mock useRouter throws "expected app router to be mounted"
+// in jsdom. usePathname returns null so the DataGrid's column-prefs listing key
+// stays disabled and data rows render synchronously (matches pre-drill-down behavior).
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  usePathname: () => null,
+  useSearchParams: () => ({ get: () => null }),
+}));
+
 // jsdom does not implement these browser APIs the DataGrid primitives touch.
 beforeEach(() => {
   useAuditLogs.mockReset();

@@ -5,11 +5,13 @@ import { getIntegrationLogs, getIntegrationLog, retryIntegrationLog, updateInteg
 import type { IntegrationLog, IntegrationLogResponse } from '../types/integrationLog.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
-export function useIntegrationLogs(params: DataGridApiFetchParams & { 
-  status?: string; 
-  integration_channel?: string; 
-  business_table?: string; 
-  business_id?: string; 
+export function useIntegrationLogs(params: DataGridApiFetchParams & {
+  status?: string;
+  integration_channel?: string;
+  business_table?: string;
+  business_id?: string;
+  created_from?: string;
+  created_to?: string;
 }) {
   return useQuery<DataGridApiResponse<IntegrationLog>>({
     queryKey: ['integrationLogs', params],

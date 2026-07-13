@@ -52,7 +52,29 @@ class AttachmentType(Base):
 
 class Attachment(Base):
     __tablename__ = "attachments"
-    
+
+    # Audit user upload activity across ALL create paths (resource upload, entity
+    # attachments on complaint/PR/SI, product photos, form files) — model-level so it
+    # is path-agnostic. Bulk ZIP import (worker) suppresses per-row via
+    # session.info["skip_audit_entity_types"] and logs one coarse row instead.
+    __audit_track__ = True
+    __audit_entity_type__ = "attachment"
+    # Meaningful columns only — skip churny/huge fields (file_path, thumbnail_path,
+    # file_hash, access_levels) so the diff stays readable.
+    __audit_columns__ = [
+        "original_filename",
+        "stored_filename",
+        "attachment_type_id",
+        "entity_type",
+        "entity_id",
+        "directory_id",
+        "full_directory_path",
+        "description",
+        "uploaded_by",
+        "is_deleted",
+        "deleted_by",
+    ]
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     attachment_type_id = Column(UUID(as_uuid=False), ForeignKey("attachment_types.id", ondelete="SET NULL"), nullable=True)
     original_filename = Column(String(255), nullable=False)

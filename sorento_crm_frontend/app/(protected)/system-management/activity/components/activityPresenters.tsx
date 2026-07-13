@@ -24,12 +24,14 @@ export const ENTITY_TYPE_OPTIONS: {
   { value: 'stock_inquiry', label: 'Stock Inquiry' },
   { value: 'purchase_request', label: 'Purchase Request' },
   { value: 'product', label: 'Product' },
+  { value: 'attachment', label: 'Attachment' },
 ];
 
 export const ACTION_OPTIONS: { value: ActivityAction; label: string }[] = [
   { value: 'created', label: 'Created' },
   { value: 'updated', label: 'Updated' },
   { value: 'deleted', label: 'Deleted' },
+  { value: 'imported', label: 'Imported' },
 ];
 
 export function entityTypeLabel(type: ActivityEntityType): string {
@@ -77,6 +79,12 @@ export function actionMeta(action: ActivityAction): {
         label: 'deleted',
         dotClass: 'bg-destructive',
         textClass: 'text-destructive',
+      };
+    case 'imported':
+      return {
+        label: 'imported',
+        dotClass: 'bg-blue-500',
+        textClass: 'text-blue-600 dark:text-blue-400',
       };
     case 'updated':
     default:

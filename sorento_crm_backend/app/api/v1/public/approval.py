@@ -58,6 +58,8 @@ async def submit_approval(
             approval_comments=data.approval_comments,
         )
         old_values = _model_to_audit_dict(header_before) if header_before else None
+        # Attribute to the request's contact (WS2a) rather than "System".
+        contact_id = getattr(header, "contact_id", None)
         log_audit(
             db,
             "purchase_request",
@@ -66,6 +68,7 @@ async def submit_approval(
             old_values=old_values,
             new_values=_model_to_audit_dict(header),
             user_id=None,
+            contact_id=str(contact_id) if contact_id else None,
             description=f"Approval {data.action} via public link",
             ip_address=request.client.host if request and request.client else None,
         )

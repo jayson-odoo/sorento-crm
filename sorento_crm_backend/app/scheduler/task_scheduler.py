@@ -11,6 +11,8 @@ from app.services.scheduled_task_service import (
 )
 from app.services.respond_sync_handler import run_respond_contacts_sync
 from app.services.attachment_storage_audit_service import run_attachment_storage_audit
+from app.services.n8n_liveness_service import run_n8n_liveness_ping
+from app.services.system_health_alert_service import run_health_watchdog, run_health_daily_digest
 from app.services.user_sla_daily_summary_service import run_user_sla_daily_summary
 from app.services.marketing_service import PromotionService
 from app.services.automation_service import AutomationService
@@ -289,6 +291,9 @@ def register_task_handlers():
     register_handler("product_discontinued_check", _handler_product_discontinued_check)
     register_handler("coverage_subscription_expiry", _handler_coverage_subscription_expiry)
     register_handler("takeover_request_commit", _handler_takeover_request_commit)
+    register_handler("n8n_liveness_ping", lambda db, task: run_n8n_liveness_ping(db))
+    register_handler("system_health_watchdog", lambda db, task: run_health_watchdog(db))
+    register_handler("system_health_daily_digest", lambda db, task: run_health_daily_digest(db, task))
 
 
 def start_scheduler():

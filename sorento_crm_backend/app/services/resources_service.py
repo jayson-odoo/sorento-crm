@@ -1042,6 +1042,20 @@ class AttachmentService:
         # Numeric/date sorts need a type-consistent key; string sorts lower-case.
         numeric_sort = sort_key in {"size", "file_size_bytes"}
 
+        # "Uploaded By" sorts on the uploader's DISPLAY NAME, not the raw UUID —
+        # sorting by UUID is meaningless AND the column returns a mix of UUID
+        # objects / strings / None that raise "'<' not supported between 'UUID'
+        # and 'str'" when compared. Batch-resolve id -> name up front.
+        uploaded_by_names: dict[str, str] = {}
+        if sort_key == "uploaded_by":
+            from app.models.user import User
+            uids = {str(r[1]) for r in file_keys if r[1]}
+            if uids:
+                for u in self.db.query(User.id, User.name, User.email).filter(User.id.in_(uids)).all():
+                    uploaded_by_names[str(u.id)] = (
+                        (u.name or "").strip() or (u.email or "") or str(u.id)
+                    ).lower()
+
         def _norm(v):
             if isinstance(v, str):
                 return v.lower()
@@ -1052,9 +1066,16 @@ class AttachmentService:
             # sort first (asc) without raising on mixed None/number/str compares.
             if v is None:
                 return float("-inf") if numeric_sort else ""
+            if sort_key == "uploaded_by":
+                # Resolved uploader name (empty string for unknown/unresolved ids).
+                return uploaded_by_names.get(str(v), "")
             if isinstance(v, str):
                 return v.lower()
-            return v
+            if numeric_sort:
+                return v
+            # Any other non-string, non-numeric value (e.g. a UUID) — stringify so
+            # the sort key stays type-consistent and never raises on mixed compares.
+            return str(v).lower()
 
         # Build a homogeneous sortable list of (kind, id, primary, name).
         # For Name sort the primary is the lower-cased name (folders interleave);

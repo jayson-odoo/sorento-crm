@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -35,12 +35,26 @@ import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 export default function IntegrationLogsList() {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [channelFilter, setChannelFilter] = useState<string>('all');
+  // Seed filters from the URL so a System Health drill-down (channel + failed +
+  // last-24h) lands here pre-filtered.
+  const [statusFilter, setStatusFilter] = useState<string>(
+    () => searchParams.get('status') ?? 'all',
+  );
+  const [channelFilter, setChannelFilter] = useState<string>(
+    () => searchParams.get('integration_channel') ?? 'all',
+  );
   const [tableFilter, setTableFilter] = useState<string>('all');
+  const [createdFrom, setCreatedFrom] = useState<string>(
+    () => searchParams.get('created_from') ?? '',
+  );
+  const [createdTo, setCreatedTo] = useState<string>(
+    () => searchParams.get('created_to') ?? '',
+  );
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data, isLoading, refetch, isRefetching } = useIntegrationLogs({
@@ -51,7 +65,19 @@ export default function IntegrationLogsList() {
     status: statusFilter !== 'all' ? statusFilter : undefined,
     integration_channel: channelFilter !== 'all' ? channelFilter : undefined,
     business_table: tableFilter !== 'all' ? tableFilter : undefined,
+    created_from: createdFrom || undefined,
+    created_to: createdTo || undefined,
   });
+
+  // Day-granular date inputs; widen "to" to end-of-day so the chosen day is inclusive.
+  const setCreatedFromDay = (v: string) => {
+    setCreatedFrom(v ? `${v}T00:00:00` : '');
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  };
+  const setCreatedToDay = (v: string) => {
+    setCreatedTo(v ? `${v}T23:59:59` : '');
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  };
 
   const retryMutation = useRetryIntegrationLog();
 
@@ -195,13 +221,30 @@ export default function IntegrationLogsList() {
   const filtersActiveCount =
     (statusFilter !== 'all' ? 1 : 0) +
     (channelFilter !== 'all' ? 1 : 0) +
-    (tableFilter !== 'all' ? 1 : 0);
+    (tableFilter !== 'all' ? 1 : 0) +
+    (createdFrom || createdTo ? 1 : 0);
 
   const handleClearFilters = () => {
     setStatusFilter('all');
     setChannelFilter('all');
     setTableFilter('all');
+    setCreatedFrom('');
+    setCreatedTo('');
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+    router.replace(pathname);
   };
+
+  // A drill-down may target a channel not in the fixed option list (e.g. respond_io);
+  // surface it so the Select shows the active value rather than a blank trigger.
+  const KNOWN_CHANNELS = [
+    'n8n',
+    'sla_management',
+    'sla_tracking_creation',
+    'sla_tracking_update',
+    'sla_escalation',
+  ];
+  const extraChannel =
+    channelFilter !== 'all' && !KNOWN_CHANNELS.includes(channelFilter) ? channelFilter : null;
 
   return (
     <DataGrid
@@ -267,6 +310,9 @@ export default function IntegrationLogsList() {
                       <SelectItem value="sla_tracking_creation">SLA Tracking (create)</SelectItem>
                       <SelectItem value="sla_tracking_update">SLA Tracking (update)</SelectItem>
                       <SelectItem value="sla_escalation">SLA Escalation</SelectItem>
+                      {extraChannel && (
+                        <SelectItem value={extraChannel}>{extraChannel}</SelectItem>
+                      )}
                     </SelectContent>
                   </Select>
                   <Select value={tableFilter} onValueChange={setTableFilter}>
@@ -280,6 +326,28 @@ export default function IntegrationLogsList() {
                       <SelectItem value="conversation_sla_event_log">Conversation SLA Event Log</SelectItem>
                     </SelectContent>
                   </Select>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">From date</label>
+                      <Input
+                        type="date"
+                        data-testid="integration-created-from"
+                        value={createdFrom ? createdFrom.slice(0, 10) : ''}
+                        max={createdTo ? createdTo.slice(0, 10) : undefined}
+                        onChange={(e) => setCreatedFromDay(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-medium text-muted-foreground">To date</label>
+                      <Input
+                        type="date"
+                        data-testid="integration-created-to"
+                        value={createdTo ? createdTo.slice(0, 10) : ''}
+                        min={createdFrom ? createdFrom.slice(0, 10) : undefined}
+                        onChange={(e) => setCreatedToDay(e.target.value)}
+                      />
+                    </div>
+                  </div>
                   {filtersActiveCount > 0 && (
                     <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">
                       Clear Filters

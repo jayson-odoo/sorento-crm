@@ -72,6 +72,13 @@ class SystemSettingUpdate(BaseModel):
     # Form handling-lock (PLAN-form-handling-lock): the source_entity_types the lock is
     # enabled for. Stored as CSV; accepted/returned as a list. Empty = off everywhere.
     handling_lock_enabled_types: Optional[list[str]] = None
+    # System-health observability (digest + watchdog alerts).
+    health_digest_enabled: Optional[bool] = None
+    health_alerts_enabled: Optional[bool] = None
+    health_notify_role_ids: Optional[list[str]] = None
+    health_notify_user_ids: Optional[list[str]] = None
+    health_integration_fail_threshold: Optional[int] = Field(None, ge=1, le=100000)
+    health_audit_volume_floor: Optional[int] = Field(None, ge=0, le=1000000)
 
 
 class SmtpTestResult(BaseModel):
@@ -161,6 +168,12 @@ async def get_settings(
                     if settings
                     else []
                 ),
+                "health_digest_enabled": getattr(settings, "health_digest_enabled", True) if settings else None,
+                "health_alerts_enabled": getattr(settings, "health_alerts_enabled", True) if settings else None,
+                "health_notify_role_ids": getattr(settings, "health_notify_role_ids", None) if settings else None,
+                "health_notify_user_ids": getattr(settings, "health_notify_user_ids", None) if settings else None,
+                "health_integration_fail_threshold": getattr(settings, "health_integration_fail_threshold", 10) if settings else None,
+                "health_audit_volume_floor": getattr(settings, "health_audit_volume_floor", 0) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]

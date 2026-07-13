@@ -9,6 +9,15 @@ from uuid import UUID
 from app.models.audit import AuditLog
 
 
+def _is_uuid(value: str) -> bool:
+    """True if ``value`` parses as a UUID (for guarding UUID-typed filter columns)."""
+    try:
+        UUID(str(value))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
 # Declarative audit: set on the model class:
 #   __audit_track__ = True
 #   __audit_entity_type__ = "entity_type"  # optional, default __tablename__
@@ -104,22 +113,27 @@ def log_audit(
     old_values: Optional[dict[str, Any]] = None,
     new_values: Optional[dict[str, Any]] = None,
     user_id: Optional[str] = None,
+    contact_id: Optional[str] = None,
     description: Optional[str] = None,
     ip_address: Optional[str] = None,
     skip_flush: bool = False,
 ) -> AuditLog:
     """Write one audit log entry. Call from API layer after create/update/delete.
-    
+
     Args:
+        contact_id: Acting contact (respond_contacts.id) for portal/public-link writes
+            with no staff ``user_id``. Defaults to the request's actor-contact context,
+            so auto-tracked ORM rows attribute to the contact by name instead of "System".
         skip_flush: If True, don't flush (useful when already inside a flush operation).
     """
-    from app.audit_context import get_trace_id
+    from app.audit_context import get_trace_id, get_actor_contact_id
 
     entry = AuditLog(
         entity_type=entity_type,
         entity_id=entity_id,
         action=action.upper(),
         user_id=user_id,  # None for system/public actions (e.g. approval via public link)
+        contact_id=contact_id if contact_id is not None else get_actor_contact_id(),
         old_values=old_values,
         new_values=new_values,
         description=description,
@@ -132,6 +146,42 @@ def log_audit(
     return entry
 
 
+def log_import_audit(
+    db: Session,
+    *,
+    entity_type: str,
+    label: str,
+    row_count: int,
+    user_id: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    status: str = "success",
+) -> AuditLog:
+    """Write ONE coarse job-level audit row for a bulk import.
+
+    Bulk imports persist via ``bulk_insert_mappings`` / raw SQL which BYPASS the
+    ORM flush listener, so per-row audit never fires. This records a single
+    ``IMPORT`` event at the job boundary instead. Best-effort by contract: the
+    caller MUST wrap this (and the commit) in try/except so an audit-write
+    failure never breaks the import.
+
+    ``status`` other than ``"success"`` appends a suffix to the description:
+    ``"partial"`` -> ``(partial)``, anything else -> ``(failed)``.
+    """
+    description = f"{label}, {row_count} rows"
+    if status == "partial":
+        description += " (partial)"
+    elif status != "success":
+        description += " (failed)"
+    return log_audit(
+        db,
+        entity_type,
+        entity_id or "",
+        "IMPORT",
+        user_id=user_id,
+        description=description,
+    )
+
+
 def list_audit_logs(
     db: Session,
     entity_type: Optional[str] = None,
@@ -139,21 +189,36 @@ def list_audit_logs(
     user_id: Optional[str] = None,
     action: Optional[str] = None,
     trace_id: Optional[str] = None,
+    changed_from: Optional[datetime] = None,
+    changed_to: Optional[datetime] = None,
     page: int = 1,
     limit: int = 50,
 ) -> tuple[list[AuditLog], int]:
-    """List audit logs with optional filters. Returns (items, total)."""
+    """List audit logs with optional filters. Returns (items, total).
+
+    ``entity_id`` and ``user_id`` are UUID columns — a non-UUID value (e.g. a
+    typed name in the User filter) would raise a Postgres DataError (500). Guard
+    both: an unparseable value can never match a row, so short-circuit to empty.
+    """
     q = db.query(AuditLog)
     if entity_type:
         q = q.filter(AuditLog.entity_type == entity_type)
     if entity_id:
+        if not _is_uuid(entity_id):
+            return [], 0
         q = q.filter(AuditLog.entity_id == entity_id)
     if user_id:
+        if not _is_uuid(user_id):
+            return [], 0
         q = q.filter(AuditLog.user_id == user_id)
     if action:
         q = q.filter(AuditLog.action == action.upper())
     if trace_id:
         q = q.filter(AuditLog.trace_id == trace_id)
+    if changed_from:
+        q = q.filter(AuditLog.changed_at >= changed_from)
+    if changed_to:
+        q = q.filter(AuditLog.changed_at <= changed_to)
     q = q.order_by(AuditLog.changed_at.desc())
     total = q.count()
     offset = (page - 1) * limit
@@ -217,9 +282,14 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     # corrected actor too.
     _swap_actor_fields_during_impersonation(session)
     skip_set = set(session.info.get("skip_audit_for") or [])
+    # Entity-type-level suppression: bulk jobs that persist a tracked model per-row
+    # (e.g. attachment bulk import via ORM create_attachment in a worker with no
+    # request actor) set this so they emit ONE coarse job-level audit row instead
+    # of N per-row rows attributed to "System".
+    skip_types = set(session.info.get("skip_audit_entity_types") or [])
 
     def _should_skip(etype: str, eid: str) -> bool:
-        return (etype, eid) in skip_set
+        return etype in skip_types or (etype, eid) in skip_set
 
     for obj in session.new:
         if not _is_audited(obj):
@@ -274,8 +344,14 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     if not _audit_table_exists(session.get_bind()):
         session.info.pop("audit_pending", None)
         return
-    from app.audit_context import get_audit_context
+    from app.audit_context import get_audit_context, get_actor_contact_id
     user_id, ip_address = get_audit_context()
+    # Acting contact for portal/public writes. Prefer session.info (set by the portal
+    # token dependency) over the contextvar: FastAPI runs sync dependencies in a
+    # SEPARATE threadpool thread from the path op, so a contextvar mutated in the
+    # dependency is NOT visible here — but session.info lives on the shared Session
+    # object and survives across threads. Fall back to the contextvar for in-thread callers.
+    contact_id = session.info.get("actor_contact_id") or get_actor_contact_id()
     session.info["audit_flushing"] = True
     try:
         for entity_type, entity_id, action, old_values, new_values in pending:
@@ -287,6 +363,7 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
                 old_values=old_values,
                 new_values=new_values,
                 user_id=user_id,
+                contact_id=contact_id,
                 ip_address=ip_address,
                 skip_flush=True,
             )

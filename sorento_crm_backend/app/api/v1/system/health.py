@@ -173,6 +173,7 @@ def _scheduled_tasks_health(db: Session, now: datetime) -> Optional[ScheduledTas
 def _integrations_health(db: Session, cutoff: datetime) -> Optional[IntegrationsHealth]:
     try:
         from app.models.integration import IntegrationLog
+        from app.services.n8n_liveness_service import HEALTHCHECK_CHANNEL
 
         rows = (
             db.query(
@@ -180,7 +181,12 @@ def _integrations_health(db: Session, cutoff: datetime) -> Optional[Integrations
                 IntegrationLog.status,
                 func.count(IntegrationLog.id),
             )
-            .filter(IntegrationLog.created_at >= cutoff)
+            .filter(
+                IntegrationLog.created_at >= cutoff,
+                # Liveness probes are not a business integration channel — the
+                # watchdog/digest surface their status separately.
+                IntegrationLog.integration_channel != HEALTHCHECK_CHANNEL,
+            )
             .group_by(IntegrationLog.integration_channel, IntegrationLog.status)
             .all()
         )

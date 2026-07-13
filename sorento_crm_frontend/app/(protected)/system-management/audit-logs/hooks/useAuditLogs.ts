@@ -11,6 +11,8 @@ export function useAuditLogs(params: AuditLogListParams) {
       params.entity_id,
       params.user_id,
       params.action,
+      params.changed_from,
+      params.changed_to,
     ],
     queryFn: () => getAuditLogs(params),
     staleTime: 1000 * 60 * 5,

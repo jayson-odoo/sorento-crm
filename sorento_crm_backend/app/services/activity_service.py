@@ -103,6 +103,7 @@ _STORED_ACTIONS_FOR_FE = {
     "created": ("INSERT", "CREATE"),
     "updated": ("UPDATE",),
     "deleted": ("DELETE",),
+    "imported": ("IMPORT",),
 }
 
 
@@ -112,6 +113,8 @@ def _fe_action(stored: Optional[str]) -> str:
         return "created"
     if s == "DELETE":
         return "deleted"
+    if s == "IMPORT":
+        return "imported"
     return "updated"
 
 
@@ -403,8 +406,16 @@ def get_activity_feed(
     for r in rows:
         eid = str(r.entity_id)
         changes = _build_changes(r.action, r.old_values, r.new_values)
-        label, href = labels.get((r.entity_type, eid), (eid, None))
         cfg = _BY_STORED.get(r.entity_type)
+        if r.action == "IMPORT":
+            # Coarse import rows are job-keyed (entity_id = import job id, not a
+            # live entity) — resolving it would render a bogus "(deleted)" label.
+            # Use the human description ("Order tracking import X, N rows") instead.
+            pretty = str(r.entity_type).replace("_", " ").title()
+            label = r.description or f"{pretty} import"
+            href = None
+        else:
+            label, href = labels.get((r.entity_type, eid), (eid, None))
         items.append({
             "id": str(r.id),
             "entity_type": cfg.fe_type if cfg else r.entity_type,
