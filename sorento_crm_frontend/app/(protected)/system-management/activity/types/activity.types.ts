@@ -21,10 +21,11 @@ export type ActivityEntityType =
   | 'ticket'
   | 'stock_inquiry'
   | 'purchase_request'
-  | 'product';
+  | 'product'
+  | 'attachment';
 
-/** Normalised action verb. Backend INSERT/CREATE collapse to "created". */
-export type ActivityAction = 'created' | 'updated' | 'deleted';
+/** Normalised action verb. Backend INSERT/CREATE collapse to "created"; IMPORT → "imported". */
+export type ActivityAction = 'created' | 'updated' | 'deleted' | 'imported';
 
 /** A single field-level change within an activity item. */
 export interface ActivityChange {

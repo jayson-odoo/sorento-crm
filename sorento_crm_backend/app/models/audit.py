@@ -15,6 +15,10 @@ class AuditLog(Base):
     entity_id = Column(String(100), nullable=False, index=True)
     action = Column(String(20), nullable=False)  # INSERT | UPDATE | DELETE
     user_id = Column(String(100), nullable=True)  # system, or user id when available
+    # Acting contact (respond_contacts.id) for portal/public-link writes where there is
+    # no staff user_id. NULL for staff writes and the `system` automation principal.
+    # Display resolves this to the contact name BEFORE the user_id -> staff / "System" fallback.
+    contact_id = Column(String(100), nullable=True, index=True)
     changed_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     old_values = Column(JSONB, nullable=True)
     new_values = Column(JSONB, nullable=True)

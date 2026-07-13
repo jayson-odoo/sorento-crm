@@ -84,6 +84,19 @@ export interface SystemSetting {
   // Form handling-lock ("I'm handling this"): the source_entity_types the per-form lock
   // is enabled for (e.g. ["complaint", "stock_inquiry"]). Empty = lock off everywhere.
   handlingLockEnabledTypes: string[];
+  // System Health observability (daily digest + immediate anomaly alerts).
+  /** Send the daily system-health digest (in-app + email) to the notify roles. */
+  healthDigestEnabled: boolean;
+  /** Send off-cycle anomaly alerts (n8n down, task failed/overdue, integration spike). */
+  healthAlertsEnabled: boolean;
+  /** Roles that receive the digest + alerts. */
+  healthNotifyRoleIds: string[];
+  /** Individual users that receive the digest + alerts (unioned with role members). */
+  healthNotifyUserIds: string[];
+  /** Failed-integration count within the window that trips an immediate alert. */
+  healthIntegrationFailThreshold: number;
+  /** Expected minimum daily audit-event volume; 0 disables the low-volume warning. */
+  healthAuditVolumeFloor: number;
 
   smtp?: {
     smtp_host?: string | null;

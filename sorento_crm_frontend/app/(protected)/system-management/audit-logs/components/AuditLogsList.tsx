@@ -1,6 +1,8 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
   PaginationState,
@@ -35,13 +37,47 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { formatDateTime } from '@/lib/helpers';
+import {
+  Command,
+  CommandCheck,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { ChevronsUpDown } from 'lucide-react';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { getUsersSelect } from '@/services/userSelectService';
 import { useAuditLogs } from '../hooks/useAuditLogs';
 import type { AuditLog } from '../types/auditLog.types';
 
 const ACTION_ALL = '__all__';
+const ENTITY_TYPE_ALL = '__all__';
 
-function actionBadgeVariant(action: string): 'success' | 'warning' | 'destructive' | 'secondary' {
+// Entity types the audit trigger records (stored value = table/entity name). A
+// fixed list beats free text so a singular/plural typo ("user" vs "users") can't
+// silently return zero rows. Keep in sync with the __audit_track__ models.
+const ENTITY_TYPES = [
+  'product',
+  'orders',
+  'suppliers',
+  'purchase_request',
+  'complaint',
+  'stock_inquiry',
+  'forms',
+  'users',
+  'promotions',
+  'attachment',
+  'notification',
+  'impersonation_session',
+  'contact_impersonation_session',
+] as const;
+
+function actionBadgeVariant(
+  action: string,
+): 'success' | 'warning' | 'destructive' | 'secondary' | 'info' {
   switch (action.toUpperCase()) {
     case 'INSERT':
     case 'CREATE':
@@ -50,6 +86,8 @@ function actionBadgeVariant(action: string): 'success' | 'warning' | 'destructiv
       return 'warning';
     case 'DELETE':
       return 'destructive';
+    case 'IMPORT':
+      return 'info';
     default:
       return 'secondary';
   }
@@ -65,12 +103,22 @@ function prettyJson(value: Record<string, unknown> | null | undefined): string {
 }
 
 export default function AuditLogsList() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [entityType, setEntityType] = useState('');
   const [action, setAction] = useState(ACTION_ALL);
   const [userId, setUserId] = useState('');
   const [entityId, setEntityId] = useState('');
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
+  // Seed the date range from the URL so a drill-down link (e.g. from the System
+  // Health "Audit Activity" tile) lands here pre-filtered to that day.
+  const [dateFrom, setDateFrom] = useState(() => searchParams.get('changed_from') ?? '');
+  const [dateTo, setDateTo] = useState(() => searchParams.get('changed_to') ?? '');
+
+  const [userPickerOpen, setUserPickerOpen] = useState(false);
 
   const { data, isLoading, isError, error, refetch, isFetching } = useAuditLogs({
     pageIndex: pagination.pageIndex,
@@ -79,10 +127,53 @@ export default function AuditLogsList() {
     entity_id: entityId || undefined,
     user_id: userId || undefined,
     action: action !== ACTION_ALL ? action : undefined,
+    changed_from: dateFrom || undefined,
+    changed_to: dateTo || undefined,
   });
 
+  // Users for the "User" picker — the audit user_id is a UUID, so a name must
+  // resolve to an id (free text would 500 the UUID-typed column).
+  const { data: users } = useQuery({
+    queryKey: ['audit-user-select'],
+    queryFn: () => getUsersSelect(),
+    staleTime: 5 * 60 * 1000,
+  });
+  const selectedUserLabel = useMemo(() => {
+    if (!userId) return null;
+    const u = users?.find((x) => x.id === userId);
+    return u ? u.name || u.email : userId;
+  }, [userId, users]);
+
   const activeFilterCount =
-    (entityType ? 1 : 0) + (action !== ACTION_ALL ? 1 : 0) + (userId ? 1 : 0);
+    (entityType ? 1 : 0) +
+    (action !== ACTION_ALL ? 1 : 0) +
+    (userId ? 1 : 0) +
+    (dateFrom || dateTo ? 1 : 0);
+
+  // Date inputs are day-granular; widen "to" to end-of-day so the chosen day is inclusive.
+  const setFromDay = (v: string) => {
+    setDateFrom(v ? `${v}T00:00:00` : '');
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  };
+  const setToDay = (v: string) => {
+    setDateTo(v ? `${v}T23:59:59` : '');
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  };
+
+  // Human-readable label for the active date-range drill-down ("Showing 2026-07-02").
+  const dateRangeLabel = useMemo(() => {
+    if (!dateFrom) return null;
+    const fromDay = dateFrom.slice(0, 10);
+    const toDay = dateTo ? dateTo.slice(0, 10) : '';
+    return toDay && toDay !== fromDay ? `${fromDay} → ${toDay}` : fromDay;
+  }, [dateFrom, dateTo]);
+
+  const clearDateRange = () => {
+    setDateFrom('');
+    setDateTo('');
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+    router.replace(pathname);
+  };
 
   const columns = useMemo<ColumnDef<AuditLog>[]>(
     () => [
@@ -91,7 +182,7 @@ export default function AuditLogsList() {
         header: ({ column }) => <DataGridColumnHeader title="Changed At" column={column} />,
         cell: ({ row }) => (
           <span className="whitespace-nowrap text-sm">
-            {formatDateTime(new Date(row.original.changed_at))}
+            {formatDateTimeInMalaysia(row.original.changed_at)}
           </span>
         ),
         size: 180,
@@ -205,6 +296,10 @@ export default function AuditLogsList() {
     setEntityType('');
     setAction(ACTION_ALL);
     setUserId('');
+    setDateFrom('');
+    setDateTo('');
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+    router.replace(pathname);
   };
 
   if (isError) {
@@ -268,11 +363,22 @@ export default function AuditLogsList() {
                   <div className="space-y-3">
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">Entity type</label>
-                      <Input
-                        placeholder="e.g. complaint, purchase_request"
-                        value={entityType}
-                        onChange={(e) => setEntityType(e.target.value)}
-                      />
+                      <Select
+                        value={entityType || ENTITY_TYPE_ALL}
+                        onValueChange={(v) => setEntityType(v === ENTITY_TYPE_ALL ? '' : v)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="All entity types" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={ENTITY_TYPE_ALL}>All entity types</SelectItem>
+                          {ENTITY_TYPES.map((t) => (
+                            <SelectItem key={t} value={t}>
+                              {t}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">Action</label>
@@ -286,16 +392,74 @@ export default function AuditLogsList() {
                           <SelectItem value="CREATE">Create</SelectItem>
                           <SelectItem value="UPDATE">Update</SelectItem>
                           <SelectItem value="DELETE">Delete</SelectItem>
+                          <SelectItem value="IMPORT">Import</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-1.5">
-                      <label className="text-xs font-medium text-muted-foreground">User ID</label>
-                      <Input
-                        placeholder="Filter by user ID"
-                        value={userId}
-                        onChange={(e) => setUserId(e.target.value)}
-                      />
+                      <label className="text-xs font-medium text-muted-foreground">User</label>
+                      <Popover open={userPickerOpen} onOpenChange={setUserPickerOpen}>
+                        <PopoverTrigger asChild>
+                          <Button variant="outline" className="w-full justify-between font-normal">
+                            <span className="truncate">{selectedUserLabel ?? 'Any user'}</span>
+                            <ChevronsUpDown className="size-3.5 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[240px] p-0" align="start">
+                          <Command>
+                            <CommandInput placeholder="Search users..." />
+                            <CommandList>
+                              <CommandEmpty>No users found.</CommandEmpty>
+                              <CommandGroup>
+                                {userId && (
+                                  <CommandItem
+                                    value="__clear__"
+                                    onSelect={() => {
+                                      setUserId('');
+                                      setUserPickerOpen(false);
+                                    }}
+                                  >
+                                    <span className="grow text-muted-foreground">Any user</span>
+                                  </CommandItem>
+                                )}
+                                {users?.map((u) => (
+                                  <CommandItem
+                                    key={u.id}
+                                    value={`${u.name ?? ''} ${u.email}`}
+                                    onSelect={() => {
+                                      setUserId(u.id);
+                                      setUserPickerOpen(false);
+                                    }}
+                                  >
+                                    <span className="grow truncate">{u.name || u.email}</span>
+                                    {userId === u.id && <CommandCheck />}
+                                  </CommandItem>
+                                ))}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-muted-foreground">From date</label>
+                        <Input
+                          type="date"
+                          value={dateFrom ? dateFrom.slice(0, 10) : ''}
+                          max={dateTo ? dateTo.slice(0, 10) : undefined}
+                          onChange={(e) => setFromDay(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-muted-foreground">To date</label>
+                        <Input
+                          type="date"
+                          value={dateTo ? dateTo.slice(0, 10) : ''}
+                          min={dateFrom ? dateFrom.slice(0, 10) : undefined}
+                          onChange={(e) => setToDay(e.target.value)}
+                        />
+                      </div>
                     </div>
                     {activeFilterCount > 0 && (
                       <Button variant="ghost" size="sm" className="w-full" onClick={clearFilters}>
@@ -309,6 +473,17 @@ export default function AuditLogsList() {
               onRefresh={() => void refetch()}
               isRefreshing={isFetching && !isLoading}
             />
+            {dateRangeLabel && (
+              <div className="mt-3 flex items-center gap-2" data-testid="audit-date-filter-active">
+                <Badge variant="info" appearance="light">
+                  Showing {dateRangeLabel}
+                </Badge>
+                <Button variant="ghost" size="sm" onClick={clearDateRange}>
+                  <X className="size-3.5" />
+                  Clear date filter
+                </Button>
+              </div>
+            )}
           </CardHeader>
           <CardTable>
             <ScrollArea>
@@ -328,8 +503,8 @@ export default function AuditLogsList() {
             <DialogTitle>Audit entry details</DialogTitle>
             <DialogDescription>
               {selectedLog
-                ? `${selectedLog.action} on ${selectedLog.entity_type} · ${formatDateTime(
-                    new Date(selectedLog.changed_at),
+                ? `${selectedLog.action} on ${selectedLog.entity_type} · ${formatDateTimeInMalaysia(
+                    selectedLog.changed_at,
                   )}`
                 : ''}
             </DialogDescription>

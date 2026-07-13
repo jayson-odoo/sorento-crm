@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,6 +21,33 @@ import type {
   IntegrationsHealth,
   ScheduledTasksHealth,
 } from '../types/health.types';
+
+/** ISO timestamp for "24 hours ago" — used to scope integration drill-downs. */
+function last24hFromIso(): string {
+  return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+}
+
+/**
+ * Build the audit-logs drill-down href for a single trend day.
+ * The trend date is a UTC calendar day (YYYY-MM-DD); scope the whole UTC day.
+ */
+function auditDayHref(date: string): string {
+  const params = new URLSearchParams({
+    changed_from: `${date}T00:00:00.000Z`,
+    changed_to: `${date}T23:59:59.999Z`,
+  });
+  return `/system-management/audit-logs?${params.toString()}`;
+}
+
+/** Build the integration-logs drill-down href for a channel's failed rows in the last 24h. */
+function integrationFailedHref(channel: string): string {
+  const params = new URLSearchParams({
+    integration_channel: channel,
+    status: 'failed',
+    created_from: last24hFromIso(),
+  });
+  return `/integration-management/integration-logs?${params.toString()}`;
+}
 
 function MetricValue({ label, value }: { label: string; value: string | number }) {
   return (
@@ -115,19 +143,33 @@ function ScheduledTasksCard({ data }: { data: ScheduledTasksHealth | null }) {
           <div className="grid grid-cols-3 gap-4">
             <MetricValue label="Total" value={data.total} />
             <div className="flex flex-col gap-1">
-              <span
-                className={`text-2xl font-semibold ${warnOverdue ? 'text-destructive' : 'text-foreground'}`}
-              >
-                {data.overdue}
-              </span>
+              {warnOverdue ? (
+                <Link
+                  href="/system-management/scheduled-tasks"
+                  data-testid="health-scheduled-overdue-link"
+                  className="w-fit cursor-pointer text-2xl font-semibold text-destructive underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+                >
+                  {data.overdue}
+                </Link>
+              ) : (
+                <span className="text-2xl font-semibold text-foreground">{data.overdue}</span>
+              )}
               <span className="text-xs text-muted-foreground">Overdue</span>
             </div>
             <div className="flex flex-col gap-1">
-              <span
-                className={`text-2xl font-semibold ${warnFailed ? 'text-destructive' : 'text-foreground'}`}
-              >
-                {data.last_run_failed}
-              </span>
+              {warnFailed ? (
+                <Link
+                  href="/system-management/scheduled-tasks"
+                  data-testid="health-scheduled-failed-link"
+                  className="w-fit cursor-pointer text-2xl font-semibold text-destructive underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+                >
+                  {data.last_run_failed}
+                </Link>
+              ) : (
+                <span className="text-2xl font-semibold text-foreground">
+                  {data.last_run_failed}
+                </span>
+              )}
               <span className="text-xs text-muted-foreground">Last run failed</span>
             </div>
           </div>
@@ -170,7 +212,14 @@ function IntegrationsCard({ data }: { data: IntegrationsHealth | null }) {
                   <TableCell className="text-right">{c.success}</TableCell>
                   <TableCell className="text-right">
                     {c.failed > 0 ? (
-                      <span className="font-medium text-destructive">{c.failed}</span>
+                      <Link
+                        href={integrationFailedHref(c.channel)}
+                        data-testid={`health-integration-failed-link-${c.channel}`}
+                        className="cursor-pointer font-medium text-destructive underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
+                        title={`View ${c.failed} failed ${c.channel} log(s) from the last 24h`}
+                      >
+                        {c.failed}
+                      </Link>
                     ) : (
                       c.failed
                     )}
@@ -207,16 +256,22 @@ function AuditActivityCard({ data }: { data: AuditActivityHealth | null }) {
         ) : (
           <div className="flex items-end gap-2 pt-2" style={{ height: 96 }}>
             {trend.map((t) => (
-              <div key={t.date} className="flex flex-1 flex-col items-center gap-1">
+              <Link
+                key={t.date}
+                href={auditDayHref(t.date)}
+                data-testid={`health-audit-day-link-${t.date}`}
+                aria-label={`View ${t.count} audit entries on ${t.date}`}
+                title={`${t.date}: ${t.count} — view entries`}
+                className="group flex flex-1 cursor-pointer flex-col items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
                 <div
-                  className="w-full rounded-sm bg-primary/70"
+                  className="w-full rounded-sm bg-primary/70 transition-colors group-hover:bg-primary group-focus-visible:bg-primary"
                   style={{ height: `${Math.round((t.count / max) * 72)}px` }}
-                  title={`${t.date}: ${t.count}`}
                 />
-                <span className="text-[10px] text-muted-foreground">
+                <span className="text-[10px] text-muted-foreground group-hover:text-foreground">
                   {t.date.slice(5)}
                 </span>
-              </div>
+              </Link>
             ))}
           </div>
         )}

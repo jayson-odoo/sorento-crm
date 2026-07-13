@@ -1,4 +1,5 @@
 import { Metadata } from 'next';
+import { Suspense } from 'react';
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -45,7 +46,9 @@ export default async function IntegrationLogsPage() {
       </Container>
 
       <Container>
-        <IntegrationLogsList />
+        <Suspense fallback={null}>
+          <IntegrationLogsList />
+        </Suspense>
       </Container>
     </>
   );

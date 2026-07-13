@@ -2,13 +2,15 @@ import { apiFetch } from '@/lib/api';
 import type { IntegrationLog, IntegrationLogResponse } from '../types/integrationLog.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
-export async function getIntegrationLogs(params: DataGridApiFetchParams & { 
-  status?: string; 
-  integration_channel?: string; 
-  business_table?: string; 
-  business_id?: string; 
+export async function getIntegrationLogs(params: DataGridApiFetchParams & {
+  status?: string;
+  integration_channel?: string;
+  business_table?: string;
+  business_id?: string;
+  created_from?: string;
+  created_to?: string;
 }): Promise<DataGridApiResponse<IntegrationLog>> {
-  const { pageIndex, pageSize, sorting, searchQuery, status, integration_channel, business_table, business_id } = params;
+  const { pageIndex, pageSize, sorting, searchQuery, status, integration_channel, business_table, business_id, created_from, created_to } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -20,6 +22,8 @@ export async function getIntegrationLogs(params: DataGridApiFetchParams & {
     ...(integration_channel ? { integration_channel } : {}),
     ...(business_table ? { business_table } : {}),
     ...(business_id ? { business_id } : {}),
+    ...(created_from ? { created_from } : {}),
+    ...(created_to ? { created_to } : {}),
   });
   const response = await apiFetch(`/api/v1/integrations/logs?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch integration logs');

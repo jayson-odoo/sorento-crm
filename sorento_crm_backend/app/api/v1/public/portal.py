@@ -73,7 +73,18 @@ def get_portal_token(
     token: Annotated[Optional[str], Query()] = None,
     db: Session = Depends(get_db),
 ) -> PortalToken:
-    return _resolve_portal_token(db, x_portal_token, token)
+    resolved = _resolve_portal_token(db, x_portal_token, token)
+    # Attribute any audited write in this request to the acting contact (WS2a),
+    # so portal submissions read as the contact's name instead of "System".
+    # Stash on the SHARED db.info (not a contextvar): FastAPI runs this sync
+    # dependency in a different threadpool thread than the path op + flush, so a
+    # contextvar set here wouldn't be visible at flush time. db.info lives on the
+    # Session object (same instance via Depends(get_db)) and survives the thread hop.
+    if resolved.contact_id:
+        db.info["actor_contact_id"] = str(resolved.contact_id)
+    from app.audit_context import set_actor_contact_id
+    set_actor_contact_id(str(resolved.contact_id) if resolved.contact_id else None)
+    return resolved
 
 
 # ---------- OTP ----------

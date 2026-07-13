@@ -57,3 +57,23 @@ def set_trace_id(trace_id: Optional[str]) -> None:
 def get_trace_id() -> Optional[str]:
     """Return the current request's trace/correlation id (None outside a request)."""
     return _trace_id.get()
+
+
+# Acting contact for unauthenticated portal/public-link writes (System Health WS2a).
+# Separate contextvar (like trace_id) so the (user, ip, effective) tuple is untouched.
+# Portal / public-approval routes set this to the resolved respond_contacts.id; the
+# audit listener stamps it onto AuditLog.contact_id so the row attributes to the
+# contact by name instead of the ambiguous "System" fallback.
+_actor_contact_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "audit_actor_contact_id", default=None
+)
+
+
+def set_actor_contact_id(contact_id: Optional[str]) -> None:
+    """Set the acting contact (respond_contacts.id) for the current request."""
+    _actor_contact_id.set(contact_id)
+
+
+def get_actor_contact_id() -> Optional[str]:
+    """Return the acting contact id for the current request (None if not a contact write)."""
+    return _actor_contact_id.get()

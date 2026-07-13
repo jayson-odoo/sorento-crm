@@ -20,7 +20,8 @@ class AuditLogResponse(BaseModel):
     entity_id: str
     action: str
     user_id: Optional[str] = None
-    user_display_name: Optional[str] = None  # Resolved from users.name for display
+    contact_id: Optional[str] = None  # acting contact (respond_contacts.id) for portal/public writes
+    user_display_name: Optional[str] = None  # Resolved: contact name -> staff name -> "System"
     changed_at: datetime
     old_values: Optional[dict[str, Any]] = None
     new_values: Optional[dict[str, Any]] = None

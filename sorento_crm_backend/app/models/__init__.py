@@ -39,6 +39,7 @@ from app.models.download import UserDownload, DownloadStatus
 from app.models.audit import AuditLog
 from app.models.notification import Notification, NotificationDelivery, PushSubscription
 from app.models.scheduled_task import ScheduledTask, ScheduledTaskRun
+from app.models.health_alert_state import HealthAlertState
 from app.models.numbering import DocumentNumberingRule
 from app.models.app_modules import AppModuleCatalog, AppModuleBundle, TenantModule, ModuleInstallEvent
 from app.models.list_query_metadata import ListQueryResource, ListQueryField

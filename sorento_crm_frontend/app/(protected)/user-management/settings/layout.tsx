@@ -71,6 +71,22 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
     handlingLockEnabledTypes: Array.isArray(raw.handling_lock_enabled_types)
       ? (raw.handling_lock_enabled_types as string[])
       : [],
+    healthDigestEnabled: Boolean(raw.health_digest_enabled),
+    healthAlertsEnabled: Boolean(raw.health_alerts_enabled),
+    healthNotifyRoleIds: Array.isArray(raw.health_notify_role_ids)
+      ? (raw.health_notify_role_ids as string[])
+      : [],
+    healthNotifyUserIds: Array.isArray(raw.health_notify_user_ids)
+      ? (raw.health_notify_user_ids as string[])
+      : [],
+    healthIntegrationFailThreshold:
+      typeof raw.health_integration_fail_threshold === 'number'
+        ? raw.health_integration_fail_threshold
+        : 10,
+    healthAuditVolumeFloor:
+      typeof raw.health_audit_volume_floor === 'number'
+        ? raw.health_audit_volume_floor
+        : 0,
     smtp: raw.smtp as SystemSetting['smtp'] ?? null,
   } as SystemSetting;
 }
@@ -131,6 +147,12 @@ function createDefaultSettings(): SystemSetting {
     notifySystemErrorRoleIds: [],
     complaintDoDeliveredNotifyTiers: '1,2',
     handlingLockEnabledTypes: [],
+    healthDigestEnabled: false,
+    healthAlertsEnabled: false,
+    healthNotifyRoleIds: [],
+    healthNotifyUserIds: [],
+    healthIntegrationFailThreshold: 10,
+    healthAuditVolumeFloor: 0,
     smtp: null,
   };
 }
@@ -165,6 +187,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       complaints: {
         title: 'Complaints',
         path: '/user-management/settings/complaints',
+      },
+      'system-health': {
+        title: 'System Health',
+        path: '/user-management/settings/system-health',
       },
       smtp: {
         title: 'SMTP',

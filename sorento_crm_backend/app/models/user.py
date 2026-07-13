@@ -242,6 +242,15 @@ class SystemSetting(Base):
     # 0 = disabled (takeover commits instantly, pre-feature behavior). See PLAN-takeover-cooldown.
     takeover_cooldown_seconds = Column(Integer, nullable=False, server_default="60", default=60)
 
+    # System-health observability (PLAN-system-health-observability):
+    # daily digest + immediate watchdog alerts. Recipients = role ids (like notify_*_role_ids).
+    health_digest_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    health_alerts_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    health_notify_role_ids = Column(ARRAY(String), nullable=True)  # digest + alert recipients (by role); empty -> admins fallback in code
+    health_notify_user_ids = Column(ARRAY(String), nullable=True)  # digest + alert recipients (individual users), unioned with role members
+    health_integration_fail_threshold = Column(Integer, nullable=False, server_default="10", default=10)  # per-channel 24h failed spike
+    health_audit_volume_floor = Column(Integer, nullable=False, server_default="0", default=0)  # 0 = floor alert disabled
+
     # New products / import: default product_supplier (standard lead time + supplier)
     default_product_supplier_id = Column(
         PG_UUID(as_uuid=False),

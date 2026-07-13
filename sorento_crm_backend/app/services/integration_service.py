@@ -602,23 +602,35 @@ class IntegrationLogService:
         status: Optional[str] = None,
         integration_channel: Optional[str] = None,
         business_table: Optional[str] = None,
-        business_id: Optional[str] = None
+        business_id: Optional[str] = None,
+        created_from: Optional[datetime] = None,
+        created_to: Optional[datetime] = None,
+        exclude_healthcheck: bool = True,
     ):
         """List integration logs with pagination and filtering."""
         from app.schemas.common import PaginationResponse
-        
+        from app.services.n8n_liveness_service import HEALTHCHECK_CHANNEL
+
         try:
             q = self.db.query(IntegrationLog)
-            
+
             if status:
                 q = q.filter(IntegrationLog.status == status)
             if integration_channel:
                 q = q.filter(IntegrationLog.integration_channel == integration_channel)
+            elif exclude_healthcheck:
+                # Sentinel hygiene: liveness-probe rows are noise in the general list.
+                # Only excluded when the caller didn't explicitly ask for a channel.
+                q = q.filter(IntegrationLog.integration_channel != HEALTHCHECK_CHANNEL)
             if business_table:
                 q = q.filter(IntegrationLog.business_table == business_table)
             if business_id:
                 q = q.filter(IntegrationLog.business_id == business_id)
-            
+            if created_from:
+                q = q.filter(IntegrationLog.created_at >= created_from)
+            if created_to:
+                q = q.filter(IntegrationLog.created_at <= created_to)
+
             q = q.order_by(IntegrationLog.created_at.desc())
             
             total = q.count()
