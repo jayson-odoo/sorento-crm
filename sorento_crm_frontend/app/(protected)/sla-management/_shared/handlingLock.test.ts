@@ -12,6 +12,7 @@ function tracker(partial: Partial<HandlingLockTracker> = {}): HandlingLockTracke
     id: 'trk-1',
     source_entity_type: 'complaint',
     current_tier: 2,
+    escalated_at: '2026-07-01T00:00:00',
     is_resolved: false,
     handled_by_id: null,
     handled_by_name: null,
@@ -43,7 +44,19 @@ describe('resolveHandlingLockState', () => {
 
   it('not_escalated when the tracker is tier 1 (not escalated)', () => {
     expect(
-      resolveHandlingLockState(input({ activeTracker: tracker({ current_tier: 1 }) })),
+      resolveHandlingLockState(
+        input({ activeTracker: tracker({ current_tier: 1, escalated_at: null }) }),
+      ),
+    ).toBe('not_escalated');
+  });
+
+  it('not_escalated when never escalated even at a tier-2 START (project_sales)', () => {
+    // project_sales begins at tier 2 with no tier 1; a fresh form has escalated_at=null
+    // and must NOT show the handling-lock banner.
+    expect(
+      resolveHandlingLockState(
+        input({ activeTracker: tracker({ current_tier: 2, escalated_at: null }) }),
+      ),
     ).toBe('not_escalated');
   });
 

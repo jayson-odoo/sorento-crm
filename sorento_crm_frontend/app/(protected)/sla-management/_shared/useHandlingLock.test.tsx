@@ -49,6 +49,7 @@ function row(partial: Partial<FormHandlingTracker> = {}): FormHandlingTracker {
     source_entity_type: 'complaint',
     source_entity_id: 'cmp-1',
     escalation_reason: null,
+    escalated_at: '2026-07-01T00:00:00',
     handled_by_id: null,
     handled_by_name: null,
     handled_at: null,
@@ -128,6 +129,25 @@ describe('useHandlingLock', () => {
       { wrapper: wrapper() },
     );
     await waitFor(() => expect(result.current.tracker?.id).toBe('active'));
+  });
+
+  it('refresh() refetches the handling query (lock banner appears after an external escalate)', async () => {
+    // Escalating from the form's gear menu is an external side effect that does not touch
+    // this query's key — refresh() must invalidate + refetch so the lock banner shows
+    // without a page reload. Regression: escalate only invalidated form-sla-trackers.
+    getFormHandlingTrackers.mockResolvedValue([row({ handled_by_id: null })]);
+    const { result } = renderHook(
+      () => useHandlingLock({ sourceEntityType: 'complaint', sourceEntityId: 'cmp-1' }),
+      { wrapper: wrapper() },
+    );
+    await waitFor(() => expect(result.current.state).toBe('unclaimed'));
+    expect(getFormHandlingTrackers).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      result.current.refresh();
+    });
+
+    await waitFor(() => expect(getFormHandlingTrackers).toHaveBeenCalledTimes(2));
   });
 
   it('does not query (state not_escalated) when the entity id is null', async () => {

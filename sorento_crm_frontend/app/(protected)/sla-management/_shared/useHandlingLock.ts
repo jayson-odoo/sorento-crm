@@ -47,6 +47,10 @@ export interface UseHandlingLockResult {
   takeOver: () => void;
   /** Release the lock (holder only). No-op when there is no active tracker. */
   release: () => void;
+  /** Refetch the handling-lock state. Call after a side effect that escalates/resolves
+   *  the SLA stage from OUTSIDE the hook (e.g. the form's manual "Escalate" action), so
+   *  the lock banner appears without a page reload. */
+  refresh: () => void;
   /** True while a claim / take-over / release request is in flight. */
   isMutating: boolean;
 }
@@ -58,6 +62,7 @@ function toLockTracker(row: FormHandlingTracker | null): HandlingLockTracker | n
     id: row.tracking_id,
     source_entity_type: row.source_entity_type,
     current_tier: row.current_tier,
+    escalated_at: row.escalated_at,
     is_resolved: row.is_resolved,
     handled_by_id: row.handled_by_id,
     handled_by_name: row.handled_by_name,
@@ -149,6 +154,7 @@ export function useHandlingLock(input: UseHandlingLockInput): UseHandlingLockRes
     release: () => {
       if (activeRow) releaseMutation.mutate();
     },
+    refresh: invalidate,
     isMutating:
       claimMutation.isPending || takeOverMutation.isPending || releaseMutation.isPending,
   };

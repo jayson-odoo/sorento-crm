@@ -663,6 +663,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 try {
                   const res = await escalateFormTracking(activeTracker.id, escalateReason.trim());
                   queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'complaint', complaintId] });
+                  handlingLock.refresh(); // lock banner keys on a separate query — refetch so it appears without reload
                   toast.success(`Escalated to tier ${res.current_tier}`);
                   setEscalateOpen(false);
                 } catch (err) {

@@ -195,8 +195,13 @@ def _tracker(
     entity="complaint",
     handled_by=None,
     agent=True,
+    escalated=None,
 ):
     now = datetime.utcnow()
+    # "Escalated" is keyed on escalated_at, NOT current_tier > 1 (a config may start above
+    # tier 1). Default: derive from tier so existing tier-2 fixtures stay escalated; pass
+    # escalated=False to model a tier-2 START (project_sales) that was never escalated.
+    is_escalated = escalated if escalated is not None else (tier or 1) > 1
     t = ConversationSLATracking(
         id=str(uuid.uuid4()),
         policy_id=seed["policy_id"],
@@ -205,6 +210,7 @@ def _tracker(
         current_tier_started_at=now - timedelta(hours=2),
         due_at=now + timedelta(hours=4),
         due_at_resolution=now + timedelta(hours=20),
+        escalated_at=(now - timedelta(hours=2)) if is_escalated else None,
         is_resolved=resolved,
         source_entity_type=entity,
         source_entity_id=str(uuid.uuid4()),
@@ -283,6 +289,15 @@ def test_claim_non_eligible_403(db, seed):  # P2-3
 
 def test_claim_non_escalated_rejected(db, seed):  # P2-3
     t = _tracker(db, seed, tier=1)
+    with pytest.raises(AppException) as e:
+        HandlingLockService(db).claim_handling(t.id, _actor(seed, "member_a"))
+    assert e.value.status_code == 422
+
+
+def test_claim_tier2_start_never_escalated_rejected(db, seed):  # regression: project_sales
+    # A config may START at tier 2 (project_sales has no tier 1). A fresh tracker sits at
+    # tier 2 with escalated_at=None and is NOT escalated — claim must be rejected.
+    t = _tracker(db, seed, tier=2, escalated=False)
     with pytest.raises(AppException) as e:
         HandlingLockService(db).claim_handling(t.id, _actor(seed, "member_a"))
     assert e.value.status_code == 422
@@ -415,6 +430,15 @@ def test_guard_admin_when_other_holds_403(db, seed, _admin_roles):  # P2-6
 
 def test_guard_not_escalated_allows(db, seed, _admin_roles):  # P2-6 / regression
     t = _tracker(db, seed, tier=1, handled_by=None)
+    assert_can_act_on_form(
+        db, t.source_entity_id, _actor(seed, "outsider"),
+        source_entity_type="complaint",
+    )
+
+
+def test_guard_tier2_start_never_escalated_allows(db, seed, _admin_roles):  # regression: project_sales
+    # tier-2 START, never escalated → guard must NOT lock (anyone with page perms can act).
+    t = _tracker(db, seed, tier=2, handled_by=None, escalated=False)
     assert_can_act_on_form(
         db, t.source_entity_id, _actor(seed, "outsider"),
         source_entity_type="complaint",

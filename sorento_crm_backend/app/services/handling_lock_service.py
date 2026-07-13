@@ -1,6 +1,8 @@
 """Form handling-lock ("I'm handling this") — claim / take-over / release + CTA guard.
 
-Once a FORM SLA tracker escalates (current_tier > 1) and the per-form flag is on,
+Once a FORM SLA tracker escalates (``escalated_at`` is set — NOT ``current_tier > 1``,
+since a config may START above tier 1, e.g. project_sales begins at tier 2) and the
+per-form flag is on,
 every state-changing business CTA (approve/reject/process/close/submit/reopen) is
 disabled for everyone until an eligible team-chain member claims the lock
 (``ConversationSLATracking.handled_by_id``). The lock is mutually exclusive and
@@ -100,6 +102,17 @@ def _is_eligible(db: Session, tracker: ConversationSLATracking, user_id: str) ->
     return str(user_id) in eligible_user_ids(db, tracker)
 
 
+def _is_escalated(tracker: ConversationSLATracking) -> bool:
+    """A form tracker is ESCALATED once ``escalated_at`` is stamped by ``_escalate_tracker``.
+
+    NOT ``current_tier > 1``: some configs start above tier 1 (project_sales begins at
+    tier 2 with no tier 1 team), so a fresh, never-escalated tracker can sit at tier 2.
+    ``escalated_at`` is set ONLY on a real escalation and never on initial assignment —
+    the same signal the SLA-escalation banner keys on (``escalation_reason``).
+    """
+    return getattr(tracker, "escalated_at", None) is not None
+
+
 def _user_name(db: Session, user_id: Optional[str]) -> Optional[str]:
     if not user_id:
         return None
@@ -149,7 +162,7 @@ def assert_can_act_on_form(
     tracker = _active_form_tracker(db, source_entity_id, source_entity_type)
     if tracker is None:
         return  # no active form tracker -> today's behavior
-    if int(getattr(tracker, "current_tier", 1) or 1) <= 1:
+    if not _is_escalated(tracker):
         return  # not escalated -> no lock
     if not is_handling_lock_enabled(db, tracker.source_entity_type):
         return  # flag off -> today's behavior
@@ -211,7 +224,7 @@ class HandlingLockService:
                 message="This SLA task is already resolved.",
                 code="VALIDATION_ERROR",
             )
-        if int(getattr(tracker, "current_tier", 1) or 1) <= 1:
+        if not _is_escalated(tracker):
             raise AppException(
                 status_code=422,
                 message="This form is not escalated; the handling lock does not apply.",
