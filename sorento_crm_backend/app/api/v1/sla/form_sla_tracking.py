@@ -64,6 +64,10 @@ def _serialize(
         "source_entity_type": t.source_entity_type,
         "source_entity_id": t.source_entity_id,
         "escalation_reason": t.escalation_reason,
+        # Stamped ONLY on a real escalation (never on initial assignment). The FE lock
+        # resolver keys "is escalated" on this, NOT current_tier > 1 — a config may start
+        # above tier 1 (project_sales begins at tier 2).
+        "escalated_at": t.escalated_at,
         # Handling lock (PLAN-form-handling-lock). NULL handled_by_id = unclaimed.
         "handled_by_id": t.handled_by_id,
         "handled_by_name": _assignee_name(db, t.handled_by_id),

@@ -180,6 +180,7 @@ def _tracker(db, seed, *, tier=2, handled_by=None):
         current_tier_started_at=now - timedelta(hours=2),
         due_at=now + timedelta(hours=4),
         due_at_resolution=now + timedelta(hours=20),
+        escalated_at=now - timedelta(hours=2),  # escalated → lock applies
         is_resolved=False,
         source_entity_type="complaint",
         source_entity_id=str(uuid.uuid4()),

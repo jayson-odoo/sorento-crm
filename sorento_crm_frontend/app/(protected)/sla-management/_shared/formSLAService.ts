@@ -114,6 +114,8 @@ export interface FormHandlingTracker {
   source_entity_type: FormSLASourceType;
   source_entity_id: string;
   escalation_reason: string | null;
+  /** Stamped only on a real escalation (never on initial assignment). NULL = never escalated. */
+  escalated_at: string | null;
   /** The active handler lock. NULL = unclaimed. */
   handled_by_id: string | null;
   handled_by_name: string | null;

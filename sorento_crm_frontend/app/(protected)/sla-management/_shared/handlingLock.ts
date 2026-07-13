@@ -3,7 +3,8 @@ import type { FormSLASourceType } from './formSLAService';
 /**
  * "I'm handling this" handling-lock — pure state resolver + types.
  *
- * Once a form-SLA stage tracker is ESCALATED (`current_tier > 1`) AND the per-form
+ * Once a form-SLA stage tracker is ESCALATED (`escalated_at` set — NOT `current_tier > 1`,
+ * since a config may START above tier 1, e.g. project_sales begins at tier 2) AND the per-form
  * feature flag is on, the state-changing business CTAs (approve/reject/process/close/
  * submit/reopen) disable for everyone until an eligible team-chain member claims the
  * lock via "I'm handling this". The lock (`handled_by_id`) is SEPARATE from the
@@ -28,6 +29,8 @@ export interface HandlingLockTracker {
   id: string;
   source_entity_type?: string | null;
   current_tier: number;
+  /** Stamped only on a real escalation (never on initial assignment). NULL = never escalated. */
+  escalated_at?: string | null;
   is_resolved?: boolean;
   /** The active handler lock. NULL/absent = unclaimed. */
   handled_by_id?: string | null;
@@ -56,12 +59,14 @@ export interface ResolveHandlingLockInput {
 export function resolveHandlingLockState(input: ResolveHandlingLockInput): HandlingLockState {
   const { activeTracker, currentUserId, isEligible, isAdmin, flagEnabledForType } = input;
 
-  // No lock today: flag off, no active tracker, resolved, or not escalated (tier 1).
+  // No lock today: flag off, no active tracker, resolved, or never escalated.
+  // "Escalated" = escalated_at stamped, NOT current_tier > 1 — a config may start above
+  // tier 1 (project_sales begins at tier 2), so tier alone would falsely lock a fresh form.
   if (
     !flagEnabledForType ||
     !activeTracker ||
     activeTracker.is_resolved ||
-    (activeTracker.current_tier ?? 0) <= 1
+    !activeTracker.escalated_at
   ) {
     return 'not_escalated';
   }
