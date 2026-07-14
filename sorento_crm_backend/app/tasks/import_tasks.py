@@ -26,6 +26,7 @@ from app.services.procurement_service import (
     SPOAllocationService,
     PickingHeaderService,
     AllocationReceivedGuardError,
+    _spo_match_key,
 )
 from app.services.resources_service import (
     AttachmentDirectoryService,
@@ -768,7 +769,7 @@ def process_attachment_bulk_import(
                         existing_to_replace.storage_provider = storage_provider  # type: ignore[assignment]
                         # Tag with the import_job.job_id so the upload-activity
                         # endpoint can group every file in this ZIP into one
-                        # session row. See docs/plans/PLAN-upload-activity-drawer.md §4.2.
+                        # session row. See documentation/plans/PLAN-upload-activity-drawer.md §4.2.
                         existing_to_replace.upload_batch_id = job_id_str  # type: ignore[assignment]
                         db.commit()
                         db.refresh(existing_to_replace)
@@ -812,7 +813,7 @@ def process_attachment_bulk_import(
                         storage_provider=storage_provider,
                         # Tag with the import_job.job_id so the upload-activity
                         # endpoint can group every file in this ZIP into one
-                        # session row. See docs/plans/PLAN-upload-activity-drawer.md §4.2.
+                        # session row. See documentation/plans/PLAN-upload-activity-drawer.md §4.2.
                         upload_batch_id=job_id_str,
                     )
                     attachment = attachment_service.create_attachment(attachment_data, user_id)
@@ -1578,17 +1579,6 @@ def validate_grn_lines_import(file_data: bytes) -> Dict[str, Any]:
     }
 
 
-def _normalize_spo_number(spo_number: Optional[str]) -> str:
-    """Normalize SPO number for matching: allow different separators (e.g. / vs .).
-    E.g. SPO-2026/01-0178 and SPO-2026.01-0178 match."""
-    if not spo_number or not str(spo_number).strip():
-        return ""
-    s = str(spo_number).strip()
-    # Canonicalize common separators to dot: / and backslash -> .
-    s = s.replace("/", ".").replace("\\", ".")
-    return s
-
-
 def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
     """Process GRN listing Excel: create/update picking headers. Idempotent."""
     from rq import get_current_job
@@ -1912,9 +1902,12 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                         failed += 1
                 continue
 
-            # Get all SPO allocations for this product, then filter by normalized spo_number
-            # (SPO numbers may use / or . e.g. SPO-2026/01-0178 vs SPO-2026.01-0178)
-            spo_normalized = _normalize_spo_number(spo_number)
+            # Get all SPO allocations for this product, then filter by SPO match key.
+            # _spo_match_key strips ALL non-alphanumerics (not just / -> .), so
+            # SPO-2026/06-0095 matches SPO-202606-0095 — the same tolerant key the
+            # rest of the system (linked-GRN display, service FIFO) uses. A weaker
+            # separator-only normalizer silently left picking lines unlinked.
+            spo_normalized = _spo_match_key(spo_number)
             all_allocations = (
                 db.query(SPOAllocation)
                 .filter(SPOAllocation.product_id == product_id)
@@ -1924,7 +1917,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             def _alloc_spo_val(a: Any) -> str:
                 v = a.spo_number
                 return str(v) if v is not None else ""
-            spo_allocations = [a for a in all_allocations if _normalize_spo_number(_alloc_spo_val(a)) == spo_normalized]
+            spo_allocations = [a for a in all_allocations if _spo_match_key(_alloc_spo_val(a)) == spo_normalized]
 
             # Build pool: (alloc_id, alloc_warehouse_id, available) FIFO by created_at.
             # FIFO from SPO allocation: prefer allocation whose warehouse matches GR line location.
