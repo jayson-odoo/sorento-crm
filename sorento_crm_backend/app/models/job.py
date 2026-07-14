@@ -48,6 +48,15 @@ class ImportJob(Base):
     completed_at = Column(DateTime(timezone=False), nullable=True)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     
+    # Retained source file (tracing): the ORIGINAL uploaded bytes are streamed to the
+    # storage bucket at import time so the file is retrievable later. All nullable —
+    # storage is best-effort (never blocks an import) and older jobs / non-file imports
+    # (products, warehouses) have none. See docs/plans/imports/.
+    source_filename = Column(String, nullable=True)       # original upload name (display)
+    source_file_key = Column(String, nullable=True)       # storage object key
+    source_file_provider = Column(String, nullable=True)  # 's3' | 'r2'
+    source_file_size = Column(Integer, nullable=True)      # bytes
+
     # Additional metadata
     job_metadata = Column('metadata', JSONB, nullable=True)  # Store additional job metadata
     

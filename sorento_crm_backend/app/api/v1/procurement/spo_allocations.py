@@ -143,14 +143,18 @@ async def import_spo_allocations(
 
     job_ids = []
     job_service = JobService(db)
+    from app.services.import_source_store import store_import_source_file
     for upload in files:
         file_data = await upload.read()
+        # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
+        source_bytes, source_name, source_ctype = file_data, upload.filename, upload.content_type
         file_data, cleaned_name = maybe_strip(file_data, upload.filename or "unknown.xlsx")
         job = job_service.create_job(
             job_type="spo_import",
             user_id=current_user["id"],
             filename=cleaned_name,
         )
+        store_import_source_file(job, source_bytes, source_name, source_ctype)
         db.commit()
         rq_job = enqueue_job(
             process_spo_import,

@@ -3,7 +3,7 @@
 import { use } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { MoveLeft, ChevronLeft, ChevronRight } from 'lucide-react';
+import { MoveLeft, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Breadcrumb,
@@ -22,7 +22,12 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
-import { getImportJob, getImportJobStatus, getImportJobs } from '../services/importJobService';
+import {
+  getImportJob,
+  getImportJobStatus,
+  getImportJobs,
+  getImportJobSourceUrl,
+} from '../services/importJobService';
 import { useCancelImportJob, useImportJobStatus } from '../hooks/useImportJobs';
 import type { ImportJob } from '../types/importJob.types';
 import { toast } from 'sonner';
@@ -304,6 +309,27 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                   <div>
                     <p className="text-muted-foreground">Filename</p>
                     <p className="font-medium">{job.filename}</p>
+                  </div>
+                )}
+                {job.has_source_file && (
+                  <div>
+                    <p className="text-muted-foreground">Source File</p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-1"
+                      onClick={async () => {
+                        try {
+                          const { url } = await getImportJobSourceUrl(id);
+                          window.open(url, '_blank', 'noopener,noreferrer');
+                        } catch {
+                          toast.error('Could not open the original uploaded file.');
+                        }
+                      }}
+                    >
+                      <Download className="size-4" />
+                      Download original
+                    </Button>
                   </div>
                 )}
                 <div>
