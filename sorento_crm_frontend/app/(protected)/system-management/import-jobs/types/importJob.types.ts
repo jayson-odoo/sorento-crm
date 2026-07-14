@@ -17,4 +17,9 @@ export interface ImportJob {
   completed_at?: Date | null;
   updated_at?: Date | null;
   job_metadata?: any;
+  // Retained original upload (tracing). Raw storage key is never exposed; download
+  // via getImportJobSourceUrl which returns a fresh signed URL.
+  source_filename?: string | null;
+  source_file_size?: number | null;
+  has_source_file?: boolean;
 }

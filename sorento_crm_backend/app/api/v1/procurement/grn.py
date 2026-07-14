@@ -160,6 +160,8 @@ async def import_grn_listing(
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Excel file (.xlsx, .xls or .xlsm) required")
     file_data = await file.read()
+    # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
+    source_bytes, source_name, source_ctype = file_data, file.filename, file.content_type
     from app.services.excel_macro_stripper import maybe_strip
     file_data, cleaned_name = maybe_strip(file_data, file.filename or "unknown.xlsx")
 
@@ -183,6 +185,8 @@ async def import_grn_listing(
         user_id=current_user["id"],
         filename=cleaned_name,
     )
+    from app.services.import_source_store import store_import_source_file
+    store_import_source_file(job, source_bytes, source_name, source_ctype)
     db.commit()
     rq_job = enqueue_job(
         process_grn_listing_import,
@@ -209,6 +213,8 @@ async def import_grn_lines(
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Excel file (.xlsx, .xls or .xlsm) required")
     file_data = await file.read()
+    # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
+    source_bytes, source_name, source_ctype = file_data, file.filename, file.content_type
     from app.services.excel_macro_stripper import maybe_strip
     file_data, cleaned_name = maybe_strip(file_data, file.filename or "unknown.xlsx")
 
@@ -232,6 +238,8 @@ async def import_grn_lines(
         user_id=current_user["id"],
         filename=cleaned_name,
     )
+    from app.services.import_source_store import store_import_source_file
+    store_import_source_file(job, source_bytes, source_name, source_ctype)
     db.commit()
     rq_job = enqueue_job(
         process_grn_lines_import,

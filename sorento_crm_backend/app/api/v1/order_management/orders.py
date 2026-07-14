@@ -1067,6 +1067,8 @@ async def import_order_tracking(
                 detail="Invalid file type. Please upload an Excel file (.xlsx, .xls, or .xlsm)."
             )
         file_data = await file.read()
+        # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
+        source_bytes, source_name, source_ctype = file_data, file.filename, file.content_type
         from app.services.excel_macro_stripper import maybe_strip
         file_data, cleaned_name = maybe_strip(file_data, file.filename or "upload.xlsx")
 
@@ -1093,6 +1095,8 @@ async def import_order_tracking(
             user_id=current_user["id"],
             filename=cleaned_name
         )
+        from app.services.import_source_store import store_import_source_file
+        store_import_source_file(job, source_bytes, source_name, source_ctype)
         db.commit()
 
         rq_job = enqueue_job(
@@ -1134,6 +1138,8 @@ async def import_delivery_order_detail(
                 detail="Invalid file type. Please upload an Excel file (.xlsx, .xls, or .xlsm)."
             )
         file_data = await file.read()
+        # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
+        source_bytes, source_name, source_ctype = file_data, file.filename, file.content_type
         from app.services.excel_macro_stripper import (
             MacroWorkbookError,
             extract_macro_template_xlsx,
@@ -1181,6 +1187,8 @@ async def import_delivery_order_detail(
             user_id=current_user["id"],
             filename=cleaned_name,
         )
+        from app.services.import_source_store import store_import_source_file
+        store_import_source_file(job, source_bytes, source_name, source_ctype)
         db.commit()
 
         rq_job = enqueue_job(

@@ -36,7 +36,12 @@ class ImportJobResponse(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     job_metadata: Optional[Dict[str, Any]] = None
-    
+    # Retained source file (tracing). Raw storage key is intentionally NOT exposed —
+    # the FE downloads via GET /jobs/{id}/source which returns a fresh signed URL.
+    source_filename: Optional[str] = None
+    source_file_size: Optional[int] = None
+    has_source_file: bool = False
+
     model_config = ConfigDict(from_attributes=True)
 
 
