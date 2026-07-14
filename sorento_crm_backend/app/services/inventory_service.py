@@ -749,40 +749,30 @@ class StockService:
         stock_items = q.offset(offset).limit(limit).all()
 
         # "Data last updated" semantics: report the latest genuine stock UPLOAD
-        # (BULK_IMPORT) time per row, not the raw Stock.updated_at. The stock row's
-        # updated_at is also bumped by SYSTEM_ADJUSTMENT zeroing ("missing from full
-        # stock take"), so a stock-take that zeros a discontinued row would otherwise
-        # masquerade as a fresh upload. The MCP render envelope's `last_updated_at`
-        # maxes over row `updated_at`, so overriding it here makes the MCP report the
-        # last real import. FE never renders `updated_at` (type-only field), so this
-        # override is invisible there.
+        # (BULK_IMPORT) time — i.e. when the stock dataset was last refreshed at all,
+        # NOT the raw Stock.updated_at. Two reasons the raw column is wrong here:
+        #  1. It is also bumped by SYSTEM_ADJUSTMENT zeroing ("missing from full stock
+        #     take"), so a stock-take that zeros a discontinued row masquerades as a
+        #     fresh upload.
+        #  2. A discontinued SKU that is simply absent from every recent upload file
+        #     gets no new BULK_IMPORT row, so its own last-import time is frozen far in
+        #     the past and reads as stale even though stock data as a whole is fresh.
+        # We therefore stamp every returned row with the SYSTEM-WIDE latest BULK_IMPORT
+        # time (one scalar query). The MCP render envelope's `last_updated_at` maxes
+        # over row `updated_at`, so this makes the MCP report the last real import
+        # globally. FE never renders `updated_at` (type-only field), so this override
+        # is invisible there.
         if stock_items:
-            product_id_set = {s.product_id for s in stock_items}
-            warehouse_id_set = {s.warehouse_id for s in stock_items}
-            import_rows = (
-                self.db.query(
-                    StockLedger.product_id,
-                    StockLedger.warehouse_id,
-                    func.max(StockLedger.created_at).label("last_import_at"),
-                )
-                .filter(
-                    StockLedger.transaction_type == "BULK_IMPORT",
-                    StockLedger.product_id.in_(product_id_set),
-                    StockLedger.warehouse_id.in_(warehouse_id_set),
-                )
-                .group_by(StockLedger.product_id, StockLedger.warehouse_id)
-                .all()
+            last_import_at = (
+                self.db.query(func.max(StockLedger.created_at))
+                .filter(StockLedger.transaction_type == "BULK_IMPORT")
+                .scalar()
             )
-            last_import = {
-                (str(r.product_id), str(r.warehouse_id)): r.last_import_at
-                for r in import_rows
-            }
-            for s in stock_items:
-                imported_at = last_import.get((str(s.product_id), str(s.warehouse_id)))
-                if imported_at is not None:
+            if last_import_at is not None:
+                for s in stock_items:
                     # Bypass the ORM instrumented descriptor so this transient
                     # override is never marked dirty / flushed to the stock row.
-                    s.__dict__["updated_at"] = imported_at
+                    s.__dict__["updated_at"] = last_import_at
 
         payload = {
             "data": stock_items,
