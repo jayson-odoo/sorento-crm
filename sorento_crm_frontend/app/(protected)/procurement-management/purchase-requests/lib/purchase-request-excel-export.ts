@@ -146,7 +146,7 @@ export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Pr
     ['Sponsor Subject:', str(request.sponsor_subject)],
     ['Date of Delivery:', deliveryDate],
     [],
-    ['NO.', 'Item Code', 'Qty', 'U/P', 'Total'],
+    ['NO.', 'Item Code', 'Qty', 'U/P', 'Total', 'Remark'],
   ];
 
   let grandTotal = 0;
@@ -166,18 +166,19 @@ export async function exportSponsorshipFormToExcel(request: PurchaseRequest): Pr
       line != null && line.quantity != null ? Number(line.quantity) : '',
       unitPrice,
       lineTotal.toFixed(2),
+      line ? str(line.remark) : '',
     ]);
   }
 
   aoa.push(
-    ['', '', '', 'Grand Total:', grandTotal.toFixed(2)],
+    ['', '', '', 'Grand Total:', grandTotal.toFixed(2), ''],
     [],
     ['Requested by:', str(request.requested_by)],
     ['Approved by:', str(request.approved_by), 'Date:', approvedAt],
   );
 
   const ws = xlsx.utils.aoa_to_sheet(aoa);
-  const colWidths = [{ wch: 14 }, { wch: 20 }, { wch: 8 }, { wch: 10 }, { wch: 12 }];
+  const colWidths = [{ wch: 14 }, { wch: 20 }, { wch: 8 }, { wch: 10 }, { wch: 12 }, { wch: 40 }];
   ws['!cols'] = colWidths;
   const wb = xlsx.utils.book_new();
   xlsx.utils.book_append_sheet(wb, ws, 'Sponsorship Form');
