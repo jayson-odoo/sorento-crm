@@ -4161,6 +4161,24 @@ class PurchaseRequestService:
         re.IGNORECASE,
     )
 
+    def _resolve_actor_display_name(self, actor_user_id: Optional[str]) -> str:
+        """Resolve a CRM user id to a display name for storage in ``approved_by``.
+
+        Returns the user's name (or email) so the "Approved by"/"Rejected by"
+        field never renders a raw UUID. Falls back to the id string only if it
+        is already a non-UUID value; empty string when nothing usable.
+        """
+        from app.models.user import User
+
+        uid = (actor_user_id or "").strip()
+        if not uid:
+            return ""
+        user = self.db.query(User).filter(User.id == uid).first()
+        if user:
+            return ((user.name or "").strip() or user.email or uid).strip() or ""
+        # Not a matching user row — echo back only if it isn't a bare UUID.
+        return "" if self._UUID_RE.match(uid) else uid
+
     def _resolve_approver_display_name(self, header: PurchaseRequestHeader) -> str:
         """Resolve ``approved_by`` to a human-readable display name.
 
@@ -6126,7 +6144,10 @@ class PurchaseRequestService:
         header.status = "rejected"
         header.approval_comments = reason
         header.approved_at = now_utc
-        header.approved_by = actor_user_id or ""
+        # Store a resolved display name (never a raw UUID) so the "Rejected by"
+        # field renders a person, consistent with the approval-decision path.
+        # The raw actor id is preserved separately in requested_approval_by_user_id.
+        header.approved_by = self._resolve_actor_display_name(actor_user_id)
         header.approval_signature_ref = None
         if actor_user_id is not None:
             header.requested_approval_by_user_id = actor_user_id

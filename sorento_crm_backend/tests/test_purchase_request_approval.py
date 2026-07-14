@@ -20,6 +20,7 @@ from app.models.procurement import (
     PurchaseRequestHeader,
     PurchaseRequestLine,
 )
+from app.models.user import User
 from app.services import procurement_service as procurement_service_mod
 from app.services.procurement_service import PurchaseRequestService
 
@@ -55,6 +56,7 @@ def db():
             PurchaseRequestHeader.__table__,
             PurchaseRequestLine.__table__,
             ApprovalToken.__table__,
+            User.__table__,
         ],
     )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -120,3 +122,47 @@ def test_reject_submitted_advances_status(db):
 
     assert header.approval_status == "rejected"
     assert header.status == "rejected"
+
+
+def test_reject_submitted_stores_actor_name_not_uuid(db):
+    """`approved_by` (the "Rejected by" field) must hold a display name, never a raw UUID."""
+    actor_id = str(uuid.uuid4())
+    db.add(User(id=actor_id, name="CK Lee", email="ck@example.com"))
+    header_id = str(uuid.uuid4())
+    db.add(
+        PurchaseRequestHeader(
+            id=header_id,
+            request_type="purchase_request",
+            status="submitted",
+            approval_status=None,
+        )
+    )
+    db.commit()
+    service = PurchaseRequestService(db)
+
+    header = service.reject_submitted(header_id, "not needed", actor_user_id=actor_id)
+
+    assert header.approved_by == "CK Lee"  # resolved name, not the UUID
+    assert header.approved_by != actor_id
+    # Raw actor id is preserved separately for FK / audit purposes.
+    assert header.requested_approval_by_user_id == actor_id
+
+
+def test_reject_submitted_unmatched_uuid_not_leaked(db):
+    """An actor UUID with no matching user row must not leak into `approved_by`."""
+    orphan_id = str(uuid.uuid4())
+    header_id = str(uuid.uuid4())
+    db.add(
+        PurchaseRequestHeader(
+            id=header_id,
+            request_type="purchase_request",
+            status="submitted",
+            approval_status=None,
+        )
+    )
+    db.commit()
+    service = PurchaseRequestService(db)
+
+    header = service.reject_submitted(header_id, "not needed", actor_user_id=orphan_id)
+
+    assert header.approved_by == ""  # UUID-shaped + no user -> blank, never the UUID
