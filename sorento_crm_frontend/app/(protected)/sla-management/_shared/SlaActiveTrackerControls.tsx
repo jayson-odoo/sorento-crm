@@ -34,6 +34,10 @@ export function SlaActiveTrackerControls({
         reason={activeTracker.escalation_reason}
         tier={activeTracker.current_tier}
         assignee={activeTracker.assigned_user_name}
+        assigneeWaPhone={activeTracker.assigned_user_wa_phone}
+        escalatedFromName={activeTracker.escalated_from_name}
+        escalatedFromWaPhone={activeTracker.escalated_from_wa_phone}
+        escalatedAt={activeTracker.escalated_at}
       />
       {latestExtend && (
         <SlaExtensionBanner
@@ -41,6 +45,8 @@ export function SlaActiveTrackerControls({
           newDue={latestExtend.due_at ?? activeTracker.due_at_resolution}
           tier={activeTracker.current_tier}
           assignee={activeTracker.assigned_user_name}
+          assigneeWaPhone={activeTracker.assigned_user_wa_phone}
+          eventAt={latestExtend.event_at}
         />
       )}
     </div>

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Hand, HandHelping, Info, Lock } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { PersonLink } from '@/components/common/PersonLink';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { HandlingLockState, HandlingLockTracker } from './handlingLock';
 import { TakeOverConfirmDialog } from './HandlingLockActions';
@@ -40,7 +41,13 @@ export function HandlingLockBanner({
 
   const tier = tracker?.current_tier ?? null;
   const tierText = tier != null ? `Tier ${tier}` : 'a higher tier';
-  const handlerName = tracker?.handled_by_name?.trim() || 'Someone';
+  // WHO — a wa.me link when the holder has a resolvable phone, else plain text
+  // (PersonLink handles the fallback). Falls back to "Someone" when unnamed.
+  const handlerNode = tracker?.handled_by_name?.trim() ? (
+    <PersonLink name={tracker.handled_by_name} waPhone={tracker.handled_by_wa_phone} />
+  ) : (
+    'Someone'
+  );
   const since = sinceLabel(tracker?.handled_at);
 
   const shellClass =
@@ -94,7 +101,7 @@ export function HandlingLockBanner({
           <Lock className="mt-0.5 size-4 shrink-0" />
           <span>
             <span className="font-medium">
-              {handlerName} is handling this{since}
+              {handlerNode} is handling this{since}
             </span>
             . Take over to act on this form.
           </span>
@@ -144,7 +151,7 @@ export function HandlingLockBanner({
         <Lock className="mt-0.5 size-4 shrink-0" />
         <span>
           Escalated to {tierText}, handled by{' '}
-          <span className="font-medium">{handlerName}</span>.
+          <span className="font-medium">{handlerNode}</span>.
         </span>
       </p>
     </div>

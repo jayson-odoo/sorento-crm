@@ -350,6 +350,10 @@ class PurchaseRequestHeader(Base):
     approval_status = Column(String(50), nullable=True)  # pending | approved | rejected
     approved_at = Column(DateTime(timezone=False), nullable=True)
     approved_by = Column(Text, nullable=True)
+    # Dedicated rejecter user id (users.id). Populated on both reject paths so the
+    # rejection banner can resolve a name + wa.me phone. NULL for external-email
+    # approvers and legacy rejections (approved_by then holds only a name string).
+    rejected_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approval_signature_ref = Column(Text, nullable=True)
     approval_comments = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

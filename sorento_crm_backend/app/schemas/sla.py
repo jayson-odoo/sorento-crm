@@ -417,6 +417,8 @@ class ConversationSLAEventLogCreate(BaseModel):
     reason: Optional[str] = None
     assigned_to: Optional[str] = None  # Keep for backward compatibility
     assigned_to_id: Optional[str] = None  # FK to users
+    # Prior-tier owner snapshotted at escalation time (before assigned_to_id overwrite).
+    from_assigned_to_id: Optional[str] = None  # FK to users (escalated-FROM)
     due_at: Optional[datetime] = None
     response_time: Optional[Decimal] = None
     resolution_time: Optional[Decimal] = None
@@ -448,8 +450,14 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
     contact_name: Optional[str] = None  # From contact.name or respond_contact_name
     assigned_user_name: Optional[str] = None  # From assigned_user.name
     assigned_user_email: Optional[str] = None  # From assigned_user.email
+    # Bare wa.me digits of the current assignee, for the extension banner link.
+    assigned_user_wa_phone: Optional[str] = None
     assigned_user_superior_name: Optional[str] = None  # From assigned_user.superior (for tooltip)
     assigned_user_superior_email: Optional[str] = None  # From assigned_user.superior (for tooltip)
+    # Escalated-FROM owner (latest escalation event's from_assigned_to_id) for the
+    # escalation banner: WHO missed at the prior tier + their wa.me digits.
+    escalated_from_name: Optional[str] = None
+    escalated_from_wa_phone: Optional[str] = None
     responded_by_user_name: Optional[str] = None  # Looked up from responded_by user ID
     resolved_by_user_name: Optional[str] = None  # Looked up from resolved_by user ID
     # Average times calculated from event logs

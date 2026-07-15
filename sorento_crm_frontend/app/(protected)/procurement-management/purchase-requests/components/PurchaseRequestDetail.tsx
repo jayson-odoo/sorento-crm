@@ -843,7 +843,17 @@ export default function PurchaseRequestDetail({
         // PR/SF store the rejection reason in approval_comments (both CS-reject
         // before approval and approver-reject write it there), not a dedicated
         // rejection_reason column.
-        <RejectionReasonBanner reason={request.approval_comments} />
+        <RejectionReasonBanner
+          reason={request.approval_comments}
+          // BE emits `rejected_by_name` / `rejected_by_wa_phone` from the new
+          // `rejected_by_id` column, and already applies the legacy `approved_by`
+          // fallback server-side WITH a bare-UUID guard (HIST-3). Do NOT re-add an
+          // unguarded `?? request.approved_by` here — that would leak a raw UUID into
+          // the UI when approved_by holds an id. WHEN sourced from `approved_at`.
+          rejectedByName={(request as { rejected_by_name?: string | null }).rejected_by_name ?? undefined}
+          rejectedByWaPhone={(request as { rejected_by_wa_phone?: string | null }).rejected_by_wa_phone ?? undefined}
+          rejectedAt={request.approved_at}
+        />
       )}
 
       <SlaActiveTrackerControls

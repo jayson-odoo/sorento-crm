@@ -718,7 +718,13 @@ export default function StockInquiryDetail({
       </Dialog>
 
       {inquiry.status === 'rejected' && (
-        <RejectionReasonBanner reason={inquiry.rejection_reason} />
+        <RejectionReasonBanner
+          reason={inquiry.rejection_reason}
+          rejectedByName={inquiry.rejected_by_name}
+          // Phase 2: BE to emit `rejected_by_wa_phone` on the detail DTO.
+          rejectedByWaPhone={(inquiry as { rejected_by_wa_phone?: string | null }).rejected_by_wa_phone ?? undefined}
+          rejectedAt={inquiry.rejected_at}
+        />
       )}
 
       <SlaActiveTrackerControls

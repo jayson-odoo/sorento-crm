@@ -63,9 +63,15 @@ export interface ConversationSLATracking {
   contact_phone?: string | null;
   contact_name?: string | null;
   assigned_user_name?: string | null;
+  /** Bare wa.me digits of the current assignee, when resolvable. NULL → plain text. */
+  assigned_user_wa_phone?: string | null;
   assigned_user_email?: string | null;
   assigned_user_superior_name?: string | null;
   assigned_user_superior_email?: string | null;
+  /** Display name of the escalated-FROM owner (who missed at the prior tier), from the latest escalation event. */
+  escalated_from_name?: string | null;
+  /** Bare wa.me digits of the escalated-from owner, when resolvable. NULL → plain text. */
+  escalated_from_wa_phone?: string | null;
   responded_by_user_name?: string | null;
   resolved_by_user_name?: string | null;
   average_response_time?: number | null;

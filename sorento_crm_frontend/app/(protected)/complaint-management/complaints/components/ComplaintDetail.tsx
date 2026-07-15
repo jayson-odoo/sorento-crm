@@ -817,7 +817,14 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
       </Dialog>
 
       {complaint.status === 'rejected' && (
-        <RejectionReasonBanner reason={complaint.rejection_reason} />
+        <RejectionReasonBanner
+          reason={complaint.rejection_reason}
+          // Phase 2: BE to emit `rejected_by_name` / `rejected_by_wa_phone` / `rejected_at`
+          // on the complaint detail DTO (rejecter resolved from `rejected_by` = respond_user_id).
+          rejectedByName={(complaint as { rejected_by_name?: string | null }).rejected_by_name ?? undefined}
+          rejectedByWaPhone={(complaint as { rejected_by_wa_phone?: string | null }).rejected_by_wa_phone ?? undefined}
+          rejectedAt={(complaint as { rejected_at?: string | null }).rejected_at ?? undefined}
+        />
       )}
 
       <SlaActiveTrackerControls

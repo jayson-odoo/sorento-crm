@@ -195,6 +195,10 @@ class ConversationSLAEventLog(Base):
     reason = Column(Text, nullable=True)
     assigned_to = Column(Text, nullable=True)  # Keep for backward compatibility
     assigned_to_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # FK to users
+    # Escalated-FROM owner: the assignee at the PRIOR tier, snapshotted at escalation
+    # time BEFORE assigned_to_id is overwritten to the new tier's assignee. The
+    # escalation banner links this person (who missed). NULL for non-escalation events.
+    from_assigned_to_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)  # FK to users
     due_at = Column(DateTime(timezone=False), nullable=True)
     response_time = Column(Numeric(10, 2), nullable=True)
     resolution_time = Column(Numeric(10, 2), nullable=True)
@@ -214,6 +218,7 @@ class ConversationSLAEventLog(Base):
         Index("ix_conversation_sla_event_log_event_at", "event_at"),
         Index("ix_conversation_sla_event_log_event_type", "event_type"),
         Index("ix_conversation_sla_event_log_assigned_to_id", "assigned_to_id"),
+        Index("ix_conversation_sla_event_log_from_assigned_to_id", "from_assigned_to_id"),
     )
 
 

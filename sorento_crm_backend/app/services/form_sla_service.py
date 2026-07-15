@@ -506,6 +506,9 @@ class FormSLAOrchestrator:
         tracker.escalation_reason = reason
         tracker.due_at = _working_due_naive(self.db, now, response_hrs)
         tracker.due_at_resolution = _working_due_naive(self.db, now, resolution_hrs)
+        # Snapshot the escalated-FROM owner BEFORE the assignee overwrite so the
+        # escalation event log records who missed at the prior tier (banner link).
+        prev_assigned_to_id = tracker.assigned_to_id
         tracker.assigned_to_id = assignee["id"]
         tracker.assigned_to = (
             str(assignee.get("respond_user_id")) if assignee.get("respond_user_id") else None
@@ -528,6 +531,7 @@ class FormSLAOrchestrator:
             to_tier=target_tier,
             reason=log_reason,
             assigned_to_id=assignee["id"],
+            from_assigned_to_id=prev_assigned_to_id,
             due_at=tracker.due_at,
             trigger=trigger,
             triggered_by_id=triggered_by_id,
@@ -1166,6 +1170,7 @@ class FormSLAOrchestrator:
         to_tier: Optional[int] = None,
         reason: Optional[str] = None,
         assigned_to_id: Optional[str] = None,
+        from_assigned_to_id: Optional[str] = None,
         due_at: Optional[datetime] = None,
         trigger: Optional[str] = None,
         triggered_by_id: Optional[str] = None,
@@ -1186,6 +1191,7 @@ class FormSLAOrchestrator:
                     event_at=_to_aware_utc(_utc_naive_now()),
                     reason=reason,
                     assigned_to_id=assigned_to_id,
+                    from_assigned_to_id=from_assigned_to_id,
                     due_at=_to_aware_utc(due_at) if isinstance(due_at, datetime) else due_at,
                     trigger=trigger,
                     triggered_by_id=triggered_by_id,

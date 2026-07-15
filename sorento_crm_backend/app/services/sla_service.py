@@ -2164,6 +2164,9 @@ class ConversationSLATrackingService:
         setattr(tracking, "due_at", _working_due(self.db, now_utc, response_hours))
         # On escalation, due_at_resolution = escalation time (now) + resolution_hours (working hours)
         setattr(tracking, "due_at_resolution", _working_due(self.db, now_utc, resolution_hours))
+        # Snapshot the escalated-FROM owner BEFORE the assignee is overwritten so the
+        # escalation event log records who missed at the prior tier (banner link).
+        prev_assigned_to_id = getattr(tracking, "assigned_to_id", None)
         if assigned_to_id is not None:
             setattr(tracking, "assigned_to_id", str(assigned_to_id))
             setattr(
@@ -2190,6 +2193,11 @@ class ConversationSLATrackingService:
                 assigned_to_id=(
                     str(getattr(tracking, "assigned_to_id"))
                     if getattr(tracking, "assigned_to_id", None) is not None
+                    else None
+                ),
+                from_assigned_to_id=(
+                    str(prev_assigned_to_id)
+                    if prev_assigned_to_id is not None
                     else None
                 ),
                 due_at=(

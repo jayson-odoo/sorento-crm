@@ -30,8 +30,12 @@ from app.schemas.sla import (
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error, handle_validation_error, handle_not_found
-from app.models.sla import ConversationSLATracking, SLAPolicyTier
+from app.models.sla import ConversationSLATracking, ConversationSLAEventLog, SLAPolicyTier
 from app.models.user import User
+from app.services.banner_person_service import (
+    wa_phone_for_user_id,
+    name_and_wa_phone_for_user_id,
+)
 
 router = APIRouter()
 
@@ -149,6 +153,28 @@ def build_conversation_sla_tracking_response(
     tier_response_hours = tier.response_hours if tier else None
     tier_resolution_hours = getattr(tier, "resolution_hours", None) if tier else None
 
+    # Banner person links (PLAN-form-banner-person-links): current assignee's wa.me
+    # phone (extension banner) + the escalated-FROM owner name/phone from the latest
+    # escalation event (escalation banner). All resolve to None when unavailable.
+    assigned_user_wa_phone = wa_phone_for_user_id(db, tracking.assigned_to_id)
+    latest_escalation = (
+        db.query(ConversationSLAEventLog)
+        .filter(
+            ConversationSLAEventLog.sla_tracking_id == tracking.id,
+            ConversationSLAEventLog.event_type == "escalation",
+        )
+        .order_by(ConversationSLAEventLog.event_at.desc())
+        .first()
+    )
+    escalated_from_id = (
+        getattr(latest_escalation, "from_assigned_to_id", None)
+        if latest_escalation is not None
+        else None
+    )
+    escalated_from_name, escalated_from_wa_phone = name_and_wa_phone_for_user_id(
+        db, escalated_from_id
+    )
+
     response_dict = {
         "id": str(tracking.id),
         "policy_id": str(tracking.policy_id),
@@ -209,6 +235,9 @@ def build_conversation_sla_tracking_response(
         "contact_name": contact_name,
         "assigned_user_name": assigned_user_name,
         "assigned_user_email": assigned_user_email,
+        "assigned_user_wa_phone": assigned_user_wa_phone,
+        "escalated_from_name": escalated_from_name,
+        "escalated_from_wa_phone": escalated_from_wa_phone,
         "assigned_user_superior_name": tracking.assigned_user.superior.name
         if (tracking.assigned_user and getattr(tracking.assigned_user, "superior", None))
         else None,
