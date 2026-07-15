@@ -132,6 +132,8 @@ class MarketSegment(Base):
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     sort_order = Column(Integer, nullable=True)
+    # SCM (M2): default demand nature for customers in this segment (continuous | spike).
+    demand_nature = Column(String(20), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
