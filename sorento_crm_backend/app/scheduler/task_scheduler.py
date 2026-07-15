@@ -210,6 +210,36 @@ def _handler_product_discontinued_check(db, task):
     return run_product_discontinued_check(db, task)
 
 
+def _handler_scm_analytics(db, task):
+    """Nightly SCM analytics full recompute (demand + ABC/XYZ + supplier performance).
+
+    Runs ``run_analytics`` on the scheduler/worker process. ``run_analytics`` opens its
+    own ``scm.scm_analytics_run`` log row up-front and, on any failure, stamps that row
+    ``status='failed'`` + ``error_text`` before re-raising — so a bad run is always
+    observable in the run log. We re-raise here so the scheduled-task run is marked
+    failed too; the heartbeat's outer guard (``run_due_tasks``) keeps the scheduler
+    process alive, so a failed analytics run never crashes the scheduler.
+
+    Optional ``scheduled_tasks.metadata`` keys tune the run with no code change:
+      * ``scope``  — dict forwarded to run_analytics (product_ids / supplier_ids / ...).
+      * ``config`` — dict forwarded to run_analytics (e.g. ``as_of``).
+    Absent metadata => full-catalog run as of today (the nightly default).
+    """
+    from app.services.scm.analytics_service import run_analytics
+
+    metadata = getattr(task, "metadata_", None)
+    scope = metadata.get("scope") if isinstance(metadata, dict) else None
+    config = metadata.get("config") if isinstance(metadata, dict) else None
+    try:
+        return run_analytics(db, scope=scope, config=config)
+    except Exception:
+        # run_analytics already recorded status='failed' + error_text on its run-log
+        # row; re-raise so the scheduled-task run is failed too. The heartbeat catches
+        # this so the scheduler keeps ticking.
+        logger.exception("Scheduled SCM analytics run failed")
+        raise
+
+
 def _drain_email_outbox_tick():
     """APScheduler tick wrapper. Owns its own DB session (drain_email_outbox handles errors)."""
     try:
@@ -294,6 +324,7 @@ def register_task_handlers():
     register_handler("n8n_liveness_ping", lambda db, task: run_n8n_liveness_ping(db))
     register_handler("system_health_watchdog", lambda db, task: run_health_watchdog(db))
     register_handler("system_health_daily_digest", lambda db, task: run_health_daily_digest(db, task))
+    register_handler("scm_analytics", _handler_scm_analytics)
 
 
 def start_scheduler():

@@ -26,6 +26,7 @@ from app.api.v1 import (
     activities,
     tickets,
     downloads,
+    scm,
 )
 from app.api.v1.system import modules_runtime
 from app.api.v1.assistant import record_context as assistant_record_context
@@ -189,6 +190,14 @@ api_router.include_router(
     prefix="/tickets-management",
     tags=["tickets"],
     dependencies=[Depends(require_module_enabled_with_api_key("tickets"))],
+)
+
+# Supply Chain & Inventory Optimisation (SCM) — reorder dashboard, SO/PO surfaces.
+api_router.include_router(
+    scm.router,
+    prefix="/scm",
+    tags=["scm"],
+    dependencies=[Depends(require_module_enabled_with_api_key("scm"))],
 )
 
 # Public quoting customer-approval endpoint — unauthenticated, must be mounted

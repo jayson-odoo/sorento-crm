@@ -27,6 +27,28 @@
   --input: var(--color-zinc-200);
   --ring: var(--color-zinc-400);
   --radius: 0.5rem;
+
+  /**
+   * SCM health-state ramp (light) — diverging, accessible, NEVER hue-alone.
+   * Every state is always paired in the UI with an icon + label + the sign of
+   * net position; colour is a secondary cue. `-solid` = accent bar / icon / number
+   * ink (>=4.5:1 on card bg); `-soft` = badge/tile tint background (pair with -solid ink).
+   * States: stockout (deep red-orange), low/reorder-due (amber), healthy (teal —
+   * colourblind-safer than green), overstock (indigo), dead (slate — "no movement"),
+   * incoming PO (blue). low + overstock are prototyped but rendered disabled at M1.
+   */
+  --scm-stockout: oklch(0.55 0.19 32);
+  --scm-stockout-soft: oklch(0.96 0.035 32);
+  --scm-low: oklch(0.62 0.14 75);
+  --scm-low-soft: oklch(0.96 0.045 80);
+  --scm-healthy: oklch(0.55 0.09 195);
+  --scm-healthy-soft: oklch(0.95 0.03 195);
+  --scm-overstock: oklch(0.52 0.15 275);
+  --scm-overstock-soft: oklch(0.95 0.03 285);
+  --scm-dead: oklch(0.52 0.015 260);
+  --scm-dead-soft: oklch(0.95 0.005 260);
+  --scm-incoming: oklch(0.55 0.16 250);
+  --scm-incoming-soft: oklch(0.95 0.035 250);
 }
 
 .dark {
@@ -54,6 +76,21 @@
   --border: var(--color-zinc-800);
   --input: var(--color-zinc-800);
   --ring: var(--color-zinc-600);
+
+  /* SCM health-state ramp (dark) — brighter ink for contrast on zinc-950,
+     soft tints are low-lightness tinted fills. Kept contrast-checked >=4.5:1. */
+  --scm-stockout: oklch(0.72 0.17 34);
+  --scm-stockout-soft: oklch(0.30 0.06 32);
+  --scm-low: oklch(0.78 0.13 80);
+  --scm-low-soft: oklch(0.30 0.05 75);
+  --scm-healthy: oklch(0.74 0.10 190);
+  --scm-healthy-soft: oklch(0.29 0.04 195);
+  --scm-overstock: oklch(0.72 0.14 280);
+  --scm-overstock-soft: oklch(0.30 0.05 280);
+  --scm-dead: oklch(0.68 0.015 260);
+  --scm-dead-soft: oklch(0.29 0.008 260);
+  --scm-incoming: oklch(0.72 0.15 250);
+  --scm-incoming-soft: oklch(0.30 0.05 250);
 }
 
 /** Theme Setup **/
@@ -85,6 +122,20 @@
 
   --color-mono: var(--mono);
   --color-mono-foreground: var(--mono-foreground);
+
+  /** SCM health-state ramp → Tailwind utilities (bg-scm-*, text-scm-*, border-scm-*) **/
+  --color-scm-stockout: var(--scm-stockout);
+  --color-scm-stockout-soft: var(--scm-stockout-soft);
+  --color-scm-low: var(--scm-low);
+  --color-scm-low-soft: var(--scm-low-soft);
+  --color-scm-healthy: var(--scm-healthy);
+  --color-scm-healthy-soft: var(--scm-healthy-soft);
+  --color-scm-overstock: var(--scm-overstock);
+  --color-scm-overstock-soft: var(--scm-overstock-soft);
+  --color-scm-dead: var(--scm-dead);
+  --color-scm-dead-soft: var(--scm-dead-soft);
+  --color-scm-incoming: var(--scm-incoming);
+  --color-scm-incoming-soft: var(--scm-incoming-soft);
 
   /** Base Styles **/
   --color-border: var(--border);

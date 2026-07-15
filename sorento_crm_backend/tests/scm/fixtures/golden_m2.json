@@ -1,0 +1,26 @@
+{
+  "_note": "M2 blessed golden set. Demand + ABC/XYZ derived INDEPENDENTLY of the engine from REAL historical DO order_lines in the local prod-copy DB (see _derivation). Demand is bucketed WEEKLY (~13 x 7-day buckets over the 90-day window) so CV + the 10% trim are meaningful. Supplier golden numbers are hand-computed from a synthetic PO/GR fixture built inside each test's savepoint (see test_m2_supplier_perf.py). Assert engine output within tolerance on rates/baseline, exact on class letters/method.",
+  "as_of": "2026-06-01",
+  "window_days": 90,
+  "num_buckets": 13,
+  "bucket_days": 7,
+  "annual_days": 365,
+  "_derivation": {
+    "buckets": "~13 trailing 7-day (weekly) buckets over the 90-day window ending exclusively at as_of=2026-06-01. Bucket index = floor((as_of - order_date - 1)/7), newest-first: index 0 = the most recent 7 days [2026-05-25,2026-06-01); the oldest bucket (index 12) is the short remainder clamped to the 90-day window start. Bucket demand = SUM(order_lines.quantity) over non-cancelled orders in the week (same rows as scm.consumption_v). The `buckets` array below is newest-first. See scripts/scm_m2_golden_derive.py.",
+    "avg_daily_demand": "baseline_total / window_days (90). For method 'mean' baseline_total == total (sum of all weekly buckets). For 'trimmed_mean' (Y band only) baseline_total == kept_mean * num_buckets where kept_mean drops the top+bottom 10% of the 13 weekly totals (floor(0.10*13)=1 period each tail).",
+    "demand_cv": "population sigma/mu of the 13 per-bucket DAILY RATES (bucket_qty / bucket_days), statistics.pstdev / mean, ddof=0. Rates (not raw totals) so the short 6-day oldest bucket does not structurally inflate variability (S3); buckets 0..11 are 7-day weeks, bucket 12 is the 6-day remainder.",
+    "method": "Trim ONLY the moderate-variability Y band: 'trimmed_mean' when 0.5<demand_cv<=1.0 (drops one weekly period off each tail so an occasional spike week no longer inflates the baseline); otherwise 'mean'. Both the steady X band (cv<=0.5) AND the lumpy Z band (cv>1.0) use the plain mean (baseline==total) — a single-spike Z SKU must NOT be trimmed to a zero baseline; its Z class letter already flags low confidence.",
+    "xyz_class": "X when cv<=0.5, Y when cv<=1.0, Z when cv>1.0 (abc_xyz_policy xyz_x_max=0.5, xyz_y_max=1.0). Weekly bucketing raises CV vs the old 30-day buckets, so lumpy SKUs now classify Y/Z. The XYZ band drives the trim decision so the branch and the class letter always agree.",
+    "abc_class": "Rank ALL costed (product.cost_price>0) SKU x warehouse keys by trailing-365-day annual value SUM(qty*cost_price) desc; class decided on the cumulative share of grand total BEFORE the item itself is added (prev_cum): A when prev_cum<=80%, B when prev_cum<=95%, C=rest (abc_xyz_policy abc_a_pct=80, abc_b_pct=95). This is the standard ABC rule (B1): the boundary-crossing item belongs to the HIGHER class and rank-1 (prev_cum=0) is ALWAYS A. FT-03 sits astride the 80% cut (cum 80.67 / prev_cum 79.16) so it classes A, not B. Null-cost keys => abc_class null (unknown)."
+  },
+  "demand": [
+    {"product_code": "WESERP10B",      "warehouse_code": "BRW",    "buckets": [156, 1640, 3578, 2750, 2132, 1823, 951, 1332, 1348, 0, 0, 882, 979], "total": 17571, "baseline_total": 16537.18, "avg_daily_demand": 183.7465, "demand_cv": 0.7424, "method": "trimmed_mean", "xyz_class": "Y", "abc_class": "A", "trim_demonstration": true},
+    {"product_code": "B2155-NL-BLUE",  "warehouse_code": "BRW-IB", "buckets": [560, 810, 4750, 6669, 0, 2683, 2548, 160, 306, 0, 0, 489, 4677], "total": 23652, "baseline_total": 23652.00, "avg_daily_demand": 262.8000, "demand_cv": 1.1982, "method": "mean", "xyz_class": "Z", "abc_class": "A"},
+    {"product_code": "ST-(L)-PCT",     "warehouse_code": "BRW-IB", "buckets": [0, 300, 0, 0, 0, 0, 0, 0, 13, 0, 0, 0, 1124],             "total": 1437,  "baseline_total": 1437.00,  "avg_daily_demand": 15.9667,  "demand_cv": 2.8137, "method": "mean", "xyz_class": "Z", "abc_class": "A"},
+    {"product_code": "FT-03",          "warehouse_code": "BRW-IB", "buckets": [0, 600, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 624],               "total": 1224,  "baseline_total": 1224.00,  "avg_daily_demand": 13.6000,  "demand_cv": 2.3580, "method": "mean", "xyz_class": "Z", "abc_class": "A"},
+    {"product_code": "SRTPTFE1207",    "warehouse_code": "BRW",    "buckets": [0, 0, 0, 0, 4000, 2000, 100, 0, 0, 0, 0, 0, 600],         "total": 6700,  "baseline_total": 6700.00,  "avg_daily_demand": 74.4444,  "demand_cv": 2.1825, "method": "mean", "xyz_class": "Z", "abc_class": "C"},
+    {"product_code": "C-FH24",         "warehouse_code": "BRW-IR", "buckets": [0, 0, 1246, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],                "total": 1246,  "baseline_total": 1246.00,  "avg_daily_demand": 13.8444,  "demand_cv": 3.4641, "method": "mean", "xyz_class": "Z", "abc_class": "C", "lumpy_nonzero_demonstration": true}
+  ],
+  "channel_split_sku": {"product_code": "SRT6643-GM", "warehouse_code": "BRW", "continuous_qty": 950, "spike_qty": 150, "total": 1100,
+    "_note": "cont(152)+untagged(798) default to continuous=950; spike=150; sum=total=1100 (no double-count). Window totals are independent of bucket width."}
+}

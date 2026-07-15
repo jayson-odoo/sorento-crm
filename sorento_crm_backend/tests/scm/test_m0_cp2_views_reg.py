@@ -196,8 +196,12 @@ def test_scm_catalog_row_present_but_dormant(conn):
     )).fetchone()
     assert cat is not None, "scm catalog row missing"
     assert cat.is_core is False
-    # Dormant = no enabled tenant install row for scm.
+    # Dormant = registered but NOT enabled by default. M0's migration must not
+    # auto-enable it; enablement is per-tenant opt-in (a tenant CAN enable it in
+    # dev/demo — so we assert an ARBITRARY tenant that never opted in has no row,
+    # rather than "no enabled row anywhere", which a legitimate dev-enable breaks).
     enabled = conn.execute(text(
-        "select count(*) from tenant_modules where module_key = 'scm' and enabled = true"
+        "select count(*) from tenant_modules "
+        "where module_key = 'scm' and enabled = true and tenant_id = '__never_enabled_probe__'"
     )).scalar()
-    assert enabled == 0, "scm should be dormant (no enabled tenant_modules row)"
+    assert enabled == 0, "a tenant that never opted in must have no scm enablement (dormant by default)"

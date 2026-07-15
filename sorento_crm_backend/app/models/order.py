@@ -282,6 +282,9 @@ class SalesOrder(Base):
     so_number = Column(String(100), unique=True, nullable=False)
     customer_id = Column(UUID(as_uuid=False), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
     order_date = Column(Date, nullable=True)
+    # Customer-requested delivery / ship-by date (M1-D14). Distinct from order_date
+    # (when the SO was raised); drives the FE "requested_delivery_date" column.
+    requested_delivery_date = Column(Date, nullable=True)
     order_type = Column(String(50), nullable=True)  # lookup code (continuous / spike vocab)
     priority = Column(String(20), nullable=True)
     status = Column(String(50), default="open", nullable=False)

@@ -641,6 +641,13 @@ def seed(db) -> dict:
             )
             pol_count += 1
             grl_count += 1
+        # ON-GR TRIGGER INTEGRATION POINT (AC-M2.11): this loop is the only writer of
+        # the SCM PO→GR link (picking_type='goods_received' + source_entity_type=
+        # 'purchase_order' + picking_lines.po_line_id) until M4's runtime create-GR-from-PO
+        # lands. A runtime GR post would fire
+        # ``analytics_service.on_goods_receipt_posted(db, po.supplier_id, pol.product_id)``
+        # here to refresh just this supplier×product. The seed skips per-GR refresh on
+        # purpose — callers run one full ``run_analytics`` after seeding instead.
         po_count += 1
         grn_count += 1
     counts["purchase_orders"] = po_count
@@ -697,14 +704,16 @@ def seed(db) -> dict:
 
     db.add(
         AbcXyzPolicy(
-            abc_a_pct=_d("0.80"), abc_b_pct=_d("0.15"),
+            # M2-locked convention: CUMULATIVE percent cut points (A<=80%, B<=95%).
+            abc_a_pct=_d("80"), abc_b_pct=_d("95"),
             xyz_x_max=_d("0.50"), xyz_y_max=_d("1.00"),
             is_active=True, source_system=SEED, source_ref="demo-abcxyz",
         )
     )
     db.add(
         SupplierScoringPolicy(
-            delivery_weight=_d("0.60"), quality_weight=_d("0.40"),
+            # M2-locked weights: even split delivery / quality.
+            delivery_weight=_d("0.50"), quality_weight=_d("0.50"),
             grace_days=2, min_sample_size=3,
             is_active=True, source_system=SEED, source_ref="demo-supplier-scoring",
         )

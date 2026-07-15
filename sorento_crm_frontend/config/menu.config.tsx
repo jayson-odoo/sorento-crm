@@ -374,6 +374,32 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
+    // Supply Chain (SCM) — net-position dashboard + sales orders.
+    // Gated behind `moduleKey: 'scm'` and, per leaf, the `scm.dashboard.view`
+    // read permission that actually protects all three read endpoints (the SO
+    // and PO list routes share that read gate; writes use `scm.reorder.run`).
+    title: 'Supply Chain',
+    icon: TrendingUp,
+    moduleKey: 'scm',
+    children: [
+      {
+        title: 'Dashboard',
+        path: '/scm',
+        permission: 'scm.dashboard.view',
+      },
+      {
+        title: 'Sales Orders',
+        path: '/scm/sales-orders',
+        permission: 'scm.dashboard.view',
+      },
+      {
+        title: 'Purchase Orders',
+        path: '/scm/purchase-orders',
+        permission: 'scm.dashboard.view',
+      },
+    ],
+  },
+  {
     title: 'Delivery Order Management',
     icon: ShoppingCart,
     moduleKey: 'order',

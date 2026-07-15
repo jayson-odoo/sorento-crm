@@ -2,7 +2,35 @@
 
 **Slug:** `scm-m2-demand-classification-supplier-perf` · **Milestone:** M2
 **UAC:** `scm-m2-demand-classification-supplier-perf-acceptance-criteria.md` · **Umbrella:** `PLAN-scm-reorder-copilot.md`
-**Depends:** M0, M1 · **Status:** DRAFT (grilled, pre-code) · **Type:** BE-heavy (analytics job) + M1 column light-up
+**Depends:** M0, M1 · **Status:** BE ENGINE BUILT (Phase-2 checkpoint; FE binding pending) · **Type:** BE-heavy (analytics job) + M1 column light-up
+
+## Implementation notes (M2 engine — checkpoint)
+Deterministic engine in `app/services/scm/analytics_service.py` (+ route
+`app/api/v1/scm/analytics.py`, gated `scm.reorder.run` to run / `scm.dashboard.view` to
+read). Golden set blessed in `tests/scm/fixtures/golden_m2.json`, derived independently
+by `scripts/scm_m2_golden_derive.py` over the REAL prod-copy DO outflow. Resolved
+ambiguities in the locked decisions:
+- **Window bucketing:** 90-day window = **three trailing 30-day buckets** ending at a
+  configurable `as_of` (default today; tests pin `2026-06-01`). Equal-length buckets
+  avoid partial-calendar-month bias and keep `avg_daily = baseline_total / 90`
+  dimensionally exact. With n=3 the "drop top+bottom 10%" trim removes 0 periods, so a
+  high-CV SKU's numeric baseline == plain sum (branch label still records
+  `trimmed_mean`); the robust trim is proven meaningful in a pure-function unit test on
+  a 12-period spiky series (AC-M2.2). CV = population σ/µ over the 3 bucket totals.
+- **Demand source:** reads `scm.consumption_v` (DO `order_lines`⋈`orders`), NOT
+  `stock_ledger` (snapshot-only) — supersedes plan §2.1's stock_ledger mention.
+- **Channel coverage on real data:** only ~8 customers are segment-tagged, so ~84% of
+  window outflow is untagged→continuous. Coverage % is logged per run in
+  `scm_analytics_run.counts.channel_coverage_pct`.
+- **ABC policy convention:** canonical = CUMULATIVE percent cut points (A≤80, B≤95).
+  The engine also normalises the legacy M0-seed fraction/band convention
+  (`abc_a_pct=0.80`, `abc_b_pct=0.15`) on read so existing rows classify correctly; the
+  M0 seed script is updated to the canonical 80/95. Null-cost SKUs → `abc_class` NULL.
+- **Supplier weights:** locked 0.5/0.5 (M0 seed updated from 0.6/0.4). Golden supplier
+  tests pin the scoring policy so blessed composites are deterministic regardless of the
+  ambient row.
+- **On-GR hook** = `refresh_supplier_performance(supplier_id, product_id)` (scoped, no
+  full-catalog scan). The **scheduled** trigger + FE column light-up are the NEXT slice.
 
 ## Goal
 Produce the engine's inputs — a transparent, channel-separated demand rate; ABC/XYZ; a supplier
