@@ -406,6 +406,7 @@ class MarketSignal(Base):
 
     __table_args__ = (
         Index("ix_scm_market_signal_topic_id", "topic_id"),
+        Index("ix_scm_market_signal_category_ref", "category_ref"),
         {"schema": "scm"},
     )
 
@@ -430,16 +431,18 @@ class ScmAnalyticsRun(Base):
 
 
 class MarketResearchRun(Base):
-    """Observability log for the M5 web-search market research job."""
+    """Observability log for the M5 web-search market research job (mirrors
+    ``scm_analytics_run``): one row per run, status running → completed | failed."""
     __tablename__ = "market_research_run"
     __table_args__ = {"schema": "scm"}
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    status = Column(String(30), default="running", nullable=False)  # running | completed | failed
     started_at = Column(DateTime(timezone=False), nullable=True)
     finished_at = Column(DateTime(timezone=False), nullable=True)
-    status = Column(String(30), nullable=True)
-    counts = Column(JSONB, nullable=True)
-    error_text = Column(Text, nullable=True)
+    topic_count = Column(Integer, nullable=True)  # active topics searched this run
+    signal_count = Column(Integer, nullable=True)  # fresh signals captured this run
+    error_text = Column(Text, nullable=True)  # human message when status='failed'
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

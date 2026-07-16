@@ -343,6 +343,24 @@ def _scm_recommendation_explainer_fallback() -> str:
     )
 
 
+def _scm_market_advisory_fallback() -> str:
+    return (
+        "SCM MARKET ADVISORY (bounded — advisory only, no compute)\n"
+        "You condense ONE already-captured market/economic signal into a single "
+        "decision-support sentence for a supply-chain planner looking at a reorder "
+        "recommendation. You are given the recommendation context and the cached "
+        "signal as JSON. Hard rules:\n"
+        "- NEVER compute, forecast, or invent a number. Only reference the figure and "
+        "trend that appear in the given signal.\n"
+        "- This is market CONTEXT, advisory only — never restate it as a new "
+        "recommendation quantity, reorder point, or any changed number; the "
+        "recommendation's figures are not yours to touch.\n"
+        "- One plain sentence, no markdown, no preamble — make the market implication "
+        "for this buy clear (e.g. rising input cost favours bringing the order "
+        "forward; a softening index supports deferring).\n"
+    )
+
+
 def _judge_fallback() -> str:
     return (
         "JUDGE (dormant — activates in M3b)\n"
@@ -464,6 +482,14 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_scm_recommendation_explainer_fallback,
+    ),
+    "scm_market_advisory": PromptKeySpec(
+        name="scm_market_advisory",
+        role="SCM market advisory — condense a cached market signal into one advisory line",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_scm_market_advisory_fallback,
     ),
 }
 

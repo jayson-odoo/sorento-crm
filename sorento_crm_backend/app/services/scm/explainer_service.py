@@ -20,14 +20,16 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from app.models.ai_assistant import AIAssistantConfig
-from app.models.scm import ReorderRecommendation
+from app.models.scm import MarketSignal, ReorderRecommendation
 from app.config import settings
 from app.services.ai_prompt_registry import render
 from app.services.error_handler import AppException
 from app.services.llm_provider import get_provider
+from app.services.scm import reorder_engine
 
 # The exact refusal contract — mirrored by the FE (`explainerMockStore.REFUSAL`)
 # and asserted byte-for-byte in tests. The prompt instructs the model to emit this
@@ -35,6 +37,7 @@ from app.services.llm_provider import get_provider
 REFUSAL = "I can't compute that from this recommendation's data."
 
 _PROMPT_KEY = "scm_recommendation_explainer"
+_ADVISORY_PROMPT_KEY = "scm_market_advisory"
 _MAX_TOKENS = 220
 
 
@@ -176,10 +179,133 @@ def answer_question(db: Session, rec_id: str, question: str) -> str:
 
 
 def market_advisory(db: Session, rec_id: str) -> Optional[str]:
-    """Market advisory for a recommendation — filled by M5 Part B (market signals).
-    Until signals exist this returns the cached advisory or None (no matching signal)."""
+    """Market advisory for a recommendation (M5 Part B).
+
+    Lazy + cached: return the cached advisory if present. Else find the most recent
+    ``market_signal`` matching this rec by **product category + currency**; if one
+    exists, condense it into ONE advisory sentence (LLM ADVISORY mode — never a new
+    number), cache it to ``rec.market_advisory`` (the ONLY write), and return it. No
+    matching signal → ``None``. Advisory is decision-support prose from a STORED
+    signal — the LLM never searches and never touches a numeric column."""
     rec = _get_rec(db, rec_id)
-    return rec.market_advisory or None
+    if rec.market_advisory:
+        return rec.market_advisory
+
+    signal = _match_market_signal(db, rec)
+    if signal is None:
+        return None
+
+    provider, model = _provider_and_model(db)
+    if provider is None:
+        # No LLM configured — the stored signal's own summary IS advisory prose
+        # (restates the captured signal, invents nothing). Not cached, so a later
+        # LLM-enabled view can still generate the condensed sentence.
+        return (signal.summary or None)
+
+    text = _advisory_chat(db, provider, model, rec, signal)
+    if text:
+        rec.market_advisory = text  # the ONLY write — prose, never a numeric field
+        db.flush()
+    return text or (signal.summary or None)
+
+
+def _rec_currency(rec: ReorderRecommendation) -> Optional[str]:
+    """Currency to match signals on: the rec's own currency, else the frozen
+    supplier/inputs currency."""
+    if rec.currency:
+        return rec.currency
+    inp = rec.inputs or {}
+    supplier = inp.get("supplier") or {}
+    return supplier.get("currency") or inp.get("currency")
+
+
+def _rec_category_refs(db: Session, rec: ReorderRecommendation) -> list[str]:
+    """The category tokens a signal could be keyed by for this rec — BOTH the
+    category **id** (what the topic picker stores as ``category_ref``) and the
+    human ``category_code`` — so a signal matches regardless of which the config
+    used. Value-space-agnostic on purpose (the FE stores the id)."""
+    refs: list[str] = []
+    cat_id = db.execute(
+        text("SELECT category_id::text FROM products WHERE id = :p"),
+        {"p": rec.product_id},
+    ).scalar()
+    if cat_id:
+        refs.append(cat_id)
+    code = reorder_engine.load_category_code(db, rec.product_id)
+    if code:
+        refs.append(code)
+    return refs
+
+
+def _match_market_signal(
+    db: Session, rec: ReorderRecommendation
+) -> Optional[MarketSignal]:
+    """Most-recent cached signal matching the rec by product category (+ currency).
+
+    Category is matched on the product's category id OR code (a topic configured
+    through the UI stores the id; a legacy/code-keyed signal still matches).
+    Currency: a currencied rec matches a signal of the same currency OR a
+    currency-agnostic (null) signal; a rec with NO resolvable currency matches
+    only currency-agnostic signals (never a wrong-currency one)."""
+    refs = _rec_category_refs(db, rec)
+    if not refs:
+        return None
+    q = db.query(MarketSignal).filter(MarketSignal.category_ref.in_(refs))
+    currency = _rec_currency(rec)
+    if currency:
+        q = q.filter(
+            or_(MarketSignal.currency == currency, MarketSignal.currency.is_(None))
+        )
+    else:
+        q = q.filter(MarketSignal.currency.is_(None))
+    return (
+        q.order_by(
+            MarketSignal.captured_at.desc().nullslast(),
+            MarketSignal.created_at.desc(),
+        ).first()
+    )
+
+
+def _advisory_chat(
+    db: Session,
+    provider,
+    model: Optional[str],
+    rec: ReorderRecommendation,
+    signal: MarketSignal,
+) -> str:
+    """Render the ADVISORY prompt and condense the stored signal into one sentence."""
+    system = render(db, _ADVISORY_PROMPT_KEY)[0]
+    inp = rec.inputs or {}
+    ctx = {
+        "sku": inp.get("sku"),
+        "product_name": inp.get("product_name"),
+        "rec_type": rec.rec_type,
+        "order_quantity": _num(rec.rounded_qty),
+        "currency": rec.currency,
+        "signal_summary": signal.summary,
+        "signal_value": _num(signal.value),
+        "signal_trend": signal.trend,
+        "signal_currency": signal.currency,
+        "signal_category": signal.category_ref,
+        "signal_source": signal.source_url,
+    }
+    ctx = {k: v for k, v in ctx.items() if v is not None and v != ""}
+    user_block = (
+        "ADVISORY mode. Recommendation context + the cached market signal (JSON — the "
+        "signal is the ONLY market data you may reference):\n"
+        f"{json.dumps(ctx, ensure_ascii=False)}\n\n"
+        "Write one advisory sentence on what this market signal means for this buy."
+    )
+    result = provider.chat(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_block},
+        ],
+        temperature=0.0,
+        model=model,
+        max_tokens=_MAX_TOKENS,
+    )
+    return (result.content or "").strip()
 
 
 # ---------------------------------------------------------------------------

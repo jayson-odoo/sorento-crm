@@ -12,6 +12,7 @@ from app.api.v1.scm import (
     dashboard,
     decisions,
     explainer,
+    market,
     policies,
     purchase_orders,
     reorder_runs,
@@ -28,3 +29,4 @@ router.include_router(sales_orders.router)
 router.include_router(purchase_orders.router)
 router.include_router(decisions.router)
 router.include_router(explainer.router)
+router.include_router(market.router)

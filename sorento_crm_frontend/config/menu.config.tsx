@@ -407,6 +407,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/scm/purchase-orders',
         permission: 'scm.dashboard.view',
       },
+      {
+        title: 'Market Signals',
+        path: '/scm/market-signals',
+        permission: 'scm.dashboard.view',
+      },
     ],
   },
   {

@@ -52,4 +52,6 @@ def get_advisory(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    return {"advisory": svc.market_advisory(db, rec_id)}
+    advisory = svc.market_advisory(db, rec_id)
+    db.commit()  # persist the lazily-cached advisory (get_db closes without commit)
+    return {"advisory": advisory}
