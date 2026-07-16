@@ -3,12 +3,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
-import { Info, ShoppingCart } from 'lucide-react';
+import { CheckCheck, ShoppingCart } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useBuyRecommendationsForCash } from '../hooks/useReorderRun';
 import { useDecisionMutations, useRecommendationDecisions } from '../hooks/useDecisions';
-import { applyBudget } from '../services/reorderRunService';
 import {
   BUDGET_STEP,
   computeFunding,
@@ -45,13 +45,12 @@ export function CashCopilotResults({
   const router = useRouter();
   const { data, isLoading, isError } = useBuyRecommendationsForCash(runId, enabled);
   const { byId: decisionsById } = useRecommendationDecisions(runId, enabled);
-  const { accept, adjust, reject, bulkAccept, bulkReject } = useDecisionMutations(runId);
+  const { accept, adjust, reject, bulkAccept, bulkReject, confirm } = useDecisionMutations(runId);
 
   // Budget is null until the recs land, then seeded from the run's own costed total
-  // (real data → data-derived bounds, not a mock constant). User slides thereafter.
+  // (real data → data-derived bounds, not a mock constant). User slides thereafter;
+  // funded/deferred recompute LIVE (no Apply button — M4 slice-B UX feedback).
   const [budget, setBudget] = useState<number | null>(null);
-  const [appliedBudget, setAppliedBudget] = useState<number | null>(null);
-  const [isApplying, setIsApplying] = useState(false);
   const [explainRec, setExplainRec] = useState<ReorderRecommendation | null>(null);
 
   // Decision-layer dialog state.
@@ -59,6 +58,7 @@ export function CashCopilotResults({
   const [rejectRec, setRejectRec] = useState<ReorderRecommendation | null>(null);
   const [pendingBulkAccept, setPendingBulkAccept] = useState<PendingBulk | null>(null);
   const [pendingBulkReject, setPendingBulkReject] = useState<PendingBulk | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const baseRecs = useMemo<ReorderRecommendation[]>(() => data ?? [], [data]);
 
@@ -88,36 +88,30 @@ export function CashCopilotResults({
     return funding.funded;
   }, [explainRec, funding]);
 
-  const viewDraftPoAction = (poId?: string) => ({
-    label: 'View draft PO',
-    onClick: () => router.push(poId ? `/scm/purchase-orders/${poId}` : '/scm/purchase-orders'),
+  const viewPurchaseOrdersAction = () => ({
+    label: 'View purchase orders',
+    onClick: () => router.push('/scm/purchase-orders'),
   });
 
-  const handleApply = async () => {
-    if (!runId) return;
-    setIsApplying(true);
-    try {
-      const res = await applyBudget(runId, effectiveBudget);
-      setAppliedBudget(effectiveBudget);
-      const needsCostNote = res.needs_cost_count
-        ? `, ${res.needs_cost_count} need cost`
-        : '';
-      toast.success(
-        `Budget applied — ${res.funded_count} funded, ${res.deferred_count} deferred${needsCostNote}`,
-      );
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to apply budget');
-    } finally {
-      setIsApplying(false);
+  // Staged decisions still AWAITING a Confirm — accepted/adjusted that haven't yet
+  // been materialised into a draft PO (no draft_po_id). Once confirmed they carry a
+  // PO link and drop out of the count, so the confirm bar clears itself.
+  const stagedCount = useMemo(() => {
+    let accepted = 0;
+    let adjusted = 0;
+    for (const rec of baseRecs) {
+      const d = decisionsById?.[rec.id];
+      if (!d || d.draft_po_id) continue; // undecided, or already confirmed into a PO
+      if (d.status === 'accepted') accepted += 1;
+      else if (d.status === 'adjusted') adjusted += 1;
     }
-  };
+    return { accepted, adjusted, total: accepted + adjusted };
+  }, [baseRecs, decisionsById]);
 
   const handleAccept = async (rec: ReorderRecommendation) => {
     try {
-      const res = await accept.mutateAsync(rec);
-      toast.success(`Accepted ${rec.sku} — added to draft PO for ${res.supplier_name}`, {
-        action: viewDraftPoAction(res.draft_po_id),
-      });
+      await accept.mutateAsync(rec);
+      toast.success(`Accepted ${rec.sku} — staged. Confirm decisions to draft the PO.`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to accept recommendation');
     }
@@ -126,13 +120,27 @@ export function CashCopilotResults({
   const handleAdjustSubmit = async (payload: AdjustPayload) => {
     if (!adjustRec) return;
     try {
-      const res = await adjust.mutateAsync({ rec: adjustRec, payload });
-      toast.success(`Adjusted ${adjustRec.sku} — draft PO for ${res.supplier_name} updated`, {
-        action: viewDraftPoAction(res.draft_po_id),
-      });
+      await adjust.mutateAsync({ rec: adjustRec, payload });
+      toast.success(
+        `Adjusted ${adjustRec.sku} to ${fmtInt(payload.override_qty)} — staged. Confirm decisions to draft the PO.`,
+      );
       setAdjustRec(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to adjust recommendation');
+    }
+  };
+
+  const handleConfirmDecisions = async () => {
+    try {
+      const res = await confirm.mutateAsync([]); // empty = confirm all staged
+      toast.success(
+        `Confirmed ${res.confirmed_count} decision${res.confirmed_count === 1 ? '' : 's'} — ` +
+          `${res.po_count} draft PO${res.po_count === 1 ? '' : 's'} ready to review`,
+        { action: viewPurchaseOrdersAction() },
+      );
+      setConfirmOpen(false);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to confirm decisions');
     }
   };
 
@@ -154,8 +162,7 @@ export function CashCopilotResults({
       pendingBulkAccept.clear();
       toast.success(
         `Accepted ${res.accepted_count} recommendation${res.accepted_count === 1 ? '' : 's'} — ` +
-          `${res.po_count} draft PO${res.po_count === 1 ? '' : 's'} created`,
-        { action: viewDraftPoAction() },
+          `staged. Confirm decisions to draft the POs.`,
       );
       setPendingBulkAccept(null);
     } catch (e) {
@@ -218,20 +225,35 @@ export function CashCopilotResults({
         sliderMax={sliderMax}
         step={BUDGET_STEP}
         funding={funding}
-        onApply={handleApply}
-        isApplying={isApplying}
-        appliedBudget={appliedBudget}
       />
 
-      <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
-        <Info className="mt-0.5 size-4 shrink-0" />
-        <span>
-          Accept a funded buy to draft a purchase order (one consolidated draft per supplier), Adjust
-          to override qty or switch supplier, or Reject with a reason. Draft POs are held in Purchase
-          Orders and are NOT counted as incoming stock until you confirm them. Deferred buys can still
-          be actioned — their days-to-stockout shows the risk of waiting.
-        </span>
-      </div>
+      {/* Confirm-decisions bar — only once something is staged (M4 slice-B UX:
+          the PO is created here, not on each Accept/Adjust). */}
+      {stagedCount.total > 0 ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-primary/40 bg-primary/5 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2.5 text-sm">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <CheckCheck className="size-4.5" aria-hidden />
+            </span>
+            <span>
+              <span className="font-semibold tabular-nums">{fmtInt(stagedCount.total)}</span> decision
+              {stagedCount.total === 1 ? '' : 's'} staged
+              <span className="text-muted-foreground">
+                {' '}
+                ({fmtInt(stagedCount.accepted)} accepted, {fmtInt(stagedCount.adjusted)} adjusted)
+              </span>
+            </span>
+          </div>
+          <Button
+            onClick={() => setConfirmOpen(true)}
+            disabled={confirm.isPending}
+            className="shrink-0"
+          >
+            <CheckCheck className="size-4" />
+            Confirm decisions
+          </Button>
+        </div>
+      ) : null}
 
       <CashResultsGrid
         rows={funding.funded}
@@ -316,6 +338,22 @@ export function CashCopilotResults({
         onOpenChange={(o) => !o && setPendingBulkReject(null)}
         onSubmit={handleBulkRejectConfirm}
         isSubmitting={bulkReject.isPending}
+      />
+
+      <ConfirmActionDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title="Confirm decisions?"
+        description={
+          `This creates a consolidated draft purchase order per supplier from your ` +
+          `${fmtInt(stagedCount.total)} staged decision${stagedCount.total === 1 ? '' : 's'} ` +
+          `(${fmtInt(stagedCount.accepted)} accepted, ${fmtInt(stagedCount.adjusted)} adjusted). ` +
+          `Draft POs are held in Purchase Orders and are NOT counted as incoming stock until you ` +
+          `confirm the draft there.`
+        }
+        confirmLabel="Confirm decisions"
+        onConfirm={handleConfirmDecisions}
+        isBusy={confirm.isPending}
       />
     </div>
   );

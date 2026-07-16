@@ -75,6 +75,20 @@ export interface SupplierChoice {
   /** Composite performance score 0–100 (M2). null when no sample. */
   composite_score: number | null;
   is_primary: boolean;
+  // --- scorecard detail (frozen; drives the "why this supplier" popover). May be
+  //     null on older runs or suppliers with no M2 performance sample. ---
+  /** PO→GR observations behind the composite score. */
+  sample_size?: number | null;
+  /** Deterministic confidence band for the score (high/medium/low). */
+  confidence?: string | null;
+  /** Where the lead time came from: measured / declared / default. */
+  lead_time_source?: 'measured' | 'declared' | 'default' | string | null;
+  /** Lead-time variance (days²) behind the reliability read. */
+  lead_time_variance?: number | null;
+  /** Supplier minimum order quantity. */
+  moq?: number | null;
+  /** Supplier pack / order multiple. */
+  order_multiple?: number | null;
 }
 
 /** Per-warehouse split of a network buy qty. The qtys sum to `order_qty`. */
@@ -174,6 +188,10 @@ export interface ReorderRecommendation {
   cash_impact: number | null;
   /** 1-based rank by frozen rank_score (1 = fund first). null on non-buy rows. */
   rank: number | null;
+  /** Sequential 1..N position WITHIN its displayed section (funded / deferred),
+   *  assigned client-side at view-time so the user sees a clean priority order
+   *  (1, 2, 3…) rather than the raw global rank. Null until allocated. */
+  display_rank?: number | null;
   /** Frozen weighted score 0–1 (M4-D14 graceful-degrade). null on non-buy rows. */
   rank_score: number | null;
   /** Live funding disposition against the current budget (M4-D3). */

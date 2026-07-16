@@ -12,9 +12,22 @@ from pydantic import BaseModel, Field
 
 
 class AcceptResult(BaseModel):
-    draft_po_number: str
-    draft_po_id: str
+    # Accept/Adjust are STAGED — no PO exists until Confirm decisions, so the PO
+    # fields are null on the decision response and populated only via list_decisions
+    # after a confirm.
+    draft_po_number: Optional[str] = None
+    draft_po_id: Optional[str] = None
     supplier_name: str
+
+
+class ConfirmDecisionsRequest(BaseModel):
+    # Empty ids = confirm every staged decision in the run.
+    ids: List[str] = Field(default_factory=list)
+
+
+class ConfirmDecisionsResult(BaseModel):
+    confirmed_count: int
+    po_count: int
 
 
 class AdjustRequest(BaseModel):

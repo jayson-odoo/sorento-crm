@@ -11,13 +11,18 @@ import {
 } from '@tanstack/react-table';
 import { Popover as PopoverPrimitive } from 'radix-ui';
 import {
+  AlertTriangle,
   Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   CircleDollarSign,
   Clock,
   Info,
+  Layers,
   MoreHorizontal,
   Pencil,
+  ShoppingCart,
   X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -54,6 +59,34 @@ const FACTOR_LABEL: Record<RankFactor['key'], string> = {
   priority: 'SO priority',
   committed: 'Committed vs forecast',
 };
+
+/** Type chip — buy / disposition / no-supplier exception, visually distinct (mirrors
+ *  the M3 read-only grid). In the cash view rows are buys, but the column is kept for
+ *  parity + so a disposition/exception row reads unambiguously. */
+function TypeChip({ type }: { type: ReorderRecommendation['type'] }) {
+  if (type === 'exception') {
+    return (
+      <Badge variant="warning" appearance="light" size="md" title="A reorder would fire, but no supplier is linked">
+        <AlertTriangle className="size-3" />
+        Exception
+      </Badge>
+    );
+  }
+  if (type === 'disposition') {
+    return (
+      <Badge variant="secondary" appearance="light" size="md">
+        <Layers className="size-3" />
+        Disposition
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="info" appearance="light" size="md">
+      <ShoppingCart className="size-3" />
+      Buy
+    </Badge>
+  );
+}
 
 /** Days-to-stockout risk badge — sooner = more urgent (red < 7, amber < 21). */
 export function StockoutRiskBadge({ days }: { days: number | null }) {
@@ -114,6 +147,8 @@ function RankCell({ rec }: { rec: ReorderRecommendation }) {
     (top, f) => (top === null || f.weight * (f.value ?? 0) > top.weight * (top.value ?? 0) ? f : top),
     null,
   );
+  // Show the clean 1..N section position; the raw global rank/score stays in the popover.
+  const pos = rec.display_rank ?? rec.rank;
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -123,14 +158,15 @@ function RankCell({ rec }: { rec: ReorderRecommendation }) {
           className="inline-flex items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title="Why this rank"
         >
-          <span className="tabular-nums font-medium">{rec.rank ?? EM_DASH}</span>
+          <span className="tabular-nums font-medium">{pos ?? EM_DASH}</span>
           <Info className="size-3 text-muted-foreground" aria-hidden />
         </button>
       </PopoverTrigger>
       <PopoverPrimitive.Portal>
         <PopoverContent align="start" collisionPadding={8} className="w-72 p-0">
           <div className="border-b px-3 py-2 text-xs font-medium">
-            Rank {rec.rank} · score {rec.rank_score != null ? rec.rank_score.toFixed(2) : EM_DASH}
+            Priority #{pos ?? EM_DASH} · score{' '}
+            {rec.rank_score != null ? rec.rank_score.toFixed(2) : EM_DASH}
           </div>
           <div className="max-h-64 overflow-y-auto py-1">
             {factors.map((f) => {
@@ -170,9 +206,51 @@ function RankCell({ rec }: { rec: ReorderRecommendation }) {
   );
 }
 
-/** Cash impact cell — "—" for an uncosted buy that can't be cash-ranked (M4-D16). */
-function CashImpactCell({ rec }: { rec: ReorderRecommendation }) {
-  if (rec.cash_impact === null) {
+/** Order-qty cell — reflects an ADJUSTED decision's override qty (M4 slice-B UX:
+ *  adjusting must change the number in the grid, not just the PO), with the
+ *  original struck through so the change is legible. */
+function OrderQtyCell({
+  rec,
+  decision,
+}: {
+  rec: ReorderRecommendation;
+  decision: RecDecision | undefined;
+}) {
+  const override =
+    decision?.status === 'adjusted' && decision.override_qty != null ? decision.override_qty : null;
+  if (override === null) return <>{fmtInt(rec.order_qty)}</>;
+  return (
+    <span className="inline-flex items-center gap-1.5" title={`Adjusted from ${fmtInt(rec.order_qty)}`}>
+      <span className="text-2xs text-muted-foreground line-through">{fmtInt(rec.order_qty)}</span>
+      <span className="font-medium text-scm-overstock">{fmtInt(override)}</span>
+    </span>
+  );
+}
+
+/** Effective cash impact for a row — recomputed against an adjusted override qty
+ *  when present (keeps the funding maths honest after an Adjust), else the frozen value. */
+function effectiveCashImpact(
+  rec: ReorderRecommendation,
+  decision: RecDecision | undefined,
+): number | null {
+  if (rec.cash_impact === null) return null;
+  const override =
+    decision?.status === 'adjusted' && decision.override_qty != null ? decision.override_qty : null;
+  if (override === null || !rec.order_qty || rec.order_qty <= 0) return rec.cash_impact;
+  return (rec.cash_impact / rec.order_qty) * override;
+}
+
+/** Cash impact cell — "—" for an uncosted buy that can't be cash-ranked (M4-D16);
+ *  reflects an adjusted override qty when one is staged. */
+function CashImpactCell({
+  rec,
+  decision,
+}: {
+  rec: ReorderRecommendation;
+  decision: RecDecision | undefined;
+}) {
+  const value = effectiveCashImpact(rec, decision);
+  if (value === null) {
     return (
       <span
         className="text-muted-foreground"
@@ -182,7 +260,7 @@ function CashImpactCell({ rec }: { rec: ReorderRecommendation }) {
       </span>
     );
   }
-  return <span>{fmtMoney(rec.cash_impact)}</span>;
+  return <span>{fmtMoney(value)}</span>;
 }
 
 /** Row action menu — Accept / Adjust / Reject (M4-D7/D8). Rendered only when the
@@ -270,22 +348,44 @@ export function CashResultsGrid({
   const isNeedsCost = variant === 'needs_cost';
   const decisionsEnabled = !!onAccept && !!onAdjust && !!onReject && !isNeedsCost;
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  // Sections are collapsible (M4 slice-B UX) so the planner can fold away the
+  // buckets they're done with. All start expanded — the user folds what they want.
+  const [collapsed, setCollapsed] = useState(false);
 
   const columns = useMemo<ColumnDef<ReorderRecommendation>[]>(() => {
     const cols: ColumnDef<ReorderRecommendation>[] = [];
 
-    if (selectable && decisionsEnabled) cols.push(buildSelectColumn<ReorderRecommendation>());
-
-    // Rank is a CASH ordering — omitted for the un-priced "Needs cost" bucket.
-    if (!isNeedsCost) {
+    // Leading selection column — funded/deferred are actionable; Needs cost gets a
+    // width-matched empty spacer so all three sections' columns line up (M4 slice-B
+    // UX: standardise the alignment across Funded / Deferred / Needs cost).
+    if (selectable && decisionsEnabled) {
+      cols.push(buildSelectColumn<ReorderRecommendation>());
+    } else if (isNeedsCost) {
       cols.push({
-        accessorKey: 'rank',
-        header: ({ column }) => <DataGridColumnHeader title="Rank" column={column} />,
-        cell: ({ row }) => <RankCell rec={row.original} />,
-        size: 90,
-        meta: { headerTitle: 'Rank', skeleton: <Skeleton className="h-5 w-10" /> },
+        id: 'select-spacer',
+        header: '',
+        cell: () => null,
+        size: 51,
+        enableSorting: false,
+        enableHiding: false,
+        enableResizing: false,
       });
     }
+
+    // Rank — the clean 1..N section position. Needs cost is un-priced (no cash rank),
+    // so it shows a dash but keeps the column for cross-section alignment.
+    cols.push({
+      accessorKey: 'rank',
+      header: ({ column }) => <DataGridColumnHeader title="Rank" column={column} />,
+      cell: ({ row }) =>
+        isNeedsCost ? (
+          <span className="text-muted-foreground">{EM_DASH}</span>
+        ) : (
+          <RankCell rec={row.original} />
+        ),
+      size: 90,
+      meta: { headerTitle: 'Rank', skeleton: <Skeleton className="h-5 w-10" /> },
+    });
 
     cols.push(
       {
@@ -306,16 +406,27 @@ export function CashResultsGrid({
         meta: { headerTitle: 'SKU' },
       },
       {
+        accessorKey: 'type',
+        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
+        cell: ({ row }) => <TypeChip type={row.original.type} />,
+        size: 120,
+        meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-6 w-16" /> },
+      },
+      {
         accessorKey: 'order_qty',
         header: ({ column }) => <DataGridColumnHeader title="Order qty" column={column} />,
-        cell: ({ row }) => fmtInt(row.original.order_qty),
-        size: 110,
+        cell: ({ row }) => (
+          <OrderQtyCell rec={row.original} decision={decisionsById?.[row.original.id]} />
+        ),
+        size: 130,
         meta: { headerTitle: 'Order qty', ...numMeta },
       },
       {
         accessorKey: 'cash_impact',
         header: ({ column }) => <DataGridColumnHeader title="Cash impact" column={column} />,
-        cell: ({ row }) => <CashImpactCell rec={row.original} />,
+        cell: ({ row }) => (
+          <CashImpactCell rec={row.original} decision={decisionsById?.[row.original.id]} />
+        ),
         size: 140,
         meta: { headerTitle: 'Cash impact', ...numMeta },
       },
@@ -429,13 +540,24 @@ export function CashResultsGrid({
 
   const heading = (
     <CardHeading>
-      <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        className="flex items-center gap-2 rounded-sm text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-expanded={!collapsed}
+        title={collapsed ? `Expand ${title}` : `Collapse ${title}`}
+      >
+        {collapsed ? (
+          <ChevronRight className="size-4 text-muted-foreground" aria-hidden />
+        ) : (
+          <ChevronDown className="size-4 text-muted-foreground" aria-hidden />
+        )}
         <HeadingIcon className={cn('size-4', accentClass)} aria-hidden />
         <span className="text-sm font-semibold">{title}</span>
         <Badge variant="secondary" appearance="light" size="sm">
           {fmtInt(rows.length)}
         </Badge>
-      </div>
+      </button>
     </CardHeading>
   );
 
@@ -484,7 +606,7 @@ export function CashResultsGrid({
           ) : (
             <>
               {heading}
-              {isNeedsCost ? (
+              {isNeedsCost && !collapsed ? (
                 <p className="mt-1 text-xs text-muted-foreground">
                   These buys have no supplier cost, so they can&apos;t be cash-ranked. Add a supplier
                   cost to include them in funding.
@@ -493,12 +615,14 @@ export function CashResultsGrid({
             </>
           )}
         </CardHeader>
-        <CardTable>
-          <ScrollArea>
-            <DataGridTable />
-            <ScrollBar orientation="horizontal" />
-          </ScrollArea>
-        </CardTable>
+        {collapsed ? null : (
+          <CardTable>
+            <ScrollArea>
+              <DataGridTable />
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          </CardTable>
+        )}
       </Card>
     </DataGrid>
   );

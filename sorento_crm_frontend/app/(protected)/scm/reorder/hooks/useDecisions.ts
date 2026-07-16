@@ -7,6 +7,7 @@ import {
   adjustRecommendation,
   bulkAcceptFunded,
   bulkRejectRecommendations,
+  confirmDecisions,
   getRecommendationDecisions,
   rejectRecommendation,
 } from '../services/decisionService';
@@ -90,5 +91,12 @@ export function useDecisionMutations(runId: string | null) {
     onSuccess: invalidate,
   });
 
-  return { accept, adjust, reject, bulkAccept, bulkReject };
+  // Confirm decisions materialises the staged accepts/adjusts into draft POs, so
+  // it invalidates the decisions cache (rows now carry a → PO link) AND the PO list.
+  const confirm = useMutation({
+    mutationFn: (ids: string[] = []) => confirmDecisions(runId as string, ids),
+    onSuccess: invalidate,
+  });
+
+  return { accept, adjust, reject, bulkAccept, bulkReject, confirm };
 }

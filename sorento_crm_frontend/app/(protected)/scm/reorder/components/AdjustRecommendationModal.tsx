@@ -117,7 +117,8 @@ export function AdjustRecommendationModal({
         <DialogHeader>
           <DialogTitle>Adjust {rec.sku}</DialogTitle>
           <DialogDescription>
-            Override the buy quantity or switch supplier before this drafts a purchase order.
+            Override the buy quantity or switch supplier. This stages the change — no PO is
+            drafted until you Confirm decisions.
           </DialogDescription>
         </DialogHeader>
 

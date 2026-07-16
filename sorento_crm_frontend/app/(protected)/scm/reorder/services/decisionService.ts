@@ -67,6 +67,7 @@ import type {
   AcceptResult,
   AdjustPayload,
   BulkAcceptResult,
+  ConfirmDecisionsResult,
   RecDecision,
   RejectPayload,
 } from '../types/decisions.types';
@@ -148,6 +149,25 @@ export async function bulkAcceptFunded(
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to accept recommendations'));
   return (await res.json()) as BulkAcceptResult;
+}
+
+/** Confirm the run's staged decisions → consolidated draft POs (M4-D4). Empty
+ *  `ids` confirms every accepted/adjusted decision in the run. */
+export async function confirmDecisions(
+  runId: string,
+  ids: string[] = [],
+): Promise<ConfirmDecisionsResult> {
+  if (USE_SLICE_B_MOCKS) return { confirmed_count: ids.length, po_count: 1 };
+  const res = await apiFetch(
+    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/confirm-decisions`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    },
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to confirm decisions'));
+  return (await res.json()) as ConfirmDecisionsResult;
 }
 
 /** Bulk-reject a set of recommendations with one shared reason (M4-D9). */

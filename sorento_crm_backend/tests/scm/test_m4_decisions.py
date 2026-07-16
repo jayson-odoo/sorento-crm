@@ -54,6 +54,23 @@ def _buy_recs(db, run_id):
     ), {"r": run_id}).mappings().all()
 
 
+def _draft_po_ids_for_recs(db, rec_ids):
+    """Open SCM draft POs holding THESE recs' lines. Scoped by source_ref because the
+    local DB (a prod-data copy) can carry unrelated draft POs from other work."""
+    return db.execute(text(
+        "SELECT DISTINCT pol.purchase_order_id::text FROM purchase_order_lines pol "
+        "JOIN purchase_orders po ON po.id = pol.purchase_order_id "
+        "WHERE pol.source_ref = ANY(:r) AND po.status = 'draft_recommendation'"
+    ), {"r": list(rec_ids)}).scalars().all()
+
+
+def _po_id_for_rec(db, rec_id):
+    """The PO a rec's line currently lives in (via source_ref), or None."""
+    return db.execute(text(
+        "SELECT purchase_order_id::text FROM purchase_order_lines WHERE source_ref = :r"
+    ), {"r": rec_id}).scalar()
+
+
 def _seed_same_supplier(db):
     """Two low-stock SKUs sharing ONE supplier + a third SKU on a DIFFERENT supplier."""
     wid = _mk_warehouse(db, "M4W-CONS")
@@ -87,40 +104,64 @@ def _seed_two_supplier_product(db):
 
 
 # ===========================================================================
-# AC-M4.5 — Accept consolidates a draft PO per supplier
+# Staged decisions — Accept/Adjust create NO PO until Confirm decisions (M4 slice-B)
 # ===========================================================================
 
-def test_accept_consolidates_one_draft_po_per_supplier(scm_app):
+def test_accept_stages_no_po_until_confirm(scm_app):
+    _, db, _, _ = scm_app
+    wid_code, a, b, c = _seed_same_supplier(db)
+    run_id = _run_buys(db, wid_code)
+    recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
+
+    res = dsvc.accept_recommendation(db, recs[a]["id"], actor="tester")
+    db.flush()
+    # STAGED — status flips, but no PO exists yet (the overview-before-order model)
+    assert res["draft_po_id"] is None and res["draft_po_number"] is None
+    assert db.execute(text("SELECT status FROM scm.reorder_recommendation WHERE id = :id"),
+                      {"id": recs[a]["id"]}).scalar() == "accepted"
+    # scoped to this rec — no line/PO materialised before Confirm decisions
+    assert _po_id_for_rec(db, recs[a]["id"]) is None
+
+
+# ===========================================================================
+# AC-M4.5 — Confirm decisions consolidates a draft PO per supplier
+# ===========================================================================
+
+def test_confirm_consolidates_one_draft_po_per_supplier(scm_app):
     _, db, _, _ = scm_app
     wid_code, a, b, c = _seed_same_supplier(db)
     run_id = _run_buys(db, wid_code)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
     assert set(recs) >= {a, b, c}, "all three SKUs should buy"
 
-    r1 = dsvc.accept_recommendation(db, recs[a]["id"], actor="tester")
-    r2 = dsvc.accept_recommendation(db, recs[b]["id"], actor="tester")
-    r3 = dsvc.accept_recommendation(db, recs[c]["id"], actor="tester")
+    for pid in (a, b, c):
+        dsvc.accept_recommendation(db, recs[pid]["id"], actor="tester")
+    out = dsvc.confirm_decisions(db, run_id, ids=None, actor="tester")
+    assert out["confirmed_count"] == 3
+    assert out["po_count"] == 2  # two suppliers → two consolidated drafts
 
+    po_a = _po_id_for_rec(db, recs[a]["id"])
+    po_b = _po_id_for_rec(db, recs[b]["id"])
+    po_c = _po_id_for_rec(db, recs[c]["id"])
     # same supplier → SAME draft PO (2 lines); different supplier → its own draft
-    assert r1["draft_po_id"] == r2["draft_po_id"]
-    assert r3["draft_po_id"] != r1["draft_po_id"]
+    assert po_a == po_b
+    assert po_c != po_a
 
     shared_po = db.execute(text(
         "SELECT status, source_system FROM purchase_orders WHERE id = :id"
-    ), {"id": r1["draft_po_id"]}).mappings().first()
+    ), {"id": po_a}).mappings().first()
     assert shared_po["status"] == "draft_recommendation"
     assert shared_po["source_system"] == "scm_recommendation"
     n_lines = db.execute(text(
         "SELECT count(*) FROM purchase_order_lines WHERE purchase_order_id = :id"
-    ), {"id": r1["draft_po_id"]}).scalar()
+    ), {"id": po_a}).scalar()
     assert n_lines == 2
 
-    # rec.status flips to accepted; original recommendation qty untouched
-    for pid in (a, b, c):
-        st = db.execute(text(
-            "SELECT status FROM scm.reorder_recommendation WHERE id = :id"
-        ), {"id": recs[pid]["id"]}).scalar()
-        assert st == "accepted"
+    # confirm is idempotent — re-running doesn't duplicate lines
+    dsvc.confirm_decisions(db, run_id, ids=None, actor="tester")
+    assert db.execute(text(
+        "SELECT count(*) FROM purchase_order_lines WHERE purchase_order_id = :id"
+    ), {"id": po_a}).scalar() == 2
 
 
 # ===========================================================================
@@ -143,18 +184,24 @@ def test_draft_excluded_from_on_order_until_confirmed(scm_app):
     rec_a = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}[a]
 
     before = _on_order(db, a, wid)
-    res = dsvc.accept_recommendation(db, rec_a["id"], actor="tester")
+    dsvc.accept_recommendation(db, rec_a["id"], actor="tester")
     db.flush()
-    # draft PO is NOT counted as incoming supply (M4-D5)
+    # accept alone stages nothing on-order (no PO yet)
+    assert _on_order(db, a, wid) == before, "a staged accept must NOT appear in on_order_v"
+
+    # confirm decisions → draft PO exists but is still OUTSIDE on_order (M4-D5)
+    dsvc.confirm_decisions(db, run_id, ids=None, actor="tester")
+    po_id = _po_id_for_rec(db, rec_a["id"])
+    assert po_id is not None
     assert _on_order(db, a, wid) == before, "a draft PO must NOT appear in on_order_v"
 
     ordered_qty = float(db.execute(text(
         "SELECT qty_ordered FROM purchase_order_lines WHERE purchase_order_id = :id"
-    ), {"id": res["draft_po_id"]}).scalar())
+    ), {"id": po_id}).scalar())
     assert ordered_qty > 0
 
-    # confirm → active → NOW counts as on_order (M4-D6)
-    out = PurchaseOrderService(db).bulk_confirm([res["draft_po_id"]], actor="tester")
+    # confirm the DRAFT → active → NOW counts as on_order (M4-D6)
+    out = PurchaseOrderService(db).bulk_confirm([po_id], actor="tester")
     assert out["confirmed_count"] == 1
     assert _on_order(db, a, wid) == before + ordered_qty
 
@@ -164,9 +211,12 @@ def test_confirm_renumbers_draft_to_canonical_sequential(scm_app):
     wid_code, a, b, c = _seed_same_supplier(db)
     run_id = _run_buys(db, wid_code)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
-    # two distinct suppliers → two distinct draft POs
-    po_shared = dsvc.accept_recommendation(db, recs[a]["id"], actor="t")["draft_po_id"]
-    po_other = dsvc.accept_recommendation(db, recs[c]["id"], actor="t")["draft_po_id"]
+    # two distinct suppliers → two distinct draft POs (materialised at confirm)
+    dsvc.accept_recommendation(db, recs[a]["id"], actor="t")
+    dsvc.accept_recommendation(db, recs[c]["id"], actor="t")
+    dsvc.confirm_decisions(db, run_id, ids=None, actor="t")
+    po_shared = _po_id_for_rec(db, recs[a]["id"])
+    po_other = _po_id_for_rec(db, recs[c]["id"])
 
     draft_nums = db.execute(text(
         "SELECT po_number FROM purchase_orders WHERE id::text = ANY(:ids)"
@@ -190,7 +240,9 @@ def test_confirm_is_idempotent(scm_app):
     wid_code, a, b, c = _seed_same_supplier(db)
     run_id = _run_buys(db, wid_code)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
-    po_id = dsvc.accept_recommendation(db, recs[a]["id"], actor="t")["draft_po_id"]
+    dsvc.accept_recommendation(db, recs[a]["id"], actor="t")
+    dsvc.confirm_decisions(db, run_id, ids=None, actor="t")
+    po_id = _po_id_for_rec(db, recs[a]["id"])
 
     svc = PurchaseOrderService(db)
     assert svc.bulk_confirm([po_id], actor="t")["confirmed_count"] == 1
@@ -222,12 +274,14 @@ def test_adjust_switches_supplier_and_appends_override(scm_app):
     chosen_code = (inp.get("supplier") or {}).get("supplier_code")
     alt = next(a for a in alts if a.get("supplier_code") and a["supplier_code"] != chosen_code)
 
-    dsvc.accept_recommendation(db, rec_id, actor="t")   # first lands on proposed supplier
+    dsvc.accept_recommendation(db, rec_id, actor="t")   # staged on proposed supplier
     override_qty = orig_qty + 25
     res = dsvc.adjust_recommendation(
         db, rec_id, override_qty=override_qty,
         override_supplier_code=alt["supplier_code"],
         reason_text="cheaper supplier, buy less", actor="t")
+    # adjust is STAGED — no PO yet
+    assert res["draft_po_id"] is None
 
     # exactly ONE override row, append-only; original recommendation untouched
     ov_rows = db.execute(text(
@@ -246,7 +300,8 @@ def test_adjust_switches_supplier_and_appends_override(scm_app):
     assert float(reread["rounded_qty"]) == orig_qty
     assert reread["status"] == "adjusted"
 
-    # draft PO line reflects override qty + the switched supplier
+    # confirm decisions → the draft PO line reflects override qty + switched supplier
+    dsvc.confirm_decisions(db, run_id, ids=None, actor="t")
     line = db.execute(text(
         "SELECT pol.qty_ordered, po.supplier_id, po.status FROM purchase_order_lines pol "
         "JOIN purchase_orders po ON po.id = pol.purchase_order_id WHERE pol.source_ref = :r"
@@ -254,9 +309,9 @@ def test_adjust_switches_supplier_and_appends_override(scm_app):
     assert float(line["qty_ordered"]) == override_qty
     assert str(line["supplier_id"]) == str(alt_sid)
     assert line["status"] == "draft_recommendation"
-    assert res["draft_po_id"]
 
-    # a SECOND adjust appends a 2nd row (never mutates the first)
+    # a SECOND adjust (back to original supplier, new qty) appends a 2nd row and,
+    # after re-confirm, redirects the draft line to the original supplier.
     dsvc.adjust_recommendation(db, rec_id, override_qty=orig_qty + 5,
                                override_supplier_code=None,
                                reason_text="actually keep original supplier", actor="t")
@@ -265,6 +320,14 @@ def test_adjust_switches_supplier_and_appends_override(scm_app):
     ), {"id": rec_id}).scalar()
     assert ov2 == 2
     assert float(ov_rows[0]["override_qty"]) == override_qty  # first row unchanged
+
+    dsvc.confirm_decisions(db, run_id, ids=None, actor="t")
+    line2 = db.execute(text(
+        "SELECT pol.qty_ordered, po.supplier_id FROM purchase_order_lines pol "
+        "JOIN purchase_orders po ON po.id = pol.purchase_order_id WHERE pol.source_ref = :r"
+    ), {"r": rec_id}).mappings().first()
+    assert float(line2["qty_ordered"]) == orig_qty + 5
+    assert str(line2["supplier_id"]) != str(alt_sid)  # redirected back to proposed supplier
 
 
 def test_adjust_rejects_non_positive_qty(scm_app):
@@ -289,7 +352,9 @@ def test_reject_dismisses_and_stores_reason(scm_app):
     run_id = _run_buys(db, wid_code)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
 
-    dsvc.accept_recommendation(db, recs[a]["id"], actor="t")  # accept first…
+    dsvc.accept_recommendation(db, recs[a]["id"], actor="t")  # accept…
+    dsvc.confirm_decisions(db, run_id, ids=None, actor="t")   # …materialise its draft line
+    assert _po_id_for_rec(db, recs[a]["id"]) is not None
     dsvc.reject_recommendation(db, recs[a]["id"], reason_text="discontinued line", actor="t")
 
     st = db.execute(text(
@@ -320,12 +385,14 @@ def test_bulk_accept_then_bulk_confirm(scm_app):
 
     res = dsvc.bulk_accept(db, run_id, ids, actor="t")
     assert res["accepted_count"] == 3
-    assert res["po_count"] == 2   # two suppliers → two consolidated draft POs
+    assert res["po_count"] == 0   # staged only — no PO until Confirm decisions
 
-    draft_ids = db.execute(text(
-        "SELECT id::text FROM purchase_orders WHERE status = 'draft_recommendation' "
-        "AND source_system = 'scm_recommendation'"
-    ), {}).scalars().all()
+    conf = dsvc.confirm_decisions(db, run_id, ids=None, actor="t")
+    assert conf["confirmed_count"] == 3
+    assert conf["po_count"] == 2  # two suppliers → two consolidated draft POs
+
+    draft_ids = _draft_po_ids_for_recs(db, ids)
+    assert len(draft_ids) == 2
     out = PurchaseOrderService(db).bulk_confirm(list(draft_ids), actor="t")
     assert out["confirmed_count"] == 2
     remaining = db.execute(text(
@@ -340,7 +407,9 @@ def test_create_gr_stamps_received_and_rejects_draft(scm_app):
     run_id = _run_buys(db, wid_code)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
     actor = str(uuid.uuid4())  # picked_by_user_id is a uuid FK to users in the DB
-    po_id = dsvc.accept_recommendation(db, recs[a]["id"], actor=actor)["draft_po_id"]
+    dsvc.accept_recommendation(db, recs[a]["id"], actor=actor)
+    dsvc.confirm_decisions(db, run_id, ids=None, actor=actor)
+    po_id = _po_id_for_rec(db, recs[a]["id"])
     svc = PurchaseOrderService(db)
 
     # a GR cannot be created from a DRAFT PO
@@ -378,7 +447,9 @@ def test_list_decisions_reflects_status_and_confirmed_number(scm_app):
     run_id = _run_buys(db, wid_code)
     recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
 
-    po_id = dsvc.accept_recommendation(db, recs[a]["id"], actor="t")["draft_po_id"]
+    dsvc.accept_recommendation(db, recs[a]["id"], actor="t")
+    dsvc.confirm_decisions(db, run_id, ids=None, actor="t")  # materialise a's draft
+    po_id = _po_id_for_rec(db, recs[a]["id"])
     dsvc.reject_recommendation(db, recs[b]["id"], reason_text="too much", actor="t")
     db.commit()
 
@@ -422,3 +493,27 @@ def test_decisions_read_denied_without_dashboard_view(scm_app):
     with TestClient(app) as client:
         res = client.get(f"/api/v1/scm/reorder-runs/{uuid.uuid4()}/decisions")
     assert res.status_code == 403
+
+
+def test_confirm_decisions_denied_without_reorder_run_permission(scm_app):
+    app, _ = _client(scm_app, None)
+    with TestClient(app) as client:
+        res = client.post(f"/api/v1/scm/reorder-runs/{uuid.uuid4()}/confirm-decisions", json={"ids": []})
+    assert res.status_code == 403
+
+
+def test_confirm_decisions_endpoint_materialises_drafts(scm_app):
+    app, db = _client(scm_app, "purchasing")
+    wid_code, a, b, c = _seed_same_supplier(db)
+    run_id = _run_buys(db, wid_code)
+    recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
+    for pid in (a, b, c):
+        dsvc.accept_recommendation(db, recs[pid]["id"], actor="t")
+    db.commit()
+
+    with TestClient(app) as client:
+        res = client.post(f"/api/v1/scm/reorder-runs/{run_id}/confirm-decisions", json={"ids": []})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["confirmed_count"] == 3
+    assert body["po_count"] == 2

@@ -200,7 +200,7 @@ describe('ReorderPlanningView — run history', () => {
     );
 
     // the viewing banner + the selected run's SKU render
-    expect(await screen.findByText(/Viewing run from/i)).toBeTruthy();
+    expect(await screen.findByText(/Viewing an earlier run from/i)).toBeTruthy();
     expect(await screen.findByText('SKU-run-a')).toBeTruthy();
   });
 });

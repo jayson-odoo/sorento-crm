@@ -75,6 +75,14 @@ class SupplierChoice(BaseModel):
     lead_time_days: Optional[float] = None
     composite_score: Optional[float] = None
     is_primary: bool = False
+    # Scorecard detail for the "why this supplier" popover (frozen; may be null on
+    # older runs / suppliers with no M2 performance sample).
+    sample_size: Optional[int] = None
+    confidence: Optional[str] = None
+    lead_time_source: Optional[str] = None
+    lead_time_variance: Optional[float] = None
+    moq: Optional[float] = None
+    order_multiple: Optional[float] = None
 
 
 class AllocationLine(BaseModel):

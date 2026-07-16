@@ -20,6 +20,8 @@ from app.schemas.scm_decisions import (
     BulkAcceptResult,
     BulkRejectRequest,
     BulkRejectResult,
+    ConfirmDecisionsRequest,
+    ConfirmDecisionsResult,
     RecDecisionListResponse,
     RejectRequest,
 )
@@ -93,6 +95,20 @@ def reject(
     _user: dict = Depends(_RUN),
 ):
     result = svc.reject_recommendation(db, rec_id, payload.reason_text, (_user or {}).get("id"))
+    db.commit()
+    return result
+
+
+@router.post(
+    "/reorder-runs/{run_id}/confirm-decisions", response_model=ConfirmDecisionsResult
+)
+def confirm_decisions(
+    run_id: str,
+    payload: ConfirmDecisionsRequest = Body(default=ConfirmDecisionsRequest()),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    result = svc.confirm_decisions(db, run_id, payload.ids, (_user or {}).get("id"))
     db.commit()
     return result
 

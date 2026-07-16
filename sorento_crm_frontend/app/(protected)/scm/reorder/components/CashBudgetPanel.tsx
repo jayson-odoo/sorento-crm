@@ -1,7 +1,6 @@
 'use client';
 
-import { Check, CircleDollarSign, Wallet } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { CircleDollarSign, Wallet } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -45,24 +44,16 @@ export function CashBudgetPanel({
   sliderMax,
   step,
   funding,
-  onApply,
-  isApplying,
-  appliedBudget,
 }: {
   budget: number;
   onBudgetChange: (value: number) => void;
   sliderMax: number;
   step: number;
   funding: FundingResult;
-  onApply: () => void;
-  isApplying: boolean;
-  /** The last budget persisted via Apply (null before first apply). */
-  appliedBudget: number | null;
 }) {
   const { funded, deferred, needsCost, fundedCash, deferredCash, remaining } = funding;
   // Fill bar: how much of the budget the funded set consumes (capped at 100%).
   const fillPct = budget > 0 ? Math.min(100, Math.round((fundedCash / budget) * 100)) : 0;
-  const isApplied = appliedBudget !== null && appliedBudget === budget;
 
   const clamp = (n: number) => Math.max(0, Math.min(sliderMax, Math.round(n)));
 
@@ -81,27 +72,21 @@ export function CashBudgetPanel({
             </div>
           </div>
         </div>
-        <div className="flex items-end gap-2">
-          <div>
-            <Label htmlFor="cash-budget" className="mb-1 block text-xs">
-              Budget (RM)
-            </Label>
-            <Input
-              id="cash-budget"
-              type="number"
-              inputMode="numeric"
-              min={0}
-              max={sliderMax}
-              step={step}
-              value={budget}
-              onChange={(e) => onBudgetChange(clamp(Number(e.target.value) || 0))}
-              className="w-36 tabular-nums"
-            />
-          </div>
-          <Button onClick={onApply} disabled={isApplying} className="shrink-0">
-            {isApplied ? <Check className="size-4" /> : null}
-            {isApplied ? 'Applied' : 'Apply budget'}
-          </Button>
+        <div>
+          <Label htmlFor="cash-budget" className="mb-1 block text-xs">
+            Budget (RM)
+          </Label>
+          <Input
+            id="cash-budget"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={sliderMax}
+            step={step}
+            value={budget}
+            onChange={(e) => onBudgetChange(clamp(Number(e.target.value) || 0))}
+            className="w-36 tabular-nums"
+          />
         </div>
       </div>
 

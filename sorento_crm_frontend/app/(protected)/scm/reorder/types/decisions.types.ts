@@ -47,17 +47,24 @@ export interface RejectPayload {
   reason_text: string;
 }
 
-/** Result of a single Accept/Adjust — which draft PO it landed in. */
+/** Result of a single Accept/Adjust. Decisions are STAGED — no PO exists until
+ *  Confirm decisions — so the PO fields are null here (populated later via the
+ *  decisions read once confirmed). `supplier_name` drives the toast. */
 export interface AcceptResult {
-  draft_po_number: string;
-  /** Stable PO id — powers the "View draft PO" deep link. */
-  draft_po_id: string;
+  draft_po_number: string | null;
+  draft_po_id: string | null;
   supplier_name: string;
 }
 
-/** Result of a bulk Accept-funded run (M4-D4/D9). */
+/** Result of a bulk Accept-funded run (M4-D9) — staged, so `po_count` is 0. */
 export interface BulkAcceptResult {
   accepted_count: number;
-  /** Number of consolidated draft POs created / appended (one per supplier). */
+  po_count: number;
+}
+
+/** Result of Confirm decisions (M4-D4) — how many staged decisions materialised
+ *  and how many consolidated draft POs were created / updated (one per supplier). */
+export interface ConfirmDecisionsResult {
+  confirmed_count: number;
   po_count: number;
 }

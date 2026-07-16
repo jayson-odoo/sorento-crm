@@ -90,6 +90,13 @@ export function computeFunding(
     (a, b) => (a.days_to_stockout ?? Infinity) - (b.days_to_stockout ?? Infinity),
   );
 
+  // Clean 1..N priority per section (M4 slice-B UX) — the raw global rank (e.g.
+  // 205) confuses; the user wants a sequential position in each list. Assigned
+  // AFTER each section's final sort so the number matches the displayed order.
+  funded.forEach((r, i) => (r.display_rank = i + 1));
+  deferred.forEach((r, i) => (r.display_rank = i + 1));
+  needsCost.forEach((r, i) => (r.display_rank = i + 1));
+
   return { funded, deferred, needsCost, fundedCash, deferredCash, remaining: budget - fundedCash };
 }
 

@@ -299,7 +299,7 @@ export function mockBulkAccept(recs: ReorderRecommendation[]): BulkAcceptResult 
   const touched = new Set<string>();
   for (const rec of recs) {
     const res = mockAcceptRecommendation(rec);
-    touched.add(res.draft_po_number);
+    if (res.draft_po_number) touched.add(res.draft_po_number);
   }
   return { accepted_count: recs.length, po_count: touched.size };
 }

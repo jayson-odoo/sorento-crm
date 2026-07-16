@@ -1,20 +1,25 @@
 """SCM M4 Slice B — human decision layer (Accept / Adjust / Reject) + the draft
-PO it consolidates into.
+PO the decisions consolidate into at CONFIRM time.
 
-The recommendation itself is NEVER mutated except for its ``status`` column
-(proposed → accepted | adjusted | dismissed). Every qty / supplier override is
-recorded APPEND-ONLY in ``scm.recommendation_override`` (M4-D7) — a second adjust
-adds a second row, it never rewrites the first.
+Decisions are STAGED, not immediately materialised: Accept / Adjust / Reject only
+set the recommendation's ``status`` (proposed → accepted | adjusted | dismissed)
+and, for adjust/reject, append a ``scm.recommendation_override`` row (M4-D7 — a
+second adjust adds a second row, never rewrites the first). NO purchase order is
+created until the human explicitly runs **Confirm decisions** (``confirm_decisions``)
+— that is the point where accepted + adjusted recs are consolidated into ONE draft
+``purchase_order`` per supplier (status ``draft_recommendation``, one line per SKU).
+This gives the planner an editable overview before any PO exists.
 
-Accept/Adjust consolidate into ONE draft ``purchase_order`` per supplier (status
-``draft_recommendation``, one line per SKU — M4-D4). A draft is deliberately OUTSIDE
-``scm.on_order_v``'s status set so the next run never double-counts it as incoming
-supply (M4-D5); confirming it (``purchase_order_service.bulk_confirm``) flips it to
-``active`` and assigns the canonical ``PO-{year}/{month}-####`` number.
+A draft is deliberately OUTSIDE ``scm.on_order_v``'s status set so the next run
+never double-counts it as incoming supply (M4-D5); confirming the DRAFT
+(``purchase_order_service.bulk_confirm``) flips it to ``active`` and assigns the
+canonical ``PO-{year}/{month}-####`` number.
 
 The rec → draft-PO-line link is carried on the line's ``source_ref`` (= rec id) so
 the decision state (and its PO number) survives a confirm renumber without a schema
-change. No UUIDs surface — suppliers/POs resolve to codes/numbers.
+change. ``confirm_decisions`` is idempotent — re-running it reconciles every line
+to the rec's CURRENT decision (re-adjusted qty updated, rejected rec's line pulled).
+No UUIDs surface — suppliers/POs resolve to codes/numbers.
 """
 from __future__ import annotations
 
@@ -244,12 +249,52 @@ def _upsert_line(
     db.flush()
 
 
-def _result(po: PurchaseOrder, supplier_name: Optional[str]) -> dict:
+def _staged_result(supplier_name: Optional[str]) -> dict:
+    """A decision is STAGED, not materialised — no PO exists yet (created only at
+    Confirm decisions). The chosen supplier name drives the toast."""
     return {
-        "draft_po_number": po.po_number,
-        "draft_po_id": po.id,
+        "draft_po_number": None,
+        "draft_po_id": None,
         "supplier_name": supplier_name or "",
     }
+
+
+def _line_inputs(
+    db: Session, rec: ReorderRecommendation
+) -> tuple[Optional[str], float, Optional[float], Optional[float], Optional[str]]:
+    """Resolve (supplier_id, qty, unit_cost, lead_days, supplier_name) for a rec's
+    draft-PO line at CONFIRM time, honouring the latest adjust override (qty +
+    optional supplier switch); an accepted rec uses its proposed supplier + rounded qty."""
+    if rec.status == "adjusted":
+        ov = (
+            db.query(RecommendationOverride)
+            .filter(RecommendationOverride.recommendation_id == rec.id)
+            # overridden_at is stamped explicitly (µs precision) so it's a
+            # deterministic "latest" — created_at's DB default can tie within a txn.
+            .order_by(RecommendationOverride.overridden_at.desc())
+            .first()
+        )
+        qty = float(ov.override_qty) if ov and ov.override_qty is not None else float(rec.rounded_qty or 0)
+        if ov is not None and ov.override_supplier_id:
+            ps = _product_supplier_choice(db, rec.product_id, ov.override_supplier_id) or {}
+            return (
+                ov.override_supplier_id,
+                qty,
+                ps.get("unit_cost") if ps.get("unit_cost") is not None else _f(rec.unit_cost),
+                ps.get("lead_time_days"),
+                ps.get("supplier_name"),
+            )
+        choice = _resolve_choice(db, rec, None)
+        return choice["supplier_id"], qty, choice["unit_cost"], choice["lead_time_days"], choice["supplier_name"]
+    # accepted — proposed supplier, rounded qty as-is
+    choice = _resolve_choice(db, rec, None)
+    return (
+        choice["supplier_id"],
+        float(rec.rounded_qty or 0),
+        choice["unit_cost"],
+        choice["lead_time_days"],
+        choice["supplier_name"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -257,16 +302,13 @@ def _result(po: PurchaseOrder, supplier_name: Optional[str]) -> dict:
 # ---------------------------------------------------------------------------
 
 def accept_recommendation(db: Session, rec_id: str, actor: Optional[str]) -> dict:
-    """Accept as proposed → consolidated draft PO for the rec's supplier (M4-D4)."""
+    """Stage an Accept (M4-D4) — sets status only, NO PO. The draft PO is created
+    later at Confirm decisions, so the planner keeps an editable overview first."""
     rec = _get_buy_rec(db, rec_id)
     choice = _resolve_choice(db, rec, None)
-    _remove_rec_line(db, rec.id)
-    po = _draft_po_for_supplier(db, choice["supplier_id"], rec.currency)
-    _upsert_line(db, po, rec, float(rec.rounded_qty or 0),
-                 choice["unit_cost"], choice["lead_time_days"])
     rec.status = "accepted"
     db.flush()
-    return _result(po, choice["supplier_name"])
+    return _staged_result(choice["supplier_name"])
 
 
 def adjust_recommendation(
@@ -277,8 +319,9 @@ def adjust_recommendation(
     reason_text: str,
     actor: Optional[str],
 ) -> dict:
-    """Adjust qty and/or switch supplier (M4-D7). Writes an APPEND-ONLY override row,
-    recomputes cost/lead off the chosen supplier, and redirects the draft PO line."""
+    """Stage an Adjust (M4-D7) — writes an APPEND-ONLY override row (qty + optional
+    supplier switch) and sets status; NO PO. Confirm decisions consolidates the
+    latest override into the draft PO line."""
     rec = _get_buy_rec(db, rec_id)
     if override_qty is None or float(override_qty) <= 0:
         raise AppException(status_code=422, message="Override quantity must be greater than zero.")
@@ -286,10 +329,6 @@ def adjust_recommendation(
         raise AppException(status_code=422, message="A reason is required to adjust a recommendation.")
 
     choice = _resolve_choice(db, rec, override_supplier_code)
-    _remove_rec_line(db, rec.id)
-    po = _draft_po_for_supplier(db, choice["supplier_id"], rec.currency)
-    _upsert_line(db, po, rec, float(override_qty),
-                 choice["unit_cost"], choice["lead_time_days"])
 
     db.add(
         RecommendationOverride(
@@ -308,7 +347,7 @@ def adjust_recommendation(
     )
     rec.status = "adjusted"
     db.flush()
-    return _result(po, choice["supplier_name"])
+    return _staged_result(choice["supplier_name"])
 
 
 def reject_recommendation(
@@ -341,14 +380,49 @@ def reject_recommendation(
 
 
 def bulk_accept(db: Session, run_id: str, ids: list[str], actor: Optional[str]) -> dict:
-    """Bulk Accept funded recs (M4-D9) — consolidates per supplier and reports how many
-    distinct draft POs were touched."""
+    """Bulk Accept funded recs (M4-D9) — STAGES each as accepted; no PO yet
+    (materialised at Confirm decisions). ``po_count`` stays 0 for the staged step."""
     recs = _run_recs(db, run_id, ids)
-    touched: set[str] = set()
     for rec in recs:
-        res = accept_recommendation(db, rec.id, actor)
-        touched.add(res["draft_po_id"])
-    return {"accepted_count": len(recs), "po_count": len(touched)}
+        accept_recommendation(db, rec.id, actor)
+    return {"accepted_count": len(recs), "po_count": 0}
+
+
+def confirm_decisions(
+    db: Session, run_id: str, ids: Optional[list[str]], actor: Optional[str]
+) -> dict:
+    """Materialise the staged decisions of a run into consolidated draft POs (M4-D4).
+
+    Idempotent reconciler: for every decided rec (optionally narrowed to ``ids``)
+    — accepted/adjusted → upsert its line into the supplier's draft PO (latest
+    override qty/supplier honoured); dismissed → pull its line back out. Re-running
+    after a re-adjust just updates the line. Returns how many decisions were
+    confirmed and how many distinct draft POs were touched."""
+    q = db.query(ReorderRecommendation).filter(
+        ReorderRecommendation.run_id == run_id,
+        ReorderRecommendation.status.in_(("accepted", "adjusted", "dismissed")),
+        ReorderRecommendation.rec_type == "buy",
+    )
+    if ids:
+        q = q.filter(ReorderRecommendation.id.in_(ids))
+    recs = q.all()
+
+    touched: set[str] = set()
+    confirmed = 0
+    for rec in recs:
+        if rec.status == "dismissed":
+            _remove_rec_line(db, rec.id)
+            continue
+        supplier_id, qty, unit_cost, lead, _name = _line_inputs(db, rec)
+        # Clear any stale draft line first (e.g. a prior confirm under a since-switched
+        # supplier), then consolidate into the current supplier's draft.
+        _remove_rec_line(db, rec.id)
+        po = _draft_po_for_supplier(db, supplier_id, rec.currency)
+        _upsert_line(db, po, rec, qty, unit_cost, lead)
+        touched.add(po.id)
+        confirmed += 1
+    db.flush()
+    return {"confirmed_count": confirmed, "po_count": len(touched)}
 
 
 def bulk_reject(
@@ -397,7 +471,7 @@ def list_decisions(db: Session, run_id: str) -> list[dict]:
         override = (
             db.query(RecommendationOverride)
             .filter(RecommendationOverride.recommendation_id == rec.id)
-            .order_by(RecommendationOverride.created_at.desc())
+            .order_by(RecommendationOverride.overridden_at.desc())
             .first()
         )
         sup_code = sup_name = None

@@ -633,6 +633,15 @@ def _supplier_choice(cand: Optional[dict]) -> Optional[dict]:
         "lead_time_days": _fnum(cand.get("lead_time_days")),
         "composite_score": _fnum(cand.get("composite_score")),
         "is_primary": bool(cand.get("is_primary")),
+        # M5-prep — scorecard detail for the "why this supplier" popover (all already
+        # on the candidate from the M2 supplier_performance join). Frozen at run time.
+        "sample_size": (int(cand["supplier_sample_size"])
+                        if cand.get("supplier_sample_size") is not None else None),
+        "confidence": cand.get("supplier_confidence"),
+        "lead_time_source": cand.get("lead_time_source"),
+        "lead_time_variance": _fnum(cand.get("lead_time_variance")),
+        "moq": _fnum(cand.get("moq")),
+        "order_multiple": _fnum(cand.get("order_multiple")),
     }
 
 

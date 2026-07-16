@@ -1,10 +1,12 @@
 'use client';
 
 import { useCallback } from 'react';
+import { Popover as PopoverPrimitive } from 'radix-ui';
 import {
   AlertTriangle,
   ArrowRightLeft,
   Ban,
+  ChevronDown,
   Layers,
   PackageX,
   ShoppingCart,
@@ -18,6 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { cn } from '@/lib/utils';
 import { xyzLabel } from '../../lib/health';
@@ -251,6 +254,125 @@ function TypeChip({ rec }: { rec: ReorderRecommendation }) {
   );
 }
 
+const CONFIDENCE_LABEL: Record<string, string> = { high: 'High', medium: 'Medium', low: 'Low' };
+
+/** One label/value line inside the supplier score popover. */
+function DetailLine({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 px-3 py-1.5 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-end">
+        <span className="font-medium tabular-nums">{value}</span>
+        {sub ? <span className="ms-1 text-2xs text-muted-foreground">{sub}</span> : null}
+      </span>
+    </div>
+  );
+}
+
+/** Click-to-reveal supplier scorecard — kept OUT of the always-on table so the row
+ *  stays scannable; a planner who wants "why this supplier" clicks the chevron and
+ *  gets the composite score breakdown, reliability, cost + ordering constraints,
+ *  plus how it ranked vs the chosen supplier. Frozen numbers only (M5 boundary). */
+function SupplierScoreDetail({
+  s,
+  selected,
+  chosen,
+}: {
+  s: SupplierChoice;
+  selected: boolean;
+  chosen: SupplierChoice | null;
+}) {
+  const costDelta =
+    !selected && chosen?.unit_cost != null && s.unit_cost != null
+      ? s.unit_cost - chosen.unit_cost
+      : null;
+  const leadDelta =
+    !selected && chosen?.lead_time_days != null && s.lead_time_days != null
+      ? s.lead_time_days - chosen.lead_time_days
+      : null;
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-0.5 rounded-sm px-1 text-2xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          title="Supplier score detail"
+          aria-label={`Score detail for ${s.supplier_name ?? s.supplier_code}`}
+        >
+          Details
+          <ChevronDown className="size-3" aria-hidden />
+        </button>
+      </PopoverTrigger>
+      <PopoverPrimitive.Portal>
+        <PopoverContent align="end" collisionPadding={8} className="w-72 p-0">
+          <div className="flex items-center gap-2 border-b px-3 py-2 text-xs font-medium">
+            <span className="truncate">{s.supplier_name ?? s.supplier_code}</span>
+            <Badge variant={selected ? 'primary' : 'secondary'} appearance="light" size="xs">
+              {selected ? 'chosen' : 'alternative'}
+            </Badge>
+            {s.is_primary ? (
+              <Badge variant="secondary" appearance="light" size="xs">
+                primary
+              </Badge>
+            ) : null}
+          </div>
+          <div className="divide-y">
+            <DetailLine
+              label="Performance score"
+              value={s.composite_score != null ? fmtInt(s.composite_score) : EM_DASH}
+              sub={
+                s.confidence
+                  ? `${CONFIDENCE_LABEL[s.confidence] ?? s.confidence} · ${fmtInt(s.sample_size ?? 0)} obs`
+                  : s.sample_size != null
+                    ? `${fmtInt(s.sample_size)} obs`
+                    : undefined
+              }
+            />
+            <DetailLine
+              label="Lead time"
+              value={s.lead_time_days != null ? `${fmtInt(s.lead_time_days)}d` : EM_DASH}
+              sub={
+                [
+                  s.lead_time_source ? LEAD_SOURCE_WHY[s.lead_time_source] ?? s.lead_time_source : null,
+                  s.lead_time_variance != null ? `±${dec(Math.sqrt(Math.max(s.lead_time_variance, 0)))}d` : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ') || undefined
+              }
+            />
+            <DetailLine label="Unit cost" value={fmtMoney(s.unit_cost)} />
+            {s.moq != null && s.moq > 0 ? (
+              <DetailLine label="Min order" value={fmtInt(s.moq)} />
+            ) : null}
+            {s.order_multiple != null && s.order_multiple > 0 ? (
+              <DetailLine label="Pack multiple" value={fmtInt(s.order_multiple)} />
+            ) : null}
+            {!selected && (costDelta != null || leadDelta != null) ? (
+              <div className="px-3 py-1.5 text-2xs text-muted-foreground">
+                vs chosen:{' '}
+                {costDelta != null ? (
+                  <span className={cn(costDelta > 0 ? 'text-scm-stockout' : 'text-scm-incoming')}>
+                    {costDelta > 0 ? '+' : ''}
+                    {fmtMoney(costDelta)}
+                  </span>
+                ) : null}
+                {costDelta != null && leadDelta != null ? ', ' : ''}
+                {leadDelta != null ? (
+                  <span className={cn(leadDelta > 0 ? 'text-scm-stockout' : 'text-scm-incoming')}>
+                    {leadDelta > 0 ? '+' : ''}
+                    {fmtInt(leadDelta)}d lead
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </PopoverContent>
+      </PopoverPrimitive.Portal>
+    </Popover>
+  );
+}
+
 /** Supplier block: chosen supplier + ranked alternatives (cost / lead / score). */
 function SupplierBlock({ rec }: { rec: ReorderRecommendation }) {
   if (rec.is_exception || !rec.supplier) {
@@ -274,11 +396,12 @@ function SupplierBlock({ rec }: { rec: ReorderRecommendation }) {
         </div>
       ) : null}
       <div className="overflow-hidden rounded-lg border border-border">
-        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 border-b bg-muted/40 px-3 py-1.5 text-2xs font-medium text-muted-foreground">
+        <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 border-b bg-muted/40 px-3 py-1.5 text-2xs font-medium text-muted-foreground">
           <span>Supplier</span>
           <span className="text-right">Cost</span>
           <span className="text-right">Lead</span>
           <span className="text-right">Score</span>
+          <span className="text-right sr-only">Detail</span>
         </div>
         {ranked.map((s) => {
           const selected = s.supplier_code === rec.supplier?.supplier_code;
@@ -286,7 +409,7 @@ function SupplierBlock({ rec }: { rec: ReorderRecommendation }) {
             <div
               key={s.supplier_code}
               className={cn(
-                'grid grid-cols-[1fr_auto_auto_auto] items-center gap-x-3 px-3 py-1.5 text-sm',
+                'grid grid-cols-[1fr_auto_auto_auto_auto] items-center gap-x-3 px-3 py-1.5 text-sm',
                 selected && 'bg-muted/40',
               )}
             >
@@ -306,6 +429,9 @@ function SupplierBlock({ rec }: { rec: ReorderRecommendation }) {
               </span>
               <span className="text-right tabular-nums">
                 {s.composite_score != null ? fmtInt(s.composite_score) : EM_DASH}
+              </span>
+              <span className="text-right">
+                <SupplierScoreDetail s={s} selected={selected} chosen={rec.supplier} />
               </span>
             </div>
           );

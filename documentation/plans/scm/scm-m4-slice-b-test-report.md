@@ -1,5 +1,16 @@
 # SCM M4 Slice B — Test Report (decisions + PO draft/confirm/GR)
 
+> **Revised 2026-07-16 (M4-D17..D23, slice-B UX grill).** Decisions are now STAGED — Accept/Adjust/
+> Reject set status only; a new **Confirm decisions** step materialises the consolidated draft POs
+> (`decision_service.confirm_decisions`, idempotent). Adjusted qty reflects in the grid; rank shows a
+> clean 1..N; the "Apply budget" button is gone (live funding); sections are collapsible; the past-run
+> banner is a slim text line. pytest reworked to the staged model — **16 pass**
+> (`tests/scm/test_m4_decisions.py`, incl. `confirm_decisions` consolidation/idempotency/on-order +
+> a confirm-decisions endpoint + auth). Full flow re-verified via Playwright-MCP on the BRW-IB run
+> (81 buys): Adjust FT-B 768→100 (grid shows struck 768→100, cash RM168,192→RM21,900, badge Adjusted,
+> NO PO) → Accept FT-03 → "2 decisions staged" bar → Confirm decisions → FT-B→PO-DRAFT-0006 /
+> FT-03→PO-DRAFT-0007 (separate suppliers); re-select run → confirm bar cleared; console 0 errors.
+
 Keyed to `scm-m4-cash-copilot-acceptance-criteria.md`. Suites: **pytest 13**
 (`tests/scm/test_m4_decisions.py`), **vitest 71** (12 files under `app/(protected)/scm/**`;
 full SCM vitest suite 213 green, no regressions), **playwright 1**

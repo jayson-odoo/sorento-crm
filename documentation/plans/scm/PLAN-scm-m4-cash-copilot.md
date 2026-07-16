@@ -34,6 +34,31 @@
   cash constraint meaningless and hide the cost-data gap. This bucket surfaces the gap as actionable.
   (Supersedes the prototype's "fund uncosted for free" default.)
 
+## Slice-B UX revision (user grill 2026-07-16, post-handoff — supersedes parts of §3/§5)
+- **M4-D17 — Decisions are STAGED; the PO is created at Confirm decisions, not on each
+  Accept/Adjust.** Accept/Adjust/Reject only set `rec.status` (+ append override for adjust/reject).
+  A new **Confirm decisions** action (`POST /scm/reorder-runs/{id}/confirm-decisions`,
+  `decision_service.confirm_decisions` — idempotent reconciler) consolidates accepted+adjusted recs
+  into one draft PO per supplier. Gives the planner an editable overview before any PO exists. The
+  draft→active confirm (PO list, renumber) is unchanged downstream. Bulk-accept `po_count` is now 0
+  (staged).
+- **M4-D18 — Adjusted qty reflects in the results grid** (struck original → override, cash impact
+  recomputed pro-rata), not only in the PO.
+- **M4-D19 — Rank column shows a clean 1..N section position** (`display_rank`, assigned in
+  `computeFunding` after each section's final sort), not the raw global rank; the true score stays in
+  the explainability popover.
+- **M4-D20 — Budget is live-only: the "Apply budget" button is removed** (funding recomputes on every
+  input/slider change; no persistence step). Funding_status persistence is dropped for now.
+- **M4-D21 — Funded / Deferred / Needs cost are collapsible** (all start expanded) and column-aligned
+  (Needs cost gets a leading spacer + dash rank).
+- **M4-D22 — Past-run banner is a slim info line** (no prominent "Back to latest" button; inline text
+  link + history-panel selection return to latest).
+- **M4-D23 — Run-time budget cap DEFERRED** (the Run-planning "Budget" field stays disabled). View-time
+  slider is the M4 budget mechanism; a run-time cap changes the deterministic engine → its own slice/M5.
+- **Pending follow-ups:** supplier-choice detail popup (score breakdown + ranked alternatives — needs
+  M2 scorecard components surfaced); confirm the buy/disposition toggle (stat tiles) meets the "see
+  dispositions" ask or add an inline affordance.
+
 ## Goal
 Close the co-pilot loop — cash-ranked recommendations, human Accept/Adjust/Reject, draft→confirm PO
 flow, and reason-driven policy suggestions. The deal-closer.

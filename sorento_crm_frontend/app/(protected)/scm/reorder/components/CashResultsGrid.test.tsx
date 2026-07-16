@@ -287,6 +287,84 @@ describe('CashResultsGrid — unified Actions dropdown gating (AC-M4.9)', () => 
   });
 });
 
+describe('CashResultsGrid — adjusted override reflected in the grid (M4 slice-B)', () => {
+  it('shows the override qty with the original struck through and recomputes cash impact', () => {
+    const cb = decisionCallbacks();
+    const row = rec({
+      id: 'rec-adj',
+      order_qty: 100,
+      cash_impact: 4200, // unit 42 → override 250 ⇒ (4200/100)*250 = 10,500
+      net_position: 40,
+      days_of_cover: 5,
+    });
+    const decisionsById: Record<string, RecDecision> = {
+      'rec-adj': {
+        recommendation_id: 'rec-adj',
+        status: 'adjusted',
+        override_qty: 250,
+        override_supplier_code: null,
+        override_supplier_name: null,
+        reason_text: 'MOQ bump',
+        draft_po_number: null,
+        draft_po_id: null,
+      },
+    };
+    const { container } = render(
+      <CashResultsGrid
+        rows={[row]}
+        variant="funded"
+        isLoading={false}
+        onRowClick={() => {}}
+        decisionsById={decisionsById}
+        selectable
+        {...cb}
+      />,
+    );
+    // Override qty is the live number; the original is struck through beside it.
+    expect(screen.getByText('250')).toBeInTheDocument();
+    const struck = container.querySelector('.line-through');
+    expect(struck).not.toBeNull();
+    expect(struck).toHaveTextContent('100');
+    // Cash impact is recomputed against the override, not frozen at the original.
+    expect(screen.getByText('RM 10,500')).toBeInTheDocument();
+    expect(screen.queryByText('RM 4,200')).toBeNull();
+  });
+});
+
+describe('CashResultsGrid — section collapse toggle (M4 slice-B)', () => {
+  it('hides the table body when the section heading toggle is clicked', () => {
+    const row = rec({ id: 'rec-c', product_name: 'Ceramic Wash Basin 450mm' });
+    render(<CashResultsGrid rows={[row]} variant="funded" isLoading={false} onRowClick={() => {}} />);
+
+    // Row content is visible and the toggle advertises the expanded state.
+    expect(screen.getByText('Ceramic Wash Basin 450mm')).toBeInTheDocument();
+    const toggle = screen.getByTitle('Collapse Funded');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    fireEvent.click(toggle);
+
+    // Table body is gone; the toggle now offers to expand.
+    expect(screen.queryByText('Ceramic Wash Basin 450mm')).toBeNull();
+    expect(screen.getByTitle('Expand Funded')).toHaveAttribute('aria-expanded', 'false');
+  });
+});
+
+describe('CashResultsGrid — Rank column renders the sequential display_rank (M4 slice-B)', () => {
+  it('shows display_rank 1..N, not the raw global rank', () => {
+    const rows = [
+      rec({ id: 'r1', sku: 'SKU-1', display_rank: 1, rank: 205, order_qty: 100 }),
+      rec({ id: 'r2', sku: 'SKU-2', display_rank: 2, rank: 206, order_qty: 110 }),
+      rec({ id: 'r3', sku: 'SKU-3', display_rank: 3, rank: 207, order_qty: 120 }),
+    ];
+    render(<CashResultsGrid rows={rows} variant="funded" isLoading={false} onRowClick={() => {}} />);
+
+    const rankButtons = screen.getAllByTitle('Why this rank');
+    expect(rankButtons.map((b) => b.textContent)).toEqual(['1', '2', '3']);
+    // The raw global rank never leaks into the cell.
+    expect(screen.queryByText('205')).toBeNull();
+  });
+});
+
 describe('CashResultsGrid — needs_cost read-only variant (AC-M4.16)', () => {
   it('renders the empty state with no selection column or row actions', () => {
     render(

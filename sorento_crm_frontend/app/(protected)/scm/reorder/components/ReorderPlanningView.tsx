@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, History as HistoryIcon, PlayCircle, Sparkles } from 'lucide-react';
+import { History as HistoryIcon, PlayCircle, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -128,32 +128,29 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         />
       ) : null}
 
-      {/* Viewing a past run — banner identifying it (by time + warehouses, no UUID). */}
+      {/* Viewing a past run — a slim, low-fatigue info line (M4 slice-B UX: plain
+          text, no prominent "Back to latest" button). Return to the live run by
+          clicking it in the history panel below, or the inline text link. */}
       {isPastView ? (
-        <Card className="flex flex-col gap-3 border-primary/40 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <HistoryIcon className="size-4.5" aria-hidden />
-            </span>
-            <div className="min-w-0">
-              <div className="text-sm font-semibold">
-                Viewing run from {viewedWhen ? timeAgo(viewedWhen) : ''}
-              </div>
-              <div className="truncate text-xs text-muted-foreground">
-                {viewedRun!.started_at ? formatDateTimeInMalaysia(viewedRun!.started_at) : ''}
-                {viewedRun!.warehouse_count
-                  ? ` · ${viewedRun!.warehouse_count} warehouse${
-                      viewedRun!.warehouse_count === 1 ? '' : 's'
-                    }`
-                  : ''}
-              </div>
-            </div>
-          </div>
-          <Button variant="outline" size="sm" onClick={backToLatest} className="shrink-0">
-            <ArrowLeft className="size-4" />
-            Back to latest
-          </Button>
-        </Card>
+        <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+          <HistoryIcon className="size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 truncate">
+            Viewing an earlier run from {viewedWhen ? timeAgo(viewedWhen) : ''}
+            {viewedRun!.started_at ? ` · ${formatDateTimeInMalaysia(viewedRun!.started_at)}` : ''}
+            {viewedRun!.warehouse_count
+              ? ` · ${viewedRun!.warehouse_count} warehouse${
+                  viewedRun!.warehouse_count === 1 ? '' : 's'
+                }`
+              : ''}
+          </span>
+          <button
+            type="button"
+            onClick={backToLatest}
+            className="shrink-0 font-medium text-primary underline-offset-2 hover:underline"
+          >
+            back to latest
+          </button>
+        </div>
       ) : null}
 
       {/* Loading / error while fetching a past run's summary. */}
