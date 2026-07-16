@@ -271,8 +271,15 @@ export interface SalesOrderFormData {
 
 // `active` is the seed / back-end value for a confirmed-but-not-fully-received
 // PO. Any unknown value still renders via a neutral fallback.
+//
+// `draft_recommendation` (M4-D4) is a PO drafted from an accepted reorder
+// recommendation. It is deliberately OUTSIDE the on-order set — `scm.on_order_v`
+// counts only status IN ('active','received','partial','closed'), so a draft is
+// NOT counted as incoming supply until it is confirmed (M4-D5). Confirming a
+// draft flips it to `active` and it then counts as on-order (M4-D6).
 export type PurchaseOrderStatus =
   | 'draft'
+  | 'draft_recommendation'
   | 'active'
   | 'confirmed'
   | 'partially_received'
@@ -304,4 +311,12 @@ export interface PurchaseOrder {
   line_count: number;
   lines: PurchaseOrderLine[];
   created_at: string;
+  /** True when this PO counts as incoming supply (on-order) — false for a draft
+   *  or cancelled PO. Mirrors `scm.on_order_v`'s status filter (M4-D5/D6). */
+  is_on_order?: boolean;
+  /** How the PO originated — `recommendation` = drafted from an accepted reorder
+   *  recommendation (Slice B); `manual` = created directly. */
+  source?: 'recommendation' | 'manual';
+  /** Goods-receipt reference once a GR has been created from this PO (M4-D6). */
+  gr_reference?: string | null;
 }

@@ -175,9 +175,26 @@ function buildRec(seed: Seed): ReorderRecommendation {
       seed.lead_time_days,
       82,
     ),
+    // A ranked alternative set for the M4 Slice B "switch supplier" flow — the
+    // primary plus two deterministic alternatives (one pricier + slower, one
+    // cheaper + slower) so the Adjust recompute preview is demonstrable.
     alternatives: [
       supplier(seed.supplier_code, seed.supplier_name, seed.unit_cost, seed.lead_time_days, 82),
-    ],
+      supplier(
+        'SUP-GEN',
+        'Generic Parts Co',
+        seed.unit_cost === null ? null : Math.round(seed.unit_cost * 1.08),
+        seed.lead_time_days + 3,
+        74,
+      ),
+      supplier(
+        'SUP-EAST',
+        'Eastgate Trading',
+        seed.unit_cost === null ? null : Math.round(seed.unit_cost * 0.92),
+        seed.lead_time_days + 6,
+        69,
+      ),
+    ].map((s) => ({ ...s, is_primary: s.supplier_code === seed.supplier_code })),
     is_exception: false,
     disposition_action: null,
     transfer_flag: null,

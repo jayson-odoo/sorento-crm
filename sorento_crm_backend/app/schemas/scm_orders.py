@@ -104,6 +104,10 @@ class PurchaseOrder(BaseModel):
     line_count: int
     lines: List[PurchaseOrderLine]
     created_at: str
+    # M4 Slice B — draft→confirm→GR flow
+    is_on_order: bool = False
+    source: str = "manual"           # recommendation | manual
+    gr_reference: Optional[str] = None
 
 
 class PurchaseOrderPagination(BaseModel):

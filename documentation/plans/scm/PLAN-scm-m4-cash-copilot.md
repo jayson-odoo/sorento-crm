@@ -76,6 +76,22 @@ flow, and reason-driven policy suggestions. The deal-closer.
 - **vitest:** interactive results, budget slider, decision flows, PO bulk confirm, suggestions panel, config CRUD states.
 - **playwright:** AC-M4.15 full loop.
 
+## Slice B — Phase-3 review follow-ups (deferred hardening; reviewer verdict READY, no blockers)
+Fixed at review time: confirm/create-GR now invalidate the on-order-bearing dashboard caches
+(net-position/rollups/products/warehouses/suppliers), not just the PO list; accept-response doc
+drift (`draft_po_id`) corrected. Deferred (low-exposure, out-of-scope-ish for Slice B):
+1. **Draft consolidation concurrency** — `_draft_po_for_supplier` does SELECT-then-INSERT with no
+   lock / partial-unique index on `(supplier_id) WHERE status='draft_recommendation'`. Two concurrent
+   accepts for the same supplier (two tabs / rapid double-click) could create two drafts. `bulk_accept`
+   is sequential so the main path is safe. Hardening: partial unique index + ON CONFLICT / advisory lock.
+2. **Re-accept/adjust of a rec already in a CONFIRMED (active) PO** — `_remove_rec_line` filters
+   `status='draft_recommendation'`, so a line already in an active PO isn't removed; a new draft line is
+   created and the UI points at the new draft. Reachable because `bulk_confirm` leaves `rec.status='accepted'`.
+   Hardening: guard accept/adjust when the rec's PO is already active.
+3. Nits: GR PickingLine `quantity_picked` is `int(round())` vs the PO line's `Numeric(15,4)` (fractional-qty
+   mismatch, harmless for whole-unit reorder qty); `AdjustRequest.override_supplier_id` carries a supplier
+   CODE not a UUID (rename to `_code` to remove the foot-gun).
+
 ## 7. Risks
 - **Draft-PO / on_order** — the single most dangerous bug (draft counted as supply → under-order). Explicit test both directions (AC-M4.6).
 - **LLM classifier reliability** — low-confidence classification must be human-correctable + never block the decision; the reason_text is always stored raw.

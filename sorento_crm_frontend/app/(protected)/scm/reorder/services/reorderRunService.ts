@@ -105,6 +105,9 @@ import {
  *     run so a shared run shows one funded set. Auth: `scm.reorder.run`.
  * ────────────────────────────────────────────────────────────────────────────
  */
+// M4 Slice B (Phase 1): run the reorder page off the deterministic mock so a
+// mock run + recommendations exist to exercise the decision layer + draft-PO
+// flow with no backend. Phase 2 flips BOTH this and `USE_SLICE_B_MOCKS` to false.
 export const USE_M4_MOCKS = false;
 
 /** Stable id for the single mock run served while USE_M4_MOCKS is on. */
