@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { AlertTriangle, Ban, Layers, TrendingDown, Truck, Wallet } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -25,6 +26,8 @@ interface TileProps {
   valueClass?: string;
   iconClass?: string;
   deferred?: boolean;
+  /** When set, the whole card becomes a link navigating to this route. */
+  href?: string;
   /** When set, the big number becomes a button that opens the drill-down popup. */
   onDrill?: () => void;
   /** When set, the card BODY toggles this health filter on the dashboard. */
@@ -42,36 +45,43 @@ function Tile({
   valueClass,
   iconClass,
   deferred,
+  href,
   onDrill,
   filterStatus,
   active,
   activeRingClass,
   onToggleFilter,
 }: TileProps) {
+  const router = useRouter();
   const filterable = !!filterStatus && !!onToggleFilter;
-  const toggle = () => filterStatus && onToggleFilter?.(filterStatus);
+  // A card navigates (href) OR toggles a filter — never both.
+  const activate = () => {
+    if (href) router.push(href);
+    else if (filterStatus) onToggleFilter?.(filterStatus);
+  };
+  const clickable = filterable || !!href;
 
   return (
     <Card
-      role={filterable ? 'button' : undefined}
-      tabIndex={filterable ? 0 : undefined}
-      onClick={filterable ? toggle : undefined}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={clickable ? activate : undefined}
       onKeyDown={
-        filterable
+        clickable
           ? (e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                toggle();
+                activate();
               }
             }
           : undefined
       }
-      title={filterable ? `Filter to ${label}` : undefined}
+      title={href ? hint : filterable ? `Filter to ${label}` : undefined}
       aria-pressed={filterable ? active : undefined}
       className={cn(
         'p-4',
         deferred && 'opacity-70',
-        filterable &&
+        clickable &&
           'cursor-pointer transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         active && cn('ring-2 ring-inset', activeRingClass ?? 'ring-primary'),
       )}
@@ -238,15 +248,16 @@ export function RollupTiles({
           onToggleFilter={onToggleFilter}
           onDrill={() => setDrill({ title: 'Incoming purchase orders', status: 'incoming' })}
         />
-        {/* DEFERRED to M3 — a real reorder point needs demand × lead time +
-            safety stock, which doesn't exist yet, so this tile is greyed and
-            inert (no drill, no card-filter) rather than showing a faked count. */}
+        {/* The real count is DEFERRED to M3's engine (needs demand × lead time +
+            safety stock), so the value stays a greyed em dash rather than a faked
+            number — but the tile is the reorder surface, so it links into planning. */}
         <Tile
           label="Below reorder point"
           value={EM_DASH}
           icon={TrendingDown}
-          hint="Available in M3 — needs reorder point"
+          hint="Open reorder planning"
           deferred
+          href="/scm/reorder"
         />
         <Tile
           label="Overstock valuation"

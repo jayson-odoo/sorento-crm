@@ -659,7 +659,7 @@ def seed(db) -> dict:
     db.add(
         ReorderPolicy(
             scope_type="global", scope_ref=None, policy_type="reorder_point",
-            service_level=_d("0.95"), safety_stock_method="fixed_days", safety_days=_d(14),
+            service_level=_d("0.95"), safety_stock_method="fixed_days", safety_days=_d(7),
             forecast_window_days=90, baseline_source="continuous_only",
             spike_handling="committed_only", buy_scope="network",
             dead_stock_days=180, overstock_days=120, is_active=True, priority=0,

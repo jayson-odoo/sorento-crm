@@ -8,6 +8,12 @@ if (!window.matchMedia) {
   });
 }
 
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/scm',
+  useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 const useScmProducts = vi.fn();
 vi.mock('../hooks/useScmDashboard', () => ({
   useScmProducts: () => useScmProducts(),

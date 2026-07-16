@@ -183,6 +183,10 @@ class ReorderRun(Base):
     buy_scope = Column(String(20), nullable=True)  # network | warehouse
     budget_id = Column(UUID(as_uuid=False), ForeignKey("scm.purchasing_budget.id", ondelete="SET NULL"), nullable=True)
     policy_snapshot_ref = Column(String, nullable=True)
+    started_at = Column(DateTime(timezone=False), nullable=True)
+    finished_at = Column(DateTime(timezone=False), nullable=True)
+    error_text = Column(Text, nullable=True)  # set on status='failed'
+    run_log = Column(JSONB, nullable=True)  # {stage, buy, disposition, exceptions, total_cash_impact, recommendation_count, duration_ms}
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -200,6 +204,7 @@ class ReorderRecommendation(Base):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     run_id = Column(UUID(as_uuid=False), ForeignKey("scm.reorder_run.id", ondelete="CASCADE"), nullable=False)
+    rec_type = Column(String(20), nullable=True)  # buy | disposition | exception (discriminator + filter)
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True)  # null = network
     supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True)
@@ -217,8 +222,9 @@ class ReorderRecommendation(Base):
     rank_score = Column(Numeric, nullable=True)  # M4 (cash stage, frozen)
     rank = Column(Integer, nullable=True)  # M4
     confidence_band = Column(String(20), nullable=True)
-    triggered_reason = Column(String(100), nullable=True)
-    allocation = Column(JSONB, nullable=True)  # M3 network allocation breakdown
+    triggered_reason = Column(String(100), nullable=True)  # human reason label
+    allocation = Column(JSONB, nullable=True)  # M3 network allocation breakdown (per-wh, with codes)
+    inputs = Column(JSONB, nullable=True)  # frozen engine inputs (AC-M3.11 reproducibility) + display extras
     explanation = Column(Text, nullable=True)  # LLM (M5)
     market_advisory = Column(Text, nullable=True)  # LLM (M5)
     funding_status = Column(String(20), nullable=True)  # funded | deferred

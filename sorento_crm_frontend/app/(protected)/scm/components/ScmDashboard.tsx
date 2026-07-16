@@ -1,6 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
+import { PlayCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import type { HealthState, Perspective } from '../types/scm.types';
 import {
@@ -84,7 +87,17 @@ export function ScmDashboard() {
       <Card className="p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <PerspectiveToggle value={perspective} onChange={setPerspective} />
-          <DeadStockSettings />
+          <div className="flex items-center gap-2">
+            {/* Launch reorder planning from the dashboard too — opens the
+                Run-planning modal on the reorder surface via the `run` param. */}
+            <Button asChild size="sm">
+              <Link href="/scm/reorder?run=1">
+                <PlayCircle className="size-4" />
+                Run planning
+              </Link>
+            </Button>
+            <DeadStockSettings />
+          </div>
         </div>
         <div className="mt-4">
           <ScmFilterBar filters={filters} onChange={setFilters} />

@@ -1,0 +1,297 @@
+"""SCM M3 reorder-run endpoints — launch a background planning run, poll its status,
+and page its recommendations.
+
+Launching a run is a planning action (``scm.reorder.run``); reading status + the
+read-only results grid is a dashboard view (``scm.dashboard.view``). Matches the
+Phase-1 FE contract in ``services/reorderRunService.ts``. No UUIDs surface in display
+fields — SKU/warehouse/supplier resolve to human codes/names.
+"""
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from fastapi import APIRouter, Body, Depends, Query, Response
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.dependencies import require_permission_with_api_key
+from app.schemas.scm_reorder import (
+    CreateReorderRunRequest,
+    ReorderRunAccepted,
+    ReorderRunListResponse,
+    ReorderRunStatusResponse,
+)
+from app.services.error_handler import AppException
+from app.services.scm import reorder_run_service as svc
+
+router = APIRouter()
+
+_VIEW = require_permission_with_api_key("scm.dashboard.view")
+_RUN = require_permission_with_api_key("scm.reorder.run")
+
+# server-side sort allowlist → SQL expression (mirrors the FE grid's sortable columns)
+_SORT = {
+    "type": "rr.rec_type",
+    "sku": "p.product_code",
+    "warehouse_code": "w.warehouse_code",
+    "order_qty": "rr.rounded_qty",
+    "reorder_point": "rr.reorder_point",
+    "net_position": "rr.net_position",
+    "days_of_cover": "rr.days_of_cover",
+    "confidence": "rr.confidence_band",
+    "reason_label": "rr.triggered_reason",
+    "min_qty": "(rr.inputs->>'min_qty')::numeric",
+    "max_qty": "(rr.inputs->>'max_qty')::numeric",
+    "order_up_to": "(rr.inputs->>'order_up_to')::numeric",
+    "supplier": "su.supplier_name",
+}
+
+
+@router.post("/reorder-runs", response_model=ReorderRunAccepted, status_code=202)
+def create_reorder_run(
+    payload: CreateReorderRunRequest = Body(...),
+    response: Response = None,  # type: ignore[assignment]
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """Launch a reorder planning run in the background (RQ). Returns 202 with the
+    run_id — the UI then polls ``GET /reorder-runs/{run_id}`` until completed/failed."""
+    result = svc.create_run(
+        db,
+        warehouse_codes=payload.warehouse_codes or [],
+        buy_scope=payload.buy_scope,
+        budget_id=payload.budget_id,
+        actor=(_user or {}).get("id"),
+    )
+    if response is not None:
+        response.status_code = 202
+    return result
+
+
+@router.get("/reorder-runs", response_model=ReorderRunListResponse)
+def list_reorder_runs(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Newest-first paginated run history. Each row carries its scope (warehouse
+    codes + count), lifecycle timestamps, and — once completed — the roll-up
+    summary counts read from the immutable ``run_log``. The FE loads a past run's
+    detail by reusing ``GET /{id}`` (summary) + ``/{id}/recommendations`` (grid).
+    No UUIDs surface — runs are identified by time + warehouses."""
+    total = db.execute(text("SELECT count(*) FROM scm.reorder_run")).scalar() or 0
+    rows = db.execute(text("""
+        SELECT id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log
+        FROM scm.reorder_run
+        ORDER BY started_at DESC NULLS LAST, created_at DESC
+        LIMIT :limit OFFSET :offset
+    """), {"limit": limit, "offset": (page - 1) * limit}).mappings().all()
+
+    # Resolve every warehouse id across the page → human code in ONE query.
+    all_ids: set[str] = set()
+    for r in rows:
+        for wid in (r["warehouse_ids"] or []):
+            all_ids.add(str(wid))
+    code_by_id: dict[str, str] = {}
+    if all_ids:
+        for wr in db.execute(text(
+            "SELECT id::text AS id, warehouse_code FROM warehouses WHERE id::text = ANY(:ids)"
+        ), {"ids": list(all_ids)}).mappings().all():
+            code_by_id[wr["id"]] = wr["warehouse_code"]
+
+    data = [_list_item(r, code_by_id) for r in rows]
+    total_pages = max(1, (int(total) + limit - 1) // limit)
+    return {"data": data,
+            "pagination": {"page": page, "limit": limit, "total": int(total),
+                           "total_pages": total_pages}}
+
+
+def _list_item(r, code_by_id: dict) -> dict:
+    """One run-history row: scope resolved to warehouse codes + the completed
+    summary counts frozen in ``run_log``."""
+    wids = [str(w) for w in (r["warehouse_ids"] or [])]
+    codes = [code_by_id[w] for w in wids if w in code_by_id]
+    log_obj = r["run_log"] or {}
+    summary = None
+    if r["status"] == "completed":
+        summary = {
+            "buy_count": int(log_obj.get("buy", 0)),
+            "disposition_count": int(log_obj.get("disposition", 0)),
+            "exception_count": int(log_obj.get("exceptions", 0)),
+            "total_cash_impact": float(log_obj.get("total_cash_impact", 0.0)),
+            "recommendation_count": int(log_obj.get("recommendation_count", 0)),
+        }
+    return {
+        "run_id": str(r["id"]),
+        "status": r["status"],
+        "buy_scope": r["buy_scope"],
+        "warehouse_codes": codes,
+        "warehouse_count": len(wids),
+        "started_at": _iso(r["started_at"]),
+        "finished_at": _iso(r["finished_at"]),
+        "summary": summary,
+    }
+
+
+def _iso(dt) -> Optional[str]:
+    return dt.isoformat() if dt is not None else None
+
+
+@router.get("/reorder-runs/{run_id}", response_model=ReorderRunStatusResponse)
+def get_reorder_run(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Poll a run's status. ``summary`` is populated once ``status='completed'``;
+    ``error`` once ``status='failed'``."""
+    row = db.execute(text(
+        "SELECT id, status, buy_scope, error_text, run_log FROM scm.reorder_run "
+        "WHERE id = :id"
+    ), {"id": run_id}).mappings().first()
+    if not row:
+        raise AppException(status_code=404, message="Reorder run not found.")
+    log_obj = row["run_log"] or {}
+    summary = None
+    if row["status"] == "completed":
+        summary = {
+            "buy_count": int(log_obj.get("buy", 0)),
+            "disposition_count": int(log_obj.get("disposition", 0)),
+            "exception_count": int(log_obj.get("exceptions", 0)),
+            "total_cash_impact": float(log_obj.get("total_cash_impact", 0.0)),
+            "recommendation_count": int(log_obj.get("recommendation_count", 0)),
+        }
+    return {
+        "run_id": str(row["id"]),
+        "status": row["status"],
+        "stage": log_obj.get("stage"),
+        "buy_scope": row["buy_scope"],
+        "error": row["error_text"],
+        "summary": summary,
+    }
+
+
+@router.get("/reorder-runs/{run_id}/recommendations")
+def list_recommendations(
+    run_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    sort: Optional[str] = Query(None),
+    dir: str = Query("asc"),
+    query: Optional[str] = Query(None),
+    type: Optional[str] = Query(None),  # buy | disposition | exception
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Paginated recommendations for a completed run (DataGrid). Server-side sort over
+    the allowlisted rec columns; ``type`` filter (buy|disposition|exception); ``query``
+    on SKU/product name. Each row carries its frozen inputs (AC-M3.11)."""
+    if not db.execute(text("SELECT 1 FROM scm.reorder_run WHERE id = :id"),
+                      {"id": run_id}).first():
+        raise AppException(status_code=404, message="Reorder run not found.")
+
+    where = ["rr.run_id = :rid"]
+    params: dict[str, Any] = {"rid": run_id}
+    if type in ("buy", "disposition", "exception"):
+        where.append("rr.rec_type = :type")
+        params["type"] = type
+    if query:
+        where.append("(p.product_code ILIKE :q OR p.product_name ILIKE :q)")
+        params["q"] = f"%{query}%"
+    where_sql = " AND ".join(where)
+
+    total = db.execute(text(
+        f"SELECT count(*) FROM scm.reorder_recommendation rr "
+        f"JOIN products p ON p.id = rr.product_id WHERE {where_sql}"
+    ), params).scalar() or 0
+
+    sort_expr = _SORT.get(sort or "", None)
+    order_by = (f"{sort_expr} {'DESC' if dir.lower() == 'desc' else 'ASC'} NULLS LAST"
+                if sort_expr else "rr.rec_type ASC, p.product_code ASC")
+    params["limit"] = limit
+    params["offset"] = (page - 1) * limit
+    rows = db.execute(text(f"""
+        SELECT rr.id, rr.rec_type, rr.warehouse_id, rr.net_position, rr.reorder_point,
+               rr.days_of_cover, rr.rounded_qty, rr.recommended_qty, rr.confidence_band,
+               rr.allocation, rr.inputs,
+               p.product_code, p.product_name,
+               w.warehouse_code, w.warehouse_name,
+               su.supplier_code, su.supplier_name
+        FROM scm.reorder_recommendation rr
+        JOIN products p ON p.id = rr.product_id
+        LEFT JOIN warehouses w ON w.id = rr.warehouse_id
+        LEFT JOIN suppliers su ON su.id = rr.supplier_id
+        WHERE {where_sql}
+        ORDER BY {order_by}
+        LIMIT :limit OFFSET :offset
+    """), params).mappings().all()
+
+    data = [_row(r) for r in rows]
+    total_pages = max(1, (int(total) + limit - 1) // limit)
+    return {"data": data,
+            "pagination": {"page": page, "limit": limit, "total": int(total),
+                           "total_pages": total_pages}}
+
+
+def _row(r) -> dict:
+    """Build a read-only recommendation row from stored columns + frozen ``inputs``."""
+    inp = r["inputs"] or {}
+    is_network = r["warehouse_id"] is None
+    allocation = None
+    if r["allocation"]:
+        allocation = [{"warehouse_code": a.get("warehouse_code"),
+                       "warehouse_name": a.get("warehouse_name"),
+                       "qty": a.get("qty")} for a in r["allocation"]]
+    return {
+        "id": r["id"],
+        "type": r["rec_type"],
+        "sku": r["product_code"],
+        "product_name": r["product_name"],
+        "abc_class": inp.get("abc_class"),
+        "xyz_class": inp.get("xyz_class"),
+        "warehouse_code": r["warehouse_code"],
+        "warehouse_name": r["warehouse_name"],
+        "is_network": is_network,
+        "allocation": allocation,
+        "order_qty": _f(r["rounded_qty"]) if r["rec_type"] == "buy" else None,
+        # Pre-rounding order qty (order-up-to − net) so the derivation popup can show
+        # the raw figure BEFORE MoQ / pack-multiple rounding lands on `order_qty`.
+        "recommended_qty": _f(r["recommended_qty"]) if r["rec_type"] == "buy" else None,
+        "reorder_point": _f(r["reorder_point"]),
+        "min_qty": inp.get("min_qty"),
+        "max_qty": inp.get("max_qty"),
+        "order_up_to": inp.get("order_up_to"),
+        "net_position": _f(r["net_position"]),
+        "days_of_cover": _f(r["days_of_cover"]),
+        "reason": inp.get("reason"),
+        "reason_label": inp.get("reason_label"),
+        "confidence": r["confidence_band"],
+        "sample_size": int(inp.get("sample_size") or 0),
+        "supplier": inp.get("supplier"),
+        "alternatives": inp.get("alternatives") or [],
+        "is_exception": bool(inp.get("is_exception")),
+        "disposition_action": inp.get("disposition_action"),
+        "transfer_flag": inp.get("transfer_flag"),
+        # --- frozen derivation inputs (drive the plain-language explanation popup) ---
+        # All already frozen at run time in `inputs` (AC-M3.11) — surfaced read-only,
+        # never recomputed on the client.
+        "forecast_daily_demand": inp.get("demand_rate"),
+        "lead_time_days": inp.get("lead_time_days"),
+        "lead_time_source": inp.get("lead_time_source"),
+        "safety_stock": inp.get("safety_stock"),
+        "safety_stock_method": inp.get("safety_stock_method"),
+        "safety_stock_fallback": inp.get("safety_stock_fallback"),
+        "service_level": inp.get("service_level"),
+        "safety_days": inp.get("safety_days"),
+        "review_days": inp.get("review_days"),
+        "moq": inp.get("moq"),
+        "order_multiple": inp.get("order_multiple"),
+        "policy_type": inp.get("policy_type"),
+        "supplier_selection": inp.get("selection"),
+    }
+
+
+def _f(v) -> Optional[float]:
+    return float(v) if v is not None else None

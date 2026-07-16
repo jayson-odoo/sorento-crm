@@ -158,7 +158,7 @@ export default function PurchaseOrdersList() {
                   </Button>
                 </span>
               </TooltipTrigger>
-              <TooltipContent>Coming in a later step (M4)</TooltipContent>
+              <TooltipContent>Not yet available</TooltipContent>
             </Tooltip>
           </div>
         ),
@@ -192,7 +192,7 @@ export default function PurchaseOrdersList() {
       <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
         <Info className="mt-0.5 size-4 shrink-0" />
         <span>
-          Read-only view. Creating, confirming and receiving purchase orders arrives in a later step.
+          Read-only view. Creating, confirming and receiving purchase orders are not yet available.
         </span>
       </div>
 

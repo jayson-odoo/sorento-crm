@@ -6,11 +6,19 @@ orders (read-only at M1).
 """
 from fastapi import APIRouter
 
-from app.api.v1.scm import analytics, config, dashboard, purchase_orders, sales_orders
+from app.api.v1.scm import (
+    analytics,
+    config,
+    dashboard,
+    purchase_orders,
+    reorder_runs,
+    sales_orders,
+)
 
 router = APIRouter()
 router.include_router(dashboard.router)
 router.include_router(config.router)
 router.include_router(analytics.router)
+router.include_router(reorder_runs.router)
 router.include_router(sales_orders.router)
 router.include_router(purchase_orders.router)

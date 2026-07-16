@@ -388,6 +388,16 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'scm.dashboard.view',
       },
       {
+        title: 'Reorder Planning',
+        path: '/scm/reorder',
+        permission: 'scm.reorder.run',
+      },
+      {
+        title: 'Policies',
+        path: '/scm/policies',
+        permission: 'scm.policy.manage',
+      },
+      {
         title: 'Sales Orders',
         path: '/scm/sales-orders',
         permission: 'scm.dashboard.view',
