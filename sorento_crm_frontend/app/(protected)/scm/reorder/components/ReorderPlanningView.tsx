@@ -8,12 +8,13 @@ import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia, timeAgo } from '@/lib/helpers';
 import { runHistoryKey, useReorderRun, useReorderRunDetail } from '../hooks/useReorderRun';
-import type { ReorderRunHistoryItem } from '../services/reorderRunService';
+import { type ReorderRunHistoryItem } from '../services/reorderRunService';
 import type {
   CreateReorderRunRequest,
   ReorderRecType,
   ReorderRunSummary,
 } from '../types/reorder.types';
+import { CashCopilotResults } from './CashCopilotResults';
 import { ReorderResultsGrid } from './ReorderResultsGrid';
 import { ReorderStatTiles } from './ReorderStatTiles';
 import { RunHistoryPanel } from './RunHistoryPanel';
@@ -165,7 +166,10 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
         </Card>
       ) : null}
 
-      {/* Stat tiles + results grid — driven by whichever run is displayed. */}
+      {/* Stat tiles + results grid — driven by whichever run is displayed. When
+          the M4 cash co-pilot is on, the BUY view becomes the interactive
+          budget → funded/deferred experience; disposition/exception rows stay in
+          the read-only planning grid. */}
       {showResults && displayedSummary && displayedRunId ? (
         <div ref={resultsRef} className="scroll-mt-4 space-y-5">
           <ReorderStatTiles
@@ -173,12 +177,16 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             activeType={typeFilter}
             onToggle={toggleType}
           />
-          <ReorderResultsGrid
-            runId={displayedRunId}
-            enabled={showResults}
-            typeFilter={typeFilter}
-            onTypeFilterChange={setTypeFilter}
-          />
+          {typeFilter === '' || typeFilter === 'buy' ? (
+            <CashCopilotResults runId={displayedRunId} enabled={showResults} />
+          ) : (
+            <ReorderResultsGrid
+              runId={displayedRunId}
+              enabled={showResults}
+              typeFilter={typeFilter}
+              onTypeFilterChange={setTypeFilter}
+            />
+          )}
         </div>
       ) : null}
 

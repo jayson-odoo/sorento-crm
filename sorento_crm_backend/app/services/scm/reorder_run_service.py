@@ -31,6 +31,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.scm import ReorderRecommendation, ReorderRun
+from app.services.scm import cash_ranking
 from app.services.scm import reorder_engine as eng
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
@@ -147,6 +148,10 @@ def _execute_run(db: Session, run_id: str) -> dict:
         else:
             recs = _plan_per_warehouse(db, run_id, rows, policies, today, last_move)
 
+        # M4 cash stage — compute + FREEZE each buy's rank_score / rank / rank_factors
+        # (funded/deferred is computed live at view-time against a budget, not here).
+        _apply_cash_stage(db, recs)
+
         for r in recs:
             db.add(r)
         db.flush()
@@ -192,7 +197,7 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]]) -> list[dict
         params["wids"] = [str(w) for w in warehouse_ids]
     sql = text(f"""
         SELECT np.product_id, np.warehouse_id,
-               p.product_code, p.product_name, pc.category_code,
+               p.product_code, p.product_name, pc.category_code, p.list_price,
                w.warehouse_code, w.warehouse_name,
                np.quantity_on_hand, np.on_order, np.committed, np.net_position,
                ds.avg_daily_demand, ds.demand_cv, ds.sample_days,
@@ -343,6 +348,10 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         "selection": tog["supplier_selection"],
         "overstock": bool(disp and disp["type"] == "overstock"),
         "short": net < rop,
+        # M4 cash-ranking factor inputs (list_price read-only from products; committed
+        # from the net-position view) — frozen into `inputs` for the cash stage.
+        "list_price": _fnum(row.get("list_price")),
+        "committed": _fnum(row.get("committed")),
     }
 
 
@@ -505,6 +514,10 @@ def _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
                                      supplier_adequate=supplier_adequate),
         "sample_size": int(chosen.get("supplier_sample_size") or 0) if chosen else 0,
         "selection": tog["supplier_selection"],
+        # M4 cash-ranking factor inputs on the aggregate: list_price is per-product
+        # (same across warehouses); committed is summed across the network's cells.
+        "list_price": _fnum(prows[0].get("list_price")),
+        "committed": _fnum(sum(float(r.get("committed") or 0.0) for r in prows)),
     }
 
 
@@ -560,6 +573,9 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         "var_lt": c.get("var_lt"),
         "demand_rate": _r(c.get("demand_rate")),
         "net": _r(c.get("net")),
+        # M4 cash-ranking factor inputs (frozen for the cash stage + explainability).
+        "list_price": c.get("list_price"),
+        "committed": c.get("committed"),
         "on_cadence": True,
         "selection": c.get("selection"),
         "sample_size": c.get("sample_size"),
@@ -648,6 +664,114 @@ def _reason_enum(policy_type: Optional[str]) -> str:
     if policy_type in ("reorder_point", "periodic_review", "min_max"):
         return policy_type
     return "reorder_point"
+
+
+# ===========================================================================
+# M4 cash stage — freeze rank_score + rank on the buy recommendations
+# ===========================================================================
+
+def load_cash_weights(db: Session) -> dict:
+    """Weights from the single active ``scm.cash_ranking_policy`` row; falls back to
+    the seeded defaults when none is present (fresh install pre-migration seed)."""
+    row = db.execute(text(
+        "SELECT weight_urgency, weight_margin, weight_abc, weight_priority, "
+        "       weight_committed "
+        "FROM scm.cash_ranking_policy WHERE is_active = true "
+        "ORDER BY updated_at DESC NULLS LAST, created_at DESC LIMIT 1"
+    )).mappings().first()
+    if not row:
+        return dict(cash_ranking.DEFAULT_WEIGHTS)
+    return {
+        "urgency": _wf(row["weight_urgency"], "urgency"),
+        "margin": _wf(row["weight_margin"], "margin"),
+        "abc": _wf(row["weight_abc"], "abc"),
+        "priority": _wf(row["weight_priority"], "priority"),
+        "committed": _wf(row["weight_committed"], "committed"),
+    }
+
+
+def _wf(v, key: str) -> float:
+    return float(v) if v is not None else float(cash_ranking.DEFAULT_WEIGHTS[key])
+
+
+def _apply_cash_stage(db: Session, recs: list[ReorderRecommendation]) -> None:
+    """Compute + FREEZE the cash-ranking fields on the run's BUY recs (M4-D1/D14):
+    each buy's graceful-degrade ``rank_score`` + its factor vector + days-to-stockout
+    (into ``inputs``), then a dense ``rank`` by rank_score desc (tiebreak cash_impact
+    then product_code). Non-buy recs are untouched. Funded/deferred is NOT decided
+    here — it is applied live at view-time against a budget (M4-D2/D3)."""
+    weights = load_cash_weights(db)
+    buys = [r for r in recs if r.rec_type == "buy"]
+    for r in buys:
+        inp = dict(r.inputs or {})
+        factors = cash_ranking.build_factors(
+            weights,
+            days_of_cover=_fnum(r.days_of_cover),
+            net_position=_fnum(r.net_position),
+            list_price=inp.get("list_price"),
+            unit_cost=_fnum(r.unit_cost),
+            abc_class=inp.get("abc_class"),
+            committed=inp.get("committed"),
+            forecast_daily_demand=_fnum(r.forecast_daily_demand),
+            lead_time_days=inp.get("lead_time_days"),
+        )
+        r.rank_score = round(cash_ranking.rank_score(factors), 6)
+        inp["rank_factors"] = [f.as_dict() for f in factors]
+        inp["days_to_stockout"] = cash_ranking.days_to_stockout(
+            _fnum(r.net_position), _fnum(r.forecast_daily_demand), _fnum(r.days_of_cover))
+        r.inputs = inp
+
+    ordered = sorted(buys, key=lambda r: cash_ranking.rank_sort_key(
+        float(r.rank_score or 0.0), _fnum(r.cash_impact), (r.inputs or {}).get("sku")))
+    for i, r in enumerate(ordered, start=1):
+        r.rank = i
+
+
+# ===========================================================================
+# M4 funding allocation — greedy-by-rank over a run's buys (view-time + persist)
+# ===========================================================================
+
+def _load_run_buys(db: Session, run_id: str) -> list[cash_ranking.Buy]:
+    """The run's BUY recs as allocator inputs (id, frozen rank, cash_impact)."""
+    rows = db.execute(text(
+        "SELECT id, rank, cash_impact FROM scm.reorder_recommendation "
+        "WHERE run_id = :rid AND rec_type = 'buy'"
+    ), {"rid": run_id}).mappings().all()
+    return [cash_ranking.Buy(
+        id=str(r["id"]),
+        rank=int(r["rank"]) if r["rank"] is not None else None,
+        cash_impact=float(r["cash_impact"]) if r["cash_impact"] is not None else None,
+    ) for r in rows]
+
+
+def allocate_run_budget(db: Session, run_id: str,
+                        budget: Optional[float]) -> cash_ranking.AllocationResult:
+    """Greedy funding over the run's buys for ``budget`` — VIEW-TIME, no persistence."""
+    return cash_ranking.allocate_funding(_load_run_buys(db, run_id), budget)
+
+
+def apply_run_budget(db: Session, run_id: str, budget: float) -> dict:
+    """PERSIST the funding split for ``budget``: stamps ``funding_status`` on every buy
+    rec + ``budget_amount`` on the run (so a shared run shows one funded set). Returns
+    the roll-up counts + funded/deferred cash."""
+    result = cash_ranking.allocate_funding(_load_run_buys(db, run_id), budget)
+    for rec_id, status in result.status_by_id.items():
+        db.execute(text(
+            "UPDATE scm.reorder_recommendation SET funding_status = :s WHERE id = :id"
+        ), {"s": status, "id": rec_id})
+    db.execute(text(
+        "UPDATE scm.reorder_run SET budget_amount = :b WHERE id = :rid"
+    ), {"b": budget, "rid": run_id})
+    db.commit()
+    return {
+        "run_id": run_id,
+        "budget": float(budget),
+        "funded_count": result.funded_count,
+        "deferred_count": result.deferred_count,
+        "needs_cost_count": result.needs_cost_count,
+        "funded_cash": result.funded_cash,
+        "deferred_cash": result.deferred_cash,
+    }
 
 
 def _summarise(recs: list[ReorderRecommendation]) -> dict:

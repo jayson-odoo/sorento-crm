@@ -182,6 +182,7 @@ class ReorderRun(Base):
     warehouse_ids = Column(JSONB, nullable=True)
     buy_scope = Column(String(20), nullable=True)  # network | warehouse
     budget_id = Column(UUID(as_uuid=False), ForeignKey("scm.purchasing_budget.id", ondelete="SET NULL"), nullable=True)
+    budget_amount = Column(Numeric(15, 2), nullable=True)  # M4 — chosen budget the "Apply budget" action persists
     policy_snapshot_ref = Column(String, nullable=True)
     started_at = Column(DateTime(timezone=False), nullable=True)
     finished_at = Column(DateTime(timezone=False), nullable=True)

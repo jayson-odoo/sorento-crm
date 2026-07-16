@@ -1,8 +1,38 @@
 # PLAN — SCM M4: Cash Constraint + Co-Pilot Loop
 
 **Slug:** `scm-m4-cash-copilot` · **Milestone:** M4 · **UAC:** `scm-m4-cash-copilot-acceptance-criteria.md`
-**Umbrella:** `PLAN-scm-reorder-copilot.md` · **Depends:** M0/M1/M2/M3 · **Status:** DRAFT (grilled, pre-code)
+**Umbrella:** `PLAN-scm-reorder-copilot.md` · **Depends:** M0/M1/M2/M3 · **Status:** Building slice-by-slice (A→D)
 **Type:** BE (cash stage + decisions + feedback) + interactive results/PO/config UI
+
+## Reality check (2026-07-16, post-M3+policy-config build — de-risks the plan)
+- `reorder_recommendation` ALREADY carries the M4 columns (M3 pre-provisioned): `rank_score`,
+  `rank`, `funding_status`, `cash_impact`, `unit_cost`, `urgency_score`, `priority_score`,
+  `status` (proposed|accepted|adjusted|dismissed). No column migration for these.
+- `scm.on_order_v` ALREADY excludes drafts: `WHERE po.status IN ('active','received','partial','closed')`
+  (migration 274) — M4-D5's most-dangerous bug (draft counted as supply) is already prevented.
+  Draft POs use a status OUTSIDE that set (`draft_recommendation`).
+- `purchase_orders`/`purchase_order_lines` (public, mig 273) + `purchasing_budget` (M0 stub) exist.
+- LLM infra reusable: `ai_prompt_registry` / `ai_prompt_service` / `ai_prompt_seed` / `ai_trace`
+  (add key `scm_override_reason_classifier`, schema-forced). Policy-suggestion Apply reuses the
+  just-built `policy_service` to mutate `reorder_policy` (human-applied + audited).
+- NEW tables only: `cash_ranking_policy`, `override_reason`, `reason_action_map`,
+  `recommendation_override`.
+
+## Locked decisions (user grill 2026-07-16)
+- **M4-D14 — Margin gap = GRACEFUL DEGRADE.** Real data has cost on ~91 SKUs and the seed must NEVER
+  write `list_price`. `rank_score = Σ(wᵢ·fᵢ) / Σ(wᵢ present)` — the margin factor is DROPPED (not
+  zeroed) for SKUs with no cost, so it never dilutes the score; urgency (low days-of-cover / below-ROP
+  depth) dominates, ABC + SO-priority + committed fill in. No fabricated cost/price. Ranking stays
+  meaningful and honest on real data. Show which factors were present per rec (explainability).
+- **M4-D15 — Build slice-by-slice, three-phase loop + checkpoint each:** A cash-stage + interactive
+  results → B decisions + PO draft/confirm + create-GR → C LLM feedback loop → D config CRUD.
+- **M4-D16 — Uncosted buys = separate "Needs cost" bucket, NOT funded/deferred.** A buy with no
+  supplier cost (`cash_impact` null) cannot be cash-ranked. It goes to a THIRD section ("Needs cost")
+  — un-rankable, still showing urgency / days-of-cover / order qty, with an "add supplier cost to
+  cash-rank this" CTA. Funded/Deferred (and Σ funded ≤ budget) are computed over COSTED buys only.
+  Rationale: real data is ~13,280 uncosted vs ~91 costed; funding uncosted "for free" would make the
+  cash constraint meaningless and hide the cost-data gap. This bucket surfaces the gap as actionable.
+  (Supersedes the prototype's "fund uncosted for free" default.)
 
 ## Goal
 Close the co-pilot loop — cash-ranked recommendations, human Accept/Adjust/Reject, draft→confirm PO

@@ -177,17 +177,25 @@ def get_reorder_run(
 def list_recommendations(
     run_id: str,
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    # cap 1000: the M4 cash view fetches the whole buy set unpaginated (greedy funding
+    # + funded/deferred/needs-cost sections run across the entire ranked list).
+    limit: int = Query(50, ge=1, le=1000),
     sort: Optional[str] = Query(None),
     dir: str = Query("asc"),
     query: Optional[str] = Query(None),
     type: Optional[str] = Query(None),  # buy | disposition | exception
+    budget: Optional[float] = Query(None, ge=0),  # M4 — live funding what-if
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
     """Paginated recommendations for a completed run (DataGrid). Server-side sort over
     the allowlisted rec columns; ``type`` filter (buy|disposition|exception); ``query``
-    on SKU/product name. Each row carries its frozen inputs (AC-M3.11)."""
+    on SKU/product name. Each row carries its frozen inputs (AC-M3.11).
+
+    M4: when ``budget`` is supplied, buy rows carry a LIVE ``funding_status``
+    (funded|deferred|needs_cost) from the greedy skip-overflow allocation over the
+    run's FROZEN rank_score — no engine re-run, no persistence. Omitting ``budget``
+    returns the last persisted funding_status (or null for costed buys never funded)."""
     if not db.execute(text("SELECT 1 FROM scm.reorder_run WHERE id = :id"),
                       {"id": run_id}).first():
         raise AppException(status_code=404, message="Reorder run not found.")
@@ -216,6 +224,7 @@ def list_recommendations(
         SELECT rr.id, rr.rec_type, rr.warehouse_id, rr.net_position, rr.reorder_point,
                rr.days_of_cover, rr.rounded_qty, rr.recommended_qty, rr.confidence_band,
                rr.allocation, rr.inputs,
+               rr.rank, rr.rank_score, rr.unit_cost, rr.cash_impact, rr.funding_status,
                p.product_code, p.product_name,
                w.warehouse_code, w.warehouse_name,
                su.supplier_code, su.supplier_name
@@ -228,17 +237,48 @@ def list_recommendations(
         LIMIT :limit OFFSET :offset
     """), params).mappings().all()
 
-    data = [_row(r) for r in rows]
+    # M4 live funding: when a budget is supplied, run the greedy allocator over the
+    # run's WHOLE frozen buy set (not just this page) and annotate the buy rows.
+    funding_by_id: Optional[dict[str, str]] = None
+    if budget is not None:
+        funding_by_id = svc.allocate_run_budget(db, run_id, budget).status_by_id
+
+    data = [_row(r, funding_by_id) for r in rows]
     total_pages = max(1, (int(total) + limit - 1) // limit)
     return {"data": data,
             "pagination": {"page": page, "limit": limit, "total": int(total),
                            "total_pages": total_pages}}
 
 
-def _row(r) -> dict:
-    """Build a read-only recommendation row from stored columns + frozen ``inputs``."""
+@router.put("/reorder-runs/{run_id}/budget")
+def apply_reorder_run_budget(
+    run_id: str,
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """Persist the chosen budget + funding split to the run ("Apply budget"). Runs the
+    greedy allocator over the run's frozen buys, stamps ``funding_status`` on each buy
+    rec + ``budget_amount`` on the run so a shared run shows ONE funded set. Persisting
+    funding + budget is a planning action (mutates run state) → ``scm.reorder.run``."""
+    if not db.execute(text("SELECT 1 FROM scm.reorder_run WHERE id = :id"),
+                      {"id": run_id}).first():
+        raise AppException(status_code=404, message="Reorder run not found.")
+    budget = payload.get("budget")
+    if budget is None or not isinstance(budget, (int, float)) or budget < 0:
+        raise AppException(status_code=422, message="A non-negative budget is required.")
+    return svc.apply_run_budget(db, run_id, float(budget))
+
+
+def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
+    """Build a read-only recommendation row from stored columns + frozen ``inputs``.
+
+    ``funding_by_id`` (M4) carries the live budget allocation → a buy row's
+    ``funding_status`` reflects the slid budget. When absent, buy rows fall back to
+    their persisted ``funding_status`` (uncosted buys are always ``needs_cost``)."""
     inp = r["inputs"] or {}
     is_network = r["warehouse_id"] is None
+    is_buy = r["rec_type"] == "buy"
     allocation = None
     if r["allocation"]:
         allocation = [{"warehouse_code": a.get("warehouse_code"),
@@ -290,7 +330,30 @@ def _row(r) -> dict:
         "order_multiple": inp.get("order_multiple"),
         "policy_type": inp.get("policy_type"),
         "supplier_selection": inp.get("selection"),
+        # --- M4 cash co-pilot (buy rows only; non-buy leave these null) ---
+        "unit_cost": _f(r["unit_cost"]) if is_buy else None,
+        "cash_impact": _f(r["cash_impact"]) if is_buy else None,
+        "rank": int(r["rank"]) if (is_buy and r["rank"] is not None) else None,
+        "rank_score": _f(r["rank_score"]) if is_buy else None,
+        "funding_status": _funding_status(r, is_buy, funding_by_id),
+        "days_to_stockout": inp.get("days_to_stockout") if is_buy else None,
+        "rank_factors": (inp.get("rank_factors") or []) if is_buy else [],
     }
+
+
+def _funding_status(r, is_buy: bool,
+                    funding_by_id: Optional[dict[str, str]]) -> Optional[str]:
+    """Live funding when a budget was supplied; else the persisted status. Non-buy
+    rows never carry a funding status."""
+    if not is_buy:
+        return None
+    if funding_by_id is not None:
+        return funding_by_id.get(str(r["id"]))
+    # No budget in the query — an uncosted buy is always needs_cost (M4-D16); a costed
+    # buy shows its last persisted funding_status (null when never funded).
+    if r["cash_impact"] is None:
+        return "needs_cost"
+    return r["funding_status"]
 
 
 def _f(v) -> Optional[float]:

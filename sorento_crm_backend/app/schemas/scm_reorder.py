@@ -83,6 +83,26 @@ class AllocationLine(BaseModel):
     qty: float
 
 
+class RankFactor(BaseModel):
+    """One weighted factor behind a buy rec's frozen rank_score (M4-D1/D14). A dropped
+    factor (no data) carries ``present=False`` + ``value=None`` (graceful degrade)."""
+    key: str  # urgency | margin | abc | priority | committed
+    weight: float
+    value: Optional[float] = None
+    present: bool = True
+
+
+class ApplyBudgetResponse(BaseModel):
+    """Result of persisting a budget to a run (PUT /reorder-runs/{id}/budget)."""
+    run_id: str
+    budget: float
+    funded_count: int
+    deferred_count: int
+    needs_cost_count: int
+    funded_cash: float
+    deferred_cash: float
+
+
 class ReorderRecommendationRow(BaseModel):
     id: str
     type: str  # buy | disposition | exception
@@ -125,6 +145,14 @@ class ReorderRecommendationRow(BaseModel):
     order_multiple: Optional[float] = None
     policy_type: Optional[str] = None
     supplier_selection: Optional[str] = None
+    # --- M4 cash co-pilot (buy rows only) ---
+    unit_cost: Optional[float] = None
+    cash_impact: Optional[float] = None
+    rank: Optional[int] = None
+    rank_score: Optional[float] = None
+    funding_status: Optional[str] = None  # funded | deferred | needs_cost | null
+    days_to_stockout: Optional[float] = None
+    rank_factors: List[RankFactor] = []
 
 
 class RecommendationPage(BaseModel):

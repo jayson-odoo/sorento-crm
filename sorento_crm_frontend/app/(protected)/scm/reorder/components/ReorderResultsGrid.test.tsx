@@ -84,6 +84,13 @@ function rec(over: Partial<ReorderRecommendation>): ReorderRecommendation {
     order_multiple: 5,
     policy_type: 'reorder_point',
     supplier_selection: 'primary',
+    unit_cost: null,
+    cash_impact: null,
+    rank: null,
+    rank_score: null,
+    funding_status: null,
+    days_to_stockout: null,
+    rank_factors: [],
     ...over,
   };
 }

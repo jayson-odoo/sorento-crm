@@ -22,9 +22,13 @@ import RecordNavigation from '@/components/common/RecordNavigation';
 import { cn } from '@/lib/utils';
 import { xyzLabel } from '../../lib/health';
 import type { XyzClass } from '../../types/scm.types';
-import { EM_DASH, fmtInt, fmtMoney } from '../../lib/format';
+import { EM_DASH, fmtInt, fmtMoney, fmtPct } from '../../lib/format';
 import { ConfidenceBadge } from '../../components/HealthIndicators';
-import type { ReorderRecommendation, SupplierChoice } from '../types/reorder.types';
+import type {
+  RankFactor,
+  ReorderRecommendation,
+  SupplierChoice,
+} from '../types/reorder.types';
 
 /**
  * Row-click explanation popup — the headline "make it fool-proof" surface.
@@ -108,6 +112,86 @@ function Step({
       >
         {value}
       </div>
+    </div>
+  );
+}
+
+const RANK_FACTOR_LABEL: Record<RankFactor['key'], string> = {
+  urgency: 'Urgency',
+  margin: 'Margin',
+  abc: 'ABC value',
+  priority: 'SO priority',
+  committed: 'Committed vs forecast',
+};
+
+/** M4 "why this rank" block — which cash-ranking factors were present, and which
+ *  dominated. Margin is DROPPED (not zeroed) for uncosted SKUs (M4-D14), shown
+ *  greyed so a novice sees exactly why urgency ended up dominant. */
+function RankExplanation({ rec }: { rec: ReorderRecommendation }) {
+  const factors = rec.rank_factors ?? [];
+  const present = factors.filter((f) => f.present && f.value !== null);
+  const dominant = present.reduce<RankFactor | null>(
+    (top, f) => (top === null || f.weight * (f.value ?? 0) > top.weight * (top.value ?? 0) ? f : top),
+    null,
+  );
+  const isNeedsCost = rec.funding_status === 'needs_cost';
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        {isNeedsCost ? (
+          <Badge variant="secondary" appearance="light" size="md">
+            No supplier cost
+          </Badge>
+        ) : (
+          <Badge variant="primary" appearance="light" size="md">
+            Rank {rec.rank}
+          </Badge>
+        )}
+        <span className="text-muted-foreground">
+          {isNeedsCost
+            ? "Can't be cash-ranked or funded until a supplier cost is added."
+            : `Score ${rec.rank_score != null ? rec.rank_score.toFixed(2) : EM_DASH} · cash impact ${
+                rec.cash_impact != null ? fmtMoney(rec.cash_impact) : 'unknown (uncosted)'
+              }`}
+        </span>
+      </div>
+      <div className="overflow-hidden rounded-lg border border-border">
+        {factors.map((f) => {
+          const isDominant = dominant?.key === f.key;
+          return (
+            <div
+              key={f.key}
+              className={cn(
+                'flex items-center justify-between gap-3 border-b px-3 py-1.5 text-sm last:border-b-0',
+                !f.present && 'opacity-55',
+              )}
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate">{RANK_FACTOR_LABEL[f.key]}</span>
+                {isDominant ? (
+                  <Badge variant="primary" appearance="light" size="xs">
+                    top driver
+                  </Badge>
+                ) : null}
+              </span>
+              <span className="shrink-0 tabular-nums text-muted-foreground">
+                {f.present && f.value !== null ? (
+                  <>
+                    {fmtPct(f.value)} <span className="text-2xs">· weight {f.weight}</span>
+                  </>
+                ) : (
+                  <span className="text-2xs italic">dropped — no cost on file</span>
+                )}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {isNeedsCost
+          ? 'Without a supplier cost the margin factor drops out and there is no cash impact to weigh against the budget, so this buy stays in Needs cost. It is still a real must-buy — add a cost to fund it.'
+          : 'Rank orders the buys for funding: higher-ranked buys are funded first when the budget is tight. Factors without data are dropped so they never dilute the score.'}
+      </p>
     </div>
   );
 }
@@ -500,6 +584,16 @@ export function ReorderExplanationDialog({
               <SectionTitle>{isBuyLike ? 'How the numbers were reached' : "Why it's flagged"}</SectionTitle>
               {isBuyLike ? <BuyDerivation rec={rec} /> : <DispositionExplanation rec={rec} />}
             </div>
+
+            {/* Cash ranking (M4 buy recs only) */}
+            {rec.type === 'buy' && rec.rank != null ? (
+              <div>
+                <SectionTitle>
+                  {rec.funding_status === 'needs_cost' ? 'Why it needs a cost' : 'Why this rank'}
+                </SectionTitle>
+                <RankExplanation rec={rec} />
+              </div>
+            ) : null}
 
             {/* Policy + trigger */}
             <div>

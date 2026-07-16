@@ -40,6 +40,30 @@ export type ReorderConfidence = 'high' | 'medium' | 'low';
  *  one buy qty (auto-allocated); `warehouse` plans each warehouse independently. */
 export type BuyScope = 'network' | 'warehouse';
 
+/** M4 cash-ranking factor keys (M4-D1/D14). Each buy recommendation carries the
+ *  set of factors that fed its frozen `rank_score`; a factor is DROPPED (not
+ *  zeroed) when unavailable — e.g. `margin` for an uncosted SKU (`present:false`,
+ *  `value:null`) — so it never dilutes the score (graceful-degrade). */
+export type RankFactorKey = 'urgency' | 'margin' | 'abc' | 'priority' | 'committed';
+
+/** One weighted factor behind a recommendation's rank_score. Surfaced so a novice
+ *  can see WHICH factors were present and which dominated the ranking. */
+export interface RankFactor {
+  key: RankFactorKey;
+  /** Configured weight from the active cash_ranking_policy (0–1). */
+  weight: number;
+  /** Normalized factor value 0–1; null when the factor was unavailable. */
+  value: number | null;
+  /** False when the factor was dropped (e.g. margin with no cost). */
+  present: boolean;
+}
+
+/** M4 funding disposition, applied live at view-time against the slid budget.
+ *  `needs_cost` = an uncosted buy that CANNOT be cash-ranked (M4-D16) — it's a
+ *  real must-buy but un-priced, so it never funds/defers or touches the budget.
+ *  null = not yet allocated (no budget applied). */
+export type FundingStatus = 'funded' | 'deferred' | 'needs_cost' | null;
+
 /** One candidate supplier — the selected one plus ranked alternatives. */
 export interface SupplierChoice {
   supplier_code: string;
@@ -138,6 +162,27 @@ export interface ReorderRecommendation {
   policy_type: ReorderReason | null;
   /** Which supplier-selection rule chose the supplier. */
   supplier_selection: 'primary' | 'best_score' | 'lowest_cost' | null;
+
+  // --- M4 cash co-pilot (buy recommendations only) ----------------------------
+  // Frozen at run time (rank_score / rank / rank_factors / cash_impact) except
+  // `funding_status`, which is applied LIVE at view-time against the slid budget
+  // (M4-D2/D3). Non-buy rows (disposition / exception) leave these null — they
+  // don't participate in cash ranking or funding.
+  /** Landed unit cost driving cash_impact; null for an uncosted SKU (margin dropped). */
+  unit_cost: number | null;
+  /** order_qty × unit_cost, in RM; null when the SKU is uncosted. */
+  cash_impact: number | null;
+  /** 1-based rank by frozen rank_score (1 = fund first). null on non-buy rows. */
+  rank: number | null;
+  /** Frozen weighted score 0–1 (M4-D14 graceful-degrade). null on non-buy rows. */
+  rank_score: number | null;
+  /** Live funding disposition against the current budget (M4-D3). */
+  funding_status: FundingStatus;
+  /** Days until this SKU stocks out at forecast demand — surfaced on deferred rows
+   *  as the visible risk of NOT funding it (M4-D4). null when not derivable. */
+  days_to_stockout: number | null;
+  /** The factors that fed rank_score, with present/dropped flags (explainability). */
+  rank_factors: RankFactor[];
 }
 
 /** Roll-up counts + cash impact for the completed run. */

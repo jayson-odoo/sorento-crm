@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   createReorderRun,
+  getBuyRecommendationsForCash,
   getReorderRun,
   getRecommendations,
   listReorderRuns,
@@ -198,6 +199,23 @@ export function useReorderRunDetail(runId: string | null, enabled: boolean) {
     enabled: enabled && !!runId,
     refetchOnWindowFocus: false,
     staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+/**
+ * The FULL buy recommendation set for the M4 cash co-pilot (not paginated —
+ * greedy funding runs across the whole ranked list). Fetched once; the budget
+ * slider then recomputes funded/deferred live client-side via `computeFunding`,
+ * so this does NOT refetch per slider tick.
+ */
+export function useBuyRecommendationsForCash(runId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'cash-recs', runId],
+    queryFn: () => getBuyRecommendationsForCash(runId as string),
+    enabled: enabled && !!runId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
