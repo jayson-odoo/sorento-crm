@@ -3,16 +3,19 @@
 Adds nullable source-file columns to import_jobs so the raw uploaded bytes can be
 persisted to the storage bucket and downloaded later from Import Job Details.
 
-Revision ID: 272_import_source_file
-Revises: 271_audit_action_allow_import
+Revision ID: 273_import_source_file
+Revises: 272_banner_person_link_fields
 Create Date: 2026-07-14
+
+Rebased onto main's 272_banner_person_link_fields tip during merge (was
+originally 272 off 271; renumbered to 273 to keep a single linear head).
 """
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = "272_import_source_file"
-down_revision = "271_audit_action_allow_import"
+revision = "273_import_source_file"
+down_revision = "272_banner_person_link_fields"
 branch_labels = None
 depends_on = None
 
