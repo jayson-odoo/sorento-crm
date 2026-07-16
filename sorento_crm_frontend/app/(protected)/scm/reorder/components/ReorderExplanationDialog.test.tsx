@@ -9,6 +9,15 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
 
+// M5 semantic layer hooks are react-query-backed; this suite renders the dialog
+// without a QueryClientProvider, so stub them to inert states. Phase-2 replaces
+// this with real coverage of the explanation / advisory / Ask surfaces.
+vi.mock('../hooks/useExplainer', () => ({
+  useRecommendationExplanation: () => ({ data: undefined, isLoading: false, isError: false }),
+  useRecommendationAdvisory: () => ({ data: { advisory: null } }),
+  useAskRecommendation: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+
 // jsdom polyfills for Radix Dialog / Tooltip.
 class ResizeObserverStub {
   observe() {}

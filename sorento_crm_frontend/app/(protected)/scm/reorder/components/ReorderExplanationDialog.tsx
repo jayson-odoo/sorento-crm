@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Popover as PopoverPrimitive } from 'radix-ui';
 import {
   AlertTriangle,
@@ -9,9 +9,13 @@ import {
   ChevronDown,
   Layers,
   PackageX,
+  SendHorizontal,
   ShoppingCart,
+  Sparkles,
+  TrendingUp,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogBody,
@@ -20,9 +24,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Skeleton } from '@/components/ui/skeleton';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { cn } from '@/lib/utils';
+import {
+  useAskRecommendation,
+  useRecommendationAdvisory,
+  useRecommendationExplanation,
+} from '../hooks/useExplainer';
+import { REFUSAL } from '../lib/explainerMockStore';
+import type { AskTurn } from '../types/explainer.types';
 import { xyzLabel } from '../../lib/health';
 import type { XyzClass } from '../../types/scm.types';
 import { EM_DASH, fmtInt, fmtMoney, fmtPct } from '../../lib/format';
@@ -614,6 +627,132 @@ function DispositionExplanation({ rec }: { rec: ReorderRecommendation }) {
   );
 }
 
+/**
+ * M5 semantic layer — the LLM narrator that sits ON TOP of the deterministic
+ * derivation above. A generated one-sentence explanation (clearly badged "AI" so
+ * it's never mistaken for the frozen arithmetic below it) plus an optional market
+ * advisory. Buy / exception recs only — disposition rows don't get a buy
+ * narrative. Speaks only the rec's frozen numbers (M5 boundary).
+ */
+function AiSummaryBlock({ rec, enabled }: { rec: ReorderRecommendation; enabled: boolean }) {
+  const explanation = useRecommendationExplanation(rec, enabled);
+  const advisory = useRecommendationAdvisory(rec, enabled);
+
+  return (
+    <div className="space-y-2">
+      <div className="rounded-lg border border-primary/25 bg-primary/5 p-3">
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <Sparkles className="size-3.5 text-primary" aria-hidden />
+          <span className="text-2xs font-semibold uppercase tracking-wide text-primary">
+            AI summary
+          </span>
+        </div>
+        {explanation.isLoading ? (
+          <div className="space-y-1.5" aria-label="Generating explanation">
+            <Skeleton className="h-3.5 w-full" />
+            <Skeleton className="h-3.5 w-4/5" />
+          </div>
+        ) : explanation.isError ? (
+          <p className="text-sm text-muted-foreground">
+            Couldn&apos;t generate a plain-language summary — the derivation below still applies.
+          </p>
+        ) : (
+          <p className="text-sm">{explanation.data?.explanation}</p>
+        )}
+      </div>
+
+      {/* Market advisory — subtle info callout, only when a signal matched. */}
+      {advisory.data?.advisory ? (
+        <div className="flex items-start gap-2 rounded-lg border border-scm-incoming/40 bg-scm-incoming-soft p-3 text-sm">
+          <TrendingUp className="mt-0.5 size-4 shrink-0 text-scm-incoming" aria-hidden />
+          <div className="min-w-0 space-y-1">
+            <Badge variant="info" appearance="light" size="xs">
+              Market signal
+            </Badge>
+            <p>{advisory.data.advisory}</p>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * M5 Ask box — a bounded Q&A grounded in THIS rec's frozen numbers. Keeps a short
+ * transcript in local state (reset when the dialog steps to another rec via the
+ * `key` on DialogBody). A question that needs a number the rec doesn't carry
+ * comes back as the exact refusal string, which we style as a muted turn so the
+ * user sees the model declining rather than guessing.
+ */
+function AskSection({ rec }: { rec: ReorderRecommendation }) {
+  const [question, setQuestion] = useState('');
+  const [turns, setTurns] = useState<AskTurn[]>([]);
+  const ask = useAskRecommendation(rec);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const q = question.trim();
+    if (!q || ask.isPending) return;
+    setQuestion('');
+    try {
+      const res = await ask.mutateAsync(q);
+      setTurns((prev) => [...prev, { question: q, answer: res.answer, refused: res.answer === REFUSAL }]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to answer question';
+      setTurns((prev) => [...prev, { question: q, answer: msg, refused: true }]);
+    }
+  };
+
+  return (
+    <div>
+      <SectionTitle>Ask about this recommendation</SectionTitle>
+      {turns.length ? (
+        <div className="mb-3 space-y-3">
+          {turns.map((t, i) => (
+            <div key={i} className="space-y-1">
+              <div className="flex justify-end">
+                <div className="max-w-[85%] rounded-lg bg-primary/10 px-3 py-1.5 text-sm">
+                  {t.question}
+                </div>
+              </div>
+              <div className="flex justify-start">
+                <div
+                  className={cn(
+                    'flex max-w-[85%] items-start gap-1.5 rounded-lg px-3 py-1.5 text-sm',
+                    t.refused ? 'bg-muted text-muted-foreground italic' : 'bg-muted',
+                  )}
+                >
+                  <Sparkles className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden />
+                  <span>{t.answer}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+          {ask.isPending ? (
+            <div className="flex justify-start">
+              <div className="flex max-w-[85%] items-center gap-1.5 rounded-lg bg-muted px-3 py-1.5">
+                <Skeleton className="h-3.5 w-32" />
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <form onSubmit={submit} className="flex items-center gap-2">
+        <Input
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder="e.g. What lead time was used?"
+          aria-label="Ask about this recommendation"
+        />
+        <Button type="submit" disabled={!question.trim() || ask.isPending}>
+          <SendHorizontal className="size-4" aria-hidden />
+          Ask
+        </Button>
+      </form>
+    </div>
+  );
+}
+
 export function ReorderExplanationDialog({
   rec,
   open,
@@ -640,12 +779,19 @@ export function ReorderExplanationDialog({
   const isBuyLike = rec?.type === 'buy' || rec?.type === 'exception';
   const canPage = !!recs && recs.length > 1 && !!rec && !!onNavigate;
 
-  // Arrow-key stepping between recommendations while the popup is open. Safe to
-  // bind on the content: the dialog has no text inputs to hijack.
+  // Arrow-key stepping between recommendations while the popup is open. Ignore
+  // arrows fired from a text field (the M5 Ask input lives in this DialogContent),
+  // so moving the caret mid-question never jumps to another recommendation.
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (!canPage || !recs || !rec || !onNavigate) return;
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)
+      )
+        return;
       const idx = recs.findIndex((r) => r.id === rec.id);
       if (idx < 0) return;
       const nextIdx = e.key === 'ArrowRight' ? idx + 1 : idx - 1;
@@ -704,6 +850,11 @@ export function ReorderExplanationDialog({
             <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
               {summaryText(rec)}
             </div>
+
+            {/* M5 AI narration + market advisory (buy / exception only) — sits
+                ABOVE the deterministic derivation and is badged so it reads as
+                generated prose, not the frozen arithmetic below. */}
+            {isBuyLike ? <AiSummaryBlock rec={rec} enabled={open} /> : null}
 
             {/* Step-by-step derivation */}
             <div>
@@ -782,6 +933,11 @@ export function ReorderExplanationDialog({
                 </div>
               </div>
             ) : null}
+
+            {/* M5 Ask box — bounded Q&A over this rec's frozen numbers (buy /
+                exception only). Lives at the bottom so the derivation is read
+                first; the dialog body is already mobile-scrollable. */}
+            {isBuyLike ? <AskSection rec={rec} /> : null}
           </DialogBody>
         ) : null}
       </DialogContent>

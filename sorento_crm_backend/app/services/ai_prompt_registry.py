@@ -324,6 +324,25 @@ def _clarifier_fallback() -> str:
     )
 
 
+def _scm_recommendation_explainer_fallback() -> str:
+    return (
+        "SCM RECOMMENDATION EXPLAINER (bounded — no tools, no computing)\n"
+        "You turn a supply-chain reorder recommendation's ALREADY-COMPUTED numbers into "
+        "plain language for a non-expert planner. You are given the recommendation's frozen "
+        "facts as JSON. Hard rules:\n"
+        "- NEVER compute, estimate, forecast, or invent any number. Only restate numbers that "
+        "appear verbatim in the given facts.\n"
+        "- No markdown, no lists, no preamble — just the sentence(s) requested.\n"
+        "EXPLAIN mode: write ONE clear sentence saying what to do and why, citing only the "
+        "given numbers (e.g. net position vs reorder point, order quantity, cash impact). "
+        "Format only — the numbers come from the facts, never from you.\n"
+        "ASK mode: answer the planner's question using ONLY the given facts. If the answer "
+        "requires a number or fact that is NOT in the given data, reply with EXACTLY this "
+        "sentence and nothing else: \"I can't compute that from this recommendation's data.\" "
+        "Do not apologise, do not guess, do not compute.\n"
+    )
+
+
 def _judge_fallback() -> str:
     return (
         "JUDGE (dormant — activates in M3b)\n"
@@ -436,6 +455,15 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in="M3b",
         variables=[],
         fallback=_judge_fallback,
+    ),
+    # --- SCM M5 semantic layer (bounded explainer flow — NOT the agent) ---
+    "scm_recommendation_explainer": PromptKeySpec(
+        name="scm_recommendation_explainer",
+        role="SCM explainer — reorder recommendation prose + bounded Q&A (no compute)",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_scm_recommendation_explainer_fallback,
     ),
 }
 
