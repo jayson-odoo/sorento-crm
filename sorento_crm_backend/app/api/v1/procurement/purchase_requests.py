@@ -170,6 +170,7 @@ async def get_purchase_request(
                     if qty is not None and up is not None:
                         grand += Decimal(str(qty)) * Decimal(str(up))
             setattr(header, "grand_total", grand)
+        service.attach_rejection_person(header)
         return header
     except HTTPException:
         raise
@@ -362,6 +363,7 @@ async def reject_submitted_purchase_request(
                     "approver_display_name",
                     (user.name and user.name.strip()) or user.email or "",
                 )
+        service.attach_rejection_person(header)
         return header
     except HTTPException:
         raise
@@ -402,6 +404,7 @@ async def decide_purchase_request_approval(
             action=body.action,
             approved_by=approver_name,
             approval_comments=body.comments,
+            actor_user_id=uid,
         )
         if getattr(header, "approver_user_id", None):
             user = db.query(User).filter(User.id == header.approver_user_id).first()
@@ -411,6 +414,7 @@ async def decide_purchase_request_approval(
                     "approver_display_name",
                     (user.name and user.name.strip()) or user.email or "",
                 )
+        service.attach_rejection_person(header)
         return header
     except HTTPException:
         raise

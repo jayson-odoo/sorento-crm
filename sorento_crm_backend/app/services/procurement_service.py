@@ -37,6 +37,7 @@ from app.schemas.procurement import (
     PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate, PurchaseRequestUpdateAndReply,
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
+from app.services.banner_person_service import wa_phone_for_user_id
 from app.services.validators import validate_project_value
 from app.config import settings
 
@@ -2724,6 +2725,10 @@ class StockInquiryService:
         data["rejected_by_name"] = (
             self._resolve_user_display_name(inquiry.rejected_by) if inquiry.rejected_by else None
         )
+        # Rejecter's wa.me digits for the rejection banner link (rejected_by = users.id).
+        data["rejected_by_wa_phone"] = (
+            wa_phone_for_user_id(self.db, inquiry.rejected_by) if inquiry.rejected_by else None
+        )
         data["reopened_by_name"] = (
             self._resolve_user_display_name(inquiry.reopened_by) if inquiry.reopened_by else None
         )
@@ -4178,6 +4183,31 @@ class PurchaseRequestService:
             return ((user.name or "").strip() or user.email or uid).strip() or ""
         # Not a matching user row — echo back only if it isn't a bare UUID.
         return "" if self._UUID_RE.match(uid) else uid
+
+    def attach_rejection_person(self, header: PurchaseRequestHeader) -> PurchaseRequestHeader:
+        """Set ``rejected_by_name`` + ``rejected_by_wa_phone`` on a header for the detail
+        DTO (PLAN-form-banner-person-links REJ-3/REJ-4/HIST-3).
+
+        Resolution:
+        1. ``rejected_by_id`` (new column) -> User -> name + wa.me digits.
+        2. Legacy rejected PRs (no ``rejected_by_id``): fall back to the ``approved_by``
+           display-name string, plain text (no phone). Only when the PR is rejected.
+        Never leaks a raw UUID; never raises.
+        """
+        rid = (getattr(header, "rejected_by_id", None) or "").strip() or None
+        name = (self._resolve_actor_display_name(rid) or None) if rid else None
+        phone = wa_phone_for_user_id(self.db, rid) if rid else None
+        if not name:
+            status_val = (getattr(header, "approval_status", None) or getattr(header, "status", None) or "").strip().lower()
+            if status_val == "rejected":
+                legacy = (getattr(header, "approved_by", None) or "").strip()
+                # approved_by holds a display-name string for rejected PRs; echo it only
+                # when it is not a bare UUID.
+                if legacy and not self._UUID_RE.match(legacy):
+                    name = legacy
+        setattr(header, "rejected_by_name", name)
+        setattr(header, "rejected_by_wa_phone", phone)
+        return header
 
     def _resolve_approver_display_name(self, header: PurchaseRequestHeader) -> str:
         """Resolve ``approved_by`` to a human-readable display name.
@@ -6148,6 +6178,14 @@ class PurchaseRequestService:
         # field renders a person, consistent with the approval-decision path.
         # The raw actor id is preserved separately in requested_approval_by_user_id.
         header.approved_by = self._resolve_actor_display_name(actor_user_id)
+        # Dedicated rejecter id so the banner can resolve a name + wa.me phone.
+        # Guard the FK the same way the approval-decision path does: only set it when
+        # the actor resolves to a real users row, so a non-user actor id can never
+        # abort the whole reject on the FK constraint (NULL -> banner plain text).
+        _rid = (actor_user_id or "").strip() if actor_user_id else None
+        header.rejected_by_id = (
+            _rid if (_rid and self.db.query(User.id).filter(User.id == _rid).first()) else None
+        )
         header.approval_signature_ref = None
         if actor_user_id is not None:
             header.requested_approval_by_user_id = actor_user_id
@@ -6493,6 +6531,7 @@ class PurchaseRequestService:
         action: str,
         approved_by: Optional[str] = None,
         approval_comments: Optional[str] = None,
+        actor_user_id: Optional[str] = None,
     ):
         """Authenticated in-system approve/reject (no token) — the form's Approve/
         Reject buttons. Same effect as the public link's ``submit_approval``: it
@@ -6507,7 +6546,11 @@ class PurchaseRequestService:
                 "This request is not pending approval. Send it for approval first."
             )
         return self._apply_approval_decision(
-            header, action, approved_by=approved_by, approval_comments=approval_comments
+            header,
+            action,
+            approved_by=approved_by,
+            approval_comments=approval_comments,
+            actor_user_id=actor_user_id,
         )
 
     def submit_approval(
@@ -6551,6 +6594,7 @@ class PurchaseRequestService:
         approved_by: Optional[str] = None,
         approval_signature_ref: Optional[str] = None,
         approval_comments: Optional[str] = None,
+        actor_user_id: Optional[str] = None,
     ):
         """Apply an approve/reject decision and run ALL side effects (status,
         notifications, form-SLA event, approval automation). Shared by the public
@@ -6575,6 +6619,17 @@ class PurchaseRequestService:
         header.status = action
         header.approved_at = now
         header.approved_by = approved_by or header.approver_email or ""
+        if action == "rejected":
+            # Populate the dedicated rejecter id when it resolves to a CRM user
+            # (in-system decision). External-email approvers (public link) have no
+            # user row -> NULL, and the banner falls back to plain text (REJ-4).
+            resolved_rejecter_id = None
+            for candidate in (actor_user_id, getattr(header, "approver_user_id", None)):
+                cid = (candidate or "").strip() if candidate else None
+                if cid and self.db.query(User.id).filter(User.id == cid).first():
+                    resolved_rejecter_id = cid
+                    break
+            header.rejected_by_id = resolved_rejecter_id
         header.approval_signature_ref = approval_signature_ref
         header.approval_comments = approval_comments
         self.db.commit()

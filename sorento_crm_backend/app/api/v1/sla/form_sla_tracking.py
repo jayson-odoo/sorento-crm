@@ -27,6 +27,7 @@ from app.services.handling_lock_service import (
     _is_eligible,
     _actor_is_admin,
 )
+from app.services.banner_person_service import wa_phone_for_user_id
 
 router = APIRouter()
 
@@ -71,6 +72,8 @@ def _serialize(
         # Handling lock (PLAN-form-handling-lock). NULL handled_by_id = unclaimed.
         "handled_by_id": t.handled_by_id,
         "handled_by_name": _assignee_name(db, t.handled_by_id),
+        # wa.me digits of the lock holder for the handling-lock banner link.
+        "handled_by_wa_phone": wa_phone_for_user_id(db, t.handled_by_id),
         "handled_at": t.handled_at,
         # Per-form feature flag; FE hides the whole lock UI when off.
         "flag_enabled": (

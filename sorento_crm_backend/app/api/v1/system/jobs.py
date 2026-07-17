@@ -80,6 +80,9 @@ async def list_jobs(
                 'completed_at': job.completed_at,
                 'updated_at': getattr(job, 'updated_at', None),
                 'job_metadata': job.job_metadata,
+                'source_filename': getattr(job, 'source_filename', None),
+                'source_file_size': getattr(job, 'source_file_size', None),
+                'has_source_file': bool(getattr(job, 'source_file_key', None)),
             }
             jobs_data.append(job_dict)
         
@@ -148,6 +151,59 @@ async def get_job(
             'completed_at': job.completed_at,
             'updated_at': getattr(job, 'updated_at', None),
             'job_metadata': job.job_metadata,
+            'source_filename': getattr(job, 'source_filename', None),
+            'source_file_size': getattr(job, 'source_file_size', None),
+            'has_source_file': bool(getattr(job, 'source_file_key', None)),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/jobs/{job_id}/source")
+async def download_job_source_file(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return a fresh signed URL for the retained original upload of an import job.
+
+    Accepts RQ job_id or DB id. Owner-only (mirrors get_job). 404 when the job has no
+    retained source file (older jobs, non-file imports, or a best-effort storage miss).
+    """
+    try:
+        job_service = JobService(db)
+        job = job_service.get_job(job_id) or job_service.get_job_by_db_id(job_id)
+
+        if not job:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+        if job.user_id != current_user["id"]:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+        key = getattr(job, "source_file_key", None)
+        if not key:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No source file was retained for this import job.",
+            )
+
+        from app.services.storage_router import resolve_signed_url
+
+        url = resolve_signed_url(
+            key,
+            provider=getattr(job, "source_file_provider", None),
+            expires_in=3600,
+        )
+        if not url:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Could not generate a download link for the source file.",
+            )
+        return {
+            "url": url,
+            "filename": getattr(job, "source_filename", None) or job.filename,
+            "size": getattr(job, "source_file_size", None),
         }
     except HTTPException:
         raise

@@ -1,6 +1,9 @@
 # PLAN — Form-banner person links (WHO · WHEN · wa.me hyperlink)
 
-**Status:** Draft (pre-code, awaiting grill)
+**Status:** Merged to main — BE+FE built, 30 FE vitest + 21 BE pytest green, rejection + SLA-escalation
+banners verified live in-browser (wa.me links + underline + no-phone plain-text). Escalation banner
+links both current assignee and escalated-from owner. Local heuristic backfill run (151 rows set).
+Pending: run the backfill on the real prod DB at deploy.
 **Classification:** **CORE** — attribution on core form-detail banners (SLA / handling-lock /
 rejection). Not toggleable, `public` schema, normal FKs. No `app_modules_catalog` entry.
 **Domain:** forms / sla · **UAC:** `documentation/plans/forms/form-banner-person-links-acceptance-criteria.md`

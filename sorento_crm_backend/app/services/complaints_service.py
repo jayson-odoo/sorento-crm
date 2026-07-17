@@ -21,6 +21,7 @@ from app.models.sla import ConversationSLATracking
 from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
 from app.services.error_handler import handle_not_found
 from app.services.entity_attachment_service import EntityAttachmentService
+from app.services.banner_person_service import wa_phone_for_respond_user_id
 
 
 # Sentinel: distinguishes "caller passed a precomputed value (maybe None)" from
@@ -292,6 +293,8 @@ class ComplaintService:
         view_url_override: Optional[str] = None,
         assigned_to_name_override=_UNSET,
         handled_by_name_override=_UNSET,
+        handled_by_wa_phone_override=_UNSET,
+        rejected_by_wa_phone_override=_UNSET,
         last_responded_by_name_override=_UNSET,
     ) -> dict:
         """Serialize complaint with attachments from generic entity_attachment_links table.
@@ -342,6 +345,21 @@ class ComplaintService:
             data["handled_by_name"] = handled_by_name_override
         else:
             data["handled_by_name"] = None
+        if handled_by_wa_phone_override is not _UNSET:
+            data["handled_by_wa_phone"] = handled_by_wa_phone_override
+        else:
+            data["handled_by_wa_phone"] = None
+        # Rejecter attribution for the rejection banner. complaint.rejected_by holds a
+        # respond_user_id (NOT a users.id) — resolve name + wa.me digits via that path.
+        if data.get("rejected_by"):
+            data["rejected_by_name"] = self._resolve_user_display_name(data["rejected_by"])
+            if rejected_by_wa_phone_override is not _UNSET:
+                data["rejected_by_wa_phone"] = rejected_by_wa_phone_override
+            else:
+                data["rejected_by_wa_phone"] = wa_phone_for_respond_user_id(self.db, data["rejected_by"])
+        else:
+            data["rejected_by_name"] = None
+            data["rejected_by_wa_phone"] = None
         rc = getattr(complaint, "root_cause", None)
         data["root_cause_name"] = getattr(rc, "name", None) if rc is not None else None
         res = getattr(complaint, "resolution", None)
@@ -747,6 +765,11 @@ class ComplaintService:
                 view_url_override=view_url_map.get(str(complaint.id)),
                 assigned_to_name_override=_assigned_name(complaint),
                 handled_by_name_override=_handled_name(complaint),
+                # Banners (handling-lock / rejection) render on the DETAIL page only,
+                # so the list path skips the per-row wa.me phone lookups (N+1). Phones
+                # resolve in get_complaint / get_complaint_for_response instead.
+                handled_by_wa_phone_override=None,
+                rejected_by_wa_phone_override=None,
                 last_responded_by_name_override=(
                     user_name_map.get(str(complaint.last_responded_by))
                     if getattr(complaint, "last_responded_by", None)

@@ -35,6 +35,8 @@ export interface HandlingLockTracker {
   /** The active handler lock. NULL/absent = unclaimed. */
   handled_by_id?: string | null;
   handled_by_name?: string | null;
+  /** Bare wa.me digits (e.g. `60123...`) of the lock holder, when resolvable. NULL → plain text. */
+  handled_by_wa_phone?: string | null;
   /** Naive-UTC ISO string of when the current lock was claimed. */
   handled_at?: string | null;
   assigned_to_id?: string | null;

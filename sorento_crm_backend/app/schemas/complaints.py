@@ -224,10 +224,13 @@ class ComplaintResponse(ComplaintBase):
     rejection_reason: Optional[str] = None
     rejected_at: Optional[datetime] = None
     rejected_by: Optional[str] = None
+    rejected_by_name: Optional[str] = None  # resolved rejecter display name (banner)
+    rejected_by_wa_phone: Optional[str] = None  # rejecter's wa.me digits (banner link)
     resolved_at: Optional[datetime] = None
     resolved_by: Optional[str] = None
     assigned_to_name: Optional[str] = None
     handled_by_name: Optional[str] = None
+    handled_by_wa_phone: Optional[str] = None  # holder's wa.me digits (banner link)
     root_cause_id: Optional[str] = None
     resolution_id: Optional[str] = None
     root_cause_name: Optional[str] = None

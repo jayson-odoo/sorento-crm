@@ -653,12 +653,14 @@ class StockInquiryResponse(StockInquiryBase):
     rejected_at: Optional[datetime] = None
     rejected_by: Optional[str] = None
     rejected_by_name: Optional[str] = None
+    rejected_by_wa_phone: Optional[str] = None  # rejecter's wa.me digits (banner link)
     rejected_from: Optional[str] = None
     reopen_reason: Optional[str] = None
     reopened_at: Optional[datetime] = None
     reopened_by: Optional[str] = None
     reopened_by_name: Optional[str] = None
     handled_by_name: Optional[str] = None  # form-handling-lock holder display name
+    handled_by_wa_phone: Optional[str] = None  # holder's wa.me digits (banner link)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     attachments: Optional[List[StockInquiryAttachmentResponse]] = []
@@ -718,6 +720,9 @@ class PurchaseRequestHeaderBase(BaseModel):
     approval_status: Optional[str] = None  # pending | approved | rejected
     approved_at: Optional[datetime] = None
     approved_by: Optional[str] = None
+    rejected_by_id: Optional[str] = None  # users.id of the rejecter (dedicated column)
+    rejected_by_name: Optional[str] = None  # resolved rejecter display name (banner)
+    rejected_by_wa_phone: Optional[str] = None  # rejecter's wa.me digits (banner link)
     approval_signature_ref: Optional[str] = None
     approval_comments: Optional[str] = None
 
@@ -803,6 +808,7 @@ class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
     assigned_to_id: Optional[str] = None  # latest unresolved form-SLA assignee (users.id)
     assigned_to_name: Optional[str] = None  # resolved display name
     handled_by_name: Optional[str] = None  # form-handling-lock holder display name
+    handled_by_wa_phone: Optional[str] = None  # holder's wa.me digits (banner link)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -835,6 +841,7 @@ class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     assigned_to_id: Optional[str] = None  # latest unresolved form-SLA assignee (users.id)
     assigned_to_name: Optional[str] = None  # resolved display name
     handled_by_name: Optional[str] = None  # form-handling-lock holder display name
+    handled_by_wa_phone: Optional[str] = None  # holder's wa.me digits (banner link)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     lines: Optional[List[PurchaseRequestLineResponse]] = []
