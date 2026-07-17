@@ -20,3 +20,7 @@ class AskResult(BaseModel):
 
 class AdvisoryResult(BaseModel):
     advisory: Optional[str] = None
+
+
+class RunOverviewResult(BaseModel):
+    overview: str

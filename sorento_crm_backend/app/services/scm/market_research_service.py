@@ -53,7 +53,19 @@ _VALID_TRENDS = {"up", "down", "flat"}
 # key access (single choke-point so tests + the endpoint agree)
 # ---------------------------------------------------------------------------
 
-def _anthropic_api_key() -> Optional[str]:
+def _anthropic_api_key(db: Session) -> Optional[str]:
+    """Anthropic key for the market web search — DB-configured (assistant config,
+    same place the OpenAI key lives), falling back to the env only if the DB is
+    empty. NOT an env-only setting (user preference)."""
+    from app.models.ai_assistant import AIAssistantConfig
+
+    row = (
+        db.query(AIAssistantConfig)
+        .order_by(AIAssistantConfig.created_at.asc())
+        .first()
+    )
+    if row and row.anthropic_api_key_ciphertext:
+        return row.anthropic_api_key_ciphertext
     return getattr(settings, "anthropic_api_key", None) or None
 
 
@@ -212,7 +224,7 @@ def run_research(db: Session, actor: Optional[str] = None) -> dict:
     )
     run.topic_count = len(topics)
 
-    if not _anthropic_api_key():
+    if not _anthropic_api_key(db):
         run.status = "failed"
         run.error_text = NO_KEY_ERROR
         run.signal_count = 0

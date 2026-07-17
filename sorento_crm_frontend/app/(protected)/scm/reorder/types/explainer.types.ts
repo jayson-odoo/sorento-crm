@@ -24,6 +24,11 @@ export interface AdvisoryResult {
   advisory: string | null;
 }
 
+/** Run-level AI overview — a short brief over the whole planning run. */
+export interface RunOverviewResult {
+  overview: string;
+}
+
 /** One entry in the in-dialog Ask transcript (local UI state only, not persisted). */
 export interface AskTurn {
   question: string;

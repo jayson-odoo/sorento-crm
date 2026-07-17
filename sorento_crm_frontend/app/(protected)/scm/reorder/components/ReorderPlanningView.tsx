@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia, timeAgo } from '@/lib/helpers';
+import { useRunOverview } from '../hooks/useExplainer';
 import { runHistoryKey, useReorderRun, useReorderRunDetail } from '../hooks/useReorderRun';
 import { type ReorderRunHistoryItem } from '../services/reorderRunService';
 import type {
@@ -27,6 +28,30 @@ function toUtcDate(raw: string | null): Date | null {
   const hasTz = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(raw);
   const d = new Date(hasTz ? raw : `${raw}Z`);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** Run-level AI overview — a plain-language brief over the whole planning run,
+ *  sitting above the per-row grid (each row still drills into its own product via
+ *  the explanation dialog). Lazy + cached; skeleton while the LLM generates. */
+function AiRunOverview({ runId, enabled }: { runId: string; enabled: boolean }) {
+  const { data, isLoading, isError } = useRunOverview(runId, enabled);
+  if (isError) return null; // overview is a bonus — never block the results on it
+  return (
+    <Card className="border-primary/30 bg-primary/5 p-4">
+      <div className="mb-1.5 flex items-center gap-1.5 text-primary">
+        <Sparkles className="size-4" aria-hidden />
+        <span className="text-xs font-semibold uppercase tracking-wide">AI overview</span>
+      </div>
+      {isLoading ? (
+        <div className="space-y-1.5">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-4/5" />
+        </div>
+      ) : (
+        <p className="text-sm text-foreground">{data?.overview}</p>
+      )}
+    </Card>
+  );
 }
 
 export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boolean }) {
@@ -174,6 +199,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             activeType={typeFilter}
             onToggle={toggleType}
           />
+          <AiRunOverview runId={displayedRunId} enabled={showResults} />
           {typeFilter === '' || typeFilter === 'buy' ? (
             <CashCopilotResults runId={displayedRunId} enabled={showResults} />
           ) : (

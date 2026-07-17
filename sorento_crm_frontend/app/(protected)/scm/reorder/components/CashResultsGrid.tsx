@@ -561,22 +561,23 @@ export function CashResultsGrid({
     </CardHeading>
   );
 
-  // The still-PENDING subset of the current selection — the only rows a bulk
-  // Accept/Reject applies to (M4-D9). Actions gate off this count.
+  // Decisions are changeable — a rejected buy can be re-accepted, an accepted one
+  // re-rejected. So each bulk action targets the subset it would actually change:
+  // Accept → selected rows not already accepted; Reject → not already rejected.
   const clearSelection = () => table.resetRowSelection();
-  const pendingSelected = table
-    .getSelectedRowModel()
-    .rows.map((r) => r.original)
-    .filter((rec) => {
-      const st = decisionsById?.[rec.id]?.status;
-      return !st || st === 'proposed';
-    });
+  const selectedRecs = table.getSelectedRowModel().rows.map((r) => r.original);
+  const acceptTargets = selectedRecs.filter(
+    (rec) => decisionsById?.[rec.id]?.status !== 'accepted',
+  );
+  const rejectTargets = selectedRecs.filter(
+    (rec) => decisionsById?.[rec.id]?.status !== 'dismissed',
+  );
 
   const bulkActions = buildResultsBulkActions(
-    { pendingCount: pendingSelected.length },
+    { acceptCount: acceptTargets.length, rejectCount: rejectTargets.length },
     {
-      onAccept: () => onBulkAccept?.(pendingSelected, clearSelection),
-      onReject: () => onBulkReject?.(pendingSelected, clearSelection),
+      onAccept: () => onBulkAccept?.(acceptTargets, clearSelection),
+      onReject: () => onBulkReject?.(rejectTargets, clearSelection),
     },
   );
 

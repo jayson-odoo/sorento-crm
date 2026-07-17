@@ -377,3 +377,127 @@ def test_advisory_denied_without_dashboard_view(scm_app):
     with TestClient(app) as client:
         res = client.get(f"/api/v1/scm/recommendations/{uuid.uuid4()}/advisory")
     assert res.status_code == 403
+
+
+# ===========================================================================
+# run overview — aggregate brief, cached onto reorder_run.overview
+# ===========================================================================
+
+def _seed_run(db) -> str:
+    """Run the M4 cash seed and return the completed run_id (with buys frozen)."""
+    _seed_two_buys(db)
+    created = run_svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    assert run_svc.run_reorder(created["run_id"], db=db)["status"] == "completed"
+    return created["run_id"]
+
+
+def test_explain_run_aggregates_caches_and_boundary(scm_app, monkeypatch):
+    _, db, _, _ = scm_app
+    run_id = _seed_run(db)
+    fake = _install_provider(monkeypatch, "This run recommends 2 buys worth RM 500.")
+
+    # numeric snapshot of every rec before the overview runs
+    before = db.execute(
+        text(
+            "SELECT id, rounded_qty, reorder_point, net_position, cash_impact "
+            "FROM scm.reorder_recommendation WHERE run_id = :r ORDER BY id"
+        ),
+        {"r": run_id},
+    ).mappings().all()
+
+    out = explainer_service.explain_run(db, run_id)
+    assert out == "This run recommends 2 buys worth RM 500."
+
+    # the model only saw the run's frozen aggregates (buy_count present)
+    facts = _facts_json(_user_block(fake))
+    assert facts["buy_count"] >= 1
+
+    # cached onto the run — a second read serves the cache, no second LLM call
+    db.flush()
+    cached = db.execute(
+        text("SELECT overview FROM scm.reorder_run WHERE id = :r"), {"r": run_id}
+    ).scalar()
+    assert cached == "This run recommends 2 buys worth RM 500."
+    again = explainer_service.explain_run(db, run_id)
+    assert again == out
+    assert len(fake.calls) == 1, "cached overview must not re-invoke the LLM"
+
+    # no recommendation numeric column was touched by the overview
+    after = db.execute(
+        text(
+            "SELECT id, rounded_qty, reorder_point, net_position, cash_impact "
+            "FROM scm.reorder_recommendation WHERE run_id = :r ORDER BY id"
+        ),
+        {"r": run_id},
+    ).mappings().all()
+    assert [dict(r) for r in after] == [dict(r) for r in before]
+
+
+def test_explain_run_no_provider_deterministic_not_cached(scm_app, monkeypatch):
+    _, db, _, _ = scm_app
+    run_id = _seed_run(db)
+    _install_no_provider(monkeypatch)
+
+    out = explainer_service.explain_run(db, run_id)
+    assert out and "buy" in out.lower()
+
+    db.flush()
+    assert db.execute(
+        text("SELECT overview FROM scm.reorder_run WHERE id = :r"), {"r": run_id}
+    ).scalar() is None, "deterministic overview must not cache"
+
+
+def test_run_overview_endpoint_happy(scm_app, monkeypatch):
+    app, db = _client(scm_app, "purchasing")
+    run_id = _seed_run(db)
+    db.commit()
+    fake = _install_provider(monkeypatch, "Run brief: 2 buys, one urgent SKU.")
+
+    with TestClient(app) as client:
+        r1 = client.get(f"/api/v1/scm/reorder-runs/{run_id}/overview")
+        assert r1.status_code == 200, r1.text
+        assert r1.json()["overview"] == "Run brief: 2 buys, one urgent SKU."
+        # cached — a second view does not re-invoke the model
+        r2 = client.get(f"/api/v1/scm/reorder-runs/{run_id}/overview")
+        assert r2.json()["overview"] == "Run brief: 2 buys, one urgent SKU."
+    assert len(fake.calls) == 1
+
+
+def test_run_overview_missing_run_404(scm_app):
+    app, _ = _client(scm_app, "purchasing")
+    with TestClient(app) as client:
+        res = client.get(f"/api/v1/scm/reorder-runs/{uuid.uuid4()}/overview")
+    assert res.status_code == 404, res.text
+
+
+def test_run_overview_denied_without_dashboard_view(scm_app):
+    app, _ = _client(scm_app, None)
+    with TestClient(app) as client:
+        res = client.get(f"/api/v1/scm/reorder-runs/{uuid.uuid4()}/overview")
+    assert res.status_code == 403
+
+
+# ===========================================================================
+# disposition explain — the frozen disposition facts reach the model
+# ===========================================================================
+
+def test_disposition_explain_surfaces_disposition_facts(scm_app, monkeypatch):
+    _, db, _, _ = scm_app
+    rec = _seed_buy_rec(db)
+    # Re-cast this frozen rec as a disposition with an overstock reason + hold action.
+    inp = dict(rec.inputs or {})
+    inp["reason"] = "overstock"
+    inp["disposition_action"] = "hold"
+    rec.rec_type = "disposition"
+    rec.inputs = inp
+    db.flush()
+    db.expire(rec)
+
+    fake = _install_provider(monkeypatch, "Hold this stock — it is overstocked.")
+    out = explainer_service.explain_recommendation(db, rec.id)
+    assert out == "Hold this stock — it is overstocked."
+
+    facts = _facts_json(_user_block(fake))
+    assert facts["type"] == "disposition"
+    assert facts["reason"] == "overstock"
+    assert facts["disposition_action"] == "hold"

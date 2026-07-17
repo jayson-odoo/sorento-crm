@@ -7,16 +7,19 @@ import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
  * Drive's `buildDriveBulkActions`. Pure, so the selection-gating is
  * unit-testable without the DataGrid stack.
  *
- * Gating:
- *  - Accept and Reject apply ONLY to still-PENDING (proposed) recommendations in
- *    the selection; each acts on that subset. Adjust is single-row only (never a
- *    bulk action).
- *  - If the selection contains no pending recs (all already decided), NO action
- *    applies → returns `[]` so the Actions button does not render.
+ * Gating — a decision is CHANGEABLE (a rejected buy can be re-accepted, an
+ * accepted one re-rejected), so an action shows whenever it would change at least
+ * one selected row:
+ *  - Accept shows unless EVERY selected row is already accepted (acts on the ones
+ *    that aren't).
+ *  - Reject shows unless EVERY selected row is already rejected (acts on the rest).
+ *  - Both hidden only when the selection is empty. Adjust stays single-row only.
  */
 export interface ResultsBulkActionState {
-  /** How many selected rows are still pending (proposed) — the actionable subset. */
-  pendingCount: number;
+  /** Selected rows that aren't already accepted — Accept's target subset. */
+  acceptCount: number;
+  /** Selected rows that aren't already rejected — Reject's target subset. */
+  rejectCount: number;
 }
 
 export interface ResultsBulkActionHandlers {
@@ -28,9 +31,12 @@ export function buildResultsBulkActions(
   state: ResultsBulkActionState,
   handlers: ResultsBulkActionHandlers,
 ): ToolbarAction[] {
-  if (state.pendingCount === 0) return [];
-  return [
-    { key: 'bulk-accept', label: 'Accept', icon: Check, onClick: handlers.onAccept },
-    { key: 'bulk-reject', label: 'Reject', icon: X, destructive: true, onClick: handlers.onReject },
-  ];
+  const actions: ToolbarAction[] = [];
+  if (state.acceptCount > 0) {
+    actions.push({ key: 'bulk-accept', label: 'Accept', icon: Check, onClick: handlers.onAccept });
+  }
+  if (state.rejectCount > 0) {
+    actions.push({ key: 'bulk-reject', label: 'Reject', icon: X, destructive: true, onClick: handlers.onReject });
+  }
+  return actions;
 }

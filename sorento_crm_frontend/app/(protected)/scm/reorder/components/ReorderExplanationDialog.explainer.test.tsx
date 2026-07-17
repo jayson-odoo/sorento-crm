@@ -175,20 +175,21 @@ describe('ReorderExplanationDialog — M5 semantic layer', () => {
     ).toBeInTheDocument();
   });
 
-  it('renders the AI-summary block for a BUY rec and OMITS it for a disposition', () => {
+  it('renders the AI-summary block AND the Ask box for BUY and disposition alike', () => {
     const { rerender } = render(
       <ReorderExplanationDialog rec={rec({})} open onOpenChange={() => {}} />,
     );
     expect(screen.getByText('AI summary')).toBeInTheDocument();
-    // buy recs also get the bounded Ask box
+    // buy recs get the bounded Ask box
     expect(screen.getByText('Ask about this recommendation')).toBeInTheDocument();
 
-    // Disposition rows get NEITHER the AI summary nor the Ask box.
+    // Disposition rows now get the SAME AI summary + Ask surfaces (a disposition
+    // is a real recommendation the planner may want explained / interrogated).
     rerender(
       <ReorderExplanationDialog rec={dispositionRec()} open onOpenChange={() => {}} />,
     );
-    expect(screen.queryByText('AI summary')).not.toBeInTheDocument();
-    expect(screen.queryByText('Ask about this recommendation')).not.toBeInTheDocument();
+    expect(screen.getByText('AI summary')).toBeInTheDocument();
+    expect(screen.getByText('Ask about this recommendation')).toBeInTheDocument();
   });
 
   it('shows the market-advisory callout only when an advisory is present', () => {

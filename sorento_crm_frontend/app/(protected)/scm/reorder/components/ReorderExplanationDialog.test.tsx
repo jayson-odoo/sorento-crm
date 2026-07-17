@@ -99,10 +99,8 @@ describe('ReorderExplanationDialog', () => {
   it('explains a BUY recommendation with the step-by-step derivation', () => {
     render(<ReorderExplanationDialog rec={rec({})} open onOpenChange={() => {}} />);
 
-    // plain-language summary up top
-    expect(
-      screen.getByText(/Order 4 units of ACC-CB9001 \(Ceramic Wash Basin\)/i),
-    ).toBeInTheDocument();
+    // The old deterministic one-liner headline is gone — the AI summary block is
+    // now the sole top-of-dialog narrative (covered in the explainer suite).
 
     // every derivation step is spelled out
     expect(screen.getByText('Forecast demand')).toBeInTheDocument();
@@ -149,7 +147,6 @@ describe('ReorderExplanationDialog', () => {
       />,
     );
 
-    expect(screen.getByText(/well above the healthy ceiling/i)).toBeInTheDocument();
     expect(screen.getByText("Why it's flagged")).toBeInTheDocument();
     expect(screen.getByText('Overstock')).toBeInTheDocument();
     expect(screen.getByText('Suggested action')).toBeInTheDocument();

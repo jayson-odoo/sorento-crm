@@ -52,7 +52,18 @@ import type {
   AdvisoryResult,
   AskResult,
   ExplanationResult,
+  RunOverviewResult,
 } from '../types/explainer.types';
+
+/** Lazy, cached run-level AI overview — a short brief over the whole run's frozen
+ *  aggregates. Real endpoint only (no mock). */
+export async function getRunOverview(runId: string): Promise<RunOverviewResult> {
+  const res = await apiFetch(
+    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/overview`,
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load run overview'));
+  return (await res.json()) as RunOverviewResult;
+}
 
 /** Lazy, cached one-sentence explanation for a recommendation (M5-A1). */
 export async function getRecommendationExplanation(

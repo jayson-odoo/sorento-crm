@@ -5,6 +5,7 @@ import {
   askRecommendation,
   getRecommendationAdvisory,
   getRecommendationExplanation,
+  getRunOverview,
 } from '../services/explainerService';
 import type { ReorderRecommendation } from '../types/reorder.types';
 
@@ -13,6 +14,23 @@ import type { ReorderRecommendation } from '../types/reorder.types';
 export const explanationKey = (id: string) => ['scm', 'reorder', 'explanation', id];
 /** Cache key for a rec's market advisory. */
 export const advisoryKey = (id: string) => ['scm', 'reorder', 'advisory', id];
+/** Cache key for a run's AI overview. */
+export const runOverviewKey = (id: string) => ['scm', 'reorder', 'run-overview', id];
+
+/**
+ * Lazily fetch the run-level AI overview — a short brief over the whole run.
+ * Cached ~indefinitely (built from the run's frozen aggregates).
+ */
+export function useRunOverview(runId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: runOverviewKey(runId ?? 'none'),
+    queryFn: () => getRunOverview(runId as string),
+    enabled: enabled && !!runId,
+    refetchOnWindowFocus: false,
+    staleTime: Infinity,
+    retry: 1,
+  });
+}
 
 /**
  * Lazily fetch the one-sentence LLM explanation for a recommendation. Only runs

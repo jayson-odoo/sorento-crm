@@ -201,7 +201,7 @@ def test_run_research_never_writes_a_recommendation_column(scm_app, monkeypatch)
     _mk_topic(db, "M5-RUN-ISO")
 
     before = _rec_snapshot(db, rec_id)
-    monkeypatch.setattr(svc, "_anthropic_api_key", lambda: "fake-key")
+    monkeypatch.setattr(svc, "_anthropic_api_key", lambda _db=None: "fake-key")
     monkeypatch.setattr(
         svc, "_web_search_topic",
         lambda db, topic: [{"value": 1, "trend": "up", "summary": "x", "source_url": None}],
@@ -219,7 +219,7 @@ def test_run_research_never_writes_a_recommendation_column(scm_app, monkeypatch)
 def test_run_research_no_key_records_failed_run(scm_app, monkeypatch):
     _, db, _, _ = scm_app
     topic = _mk_topic(db, "M5-NOKEY")
-    monkeypatch.setattr(svc, "_anthropic_api_key", lambda: None)
+    monkeypatch.setattr(svc, "_anthropic_api_key", lambda _db=None: None)
 
     out = svc.run_research(db, actor="tester")
     assert out["status"] == "failed"
@@ -275,7 +275,7 @@ def test_run_research_persists_signals_traps_failures_filters_rows(scm_app, monk
             return [{"value": 3, "trend": "flat", "summary": "Steel flat", "source_url": None}]
         raise AssertionError(f"inactive topic {topic.label} must not be searched")
 
-    monkeypatch.setattr(svc, "_anthropic_api_key", lambda: "fake-key")
+    monkeypatch.setattr(svc, "_anthropic_api_key", lambda _db=None: "fake-key")
     monkeypatch.setattr(svc, "_web_search_topic", fake_search)
 
     out = svc.run_research(db, actor="tester")
@@ -311,7 +311,7 @@ def test_run_research_clean_run_is_completed(scm_app, monkeypatch):
     _, db, _, _ = scm_app
     db.execute(text("UPDATE scm.market_research_topic SET is_active = false"))
     topic = _mk_topic(db, "M5-CLEAN")
-    monkeypatch.setattr(svc, "_anthropic_api_key", lambda: "fake-key")
+    monkeypatch.setattr(svc, "_anthropic_api_key", lambda _db=None: "fake-key")
     monkeypatch.setattr(
         svc, "_web_search_topic",
         lambda db, t: [{"value": 9, "trend": "up", "summary": "Nickel up", "source_url": None}],
@@ -522,7 +522,7 @@ def test_run_endpoint_no_key_then_fetch_run(scm_app, monkeypatch):
     app, db = _client(scm_app, "purchasing")
     _mk_topic(db, "M5-EP-RUN")
     db.commit()
-    monkeypatch.setattr(svc, "_anthropic_api_key", lambda: None)
+    monkeypatch.setattr(svc, "_anthropic_api_key", lambda _db=None: None)
 
     with TestClient(app) as c:
         run = c.post("/api/v1/scm/market-research/run")

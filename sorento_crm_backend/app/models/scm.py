@@ -188,6 +188,7 @@ class ReorderRun(Base):
     finished_at = Column(DateTime(timezone=False), nullable=True)
     error_text = Column(Text, nullable=True)  # set on status='failed'
     run_log = Column(JSONB, nullable=True)  # {stage, buy, disposition, exceptions, total_cash_impact, recommendation_count, duration_ms}
+    overview = Column(Text, nullable=True)  # LLM (M5) — lazy-cached run-level AI overview
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

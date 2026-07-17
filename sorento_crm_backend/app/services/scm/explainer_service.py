@@ -24,7 +24,7 @@ from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from app.models.ai_assistant import AIAssistantConfig
-from app.models.scm import MarketSignal, ReorderRecommendation
+from app.models.scm import MarketSignal, ReorderRecommendation, ReorderRun
 from app.config import settings
 from app.services.ai_prompt_registry import render
 from app.services.error_handler import AppException
@@ -49,12 +49,32 @@ def _num(v: Any) -> Optional[float]:
     return float(v) if v is not None else None
 
 
+_SELECTION_WHY = {
+    "primary": "it is the primary supplier",
+    "best_score": "it has the best supplier performance score",
+    "lowest_cost": "it is the lowest cost",
+}
+
+
 def _rec_facts(rec: ReorderRecommendation) -> dict:
     """The frozen, already-computed numbers the model is allowed to speak. Pulled
     from the recommendation columns + its frozen ``inputs`` snapshot — never
     recomputed here."""
     inp = rec.inputs or {}
     supplier = inp.get("supplier") or {}
+    selection = inp.get("selection")  # frozen key is "selection" (primary|best_score|lowest_cost)
+    # Ranked alternatives the engine considered (so "why THIS supplier" / "why not
+    # another" is answerable from the frozen set, not refused).
+    alternatives = [
+        {
+            "supplier_name": a.get("supplier_name"),
+            "unit_cost": _num(a.get("unit_cost")),
+            "lead_time_days": _num(a.get("lead_time_days")),
+            "performance_score": _num(a.get("composite_score")),
+        }
+        for a in (inp.get("alternatives") or [])
+        if a and a.get("supplier_name")
+    ]
     facts = {
         "sku": inp.get("sku"),
         "product_name": inp.get("product_name"),
@@ -71,8 +91,15 @@ def _rec_facts(rec: ReorderRecommendation) -> dict:
         "currency": rec.currency,
         "policy_type": inp.get("policy_type"),
         "triggered_reason": rec.triggered_reason,
-        "supplier_name": supplier.get("supplier_name"),
-        "supplier_lead_time_days": _num(supplier.get("lead_time_days")),
+        "reason": inp.get("reason"),  # dead | overstock | reorder_point | ... (disposition rows)
+        "disposition_action": inp.get("disposition_action"),  # discontinue | promo | hold
+        # --- chosen supplier + WHY it was chosen + the alternatives ---
+        "chosen_supplier": supplier.get("supplier_name"),
+        "chosen_supplier_cost": _num(supplier.get("unit_cost")),
+        "chosen_supplier_lead_time_days": _num(supplier.get("lead_time_days")),
+        "chosen_supplier_performance_score": _num(supplier.get("composite_score")),
+        "supplier_chosen_because": _SELECTION_WHY.get(selection) if selection else None,
+        "alternative_suppliers": alternatives or None,
         "confidence": rec.confidence_band,
     }
     # Drop keys with no value so the model can't mistake a null for a real number.
@@ -147,7 +174,8 @@ def explain_recommendation(db: Session, rec_id: str) -> str:
     user_block = (
         "EXPLAIN mode. Recommendation facts (JSON — the ONLY numbers you may use):\n"
         f"{json.dumps(facts, ensure_ascii=False)}\n\n"
-        "Write one plain sentence telling the planner what to do and why."
+        "Write one plain sentence telling the planner what to do and why. "
+        "Money is Malaysian Ringgit — write it as 'RM'."
     )
     text = _chat(db, provider, model, user_block)
     if text:
@@ -172,6 +200,7 @@ def answer_question(db: Session, rec_id: str, question: str) -> str:
         "ASK mode. Recommendation facts (JSON — the ONLY numbers you may use):\n"
         f"{json.dumps(facts, ensure_ascii=False)}\n\n"
         f"Planner's question: {question.strip()}\n\n"
+        "Money is Malaysian Ringgit — write it as 'RM'. "
         f'If the answer needs anything not in the facts, reply EXACTLY: "{REFUSAL}"'
     )
     text = _chat(db, provider, model, user_block)
@@ -207,6 +236,123 @@ def market_advisory(db: Session, rec_id: str) -> Optional[str]:
         rec.market_advisory = text  # the ONLY write — prose, never a numeric field
         db.flush()
     return text or (signal.summary or None)
+
+
+# ---------------------------------------------------------------------------
+# run-level overview (M5) — aggregate the run's frozen numbers → one short brief
+# ---------------------------------------------------------------------------
+
+def _run_facts(db: Session, run_id: str) -> dict:
+    """Aggregate a run's FROZEN recommendation numbers for the overview — counts,
+    cash, the biggest buys and the most urgent SKUs. All read straight from the
+    stored recs; nothing recomputed."""
+    counts = dict(
+        db.execute(
+            text(
+                "SELECT rec_type, count(*) FROM scm.reorder_recommendation "
+                "WHERE run_id = :r GROUP BY rec_type"
+            ),
+            {"r": run_id},
+        ).all()
+    )
+    total_cash = db.execute(
+        text(
+            "SELECT COALESCE(SUM(cash_impact),0) FROM scm.reorder_recommendation "
+            "WHERE run_id = :r AND rec_type='buy' AND cash_impact IS NOT NULL"
+        ),
+        {"r": run_id},
+    ).scalar()
+    needs_cost = db.execute(
+        text(
+            "SELECT count(*) FROM scm.reorder_recommendation "
+            "WHERE run_id = :r AND rec_type='buy' AND cash_impact IS NULL"
+        ),
+        {"r": run_id},
+    ).scalar()
+    top_buys = [
+        {
+            "sku": r["sku"],
+            "order_quantity": _num(r["rounded_qty"]),
+            "cash_impact": _num(r["cash_impact"]),
+        }
+        for r in db.execute(
+            text(
+                "SELECT inputs->>'sku' AS sku, rounded_qty, cash_impact "
+                "FROM scm.reorder_recommendation "
+                "WHERE run_id = :r AND rec_type='buy' AND cash_impact IS NOT NULL "
+                "ORDER BY cash_impact DESC LIMIT 5"
+            ),
+            {"r": run_id},
+        ).mappings().all()
+    ]
+    urgent = [
+        {"sku": r["sku"], "days_of_cover": _num(r["days_of_cover"])}
+        for r in db.execute(
+            text(
+                "SELECT inputs->>'sku' AS sku, days_of_cover "
+                "FROM scm.reorder_recommendation "
+                "WHERE run_id = :r AND rec_type='buy' AND days_of_cover IS NOT NULL "
+                "ORDER BY days_of_cover ASC LIMIT 5"
+            ),
+            {"r": run_id},
+        ).mappings().all()
+    ]
+    facts = {
+        "buy_count": int(counts.get("buy", 0)),
+        "disposition_count": int(counts.get("disposition", 0)),
+        "exception_count": int(counts.get("exception", 0)),
+        "total_cash_impact": _num(total_cash),
+        "buys_missing_supplier_cost": int(needs_cost or 0),
+        "biggest_buys": top_buys or None,
+        "most_urgent_skus": urgent or None,
+    }
+    return {k: v for k, v in facts.items() if v is not None and v != ""}
+
+
+def explain_run(db: Session, run_id: str) -> str:
+    """Lazy, cached run-level AI overview — a short brief over the run's frozen
+    aggregates (LLM speaks only the given numbers; no numeric write except the
+    cached ``reorder_run.overview`` prose)."""
+    run = db.query(ReorderRun).filter(ReorderRun.id == run_id).first()
+    if not run:
+        raise AppException(status_code=404, message="Run not found.")
+    if run.overview:
+        return run.overview
+
+    facts = _run_facts(db, run_id)
+    provider, model = _provider_and_model(db)
+    if provider is None:
+        return _deterministic_run_overview(facts)
+
+    user_block = (
+        "RUN OVERVIEW mode. Reorder-run aggregates (JSON — the ONLY numbers you may "
+        "use):\n"
+        f"{json.dumps(facts, ensure_ascii=False)}\n\n"
+        "Write a short brief (2-3 sentences) for a planner: the scale of what this run "
+        "recommends (buys, dispositions, total cash), then the few SKUs that most need "
+        "attention (biggest cash and/or soonest to stock out), naming them. Plain prose, "
+        "no lists, only the given numbers. Money is Malaysian Ringgit — write it as 'RM'."
+    )
+    text_out = _chat(db, provider, model, user_block)
+    if text_out:
+        run.overview = text_out  # the ONLY write — prose, never a numeric field
+        db.flush()
+    return text_out or _deterministic_run_overview(facts)
+
+
+def _deterministic_run_overview(facts: dict) -> str:
+    buys = facts.get("buy_count", 0)
+    disp = facts.get("disposition_count", 0)
+    cash = facts.get("total_cash_impact")
+    parts = [
+        f"This run recommends {buys} buy{'s' if buys != 1 else ''} "
+        f"and {disp} disposition{'s' if disp != 1 else ''}"
+        + (f", about {_fmt(cash)} in cash." if cash is not None else ".")
+    ]
+    missing = facts.get("buys_missing_supplier_cost")
+    if missing:
+        parts.append(f"{_fmt(missing)} buys still need a supplier cost to be cash-ranked.")
+    return " ".join(parts)
 
 
 def _rec_currency(rec: ReorderRecommendation) -> Optional[str]:

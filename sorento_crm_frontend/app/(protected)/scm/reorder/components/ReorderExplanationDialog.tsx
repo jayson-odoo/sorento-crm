@@ -220,31 +220,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** The plain-language headline sentence at the top of the popup. */
-function summaryText(rec: ReorderRecommendation): string {
-  const name = rec.product_name ? ` (${rec.product_name})` : '';
-  if (rec.type === 'disposition') {
-    if (rec.reason === 'dead') {
-      return `${rec.sku}${name} hasn't moved within the dead-stock window, so it's tying up cash. Review it for disposal or a promotion.`;
-    }
-    const cover = rec.days_of_cover != null ? `${fmtInt(rec.days_of_cover)} days of cover` : 'more cover than the ceiling allows';
-    return `${rec.sku}${name} has ${cover} — well above the healthy ceiling. Hold off reordering and consider a promotion or transfer.`;
-  }
-  if (rec.type === 'exception') {
-    return `A reorder would fire for ${rec.sku}${name}, but no supplier is linked to source it. Link a supplier before this can be ordered.`;
-  }
-  // buy
-  const qty = rec.order_qty != null ? fmtInt(rec.order_qty) : '';
-  const net = dec(rec.net_position);
-  if (rec.policy_type === 'min_max') {
-    return `Order ${qty} units of ${rec.sku}${name}. Net position (${net}) has fallen to/below the minimum level (${dec(rec.min_qty)}), so it's time to replenish.`;
-  }
-  if (rec.policy_type === 'periodic_review') {
-    return `Order ${qty} units of ${rec.sku}${name}. On the review cycle, net position (${net}) sits below the order-up-to target (${dec(rec.order_up_to)}), so it's time to replenish.`;
-  }
-  return `Order ${qty} units of ${rec.sku}${name}. Net position (${net}) has fallen to/below the reorder point (${dec(rec.reorder_point)}), so it's time to replenish.`;
-}
-
 function TypeChip({ rec }: { rec: ReorderRecommendation }) {
   if (rec.type === 'buy') {
     return (
@@ -846,15 +821,10 @@ export function ReorderExplanationDialog({
         {rec ? (
           // `key` resets scroll to top when stepping to a neighbouring rec.
           <DialogBody key={rec.id} className="grow space-y-5 overflow-y-auto min-h-0 -mx-6 px-6">
-            {/* Plain-language headline */}
-            <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-              {summaryText(rec)}
-            </div>
-
-            {/* M5 AI narration + market advisory (buy / exception only) — sits
-                ABOVE the deterministic derivation and is badged so it reads as
-                generated prose, not the frozen arithmetic below. */}
-            {isBuyLike ? <AiSummaryBlock rec={rec} enabled={open} /> : null}
+            {/* M5 AI narration + market advisory IS the headline for EVERY rec type
+                (buy / exception / disposition) — the old deterministic one-liner was
+                redundant with it. */}
+            <AiSummaryBlock rec={rec} enabled={open} />
 
             {/* Step-by-step derivation */}
             <div>
@@ -937,7 +907,7 @@ export function ReorderExplanationDialog({
             {/* M5 Ask box — bounded Q&A over this rec's frozen numbers (buy /
                 exception only). Lives at the bottom so the derivation is read
                 first; the dialog body is already mobile-scrollable. */}
-            {isBuyLike ? <AskSection rec={rec} /> : null}
+            <AskSection rec={rec} />
           </DialogBody>
         ) : null}
       </DialogContent>

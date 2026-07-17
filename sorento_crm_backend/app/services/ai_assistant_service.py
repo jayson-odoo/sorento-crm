@@ -411,6 +411,8 @@ class AIAssistantConfigService:
         if data.api_key is not None and data.api_key.strip():
             # Stored in this field for compatibility with IJM schema naming.
             row.api_key_ciphertext = data.api_key.strip()
+        if data.anthropic_api_key is not None and data.anthropic_api_key.strip():
+            row.anthropic_api_key_ciphertext = data.anthropic_api_key.strip()
         self.db.commit()
         self.db.refresh(row)
         return row
@@ -423,6 +425,7 @@ class AIAssistantConfigService:
             "temperature": row.temperature,
             "system_prompt": row.system_prompt,
             "api_key_masked": _mask_key(row.api_key_ciphertext),
+            "anthropic_api_key_masked": _mask_key(row.anthropic_api_key_ciphertext),
             "enabled_tools": list(row.enabled_tools or []),
             "rag_enabled": bool(row.rag_enabled),
             "is_enabled": bool(row.is_enabled),

@@ -17,6 +17,7 @@ from app.schemas.scm_explainer import (
     AskRequest,
     AskResult,
     ExplanationResult,
+    RunOverviewResult,
 )
 from app.services.scm import explainer_service as svc
 
@@ -34,6 +35,17 @@ def get_explanation(
     text = svc.explain_recommendation(db, rec_id)
     db.commit()  # persist the lazily-cached explanation
     return {"explanation": text}
+
+
+@router.get("/reorder-runs/{run_id}/overview", response_model=RunOverviewResult)
+def get_run_overview(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    text = svc.explain_run(db, run_id)
+    db.commit()  # persist the lazily-cached overview
+    return {"overview": text}
 
 
 @router.post("/recommendations/{rec_id}/ask", response_model=AskResult)

@@ -3,8 +3,8 @@
  *   - leftmost selection column (select-all checkbox) when the decision layer is on
  *   - Decision badge states: Pending / Accepted → PO ref / Adjusted / Rejected
  *   - per-row action menu (Accept / Adjust… / Reject…) wired to the callbacks
- *   - unified "Actions" dropdown appears on selection and is HIDDEN when the
- *     selection has no still-pending rows
+ *   - unified "Actions" dropdown appears on selection and lists only the
+ *     CHANGEABLE actions (decisions are reversible; hidden only on empty selection)
  *
  * The dropdown-menu module is stubbed to render inline (established repo pattern,
  * see SlaExtendAction.test) so menu items are assertable without a Radix portal.
@@ -257,7 +257,7 @@ describe('CashResultsGrid — unified Actions dropdown gating (AC-M4.9)', () => 
     expect(screen.getByRole('button', { name: /^Actions$/ })).toBeInTheDocument();
   });
 
-  it('keeps the Actions button HIDDEN when every selected row is already decided', () => {
+  it('still shows the Actions button for an already-decided selection (decisions are reversible)', () => {
     const cb = decisionCallbacks();
     const decisionsById: Record<string, RecDecision> = {
       a: {
@@ -283,7 +283,12 @@ describe('CashResultsGrid — unified Actions dropdown gating (AC-M4.9)', () => 
       />,
     );
     fireEvent.click(screen.getByLabelText('Select all rows on this page'));
-    expect(screen.queryByRole('button', { name: /^Actions$/ })).toBeNull();
+    // The accepted row can still be flipped, so the Actions strip stays available
+    // and offers Reject (Accept is dropped since it would be a no-op).
+    expect(screen.getByRole('button', { name: /^Actions$/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Actions$/ }));
+    expect(screen.getByRole('button', { name: /^Reject$/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Accept$/ })).toBeNull();
   });
 });
 

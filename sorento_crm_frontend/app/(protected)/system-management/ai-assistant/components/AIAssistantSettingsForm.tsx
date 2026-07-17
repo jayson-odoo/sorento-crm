@@ -56,6 +56,10 @@ export default function AIAssistantSettingsForm() {
   const [systemPrompt, setSystemPrompt] = useState('');
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [apiKeyEdited, setApiKeyEdited] = useState(false);
+  // Dedicated Anthropic key — used by the SCM market-research web search (Anthropic-only)
+  // while the assistant itself can run on the primary provider above.
+  const [anthropicKeyInput, setAnthropicKeyInput] = useState('');
+  const [anthropicKeyEdited, setAnthropicKeyEdited] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [toolSearch, setToolSearch] = useState('');
   const [enabledTools, setEnabledTools] = useState<string[]>([]);
@@ -78,6 +82,8 @@ export default function AIAssistantSettingsForm() {
     setIsEnabled(!!data.is_enabled);
     setApiKeyInput(data.api_key_masked || '');
     setApiKeyEdited(false);
+    setAnthropicKeyInput(data.anthropic_api_key_masked || '');
+    setAnthropicKeyEdited(false);
   }, [data]);
 
   const filteredTools = useMemo(() => {
@@ -245,6 +251,22 @@ export default function AIAssistantSettingsForm() {
       </div>
 
       <div className="space-y-2">
+        <Label>Anthropic API key</Label>
+        <p className="text-xs text-muted-foreground">
+          Used by SCM market-research web search (Anthropic-only). Leave blank if unused.
+        </p>
+        <Input
+          type="text"
+          value={anthropicKeyInput}
+          onChange={(e) => {
+            setAnthropicKeyInput(e.target.value);
+            setAnthropicKeyEdited(true);
+          }}
+          placeholder="sk-ant-****"
+        />
+      </div>
+
+      <div className="space-y-2">
         <Label>Enabled tools</Label>
         {toolsQuery.isError ? (
           <p className="text-xs text-destructive">
@@ -344,6 +366,9 @@ export default function AIAssistantSettingsForm() {
               temperature,
               system_prompt: systemPrompt,
               api_key: apiKeyEdited ? apiKeyInput.trim() || undefined : undefined,
+              anthropic_api_key: anthropicKeyEdited
+                ? anthropicKeyInput.trim() || undefined
+                : undefined,
               enabled_tools: enabledTools,
               rag_enabled: ragEnabled,
               is_enabled: isEnabled,
@@ -353,6 +378,8 @@ export default function AIAssistantSettingsForm() {
                 toast.success('AI assistant settings saved');
                 setApiKeyInput(saved.api_key_masked || '');
                 setApiKeyEdited(false);
+                setAnthropicKeyInput(saved.anthropic_api_key_masked || '');
+                setAnthropicKeyEdited(false);
               },
               onError: (e: Error) => toast.error(e.message),
             },
