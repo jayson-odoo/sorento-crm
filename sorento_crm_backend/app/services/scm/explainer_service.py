@@ -480,6 +480,31 @@ def _deterministic_run_chat_fallback(ctx: dict) -> str:
     )
 
 
+# Plan-chat gets its OWN system prompt. It must NOT inherit the single-recommendation
+# explainer's refusal contract (which tells the model to reply with the exact REFUSAL
+# string whenever the answer isn't in "this recommendation's data") — a run-level
+# question like "what defers under budget X" IS answerable by reasoning over all the
+# recs in the context, and the explainer prompt would wrongly force a refusal.
+_RUN_CHAT_SYSTEM = (
+    "You are a supply-chain planning assistant helping a manager interrogate ONE "
+    "reorder run. You are given the run as JSON: aggregate totals plus a list of "
+    "recommendations, each with its SKU, type (buy/disposition/exception), order "
+    "quantity, cash impact, net position, days of cover, reorder point, rank, funding "
+    "status, and supplier — plus any matched market signals.\n\n"
+    "You may freely COUNT, SUM, RANK, FILTER, GROUP and COMPARE the numbers you are "
+    "given to answer questions — e.g. 'which buys are most urgent' (lowest days of "
+    "cover), 'what would defer if the budget were RM 200k' (walk the buys by rank, add "
+    "up cash impact until the budget is spent; the rest defer), 'which supplier costs "
+    "the most in total'. This is reasoning over provided data, and it is exactly your "
+    "job — do it, don't refuse.\n\n"
+    "Hard rule: use ONLY the figures present in the given JSON. Never invent, estimate, "
+    "or pull in a number that isn't there. If a question genuinely needs data the run "
+    "does not contain (e.g. a supplier's phone number, next month's forecast), say so "
+    "plainly in your own words — do NOT fabricate. Answer concisely, name specific SKUs "
+    "and figures, and write money in Malaysian Ringgit as 'RM'."
+)
+
+
 def answer_run_question(
     db: Session,
     run_id: str,
@@ -498,21 +523,13 @@ def answer_run_question(
     if provider is None:
         return _deterministic_run_chat_fallback(ctx)
 
-    system = render(db, _PROMPT_KEY)[0]
     messages: list[dict] = [
-        {"role": "system", "content": system},
+        {"role": "system", "content": _RUN_CHAT_SYSTEM},
         {
             "role": "user",
             "content": (
-                "PLAN CHAT mode. You are helping a supply-chain manager interrogate ONE "
-                "reorder run. The run (JSON — the ONLY numbers you may use; you may count, "
-                "sum, rank, filter and compare them, but never invent a figure that isn't "
-                "here):\n"
-                f"{json.dumps(ctx, ensure_ascii=False)}\n\n"
-                "Answer the manager's questions about this plan concisely and specifically, "
-                "naming SKUs and figures from the data. If a question needs data not in the "
-                "run, say so plainly rather than guessing. Money is Malaysian Ringgit — write "
-                "it as 'RM'."
+                "Here is the reorder run to answer questions about (JSON):\n"
+                f"{json.dumps(ctx, ensure_ascii=False)}"
             ),
         },
         {"role": "assistant", "content": "Understood — ask me anything about this plan."},
