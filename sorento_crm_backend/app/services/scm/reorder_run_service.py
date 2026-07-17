@@ -52,7 +52,7 @@ _STAGES = ("resolving_policies", "computing_reorder_points",
 # ===========================================================================
 
 def create_run(db: Session, warehouse_codes: Optional[list[str]],
-               buy_scope: str = "network",
+               buy_scope: str = "warehouse",
                budget_id: Optional[str] = None, actor: Optional[str] = None,
                enqueue: bool = True, include_market: bool = False) -> dict:
     """Insert a ``running`` ``scm.reorder_run`` (scope snapshot + started_at) and
@@ -62,10 +62,12 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     creates a NEW run_id (runs are immutable). ``enqueue=False`` skips the RQ enqueue
     (tests call ``run_reorder`` synchronously).
 
-    ``buy_scope`` is no longer a manual-plan input (M8-D5) — it defaults to ``network``;
-    the HTTP request schema dropped it. Direct service callers may still pass it.
+    ``buy_scope`` is no longer a manual-plan input (M8-D5) — it defaults to
+    ``warehouse`` (per-warehouse planning; each buy is tied to a real warehouse, not
+    an aggregated ``Network`` row). The HTTP request schema dropped it. Direct service
+    callers may still pass ``network`` explicitly.
     """
-    buy_scope = buy_scope if buy_scope in ("network", "warehouse") else "network"
+    buy_scope = buy_scope if buy_scope in ("network", "warehouse") else "warehouse"
     warehouse_ids = _resolve_warehouse_ids(db, warehouse_codes)
     run_id = str(uuid.uuid4())
     now = datetime.utcnow()
