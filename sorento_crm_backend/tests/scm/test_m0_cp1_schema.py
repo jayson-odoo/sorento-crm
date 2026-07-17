@@ -18,11 +18,21 @@ from alembic.operations import Operations
 
 
 def _pg_url() -> str | None:
-    for line in open(os.path.join(os.path.dirname(__file__), "..", "..", ".env")):
-        if line.startswith("DATABASE_URL"):
-            raw = line.split("=", 1)[1].strip().strip('"').strip("'")
-            return re.sub(r"^postgresql\+\w+", "postgresql", raw)
-    return None
+    # DATABASE_URL env wins (CI/container); .env is a local fallback and is NOT
+    # shipped in the CI image, so its absence must skip these tests, not crash.
+    raw = os.environ.get("DATABASE_URL")
+    if not raw:
+        env = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+        if not os.path.exists(env):
+            return None
+        with open(env) as fh:
+            for line in fh:
+                if line.startswith("DATABASE_URL"):
+                    raw = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    break
+    if not raw:
+        return None
+    return re.sub(r"^postgresql\+\w+", "postgresql", raw)
 
 
 URL = _pg_url()

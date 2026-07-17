@@ -19,12 +19,22 @@ from sqlalchemy.orm import sessionmaker
 
 
 def _pg_url() -> str | None:
-    env = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
-    for line in open(env):
-        if line.startswith("DATABASE_URL"):
-            raw = line.split("=", 1)[1].strip().strip('"').strip("'")
-            return re.sub(r"^postgresql\+\w+", "postgresql", raw)
-    return None
+    # A live DATABASE_URL env var wins (CI / container). Fall back to the local
+    # .env file, which is NOT shipped in the CI Docker image (.dockerignore) — so
+    # its absence must never crash collection, only skip the Postgres route tests.
+    raw = os.environ.get("DATABASE_URL")
+    if not raw:
+        env = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
+        if not os.path.exists(env):
+            return None
+        with open(env) as fh:
+            for line in fh:
+                if line.startswith("DATABASE_URL"):
+                    raw = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    break
+    if not raw:
+        return None
+    return re.sub(r"^postgresql\+\w+", "postgresql", raw)
 
 
 URL = _pg_url()
