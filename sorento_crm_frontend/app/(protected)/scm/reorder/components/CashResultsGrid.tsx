@@ -58,6 +58,7 @@ const FACTOR_LABEL: Record<RankFactor['key'], string> = {
   abc: 'ABC value',
   priority: 'SO priority',
   committed: 'Committed vs forecast',
+  market: 'Market trend',
 };
 
 /** Type chip — buy / disposition / no-supplier exception, visually distinct (mirrors

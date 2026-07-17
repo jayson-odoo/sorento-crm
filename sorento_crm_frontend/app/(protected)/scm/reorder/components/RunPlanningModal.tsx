@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { LoaderCircle, Network, Warehouse } from 'lucide-react';
+import { LoaderCircle, Network, TrendingUp, Warehouse } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogBody,
@@ -46,6 +47,7 @@ export function RunPlanningModal({
 }) {
   const [warehouses, setWarehouses] = useState<string[]>([]);
   const [buyScope, setBuyScope] = useState<BuyScope>('network');
+  const [includeMarket, setIncludeMarket] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const {
@@ -58,6 +60,7 @@ export function RunPlanningModal({
     if (!open) return;
     setWarehouses([]);
     setBuyScope('network');
+    setIncludeMarket(false);
     setError(null);
   }, [open]);
 
@@ -71,6 +74,7 @@ export function RunPlanningModal({
       warehouse_codes: warehouses,
       buy_scope: buyScope,
       budget_id: null,
+      include_market: includeMarket,
     });
   };
 
@@ -135,6 +139,33 @@ export function RunPlanningModal({
                 );
               })}
             </div>
+          </div>
+
+          <div>
+            <Label className="mb-1.5 block">Market signals</Label>
+            <button
+              type="button"
+              onClick={() => setIncludeMarket((v) => !v)}
+              aria-pressed={includeMarket}
+              className={cn(
+                'flex w-full items-start gap-2.5 rounded-lg border p-3 text-start transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                includeMarket
+                  ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                  : 'border-border hover:bg-muted/50',
+              )}
+            >
+              <Checkbox checked={includeMarket} className="mt-0.5" tabIndex={-1} aria-hidden />
+              <span className="min-w-0">
+                <span className="flex items-center gap-1.5 text-sm font-medium">
+                  <TrendingUp className="size-4 shrink-0" aria-hidden />
+                  Factor in market signals
+                </span>
+                <span className="mt-0.5 block text-2xs leading-snug text-muted-foreground">
+                  Trending categories fund first when the budget is tight. Affects funding
+                  priority only — order quantities are unchanged.
+                </span>
+              </span>
+            </button>
           </div>
 
           <div>

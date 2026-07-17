@@ -44,7 +44,7 @@ export type BuyScope = 'network' | 'warehouse';
  *  set of factors that fed its frozen `rank_score`; a factor is DROPPED (not
  *  zeroed) when unavailable — e.g. `margin` for an uncosted SKU (`present:false`,
  *  `value:null`) — so it never dilutes the score (graceful-degrade). */
-export type RankFactorKey = 'urgency' | 'margin' | 'abc' | 'priority' | 'committed';
+export type RankFactorKey = 'urgency' | 'margin' | 'abc' | 'priority' | 'committed' | 'market';
 
 /** One weighted factor behind a recommendation's rank_score. Surfaced so a novice
  *  can see WHICH factors were present and which dominated the ranking. */
@@ -201,6 +201,8 @@ export interface ReorderRecommendation {
   days_to_stockout: number | null;
   /** The factors that fed rank_score, with present/dropped flags (explainability). */
   rank_factors: RankFactor[];
+  /** M7 — the market signal that moved this rank (opt-in runs only); null otherwise. */
+  market_signal?: string | null;
 }
 
 /** Roll-up counts + cash impact for the completed run. */
@@ -231,4 +233,6 @@ export interface CreateReorderRunRequest {
   buy_scope: BuyScope;
   /** M4 — always null in M3. */
   budget_id?: string | null;
+  /** M7 — opt-in: factor market-trend signals into the funding priority (rank), not qty. */
+  include_market?: boolean;
 }

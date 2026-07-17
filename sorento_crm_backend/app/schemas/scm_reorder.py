@@ -18,6 +18,7 @@ class CreateReorderRunRequest(BaseModel):
     warehouse_codes: List[str] = []
     buy_scope: Literal["network", "warehouse"] = "network"
     budget_id: Optional[str] = None  # M4 — ignored in M3
+    include_market: bool = False  # M7 — opt-in market-trend priority factor
 
 
 class ReorderRunAccepted(BaseModel):

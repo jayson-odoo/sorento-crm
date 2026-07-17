@@ -63,6 +63,7 @@ def create_reorder_run(
         buy_scope=payload.buy_scope,
         budget_id=payload.budget_id,
         actor=(_user or {}).get("id"),
+        include_market=payload.include_market,
     )
     if response is not None:
         response.status_code = 202
@@ -338,6 +339,11 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "funding_status": _funding_status(r, is_buy, funding_by_id),
         "days_to_stockout": inp.get("days_to_stockout") if is_buy else None,
         "rank_factors": (inp.get("rank_factors") or []) if is_buy else [],
+        # M7 — the market signal that moved this rank (only when the run opted in and a
+        # signal matched); a one-line summary for "why this rank". No UUID.
+        "market_signal": (
+            (inp.get("market_factor") or {}).get("summary") if is_buy else None
+        ),
     }
 
 

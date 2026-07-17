@@ -349,3 +349,115 @@ def test_put_budget_denied_without_reorder_run_permission(scm_app):
     with TestClient(app) as c:
         res = c.put(f"/api/v1/scm/reorder-runs/{uuid.uuid4()}/budget", json={"budget": 1000})
     assert res.status_code == 403
+
+
+# ===========================================================================
+# M7 — market-research priority factor (opt-in, bounded, qty-neutral)
+# ===========================================================================
+
+def test_market_value_symmetric_and_scaled():
+    """AC-M7.2 — up→1.0, flat→0.5, down→0.0; unknown/None→absent; strength scales."""
+    assert cr.market_value("up") == 1.0
+    assert cr.market_value("flat") == 0.5
+    assert cr.market_value("down") == 0.0
+    assert cr.market_value(None) is None
+    assert cr.market_value("sideways") is None  # unknown trend → dropped
+    # strength scales toward the extreme
+    assert cr.market_value("up", 0.0) == 0.5
+    assert cr.market_value("up", 1.0) == 1.0
+    assert cr.market_value("up", 0.5) == pytest.approx(0.75)
+    assert cr.market_value("down", 1.0) == 0.0
+    assert cr.market_value("down", 0.5) == pytest.approx(0.25)
+
+
+def test_market_factor_raises_up_over_down_and_drops_when_absent():
+    """AC-M7.3/7.4 — up-trend ranks above down-trend; with no signal the market factor
+    is dropped so the score is byte-identical to pre-M7 (a run without market signals)."""
+    base = dict(days_of_cover=6, net_position=50, list_price=100, unit_cost=60, abc_class="A")
+    up = cr.rank_score(cr.build_factors(cr.DEFAULT_WEIGHTS, **base,
+                                        market_signal_value=cr.market_value("up")))
+    down = cr.rank_score(cr.build_factors(cr.DEFAULT_WEIGHTS, **base,
+                                          market_signal_value=cr.market_value("down")))
+    none_ = cr.rank_score(cr.build_factors(cr.DEFAULT_WEIGHTS, **base, market_signal_value=None))
+    assert up > down  # trending category floats up the funding queue
+
+    # no signal → market dropped → identical to the pre-M7 factor set (W has no market key)
+    assert none_ == pytest.approx(cr.rank_score(cr.build_factors(W, **base)))
+
+    fmap = {f.key: f for f in cr.build_factors(cr.DEFAULT_WEIGHTS, **base,
+                                               market_signal_value=cr.market_value("up"))}
+    assert fmap["market"].present is True and fmap["market"].value == 1.0
+    fmap_absent = {f.key: f for f in cr.build_factors(cr.DEFAULT_WEIGHTS, **base)}
+    assert fmap_absent["market"].present is False and fmap_absent["market"].value is None
+
+
+def test_run_include_market_shifts_rank_not_qty(scm_app):
+    """AC-M7.7/7.8 — an up-trend signal on a buy's category raises its rank_score (and
+    freezes the signal for explainability) while leaving the order quantity untouched;
+    a run WITHOUT the flag carries no market factor at all."""
+    _, db, _, _ = scm_app
+    _, a, b = _seed_two_buys(db)
+    cat_a = db.execute(
+        text("SELECT category_id::text FROM products WHERE id = :p"), {"p": a}
+    ).scalar()
+    db.execute(
+        text(
+            "INSERT INTO scm.market_signal "
+            "(id, category_ref, trend, summary, captured_at, source_system, created_at) "
+            "VALUES (:id, :c, 'up', 'sage green trending', now(), 'test', now())"
+        ),
+        {"id": str(uuid.uuid4()), "c": cat_a},
+    )
+    db.flush()
+
+    def _by_pid(run_id):
+        return {
+            str(x["product_id"]): x
+            for x in db.execute(
+                text(
+                    "SELECT product_id, rank_score, rounded_qty, inputs "
+                    "FROM scm.reorder_recommendation WHERE run_id = :r AND rec_type = 'buy'"
+                ),
+                {"r": run_id},
+            ).mappings()
+        }
+
+    r0 = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    assert svc.run_reorder(r0["run_id"], db=db)["status"] == "completed"
+    base = _by_pid(r0["run_id"])
+
+    r1 = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False, include_market=True)
+    assert svc.run_reorder(r1["run_id"], db=db)["status"] == "completed"
+    mkt = _by_pid(r1["run_id"])
+
+    # rank_score rose with the up-trend; the order quantity is byte-identical (AC-M7.8)
+    assert float(mkt[a]["rank_score"]) > float(base[a]["rank_score"])
+    assert mkt[a]["rounded_qty"] == base[a]["rounded_qty"]
+
+    # the market factor is present + the signal frozen for "why this rank"
+    a_factors = {f["key"]: f for f in mkt[a]["inputs"]["rank_factors"]}
+    assert a_factors["market"]["present"] is True
+    assert mkt[a]["inputs"]["market_factor"]["summary"] == "sage green trending"
+
+    # the no-flag run carries NO present market factor (backward-compatible)
+    base_factors = {f["key"]: f for f in base[a]["inputs"]["rank_factors"]}
+    assert base_factors.get("market", {}).get("present") in (False, None)
+    assert "market_factor" not in (base[a]["inputs"] or {})
+
+
+def test_create_run_endpoint_accepts_include_market(scm_app):
+    """AC-M7.9 — the create-run endpoint accepts the include_market flag and persists it."""
+    app, db = _client(scm_app, "purchasing")
+    _seed_two_buys(db)
+    db.commit()
+    with TestClient(app) as c:
+        res = c.post(
+            "/api/v1/scm/reorder-runs",
+            json={"warehouse_codes": ["M4W-CASH"], "buy_scope": "warehouse", "include_market": True},
+        )
+        assert res.status_code == 202, res.text
+        run_id = res.json()["run_id"]
+    stored = db.execute(
+        text("SELECT include_market FROM scm.reorder_run WHERE id = :r"), {"r": run_id}
+    ).scalar()
+    assert stored is True

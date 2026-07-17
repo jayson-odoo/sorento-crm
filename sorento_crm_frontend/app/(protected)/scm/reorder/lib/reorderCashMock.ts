@@ -54,6 +54,7 @@ const WEIGHTS: Record<RankFactor['key'], number> = {
   abc: 0.15,
   priority: 0.15,
   committed: 0.1,
+  market: 0.1,
 };
 
 /** Build the factor set for a rec. Pass `margin: null` for an uncosted SKU — its

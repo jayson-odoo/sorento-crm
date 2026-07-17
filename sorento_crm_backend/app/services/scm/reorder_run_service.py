@@ -51,7 +51,7 @@ _STAGES = ("resolving_policies", "computing_reorder_points",
 
 def create_run(db: Session, warehouse_codes: Optional[list[str]], buy_scope: str,
                budget_id: Optional[str] = None, actor: Optional[str] = None,
-               enqueue: bool = True) -> dict:
+               enqueue: bool = True, include_market: bool = False) -> dict:
     """Insert a ``running`` ``scm.reorder_run`` (scope snapshot + started_at) and
     enqueue the RQ ``run_reorder`` task. Returns ``{run_id, status, buy_scope, stage}``.
 
@@ -70,6 +70,7 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]], buy_scope: str
         warehouse_ids=warehouse_ids,
         buy_scope=buy_scope,
         budget_id=budget_id or None,
+        include_market=bool(include_market),
         policy_snapshot_ref=f"policies@{now.isoformat()}",
         started_at=now,
         run_log={"stage": _STAGES[0]},
@@ -150,7 +151,8 @@ def _execute_run(db: Session, run_id: str) -> dict:
 
         # M4 cash stage — compute + FREEZE each buy's rank_score / rank / rank_factors
         # (funded/deferred is computed live at view-time against a budget, not here).
-        _apply_cash_stage(db, recs)
+        # M7: opt-in market-trend priority factor (per-run flag).
+        _apply_cash_stage(db, recs, include_market=bool(run.include_market))
 
         for r in recs:
             db.add(r)
@@ -684,7 +686,7 @@ def load_cash_weights(db: Session) -> dict:
     the seeded defaults when none is present (fresh install pre-migration seed)."""
     row = db.execute(text(
         "SELECT weight_urgency, weight_margin, weight_abc, weight_priority, "
-        "       weight_committed "
+        "       weight_committed, weight_market "
         "FROM scm.cash_ranking_policy WHERE is_active = true "
         "ORDER BY updated_at DESC NULLS LAST, created_at DESC LIMIT 1"
     )).mappings().first()
@@ -696,6 +698,7 @@ def load_cash_weights(db: Session) -> dict:
         "abc": _wf(row["weight_abc"], "abc"),
         "priority": _wf(row["weight_priority"], "priority"),
         "committed": _wf(row["weight_committed"], "committed"),
+        "market": _wf(row["weight_market"], "market"),
     }
 
 
@@ -703,16 +706,71 @@ def _wf(v, key: str) -> float:
     return float(v) if v is not None else float(cash_ranking.DEFAULT_WEIGHTS[key])
 
 
-def _apply_cash_stage(db: Session, recs: list[ReorderRecommendation]) -> None:
+def _market_values_for_recs(
+    db: Session, buys: list[ReorderRecommendation]
+) -> dict[str, tuple[Optional[float], Optional[str]]]:
+    """Per BUY product, the normalized market-trend priority + the signal summary (M7).
+    Matches the latest ``scm.market_signal`` on the product's category **id OR code**
+    (the same both-ways match the advisory uses). Returns product_id → (market_value,
+    summary); market_value is ``None`` when no signal matches (factor then dropped)."""
+    product_ids = list({str(r.product_id) for r in buys if r.product_id})
+    if not product_ids:
+        return {}
+    rows = db.execute(
+        text(
+            "SELECT p.id::text AS pid, p.category_id::text AS cat_id, pc.category_code AS code "
+            "FROM products p LEFT JOIN product_categories pc ON pc.id = p.category_id "
+            "WHERE p.id::text = ANY(:ids)"
+        ),
+        {"ids": product_ids},
+    ).mappings().all()
+    refs: set[str] = set()
+    for x in rows:
+        if x["cat_id"]:
+            refs.add(x["cat_id"])
+        if x["code"]:
+            refs.add(x["code"])
+    if not refs:
+        return {}
+    sig_rows = db.execute(
+        text(
+            "SELECT DISTINCT ON (category_ref) category_ref, trend, summary "
+            "FROM scm.market_signal WHERE category_ref = ANY(:refs) "
+            "ORDER BY category_ref, captured_at DESC NULLS LAST, created_at DESC"
+        ),
+        {"refs": list(refs)},
+    ).mappings().all()
+    by_ref = {s["category_ref"]: (s["trend"], s["summary"]) for s in sig_rows}
+    out: dict[str, tuple[Optional[float], Optional[str]]] = {}
+    for x in rows:
+        hit = by_ref.get(x["cat_id"]) or by_ref.get(x["code"])
+        if hit:
+            trend, summary = hit
+            out[x["pid"]] = (cash_ranking.market_value(trend), summary)
+        else:
+            out[x["pid"]] = (None, None)
+    return out
+
+
+def _apply_cash_stage(
+    db: Session, recs: list[ReorderRecommendation], include_market: bool = False
+) -> None:
     """Compute + FREEZE the cash-ranking fields on the run's BUY recs (M4-D1/D14):
     each buy's graceful-degrade ``rank_score`` + its factor vector + days-to-stockout
     (into ``inputs``), then a dense ``rank`` by rank_score desc (tiebreak cash_impact
     then product_code). Non-buy recs are untouched. Funded/deferred is NOT decided
-    here — it is applied live at view-time against a budget (M4-D2/D3)."""
+    here — it is applied live at view-time against a budget (M4-D2/D3).
+
+    ``include_market`` (M7): when true, each buy's category is matched to the latest
+    market signal and a bounded market-trend factor joins the rank score (order qty is
+    untouched — only the funding order shifts). When false, no market factor is added
+    and the score is byte-identical to pre-M7."""
     weights = load_cash_weights(db)
     buys = [r for r in recs if r.rec_type == "buy"]
+    market = _market_values_for_recs(db, buys) if include_market else {}
     for r in buys:
         inp = dict(r.inputs or {})
+        mv, msummary = market.get(str(r.product_id), (None, None))
         factors = cash_ranking.build_factors(
             weights,
             days_of_cover=_fnum(r.days_of_cover),
@@ -723,9 +781,13 @@ def _apply_cash_stage(db: Session, recs: list[ReorderRecommendation]) -> None:
             committed=inp.get("committed"),
             forecast_daily_demand=_fnum(r.forecast_daily_demand),
             lead_time_days=inp.get("lead_time_days"),
+            market_signal_value=mv,
         )
         r.rank_score = round(cash_ranking.rank_score(factors), 6)
         inp["rank_factors"] = [f.as_dict() for f in factors]
+        if mv is not None:
+            # Freeze the signal that moved this rank so "why this rank" can name it.
+            inp["market_factor"] = {"value": mv, "summary": msummary}
         inp["days_to_stockout"] = cash_ranking.days_to_stockout(
             _fnum(r.net_position), _fnum(r.forecast_daily_demand), _fnum(r.days_of_cover))
         r.inputs = inp

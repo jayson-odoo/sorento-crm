@@ -30,17 +30,23 @@ from typing import Any, Optional, Sequence
 # constants
 # ---------------------------------------------------------------------------
 
-FACTOR_KEYS: tuple[str, ...] = ("urgency", "margin", "abc", "priority", "committed")
+FACTOR_KEYS: tuple[str, ...] = (
+    "urgency", "margin", "abc", "priority", "committed", "market",
+)
 
 # Default weights seeded into scm.cash_ranking_policy (M4-D1: urgency + margin
 # dominant). Chosen so a stockout-urgent, high-margin SKU floats to the top and
-# ABC/priority/committed break ties; sums to 1.00. Documented in the plan.
+# ABC/priority/committed break ties. `market` (M7) is a modest, CONFIGURABLE
+# tie-breaker and is DROPPED entirely unless a run opts in AND a signal matches, so
+# its presence never dilutes a run without market signals. (Weights need not sum to
+# 1 — rank_score normalizes by the present weights.)
 DEFAULT_WEIGHTS: dict[str, float] = {
     "urgency": 0.40,
     "margin": 0.30,
     "abc": 0.15,
     "priority": 0.10,
     "committed": 0.05,
+    "market": 0.10,
 }
 
 # Days-of-cover horizon for the urgency map: a SKU with >= this cover is 0 urgency,
@@ -117,6 +123,31 @@ def priority_value(priority_signal: Optional[float]) -> Optional[float]:
     return _clamp(float(priority_signal))
 
 
+_MARKET_TREND_BASE = {"up": 1.0, "flat": 0.5, "down": 0.0}
+
+
+def market_value(trend: Optional[str],
+                 strength: Optional[float] = None) -> Optional[float]:
+    """Market-trend priority signal (M7), SYMMETRIC: ``up`` raises priority, ``down``
+    lowers it, ``flat`` is neutral. ``None``/unknown trend ⇒ absent (DROPPED — never
+    fabricated). An optional ``strength`` (0–1, e.g. a normalized % move) scales the
+    signal toward its extreme so a strong trend counts more than a faint one:
+    up = 0.5 + 0.5·s, down = 0.5 − 0.5·s, flat stays 0.5."""
+    if trend is None:
+        return None
+    base = _MARKET_TREND_BASE.get(str(trend).lower())
+    if base is None:
+        return None
+    if strength is None:
+        return base
+    s = _clamp(float(strength))
+    if base >= 1.0:
+        return _clamp(0.5 + 0.5 * s)
+    if base <= 0.0:
+        return _clamp(0.5 - 0.5 * s)
+    return 0.5
+
+
 def committed_value(committed: Optional[float],
                     forecast_daily_demand: Optional[float],
                     lead_time_days: Optional[float]) -> Optional[float]:
@@ -148,15 +179,21 @@ def build_factors(
     forecast_daily_demand: Optional[float] = None,
     lead_time_days: Optional[float] = None,
     priority_signal: Optional[float] = None,
+    market_signal_value: Optional[float] = None,
 ) -> list[Factor]:
     """Build the ordered factor vector for one buy recommendation. A factor with no
-    data lands as ``present=False`` (dropped by :func:`rank_score`)."""
+    data lands as ``present=False`` (dropped by :func:`rank_score`).
+
+    ``market_signal_value`` (M7) is the already-normalized market-trend priority
+    (from :func:`market_value`); ``None`` ⇒ the market factor is dropped, so a run
+    without market signals scores exactly as pre-M7."""
     values = {
         "urgency": urgency_value(days_of_cover, net_position),
         "margin": margin_value(list_price, unit_cost),
         "abc": abc_value(abc_class),
         "priority": priority_value(priority_signal),
         "committed": committed_value(committed, forecast_daily_demand, lead_time_days),
+        "market": market_signal_value,
     }
     out: list[Factor] = []
     for key in FACTOR_KEYS:

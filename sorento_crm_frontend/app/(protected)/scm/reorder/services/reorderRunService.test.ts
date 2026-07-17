@@ -47,8 +47,21 @@ describe('reorderRunService — createReorderRun', () => {
       warehouse_codes: ['WH-KL', 'WH-JB'],
       buy_scope: 'network',
       budget_id: null,
+      include_market: false,
     });
     expect(run).toMatchObject({ run_id: 'run-9', status: 'running', summary: null, error: null });
+  });
+
+  it('forwards include_market when the market factor is toggled on (M7)', async () => {
+    apiFetch.mockResolvedValue(
+      ok({ run_id: 'run-10', status: 'running', buy_scope: 'warehouse', stage: 'resolving_policies' }),
+    );
+    await createReorderRun({
+      warehouse_codes: ['WH-KL'],
+      buy_scope: 'warehouse',
+      include_market: true,
+    });
+    expect(JSON.parse(String(lastInit().body))).toMatchObject({ include_market: true });
   });
 });
 

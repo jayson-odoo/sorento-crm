@@ -183,6 +183,7 @@ class ReorderRun(Base):
     buy_scope = Column(String(20), nullable=True)  # network | warehouse
     budget_id = Column(UUID(as_uuid=False), ForeignKey("scm.purchasing_budget.id", ondelete="SET NULL"), nullable=True)
     budget_amount = Column(Numeric(15, 2), nullable=True)  # M4 — chosen budget the "Apply budget" action persists
+    include_market = Column(Boolean, nullable=False, default=False)  # M7 — opt-in market-trend priority factor
     policy_snapshot_ref = Column(String, nullable=True)
     started_at = Column(DateTime(timezone=False), nullable=True)
     finished_at = Column(DateTime(timezone=False), nullable=True)
@@ -322,6 +323,7 @@ class CashRankingPolicy(Base):
     weight_abc = Column(Numeric, nullable=True)
     weight_priority = Column(Numeric, nullable=True)
     weight_committed = Column(Numeric, nullable=True)
+    weight_market = Column(Numeric, nullable=True)  # M7 — market-trend priority factor
     is_active = Column(Boolean, default=True, nullable=False)
     note = Column(Text, nullable=True)
     source_system = Column(String, nullable=True)

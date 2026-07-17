@@ -198,6 +198,7 @@ export async function createReorderRun(req: CreateReorderRunRequest): Promise<Re
       warehouse_codes: req.warehouse_codes,
       buy_scope: req.buy_scope,
       budget_id: req.budget_id ?? null,
+      include_market: req.include_market ?? false,
     }),
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to start planning run'));

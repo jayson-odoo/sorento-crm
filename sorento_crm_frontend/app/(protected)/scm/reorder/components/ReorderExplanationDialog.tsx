@@ -138,6 +138,7 @@ const RANK_FACTOR_LABEL: Record<RankFactor['key'], string> = {
   abc: 'ABC value',
   priority: 'SO priority',
   committed: 'Committed vs forecast',
+  market: 'Market trend',
 };
 
 /** M4 "why this rank" block — which cash-ranking factors were present, and which
@@ -203,6 +204,15 @@ function RankExplanation({ rec }: { rec: ReorderRecommendation }) {
           );
         })}
       </div>
+      {rec.market_signal ? (
+        <div className="flex items-start gap-2 rounded-lg border border-scm-incoming/40 bg-scm-incoming-soft p-2.5 text-xs">
+          <TrendingUp className="mt-0.5 size-3.5 shrink-0 text-scm-incoming" aria-hidden />
+          <span>
+            <span className="font-medium">Market trend applied:</span> {rec.market_signal} — this
+            lifted the funding priority (rank), not the order quantity.
+          </span>
+        </div>
+      ) : null}
       <p className="text-xs text-muted-foreground">
         {isNeedsCost
           ? 'Without a supplier cost the margin factor drops out and there is no cash impact to weigh against the budget, so this buy stays in Needs cost. It is still a real must-buy — add a cost to fund it.'
