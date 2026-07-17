@@ -18,6 +18,7 @@ Reuses the shared ``llm_provider`` + ``ai_prompt_registry`` (prompt key
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Optional
 
 from sqlalchemy import or_, text
@@ -29,7 +30,7 @@ from app.config import settings
 from app.services.ai_prompt_registry import render
 from app.services.error_handler import AppException
 from app.services.llm_provider import get_provider
-from app.services.scm import reorder_engine
+from app.services.scm import cash_ranking, reorder_engine
 
 # The exact refusal contract — mirrored by the FE (`explainerMockStore.REFUSAL`)
 # and asserted byte-for-byte in tests. The prompt instructs the model to emit this
@@ -480,6 +481,86 @@ def _deterministic_run_chat_fallback(ctx: dict) -> str:
     )
 
 
+# A budget what-if ("what defers at RM 200k?") is a DECISION-CRITICAL number: the
+# funding split must come from the deterministic greedy-by-rank allocator, NOT from
+# the LLM doing arithmetic in prose. We parse the amount, run the real allocator, and
+# hand the LLM the computed result to narrate (LLM-boundary preserved).
+_BUDGET_INTENT_RE = re.compile(r"budget|fund|afford|defer|spend|\bcash\b|\brm\b|\bmyr\b", re.I)
+_AMOUNT_RE = re.compile(r"(?:rm|myr|\$)?\s*(\d[\d,]*(?:\.\d+)?)\s*([km])?\b", re.I)
+_BUDGET_SCENARIO_CAP = 50  # cap the funded/deferred lists so context stays bounded
+
+
+def _parse_budget(question: str) -> Optional[float]:
+    """Pull a budget figure out of a question when it's clearly a funding what-if.
+    Requires a funding-intent word AND a plausible amount (has a k/m unit, an RM/$
+    prefix, or is ≥ 1000) so counts like 'top 5 buys' are ignored. Returns the last
+    plausible amount (the budget usually comes last: 'cut the budget to RM 200k')."""
+    if not _BUDGET_INTENT_RE.search(question or ""):
+        return None
+    best: Optional[float] = None
+    for m in _AMOUNT_RE.finditer(question):
+        num = float(m.group(1).replace(",", ""))
+        unit = (m.group(2) or "").lower()
+        prefixed = question[max(0, m.start() - 4): m.start()].lower()
+        has_currency = "rm" in prefixed or "myr" in prefixed or "$" in prefixed
+        if unit == "k":
+            num *= 1_000
+        elif unit == "m":
+            num *= 1_000_000
+        if unit or has_currency or num >= 1000:
+            best = num
+    return best
+
+
+def _budget_scenario(db: Session, run_id: str, budget: float) -> dict:
+    """The ENGINE's funding split for ``budget`` — the same greedy-by-rank allocator
+    the Cash-budget slider uses (view-time, no persistence). This is authoritative;
+    the LLM only narrates it."""
+    rows = db.execute(
+        text(
+            "SELECT id, inputs->>'sku' AS sku, rank, cash_impact "
+            "FROM scm.reorder_recommendation WHERE run_id = :r AND rec_type = 'buy'"
+        ),
+        {"r": run_id},
+    ).mappings().all()
+    buys = [
+        cash_ranking.Buy(
+            id=str(x["id"]),
+            rank=int(x["rank"]) if x["rank"] is not None else None,
+            cash_impact=float(x["cash_impact"]) if x["cash_impact"] is not None else None,
+        )
+        for x in rows
+    ]
+    res = cash_ranking.allocate_funding(buys, budget)
+    meta = {
+        str(x["id"]): (x["sku"], x["rank"], _num(x["cash_impact"]))
+        for x in rows
+    }
+    funded = sorted(
+        (meta[i] for i, s in res.status_by_id.items() if s == "funded"),
+        key=lambda t: (t[1] if t[1] is not None else 1 << 30),
+    )
+    deferred = sorted(
+        (meta[i] for i, s in res.status_by_id.items() if s == "deferred"),
+        key=lambda t: (t[1] if t[1] is not None else 1 << 30),
+    )
+    return {
+        "budget": float(budget),
+        "rule": (
+            "greedy by rank: fund each COSTED buy (in rank order) whose full cash "
+            "impact fits the remaining budget, else defer it and continue to the next "
+            "that fits; uncosted buys can't be funded until a supplier cost is added"
+        ),
+        "funded_count": res.funded_count,
+        "deferred_count": res.deferred_count,
+        "needs_cost_count": res.needs_cost_count,
+        "funded_cash": res.funded_cash,
+        "deferred_cash": res.deferred_cash,
+        "funded": [{"sku": s, "cash_impact": c} for s, _, c in funded[:_BUDGET_SCENARIO_CAP]],
+        "deferred": [{"sku": s, "cash_impact": c} for s, _, c in deferred[:_BUDGET_SCENARIO_CAP]],
+    }
+
+
 # Plan-chat gets its OWN system prompt. It must NOT inherit the single-recommendation
 # explainer's refusal contract (which tells the model to reply with the exact REFUSAL
 # string whenever the answer isn't in "this recommendation's data") — a run-level
@@ -497,6 +578,12 @@ _RUN_CHAT_SYSTEM = (
     "up cash impact until the budget is spent; the rest defer), 'which supplier costs "
     "the most in total'. This is reasoning over provided data, and it is exactly your "
     "job — do it, don't refuse.\n\n"
+    "When the JSON includes a 'budget_scenario' object, it is the AUTHORITATIVE "
+    "funding split for that budget, already computed by the deterministic engine "
+    "(greedy by rank) — report its 'funded' / 'deferred' lists, counts and cash "
+    "verbatim; do NOT re-derive or second-guess which buys are funded. Buys under "
+    "'needs_cost_count' cannot be funded at any budget until a supplier cost is added; "
+    "mention them so the number reconciles.\n\n"
     "Hard rule: use ONLY the figures present in the given JSON. Never invent, estimate, "
     "or pull in a number that isn't there. If a question genuinely needs data the run "
     "does not contain (e.g. a supplier's phone number, next month's forecast), say so "
@@ -518,6 +605,12 @@ def answer_run_question(
     if not (question or "").strip():
         raise AppException(status_code=422, message="A question is required.")
     ctx = _run_chat_context(db, run_id)
+
+    # Budget what-if → compute the funding split deterministically (the LLM must not
+    # do this arithmetic itself) and hand it over as the authoritative answer.
+    budget = _parse_budget(question)
+    if budget is not None:
+        ctx["budget_scenario"] = _budget_scenario(db, run_id, budget)
 
     provider, model = _provider_and_model(db)
     if provider is None:

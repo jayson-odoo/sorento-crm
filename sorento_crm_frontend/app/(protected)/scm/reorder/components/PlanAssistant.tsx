@@ -1,8 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
+  Bot,
   ExternalLink,
   MessageSquare,
   Search,
@@ -15,12 +18,43 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useCategoryOptions } from '../../hooks/useScmOptions';
 import { useMarketSearch, useRunChat } from '../hooks/useExplainer';
 import type { AskTurn, MarketSignal } from '../types/explainer.types';
+
+/** Shared markdown styling for assistant answers — mirrors the global AI assistant
+ *  bubble so the two chat surfaces read identically (lists, bold, tables, code). */
+const AI_MARKDOWN_CLASS =
+  'space-y-2 text-sm leading-relaxed [&_p]:my-0 [&_ul]:my-1 [&_ol]:my-1 [&_ul]:list-disc [&_ol]:list-decimal [&_ul]:pl-5 [&_ol]:pl-5 [&_li]:my-0.5 [&_strong]:font-semibold [&_em]:italic [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-[0.9em] [&_table]:my-2 [&_table]:w-full [&_th]:border [&_th]:border-border [&_th]:px-1.5 [&_th]:py-1 [&_th]:text-left [&_td]:border [&_td]:border-border [&_td]:px-1.5 [&_td]:py-1';
+
+function AssistantMarkdown({ text }: { text: string }) {
+  return (
+    <div className={AI_MARKDOWN_CLASS}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
+}
+
+/** The three-dot "AI is thinking" indicator, matching the global assistant. */
+function ThinkingBubble() {
+  return (
+    <div className="flex justify-start">
+      <div className="rounded-lg bg-muted p-3 text-sm">
+        <div className="mb-1 flex items-center gap-2 text-xs text-muted-foreground">
+          <Bot className="size-3.5 animate-pulse" aria-hidden />
+          Thinking…
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="size-2 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:-0.3s]" />
+          <span className="size-2 animate-bounce rounded-full bg-muted-foreground/70 [animation-delay:-0.15s]" />
+          <span className="size-2 animate-bounce rounded-full bg-muted-foreground/70" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /**
  * Plan assistant (M6) — the two "talk to / search for" surfaces that sit beside the
@@ -78,36 +112,49 @@ export function PlanAssistant({ runId }: { runId: string }) {
   );
 }
 
-/** Grounded, multi-turn chat over the whole run (M6-A). Transcript is local UI state;
- *  each turn forwards the prior transcript so follow-ups resolve. */
+/** Grounded, multi-turn chat over the whole run (M6-A). UX mirrors the global AI
+ *  assistant: the user's message shows immediately, a "Thinking…" indicator runs
+ *  while the answer is generated, then the answer renders (markdown). Each turn
+ *  forwards the prior transcript so follow-ups resolve. */
 function PlanChat({ runId }: { runId: string }) {
   const [question, setQuestion] = useState('');
   const [turns, setTurns] = useState<AskTurn[]>([]);
+  // The question currently awaiting an answer — shown optimistically as a user
+  // bubble above the Thinking indicator (never lost if the answer errors).
+  const [pending, setPending] = useState<string | null>(null);
   const chat = useRunChat(runId);
+  const endRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'end' });
+  }, [turns.length, pending]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const q = question.trim();
     if (!q || chat.isPending) return;
     setQuestion('');
+    setPending(q); // show the user's message + Thinking immediately
+    const history = turns.map((t) => ({ question: t.question, answer: t.answer }));
     try {
-      const res = await chat.mutateAsync({
-        question: q,
-        history: turns.map((t) => ({ question: t.question, answer: t.answer })),
-      });
+      const res = await chat.mutateAsync({ question: q, history });
       setTurns((prev) => [...prev, { question: q, answer: res.answer, refused: false }]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to answer question';
       setTurns((prev) => [...prev, { question: q, answer: msg, refused: true }]);
+    } finally {
+      setPending(null);
     }
   };
 
+  const showTranscript = turns.length > 0 || pending !== null;
+
   return (
     <div className="space-y-3 p-3">
-      {turns.length ? (
-        <div className="max-h-80 space-y-3 overflow-y-auto pe-1">
+      {showTranscript ? (
+        <div className="max-h-96 space-y-3 overflow-y-auto pe-1">
           {turns.map((t, i) => (
-            <div key={i} className="space-y-1">
+            <div key={i} className="space-y-1.5">
               <div className="flex justify-end">
                 <div className="max-w-[85%] rounded-lg bg-primary/10 px-3 py-1.5 text-sm">
                   {t.question}
@@ -116,23 +163,31 @@ function PlanChat({ runId }: { runId: string }) {
               <div className="flex justify-start">
                 <div
                   className={cn(
-                    'flex max-w-[90%] items-start gap-1.5 rounded-lg px-3 py-1.5 text-sm',
+                    'flex max-w-[90%] items-start gap-1.5 rounded-lg px-3 py-2',
                     t.refused ? 'bg-muted italic text-muted-foreground' : 'bg-muted',
                   )}
                 >
                   <Sparkles className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden />
-                  <span className="whitespace-pre-wrap">{t.answer}</span>
+                  {t.refused ? (
+                    <span className="whitespace-pre-wrap text-sm">{t.answer}</span>
+                  ) : (
+                    <AssistantMarkdown text={t.answer} />
+                  )}
                 </div>
               </div>
             </div>
           ))}
-          {chat.isPending ? (
-            <div className="flex justify-start">
-              <div className="flex max-w-[85%] items-center gap-1.5 rounded-lg bg-muted px-3 py-1.5">
-                <Skeleton className="h-3.5 w-40" />
+          {pending !== null ? (
+            <div className="space-y-1.5">
+              <div className="flex justify-end">
+                <div className="max-w-[85%] rounded-lg bg-primary/10 px-3 py-1.5 text-sm">
+                  {pending}
+                </div>
               </div>
+              <ThinkingBubble />
             </div>
           ) : null}
+          <div ref={endRef} />
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">

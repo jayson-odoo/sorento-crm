@@ -96,6 +96,33 @@ describe('PlanAssistant (M6)', () => {
     });
   });
 
+  it('shows the user message + a Thinking indicator immediately, before the answer', async () => {
+    // hold the answer so the pending state is observable
+    let resolve!: (v: { answer: string }) => void;
+    const mutateAsync = vi.fn().mockReturnValue(
+      new Promise<{ answer: string }>((r) => {
+        resolve = r;
+      }),
+    );
+    hRunChat.mockReturnValue({ mutateAsync, isPending: false });
+
+    renderWithClient(<PlanAssistant runId="run-1" />);
+    fireEvent.click(screen.getByRole('button', { name: /discuss this plan/i }));
+    fireEvent.change(screen.getByLabelText('Ask about this plan'), {
+      target: { value: 'What defers at RM 20k?' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^ask$/i }));
+
+    // user's message is visible right away, and the Thinking indicator runs
+    expect(await screen.findByText('What defers at RM 20k?')).toBeInTheDocument();
+    expect(screen.getByText(/thinking/i)).toBeInTheDocument();
+
+    // once the answer resolves, Thinking disappears and the answer renders
+    resolve({ answer: 'Only C-FH24 is funded; the rest defer.' });
+    expect(await screen.findByText('Only C-FH24 is funded; the rest defer.')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(/thinking/i)).toBeNull());
+  });
+
   it('runs a market search and renders the returned signal', async () => {
     const mutateAsync = vi.fn().mockResolvedValue({
       signals: [

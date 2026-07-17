@@ -625,3 +625,58 @@ def test_run_chat_denied_without_dashboard_view(scm_app):
             f"/api/v1/scm/reorder-runs/{uuid.uuid4()}/chat", json={"question": "hi"}
         )
     assert res.status_code == 403
+
+
+# --- budget what-if: the funding split is ENGINE-computed, not LLM arithmetic ---
+
+def test_parse_budget_extracts_amounts_and_ignores_counts():
+    p = explainer_service._parse_budget
+    assert p("I have only budget of 20k for the 1st plan") == 20000
+    assert p("what would defer if I cut the budget to RM 200,000?") == 200000
+    assert p("fund what I can afford with RM 1.5m") == 1500000
+    # a plain count question is NOT a budget what-if
+    assert p("Which 3 buys are most urgent?") is None
+    # 'top 5' is ignored (count, <1000, no unit); the RM 50k is the budget
+    assert p("fund the top 5 buys under RM 50k") == 50000
+
+
+def test_run_chat_injects_engine_budget_scenario(scm_app, monkeypatch):
+    _, db, _, _ = scm_app
+    run_id = _seed_run(db)
+    fake = _install_provider(monkeypatch, "narrated funding split")
+
+    explainer_service.answer_run_question(db, run_id, "What gets funded if my budget is RM 50k?")
+
+    block = _user_block(fake)
+    assert '"budget_scenario"' in block, "a budget what-if must carry the computed scenario"
+    ctx = json.loads(block.split("(JSON):\n", 1)[1])
+    bs = ctx["budget_scenario"]
+
+    # the split in context is byte-for-byte the deterministic allocator's output
+    buys = [
+        explainer_service.cash_ranking.Buy(
+            id=str(r["id"]),
+            rank=int(r["rank"]) if r["rank"] is not None else None,
+            cash_impact=float(r["cash_impact"]) if r["cash_impact"] is not None else None,
+        )
+        for r in db.execute(
+            text(
+                "SELECT id, rank, cash_impact FROM scm.reorder_recommendation "
+                "WHERE run_id = :r AND rec_type = 'buy'"
+            ),
+            {"r": run_id},
+        ).mappings()
+    ]
+    res = explainer_service.cash_ranking.allocate_funding(buys, 50000.0)
+    assert bs["funded_count"] == res.funded_count
+    assert bs["deferred_count"] == res.deferred_count
+    assert bs["needs_cost_count"] == res.needs_cost_count
+    assert bs["funded_cash"] == res.funded_cash
+
+
+def test_run_chat_no_budget_scenario_for_plain_question(scm_app, monkeypatch):
+    _, db, _, _ = scm_app
+    run_id = _seed_run(db)
+    fake = _install_provider(monkeypatch, "x")
+    explainer_service.answer_run_question(db, run_id, "Which buys are most urgent?")
+    assert '"budget_scenario"' not in _user_block(fake)

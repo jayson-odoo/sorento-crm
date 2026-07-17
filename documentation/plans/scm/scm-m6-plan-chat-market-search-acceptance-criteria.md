@@ -54,4 +54,20 @@ market search impact = advisory + chat (soft), NOT engine uplift.
   renders; the resulting signal(s) then appear as advisory on matching recs and in the plan-chat.
 - **AC-M6.12** — LLM boundary: search writes ONLY `market_signal` (+ its run log), never a rec field.
 
+## A2 — plan-chat correctness + UX parity (added 2026-07-17 after review)
+
+- **AC-M6.13 (own prompt)** — plan-chat uses its OWN system prompt, NOT the
+  single-rec explainer's (which forced the exact per-rec REFUSAL string on any
+  run-level question). It authorises count/sum/rank/filter/compare over the run JSON.
+- **AC-M6.14 (budget = engine, not LLM)** — a budget what-if ("what defers at RM
+  20k") must NOT be computed by the LLM in prose. The service parses the amount, runs
+  the deterministic `cash_ranking.allocate_funding` (greedy-by-rank, the same
+  allocator the Cash-budget slider uses), and injects the result as an authoritative
+  `budget_scenario` the LLM only narrates. Verified: RM 20k → 1 funded (C-FH24), 4
+  deferred, 76 needs-cost, RM 1,652 funded cash — matches the allocator exactly.
+- **AC-M6.15 (UX parity with the global assistant)** — the plan-chat mirrors the
+  AI-assistant bubble: the user's message shows immediately, a "Thinking…" indicator
+  (bot pulse + bouncing dots) runs while the answer generates, then the answer renders
+  as markdown (lists/bold/tables). Optimistic message survives an error turn.
+
 ## Test report keys back to these ids (PASS/FAIL/DEFERRED).
