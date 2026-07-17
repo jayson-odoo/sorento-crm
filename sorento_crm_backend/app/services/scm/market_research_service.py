@@ -39,10 +39,10 @@ logger = logging.getLogger(__name__)
 # The honest degrade message surfaced on the run row when no web-search key is set.
 NO_KEY_ERROR = "Anthropic web-search not configured (set ANTHROPIC_API_KEY)"
 
-# ⚠ CONFIRM AGAINST CURRENT ANTHROPIC DOCS BEFORE ENABLING IN PROD. The web-search
-# server-tool type string and the model id below are pinned to what was current at
-# authoring time; Anthropic revises both. Read the `claude-api` skill first.
-_ANTHROPIC_MODEL = "claude-3-5-sonnet-latest"
+# Model + web-search server-tool verified live 2026-07-17 (Haiku 4.5 executed a real
+# `web_search_20250305` call and returned cited 2026 trend text). Re-confirm the tool
+# version string against current Anthropic docs on any major SDK bump.
+_ANTHROPIC_MODEL = "claude-haiku-4-5"
 _WEB_SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
 _SEARCH_MAX_TOKENS = 1024
 _EXTRACT_MAX_TOKENS = 400
@@ -276,6 +276,109 @@ def run_research(db: Session, actor: Optional[str] = None) -> dict:
     return _run_out(run)
 
 
+def search_adhoc(
+    db: Session,
+    query: str,
+    category_ref: Optional[str] = None,
+    currency: Optional[str] = None,
+    actor: Optional[str] = None,
+) -> dict:
+    """One-off market web search fired from the planning flow (AC-M6.8). Runs the
+    Anthropic web search for a free-text ``query``, caches 0+ extracted signals under
+    a reuse-or-create ad-hoc topic (``is_active=False`` so scheduled runs skip it),
+    logs a run, and returns the new signals + the run row. No key → an honest
+    ``status='failed'`` run (0 signals), never a crash. Advisory-only: writes ONLY
+    the signal table, never a recommendation field (AC-M6.12)."""
+    query = (query or "").strip()
+    if not query:
+        raise AppException(status_code=422, message="A search query is required.")
+    label = query[:200]
+    started = datetime.utcnow()
+    run = MarketResearchRun(status="running", started_at=started, source_system="adhoc")
+    db.add(run)
+    db.flush()  # assign run.id
+    run.topic_count = 1
+
+    if not _anthropic_api_key(db):
+        run.status = "failed"
+        run.error_text = NO_KEY_ERROR
+        run.signal_count = 0
+        run.finished_at = datetime.utcnow()
+        db.commit()
+        db.refresh(run)
+        return {"signals": [], "run": _run_out(run)}
+
+    topic = (
+        db.query(MarketResearchTopic)
+        .filter(
+            MarketResearchTopic.source_system == "adhoc",
+            MarketResearchTopic.label == label,
+            MarketResearchTopic.category_ref == category_ref,
+        )
+        .first()
+    )
+    if topic is None:
+        topic = MarketResearchTopic(
+            label=label,
+            category_ref=category_ref,
+            currency=currency,
+            search_prompt=query,
+            cadence="manual",
+            is_active=False,  # ad-hoc: never picked up by a scheduled/topic sweep
+            source_system="adhoc",
+        )
+        db.add(topic)
+        db.flush()
+    else:
+        topic.currency = currency
+        topic.search_prompt = query
+
+    try:
+        extracted = _web_search_topic(db, topic)
+    except Exception as exc:  # network/SDK failure → an honest failed run, not a 500
+        logger.exception("ad-hoc market search failed: %s", query)
+        run.status = "failed"
+        run.error_text = str(exc)[:2000]
+        run.signal_count = 0
+        run.finished_at = datetime.utcnow()
+        db.commit()
+        db.refresh(run)
+        return {"signals": [], "run": _run_out(run)}
+
+    new_signals: list[MarketSignal] = []
+    for item in extracted or []:
+        summary = (item.get("summary") or "").strip()
+        if not summary:
+            continue
+        trend = item.get("trend")
+        if trend not in _VALID_TRENDS:
+            trend = None
+        sig = MarketSignal(
+            topic_id=topic.id,
+            category_ref=topic.category_ref,
+            currency=topic.currency,
+            value=_coerce_num(item.get("value")),
+            trend=trend,
+            summary=summary,
+            source_url=item.get("source_url"),
+            captured_at=datetime.utcnow(),
+            source_system="web_search",
+        )
+        db.add(sig)
+        db.flush()
+        new_signals.append(sig)
+
+    run.signal_count = len(new_signals)
+    run.status = "completed"  # a search that found nothing is still a completed search
+    run.finished_at = datetime.utcnow()
+    db.commit()
+    db.refresh(run)
+    return {
+        "signals": [_signal_out(s, topic.label) for s in new_signals],
+        "run": _run_out(run),
+    }
+
+
 def _coerce_num(v: Any) -> Optional[float]:
     if v is None or v == "":
         return None
@@ -297,7 +400,7 @@ def _web_search_topic(db: Session, topic: MarketResearchTopic) -> list[dict]:
     KEY-GATED: returns ``[]`` when no Anthropic key is configured. Tests monkeypatch
     this whole function; the rest of ``run_research`` is exercised without network.
     """
-    key = _anthropic_api_key()
+    key = _anthropic_api_key(db)
     if not key:
         return []
     search_text = _anthropic_web_search(topic.search_prompt or topic.label, key)

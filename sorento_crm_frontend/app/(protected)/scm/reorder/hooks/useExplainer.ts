@@ -3,11 +3,14 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   askRecommendation,
+  askRunChat,
   getRecommendationAdvisory,
   getRecommendationExplanation,
   getRunOverview,
+  searchMarket,
 } from '../services/explainerService';
 import type { ReorderRecommendation } from '../types/reorder.types';
+import type { RunChatTurn } from '../types/explainer.types';
 
 /** Cache key for a rec's generated explanation. The frozen inputs never change,
  *  so this is effectively immutable once fetched — long stale time, no refetch. */
@@ -73,5 +76,36 @@ export function useRecommendationAdvisory(rec: ReorderRecommendation | null, ena
 export function useAskRecommendation(rec: ReorderRecommendation | null) {
   return useMutation({
     mutationFn: (question: string) => askRecommendation(rec as ReorderRecommendation, question),
+  });
+}
+
+/**
+ * Grounded plan-chat over the whole run (M6-A). `mutateAsync({ question, history })`
+ * forwards the prior transcript so follow-ups resolve; the answer reasons over the
+ * run's frozen numbers only. The caller keeps the transcript in local state.
+ */
+export function useRunChat(runId: string | null) {
+  return useMutation({
+    mutationFn: ({ question, history }: { question: string; history: RunChatTurn[] }) =>
+      askRunChat(runId as string, question, history),
+  });
+}
+
+/**
+ * Fire an ad-hoc market web search from the planning flow (M6-B).
+ * `mutateAsync({ query, categoryRef?, currency? })` resolves to the cached signals
+ * + the run row; the caller surfaces the findings and refreshes rec advisories.
+ */
+export function useMarketSearch() {
+  return useMutation({
+    mutationFn: ({
+      query,
+      categoryRef,
+      currency,
+    }: {
+      query: string;
+      categoryRef?: string | null;
+      currency?: string | null;
+    }) => searchMarket(query, categoryRef, currency),
   });
 }

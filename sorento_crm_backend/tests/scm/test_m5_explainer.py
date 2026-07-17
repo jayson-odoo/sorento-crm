@@ -501,3 +501,127 @@ def test_disposition_explain_surfaces_disposition_facts(scm_app, monkeypatch):
     assert facts["type"] == "disposition"
     assert facts["reason"] == "overstock"
     assert facts["disposition_action"] == "hold"
+
+
+# ===========================================================================
+# plan-chat (M6-A) — grounded, multi-turn conversation over the WHOLE run
+# ===========================================================================
+
+def test_run_chat_context_carries_all_recs_and_no_tools(scm_app, monkeypatch):
+    _, db, _, _ = scm_app
+    run_id = _seed_run(db)
+    fake = _install_provider(monkeypatch, "The most urgent buy is FT-B.")
+
+    out = explainer_service.answer_run_question(db, run_id, "Which buys are most urgent?")
+    assert out == "The most urgent buy is FT-B."
+
+    # messages = [system, user(context), assistant(ack), user(question)]
+    block = _user_block(fake)  # the context block (messages[1])
+    assert '"aggregates"' in block and '"recommendations"' in block
+    # a real SKU from the run is present in the grounded context (AC-M6.2)
+    sku = db.execute(
+        text("SELECT inputs->>'sku' FROM scm.reorder_recommendation WHERE run_id = :r LIMIT 1"),
+        {"r": run_id},
+    ).scalar()
+    assert sku and sku in block
+    # AC-M6.4 — plan-chat is a bounded chat, never an agent loop
+    assert fake.calls[0]["kwargs"].get("tools") is None
+    # the manager's question is the final turn
+    assert fake.calls[0]["messages"][-1]["content"] == "Which buys are most urgent?"
+
+
+def test_run_chat_touches_no_numeric_column(scm_app, monkeypatch):
+    _, db, _, _ = scm_app
+    run_id = _seed_run(db)
+    _install_provider(monkeypatch, "Here is your answer.")
+
+    before = db.execute(
+        text(
+            "SELECT id, rounded_qty, reorder_point, net_position, cash_impact, rank "
+            "FROM scm.reorder_recommendation WHERE run_id = :r ORDER BY id"
+        ),
+        {"r": run_id},
+    ).mappings().all()
+
+    explainer_service.answer_run_question(db, run_id, "What should I prioritise?")
+    db.flush()
+
+    after = db.execute(
+        text(
+            "SELECT id, rounded_qty, reorder_point, net_position, cash_impact, rank "
+            "FROM scm.reorder_recommendation WHERE run_id = :r ORDER BY id"
+        ),
+        {"r": run_id},
+    ).mappings().all()
+    assert [dict(r) for r in after] == [dict(r) for r in before]
+    # chat is NOT overview — it must not write the cached overview column either
+    assert db.execute(
+        text("SELECT overview FROM scm.reorder_run WHERE id = :r"), {"r": run_id}
+    ).scalar() is None
+
+
+def test_run_chat_forwards_prior_history(scm_app, monkeypatch):
+    _, db, _, _ = scm_app
+    run_id = _seed_run(db)
+    fake = _install_provider(monkeypatch, "The next one is FT-B.")
+    history = [{"question": "What is the biggest buy?", "answer": "FT-03 at RM 76,860."}]
+
+    explainer_service.answer_run_question(db, run_id, "And the next one?", history=history)
+
+    contents = [m["content"] for m in fake.calls[0]["messages"]]
+    assert "What is the biggest buy?" in contents  # prior question forwarded
+    assert "FT-03 at RM 76,860." in contents  # prior answer forwarded
+    assert fake.calls[0]["messages"][-1]["content"] == "And the next one?"
+
+
+def test_run_chat_no_provider_graceful(scm_app, monkeypatch):
+    _, db, _, _ = scm_app
+    run_id = _seed_run(db)
+    _install_no_provider(monkeypatch)
+    out = explainer_service.answer_run_question(db, run_id, "why so much cash?")
+    assert out and "buy" in out.lower()  # falls back to a real aggregate sentence
+
+
+def test_run_chat_endpoint_happy(scm_app, monkeypatch):
+    app, db = _client(scm_app, "purchasing")
+    run_id = _seed_run(db)
+    db.commit()
+    _install_provider(monkeypatch, "Top risks: FT-B and FT-03.")
+    with TestClient(app) as client:
+        res = client.post(
+            f"/api/v1/scm/reorder-runs/{run_id}/chat",
+            json={"question": "What are the top stockout risks?"},
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["answer"] == "Top risks: FT-B and FT-03."
+
+
+def test_run_chat_endpoint_rejects_empty_question(scm_app, monkeypatch):
+    app, db = _client(scm_app, "purchasing")
+    run_id = _seed_run(db)
+    db.commit()
+    _install_provider(monkeypatch, "unused")
+    with TestClient(app) as client:
+        res = client.post(
+            f"/api/v1/scm/reorder-runs/{run_id}/chat", json={"question": ""}
+        )
+    assert res.status_code == 422, res.text
+
+
+def test_run_chat_missing_run_404(scm_app, monkeypatch):
+    app, _ = _client(scm_app, "purchasing")
+    _install_provider(monkeypatch, "unused")
+    with TestClient(app) as client:
+        res = client.post(
+            f"/api/v1/scm/reorder-runs/{uuid.uuid4()}/chat", json={"question": "hi"}
+        )
+    assert res.status_code == 404, res.text
+
+
+def test_run_chat_denied_without_dashboard_view(scm_app):
+    app, _ = _client(scm_app, None)
+    with TestClient(app) as client:
+        res = client.post(
+            f"/api/v1/scm/reorder-runs/{uuid.uuid4()}/chat", json={"question": "hi"}
+        )
+    assert res.status_code == 403

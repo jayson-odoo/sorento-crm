@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.schemas.scm_market import (
+    AdhocSearchRequest,
+    AdhocSearchResult,
     MarketResearchRunResult,
     MarketResearchTopicWrite,
     MarketSignalListResponse,
@@ -51,6 +53,19 @@ def run_market_research(
     _user: dict = Depends(_RUN),
 ):
     return {"run": svc.run_research(db, (_user or {}).get("id"))}
+
+
+@router.post("/market-search", response_model=AdhocSearchResult)
+def market_search_adhoc(
+    body: AdhocSearchRequest = Body(...),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """Ad-hoc market web search fired from the planning flow — caches signals that
+    then drive the existing per-rec advisory + feed the plan-chat (M6-B, soft)."""
+    return svc.search_adhoc(
+        db, body.query, body.category_ref, body.currency, (_user or {}).get("id")
+    )
 
 
 @router.get("/market-research/runs/{run_id}", response_model=MarketResearchRunResult)

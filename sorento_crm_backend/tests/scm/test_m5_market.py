@@ -22,6 +22,8 @@ import uuid
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
+
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
@@ -568,3 +570,120 @@ def test_dashboard_only_user_can_view_but_not_manage_or_run(scm_app):
         assert c.post("/api/v1/scm/market-research/run").status_code == 403
         assert c.post("/api/v1/scm/market-topics",
                       json={"label": "x", "search_prompt": "y"}).status_code == 403
+
+
+# ===========================================================================
+# 8. ad-hoc market search fired from planning (M6-B) — soft, advisory-only
+# ===========================================================================
+
+def test_search_adhoc_caches_signals_and_completes(scm_app, monkeypatch):
+    _, db, _, _ = scm_app
+    monkeypatch.setattr(svc, "_anthropic_api_key", lambda _db=None: "fake-key")
+    monkeypatch.setattr(
+        svc, "_web_search_topic",
+        lambda db, topic: [
+            {"value": None, "trend": "up", "summary": "Ice blue is trending in 2026.",
+             "source_url": "http://example.com/trends"}
+        ],
+    )
+    out = svc.search_adhoc(db, "trending bathroom colours 2026", category_ref="SRT-FC", currency="MYR")
+
+    assert out["run"]["status"] == "completed"
+    assert out["run"]["signal_count"] == 1
+    assert len(out["signals"]) == 1
+    sig = out["signals"][0]
+    assert sig["summary"] == "Ice blue is trending in 2026."
+    assert sig["trend"] == "up"
+    assert sig["category_ref"] == "SRT-FC"
+
+    # ad-hoc topic is created inactive so no scheduled sweep re-runs it (AC-M6.8)
+    t = (
+        db.query(MarketResearchTopic)
+        .filter(MarketResearchTopic.source_system == "adhoc")
+        .first()
+    )
+    assert t and t.is_active is False and t.label == "trending bathroom colours 2026"
+
+
+def test_search_adhoc_no_key_records_failed_run(scm_app, monkeypatch):
+    _, db, _, _ = scm_app
+    monkeypatch.setattr(svc, "_anthropic_api_key", lambda _db=None: None)
+    out = svc.search_adhoc(db, "anything")
+    assert out["run"]["status"] == "failed"
+    assert out["run"]["error"] == svc.NO_KEY_ERROR
+    assert out["signals"] == []
+
+
+def test_search_adhoc_reuses_topic_on_repeat(scm_app, monkeypatch):
+    _, db, _, _ = scm_app
+    monkeypatch.setattr(svc, "_anthropic_api_key", lambda _db=None: "fake-key")
+    monkeypatch.setattr(
+        svc, "_web_search_topic",
+        lambda db, topic: [{"summary": "s", "trend": None, "value": None, "source_url": None}],
+    )
+    svc.search_adhoc(db, "green tiles", category_ref=None)
+    svc.search_adhoc(db, "green tiles", category_ref=None)
+    topics = (
+        db.query(MarketResearchTopic)
+        .filter(
+            MarketResearchTopic.source_system == "adhoc",
+            MarketResearchTopic.label == "green tiles",
+        )
+        .all()
+    )
+    assert len(topics) == 1, "repeat search must reuse the ad-hoc topic, not duplicate it"
+
+
+def test_search_adhoc_empty_query_rejected(scm_app):
+    from app.services.error_handler import AppException
+
+    _, db, _, _ = scm_app
+    with pytest.raises(AppException):
+        svc.search_adhoc(db, "   ")
+
+
+def test_search_adhoc_signal_drives_advisory(scm_app, monkeypatch):
+    """A signal cached by an ad-hoc search immediately drives the per-rec advisory on
+    a matching rec — no engine re-run (AC-M6.10)."""
+    _, db, _, _ = scm_app
+    rec = _seed_buy_rec(db)
+    category = reorder_engine.load_category_code(db, rec.product_id)
+    assert category
+
+    monkeypatch.setattr(svc, "_anthropic_api_key", lambda _db=None: "fake-key")
+    monkeypatch.setattr(
+        svc, "_web_search_topic",
+        lambda db, topic: [{"summary": "Resin up.", "trend": "up", "value": None, "source_url": None}],
+    )
+    svc.search_adhoc(db, "resin price outlook", category_ref=category, currency=rec.currency)
+
+    _install_provider(monkeypatch, "Buy ahead — resin trending up.")
+    out = explainer_service.market_advisory(db, rec.id)
+    assert out == "Buy ahead — resin trending up."
+
+
+def test_market_search_endpoint_happy(scm_app, monkeypatch):
+    app, db = _client(scm_app, "purchasing")
+    db.commit()
+    monkeypatch.setattr(svc, "_anthropic_api_key", lambda _db=None: "fake-key")
+    monkeypatch.setattr(
+        svc, "_web_search_topic",
+        lambda db, topic: [{"summary": "Trend up.", "trend": "up", "value": None, "source_url": None}],
+    )
+    with TestClient(app) as client:
+        res = client.post(
+            "/api/v1/scm/market-search",
+            json={"query": "colour trends 2026", "category_ref": "SRT-FC"},
+        )
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["run"]["status"] == "completed"
+        assert len(body["signals"]) == 1
+
+
+def test_market_search_endpoint_denied_without_run_perm(scm_app):
+    app, db = _client_with_perms(scm_app, ["scm.dashboard.view"])
+    db.commit()
+    with TestClient(app) as c:
+        res = c.post("/api/v1/scm/market-search", json={"query": "x"})
+    assert res.status_code == 403

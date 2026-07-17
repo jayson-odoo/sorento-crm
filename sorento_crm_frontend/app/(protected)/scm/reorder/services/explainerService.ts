@@ -49,9 +49,12 @@ import {
 } from '../lib/explainerMockStore';
 import type { ReorderRecommendation } from '../types/reorder.types';
 import type {
+  AdhocSearchResult,
   AdvisoryResult,
   AskResult,
   ExplanationResult,
+  RunChatResult,
+  RunChatTurn,
   RunOverviewResult,
 } from '../types/explainer.types';
 
@@ -63,6 +66,42 @@ export async function getRunOverview(runId: string): Promise<RunOverviewResult> 
   );
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load run overview'));
   return (await res.json()) as RunOverviewResult;
+}
+
+/** Grounded, multi-turn plan-chat over the WHOLE run (M6-A). Prior turns are
+ *  forwarded so follow-ups resolve; the server reasons over the run's frozen
+ *  numbers only. Real endpoint (no mock). */
+export async function askRunChat(
+  runId: string,
+  question: string,
+  history: RunChatTurn[],
+): Promise<RunChatResult> {
+  const res = await apiFetch(
+    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/chat`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, history }),
+    },
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to answer question'));
+  return (await res.json()) as RunChatResult;
+}
+
+/** Ad-hoc market web search fired from the planning flow (M6-B). Caches signals
+ *  that then drive the per-rec advisory + feed the plan-chat. Real endpoint. */
+export async function searchMarket(
+  query: string,
+  categoryRef?: string | null,
+  currency?: string | null,
+): Promise<AdhocSearchResult> {
+  const res = await apiFetch('/api/v1/scm/market-search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, category_ref: categoryRef ?? null, currency: currency ?? null }),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Market search failed'));
+  return (await res.json()) as AdhocSearchResult;
 }
 
 /** Lazy, cached one-sentence explanation for a recommendation (M5-A1). */

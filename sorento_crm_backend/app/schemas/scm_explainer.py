@@ -24,3 +24,20 @@ class AdvisoryResult(BaseModel):
 
 class RunOverviewResult(BaseModel):
     overview: str
+
+
+class RunChatTurn(BaseModel):
+    """One prior exchange in the plan-chat transcript (client-held, forwarded so
+    follow-ups resolve)."""
+
+    question: str
+    answer: str
+
+
+class RunChatRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    history: list[RunChatTurn] = Field(default_factory=list)
+
+
+class RunChatResult(BaseModel):
+    answer: str

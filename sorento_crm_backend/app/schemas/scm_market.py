@@ -77,3 +77,18 @@ class MarketResearchRun(BaseModel):
 
 class MarketResearchRunResult(BaseModel):
     run: MarketResearchRun
+
+
+# ── Ad-hoc search (fired from the planning flow, M6-B) ──────────────────────────
+
+
+class AdhocSearchRequest(BaseModel):
+    # free-text market question, e.g. "trending bathroom colours 2026"
+    query: str = Field(..., min_length=1)
+    category_ref: Optional[str] = None  # category id to key the signal to (optional)
+    currency: Optional[str] = None
+
+
+class AdhocSearchResult(BaseModel):
+    signals: list[MarketSignal]
+    run: MarketResearchRun

@@ -39,6 +39,10 @@ REFUSAL = "I can't compute that from this recommendation's data."
 _PROMPT_KEY = "scm_recommendation_explainer"
 _ADVISORY_PROMPT_KEY = "scm_market_advisory"
 _MAX_TOKENS = 220
+# Plan-chat answers are longer than a one-liner (a manager asks for a short list /
+# comparison) but still bounded. The context can hold a few hundred compact recs.
+_RUN_CHAT_MAX_TOKENS = 700
+_RUN_CHAT_MAX_RECS = 250
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +357,182 @@ def _deterministic_run_overview(facts: dict) -> str:
     if missing:
         parts.append(f"{_fmt(missing)} buys still need a supplier cost to be cash-ranked.")
     return " ".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# plan-chat — a grounded, multi-turn conversation over the WHOLE run (M6-A)
+# ---------------------------------------------------------------------------
+
+def _run_market_signals(db: Session, run_id: str, limit: int = 15) -> list[dict]:
+    """Latest cached market signals whose category matches any product in the run —
+    so a plan-chat question like 'given the colour trend, what should I stock?' has
+    the signal text to reason over. Matched on the product's category **id** (what
+    the topic picker + ad-hoc search store as ``category_ref``)."""
+    refs = [
+        r[0]
+        for r in db.execute(
+            text(
+                "SELECT DISTINCT p.category_id::text FROM scm.reorder_recommendation r "
+                "JOIN products p ON p.id = r.product_id "
+                "WHERE r.run_id = :r AND p.category_id IS NOT NULL"
+            ),
+            {"r": run_id},
+        ).all()
+    ]
+    if not refs:
+        return []
+    rows = (
+        db.query(MarketSignal)
+        .filter(MarketSignal.category_ref.in_(refs))
+        .order_by(
+            MarketSignal.captured_at.desc().nullslast(),
+            MarketSignal.created_at.desc(),
+        )
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "category_ref": s.category_ref,
+            "summary": s.summary,
+            "trend": s.trend,
+            "value": _num(s.value),
+            "currency": s.currency,
+            "source_url": s.source_url,
+        }
+        for s in rows
+    ]
+
+
+def _run_chat_context(db: Session, run_id: str) -> dict:
+    """The whole run, compact, as the plan-chat's entire world (AC-M6.2): run
+    aggregates + a per-rec snapshot of EVERY rec (capped, urgent + biggest-cash
+    first) + matched market signals. Frozen numbers only — nothing recomputed."""
+    run = db.query(ReorderRun).filter(ReorderRun.id == run_id).first()
+    if not run:
+        raise AppException(status_code=404, message="Run not found.")
+    total = (
+        db.execute(
+            text("SELECT count(*) FROM scm.reorder_recommendation WHERE run_id = :r"),
+            {"r": run_id},
+        ).scalar()
+        or 0
+    )
+    rows = db.execute(
+        text(
+            "SELECT inputs->>'sku' AS sku, inputs->>'product_name' AS product_name, "
+            "rec_type, rounded_qty, cash_impact, net_position, days_of_cover, "
+            "reorder_point, rank, funding_status, "
+            "inputs->>'disposition_action' AS disposition_action, "
+            "inputs->>'reason' AS reason, "
+            "inputs->'supplier'->>'supplier_name' AS supplier "
+            "FROM scm.reorder_recommendation WHERE run_id = :r "
+            # urgent (soonest to run dry) first, then biggest cash — the order a
+            # manager cares about, and the right rows to keep if we must truncate.
+            "ORDER BY (days_of_cover IS NULL), days_of_cover ASC, "
+            "cash_impact DESC NULLS LAST LIMIT :lim"
+        ),
+        {"r": run_id, "lim": _RUN_CHAT_MAX_RECS},
+    ).mappings().all()
+    recs = [
+        {
+            k: v
+            for k, v in {
+                "sku": r["sku"],
+                "product_name": r["product_name"],
+                "type": r["rec_type"],
+                "order_quantity": _num(r["rounded_qty"]),
+                "cash_impact": _num(r["cash_impact"]),
+                "net_position": _num(r["net_position"]),
+                "days_of_cover": _num(r["days_of_cover"]),
+                "reorder_point": _num(r["reorder_point"]),
+                "rank": r["rank"],
+                "funding_status": r["funding_status"],
+                "disposition_action": r["disposition_action"],
+                "reason": r["reason"],
+                "supplier": r["supplier"],
+            }.items()
+            if v is not None and v != ""
+        }
+        for r in rows
+    ]
+    ctx: dict = {
+        "aggregates": _run_facts(db, run_id),
+        "recommendations_total": int(total),
+        "recommendations_shown": len(recs),
+        "recommendations": recs,
+    }
+    if len(recs) < int(total):
+        ctx["truncation_note"] = (
+            f"Showing the {len(recs)} most urgent / highest-cash of {total} "
+            "recommendations; totals in 'aggregates' cover all of them."
+        )
+    signals = _run_market_signals(db, run_id)
+    if signals:
+        ctx["market_signals"] = signals
+    return ctx
+
+
+def _deterministic_run_chat_fallback(ctx: dict) -> str:
+    """No LLM configured — restate the aggregates (never fabricate an answer)."""
+    return _deterministic_run_overview(ctx.get("aggregates") or {}) + (
+        " (AI chat is unavailable — configure a provider to ask follow-up questions.)"
+    )
+
+
+def answer_run_question(
+    db: Session,
+    run_id: str,
+    question: str,
+    history: Optional[list[dict]] = None,
+) -> str:
+    """Grounded, multi-turn plan-chat (AC-M6.1-6.6). The model may REASON over the
+    run's frozen numbers (count, sum, rank, compare, "what defers under budget X")
+    but must not invent a figure the context doesn't contain. Prose only, no tools,
+    no numeric write."""
+    if not (question or "").strip():
+        raise AppException(status_code=422, message="A question is required.")
+    ctx = _run_chat_context(db, run_id)
+
+    provider, model = _provider_and_model(db)
+    if provider is None:
+        return _deterministic_run_chat_fallback(ctx)
+
+    system = render(db, _PROMPT_KEY)[0]
+    messages: list[dict] = [
+        {"role": "system", "content": system},
+        {
+            "role": "user",
+            "content": (
+                "PLAN CHAT mode. You are helping a supply-chain manager interrogate ONE "
+                "reorder run. The run (JSON — the ONLY numbers you may use; you may count, "
+                "sum, rank, filter and compare them, but never invent a figure that isn't "
+                "here):\n"
+                f"{json.dumps(ctx, ensure_ascii=False)}\n\n"
+                "Answer the manager's questions about this plan concisely and specifically, "
+                "naming SKUs and figures from the data. If a question needs data not in the "
+                "run, say so plainly rather than guessing. Money is Malaysian Ringgit — write "
+                "it as 'RM'."
+            ),
+        },
+        {"role": "assistant", "content": "Understood — ask me anything about this plan."},
+    ]
+    for turn in history or []:
+        q = (turn.get("question") or "").strip()
+        a = (turn.get("answer") or "").strip()
+        if q:
+            messages.append({"role": "user", "content": q})
+        if a:
+            messages.append({"role": "assistant", "content": a})
+    messages.append({"role": "user", "content": question.strip()})
+
+    result = provider.chat(
+        messages,
+        temperature=0.0,
+        model=model,
+        max_tokens=_RUN_CHAT_MAX_TOKENS,
+    )
+    return (result.content or "").strip() or _deterministic_run_chat_fallback(ctx)
 
 
 def _rec_currency(rec: ReorderRecommendation) -> Optional[str]:

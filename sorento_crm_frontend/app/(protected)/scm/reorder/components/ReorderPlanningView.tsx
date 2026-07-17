@@ -16,6 +16,7 @@ import type {
   ReorderRunSummary,
 } from '../types/reorder.types';
 import { CashCopilotResults } from './CashCopilotResults';
+import { PlanAssistant } from './PlanAssistant';
 import { ReorderResultsGrid } from './ReorderResultsGrid';
 import { ReorderStatTiles } from './ReorderStatTiles';
 import { RunHistoryPanel } from './RunHistoryPanel';
@@ -200,6 +201,7 @@ export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boo
             onToggle={toggleType}
           />
           <AiRunOverview runId={displayedRunId} enabled={showResults} />
+          <PlanAssistant runId={displayedRunId} />
           {typeFilter === '' || typeFilter === 'buy' ? (
             <CashCopilotResults runId={displayedRunId} enabled={showResults} />
           ) : (
