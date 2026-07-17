@@ -267,7 +267,7 @@ def _handler_scm_reorder_run(db, task):
     created = reorder_svc.create_run(
         db,
         warehouse_codes=[],            # all active warehouses (M8-D1)
-        buy_scope="network",
+        buy_scope="warehouse",         # per-warehouse planning: each buy ties to a real WH
         include_market=include_market,  # market OFF for the scheduled run (M8-D1)
         enqueue=False,                  # run inline on this process
     )
