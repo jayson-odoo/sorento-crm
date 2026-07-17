@@ -8,6 +8,10 @@ class ResizeObserverStub {
   disconnect() {}
 }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
+Element.prototype.hasPointerCapture = Element.prototype.hasPointerCapture ?? (() => false);
+Element.prototype.setPointerCapture = Element.prototype.setPointerCapture ?? (() => {});
+Element.prototype.releasePointerCapture = Element.prototype.releasePointerCapture ?? (() => {});
+Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
     matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
@@ -20,7 +24,12 @@ vi.mock('../hooks/useScmDashboard', () => ({
 }));
 
 import { ProductListDialog } from './ProductListDialog';
-import { NET_POSITION_FORMULA } from './HealthIndicators';
+import {
+  LEAD_TIME_HINT,
+  NET_POSITION_FORMULA,
+  REORDER_POINT_FORMULA,
+  SAFETY_STOCK_HINT,
+} from './HealthIndicators';
 import { EMPTY_SCM_FILTERS } from '../services/scmDashboardService';
 import type { ProductSummary } from '../types/scm.types';
 
@@ -127,5 +136,91 @@ describe('ProductListDialog', () => {
     expect(within(dialog).getByText(/Page 1 of 3/)).toBeInTheDocument();
     expect(within(dialog).getByLabelText('Previous page')).toBeDisabled();
     expect(within(dialog).getByLabelText('Next page')).toBeEnabled();
+  });
+
+  it('adds a Reorder point column + "Low stock" status in the Low-stock drill (M8-B8)', () => {
+    useScmProducts.mockReturnValue(
+      page([prod({ status: 'low', on_hand: 12, net_position: 20, reorder_point: 30, stockout_with_committed: false })], 1),
+    );
+    render(
+      <ProductListDialog
+        {...baseProps}
+        title="Below reorder point"
+        target={{ status: 'low' }}
+      />,
+    );
+    const dialog = screen.getByRole('dialog');
+    // the Low-stock drill exposes the Reorder point column (net <= ROP relationship)
+    expect(within(dialog).getByText('Reorder point')).toBeInTheDocument();
+    expect(within(dialog).getByText('30')).toBeInTheDocument();
+    // status renders "Low stock", never "Healthy" or "Stockout"
+    expect(within(dialog).getByText('Low stock')).toBeInTheDocument();
+    expect(within(dialog).queryByText('Stockout')).not.toBeInTheDocument();
+  });
+
+  it('exposes the Reorder-point formula popover in the Low-stock drill (M8-F5)', async () => {
+    useScmProducts.mockReturnValue(
+      page([prod({ status: 'low', on_hand: 12, net_position: 20, reorder_point: 30, avg_daily_demand: 2, stockout_with_committed: false })], 1),
+    );
+    render(
+      <ProductListDialog
+        {...baseProps}
+        title="Below reorder point"
+        target={{ status: 'low' }}
+      />,
+    );
+    // the (i) beside the Reorder point cell opens a popover with the ROP formula
+    fireEvent.click(screen.getByLabelText('Explain reorder point for CWCY605'));
+    expect(await screen.findByText(REORDER_POINT_FORMULA)).toBeInTheDocument();
+    // "Reorder point = Safety stock + Demand rate x Lead time" is the exact wording
+    expect(REORDER_POINT_FORMULA).toMatch(/Safety stock \+ Demand rate x Lead time/i);
+  });
+
+  it('shows the safety-stock + lead-time values and definitions in the ROP popover (M8-F10)', async () => {
+    useScmProducts.mockReturnValue(
+      page([prod({
+        status: 'low', on_hand: 15, net_position: 20, reorder_point: 30,
+        avg_daily_demand: 2, safety_stock: 88, lead_time_days: 7,
+        stockout_with_committed: false,
+      })], 1),
+    );
+    render(
+      <ProductListDialog {...baseProps} title="Below reorder point" target={{ status: 'low' }} />,
+    );
+    fireEvent.click(screen.getByLabelText('Explain reorder point for CWCY605'));
+    // both ROP inputs render with their actual values …
+    expect(await screen.findByText('Safety stock')).toBeInTheDocument();
+    expect(screen.getByText('88')).toBeInTheDocument();
+    expect(screen.getByText('Lead time')).toBeInTheDocument();
+    expect(screen.getByText('7 days')).toBeInTheDocument();
+    // … each with its one-line plain definition, not the old "set on the reorder plan" note
+    expect(screen.getByText(SAFETY_STOCK_HINT)).toBeInTheDocument();
+    expect(screen.getByText(LEAD_TIME_HINT)).toBeInTheDocument();
+    expect(screen.queryByText(/Safety stock and lead time are set on the reorder plan/i)).not.toBeInTheDocument();
+  });
+
+  it('shows a dash + "set on the reorder plan" only for a missing ROP input (M8-F10)', async () => {
+    useScmProducts.mockReturnValue(
+      page([prod({
+        status: 'low', on_hand: 12, net_position: 20, reorder_point: 30,
+        avg_daily_demand: 2, safety_stock: 12, lead_time_days: null,
+        stockout_with_committed: false,
+      })], 1),
+    );
+    render(
+      <ProductListDialog {...baseProps} title="Below reorder point" target={{ status: 'low' }} />,
+    );
+    fireEvent.click(screen.getByLabelText('Explain reorder point for CWCY605'));
+    // safety stock present keeps its definition …
+    expect(await screen.findByText(SAFETY_STOCK_HINT)).toBeInTheDocument();
+    // … lead time is null → dash + the note (only for the missing one), no lead-time hint
+    expect(screen.getByText('Set on the reorder plan.')).toBeInTheDocument();
+    expect(screen.queryByText(LEAD_TIME_HINT)).not.toBeInTheDocument();
+  });
+
+  it('does NOT add the Reorder point column to the Stockouts drill', () => {
+    useScmProducts.mockReturnValue(page([prod()], 1));
+    render(<ProductListDialog {...baseProps} />);
+    expect(within(screen.getByRole('dialog')).queryByText('Reorder point')).not.toBeInTheDocument();
   });
 });

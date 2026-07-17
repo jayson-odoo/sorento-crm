@@ -29,7 +29,13 @@
  *                                       //   value location on net-position rows).
  *                                       //   null = unknown (e.g. null cost_price SKU).
  *   xyz_class        : 'X'|'Y'|'Z'|null // item_classification.xyz_class. null = unknown.
- *   reorder_point    : number | null    // M3 — stays null until the ROP engine lands.
+ *   reorder_point    : number | null    // M8-B — latest completed run's engine ROP;
+ *                                       //   null when the SKU was never planned.
+ *   safety_stock     : number | null    // M8-F10 — ROP input from the SAME rec's frozen
+ *                                       //   inputs; buffer for demand/supply variability.
+ *   lead_time_days   : number | null    // M8-F10 — ROP input (supplier lead-time days);
+ *                                       //   null when un-planned. Shown with a plain
+ *                                       //   definition in the Low-stock reorder-point (i).
  *
  * demand trend series (`/demand-series?sku=&warehouse=`) — the expandable Product
  * row's "Demand — last 12 months" sparkline. ~12 MONTHLY buckets of DO outflow
@@ -41,8 +47,9 @@
  *   overstock_valuation : number | null // Σ stock_valuation WHERE days_of_cover
  *                                        //   > reorder_policy.overstock_days.
  *   overstock_count     : number | null // count of the same SKU×warehouse rows.
- *   below_rop_count     : number | null // M3, NOT M2 — needs a real reorder point;
- *                                        //   stays null, tile DEFERRED.
+ *   below_rop_count     : number | null // M8-B — count of on_hand>0 AND
+ *                                        //   net<=reorder_point (latest completed
+ *                                        //   run's engine ROP); 0 when no run yet.
  *
  * suppliers (`/suppliers`) — a `performance` object per supplier group, or null:
  *   performance: {
@@ -62,10 +69,10 @@
  * "Demand": Steady/Variable/Erratic — see `lib/health` display maps); the wire
  * contract keeps the industry-standard ABC/XYZ names.
  *
- * The `health` param accepts `stockout|dead|healthy|incoming|overstock`. Overstock
- * is demand-derived (days-of-cover over the ceiling) and computed + filtered
- * server-side. `low` (below reorder point) is DEFERRED to M3 — its tile + legend
- * chip render greyed/inert and `health=low` is never sent.
+ * The `health` param accepts `stockout|dead|low|healthy|incoming|overstock`.
+ * Overstock is demand-derived (days-of-cover over the ceiling); `low` (M8-B) is a
+ * stocked SKU at/under the demand-aware engine reorder point — both computed +
+ * filtered server-side.
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
@@ -74,6 +81,7 @@ import type { DataGridApiResponse } from '@/components/ui/data-grid';
 import type {
   AbcFilterValue,
   ActiveStatusFilter,
+  DemandExplain,
   DemandSeries,
   HealthState,
   LifecycleFilter,
@@ -258,6 +266,24 @@ export async function getDemandSeries(
   if (warehouse) sp.set('warehouse', warehouse);
   const res = await apiFetch(`${BASE}/demand-series?${sp.toString()}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load demand trend'));
+  return res.json();
+}
+
+/**
+ * The demand working behind a SKU's avg-daily-demand — the navigable delivery
+ * orders that drove outflow plus the rate + Coefficient of variation (M8-B9,
+ * reusing the Slice A2 explain endpoint). Scoped to one warehouse when the drill
+ * cell carries one. Takes the product/warehouse UUIDs (carried on the drill row
+ * for this fetch only) and resolves them to human-readable DO numbers server-side.
+ */
+export async function getDemandExplain(
+  productId: string,
+  warehouseId?: string | null,
+): Promise<DemandExplain> {
+  const sp = new URLSearchParams({ product_id: productId });
+  if (warehouseId) sp.set('warehouse_id', warehouseId);
+  const res = await apiFetch(`/api/v1/scm/analytics/explain/demand?${sp.toString()}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load demand detail'));
   return res.json();
 }
 

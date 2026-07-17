@@ -16,10 +16,9 @@ import type { AbcClass, HealthState, XyzClass } from '../types/scm.types';
  *
  * `deferred: true` states are rendered disabled/muted — they light up when the
  * backing data exists. `overstock` is ACTIVE (days-of-cover over the ceiling,
- * computed + filtered server-side). `low` (below reorder point) stays DEFERRED
- * to M3: a real reorder point needs demand × lead time + safety stock, which
- * doesn't exist until M3 — we never fake it. The reorder-point *column* is
- * likewise deferred (M3).
+ * computed + filtered server-side). `low` (below reorder point) is ACTIVE as of
+ * M8-B: the demand-aware engine reorder point (latest completed run) is real, so
+ * a stocked SKU with `net <= reorder_point` reads as "Low stock".
  */
 export interface HealthStateMeta {
   state: HealthState;
@@ -42,7 +41,7 @@ export interface HealthStateMeta {
 export const HEALTH_STATES: Record<HealthState, HealthStateMeta> = {
   stockout: {
     state: 'stockout',
-    label: 'Stockout',
+    label: 'Out of stock',
     icon: AlertTriangle,
     solidClass: 'bg-scm-stockout',
     softClass: 'bg-scm-stockout-soft',
@@ -53,18 +52,16 @@ export const HEALTH_STATES: Record<HealthState, HealthStateMeta> = {
   },
   low: {
     state: 'low',
-    label: 'Low / reorder-due',
+    label: 'Low stock',
     icon: TrendingDown,
     solidClass: 'bg-scm-low',
     softClass: 'bg-scm-low-soft',
     textClass: 'text-scm-low',
     barClass: 'bg-scm-low',
-    // DEFERRED to M3. A real reorder point = demand × lead time + safety stock,
-    // none of which exists until M3, so this legend chip stays inactive/greyed
-    // ("later step") — we never fabricate a reorder point. Do NOT flip to false
-    // until the M3 reorder-point engine lands.
-    deferred: true,
-    intent: 'Below reorder point',
+    // ACTIVE as of M8-B: the demand-aware engine reorder point (latest completed
+    // run) is real, so a stocked SKU with net <= reorder_point reads as Low stock.
+    deferred: false,
+    intent: 'In stock but at or below the reorder point',
   },
   healthy: {
     state: 'healthy',
@@ -114,10 +111,12 @@ export const HEALTH_STATES: Record<HealthState, HealthStateMeta> = {
   },
 };
 
-/** States wired with real data at M1, worst-first (drives legend + composition order). */
+/** States wired with real data, worst-first (drives legend + composition order).
+ *  `low` (below reorder point) joined the active set at M8-B. */
 export const M1_ACTIVE_STATES: HealthState[] = [
   'stockout',
   'dead',
+  'low',
   'healthy',
   'incoming',
 ];

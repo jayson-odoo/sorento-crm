@@ -7,7 +7,9 @@ numeric write anywhere (AC-M5.3 / AC-M5.8). Paths mirror the FE contract in
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Depends
+from typing import Optional
+
+from fastapi import APIRouter, Body, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -17,6 +19,7 @@ from app.schemas.scm_explainer import (
     AskRequest,
     AskResult,
     ExplanationResult,
+    PastPlansResult,
     RunChatRequest,
     RunChatResult,
     RunOverviewResult,
@@ -57,8 +60,36 @@ def run_chat(
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
+    """Unified plan assistant (M8-F6): one Ask input. The service auto-decides whether
+    a live market web search is needed, folds any reading into the grounded answer, and
+    attaches a confirm-gated ``proposal`` when a signal maps onto plan lines. No numeric
+    write anywhere; a live scan only caches its own signal row (persisted on commit)."""
     history = [t.model_dump() for t in payload.history]
-    return {"answer": svc.answer_run_question(db, run_id, payload.question, history)}
+    result = svc.answer_run_chat(
+        db, run_id, payload.question, history, actor=(_user or {}).get("id")
+    )
+    db.commit()  # persist any signal row cached by an auto-run market scan
+    return result
+
+
+@router.get("/reorder-runs/{run_id}/past-plans", response_model=PastPlansResult)
+def get_past_plans(
+    run_id: str,
+    product_code: Optional[str] = Query(default=None),
+    category: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Cross-run history (M8-E3): prior COMPLETED-run lines for a SKU (+ its category
+    siblings / variant neighbours) or a category. Read-only; the current run is
+    excluded so only PRIOR plans surface."""
+    lines = svc.query_past_plans(
+        db,
+        product_code=product_code,
+        category_ref=category,
+        exclude_run_id=run_id,
+    )
+    return {"data": lines}
 
 
 @router.post("/recommendations/{rec_id}/ask", response_model=AskResult)

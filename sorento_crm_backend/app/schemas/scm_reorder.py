@@ -15,8 +15,12 @@ from pydantic import BaseModel
 # --- create / poll ----------------------------------------------------------
 
 class CreateReorderRunRequest(BaseModel):
+    """Manual-plan request (M8-D5). ``buy_scope`` is gone — planning scope is fixed
+    (create_run defaults it internally); the FE manual modal sends only warehouse +
+    budget. Market never enters a run (it reaches the plan through chat only), so
+    ``include_market`` stays false here.
+    """
     warehouse_codes: List[str] = []
-    buy_scope: Literal["network", "warehouse"] = "network"
     budget_id: Optional[str] = None  # M4 — ignored in M3
     include_market: bool = False  # M7 — opt-in market-trend priority factor
 
@@ -65,6 +69,14 @@ class ReorderRunListItem(BaseModel):
 class ReorderRunListResponse(BaseModel):
     data: List[ReorderRunListItem]
     pagination: dict  # {page, limit, total, total_pages}
+
+
+class ReorderRunTodayResponse(ReorderRunListItem):
+    """The run the reorder page opens to without knowing an id (M8-D3/D4): today's
+    scheduled snapshot when present, else the most-recent completed run (the last
+    available snapshot). ``is_today`` tells the FE whether the header may say
+    "Today's plan" or must show that run's date + time (M8-D11)."""
+    is_today: bool = False
 
 
 # --- recommendations grid ---------------------------------------------------

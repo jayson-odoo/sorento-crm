@@ -5,11 +5,13 @@ canonical ``public`` master data, and computes per SKU×warehouse **health statu
 **valuation**, **imbalance**, and the attention ranking that drives the default sort.
 
 Health status (per SKU×warehouse or per aggregated product) precedence:
-  1. ``stockout``  — quantity_on_hand == 0
+  1. ``stockout``  — quantity_on_hand == 0 (rendered "Out of stock", M8-B7)
   2. ``dead``      — on_hand > 0 AND last outbound movement older than the resolved
                      ``reorder_policy.dead_stock_days`` (or never moved)
-  3. ``incoming``  — on_hand > 0, not dead, and an open (placed) PO contributes supply
-  4. ``healthy``   — otherwise
+  3. ``low``       — on_hand > 0, not dead, and ``net <= reorder_point`` (the demand-aware
+                     engine ROP from the latest completed run); rendered "Low stock" (M8-B7)
+  4. ``incoming``  — on_hand > 0, not dead/low, and an open (placed) PO contributes supply
+  5. ``healthy``   — otherwise
 
 ``stockout_with_committed`` = on_hand == 0 AND committed > 0 (the reorder-signal
 attention badge). ``imbalance`` = the same SKU is stocked-out in one warehouse while
@@ -43,7 +45,7 @@ _ABC_RANK = {"A": 0, "B": 1, "C": 2}
 # PO statuses that count as placed supply — mirrors scm.on_order_v (drafts excluded).
 PLACED_PO_STATUSES = ("active", "received", "partial", "closed")
 
-_STATUS_RANK = {"stockout": 1, "dead": 2, "incoming": 3, "healthy": 4}
+_STATUS_RANK = {"stockout": 1, "dead": 2, "low": 3, "incoming": 4, "healthy": 5}
 
 
 @dataclass
@@ -71,11 +73,20 @@ def _f(value) -> float:
 
 
 def _compute_status(on_hand: float, on_order: float, committed: float,
-                    last_movement: Optional[date], dead_days: int, today: date) -> str:
+                    last_movement: Optional[date], dead_days: int, today: date,
+                    net: Optional[float] = None,
+                    reorder_point: Optional[float] = None) -> str:
     if on_hand <= 0:
         return "stockout"
     if last_movement is None or (today - last_movement).days > dead_days:
         return "dead"
+    # M8-B7: a stocked, non-dead SKU sitting at/under its demand-aware reorder point
+    # reads as ``low`` (Low stock) rather than healthy/incoming — reorder is the signal
+    # that matters. ``net`` already folds in on_order, so an inbound PO that still leaves
+    # net at/under ROP is genuinely low. A null reorder_point (no completed run / no rec)
+    # skips this branch, so an un-planned SKU never falsely reads as low.
+    if reorder_point is not None and net is not None and net <= reorder_point:
+        return "low"
     if on_order > 0:
         return "incoming"
     return "healthy"
@@ -121,6 +132,21 @@ def _is_overstock(on_hand: float, days_of_cover: Optional[float],
     return not avg_daily_demand  # 0 or None → infinite cover with stock
 
 
+def _is_below_rop(on_hand: float, net: float, reorder_point: Optional[float]) -> bool:
+    """Low-stock (M8-B): a STOCKED product sitting at or under its demand-aware
+    reorder point (engine ROP from the latest completed run, NOT a static min qty).
+
+    ``on_hand > 0`` keeps stockout precedence (M8-B2: an ``on_hand <= 0`` product is
+    ``stockout``, never ``low`` — counted in the Stockouts tile only). A null
+    ``reorder_point`` (no completed run, or no rec for this product) never counts, so
+    an un-planned SKU is simply absent from the low set rather than falsely flagged."""
+    if reorder_point is None:
+        return False
+    if on_hand <= 0:
+        return False
+    return net <= reorder_point
+
+
 def _matches_class(value: Optional[str], wanted: Optional[str]) -> bool:
     """ABC/XYZ class-filter predicate. ``unknown`` matches an unclassified (null)
     row; a concrete letter matches exactly; no filter matches everything."""
@@ -154,6 +180,11 @@ def _matches_health(row: dict, health: str) -> bool:
     computed status letter-for-letter."""
     if health == "overstock":
         return bool(row.get("overstock"))
+    if health == "low":
+        # Low-stock is demand-derived (net at/under the engine reorder point) and is NOT
+        # one of the mutually-exclusive computed statuses, so it matches the row's
+        # precomputed ``below_rop`` flag (which already enforces stockout precedence).
+        return bool(row.get("below_rop"))
     return row["status"] == health
 
 
@@ -191,6 +222,30 @@ class ScmDashboardService:
         self._global_dead_days: Optional[int] = None
         self._global_loaded = False
         self._overstock_days: Optional[int] = None
+        self._latest_run_id: Optional[str] = None
+        self._latest_run_loaded = False
+
+    # -- latest completed reorder run (reorder-point source) -----------------
+
+    def _latest_completed_run_id(self) -> Optional[str]:
+        """Id of the most recent completed reorder run, whose frozen
+        ``reorder_recommendation.reorder_point`` values drive the low-stock signal
+        (M8-B). The engine is NOT re-run — this is a read of the last snapshot. Ordered
+        by finish time (falling back to creation) so the freshest plan wins — the SAME
+        ordering key ``reorder_run_service.today_or_latest_run`` uses for its
+        latest-completed fallback, so the dashboard ROP source and the reorder page
+        reference the same run. ``None`` when no run has ever completed (low-stock then
+        reads as zero, never crashing)."""
+        if not self._latest_run_loaded:
+            row = self.db.execute(text(
+                "SELECT id FROM scm.reorder_run "
+                "WHERE status = 'completed' "
+                "ORDER BY COALESCE(finished_at, created_at) DESC, created_at DESC "
+                "LIMIT 1"
+            )).fetchone()
+            self._latest_run_id = row[0] if row else None
+            self._latest_run_loaded = True
+        return self._latest_run_id
 
     # -- overstock ceiling ---------------------------------------------------
 
@@ -272,6 +327,15 @@ class ScmDashboardService:
             )
             params["sup"] = filters.supplier
 
+        # Reorder-point source (M8-B): the latest completed run's frozen ROP, matched
+        # per product (+ warehouse when the rec is per-warehouse; a network/null-warehouse
+        # rec falls back for that product). Exact-warehouse recs win over network recs, and
+        # only non-null ROPs are considered. Null when no completed run / no rec → the row
+        # simply never reads as low. Read-only join, no engine re-run. The SAME chosen rec
+        # also yields the ROP inputs (M8-F10): ``safety_stock`` + ``lead_time_days`` ride in
+        # the rec's frozen ``inputs`` JSONB, so the reorder-point explain can show the two
+        # values that feed it without a second lookup.
+        params["latest_run_id"] = self._latest_completed_run_id()
         sql = text(
             f"""
             SELECT p.id AS product_id, p.product_code, p.product_name, p.cost_price,
@@ -279,7 +343,8 @@ class ScmDashboardService:
                    w.id AS warehouse_id, w.warehouse_code, w.warehouse_name,
                    np.quantity_on_hand, np.on_order, np.committed, np.net_position,
                    ds.avg_daily_demand, ds.demand_cv,
-                   ic.abc_class, ic.xyz_class, ic.annual_value
+                   ic.abc_class, ic.xyz_class, ic.annual_value,
+                   rop.reorder_point, rop.safety_stock, rop.lead_time_days
             FROM scm.net_position_v np
             JOIN products p ON p.id = np.product_id
             JOIN warehouses w ON w.id = np.warehouse_id
@@ -288,6 +353,18 @@ class ScmDashboardService:
               ON ds.product_id = np.product_id AND ds.warehouse_id = np.warehouse_id
             LEFT JOIN scm.item_classification ic
               ON ic.product_id = np.product_id AND ic.warehouse_id = np.warehouse_id
+            LEFT JOIN LATERAL (
+                SELECT rr.reorder_point,
+                       (rr.inputs->>'safety_stock')::numeric AS safety_stock,
+                       (rr.inputs->>'lead_time_days')::numeric AS lead_time_days
+                FROM scm.reorder_recommendation rr
+                WHERE rr.run_id = :latest_run_id
+                  AND rr.product_id = np.product_id
+                  AND (rr.warehouse_id = np.warehouse_id OR rr.warehouse_id IS NULL)
+                  AND rr.reorder_point IS NOT NULL
+                ORDER BY (rr.warehouse_id = np.warehouse_id) DESC NULLS LAST
+                LIMIT 1
+            ) rop ON true
             WHERE {' AND '.join(where)}
             """
         )
@@ -310,7 +387,21 @@ class ScmDashboardService:
             net = _f(r["net_position"])
             lm = last_move.get((pid, wid))
             dead_days = self._dead_days_for(pid, r["category_code"])
-            status = _compute_status(on_hand, on_order, committed, lm, dead_days, self._today)
+            # M8-B low-stock: engine reorder point (latest completed run), frozen; a
+            # stocked SKU at/under it reads as ``low`` (after stockout/dead precedence).
+            rop_raw = r["reorder_point"]
+            reorder_point = float(rop_raw) if rop_raw is not None else None
+            # M8-F10: the ROP inputs from the SAME chosen rec (frozen inputs JSONB); null
+            # when un-planned or the rec never carried them.
+            ss_raw = r["safety_stock"]
+            safety_stock = float(ss_raw) if ss_raw is not None else None
+            lt_raw = r["lead_time_days"]
+            lead_time_days = float(lt_raw) if lt_raw is not None else None
+            below_rop = _is_below_rop(on_hand, net, reorder_point)
+            status = _compute_status(
+                on_hand, on_order, committed, lm, dead_days, self._today,
+                net=net, reorder_point=reorder_point,
+            )
             sup = suppliers.get(pid)
             cost = r["cost_price"]
             valuation = float(cost) * on_hand if cost is not None else None
@@ -346,6 +437,10 @@ class ScmDashboardService:
                 "xyz_class": r["xyz_class"],
                 "annual_value": float(av) if av is not None else None,
                 "overstock": overstock,
+                "reorder_point": reorder_point,
+                "safety_stock": safety_stock,
+                "lead_time_days": lead_time_days,
+                "below_rop": below_rop,
             })
         return out
 
@@ -460,7 +555,17 @@ class ScmDashboardService:
             last_moves = [w["last_movement"] for w in whs if w["last_movement"]]
             last_move = max(last_moves) if last_moves else None
             dead_days = self._dead_days_for(pid, first["category_code"])
-            status = _compute_status(on_hand, on_order, committed, last_move, dead_days, self._today)
+            # Product-level reorder point = Σ per-warehouse engine ROP (None when no
+            # warehouse carries one). ``low`` (below reorder point) reads off the
+            # product net vs that aggregate so the net-position row's status chip agrees
+            # with its own net + ROP figures (M8-B7).
+            rop_parts = [w["reorder_point"] for w in whs if w["reorder_point"] is not None]
+            product_rop = sum(rop_parts) if rop_parts else None
+            product_below_rop = _is_below_rop(on_hand, net, product_rop)
+            status = _compute_status(
+                on_hand, on_order, committed, last_move, dead_days, self._today,
+                net=net, reorder_point=product_rop,
+            )
             stockout_committed = on_hand <= 0 and committed > 0
             # Product-level demand = Σ per-warehouse avg_daily_demand (None when no
             # warehouse has demand). Days-of-cover / overstock read off the product
@@ -509,8 +614,11 @@ class ScmDashboardService:
                 "abc_class": abc_class,
                 "xyz_class": xyz_class,
                 "overstock": product_overstock,
-                # Reorder point is an M3 field — always null until then.
+                # Reorder-point column stays deferred on the net-position grid (renders
+                # "—"); the aggregate ROP is used only to drive the `low` status +
+                # ``below_rop`` health filter at product level (mirrors the per-wh flag).
                 "reorder_point": None,
+                "below_rop": product_below_rop,
             })
 
         if filters.health:
@@ -562,7 +670,7 @@ class ScmDashboardService:
         out: List[dict] = []
         for code, whs in by_wh.items():
             name = whs[0]["warehouse_name"] or code
-            comp = {"stockout": 0, "dead": 0, "healthy": 0, "incoming": 0}
+            comp = {"stockout": 0, "dead": 0, "low": 0, "healthy": 0, "incoming": 0}
             overstock_ct = 0
             for w in whs:
                 comp[w["status"]] = comp.get(w["status"], 0) + 1
@@ -589,8 +697,8 @@ class ScmDashboardService:
                     "dead": comp["dead"],
                     "healthy": comp["healthy"],
                     "incoming": comp["incoming"],
-                    # Below-reorder-point stays deferred to M3.
-                    "low": None,
+                    # M8-B7: stocked SKUs at/under the engine reorder point in this warehouse.
+                    "low": comp["low"],
                     "overstock": overstock_ct,
                 },
             })
@@ -691,7 +799,14 @@ class ScmDashboardService:
             last_moves = [w["last_movement"] for w in agg["whs"] if w["last_movement"]]
             last_move = max(last_moves) if last_moves else None
             dead_days = self._dead_days_for(pid, agg["category_code"])
-            status = _compute_status(on_hand, on_order, committed, last_move, dead_days, self._today)
+            # M8-B7: product-level low-stock so the supplier "products supplied" chip
+            # agrees with the dashboard (Σ per-warehouse engine ROP; None when none).
+            rop_parts = [w["reorder_point"] for w in agg["whs"] if w["reorder_point"] is not None]
+            product_rop = sum(rop_parts) if rop_parts else None
+            status = _compute_status(
+                on_hand, on_order, committed, last_move, dead_days, self._today,
+                net=agg["net_position"], reorder_point=product_rop,
+            )
             demand_parts = [w["avg_daily_demand"] for w in agg["whs"] if w["avg_daily_demand"]]
             product_add = sum(demand_parts) if demand_parts else None
             product_doc = _days_of_cover(agg["net_position"], product_add)
@@ -704,6 +819,8 @@ class ScmDashboardService:
                 "net_position": agg["net_position"],
                 "status": status,
                 "overstock": _is_overstock(on_hand, product_doc, product_add, overstock_days),
+                # Mirrors the per-warehouse flag so the `low` health filter resolves here.
+                "below_rop": _is_below_rop(on_hand, agg["net_position"], product_rop),
                 "incoming_po_eta": min(etas).isoformat() if etas else None,
             })
 
@@ -741,6 +858,7 @@ class ScmDashboardService:
         overstock_val = 0.0
         stockout_count = 0
         overstock_count = 0
+        below_rop_count = 0
         missing_cost_products: set = set()
         for r in rows:
             if r["stock_valuation"] is not None:
@@ -757,6 +875,11 @@ class ScmDashboardService:
             # counted per SKU×warehouse, independent of the health status.
             if r["overstock"]:
                 overstock_count += 1
+            # Below-reorder-point (M8-B): stocked SKU at/under the engine ROP. The
+            # ``on_hand>0`` guard inside ``below_rop`` means a stockout is never also
+            # counted here (M8-B2 precedence) — the two tiles partition the SKUs.
+            if r["below_rop"]:
+                below_rop_count += 1
 
         po_ids = {pr["po_id"] for pr in placed}
         etas = [pr["eta"] for pr in placed if pr["eta"]]
@@ -767,8 +890,9 @@ class ScmDashboardService:
             "incoming_po_count": len(po_ids),
             "incoming_po_next_eta": min(etas).isoformat() if etas else None,
             "valuation_missing_cost_count": len(missing_cost_products),
-            # Below-reorder-point stays deferred to M3 (needs a real reorder point).
-            "below_rop_count": None,
+            # Below-reorder-point (M8-B): stocked SKUs at/under the latest completed
+            # run's engine reorder point. Zero when no run has completed / no matching recs.
+            "below_rop_count": below_rop_count,
             "overstock_valuation": round(overstock_val, 2),
             "overstock_count": overstock_count,
         }
@@ -804,6 +928,10 @@ class ScmDashboardService:
             out.append({
                 "sku": r["sku"],
                 "product_name": r["product_name"],
+                # UUIDs carried for the avg-daily-demand explain fetch only (M8-B9) —
+                # never displayed; the drill resolves them to DO numbers server-side.
+                "product_id": str(r["product_id"]) if r["product_id"] is not None else None,
+                "warehouse_id": str(r["warehouse_id"]) if r["warehouse_id"] is not None else None,
                 "warehouse_code": r["warehouse_code"],
                 "warehouse_name": r["warehouse_name"] or r["warehouse_code"],
                 "on_hand": r["on_hand"],
@@ -818,6 +946,12 @@ class ScmDashboardService:
                 "days_of_cover": r["days_of_cover"],
                 "abc_class": r["abc_class"],
                 "xyz_class": r["xyz_class"],
+                # M8-B — engine reorder point (latest completed run); null when un-planned.
+                "reorder_point": r["reorder_point"],
+                # M8-F10 — the ROP inputs from the same rec; shown with a plain definition
+                # in the Low-stock reorder-point (i). Null when un-planned.
+                "safety_stock": r["safety_stock"],
+                "lead_time_days": r["lead_time_days"],
             })
 
         # sort: explicit metric/code/status column overrides the code default.

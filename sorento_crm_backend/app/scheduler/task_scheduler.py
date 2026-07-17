@@ -240,6 +240,48 @@ def _handler_scm_analytics(db, task):
         raise
 
 
+def _handler_scm_reorder_run(db, task):
+    """Daily scheduled reorder planning run (M8-D1/D6/D8).
+
+    Plans ALL active warehouses with market insight OFF, then funds EVERYTHING (full
+    budget) so the morning snapshot opens fully within-budget — the user tightens the
+    budget on the page to defer (M8-D6). Runs the pipeline INLINE on the scheduler/
+    worker process (like ``_handler_scm_analytics`` runs ``run_analytics`` inline) so the
+    run + the full-budget funding split are both complete + persisted when the handler
+    returns; no dependence on a live RQ worker draining the run afterwards.
+
+    Optional ``scheduled_tasks.metadata`` keys tune the run with no code change (the
+    "configurable time" is the row's ``start_at``/interval; these tune the run body):
+      * ``budget``          — a numeric cash cap for the scheduled split; null/absent =>
+        full budget (fund everything, the default).
+      * ``include_market``  — market-trend priority factor (default false; market never
+        enters a run per M8-D5, so leave false).
+    """
+    from app.services.scm import reorder_run_service as reorder_svc
+
+    metadata = getattr(task, "metadata_", None)
+    md = metadata if isinstance(metadata, dict) else {}
+    budget = md.get("budget")
+    include_market = bool(md.get("include_market", False))
+
+    created = reorder_svc.create_run(
+        db,
+        warehouse_codes=[],            # all active warehouses (M8-D1)
+        buy_scope="network",
+        include_market=include_market,  # market OFF for the scheduled run (M8-D1)
+        enqueue=False,                  # run inline on this process
+    )
+    run_id = created["run_id"]
+    reorder_svc.run_reorder(run_id, db=db)
+
+    if isinstance(budget, (int, float)) and not isinstance(budget, bool):
+        funding = reorder_svc.apply_run_budget(db, run_id, float(budget))
+    else:
+        # Full budget (M8-D6): fund every costed buy regardless of a numeric cap.
+        funding = reorder_svc.apply_run_budget(db, run_id, None, full=True)
+    return {"run_id": run_id, "include_market": include_market, **funding}
+
+
 def _drain_email_outbox_tick():
     """APScheduler tick wrapper. Owns its own DB session (drain_email_outbox handles errors)."""
     try:
@@ -325,6 +367,7 @@ def register_task_handlers():
     register_handler("system_health_watchdog", lambda db, task: run_health_watchdog(db))
     register_handler("system_health_daily_digest", lambda db, task: run_health_daily_digest(db, task))
     register_handler("scm_analytics", _handler_scm_analytics)
+    register_handler("scm_reorder_run", _handler_scm_reorder_run)
 
 
 def start_scheduler():

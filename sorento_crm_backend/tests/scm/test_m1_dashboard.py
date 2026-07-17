@@ -89,8 +89,9 @@ def test_rollups_shape(scm_app):
     # exactly one placed PO (PO-2026/07-0029, active) contributes incoming supply.
     assert body["incoming_po_count"] == 1
     assert body["incoming_po_next_eta"] == "2026-08-04"
-    # Below-reorder-point stays deferred to M3; overstock is M2-real (non-null).
-    assert body["below_rop_count"] is None
+    # Below-reorder-point is now populated (M8-B) from the latest completed run's
+    # engine ROP — a non-negative int (0 when no run has completed); overstock is M2-real.
+    assert body["below_rop_count"] is not None and body["below_rop_count"] >= 0
     assert body["overstock_valuation"] is not None and body["overstock_valuation"] >= 0
     assert body["overstock_count"] is not None and body["overstock_count"] >= 0
     assert body["total_stock_valuation"] > 0
@@ -107,8 +108,8 @@ def test_warehouses_shape(scm_app):
     t = tiles[0]
     assert {"warehouse_code", "warehouse_name", "worst_state", "stock_valuation",
             "sku_count", "composition"} <= set(t)
-    # Below-reorder-point deferred to M3; overstock is an M2-real count.
-    assert t["composition"]["low"] is None
+    # M8-B7: low (below reorder point) is now a real per-warehouse count; overstock is M2-real.
+    assert t["composition"]["low"] is not None and t["composition"]["low"] >= 0
     assert t["composition"]["overstock"] is not None and t["composition"]["overstock"] >= 0
 
 

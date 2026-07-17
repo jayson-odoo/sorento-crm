@@ -9,7 +9,7 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 const toastError = vi.fn();
 vi.mock('sonner', () => ({ toast: { error: (...a: unknown[]) => toastError(...a) } }));
 
-import { useReorderRun } from './useReorderRun';
+import { useReorderRun, useTodayRun } from './useReorderRun';
 
 function jsonRes(body: unknown, ok = true, status = 200) {
   return {
@@ -76,7 +76,7 @@ describe('useReorderRun — lifecycle', () => {
     const { result } = renderHook(() => useReorderRun(), { wrapper });
 
     await act(async () => {
-      await result.current.start({ warehouse_codes: ['WH-KL'], buy_scope: 'network' });
+      await result.current.start({ warehouse_codes: ['WH-KL'] });
     });
 
     // POST fired with the run request
@@ -97,7 +97,7 @@ describe('useReorderRun — lifecycle', () => {
     routeApi([RUNNING]);
     const { result } = renderHook(() => useReorderRun(), { wrapper });
     await act(async () => {
-      await result.current.start({ warehouse_codes: ['WH-KL'], buy_scope: 'network' });
+      await result.current.start({ warehouse_codes: ['WH-KL'] });
     });
     await waitFor(() => expect(result.current.isRunning).toBe(true));
     expect(result.current.stageIndex).toBe(0);
@@ -108,7 +108,7 @@ describe('useReorderRun — lifecycle', () => {
     routeApi([{ ...RUNNING, status: 'failed', error: 'Engine crashed writing recommendations' }]);
     const { result } = renderHook(() => useReorderRun(), { wrapper });
     await act(async () => {
-      await result.current.start({ warehouse_codes: ['WH-KL'], buy_scope: 'network' });
+      await result.current.start({ warehouse_codes: ['WH-KL'] });
     });
     await waitFor(() => expect(result.current.isFailed).toBe(true));
     expect(result.current.error).toBe('Engine crashed writing recommendations');
@@ -118,7 +118,7 @@ describe('useReorderRun — lifecycle', () => {
     apiFetch.mockResolvedValue(jsonRes({ detail: 'Not allowed to run planning' }, false, 403));
     const { result } = renderHook(() => useReorderRun(), { wrapper });
     await act(async () => {
-      await result.current.start({ warehouse_codes: ['WH-KL'], buy_scope: 'network' });
+      await result.current.start({ warehouse_codes: ['WH-KL'] });
     });
     expect(result.current.isFailed).toBe(true);
     expect(result.current.error).toBe('Not allowed to run planning');
@@ -131,7 +131,7 @@ describe('useReorderRun — lifecycle', () => {
       routeApi([RUNNING]); // never terminates — simulates an orphaned run
       const { result } = renderHook(() => useReorderRun(), { wrapper });
       await act(async () => {
-        await result.current.start({ warehouse_codes: ['WH-KL'], buy_scope: 'network' });
+        await result.current.start({ warehouse_codes: ['WH-KL'] });
       });
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2_000);
@@ -166,10 +166,50 @@ describe('useReorderRun — lifecycle', () => {
     routeApi([COMPLETED]);
     const { result } = renderHook(() => useReorderRun(), { wrapper });
     await act(async () => {
-      await result.current.start({ warehouse_codes: ['WH-KL'], buy_scope: 'network' });
+      await result.current.start({ warehouse_codes: ['WH-KL'] });
     });
     await waitFor(() => expect(result.current.isComplete).toBe(true));
     act(() => result.current.reset());
     expect(result.current.run).toBeNull();
+  });
+});
+
+// The run the page opens to (M8-D3/D4): today's scheduled snapshot, else the most
+// recent completed run, else null (fresh install). `is_today` drives the header
+// copy ("Today's plan" vs a past-run date+time).
+const TODAY_RUN = {
+  run_id: 'run-today',
+  status: 'completed',
+  buy_scope: 'network',
+  warehouse_codes: ['WH-KL', 'WH-JB'],
+  warehouse_count: 2,
+  started_at: '2026-07-17T06:00:00',
+  finished_at: '2026-07-17T06:00:08',
+  is_today: true,
+  summary: { buy_count: 4, disposition_count: 1, exception_count: 0, total_cash_impact: 9000, recommendation_count: 5 },
+};
+
+describe('useTodayRun — the page default run (M8-D3/D4)', () => {
+  it('GETs /reorder-runs/today and exposes today’s snapshot', async () => {
+    apiFetch.mockResolvedValue(jsonRes(TODAY_RUN));
+    const { result } = renderHook(() => useTodayRun(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(apiFetch).toHaveBeenCalledWith('/api/v1/scm/reorder-runs/today');
+    expect(result.current.data?.run_id).toBe('run-today');
+    expect(result.current.data?.is_today).toBe(true);
+  });
+
+  it('returns null when no run exists yet (fresh install → empty page)', async () => {
+    apiFetch.mockResolvedValue(jsonRes(null));
+    const { result } = renderHook(() => useTodayRun(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data).toBeNull();
+  });
+
+  it('falls back to a past completed run flagged is_today=false (M8-D4)', async () => {
+    apiFetch.mockResolvedValue(jsonRes({ ...TODAY_RUN, run_id: 'run-old', is_today: false }));
+    const { result } = renderHook(() => useTodayRun(), { wrapper });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.is_today).toBe(false);
   });
 });

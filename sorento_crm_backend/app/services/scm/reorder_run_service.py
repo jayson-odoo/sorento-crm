@@ -26,11 +26,13 @@ import logging
 import uuid
 from datetime import date, datetime
 from typing import Any, Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.scm import ReorderRecommendation, ReorderRun
+from app.services.error_handler import AppException
 from app.services.scm import cash_ranking
 from app.services.scm import reorder_engine as eng
 from app.services.scm.reorder_policy import (
@@ -49,7 +51,8 @@ _STAGES = ("resolving_policies", "computing_reorder_points",
 # create_run — insert the run + enqueue the job
 # ===========================================================================
 
-def create_run(db: Session, warehouse_codes: Optional[list[str]], buy_scope: str,
+def create_run(db: Session, warehouse_codes: Optional[list[str]],
+               buy_scope: str = "network",
                budget_id: Optional[str] = None, actor: Optional[str] = None,
                enqueue: bool = True, include_market: bool = False) -> dict:
     """Insert a ``running`` ``scm.reorder_run`` (scope snapshot + started_at) and
@@ -58,6 +61,9 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]], buy_scope: str
     ``warehouse_codes`` empty/None => plan every active warehouse. A re-run always
     creates a NEW run_id (runs are immutable). ``enqueue=False`` skips the RQ enqueue
     (tests call ``run_reorder`` synchronously).
+
+    ``buy_scope`` is no longer a manual-plan input (M8-D5) — it defaults to ``network``;
+    the HTTP request schema dropped it. Direct service callers may still pass it.
     """
     buy_scope = buy_scope if buy_scope in ("network", "warehouse") else "network"
     warehouse_ids = _resolve_warehouse_ids(db, warehouse_codes)
@@ -102,6 +108,58 @@ def _resolve_warehouse_ids(db: Session, warehouse_codes: Optional[list[str]]) ->
         "SELECT id FROM warehouses WHERE is_active = true"
     )).fetchall()
     return [str(r[0]) for r in rows]
+
+
+# ===========================================================================
+# today's plan — the run the reorder page opens to (M8-D3/D4)
+# ===========================================================================
+
+_KL_TZ = ZoneInfo("Asia/Kuala_Lumpur")
+
+
+def today_or_latest_run(db: Session, today: Optional[date] = None) -> Optional[dict]:
+    """Pick the run the reorder page opens to WITHOUT knowing an id (M8-D3/D4).
+
+    Returns ``{"row": <run mapping>, "is_today": bool}`` where the row is the
+    most-recent NON-FAILED run STARTED today (Malaysia wall-clock) — the day's
+    scheduled snapshot; else the most-recent COMPLETED run overall — the last
+    available snapshot fallback when today's run has not fired (or failed). Returns
+    ``None`` only when no run exists at all (fresh install → FE shows the empty page +
+    Manual plan). ``today`` overrides the KL calendar date (tests only).
+
+    ``started_at`` is stored naive-UTC; its KL calendar date is derived in SQL so the
+    06:00-KL scheduled run counts as "today" even though its UTC date is the prior day.
+    """
+    if today is None:
+        today = datetime.now(_KL_TZ).date()
+    cols = ("id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log")
+    row = db.execute(text(f"""
+        SELECT {cols}
+        FROM scm.reorder_run
+        WHERE status <> 'failed'
+          AND ((started_at AT TIME ZONE 'utc') AT TIME ZONE 'Asia/Kuala_Lumpur')::date = :today
+        ORDER BY started_at DESC NULLS LAST, created_at DESC
+        LIMIT 1
+    """), {"today": today}).mappings().first()
+    if row is not None:
+        return {"row": dict(row), "is_today": True}
+    # Same ordering key as dashboard_service._latest_completed_run_id so both surfaces
+    # reference the SAME latest-completed run (the dashboard's ROP source and this page).
+    row = db.execute(text(f"""
+        SELECT {cols}
+        FROM scm.reorder_run
+        WHERE status = 'completed'
+        ORDER BY COALESCE(finished_at, created_at) DESC, created_at DESC
+        LIMIT 1
+    """)).mappings().first()
+    if row is None:
+        return None
+    started = row["started_at"]
+    is_today = bool(
+        started is not None
+        and started.replace(tzinfo=ZoneInfo("UTC")).astimezone(_KL_TZ).date() == today
+    )
+    return {"row": dict(row), "is_today": is_today}
 
 
 # ===========================================================================
@@ -815,28 +873,62 @@ def _load_run_buys(db: Session, run_id: str) -> list[cash_ranking.Buy]:
     ) for r in rows]
 
 
+def _decision_split(db: Session, run_id: str) -> tuple[set[str], set[str]]:
+    """The run's buy recs partitioned by decision-overlay status (M8-C3): pinned =
+    accepted/adjusted (force-funded), rejected = dismissed (excluded). Proposed recs are
+    in neither set (they reshuffle with the budget)."""
+    rows = db.execute(text(
+        "SELECT id, status FROM scm.reorder_recommendation "
+        "WHERE run_id = :rid AND rec_type = 'buy'"
+    ), {"rid": run_id}).mappings().all()
+    pinned = {str(r["id"]) for r in rows if r["status"] in ("accepted", "adjusted")}
+    rejected = {str(r["id"]) for r in rows if r["status"] == "dismissed"}
+    return pinned, rejected
+
+
 def allocate_run_budget(db: Session, run_id: str,
                         budget: Optional[float]) -> cash_ranking.AllocationResult:
-    """Greedy funding over the run's buys for ``budget`` — VIEW-TIME, no persistence."""
-    return cash_ranking.allocate_funding(_load_run_buys(db, run_id), budget)
+    """Greedy funding over the run's buys for ``budget`` — VIEW-TIME, no persistence.
+    Applies the decision overlay (pins win, rejects excluded) so the live view matches
+    the persisted split (M8-C3)."""
+    pinned, rejected = _decision_split(db, run_id)
+    return cash_ranking.allocate_funding(
+        _load_run_buys(db, run_id), budget,
+        pinned_ids=pinned, rejected_ids=rejected)
 
 
-def apply_run_budget(db: Session, run_id: str, budget: float) -> dict:
+def apply_run_budget(db: Session, run_id: str, budget: Optional[float],
+                     *, full: bool = False) -> dict:
     """PERSIST the funding split for ``budget``: stamps ``funding_status`` on every buy
-    rec + ``budget_amount`` on the run (so a shared run shows one funded set). Returns
-    the roll-up counts + funded/deferred cash."""
-    result = cash_ranking.allocate_funding(_load_run_buys(db, run_id), budget)
+    rec + ``budget_amount`` on the run (so a shared run shows one funded set). Derives
+    pins (accepted/adjusted) + rejects (dismissed) from the decision overlay so the
+    PERSISTED split matches the live FE split (M8-C3). ``full`` (or ``budget`` None) funds
+    every costed buy within/regardless of budget (the daily-cron path). Rejected recs are
+    excluded from the split and have their ``funding_status`` cleared. Returns the roll-up
+    counts + funded/deferred cash."""
+    pinned, rejected = _decision_split(db, run_id)
+    result = cash_ranking.allocate_funding(
+        _load_run_buys(db, run_id), budget,
+        pinned_ids=pinned, rejected_ids=rejected, full=full)
     for rec_id, status in result.status_by_id.items():
         db.execute(text(
             "UPDATE scm.reorder_recommendation SET funding_status = :s WHERE id = :id"
         ), {"s": status, "id": rec_id})
+    # Rejected buys are out of the plan — clear any stale funding_status so a later read
+    # never shows a dismissed rec as funded/deferred (it reads the decision overlay).
+    if rejected:
+        db.execute(text(
+            "UPDATE scm.reorder_recommendation SET funding_status = NULL "
+            "WHERE id::text = ANY(:ids)"
+        ), {"ids": list(rejected)})
+    budget_amount = None if (full or budget is None) else float(budget)
     db.execute(text(
         "UPDATE scm.reorder_run SET budget_amount = :b WHERE id = :rid"
-    ), {"b": budget, "rid": run_id})
+    ), {"b": budget_amount, "rid": run_id})
     db.commit()
     return {
         "run_id": run_id,
-        "budget": float(budget),
+        "budget": budget_amount,
         "funded_count": result.funded_count,
         "deferred_count": result.deferred_count,
         "needs_cost_count": result.needs_cost_count,
@@ -845,8 +937,86 @@ def apply_run_budget(db: Session, run_id: str, budget: float) -> dict:
     }
 
 
+def explain_net(db: Session, rec_id: str) -> dict:
+    """M8-A1 net-breakdown drill for a recommendation.
+
+    Returns the four position components (on_hand / on_order / committed / net) for the
+    rec's product×warehouse plus the OPEN sales-order lines behind ``committed`` — each
+    navigable (SO number, customer, qty, order date) rather than a pre-aggregated total.
+
+    Positions come from ``scm.net_position_v`` (the SAME source the run froze
+    ``net_position`` from, via ``_positions``); the committed lines come from the base
+    ``sales_order_lines`` tables. Both apply the identical filter
+    (``status='open' AND qty_ordered > qty_delivered``) so the listed line qtys sum to
+    ``committed``, and ``on_hand + on_order - committed == net`` holds. Read-only; no
+    numeric write anywhere.
+    """
+    rec = db.execute(text(
+        "SELECT product_id, warehouse_id FROM scm.reorder_recommendation WHERE id = :id"
+    ), {"id": rec_id}).mappings().first()
+    if not rec:
+        raise AppException(status_code=404, message="Recommendation not found.")
+    return net_breakdown(
+        db,
+        str(rec["product_id"]),
+        str(rec["warehouse_id"]) if rec["warehouse_id"] is not None else None,
+    )
+
+
+def net_breakdown(db: Session, product_id: str,
+                  warehouse_id: Optional[str]) -> dict:
+    """Net components + open-SO-line contributors for a product (+ optional warehouse).
+
+    When ``warehouse_id`` is None (a network rec) positions are summed across all of the
+    product's warehouse cells and the committed SO lines are listed network-wide."""
+    wh_pos = "AND warehouse_id = :wid" if warehouse_id else ""
+    params: dict[str, Any] = {"pid": product_id}
+    if warehouse_id:
+        params["wid"] = warehouse_id
+    pos = db.execute(text(f"""
+        SELECT COALESCE(SUM(quantity_on_hand), 0) AS on_hand,
+               COALESCE(SUM(on_order), 0)         AS on_order,
+               COALESCE(SUM(committed), 0)        AS committed,
+               COALESCE(SUM(net_position), 0)     AS net
+        FROM scm.net_position_v
+        WHERE product_id = :pid {wh_pos}
+    """), params).mappings().first()
+
+    wh_sol = "AND sol.warehouse_id = :wid" if warehouse_id else ""
+    sos = db.execute(text(f"""
+        SELECT so.so_number,
+               c.customer_name,
+               so.order_date,
+               (sol.qty_ordered - sol.qty_delivered) AS qty
+        FROM sales_order_lines sol
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        LEFT JOIN customers c ON c.id = so.customer_id
+        WHERE sol.product_id = :pid
+          AND so.status = 'open'
+          AND sol.qty_ordered > sol.qty_delivered
+          {wh_sol}
+        ORDER BY so.order_date DESC NULLS LAST, so.so_number
+    """), params).mappings().all()
+
+    return {
+        "on_hand": _fnum(pos["on_hand"]),
+        "on_order": _fnum(pos["on_order"]),
+        "committed": _fnum(pos["committed"]),
+        "net": _fnum(pos["net"]),
+        "committed_sos": [{
+            "so_number": r["so_number"],
+            "qty": _fnum(r["qty"]),
+            "customer_name": r["customer_name"],
+            "order_date": r["order_date"].isoformat() if r["order_date"] else None,
+        } for r in sos],
+    }
+
+
 def _summarise(recs: list[ReorderRecommendation]) -> dict:
-    buy = sum(1 for r in recs if r.rec_type == "buy")
+    # Buy count = ORDERABLE buys only (a supplier cost exists). Uncosted buys can't be
+    # bought — they're the "N products skipped, no supplier cost" banner, not part of
+    # the plan — so they must not inflate the Buy tile (mirrors the FE needs-cost split).
+    buy = sum(1 for r in recs if r.rec_type == "buy" and r.unit_cost is not None)
     disposition = sum(1 for r in recs if r.rec_type == "disposition")
     exceptions = sum(1 for r in recs if r.rec_type == "exception")
     total_cash = float(sum(float(r.cash_impact or 0.0) for r in recs if r.rec_type == "buy"))

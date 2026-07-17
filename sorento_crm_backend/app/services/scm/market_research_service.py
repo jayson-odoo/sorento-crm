@@ -258,6 +258,7 @@ def run_research(db: Session, actor: Optional[str] = None) -> dict:
                     trend=trend,
                     summary=summary,
                     source_url=item.get("source_url"),
+                    sources=item.get("sources"),
                     captured_at=datetime.utcnow(),
                     source_system="web_search",
                 )
@@ -361,6 +362,7 @@ def search_adhoc(
             trend=trend,
             summary=summary,
             source_url=item.get("source_url"),
+            sources=item.get("sources"),
             captured_at=datetime.utcnow(),
             source_system="web_search",
         )
@@ -403,15 +405,27 @@ def _web_search_topic(db: Session, topic: MarketResearchTopic) -> list[dict]:
     key = _anthropic_api_key(db)
     if not key:
         return []
-    search_text = _anthropic_web_search(topic.search_prompt or topic.label, key)
+    search_text, sources = _anthropic_web_search(topic.search_prompt or topic.label, key)
     if not search_text:
         return []
-    return _extract_signals(db, topic, search_text)
+    signals = _extract_signals(db, topic, search_text)
+    # Attach the harvested citation list to EVERY signal from this search (they share the
+    # same reading). Merge in the LLM-extracted primary source_url if it isn't already
+    # listed, so the card always has at least that one link (M8-F: prove it is factual).
+    for item in signals:
+        merged = list(sources)
+        primary = (item.get("source_url") or "").strip()
+        if primary and not any(s.get("url") == primary for s in merged):
+            merged.insert(0, {"url": primary, "title": None})
+        item["sources"] = merged or None
+    return signals
 
 
-def _anthropic_web_search(prompt: str, api_key: str) -> str:
+def _anthropic_web_search(prompt: str, api_key: str) -> tuple[str, list[dict]]:
     """Raw Anthropic SDK call with the web-search SERVER tool. Returns the model's
-    concatenated text output (which cites the figures/URLs it found).
+    concatenated text output (which cites the figures/URLs it found) AND the list of
+    citation sources ``[{url, title}]`` harvested from the response — both the text
+    blocks' inline citations and the web_search_tool_result blocks — deduped by url.
 
     ⚠ The tool version string + model id are pinned to authoring-time values and MUST
     be re-confirmed against current Anthropic docs before enabling in prod.
@@ -423,7 +437,8 @@ def _anthropic_web_search(prompt: str, api_key: str) -> str:
         "\n\nUsing web search, report the single most relevant current figure for the "
         "above (a price, index level, %, or rate), whether it is trending up, down or "
         "flat, a one-line plain-language summary a supply-chain planner can act on, and "
-        "the source URL you took the figure from. Be concise."
+        "the source URL you took the figure from. Cite several sources where possible. "
+        "Be concise."
     )
     resp = client.messages.create(
         model=_ANTHROPIC_MODEL,
@@ -432,10 +447,29 @@ def _anthropic_web_search(prompt: str, api_key: str) -> str:
         messages=[{"role": "user", "content": f"{prompt}{instruction}"}],
     )
     parts: list[str] = []
+    sources: list[dict] = []
+    seen: set[str] = set()
+
+    def _add(url, title) -> None:
+        u = (url or "").strip()
+        if not u or u in seen:
+            return
+        seen.add(u)
+        sources.append({"url": u, "title": (title or None)})
+
     for block in getattr(resp, "content", None) or []:
-        if getattr(block, "type", None) == "text":
+        btype = getattr(block, "type", None)
+        if btype == "text":
             parts.append(getattr(block, "text", "") or "")
-    return "".join(parts).strip()
+            # inline citations on the text block point at the sources it used
+            for cit in getattr(block, "citations", None) or []:
+                _add(getattr(cit, "url", None), getattr(cit, "title", None))
+        elif btype == "web_search_tool_result":
+            # the raw result set the model searched over
+            content = getattr(block, "content", None) or []
+            for item in content:
+                _add(getattr(item, "url", None), getattr(item, "title", None))
+    return "".join(parts).strip(), sources
 
 
 _EXTRACT_SYSTEM = (

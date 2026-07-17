@@ -21,6 +21,7 @@ from app.schemas.scm_reorder import (
     ReorderRunAccepted,
     ReorderRunListResponse,
     ReorderRunStatusResponse,
+    ReorderRunTodayResponse,
 )
 from app.services.error_handler import AppException
 from app.services.scm import reorder_run_service as svc
@@ -60,7 +61,6 @@ def create_reorder_run(
     result = svc.create_run(
         db,
         warehouse_codes=payload.warehouse_codes or [],
-        buy_scope=payload.buy_scope,
         budget_id=payload.budget_id,
         actor=(_user or {}).get("id"),
         include_market=payload.include_market,
@@ -102,23 +102,44 @@ def list_reorder_runs(
         ), {"ids": list(all_ids)}).mappings().all():
             code_by_id[wr["id"]] = wr["warehouse_code"]
 
-    data = [_list_item(r, code_by_id) for r in rows]
+    buy_counts = _costed_buy_counts(db, [str(r["id"]) for r in rows])
+    data = [_list_item(r, code_by_id, buy_counts) for r in rows]
     total_pages = max(1, (int(total) + limit - 1) // limit)
     return {"data": data,
             "pagination": {"page": page, "limit": limit, "total": int(total),
                            "total_pages": total_pages}}
 
 
-def _list_item(r, code_by_id: dict) -> dict:
+def _costed_buy_counts(db: Session, run_ids: list[str]) -> dict[str, int]:
+    """Live count of ORDERABLE buys (unit_cost present) per run, from the frozen
+    recommendations. Overrides the run_log's ``buy`` tally so runs generated before
+    the uncosted-exclusion fix still report the orderable count, keeping the Buy tile
+    consistent with the plan grid (which parks uncosted buys in the needs-cost banner)."""
+    if not run_ids:
+        return {}
+    rows = db.execute(text(
+        "SELECT run_id::text AS run_id, count(*) AS n FROM scm.reorder_recommendation "
+        "WHERE run_id::text = ANY(:ids) AND rec_type = 'buy' AND unit_cost IS NOT NULL "
+        "GROUP BY run_id"
+    ), {"ids": run_ids}).mappings().all()
+    return {r["run_id"]: int(r["n"]) for r in rows}
+
+
+def _list_item(r, code_by_id: dict, buy_counts: dict[str, int] | None = None) -> dict:
     """One run-history row: scope resolved to warehouse codes + the completed
-    summary counts frozen in ``run_log``."""
+    summary counts frozen in ``run_log`` (buy_count overridden with the live
+    orderable-buy count so uncosted buys never inflate it)."""
     wids = [str(w) for w in (r["warehouse_ids"] or [])]
     codes = [code_by_id[w] for w in wids if w in code_by_id]
     log_obj = r["run_log"] or {}
     summary = None
     if r["status"] == "completed":
+        rid = str(r["id"])
+        buy_count = (buy_counts or {}).get(rid)
+        if buy_count is None:
+            buy_count = int(log_obj.get("buy", 0))
         summary = {
-            "buy_count": int(log_obj.get("buy", 0)),
+            "buy_count": buy_count,
             "disposition_count": int(log_obj.get("disposition", 0)),
             "exception_count": int(log_obj.get("exceptions", 0)),
             "total_cash_impact": float(log_obj.get("total_cash_impact", 0.0)),
@@ -140,6 +161,34 @@ def _iso(dt) -> Optional[str]:
     return dt.isoformat() if dt is not None else None
 
 
+# NOTE: this static route MUST stay ABOVE ``/reorder-runs/{run_id}`` — declared after
+# it, FastAPI would capture "today" as ``run_id`` (route-shadowing).
+@router.get("/reorder-runs/today", response_model=Optional[ReorderRunTodayResponse])
+def get_today_reorder_run(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """M8-D3/D4 — the run the reorder page opens to without knowing an id: today's
+    scheduled snapshot when present, else the most-recent completed run (last available
+    snapshot). ``is_today`` distinguishes the two so the FE header shows "Today's plan"
+    vs that run's date+time (M8-D11). ``null`` when no run exists yet (fresh install →
+    FE shows the empty page + Manual plan). Same row shape as the history list."""
+    picked = svc.today_or_latest_run(db)
+    if picked is None:
+        return None
+    row = picked["row"]
+    code_by_id: dict[str, str] = {}
+    ids = [str(w) for w in (row["warehouse_ids"] or [])]
+    if ids:
+        for wr in db.execute(text(
+            "SELECT id::text AS id, warehouse_code FROM warehouses WHERE id::text = ANY(:ids)"
+        ), {"ids": ids}).mappings().all():
+            code_by_id[wr["id"]] = wr["warehouse_code"]
+    item = _list_item(row, code_by_id, _costed_buy_counts(db, [str(row["id"])]))
+    item["is_today"] = picked["is_today"]
+    return item
+
+
 @router.get("/reorder-runs/{run_id}", response_model=ReorderRunStatusResponse)
 def get_reorder_run(
     run_id: str,
@@ -157,8 +206,9 @@ def get_reorder_run(
     log_obj = row["run_log"] or {}
     summary = None
     if row["status"] == "completed":
+        buy_count = _costed_buy_counts(db, [str(row["id"])]).get(str(row["id"]))
         summary = {
-            "buy_count": int(log_obj.get("buy", 0)),
+            "buy_count": buy_count if buy_count is not None else int(log_obj.get("buy", 0)),
             "disposition_count": int(log_obj.get("disposition", 0)),
             "exception_count": int(log_obj.get("exceptions", 0)),
             "total_cash_impact": float(log_obj.get("total_cash_impact", 0.0)),
@@ -222,7 +272,7 @@ def list_recommendations(
     params["limit"] = limit
     params["offset"] = (page - 1) * limit
     rows = db.execute(text(f"""
-        SELECT rr.id, rr.rec_type, rr.warehouse_id, rr.net_position, rr.reorder_point,
+        SELECT rr.id, rr.rec_type, rr.product_id, rr.warehouse_id, rr.net_position, rr.reorder_point,
                rr.days_of_cover, rr.rounded_qty, rr.recommended_qty, rr.confidence_band,
                rr.allocation, rr.inputs,
                rr.rank, rr.rank_score, rr.unit_cost, rr.cash_impact, rr.funding_status,
@@ -259,16 +309,35 @@ def apply_reorder_run_budget(
     _user: dict = Depends(_RUN),
 ):
     """Persist the chosen budget + funding split to the run ("Apply budget"). Runs the
-    greedy allocator over the run's frozen buys, stamps ``funding_status`` on each buy
-    rec + ``budget_amount`` on the run so a shared run shows ONE funded set. Persisting
-    funding + budget is a planning action (mutates run state) → ``scm.reorder.run``."""
+    pin/reject-aware allocator over the run's frozen buys, stamps ``funding_status`` on
+    each buy rec + ``budget_amount`` on the run so a shared run shows ONE funded set.
+    Persisting funding + budget is a planning action (mutates run state) → ``scm.reorder.run``.
+
+    Full-budget request (``full: true`` OR a null ``budget``) funds every costed buy — the
+    daily-cron / 'fund all' path — and stamps a null ``budget_amount``."""
     if not db.execute(text("SELECT 1 FROM scm.reorder_run WHERE id = :id"),
                       {"id": run_id}).first():
         raise AppException(status_code=404, message="Reorder run not found.")
     budget = payload.get("budget")
-    if budget is None or not isinstance(budget, (int, float)) or budget < 0:
+    if payload.get("full") or budget is None:
+        return svc.apply_run_budget(db, run_id, None, full=True)
+    if not isinstance(budget, (int, float)) or budget < 0:
         raise AppException(status_code=422, message="A non-negative budget is required.")
     return svc.apply_run_budget(db, run_id, float(budget))
+
+
+@router.get("/recommendations/{rec_id}/explain-net")
+def explain_recommendation_net(
+    rec_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """M8-A1 — net-breakdown drill: ``on_hand`` / ``on_order`` / ``committed`` / ``net``
+    for the rec's product×warehouse plus the list of OPEN sales-order lines behind
+    ``committed`` (each navigable — SO number, customer, qty, order date), summing to the
+    committed figure. Read-only; no numeric write. IDs resolve to human-readable
+    SO number + customer name (no UUIDs surface)."""
+    return svc.explain_net(db, rec_id)
 
 
 def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
@@ -294,6 +363,11 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None) -> dict:
         "xyz_class": inp.get("xyz_class"),
         "warehouse_code": r["warehouse_code"],
         "warehouse_name": r["warehouse_name"],
+        # Data-only ids (never rendered) so the FE demand drill can call
+        # GET /analytics/explain/demand?product_id=&warehouse_id= (M8-A2). Mirrors
+        # how the row already carries the opaque `id` for the explain / detail fetch.
+        "product_id": str(r["product_id"]) if r["product_id"] is not None else None,
+        "warehouse_id": str(r["warehouse_id"]) if r["warehouse_id"] is not None else None,
         "is_network": is_network,
         "allocation": allocation,
         "order_qty": _f(r["rounded_qty"]) if r["rec_type"] == "buy" else None,

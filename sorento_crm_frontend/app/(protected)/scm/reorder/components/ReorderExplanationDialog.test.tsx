@@ -218,6 +218,29 @@ describe('ReorderExplanationDialog', () => {
     expect(onNavigate).toHaveBeenCalledWith(recs[0]);
   });
 
+  it('labels the ABC rank factor with the layman term "Value", not "ABC value" (M8-F4)', () => {
+    render(
+      <ReorderExplanationDialog
+        rec={rec({
+          rank: 1,
+          rank_score: 0.8,
+          cash_impact: 168,
+          unit_cost: 42,
+          rank_factors: [
+            { key: 'urgency', weight: 0.4, value: 0.9, present: true },
+            { key: 'abc', weight: 0.2, value: 1.0, present: true },
+          ],
+        })}
+        open
+        onOpenChange={() => {}}
+      />,
+    );
+    // the "Why this rank" block renders the ABC factor as the plain-language "Value"
+    expect(screen.getByText('Value')).toBeInTheDocument();
+    // the jargon label never leaks to the UI
+    expect(screen.queryByText(/ABC value/i)).not.toBeInTheDocument();
+  });
+
   it('flags a no-supplier EXCEPTION and cannot size the order', () => {
     render(
       <ReorderExplanationDialog

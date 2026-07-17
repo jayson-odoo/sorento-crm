@@ -10,9 +10,9 @@
  *    POST /api/v1/scm/reorder-runs
  *    body: {
  *      warehouse_codes: string[],          // which warehouses to plan for
- *      buy_scope: "network" | "warehouse", // aggregate vs per-warehouse
  *      budget_id?: string | null           // M4 — always null/omitted in M3
  *    }
+ *    Planning scope is fixed server-side (M8-D5) — no `buy_scope` in the request.
  *    → 202 { run_id, status: "running", buy_scope, stage: <ReorderRunStage> }
  *    Enqueues the RQ `run_reorder(run_id)` task. Auth: `scm.reorder.run`.
  *
@@ -168,6 +168,22 @@ export interface ReorderRunHistoryPage {
   pagination: { page: number; limit: number; total: number; total_pages: number };
 }
 
+/** The run the page opens to (M8-D3/D4): today's scheduled snapshot when present,
+ *  else the most-recent completed run. `is_today` distinguishes the two so the
+ *  header reads "Today's plan" vs that run's date+time. Same row shape as history. */
+export interface TodayRun extends ReorderRunHistoryItem {
+  is_today: boolean;
+}
+
+/** Load the default run for the page — `null` when no run exists yet (fresh
+ *  install → empty page + Manual plan). Never throws on an empty body. */
+export async function getTodayRun(): Promise<TodayRun | null> {
+  const res = await apiFetch('/api/v1/scm/reorder-runs/today');
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load today’s plan'));
+  const body = (await res.json()) as TodayRun | null;
+  return body ?? null;
+}
+
 /** Raw shape returned by POST /reorder-runs (202). */
 interface ReorderRunAcceptedDto {
   run_id: string;
@@ -196,7 +212,6 @@ export async function createReorderRun(req: CreateReorderRunRequest): Promise<Re
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       warehouse_codes: req.warehouse_codes,
-      buy_scope: req.buy_scope,
       budget_id: req.budget_id ?? null,
       include_market: req.include_market ?? false,
     }),
@@ -207,7 +222,7 @@ export async function createReorderRun(req: CreateReorderRunRequest): Promise<Re
     run_id: dto.run_id,
     status: dto.status,
     stage: (dto.stage as ReorderRunStage) ?? DEFAULT_STAGE,
-    buy_scope: (dto.buy_scope as BuyScope) ?? req.buy_scope,
+    buy_scope: (dto.buy_scope as BuyScope) ?? 'network',
     summary: null,
     error: null,
   };
@@ -227,6 +242,20 @@ export async function getReorderRun(runId: string): Promise<ReorderRun> {
     summary: dto.summary ?? null,
     error: dto.error ?? null,
   };
+}
+
+/** DEMO / ADMIN reset — roll a run's decisions back to as-generated (clears every
+ *  accept/reject/adjust + the draft POs they staged) so the flow can be re-demoed.
+ *  Confirmed (active) POs are untouched. Returns what was cleared. */
+export async function resetRunDecisions(
+  runId: string,
+): Promise<{ run_id: string; decisions_cleared: number; overrides_cleared: number }> {
+  const res = await apiFetch(
+    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/reset-decisions`,
+    { method: 'POST' },
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to reset the plan'));
+  return res.json();
 }
 
 /** Paginated recommendations for the results grid (server-side page/sort/filter). */
@@ -263,6 +292,35 @@ export async function getRecommendations(
   );
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load recommendations'));
   return (await res.json()) as RecommendationPage;
+}
+
+/**
+ * The FULL disposition (Stock allocation) recommendation set for a run, unpaginated.
+ * The Stock allocation view (M8-F18) splits these into actionable (Discontinue /
+ * Promote) vs FYI "hold" client-side, and the tile counts ONLY the actionable subset
+ * — so an accurate count needs every row, not a page. A run can carry >1000 hold rows
+ * (past the endpoint's page cap) with the few actionable rows scattered alphabetically,
+ * so we page through at the 1000-row cap until the whole set is fetched. Cached per run.
+ */
+export async function getAllDispositionRecommendations(
+  runId: string,
+): Promise<ReorderRecommendation[]> {
+  const PAGE = 1000; // endpoint's max `limit`
+  const first = await getRecommendations(runId, {
+    pageIndex: 0,
+    pageSize: PAGE,
+    type: 'disposition',
+  });
+  const out = [...first.data];
+  for (let page = 1; page < first.pagination.total_pages; page += 1) {
+    const next = await getRecommendations(runId, {
+      pageIndex: page,
+      pageSize: PAGE,
+      type: 'disposition',
+    });
+    out.push(...next.data);
+  }
+  return out;
 }
 
 /** Newest-first paginated run history (drives the Run history panel). */

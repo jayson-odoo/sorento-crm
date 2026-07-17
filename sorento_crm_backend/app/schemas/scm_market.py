@@ -92,3 +92,40 @@ class AdhocSearchRequest(BaseModel):
 class AdhocSearchResult(BaseModel):
     signals: list[MarketSignal]
     run: MarketResearchRun
+
+
+# ── Market signal -> proposed qty deltas (M8-E11, proposal ONLY, no writes) ─────
+
+
+class MarketProposalRequest(BaseModel):
+    # base the proposal on an existing cached signal, OR run a fresh ad-hoc search
+    signal_id: Optional[str] = None
+    query: Optional[str] = None
+    category_ref: Optional[str] = None  # scope a fresh search to a category (optional)
+
+
+class MarketProposalLine(BaseModel):
+    rec_id: str  # target recommendation for the confirm-gated /adjust call
+    sku: Optional[str] = None
+    product_name: Optional[str] = None
+    old_qty: float
+    new_qty: float  # bounded uplift — a proposal, never written here
+    unit_cost: Optional[float] = None
+    cash_impact_delta: Optional[float] = None  # (new-old) * unit_cost; null if uncosted
+    reason: str  # pre-filled from the signal for the override layer
+
+
+class MarketSource(BaseModel):
+    """One citation backing a market signal (M8-F): a url + optional page title."""
+
+    url: str
+    title: Optional[str] = None
+
+
+class MarketProposalResult(BaseModel):
+    signal_summary: Optional[str] = None
+    source_url: Optional[str] = None  # kept for back-compat; prefer ``sources``
+    # M8-F: the citation sources proving the signal is factual (several when available;
+    # falls back to the single legacy source_url so older cached signals still show one).
+    sources: list[MarketSource] = []
+    lines: list[MarketProposalLine]

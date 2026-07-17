@@ -142,19 +142,30 @@ function RunRow({
 export function RunHistoryPanel({
   selectedRunId,
   onSelect,
+  runs: runsOverride,
 }: {
   selectedRunId: string | null;
   onSelect: (run: ReorderRunHistoryItem) => void;
+  /** Prototype override (M8-D9): when provided, render these mock runs and skip
+   *  the fetch entirely. Phase 2 drops this and uses the live run-history API. */
+  runs?: ReorderRunHistoryItem[];
 }) {
+  const usingMock = runsOverride !== undefined;
   const [page, setPage] = useState(1);
-  const { data, isLoading, isError, error, refetch, isFetching } = useReorderRunHistory(
-    page,
-    PAGE_SIZE,
-  );
+  const {
+    data,
+    isLoading: queryLoading,
+    isError: queryError,
+    error,
+    refetch,
+    isFetching,
+  } = useReorderRunHistory(page, PAGE_SIZE, !usingMock);
 
-  const runs = data?.data ?? [];
-  const totalPages = data?.pagination.total_pages ?? 1;
-  const total = data?.pagination.total ?? 0;
+  const runs = usingMock ? runsOverride : (data?.data ?? []);
+  const isLoading = usingMock ? false : queryLoading;
+  const isError = usingMock ? false : queryError;
+  const totalPages = usingMock ? 1 : (data?.pagination.total_pages ?? 1);
+  const total = usingMock ? runsOverride.length : (data?.pagination.total ?? 0);
 
   return (
     <Card>

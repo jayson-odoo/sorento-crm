@@ -402,6 +402,10 @@ class MarketSignal(Base):
     trend = Column(String(30), nullable=True)
     summary = Column(Text, nullable=True)
     source_url = Column(Text, nullable=True)
+    # M8-F: multiple citation sources ([{url, title}, ...]) harvested from the web-search
+    # result, so the market card can PROVE the figure with several links. Falls back to
+    # [source_url] for legacy signals that carry only the single url.
+    sources = Column(JSONB, nullable=True)
     captured_at = Column(DateTime(timezone=False), nullable=True)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)

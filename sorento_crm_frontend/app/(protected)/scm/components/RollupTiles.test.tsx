@@ -61,13 +61,13 @@ describe('RollupTiles', () => {
 
   it('renders skeletons (no figures) while loading', () => {
     render(<RollupTiles data={undefined} isLoading isError={false} {...baseProps} />);
-    expect(screen.queryByText('Stockouts')).not.toBeInTheDocument();
+    expect(screen.queryByText('Out of stock')).not.toBeInTheDocument();
   });
 
   it('renders figures and shows "—" for the two deferred tiles', () => {
     render(<RollupTiles data={DATA} isLoading={false} isError={false} {...baseProps} />);
-    expect(screen.getByText('Stockouts')).toBeInTheDocument();
-    expect(screen.getByText('Below reorder point')).toBeInTheDocument();
+    expect(screen.getByText('Out of stock')).toBeInTheDocument();
+    expect(screen.getByText('Low stock')).toBeInTheDocument();
     expect(screen.getByText('Overstock valuation')).toBeInTheDocument();
     // exactly the two deferred tiles render the em-dash
     expect(screen.getAllByText('—')).toHaveLength(2);
@@ -75,7 +75,7 @@ describe('RollupTiles', () => {
 
   it('toggles a health filter from a stat card body', () => {
     render(<RollupTiles data={DATA} isLoading={false} isError={false} {...baseProps} />);
-    fireEvent.click(screen.getByTitle('Filter to Stockouts'));
+    fireEvent.click(screen.getByTitle('Filter to Out of stock'));
     expect(baseProps.onToggleFilter).toHaveBeenCalledWith('stockout');
   });
 
@@ -105,7 +105,7 @@ describe('RollupTiles', () => {
       isError: false,
     });
     render(<RollupTiles data={DATA} isLoading={false} isError={false} {...baseProps} />);
-    fireEvent.click(screen.getByLabelText(/Stockouts: 3\. View products/i));
+    fireEvent.click(screen.getByLabelText(/Out of stock: 3\. View products/i));
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText('CWCY605')).toBeInTheDocument();
   });

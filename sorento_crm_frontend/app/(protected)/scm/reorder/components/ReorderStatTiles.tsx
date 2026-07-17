@@ -1,52 +1,53 @@
 'use client';
 
-import { AlertTriangle, PackageX, ShoppingCart, Wallet } from 'lucide-react';
+import { PackageX, ShoppingCart, Wallet } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { fmtInt, fmtMoney } from '../../lib/format';
-import type { ReorderRecType, ReorderRunSummary } from '../types/reorder.types';
+
+/** Which recommendation set the plan view is filtered to. Cash impact is a stat,
+ *  not a view, so it never appears here. */
+export type ReorderPlanView = 'buy' | 'disposition';
 
 function Tile({
   label,
   value,
+  subLabel,
   icon: Icon,
   valueClass,
   iconClass,
-  filterType,
   active,
   activeRingClass,
-  onToggle,
+  onClick,
 }: {
   label: string;
   value: string;
+  subLabel?: string;
   icon: typeof Wallet;
   valueClass?: string;
   iconClass?: string;
-  /** When set, the whole card toggle-filters the grid to this recommendation type. */
-  filterType?: ReorderRecType;
   active?: boolean;
   activeRingClass?: string;
-  onToggle?: (type: ReorderRecType) => void;
+  onClick?: () => void;
 }) {
-  const clickable = !!filterType && !!onToggle;
-  const activate = () => filterType && onToggle?.(filterType);
+  const clickable = !!onClick;
   return (
     <Card
       role={clickable ? 'button' : undefined}
       tabIndex={clickable ? 0 : undefined}
-      onClick={clickable ? activate : undefined}
+      onClick={onClick}
       onKeyDown={
         clickable
           ? (e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                activate();
+                onClick?.();
               }
             }
           : undefined
       }
-      title={clickable ? (active ? `Clear ${label} filter` : `Filter to ${label}`) : undefined}
       aria-pressed={clickable ? active : undefined}
+      title={clickable ? `Show ${label} recommendations` : undefined}
       className={cn(
         'p-4',
         clickable &&
@@ -56,12 +57,7 @@ function Tile({
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 truncate text-xs font-medium text-muted-foreground">{label}</div>
-        <span
-          className={cn(
-            'flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted',
-            iconClass,
-          )}
-        >
+        <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted', iconClass)}>
           <Icon className="size-4.5" aria-hidden />
         </span>
       </div>
@@ -74,63 +70,65 @@ function Tile({
       >
         {value}
       </div>
+      {subLabel ? (
+        <div className="mt-0.5 w-full min-w-0 truncate text-2xs text-muted-foreground" title={subLabel}>
+          {subLabel}
+        </div>
+      ) : null}
     </Card>
   );
 }
 
-/** Roll-up tiles for a completed run: # buy, # disposition, # exceptions, cash.
- *  The three count tiles toggle-filter the results grid by type (like the M2
- *  dashboard health tiles); the cash tile stays non-interactive. */
+/**
+ * SCM M8 summary cards for today's plan (M8-C0): exactly three - Buy,
+ * Stock allocation, Cash impact. Buy and Stock allocation are clickable FILTERS
+ * that switch the plan table between the buy cash co-pilot and the read-only
+ * allocation list (the selected card shows an active ring); Cash impact is a stat
+ * only. The Stock allocation count is ACTIONABLE dispositions only (Discontinue /
+ * Promote); FYI "hold" lines are excluded and shown as a muted "N on hold" sub-label
+ * (M8-F18). The internal view key stays `disposition` (M8-C12 relabels the UI only).
+ * The prior Today's-plan / Stock-warning / Within-budget / Over-budget cards are gone:
+ * within/over counts live in the table section headers, and stock warning moved
+ * to the SCM dashboard (M8-B). Prototype: counts are mock.
+ */
 export function ReorderStatTiles({
-  summary,
-  activeType,
-  onToggle,
+  buyCount,
+  dispositionCount,
+  cashTotal,
+  activeView,
+  onSelectView,
 }: {
-  summary: ReorderRunSummary;
-  /** Currently active grid type filter ('' = none) — drives the selected ring. */
-  activeType: string;
-  onToggle: (type: ReorderRecType) => void;
+  buyCount: number;
+  /** ACTIONABLE dispositions only (Discontinue / Promote) - hold lines are excluded
+   *  from the plan entirely and are NOT surfaced here (they carry no action). */
+  dispositionCount: number;
+  cashTotal: number;
+  activeView: ReorderPlanView;
+  onSelectView: (view: ReorderPlanView) => void;
 }) {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
       <Tile
-        label="Buy recommendations"
-        value={fmtInt(summary.buy_count)}
+        label="Buy"
+        value={fmtInt(buyCount)}
         icon={ShoppingCart}
         valueClass="text-scm-incoming"
         iconClass="bg-scm-incoming-soft text-scm-incoming"
-        filterType="buy"
-        active={activeType === 'buy'}
+        active={activeView === 'buy'}
         activeRingClass="ring-scm-incoming"
-        onToggle={onToggle}
+        onClick={() => onSelectView('buy')}
       />
       <Tile
-        label="Dispositions"
-        value={fmtInt(summary.disposition_count)}
+        label="Stock allocation"
+        value={fmtInt(dispositionCount)}
         icon={PackageX}
         valueClass="text-scm-overstock"
         iconClass="bg-scm-overstock-soft text-scm-overstock"
-        filterType="disposition"
-        active={activeType === 'disposition'}
+        active={activeView === 'disposition'}
         activeRingClass="ring-scm-overstock"
-        onToggle={onToggle}
+        onClick={() => onSelectView('disposition')}
       />
-      <Tile
-        label="No-supplier exceptions"
-        value={fmtInt(summary.exception_count)}
-        icon={AlertTriangle}
-        valueClass="text-scm-stockout"
-        iconClass="bg-scm-stockout-soft text-scm-stockout"
-        filterType="exception"
-        active={activeType === 'exception'}
-        activeRingClass="ring-scm-stockout"
-        onToggle={onToggle}
-      />
-      <Tile
-        label="Total cash impact"
-        value={fmtMoney(summary.total_cash_impact)}
-        icon={Wallet}
-      />
+      <Tile label="Cash impact" value={fmtMoney(cashTotal)} icon={Wallet} />
     </div>
   );
 }

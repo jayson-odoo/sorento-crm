@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import type { SortingState } from '@tanstack/react-table';
 import {
   getDeadStockDays,
+  getDemandExplain,
   getDemandSeries,
   getNetPosition,
   getProducts,
@@ -107,6 +108,24 @@ export function useDemandSeries(
     queryKey: ['scm', 'demand-series', sku, warehouse ?? null],
     queryFn: () => getDemandSeries(sku, warehouse),
     enabled: enabled && !!sku,
+    ...baseOptions,
+  });
+}
+
+/**
+ * The delivery orders + rate behind one product×warehouse avg-daily-demand,
+ * fetched lazily when the drill popover opens (`enabled`). Takes the UUIDs the
+ * drill row carries for this fetch only (never displayed). Idle until opened.
+ */
+export function useDemandExplain(
+  productId: string | null | undefined,
+  warehouseId: string | null | undefined,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ['scm', 'demand-explain', productId ?? null, warehouseId ?? null],
+    queryFn: () => getDemandExplain(productId as string, warehouseId),
+    enabled: enabled && !!productId,
     ...baseOptions,
   });
 }

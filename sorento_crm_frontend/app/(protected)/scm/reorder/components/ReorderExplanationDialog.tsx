@@ -1,12 +1,14 @@
 'use client';
 
 import { useCallback, useState } from 'react';
+import Link from 'next/link';
 import { Popover as PopoverPrimitive } from 'radix-ui';
 import {
   AlertTriangle,
   ArrowRightLeft,
   Ban,
   ChevronDown,
+  ExternalLink,
   Layers,
   PackageX,
   SendHorizontal,
@@ -135,7 +137,7 @@ function Step({
 const RANK_FACTOR_LABEL: Record<RankFactor['key'], string> = {
   urgency: 'Urgency',
   margin: 'Margin',
-  abc: 'ABC value',
+  abc: 'Value',
   priority: 'SO priority',
   committed: 'Committed vs forecast',
   market: 'Market trend',
@@ -746,6 +748,7 @@ export function ReorderExplanationDialog({
   totalCount,
   pageItemOffset,
   onNavigate,
+  poLink,
 }: {
   rec: ReorderRecommendation | null;
   open: boolean;
@@ -760,6 +763,9 @@ export function ReorderExplanationDialog({
   pageItemOffset?: number;
   /** Step to a neighbouring recommendation in place (no close). */
   onNavigate?: (rec: ReorderRecommendation) => void;
+  /** The draft PO this rec was confirmed into (M8-F8) — drives the "View PO"
+   *  button that deep-links to the PO detail page. null when not yet confirmed. */
+  poLink?: { po_number: string; po_id: string | null } | null;
 }) {
   const isBuyLike = rec?.type === 'buy' || rec?.type === 'exception';
   const canPage = !!recs && recs.length > 1 && !!rec && !!onNavigate;
@@ -823,6 +829,16 @@ export function ReorderExplanationDialog({
                 <TypeChip rec={rec} />
                 <span className="font-medium text-foreground">{rec.sku}</span>
                 {rec.product_name ? <span>— {rec.product_name}</span> : null}
+                {/* View PO (M8-F8): once the line is confirmed into a draft PO, jump
+                    straight to that PO's detail page. */}
+                {poLink?.po_id ? (
+                  <Button asChild variant="outline" size="sm" className="ms-auto h-7 shrink-0 px-2 text-xs">
+                    <Link href={`/scm/purchase-orders/${poLink.po_id}`} title={`View ${poLink.po_number}`}>
+                      <ExternalLink className="size-3.5" aria-hidden />
+                      View PO
+                    </Link>
+                  </Button>
+                ) : null}
               </span>
             ) : null}
           </DialogDescription>

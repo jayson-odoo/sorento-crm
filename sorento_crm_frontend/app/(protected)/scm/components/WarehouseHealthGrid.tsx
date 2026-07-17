@@ -132,10 +132,10 @@ function WarehouseTile({
 
       <div className="mt-3 grid grid-cols-3 gap-2 text-center">
         <CountStat
-          label="Stockout"
+          label="Out of stock"
           value={wh.stockout_count}
           tone={wh.stockout_count > 0 ? 'text-scm-stockout' : undefined}
-          onOpen={() => openCount('stockout', 'Stockouts')}
+          onOpen={() => openCount('stockout', 'Out of stock')}
         />
         <CountStat
           label="Dead"

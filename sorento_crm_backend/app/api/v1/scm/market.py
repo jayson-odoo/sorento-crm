@@ -20,12 +20,15 @@ from app.dependencies import require_permission_with_api_key
 from app.schemas.scm_market import (
     AdhocSearchRequest,
     AdhocSearchResult,
+    MarketProposalRequest,
+    MarketProposalResult,
     MarketResearchRunResult,
     MarketResearchTopicWrite,
     MarketSignalListResponse,
     MarketTopicListResponse,
     MarketTopicResult,
 )
+from app.services.scm import market_proposal_service as proposal_svc
 from app.services.scm import market_research_service as svc
 
 router = APIRouter()
@@ -65,6 +68,28 @@ def market_search_adhoc(
     then drive the existing per-rec advisory + feed the plan-chat (M6-B, soft)."""
     return svc.search_adhoc(
         db, body.query, body.category_ref, body.currency, (_user or {}).get("id")
+    )
+
+
+@router.post(
+    "/reorder-runs/{run_id}/market-proposal", response_model=MarketProposalResult
+)
+def market_proposal(
+    run_id: str,
+    body: MarketProposalRequest = Body(...),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """M8-E11 — map a market signal to a per-line qty-uplift PROPOSAL on the run's
+    matching buy recs. Writes NOTHING to any recommendation column and never re-runs
+    the engine (M8-E7); the user confirms each line via /recommendations/{id}/adjust."""
+    return proposal_svc.build_market_proposal(
+        db,
+        run_id,
+        signal_id=body.signal_id,
+        query=body.query,
+        category_ref=body.category_ref,
+        actor=(_user or {}).get("id"),
     )
 
 

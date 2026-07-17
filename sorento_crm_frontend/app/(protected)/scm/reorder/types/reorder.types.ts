@@ -111,6 +111,11 @@ export interface ReorderRecommendation {
   /** Warehouse code for a per-warehouse row; null for an aggregated network row. */
   warehouse_code: string | null;
   warehouse_name: string | null;
+  /** Data-only ids — NEVER rendered. They let the days-cover demand drill call
+   *  `GET /analytics/explain/demand?product_id=&warehouse_id=`. `warehouse_id` is
+   *  null on a network (aggregated) row (demand then sums across warehouses). */
+  product_id?: string | null;
+  warehouse_id?: string | null;
   is_network: boolean;
   /** Populated on network buy rows — the suggested per-warehouse split. */
   allocation: AllocationLine[] | null;
@@ -227,10 +232,10 @@ export interface ReorderRun {
   error: string | null;
 }
 
-/** Request to launch a run. `budget_id` is greyed in the UI until M4. */
+/** Request to launch a run. `budget_id` is greyed in the UI until M4. Planning scope
+ *  is fixed server-side (M8-D5) — `buy_scope` is no longer a request field. */
 export interface CreateReorderRunRequest {
   warehouse_codes: string[];
-  buy_scope: BuyScope;
   /** M4 — always null in M3. */
   budget_id?: string | null;
   /** M7 — opt-in: factor market-trend signals into the funding priority (rank), not qty. */

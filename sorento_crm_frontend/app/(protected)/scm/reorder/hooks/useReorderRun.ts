@@ -5,9 +5,11 @@ import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   createReorderRun,
+  getAllDispositionRecommendations,
   getBuyRecommendationsForCash,
   getReorderRun,
   getRecommendations,
+  getTodayRun,
   listReorderRuns,
   type RecommendationQuery,
 } from '../services/reorderRunService';
@@ -170,6 +172,24 @@ export const runDetailKey = (runId: string | null) => ['scm', 'reorder', 'run', 
 /** React-query cache key for the run-history list. */
 export const runHistoryKey = ['scm', 'reorder', 'history'];
 
+/** React-query cache key for the "today's plan" default run. */
+export const todayRunKey = ['scm', 'reorder', 'today'];
+
+/**
+ * The run the page opens to (M8-D3/D4): today's scheduled snapshot when present,
+ * else the most-recent completed run; `null` when no run exists yet. Invalidate
+ * `todayRunKey` after a manual run completes so the newest snapshot surfaces.
+ */
+export function useTodayRun() {
+  return useQuery({
+    queryKey: todayRunKey,
+    queryFn: () => getTodayRun(),
+    refetchOnWindowFocus: false,
+    staleTime: 10_000,
+    retry: 1,
+  });
+}
+
 /**
  * Newest-first paginated run history for the Run history panel. Invalidate
  * `runHistoryKey` when a fresh run completes so it appears at the top.
@@ -213,6 +233,24 @@ export function useBuyRecommendationsForCash(runId: string | null, enabled: bool
   return useQuery({
     queryKey: ['scm', 'reorder', 'cash-recs', runId],
     queryFn: () => getBuyRecommendationsForCash(runId as string),
+    enabled: enabled && !!runId,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+    retry: 1,
+  });
+}
+
+/**
+ * The FULL disposition (Stock allocation) recommendation set for a run. The M8-F18
+ * view needs every row to split actionable (Discontinue / Promote) from FYI hold
+ * and to count only the actionable subset on the tile — so it is fetched whole
+ * (paged internally past the 1000-row cap) and cached per run, not paginated. Kept
+ * enabled in the buy view too so the tile's actionable count is always live.
+ */
+export function useAllDispositionRecommendations(runId: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['scm', 'reorder', 'dispositions', runId],
+    queryFn: () => getAllDispositionRecommendations(runId as string),
     enabled: enabled && !!runId,
     staleTime: 30_000,
     refetchOnWindowFocus: false,

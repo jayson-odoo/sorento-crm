@@ -189,7 +189,8 @@ export function RollupTiles({
   }
 
   // M2 tile — real Σ stock_valuation where days-of-cover > overstock_days. The
-  // "Below reorder point" figure stays DEFERRED to M3 (needs a real reorder point).
+  // "Low stock" (below reorder point) figure is now live: the backend supplies
+  // below_rop_count off the latest completed run's demand-aware ROP (M8-B).
   const overstockValuation = data.overstock_valuation;
 
   return (
@@ -219,7 +220,7 @@ export function RollupTiles({
           onDrill={() => setDrill({ title: 'Dead stock', status: 'dead' })}
         />
         <Tile
-          label="Stockouts"
+          label="Out of stock"
           value={fmtInt(data.stockout_count)}
           icon={AlertTriangle}
           valueClass="text-scm-stockout"
@@ -229,7 +230,30 @@ export function RollupTiles({
           active={activeStatus === 'stockout'}
           activeRingClass="ring-scm-stockout"
           onToggleFilter={onToggleFilter}
-          onDrill={() => setDrill({ title: 'Stockouts', status: 'stockout' })}
+          onDrill={() => setDrill({ title: 'Out of stock', status: 'stockout' })}
+        />
+        {/* M8-B1: low-stock count = products with on_hand > 0 AND net <=
+            reorder_point (demand-aware ROP), with out-of-stock taking precedence
+            (M8-B2). The tile renders data.below_rop_count (populated from the latest
+            completed run's frozen ROP); a null value — no run has ever completed —
+            keeps the greyed em dash. Clicking the number (or the card body) drills/
+            filters to those products via the `low` health filter, which getProducts
+            now serves (M8-B4). */}
+        <Tile
+          label="Low stock"
+          value={data.below_rop_count === null ? EM_DASH : fmtInt(data.below_rop_count)}
+          icon={TrendingDown}
+          valueClass={data.below_rop_count === null ? undefined : 'text-scm-low'}
+          iconClass={
+            data.below_rop_count === null ? undefined : 'bg-scm-low-soft text-scm-low'
+          }
+          hint="In stock but at or below the reorder point"
+          deferred={data.below_rop_count === null}
+          filterStatus="low"
+          active={activeStatus === 'low'}
+          activeRingClass="ring-scm-low"
+          onToggleFilter={onToggleFilter}
+          onDrill={() => setDrill({ title: 'Low stock', status: 'low' })}
         />
         <Tile
           label="Incoming POs"
@@ -247,17 +271,6 @@ export function RollupTiles({
           activeRingClass="ring-scm-incoming"
           onToggleFilter={onToggleFilter}
           onDrill={() => setDrill({ title: 'Incoming purchase orders', status: 'incoming' })}
-        />
-        {/* The real count is DEFERRED to M3's engine (needs demand × lead time +
-            safety stock), so the value stays a greyed em dash rather than a faked
-            number — but the tile is the reorder surface, so it links into planning. */}
-        <Tile
-          label="Below reorder point"
-          value={EM_DASH}
-          icon={TrendingDown}
-          hint="Open reorder planning"
-          deferred
-          href="/scm/reorder"
         />
         <Tile
           label="Overstock valuation"

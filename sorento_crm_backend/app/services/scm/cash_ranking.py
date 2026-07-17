@@ -24,7 +24,7 @@ Two deterministic pieces:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
+from typing import Any, Collection, Optional, Sequence
 
 # ---------------------------------------------------------------------------
 # constants
@@ -250,34 +250,88 @@ class AllocationResult:
     deferred_cash: float
 
 
-def allocate_funding(buys: Sequence[Buy], budget: Optional[float]) -> AllocationResult:
-    """Greedy-by-rank funding (M4-D2/D3/D16). Uncosted buys (``cash_impact`` None) →
-    ``needs_cost`` and never touch the budget. Over the COSTED buys ordered by rank,
-    fund a buy only if its whole cash_impact fits the remaining budget, else SKIP it
-    and continue to the next that fits. Budget 0/None → all costed deferred; budget
-    ≥ Σ costed → all costed funded. Σ funded cash ≤ budget."""
-    ordered = sorted(buys, key=lambda b: (b.rank if b.rank is not None else 1 << 30))
-    status: dict[str, str] = {}
-    funded_count = deferred_count = needs_cost_count = 0
-    funded_cash = deferred_cash = 0.0
-    remaining = float(budget) if budget else 0.0
-    has_budget = bool(budget and budget > 0)
+def allocate_funding(
+    buys: Sequence[Buy],
+    budget: Optional[float],
+    *,
+    pinned_ids: Optional[Collection[str]] = None,
+    rejected_ids: Optional[Collection[str]] = None,
+    full: bool = False,
+) -> AllocationResult:
+    """Greedy-by-rank funding with a manual-override layer (M4-D2/D3/D16 + M8-C2/C3/C7).
 
+    Buckets, in the exact order the FE ``computeFundingM8`` applies them so the persisted
+    split matches the live client split for the same pins/rejects/budget. (The FE also has a
+    live-view-only ``forcedOver`` — manual drag-to-defer — staging concept that has NO
+    counterpart here: it is not persisted on confirm, so it never affects this split. A row
+    dragged-to-defer that is not rejected reverts to funded on reload — known limitation.)
+
+    * **rejected** (``rejected_ids``) — excluded from EVERY bucket; they never appear in
+      ``status_by_id`` and never draw from the budget (as if they were not in the plan).
+    * **uncosted** (``cash_impact`` None) — always ``needs_cost``; never funded/deferred,
+      never touches the budget — EVEN when pinned (a pin can't fund an unknown cost).
+    * **pinned** (``pinned_ids``, costed) — force-funded and consume the budget FIRST; they
+      stay funded even when their total exceeds the budget (so ``funded_cash`` can exceed
+      ``budget`` and the caller's free figure goes negative — a pin never defers on a cut).
+    * **un-pinned** (costed) — greedily fill the LEFTOVER budget by rank: fund a buy only if
+      its whole ``cash_impact`` fits the remaining budget, else SKIP and continue; the rest
+      defer. Budget 0/None-with-no-full → un-pinned all defer.
+
+    **Full budget** (``full=True`` or ``budget is None``) — the daily-cron path: every costed,
+    non-rejected buy funds (uncosted still ``needs_cost``); nothing defers. NOTE this INVERTS
+    the pre-M8 ``budget=None`` meaning ('fund nothing'); the only caller that passed None
+    (the live-view route) guards ``budget is not None`` before calling, so nothing breaks.
+    """
+    pinned = set(pinned_ids or ())
+    rejected = set(rejected_ids or ())
+    full_budget = full or budget is None
+    ordered = sorted(buys, key=lambda b: (b.rank if b.rank is not None else 1 << 30))
+
+    status: dict[str, str] = {}
+    funded_cash = deferred_cash = 0.0
+
+    # Costed buys still in the plan (rejected excluded, uncosted parked as needs_cost).
+    costed: list[Buy] = []
     for b in ordered:
+        if b.id in rejected:
+            continue
         if b.cash_impact is None:
             status[b.id] = "needs_cost"
-            needs_cost_count += 1
             continue
-        cost = float(b.cash_impact)
-        if has_budget and cost <= remaining + 1e-9:
+        costed.append(b)
+
+    if full_budget:
+        # Fund everything costed — no cap.
+        for b in costed:
+            status[b.id] = "funded"
+            funded_cash += float(b.cash_impact)  # type: ignore[arg-type]
+    else:
+        has_budget = bool(budget and budget > 0)
+        remaining = float(budget) if budget else 0.0
+        # 1) Pins first — force-funded, consume budget first (even into the negative).
+        for b in costed:
+            if b.id not in pinned:
+                continue
+            cost = float(b.cash_impact)  # type: ignore[arg-type]
             remaining -= cost
             funded_cash += cost
             status[b.id] = "funded"
-            funded_count += 1
-        else:
-            deferred_cash += cost
-            status[b.id] = "deferred"
-            deferred_count += 1
+        # 2) Un-pinned greedily fill the leftover budget by rank (skip-overflow).
+        for b in costed:
+            if b.id in pinned:
+                continue
+            cost = float(b.cash_impact)  # type: ignore[arg-type]
+            if has_budget and cost <= remaining + 1e-9:
+                remaining -= cost
+                funded_cash += cost
+                status[b.id] = "funded"
+            else:
+                deferred_cash += cost
+                status[b.id] = "deferred"
+
+    funded_count = sum(1 for s in status.values() if s == "funded")
+    deferred_count = sum(1 for s in status.values() if s == "deferred")
+    needs_cost_count = sum(1 for s in status.values() if s == "needs_cost")
 
     return AllocationResult(
         status_by_id=status,

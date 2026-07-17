@@ -1,177 +1,180 @@
 /**
- * SCM M4 Slice B — CashCopilotResults "staged decisions" confirm bar.
- *   - The confirm bar is ABSENT with no staged decisions.
- *   - It is PRESENT with the correct "(X accepted, Y adjusted)" summary once
- *     accepted/adjusted decisions are staged WITHOUT a draft PO.
- *   - It is ABSENT again once every staged decision carries a draft_po_id
- *     (i.e. it has been confirmed into a PO).
- *   - Clicking "Confirm decisions" opens the confirm dialog and confirming
- *     invokes the confirmDecisions mutation with [] (confirm all staged).
+ * SCM M8 — CashCopilotResults (slice C). The funded/deferred experience as ONE
+ * table (two draggable sections) with the budget control in the funded header,
+ * the needs-cost banner, and the confirm-decisions bar.
+ *   M8-C1 two sections · M8-C2 clearable budget input · M8-C7 needs-cost banner
+ *   M8-C8 confirm bar → confirm decisions
  *
- * The heavy presentational children (grids, budget panel, dialogs) are stubbed
- * so the assertions target THIS component's staging logic, and the data/decision
- * hooks are mocked via a hoisted state object the tests mutate per-case.
+ * Driven by a fabricated `M8PlanState` (the hook is unit-tested separately in
+ * useReorderPlan.test.tsx). Wrapped in a QueryClientProvider because the reused
+ * detail dialog mounts react-query hooks lazily.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReorderRecommendation } from '../types/reorder.types';
+import { recToPlanRow, type M8PlanRow } from '../lib/planRow';
+import type { M8PlanState } from '../hooks/useReorderPlan';
 
-class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
+class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
+Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
+Element.prototype.hasPointerCapture = Element.prototype.hasPointerCapture ?? (() => false);
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
     matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
   });
 }
 
-const hoisted = vi.hoisted(() => ({
-  state: {
-    data: [] as unknown[],
-    isLoading: false,
-    isError: false,
-    byId: {} as Record<string, unknown>,
-  },
-  confirmMutate: vi.fn(),
-}));
-
-vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn() }),
-}));
-vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
-
-vi.mock('../hooks/useReorderRun', () => ({
-  useBuyRecommendationsForCash: () => ({
-    data: hoisted.state.data,
-    isLoading: hoisted.state.isLoading,
-    isError: hoisted.state.isError,
-  }),
-}));
-vi.mock('../hooks/useDecisions', () => ({
-  useRecommendationDecisions: () => ({ byId: hoisted.state.byId }),
-  useDecisionMutations: () => ({
-    accept: { mutateAsync: vi.fn(), isPending: false },
-    adjust: { mutateAsync: vi.fn(), isPending: false },
-    reject: { mutateAsync: vi.fn(), isPending: false },
-    bulkAccept: { mutateAsync: vi.fn(), isPending: false },
-    bulkReject: { mutateAsync: vi.fn(), isPending: false },
-    confirm: { mutateAsync: hoisted.confirmMutate, isPending: false },
-  }),
-}));
-
-// Stub the presentational children — the confirm bar + ConfirmActionDialog are
-// what these tests exercise; the grids/panels/dialogs are covered elsewhere.
-vi.mock('./CashBudgetPanel', () => ({ CashBudgetPanel: () => <div data-testid="budget-panel" /> }));
-vi.mock('./CashResultsGrid', () => ({ CashResultsGrid: () => <div data-testid="results-grid" /> }));
-vi.mock('./AdjustRecommendationModal', () => ({ AdjustRecommendationModal: () => null }));
-vi.mock('./RejectRecommendationDialog', () => ({ RejectRecommendationDialog: () => null }));
-vi.mock('./BulkRejectDialog', () => ({ BulkRejectDialog: () => null }));
-vi.mock('./ReorderExplanationDialog', () => ({ ReorderExplanationDialog: () => null }));
-vi.mock('../../components/ConfirmActionDialog', () => ({
-  ConfirmActionDialog: ({ open, title, confirmLabel, onConfirm }: any) =>
-    open ? (
-      <div role="dialog" aria-label={title}>
-        <span>{title}</span>
-        <button type="button" data-testid="dialog-confirm" onClick={onConfirm}>
-          {confirmLabel}
-        </button>
-      </div>
-    ) : null,
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+const toastInfo = vi.fn();
+vi.mock('sonner', () => ({
+  toast: { success: (...a: unknown[]) => toastSuccess(...a), error: (...a: unknown[]) => toastError(...a), info: (...a: unknown[]) => toastInfo(...a) },
 }));
 
 import { CashCopilotResults } from './CashCopilotResults';
-import type { RecDecision } from '../types/decisions.types';
 
-function rec(id: string, over: Record<string, unknown> = {}) {
+function rec(id: string, over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
   return {
-    id,
-    type: 'buy',
-    sku: `SKU-${id}`,
-    cash_impact: 4200,
-    order_qty: 100,
-    rank: 1,
-    rank_score: 0.8,
-    days_to_stockout: 5,
-    funding_status: 'funded',
-    rank_factors: [],
-    ...over,
-  } as unknown;
-}
-
-function decision(id: string, over: Partial<RecDecision>): RecDecision {
-  return {
-    recommendation_id: id,
-    status: 'accepted',
-    override_qty: null,
-    override_supplier_code: null,
-    override_supplier_name: null,
-    reason_text: null,
-    draft_po_number: null,
-    draft_po_id: null,
-    ...over,
+    id, type: 'buy', sku: `SKU-${id}`, product_name: `Product ${id}`,
+    abc_class: 'A', xyz_class: 'X', warehouse_code: 'WH-KL', warehouse_name: 'Kuala Lumpur DC',
+    product_id: `prod-${id}`, warehouse_id: 'wh-1', is_network: false, allocation: null,
+    order_qty: 10, recommended_qty: 10, reorder_point: 5, min_qty: null, max_qty: null,
+    order_up_to: 20, net_position: 3, days_of_cover: 6, reason: 'reorder_point',
+    reason_label: 'net ≤ ROP', confidence: 'high', sample_size: 40,
+    supplier: { supplier_code: 'SUP-ACME', supplier_name: 'Acme', unit_cost: 100, lead_time_days: 14, composite_score: 88, is_primary: true },
+    alternatives: [], is_exception: false, disposition_action: null, transfer_flag: null,
+    forecast_daily_demand: 1, lead_time_days: 14, lead_time_source: 'measured', safety_stock: 2,
+    safety_stock_method: 'fixed_days', safety_stock_fallback: null, service_level: 0.95, safety_days: 7,
+    review_days: 30, moq: 1, order_multiple: 1, policy_type: 'reorder_point', supplier_selection: 'primary',
+    unit_cost: 100, cash_impact: 1000, rank: 1, rank_score: 0.9, funding_status: null,
+    days_to_stockout: 6, rank_factors: [], ...over,
   };
 }
 
+/** Fabricate the plan-state contract CashCopilotResults consumes. */
+function makePlan(over: Partial<M8PlanState> = {}): { plan: M8PlanState; setBudget: ReturnType<typeof vi.fn>; confirm: ReturnType<typeof vi.fn> } {
+  const within: M8PlanRow[] = [recToPlanRow(rec('a'))];
+  const over_: M8PlanRow[] = [recToPlanRow(rec('b', { rank: 2 }))];
+  const needsCost: M8PlanRow[] = over.funding?.needsCost ?? [];
+  const setBudget = vi.fn();
+  const confirm = vi.fn().mockResolvedValue({ confirmed_count: 1, po_count: 1 });
+  const plan = {
+    runId: 'run-1',
+    rows: [...within, ...over_],
+    budget: 5000,
+    setBudget,
+    pins: new Set<string>(),
+    rejects: new Set<string>(),
+    editedIds: new Set<string>(),
+    funding: { within, over: over_, needsCost, committed: 1000, free: 4000 },
+    decisions: { a: null, b: null },
+    decisionsById: {},
+    poByRow: {},
+    fund: vi.fn(),
+    defer: vi.fn(),
+    reject: vi.fn(),
+    editRow: vi.fn(),
+    applyProposalLine: vi.fn(),
+    confirm,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+    isConfirming: false,
+    ...over,
+  } as unknown as M8PlanState;
+  return { plan, setBudget, confirm };
+}
+
+function renderCopilot(planBundle: ReturnType<typeof makePlan>) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={client}>
+      <CashCopilotResults plan={planBundle.plan} />
+    </QueryClientProvider>,
+  );
+}
+
 beforeEach(() => {
-  cleanup();
-  hoisted.confirmMutate.mockReset();
-  hoisted.confirmMutate.mockResolvedValue({ confirmed_count: 3, po_count: 2 });
-  hoisted.state.data = [rec('a'), rec('b'), rec('c')];
-  hoisted.state.isLoading = false;
-  hoisted.state.isError = false;
-  hoisted.state.byId = {};
+  toastSuccess.mockReset();
+  toastError.mockReset();
+  toastInfo.mockReset();
 });
 
-describe('CashCopilotResults — staged-decisions confirm bar', () => {
-  it('hides the confirm bar when nothing is staged', () => {
-    hoisted.state.byId = {};
-    render(<CashCopilotResults runId="run-1" enabled />);
-    expect(screen.queryByRole('button', { name: /Confirm decisions/i })).toBeNull();
+describe('CashCopilotResults — one table, two sections (M8-C1)', () => {
+  it('renders the Within-budget and Over-budget sections with their rows', () => {
+    renderCopilot(makePlan());
+    expect(screen.getByText('Within budget')).toBeInTheDocument();
+    expect(screen.getByText('Over budget')).toBeInTheDocument();
+    expect(screen.getByText('SKU-a')).toBeInTheDocument();
+    expect(screen.getByText('SKU-b')).toBeInTheDocument();
+  });
+});
+
+describe('CashCopilotResults — clearable budget input (M8-C2)', () => {
+  it('drives setBudget on change and treats an emptied input as 0 (no stuck leading 0)', () => {
+    const bundle = makePlan();
+    renderCopilot(bundle);
+    const input = screen.getByLabelText('Cash budget') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '7000' } });
+    expect(bundle.setBudget).toHaveBeenLastCalledWith(7000);
+    // fully clearable → empty is 0 for the split, and the field shows blank (not "0")
+    fireEvent.change(input, { target: { value: '' } });
+    expect(bundle.setBudget).toHaveBeenLastCalledWith(0);
+    expect(input.value).toBe('');
+  });
+});
+
+describe('CashCopilotResults — needs-cost banner (M8-C7)', () => {
+  it('shows the skipped-products banner when uncosted rows exist and dismisses it', () => {
+    const bundle = makePlan({ funding: { within: [recToPlanRow(rec('a'))], over: [], needsCost: [recToPlanRow(rec('x', { unit_cost: null, supplier: null }))], committed: 1000, free: 4000 } } as Partial<M8PlanState>);
+    renderCopilot(bundle);
+    expect(screen.getByText(/product skipped - no supplier cost yet/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Dismiss'));
+    expect(screen.queryByText(/no supplier cost yet/i)).not.toBeInTheDocument();
   });
 
-  it('shows the bar with the accepted/adjusted breakdown for unconfirmed staged decisions', () => {
-    hoisted.state.byId = {
-      a: decision('a', { status: 'accepted' }),
-      b: decision('b', { status: 'adjusted', override_qty: 250 }),
-      c: decision('c', { status: 'accepted' }),
-    };
-    const { container } = render(<CashCopilotResults runId="run-1" enabled />);
-    expect(screen.getByRole('button', { name: /Confirm decisions/i })).toBeInTheDocument();
-    expect(container.textContent).toContain('3 decisions staged');
-    expect(container.textContent).toContain('(2 accepted, 1 adjusted)');
+  it('renders no banner when every row is costed', () => {
+    renderCopilot(makePlan());
+    expect(screen.queryByText(/no supplier cost yet/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('CashCopilotResults — confirm decisions (M8-C8 / M8-F2)', () => {
+  it('hides the confirm bar when within-budget rows exist but NO decision is accepted (M8-F2)', () => {
+    // default plan: SKU-a is within budget, but no accept/adjust decision is staged.
+    // The bar must NOT show merely because a fundable row exists.
+    renderCopilot(makePlan());
+    expect(screen.queryByText(/ready to confirm into draft purchase orders/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Confirm decisions/i })).not.toBeInTheDocument();
   });
 
-  it('hides the bar once every staged decision has been confirmed into a PO', () => {
-    hoisted.state.byId = {
-      a: decision('a', { status: 'accepted', draft_po_id: 'po-1', draft_po_number: 'PO-DRAFT-1' }),
-      b: decision('b', {
-        status: 'adjusted',
-        override_qty: 250,
-        draft_po_id: 'po-2',
-        draft_po_number: 'PO-DRAFT-2',
-      }),
-      c: decision('c', { status: 'accepted', draft_po_id: 'po-1', draft_po_number: 'PO-DRAFT-1' }),
-    };
-    render(<CashCopilotResults runId="run-1" enabled />);
-    expect(screen.queryByRole('button', { name: /Confirm decisions/i })).toBeNull();
-  });
-
-  it('opens the confirm dialog and calls confirmDecisions with [] on confirm', async () => {
-    hoisted.state.byId = {
-      a: decision('a', { status: 'accepted' }),
-      b: decision('b', { status: 'adjusted', override_qty: 250 }),
-    };
-    render(<CashCopilotResults runId="run-1" enabled />);
-
-    // Bar → open the dialog.
+  it('surfaces the confirm bar only once a line is accepted, and confirms into draft POs', async () => {
+    // M8-F2: the bar is gated on an ACCEPTED/adjusted decision, not merely on
+    // within-budget rows existing. Seed one accepted decision so the bar shows.
+    const bundle = makePlan({ decisions: { a: 'accepted', b: null } } as Partial<M8PlanState>);
+    renderCopilot(bundle);
+    // the confirm bar counts the accepted lines ready to materialise
+    expect(screen.getByText(/ready to confirm into draft purchase orders/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Confirm decisions/i }));
-    expect(screen.getByRole('dialog', { name: 'Confirm decisions?' })).toBeInTheDocument();
+    // the confirm dialog opens; confirming runs plan.confirm()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm decisions' }));
+    await waitFor(() => expect(bundle.confirm).toHaveBeenCalled());
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+  });
 
-    // Dialog confirm → the mutation fires with an empty ids list (confirm all).
-    fireEvent.click(screen.getByTestId('dialog-confirm'));
-    await waitFor(() => expect(hoisted.confirmMutate).toHaveBeenCalledWith([]));
+  it('hides the confirm bar once every accepted line already has a draft PO (M8-F9)', () => {
+    // An accepted line that has already been materialised into a draft PO is no
+    // longer "pending confirmation" — with only that line accepted, the bar hides.
+    const bundle = makePlan({
+      decisions: { a: 'accepted', b: null },
+      poByRow: { a: { po_number: 'PO-2026-0007', po_id: 'po-abc' } },
+    } as Partial<M8PlanState>);
+    renderCopilot(bundle);
+    expect(screen.queryByText(/ready to confirm into draft purchase orders/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Confirm decisions/i })).not.toBeInTheDocument();
   });
 });

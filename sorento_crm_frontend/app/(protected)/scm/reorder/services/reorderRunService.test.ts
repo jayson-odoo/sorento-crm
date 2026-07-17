@@ -33,11 +33,11 @@ function lastInit(): RequestInit {
 beforeEach(() => apiFetch.mockReset());
 
 describe('reorderRunService — createReorderRun', () => {
-  it('POSTs warehouse_codes + buy_scope + null budget, and normalises the 202 body', async () => {
+  it('POSTs warehouse_codes + null budget, and normalises the 202 body', async () => {
     apiFetch.mockResolvedValue(
       ok({ run_id: 'run-9', status: 'running', buy_scope: 'network', stage: 'resolving_policies' }),
     );
-    const run = await createReorderRun({ warehouse_codes: ['WH-KL', 'WH-JB'], buy_scope: 'network' });
+    const run = await createReorderRun({ warehouse_codes: ['WH-KL', 'WH-JB'] });
 
     const u = calledUrl();
     expect(u.pathname).toBe('/api/v1/scm/reorder-runs');
@@ -45,7 +45,6 @@ describe('reorderRunService — createReorderRun', () => {
     expect(init.method).toBe('POST');
     expect(JSON.parse(String(init.body))).toEqual({
       warehouse_codes: ['WH-KL', 'WH-JB'],
-      buy_scope: 'network',
       budget_id: null,
       include_market: false,
     });
@@ -58,7 +57,6 @@ describe('reorderRunService — createReorderRun', () => {
     );
     await createReorderRun({
       warehouse_codes: ['WH-KL'],
-      buy_scope: 'warehouse',
       include_market: true,
     });
     expect(JSON.parse(String(lastInit().body))).toMatchObject({ include_market: true });

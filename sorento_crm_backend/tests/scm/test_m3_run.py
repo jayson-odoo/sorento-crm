@@ -318,7 +318,9 @@ def test_no_supplier_sku_emits_exception(scm_app):
 
 def test_endpoints_full_flow(scm_app):
     """POST launch → GET status (completed + summary) → GET recommendations (paged,
-    frozen-input row shape, no UUIDs in display fields)."""
+    frozen-input row shape, no UUIDs in display fields). The request no longer carries
+    ``buy_scope`` (M8-D5) — the run defaults to network, so a single-warehouse plan
+    emits an aggregate (network) buy whose allocation names the warehouse."""
     app, db = _client(scm_app, "purchasing")
     wid = _mk_warehouse(db, "M3W-API")
     pid = _mk_product(db, "M3P-API")
@@ -329,10 +331,11 @@ def test_endpoints_full_flow(scm_app):
 
     with TestClient(app) as c:
         launch = c.post("/api/v1/scm/reorder-runs",
-                        json={"warehouse_codes": ["M3W-API"], "buy_scope": "warehouse"})
+                        json={"warehouse_codes": ["M3W-API"]})
         assert launch.status_code == 202, launch.text
         run_id = launch.json()["run_id"]
         assert launch.json()["status"] == "running"
+        assert launch.json()["buy_scope"] == "network"  # buy_scope removed → network default
 
         # the enqueue path is a no-op here (no worker); drive the job synchronously
         svc.run_reorder(run_id, db=db)
@@ -353,7 +356,9 @@ def test_endpoints_full_flow(scm_app):
         assert row["type"] == "buy"
         assert row["order_qty"] and row["order_qty"] > 0
         assert row["supplier"] and row["supplier"]["supplier_code"]
-        assert row["warehouse_code"] == "M3W-API"
+        # network aggregate buy: no per-row warehouse, but the allocation names it
+        assert row["is_network"] is True
+        assert any(a.get("warehouse_code") == "M3W-API" for a in (row["allocation"] or []))
         # no UUIDs surface in display fields
         assert "-" not in str(row["sku"]) or not _looks_uuid(row["sku"])
 

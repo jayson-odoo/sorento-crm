@@ -26,7 +26,8 @@ export default async function ReorderPlanningPage({
 }: {
   searchParams: Promise<{ run?: string }>;
 }) {
-  // `?run=1` (set by the dashboard's "Run planning" button) auto-opens the modal.
+  // `?run=1` auto-opens the Manual plan modal (deep-link support; the dashboard's
+  // header "Reorder plan" button now navigates here without it - M8-B6).
   const { run } = await searchParams;
   const autoOpenRun = run === '1';
 

@@ -46,6 +46,44 @@ export function NetPositionInfo({ className }: { className?: string }) {
   );
 }
 
+/** Canonical avg-daily-demand explainer copy (M8-B9). */
+export const AVG_DAILY_DEMAND_HINT =
+  'Mean units shipped per day over the demand window';
+
+/** Canonical reorder-point formula copy (M8-F5). Plain "x" (not a math sign). */
+export const REORDER_POINT_FORMULA =
+  'Reorder point = Safety stock + Demand rate x Lead time';
+
+/** Plain-language definitions of the two ROP inputs (M8-F10), shown beside their
+ *  values in the reorder-point explain. Shared so the reorder-page order-qty drill
+ *  can import the same copy. */
+export const SAFETY_STOCK_HINT =
+  'Buffer stock for demand/supply variability over the lead time.';
+export const LEAD_TIME_HINT = 'Days from placing a PO to receiving the goods.';
+
+/** Info tooltip for the Avg-daily-demand column header (mirrors NetPositionInfo). */
+export function AvgDemandInfo({ className }: { className?: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          tabIndex={0}
+          role="img"
+          aria-label={AVG_DAILY_DEMAND_HINT}
+          onClick={(e) => e.stopPropagation()}
+          className={cn(
+            'inline-flex cursor-help items-center text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            className,
+          )}
+        >
+          <Info className="size-3.5" aria-hidden />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{AVG_DAILY_DEMAND_HINT}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 /** Info tooltip for the Days-of-cover column header (mirrors NetPositionInfo). */
 export function DaysOfCoverInfo({ className }: { className?: string }) {
   return (

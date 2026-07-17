@@ -53,6 +53,7 @@ import type {
   AdvisoryResult,
   AskResult,
   ExplanationResult,
+  MarketProposalResult,
   RunChatResult,
   RunChatTurn,
   RunOverviewResult,
@@ -102,6 +103,28 @@ export async function searchMarket(
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Market search failed'));
   return (await res.json()) as AdhocSearchResult;
+}
+
+/** Map a market signal → per-line qty-uplift PROPOSAL on the run's matching buy
+ *  recs (M8-E5). Writes nothing; the user confirms each line via /adjust. */
+export async function getMarketProposal(
+  runId: string,
+  opts: { signalId?: string | null; query?: string | null; categoryRef?: string | null },
+): Promise<MarketProposalResult> {
+  const res = await apiFetch(
+    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/market-proposal`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        signal_id: opts.signalId ?? null,
+        query: opts.query ?? null,
+        category_ref: opts.categoryRef ?? null,
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Market proposal failed'));
+  return (await res.json()) as MarketProposalResult;
 }
 
 /** Lazy, cached one-sentence explanation for a recommendation (M5-A1). */

@@ -425,6 +425,47 @@ def confirm_decisions(
     return {"confirmed_count": confirmed, "po_count": len(touched)}
 
 
+def reset_run_decisions(db: Session, run_id: str, actor: Optional[str]) -> dict:
+    """DEMO / ADMIN reset — return a run to its freshly-generated state so the
+    accept / reject / adjust / confirm flow can be demonstrated again from scratch.
+
+    For every buy rec on the run: pull its line out of any DRAFT PO (emptied drafts are
+    deleted with it), drop its append-only override rows, and reset its status back to
+    'proposed'. Only DRAFT (``draft_recommendation``) POs are touched — a confirmed
+    (active) PO is a real order and is never rolled back. Idempotent: running it on an
+    already-clean run is a no-op. Returns what was cleared for the toast."""
+    recs = (
+        db.query(ReorderRecommendation)
+        .filter(ReorderRecommendation.run_id == run_id)
+        .all()
+    )
+    if not recs:
+        raise AppException(status_code=404, message="Reorder run not found.")
+    rec_ids = [r.id for r in recs]
+
+    decisions_cleared = sum(
+        1 for r in recs if r.status in ("accepted", "adjusted", "dismissed")
+    )
+    # 1) Detach every rec's draft-PO line (deletes drafts that empty out).
+    for rec in recs:
+        _remove_rec_line(db, rec.id)
+    # 2) Drop the override overlay (adjust/reject reason rows).
+    overrides_cleared = (
+        db.query(RecommendationOverride)
+        .filter(RecommendationOverride.recommendation_id.in_(rec_ids))
+        .delete(synchronize_session=False)
+    )
+    # 3) Reset decision status to the as-generated value.
+    for rec in recs:
+        rec.status = "proposed"
+    db.flush()
+    return {
+        "run_id": run_id,
+        "decisions_cleared": decisions_cleared,
+        "overrides_cleared": int(overrides_cleared or 0),
+    }
+
+
 def bulk_reject(
     db: Session, run_id: str, ids: list[str], reason_text: str, actor: Optional[str]
 ) -> dict:

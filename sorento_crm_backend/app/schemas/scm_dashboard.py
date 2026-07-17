@@ -152,6 +152,10 @@ class SupplierGroupList(BaseModel):
 class ProductSummary(BaseModel):
     sku: str
     product_name: str
+    # UUIDs carried for the avg-daily-demand explain fetch only (M8-B9); never
+    # displayed — the FE resolves them to human-readable DO numbers via the drill.
+    product_id: Optional[str] = None
+    warehouse_id: Optional[str] = None
     warehouse_code: str
     warehouse_name: str
     on_hand: float
@@ -167,6 +171,16 @@ class ProductSummary(BaseModel):
     days_of_cover: Optional[float] = None
     abc_class: Optional[str] = None
     xyz_class: Optional[str] = None
+    # M8-B — engine reorder point (latest completed run); null when the SKU was never
+    # planned. A stocked SKU with ``net_position <= reorder_point`` reads as low-stock.
+    reorder_point: Optional[float] = None
+    # M8-F10 — the safety stock + supplier lead-time days that FEED the reorder point,
+    # read from the SAME latest-run rec's frozen ``inputs`` JSONB that sourced
+    # ``reorder_point`` above. Null when un-planned (no completed run / no rec inputs).
+    # The Low-stock reorder-point (i) shows each value with a one-line plain definition
+    # so ROP is not a black box.
+    safety_stock: Optional[float] = None
+    lead_time_days: Optional[float] = None
 
 
 class ProductSummaryList(BaseModel):

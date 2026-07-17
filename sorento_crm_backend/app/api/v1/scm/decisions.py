@@ -120,3 +120,19 @@ def list_decisions(
     _user: dict = Depends(_VIEW),
 ):
     return {"data": svc.list_decisions(db, run_id)}
+
+
+@router.post("/reorder-runs/{run_id}/reset-decisions")
+def reset_decisions(
+    run_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_RUN),
+):
+    """DEMO / ADMIN — roll a run's decisions back to its as-generated state (clears
+    every accept/reject/adjust + drops the draft POs they staged) so the flow can be
+    demonstrated again. Only draft POs are removed; confirmed (active) orders are left
+    untouched. Guarded by ``scm.reorder.run`` (the same permission that makes the
+    decisions)."""
+    result = svc.reset_run_decisions(db, run_id, (_user or {}).get("id"))
+    db.commit()
+    return result

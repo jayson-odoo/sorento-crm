@@ -4,6 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   askRecommendation,
   askRunChat,
+  getMarketProposal,
   getRecommendationAdvisory,
   getRecommendationExplanation,
   getRunOverview,
@@ -107,5 +108,18 @@ export function useMarketSearch() {
       categoryRef?: string | null;
       currency?: string | null;
     }) => searchMarket(query, categoryRef, currency),
+  });
+}
+
+/**
+ * Run a live market scan and get a confirm-gated per-line qty PROPOSAL for the
+ * run's matching buys (M8-E5). `mutateAsync({ query | signalId, categoryRef? })`
+ * resolves to the proposal card; nothing is written until each line is confirmed
+ * via a real /adjust override.
+ */
+export function useMarketProposal(runId: string | null) {
+  return useMutation({
+    mutationFn: (opts: { signalId?: string | null; query?: string | null; categoryRef?: string | null }) =>
+      getMarketProposal(runId as string, opts),
   });
 }

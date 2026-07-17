@@ -1,228 +1,363 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { History as HistoryIcon, PlayCircle, Sparkles } from 'lucide-react';
+import { toast } from 'sonner';
+import { AlertCircle, CalendarClock, CalendarDays, History, PlayCircle, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatDateTimeInMalaysia, timeAgo } from '@/lib/helpers';
-import { useRunOverview } from '../hooks/useExplainer';
-import { runHistoryKey, useReorderRun, useReorderRunDetail } from '../hooks/useReorderRun';
-import { type ReorderRunHistoryItem } from '../services/reorderRunService';
-import type {
-  CreateReorderRunRequest,
-  ReorderRecType,
-  ReorderRunSummary,
-} from '../types/reorder.types';
+import { recToDispositionRow, splitDispositionRows } from '../lib/planRow';
+import { resetRunDecisions } from '../services/reorderRunService';
+import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
+import {
+  todayRunKey,
+  runHistoryKey,
+  useAllDispositionRecommendations,
+  useReorderRun,
+  useTodayRun,
+} from '../hooks/useReorderRun';
+import { useReorderPlan } from '../hooks/useReorderPlan';
+import { decisionsKey } from '../hooks/useDecisions';
+import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 import { CashCopilotResults } from './CashCopilotResults';
+import { DispositionResultsGrid } from './DispositionResultsGrid';
 import { PlanAssistant } from './PlanAssistant';
-import { ReorderResultsGrid } from './ReorderResultsGrid';
-import { ReorderStatTiles } from './ReorderStatTiles';
+import { PlanMethodologySheet } from './PlanMethodologySheet';
+import { ReorderStatTiles, type ReorderPlanView } from './ReorderStatTiles';
 import { RunHistoryPanel } from './RunHistoryPanel';
-import { RunPlanningModal } from './RunPlanningModal';
-import { RunProgressCard } from './RunProgressCard';
+import { RunPlanningModal, type ManualPlanInputs } from './RunPlanningModal';
 
-/** Parse a naive-UTC ISO string as UTC (see the audit-time lesson). */
-function toUtcDate(raw: string | null): Date | null {
-  if (!raw) return null;
-  const hasTz = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(raw);
-  const d = new Date(hasTz ? raw : `${raw}Z`);
-  return Number.isNaN(d.getTime()) ? null : d;
+/** Parse a naive-UTC ISO string as UTC, then format date / time in Malaysia. */
+function labelsFor(startedAt: string | null): { date: string; time: string } {
+  if (!startedAt) return { date: '', time: '' };
+  const hasTz = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(startedAt);
+  const d = new Date(hasTz ? startedAt : `${startedAt}Z`);
+  if (Number.isNaN(d.getTime())) return { date: startedAt, time: '' };
+  const date = new Intl.DateTimeFormat('en-MY', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'Asia/Kuala_Lumpur',
+  }).format(d);
+  const time = new Intl.DateTimeFormat('en-MY', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Kuala_Lumpur',
+  }).format(d);
+  return { date, time };
 }
 
-/** Run-level AI overview — a plain-language brief over the whole planning run,
- *  sitting above the per-row grid (each row still drills into its own product via
- *  the explanation dialog). Lazy + cached; skeleton while the LLM generates. */
-function AiRunOverview({ runId, enabled }: { runId: string; enabled: boolean }) {
-  const { data, isLoading, isError } = useRunOverview(runId, enabled);
-  if (isError) return null; // overview is a bonus — never block the results on it
-  return (
-    <Card className="border-primary/30 bg-primary/5 p-4">
-      <div className="mb-1.5 flex items-center gap-1.5 text-primary">
-        <Sparkles className="size-4" aria-hidden />
-        <span className="text-xs font-semibold uppercase tracking-wide">AI overview</span>
-      </div>
-      {isLoading ? (
-        <div className="space-y-1.5">
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-4/5" />
-        </div>
-      ) : (
-        <p className="text-sm text-foreground">{data?.overview}</p>
-      )}
-    </Card>
-  );
-}
-
+/**
+ * SCM M8 - the reorder planning page reframed as "Today's plan": a daily scheduled
+ * snapshot the user reviews and steers, opening directly to the plan (no run click
+ * needed). One table with two draggable sections, budget-in-header, inline
+ * decisions + drills, one unified assistant, and a run-history list to revisit past
+ * runs. PHASE 2 - wired to the live backend (GET /reorder-runs/today + the
+ * recommendation / decision / drill / market endpoints).
+ */
 export function ReorderPlanningView({ autoOpenRun = false }: { autoOpenRun?: boolean }) {
-  // `autoOpenRun` (dashboard deep-link `?run=1`) opens the modal on first render.
-  const [modalOpen, setModalOpen] = useState(autoOpenRun);
-  // Grid type filter is lifted here so the clickable stat tiles and the grid's own
-  // filter dropdown share one source of truth ('' = all types).
-  const [typeFilter, setTypeFilter] = useState('');
-  // A past run the user picked from history to VIEW (null = follow the live run).
-  // We keep the full list item so the banner has its time/scope without a refetch.
-  const [viewedRun, setViewedRun] = useState<ReorderRunHistoryItem | null>(null);
-  const { run, stageIndex, isRunning, isComplete, isStalled, start, reset } = useReorderRun();
-  const resultsRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
+  const [modalOpen, setModalOpen] = useState(autoOpenRun);
+  const [view, setView] = useState<ReorderPlanView>('buy');
+  // A history-selected run overrides today's; null = show today's default run.
+  const [selectedRun, setSelectedRun] = useState<ReorderRunHistoryItem | null>(null);
 
-  // When a fresh run completes, refresh the history list so it appears at the top.
-  const completedId = isComplete ? run?.run_id : null;
+  const today = useTodayRun();
+  const todayData = today.data ?? null;
+
+  // Manual re-plan runs a live run then swaps the page to today's fresh snapshot.
+  const manual = useReorderRun();
+  const pendingManual = useRef(false);
+
+  const currentItem = selectedRun ?? todayData;
+  const currentRunId = currentItem?.run_id ?? null;
+  const isToday =
+    !!todayData && currentRunId === todayData.run_id && todayData.is_today;
+  const isPastRun = !!currentItem && !isToday;
+
+  const plan = useReorderPlan(currentRunId, view === 'buy' && !!currentRunId);
+
+  // Disposition (Stock allocation) rows come from the same run (type=disposition).
+  // Fetched WHOLE (M8-F18) - kept enabled in the buy view too so the tile's
+  // actionable-only count is always live, and so the grid can split actionable
+  // (Discontinue / Promote) from FYI hold accurately (the actionable rows are few
+  // and scattered across a run that may carry >1000 hold rows).
+  const dispositionQuery = useAllDispositionRecommendations(currentRunId, !!currentRunId);
+  const dispositionRows = useMemo(
+    () => (dispositionQuery.data ?? []).map(recToDispositionRow),
+    [dispositionQuery.data],
+  );
+  const { actionable: actionableDispositions, hold: holdDispositions } = useMemo(
+    () => splitDispositionRows(dispositionRows),
+    [dispositionRows],
+  );
+
+  const summary = currentItem?.summary ?? null;
+  const { date: dateLabel, time: timeLabel } = labelsFor(currentItem?.started_at ?? null);
+
+  // Frozen per-run numbers for the "How this plan was built" sheet (M8-F15 follow-up):
+  // the top buys by priority + the funding roll-up, so each step can reveal the ACTUAL
+  // figures it describes. All values are the engine's frozen row fields - never an LLM.
+  const methodologyFacts = useMemo(() => {
+    const within = plan.funding?.within ?? [];
+    const over = plan.funding?.over ?? [];
+    const rows = [...within, ...over].sort((a, b) => a.rank - b.rank);
+    return {
+      topBuys: rows.slice(0, 4).map((r) => ({
+        sku: r.sku,
+        demand: r.forecast_daily_demand,
+        net: r.net,
+        safetyStock: r.order_qty_inputs?.safety_stock ?? null,
+        leadTime: r.supplier?.lead_time_days ?? null,
+        reorderPoint: r.order_qty_inputs?.reorder_point ?? null,
+        orderUpTo: r.order_qty_inputs?.order_up_to ?? null,
+        orderQty: r.order_qty,
+        daysCover: r.days_cover,
+      })),
+      withinCount: within.length,
+      overCount: over.length,
+      committed: plan.funding?.committed ?? 0,
+      free: plan.funding?.free ?? 0,
+      budget: plan.budget ?? 0,
+    };
+  }, [plan.funding, plan.budget]);
+
+  // When a manual run completes, refresh today's snapshot + history and jump to it.
   useEffect(() => {
-    if (completedId) void queryClient.invalidateQueries({ queryKey: runHistoryKey });
-  }, [completedId, queryClient]);
+    if (!pendingManual.current) return;
+    if (manual.isComplete && manual.run?.run_id) {
+      pendingManual.current = false;
+      void queryClient.invalidateQueries({ queryKey: todayRunKey });
+      void queryClient.invalidateQueries({ queryKey: runHistoryKey });
+      void queryClient.invalidateQueries({ queryKey: decisionsKey(manual.run.run_id) });
+      setSelectedRun(null); // fall back to today's default (the fresh run)
+      toast.success('Manual plan generated - showing the refreshed snapshot.');
+      manual.reset();
+    } else if (manual.isFailed) {
+      pendingManual.current = false;
+      toast.error(manual.error ?? 'Manual plan failed.');
+      manual.reset();
+    }
+  }, [manual.isComplete, manual.isFailed, manual.run?.run_id, manual.error, manual, queryClient]);
 
-  // Are we viewing a PAST run (not the live one)? Selecting the live run just follows it.
-  const isPastView = !!viewedRun && viewedRun.run_id !== run?.run_id;
-
-  // Load the viewed run's canonical summary via the existing GET /reorder-runs/{id}
-  // (the list item's summary seeds the tiles instantly while it loads).
-  const detail = useReorderRunDetail(viewedRun?.run_id ?? null, isPastView);
-
-  // The run currently DISPLAYED drives the tiles + results grid.
-  const displayedRunId = isPastView ? viewedRun!.run_id : run?.run_id ?? null;
-  const displayedStatus = isPastView ? detail.data?.status ?? viewedRun!.status : run?.status;
-  const displayedSummary: ReorderRunSummary | null = isPastView
-    ? detail.data?.summary ?? viewedRun!.summary
-    : run?.summary ?? null;
-  const showResults = displayedStatus === 'completed' && !!displayedSummary && !!displayedRunId;
-
-  const launch = (req: CreateReorderRunRequest) => {
-    setViewedRun(null); // a new run becomes the newest — stop viewing a past one
-    void start(req);
+  const launch = (inputs: ManualPlanInputs) => {
     setModalOpen(false);
+    pendingManual.current = true;
+    void manual.start({
+      warehouse_codes: inputs.warehouse_codes,
+      budget_id: null,
+    });
+    toast.info('Generating manual plan...');
   };
 
-  // Toggle a stat-tile filter: clicking the active type again clears it.
-  const toggleType = (type: ReorderRecType) =>
-    setTypeFilter((current) => (current === type ? '' : type));
-
-  const reviewRecommendations = () => {
-    resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // Demo reset (M8 admin): clear this run's decisions + draft POs so the accept /
+  // reject / confirm flow can be shown again. Guarded by a confirm dialog; on success
+  // every plan-derived query is invalidated so the page snaps back to as-generated.
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const doReset = async () => {
+    if (!currentRunId) return;
+    setResetting(true);
+    try {
+      const res = await resetRunDecisions(currentRunId);
+      setResetOpen(false);
+      plan.resetLocal(); // drop the FE decision overlay so stale pins/rejects clear too
+      void queryClient.invalidateQueries({ queryKey: decisionsKey(currentRunId) });
+      void queryClient.invalidateQueries({ queryKey: ['scm', 'reorder', 'cash-recs', currentRunId] });
+      void queryClient.invalidateQueries({ queryKey: ['scm', 'reorder', 'dispositions', currentRunId] });
+      void queryClient.invalidateQueries({ queryKey: todayRunKey });
+      void queryClient.invalidateQueries({ queryKey: runHistoryKey });
+      toast.success(
+        `Plan reset - cleared ${res.decisions_cleared} decision${res.decisions_cleared === 1 ? '' : 's'}. Ready to demo again.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to reset the plan');
+    } finally {
+      setResetting(false);
+    }
   };
 
-  const selectRun = (item: ReorderRunHistoryItem) => {
-    setTypeFilter('');
-    setViewedRun(item.run_id === run?.run_id ? null : item);
-    // Scroll to the results after the swap paints.
-    window.setTimeout(reviewRecommendations, 0);
-  };
+  // ---- loading / empty --------------------------------------------------------
+  if (today.isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-64" />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-24 w-full rounded-xl" />
+          ))}
+        </div>
+        <Skeleton className="h-72 w-full rounded-xl" />
+      </div>
+    );
+  }
 
-  const backToLatest = () => setViewedRun(null);
+  if (today.isError) {
+    return (
+      <Card className="flex flex-col items-center gap-3 p-10 text-center">
+        <span className="flex size-11 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+          <AlertCircle className="size-5" aria-hidden />
+        </span>
+        <p className="max-w-sm text-sm text-muted-foreground">
+          {today.error instanceof Error ? today.error.message : 'Failed to load the plan.'}
+        </p>
+        <Button variant="outline" onClick={() => void today.refetch()}>
+          Try again
+        </Button>
+      </Card>
+    );
+  }
 
-  const viewedWhen = isPastView ? toUtcDate(viewedRun!.started_at) : null;
+  if (!todayData && !selectedRun) {
+    return (
+      <>
+        <Card className="flex flex-col items-center gap-3 p-12 text-center">
+          <span className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+            <CalendarDays className="size-6" aria-hidden />
+          </span>
+          <div className="text-base font-semibold">No plan yet</div>
+          <p className="max-w-md text-sm text-muted-foreground">
+            The daily reorder plan runs automatically each morning. You can also generate one now for
+            a single warehouse.
+          </p>
+          <Button onClick={() => setModalOpen(true)}>
+            <PlayCircle className="size-4" />
+            Manual plan
+          </Button>
+        </Card>
+        <RunPlanningModal
+          open={modalOpen}
+          onOpenChange={setModalOpen}
+          onSubmit={launch}
+          isSubmitting={manual.isRunning || pendingManual.current}
+        />
+      </>
+    );
+  }
 
   return (
     <div className="space-y-5">
-      <div className="flex justify-end">
-        <Button onClick={() => setModalOpen(true)} disabled={isRunning} className="shrink-0">
-          <PlayCircle className="size-4" />
-          Run planning
-        </Button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {isPastRun ? (
+            <CalendarClock className="size-5 text-primary" aria-hidden />
+          ) : (
+            <CalendarDays className="size-5 text-primary" aria-hidden />
+          )}
+          <h2 className="text-lg font-semibold">
+            {isPastRun ? `Plan · ${dateLabel}, ${timeLabel}` : `Today's plan · ${dateLabel}`}
+          </h2>
+          <PlanMethodologySheet
+            runContext={{
+              dateLabel,
+              timeLabel,
+              warehouseCount: currentItem?.warehouse_count,
+              warehouseCodes: currentItem?.warehouse_codes,
+              isPastRun,
+            }}
+            facts={methodologyFacts}
+          />
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {currentRunId ? (
+            <button
+              type="button"
+              onClick={() => setResetOpen(true)}
+              title="Reset this plan for a fresh demo"
+              aria-label="Reset demo"
+              className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <RotateCcw className="size-3.5" aria-hidden />
+            </button>
+          ) : null}
+          <Button onClick={() => setModalOpen(true)}>
+            <PlayCircle className="size-4" />
+            Manual plan
+          </Button>
+        </div>
       </div>
 
-      {/* Idle — no run yet and not viewing history. Explicit empty state + CTA. */}
-      {!run && !isPastView ? (
-        <Card className="flex flex-col items-center gap-3 p-10 text-center">
-          <span className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
-            <Sparkles className="size-6" aria-hidden />
-          </span>
-          <div>
-            <div className="text-sm font-semibold">No planning run yet</div>
-            <p className="mt-1 max-w-md text-sm text-muted-foreground">
-              Run planning to evaluate the selected warehouses and generate reorder
-              recommendations.
-            </p>
-          </div>
-          <Button variant="outline" onClick={() => setModalOpen(true)}>
-            <PlayCircle className="size-4" />
-            Run planning
-          </Button>
-        </Card>
-      ) : null}
+      <ConfirmActionDialog
+        open={resetOpen}
+        onOpenChange={setResetOpen}
+        title="Reset this plan for a fresh demo?"
+        description="This clears every accept, reject and adjust on today's plan and removes the draft purchase orders they staged, returning it to the as-generated state. Confirmed (active) purchase orders are not affected. This cannot be undone."
+        confirmLabel="Reset plan"
+        onConfirm={doReset}
+        isBusy={resetting}
+      />
 
-      {/* Live run progress (only while following the live run, not a past view). */}
-      {run && !isPastView ? (
-        <RunProgressCard
-          run={run}
-          stageIndex={stageIndex}
-          isStalled={isStalled}
-          onReview={reviewRecommendations}
-          onRetry={reset}
-        />
-      ) : null}
-
-      {/* Viewing a past run — a slim, low-fatigue info line (M4 slice-B UX: plain
-          text, no prominent "Back to latest" button). Return to the live run by
-          clicking it in the history panel below, or the inline text link. */}
-      {isPastView ? (
-        <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
-          <HistoryIcon className="size-3.5 shrink-0" aria-hidden />
-          <span className="min-w-0 truncate">
-            Viewing an earlier run from {viewedWhen ? timeAgo(viewedWhen) : ''}
-            {viewedRun!.started_at ? ` · ${formatDateTimeInMalaysia(viewedRun!.started_at)}` : ''}
-            {viewedRun!.warehouse_count
-              ? ` · ${viewedRun!.warehouse_count} warehouse${
-                  viewedRun!.warehouse_count === 1 ? '' : 's'
-                }`
-              : ''}
+      {isPastRun ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-primary/5 px-3 py-2 text-sm">
+          <History className="size-4 shrink-0 text-primary" aria-hidden />
+          <span className="text-muted-foreground">
+            You are viewing a past run from{' '}
+            <span className="font-medium text-foreground">
+              {dateLabel}, {timeLabel}
+            </span>
+            . Return to today&apos;s plan to make changes.
           </span>
           <button
             type="button"
-            onClick={backToLatest}
-            className="shrink-0 font-medium text-primary underline-offset-2 hover:underline"
+            className="ms-auto font-medium text-primary underline-offset-2 hover:underline"
+            onClick={() => setSelectedRun(null)}
           >
-            back to latest
+            Back to today&apos;s plan
           </button>
         </div>
       ) : null}
 
-      {/* Loading / error while fetching a past run's summary. */}
-      {isPastView && detail.isLoading && !displayedSummary ? (
-        <Skeleton className="h-28 w-full rounded-xl" />
-      ) : null}
-      {isPastView && detail.isError && !displayedSummary ? (
-        <Card className="p-6 text-center text-sm text-muted-foreground">
-          Failed to load this run. Pick another from the history below.
-        </Card>
-      ) : null}
+      <ReorderStatTiles
+        buyCount={summary?.buy_count ?? 0}
+        dispositionCount={actionableDispositions.length}
+        cashTotal={summary?.total_cash_impact ?? 0}
+        activeView={view}
+        onSelectView={setView}
+      />
 
-      {/* Stat tiles + results grid — driven by whichever run is displayed. When
-          the M4 cash co-pilot is on, the BUY view becomes the interactive
-          budget → funded/deferred experience; disposition/exception rows stay in
-          the read-only planning grid. */}
-      {showResults && displayedSummary && displayedRunId ? (
-        <div ref={resultsRef} className="scroll-mt-4 space-y-5">
-          <ReorderStatTiles
-            summary={displayedSummary}
-            activeType={typeFilter}
-            onToggle={toggleType}
+      {view === 'buy' ? (
+        <>
+          <PlanAssistant
+            runId={currentRunId}
+            onApplyProposalLine={plan.applyProposalLine}
+            onApplyActions={plan.applyActions}
           />
-          <AiRunOverview runId={displayedRunId} enabled={showResults} />
-          <PlanAssistant runId={displayedRunId} />
-          {typeFilter === '' || typeFilter === 'buy' ? (
-            <CashCopilotResults runId={displayedRunId} enabled={showResults} />
+          {plan.isLoading ? (
+            <Skeleton className="h-72 w-full rounded-xl" />
+          ) : plan.isError ? (
+            <Card className="flex flex-col items-center gap-3 p-10 text-center">
+              <span className="flex size-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                <AlertCircle className="size-5" aria-hidden />
+              </span>
+              <p className="max-w-sm text-sm text-muted-foreground">
+                {plan.error instanceof Error ? plan.error.message : 'Failed to load buy recommendations.'}
+              </p>
+              <Button variant="outline" onClick={() => void plan.refetch()}>
+                Try again
+              </Button>
+            </Card>
           ) : (
-            <ReorderResultsGrid
-              runId={displayedRunId}
-              enabled={showResults}
-              typeFilter={typeFilter}
-              onTypeFilterChange={setTypeFilter}
-            />
+            <CashCopilotResults plan={plan} />
           )}
-        </div>
-      ) : null}
+        </>
+      ) : dispositionQuery.isLoading ? (
+        <Skeleton className="h-72 w-full rounded-xl" />
+      ) : (
+        <DispositionResultsGrid rows={dispositionRows} />
+      )}
 
-      {/* Run history — always rendered (own loading / empty / error states). */}
-      <RunHistoryPanel selectedRunId={displayedRunId} onSelect={selectRun} />
+      <RunHistoryPanel
+        selectedRunId={currentRunId}
+        onSelect={(run) => setSelectedRun(run)}
+      />
 
       <RunPlanningModal
         open={modalOpen}
         onOpenChange={setModalOpen}
         onSubmit={launch}
-        isSubmitting={false}
+        isSubmitting={manual.isRunning || pendingManual.current}
       />
     </div>
   );

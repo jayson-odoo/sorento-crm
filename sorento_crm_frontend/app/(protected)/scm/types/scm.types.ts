@@ -6,9 +6,9 @@
  * in M2/M3 (avg-daily-demand, days-of-cover, ROP, low/overstock composition).
  */
 
-/** Health-state vocabulary. Backend-real: stockout, dead, healthy, incoming,
- *  overstock (days-of-cover over the ceiling — computed + filtered server-side).
- *  low (below reorder point) stays DEFERRED to M3 (needs a real reorder point). */
+/** Health-state vocabulary. Backend-real: stockout (rendered "Out of stock"), dead,
+ *  low (rendered "Low stock" — stocked but net <= demand-aware reorder point, M8-B),
+ *  healthy, incoming, overstock (days-of-cover over the ceiling, server-computed). */
 export type HealthState =
   | 'stockout'
   | 'low'
@@ -76,6 +76,24 @@ export interface DemandSeriesPoint {
   month: string;
   /** Summed outflow qty for the month (≥ 0). */
   qty: number;
+}
+
+/** One delivery order behind a SKU's avg-daily-demand, shown in the explain drill
+ *  (M8-B9 / A2). Navigable to the order; `order_id` feeds the href, never displayed. */
+export interface DemandExplainDO {
+  order_id: string;
+  do_number: string;
+  order_date: string | null;
+  qty_out: number;
+}
+
+/** `GET /analytics/explain/demand` — the demand working behind a SKU's avg daily
+ *  demand: the delivery orders that drove outflow, the rate, and the variability
+ *  (Coefficient of variation). Proves the number is fact-based, not fabricated. */
+export interface DemandExplain {
+  avg_daily_demand: number;
+  demand_cv: number | null;
+  demand_dos: DemandExplainDO[];
 }
 
 /** ~12 monthly buckets of DO outflow for one SKU (M2 demand trend). */
@@ -164,6 +182,10 @@ export interface NetPositionRow {
 export interface ProductSummary {
   sku: string;
   product_name: string;
+  /** UUIDs carried ONLY for the avg-daily-demand explain fetch (M8-B9); never
+   *  displayed — the drill resolves them to human-readable DO numbers. */
+  product_id?: string | null;
+  warehouse_id?: string | null;
   warehouse_code: string;
   warehouse_name: string;
   on_hand: number;
@@ -181,6 +203,14 @@ export interface ProductSummary {
   days_of_cover: number | null;
   abc_class: AbcClass | null;
   xyz_class: XyzClass | null;
+  // M8-B — engine reorder point (latest completed run); null when the SKU was never
+  // planned. Surfaced as a column in the "Low stock" drill so net <= ROP is visible.
+  reorder_point?: number | null;
+  // M8-F10 — the ROP inputs from the SAME latest-run rec that sourced reorder_point
+  // (rec.inputs JSONB): safety_stock + supplier lead-time days. Null when un-planned.
+  // Shown with a one-line plain definition in the Low-stock reorder-point (i).
+  safety_stock?: number | null;
+  lead_time_days?: number | null;
 }
 
 /** Paginated drill-down response (server-side search/sort/pagination). */

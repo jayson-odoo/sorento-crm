@@ -1,344 +1,261 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { toast } from 'sonner';
-import { CheckCheck, ShoppingCart } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Skeleton } from '@/components/ui/skeleton';
-import { useBuyRecommendationsForCash } from '../hooks/useReorderRun';
-import { useDecisionMutations, useRecommendationDecisions } from '../hooks/useDecisions';
 import {
-  BUDGET_STEP,
-  computeFunding,
-  defaultBudgetFor,
-  sliderMaxFor,
-} from '../lib/reorderCashAllocation';
-import { fmtInt } from '../../lib/format';
-import type { ReorderRecommendation } from '../types/reorder.types';
-import type { AdjustPayload, RejectPayload } from '../types/decisions.types';
-import { CashBudgetPanel } from './CashBudgetPanel';
-import { CashResultsGrid } from './CashResultsGrid';
-import { AdjustRecommendationModal } from './AdjustRecommendationModal';
-import { RejectRecommendationDialog } from './RejectRecommendationDialog';
-import { BulkRejectDialog } from './BulkRejectDialog';
+  DndContext,
+  DragOverlay,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core';
+import { CheckCheck, Info, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Slider, SliderThumb } from '@/components/ui/slider';
+import { fmtInt, fmtMoney } from '../../lib/format';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
+import type { M8PlanState } from '../hooks/useReorderPlan';
+import { m8CashImpact, type M8PlanRow } from '../lib/planRow';
+import { BUDGET_STEP } from '../lib/reorderCashAllocation';
+import type { ReorderRecommendation } from '../types/reorder.types';
+import { CashResultsGrid } from './CashResultsGrid';
 import { ReorderExplanationDialog } from './ReorderExplanationDialog';
 
-type PendingBulk = { recs: ReorderRecommendation[]; clear: () => void };
-
 /**
- * M4 Slice A + B — cash-constrained interactive reorder results with the human
- * decision layer. Holds the budget the user slides (Slice A: funded/deferred
- * recompute live client-side against the frozen rank_score), and layers on the
- * Accept / Adjust / Reject decisions + bulk Accept-funded (Slice B, M4-D4/D7/D8/D9).
- * Only BUY recs participate — dispositions/exceptions stay in the read-only grid.
+ * SCM M8 (slice C) - the funded/deferred experience as ONE table with two
+ * draggable sections. Owns the budget control (in the Within-budget header), the
+ * drag-between-sections wiring, the needs-cost banner, and the confirm-decisions
+ * bar. All plan state lives in the shared `useReorderPlan` hook so the assistant's
+ * market bumps land on the same rows. Phase 2: wired to the live backend.
  */
-export function CashCopilotResults({
-  runId,
-  enabled,
-}: {
-  runId: string | null;
-  enabled: boolean;
-}) {
-  const router = useRouter();
-  const { data, isLoading, isError } = useBuyRecommendationsForCash(runId, enabled);
-  const { byId: decisionsById } = useRecommendationDecisions(runId, enabled);
-  const { accept, adjust, reject, bulkAccept, bulkReject, confirm } = useDecisionMutations(runId);
-
-  // Budget is null until the recs land, then seeded from the run's own costed total
-  // (real data → data-derived bounds, not a mock constant). User slides thereafter;
-  // funded/deferred recompute LIVE (no Apply button — M4 slice-B UX feedback).
-  const [budget, setBudget] = useState<number | null>(null);
-  const [explainRec, setExplainRec] = useState<ReorderRecommendation | null>(null);
-
-  // Decision-layer dialog state.
-  const [adjustRec, setAdjustRec] = useState<ReorderRecommendation | null>(null);
-  const [rejectRec, setRejectRec] = useState<ReorderRecommendation | null>(null);
-  const [pendingBulkAccept, setPendingBulkAccept] = useState<PendingBulk | null>(null);
-  const [pendingBulkReject, setPendingBulkReject] = useState<PendingBulk | null>(null);
+export function CashCopilotResults({ plan }: { plan: M8PlanState }) {
+  const { funding, displayRank, decisions, editedIds, poByRow, budget, setBudget, fund, defer, reject, editRow, confirm: runConfirm, isConfirming } = plan;
+  const [bannerDismissed, setBannerDismissed] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-
-  const baseRecs = useMemo<ReorderRecommendation[]>(() => data ?? [], [data]);
-
-  // Slider bounds derive from THIS run's costed cash (M4-D3, data-driven).
-  const sliderMax = useMemo(() => sliderMaxFor(baseRecs), [baseRecs]);
-  const defaultBudget = useMemo(() => defaultBudgetFor(baseRecs), [baseRecs]);
-
-  // Seed the budget once the recs arrive (only if the user hasn't slid it yet).
+  const [activeRow, setActiveRow] = useState<M8PlanRow | null>(null);
+  // Row-click detail (M8-C10): reuse the existing ReorderExplanationDialog, fed a
+  // recommendation adapted from the mock row. See m8RowToRecommendation.
+  const [detailRec, setDetailRec] = useState<ReorderRecommendation | null>(null);
+  // Local string mirror of the numeric budget so the input is fully clearable
+  // (empty = 0 for the split, but shown blank - no stuck leading "0"). Re-syncs
+  // when the budget changes from elsewhere (e.g. a manual-plan run).
+  const [budgetText, setBudgetText] = useState(() => (budget ? String(budget) : ''));
   useEffect(() => {
-    if (budget === null && baseRecs.length) setBudget(defaultBudget);
-  }, [budget, baseRecs, defaultBudget]);
+    if ((Number(budgetText) || 0) !== budget) setBudgetText(budget ? String(budget) : '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [budget]);
 
-  const effectiveBudget = budget ?? defaultBudget;
-
-  // Live funded/deferred split — recomputes on every slider tick client-side
-  // against the frozen rank_score (M4-D3, no round-trip). "Apply budget" persists.
-  const funding = useMemo(
-    () => computeFunding(baseRecs, effectiveBudget),
-    [baseRecs, effectiveBudget],
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } }),
   );
 
-  // The dialog's prev/next pager steps within the currently viewed section.
-  const explainSection = useMemo(() => {
-    if (!explainRec) return funding.funded;
-    if (explainRec.funding_status === 'deferred') return funding.deferred;
-    if (explainRec.funding_status === 'needs_cost') return funding.needsCost;
-    return funding.funded;
-  }, [explainRec, funding]);
+  const allRows = [...funding.within, ...funding.over];
+  // Slider ceiling = Σ all costed cash + ~10% headroom, rounded up to a step, so the
+  // full-fund end of the slider sits just past "buy everything" (min one step so the
+  // track is always draggable even on a tiny plan).
+  const sliderMax = useMemo(() => {
+    const total = allRows.reduce((s, r) => s + (m8CashImpact(r) ?? 0), 0);
+    if (total <= 0) return BUDGET_STEP;
+    return Math.ceil((total * 1.1) / BUDGET_STEP) * BUDGET_STEP;
+  }, [allRows]);
+  // The confirm bar materialises draft POs, which only happens for ACCEPTED/adjusted
+  // (decision-funded) lines - NOT merely for within-budget rows the user hasn't acted
+  // on. Gate the bar + its count on accepted decisions (M8-F2). Adjusted rows are
+  // pinned, so they read 'accepted' in the decision map and are counted here too.
+  // M8-F9: a line that has ALREADY been confirmed into a draft PO is no longer
+  // "pending confirmation" - exclude it so the bar's count shrinks after Confirm and
+  // hides once every accepted line has its PO.
+  const acceptedCount = Object.entries(decisions).filter(
+    ([id, d]) => d === 'accepted' && !poByRow[id],
+  ).length;
+  const hasAcceptedDecisions = acceptedCount > 0;
+  // The real recommendations behind the visible rows, so the detail dialog can page
+  // across them (arrow-key / prev-next navigation) and fetch each rec's real AI
+  // summary / advisory / Q&A + derivation (M8-C10).
+  const detailRecs = useMemo(
+    () => [...funding.within, ...funding.over].map((r) => r.rec),
+    [funding.within, funding.over],
+  );
 
-  const viewPurchaseOrdersAction = () => ({
-    label: 'View purchase orders',
-    onClick: () => router.push('/scm/purchase-orders'),
-  });
+  // M8-F14: "Review & add cost" deep-links to the product listing so the buyer can
+  // add the missing supplier cost. The products list (/master-data-management/products)
+  // restores a single free-text `query` from the URL, so a SINGLE skipped SKU
+  // pre-filters precisely; when several are skipped, one free-text term can't filter
+  // to a set (no SKU-set param exists), so we land on the unfiltered list rather than
+  // invent a route — the banner still states how many were skipped.
+  const needsCostSkus = useMemo(
+    () => funding.needsCost.map((r) => r.sku).filter(Boolean),
+    [funding.needsCost],
+  );
+  const reviewCostHref =
+    needsCostSkus.length === 1
+      ? `/master-data-management/products?query=${encodeURIComponent(needsCostSkus[0])}`
+      : '/master-data-management/products';
 
-  // Staged decisions still AWAITING a Confirm — accepted/adjusted that haven't yet
-  // been materialised into a draft PO (no draft_po_id). Once confirmed they carry a
-  // PO link and drop out of the count, so the confirm bar clears itself.
-  const stagedCount = useMemo(() => {
-    let accepted = 0;
-    let adjusted = 0;
-    for (const rec of baseRecs) {
-      const d = decisionsById?.[rec.id];
-      if (!d || d.draft_po_id) continue; // undecided, or already confirmed into a PO
-      if (d.status === 'accepted') accepted += 1;
-      else if (d.status === 'adjusted') adjusted += 1;
-    }
-    return { accepted, adjusted, total: accepted + adjusted };
-  }, [baseRecs, decisionsById]);
-
-  const handleAccept = async (rec: ReorderRecommendation) => {
-    try {
-      await accept.mutateAsync(rec);
-      toast.success(`Accepted ${rec.sku} — staged. Confirm decisions to draft the PO.`);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to accept recommendation');
-    }
+  const onDragStart = (e: DragStartEvent) => {
+    setActiveRow(allRows.find((r) => r.id === e.active.id) ?? null);
   };
 
-  const handleAdjustSubmit = async (payload: AdjustPayload) => {
-    if (!adjustRec) return;
-    try {
-      await adjust.mutateAsync({ rec: adjustRec, payload });
-      toast.success(
-        `Adjusted ${adjustRec.sku} to ${fmtInt(payload.override_qty)} — staged. Confirm decisions to draft the PO.`,
-      );
-      setAdjustRec(null);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to adjust recommendation');
-    }
+  const onDragEnd = (e: DragEndEvent) => {
+    setActiveRow(null);
+    const over = e.over?.data.current?.section as 'within' | 'over' | undefined;
+    const from = e.active.data.current?.section as 'within' | 'over' | undefined;
+    if (!over || over === from) return;
+    const row = allRows.find((r) => r.id === e.active.id);
+    if (!row) return;
+    if (over === 'within') fund(row); // drag up = pin/fund (no reason needed)
+    else defer(row); // drag down = defer
   };
 
-  const handleConfirmDecisions = async () => {
+  const handleConfirm = async () => {
     try {
-      const res = await confirm.mutateAsync([]); // empty = confirm all staged
-      toast.success(
-        `Confirmed ${res.confirmed_count} decision${res.confirmed_count === 1 ? '' : 's'} — ` +
-          `${res.po_count} draft PO${res.po_count === 1 ? '' : 's'} ready to review`,
-        { action: viewPurchaseOrdersAction() },
-      );
+      const res = await runConfirm();
       setConfirmOpen(false);
+      const poCount = res?.po_count ?? 0;
+      toast.success(
+        `Confirmed ${fmtInt(res?.confirmed_count ?? acceptedCount)} decision${(res?.confirmed_count ?? acceptedCount) === 1 ? '' : 's'} - ${fmtInt(poCount)} consolidated draft PO${poCount === 1 ? '' : 's'} ready to review`,
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to confirm decisions');
     }
   };
 
-  const handleRejectSubmit = async (payload: RejectPayload) => {
-    if (!rejectRec) return;
-    try {
-      await reject.mutateAsync({ rec: rejectRec, payload });
-      toast.success(`Rejected ${rejectRec.sku}`);
-      setRejectRec(null);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to reject recommendation');
-    }
-  };
-
-  const handleBulkAcceptConfirm = async () => {
-    if (!pendingBulkAccept) return;
-    try {
-      const res = await bulkAccept.mutateAsync(pendingBulkAccept.recs);
-      pendingBulkAccept.clear();
-      toast.success(
-        `Accepted ${res.accepted_count} recommendation${res.accepted_count === 1 ? '' : 's'} — ` +
-          `staged. Confirm decisions to draft the POs.`,
-      );
-      setPendingBulkAccept(null);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to accept recommendations');
-    }
-  };
-
-  const handleBulkRejectConfirm = async (reason: string) => {
-    if (!pendingBulkReject) return;
-    try {
-      const res = await bulkReject.mutateAsync({ recs: pendingBulkReject.recs, reason });
-      pendingBulkReject.clear();
-      toast.success(
-        `Rejected ${res.rejected_count} recommendation${res.rejected_count === 1 ? '' : 's'}`,
-      );
-      setPendingBulkReject(null);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to reject recommendations');
-    }
-  };
-
-  if (isLoading) {
-    return (
-      <div className="space-y-5">
-        <Skeleton className="h-44 w-full rounded-xl" />
-        <Skeleton className="h-64 w-full rounded-xl" />
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <Card className="p-6 text-center text-sm text-scm-stockout">
-        Couldn&apos;t load the buy recommendations. Retry the run from the toolbar.
-      </Card>
-    );
-  }
-
-  if (!baseRecs.length) {
-    return (
-      <Card className="flex flex-col items-center gap-3 p-10 text-center">
-        <span className="flex size-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
-          <ShoppingCart className="size-6" aria-hidden />
-        </span>
-        <div>
-          <div className="text-sm font-semibold">No buy recommendations to fund</div>
-          <p className="mt-1 max-w-md text-sm text-muted-foreground">
-            This run produced no reorders, so there is nothing to rank against a cash budget.
-          </p>
+  const budgetHeader = (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <div className="flex items-center gap-2">
+        <Label htmlFor="cash-budget" className="text-xs text-muted-foreground">
+          Cash budget
+        </Label>
+        <div className="flex items-center gap-1">
+          <span className="text-xs text-muted-foreground">RM</span>
+          <Input
+            id="cash-budget"
+            type="text"
+            inputMode="numeric"
+            value={budgetText}
+            onChange={(e) => {
+              const raw = e.target.value.replace(/[^0-9]/g, '');
+              setBudgetText(raw);
+              setBudget(raw === '' ? 0 : Number(raw));
+            }}
+            placeholder="0"
+            className="h-8 w-28 text-right tabular-nums"
+          />
         </div>
-      </Card>
-    );
-  }
+      </div>
+      {/* Slider mirrors the numeric input (M8: drag OR type) — same clamp + step as the
+          server allocator, so a drag lands the funded boundary exactly where a typed
+          value would. Kept compact so it sits inline in the section header. */}
+      <Slider
+        value={[Math.min(budget, sliderMax)]}
+        min={0}
+        max={sliderMax}
+        step={BUDGET_STEP}
+        onValueChange={([v]) => {
+          const next = Math.max(0, Math.min(v, sliderMax));
+          setBudget(next);
+          setBudgetText(next ? String(next) : '');
+        }}
+        aria-label="Cash budget slider"
+        className="w-40 sm:w-48"
+      >
+        <SliderThumb aria-label="Budget amount" />
+      </Slider>
+      <div className="text-right text-2xs leading-tight">
+        <div className="tabular-nums">{fmtMoney(funding.committed)} committed</div>
+        <div className={funding.free < 0 ? 'text-scm-stockout tabular-nums' : 'text-scm-incoming tabular-nums'}>
+          {fmtMoney(funding.free)} {funding.free < 0 ? 'over' : 'free'}
+        </div>
+      </div>
+    </div>
+  );
 
   return (
-    <div className="space-y-5">
-      <CashBudgetPanel
-        budget={effectiveBudget}
-        onBudgetChange={setBudget}
-        sliderMax={sliderMax}
-        step={BUDGET_STEP}
-        funding={funding}
-      />
-
-      {/* Confirm-decisions bar — only once something is staged (M4 slice-B UX:
-          the PO is created here, not on each Accept/Adjust). */}
-      {stagedCount.total > 0 ? (
+    <div className="space-y-4">
+      {/* Confirm-decisions bar - draft POs are created here (M8-C8), so it only shows
+          once at least one line is accepted/adjusted (M8-F2). */}
+      {hasAcceptedDecisions ? (
         <div className="flex flex-col gap-2 rounded-lg border border-primary/40 bg-primary/5 p-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2.5 text-sm">
             <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
               <CheckCheck className="size-4.5" aria-hidden />
             </span>
             <span>
-              <span className="font-semibold tabular-nums">{fmtInt(stagedCount.total)}</span> decision
-              {stagedCount.total === 1 ? '' : 's'} staged
-              <span className="text-muted-foreground">
-                {' '}
-                ({fmtInt(stagedCount.accepted)} accepted, {fmtInt(stagedCount.adjusted)} adjusted)
-              </span>
+              <span className="font-semibold tabular-nums">{fmtInt(acceptedCount)}</span> accepted line
+              {acceptedCount === 1 ? '' : 's'}, ready to confirm into draft purchase orders
             </span>
           </div>
-          <Button
-            onClick={() => setConfirmOpen(true)}
-            disabled={confirm.isPending}
-            className="shrink-0"
-          >
+          <Button onClick={() => setConfirmOpen(true)} className="shrink-0">
             <CheckCheck className="size-4" />
             Confirm decisions
           </Button>
         </div>
       ) : null}
 
-      <CashResultsGrid
-        rows={funding.funded}
-        variant="funded"
-        isLoading={false}
-        onRowClick={setExplainRec}
-        decisionsById={decisionsById}
-        onAccept={handleAccept}
-        onAdjust={setAdjustRec}
-        onReject={setRejectRec}
-        onBulkAccept={(recs, clear) => setPendingBulkAccept({ recs, clear })}
-        onBulkReject={(recs, clear) => setPendingBulkReject({ recs, clear })}
-        selectable
-      />
-      <CashResultsGrid
-        rows={funding.deferred}
-        variant="deferred"
-        isLoading={false}
-        onRowClick={setExplainRec}
-        decisionsById={decisionsById}
-        onAccept={handleAccept}
-        onAdjust={setAdjustRec}
-        onReject={setRejectRec}
-        onBulkAccept={(recs, clear) => setPendingBulkAccept({ recs, clear })}
-        onBulkReject={(recs, clear) => setPendingBulkReject({ recs, clear })}
-        selectable
-      />
-      {/* Always render Needs cost (M4-D16), even when empty — read-only (uncosted
-          buys can't be actioned until a cost is added). */}
-      <CashResultsGrid
-        rows={funding.needsCost}
-        variant="needs_cost"
-        isLoading={false}
-        onRowClick={setExplainRec}
-      />
+      <DndContext
+        sensors={sensors}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragCancel={() => setActiveRow(null)}
+      >
+        <CashResultsGrid
+          within={funding.within}
+          over={funding.over}
+          decisions={decisions}
+          editedIds={editedIds}
+          poByRow={poByRow}
+          displayRank={displayRank}
+          budgetHeader={budgetHeader}
+          handlers={{ onFund: fund, onReject: reject, onEdit: editRow }}
+          onOpenDetail={(row) => setDetailRec(row.rec)}
+        />
+        <DragOverlay dropAnimation={null}>
+          {activeRow ? (
+            <div className="rounded-md border bg-background px-3 py-1.5 text-xs font-medium shadow-md">
+              {activeRow.sku}
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
 
-      <ReorderExplanationDialog
-        rec={explainRec}
-        open={!!explainRec}
-        onOpenChange={(o) => !o && setExplainRec(null)}
-        recs={explainSection}
-        totalCount={explainSection.length}
-        pageItemOffset={0}
-        onNavigate={setExplainRec}
-      />
-
-      <AdjustRecommendationModal
-        rec={adjustRec}
-        open={!!adjustRec}
-        onOpenChange={(o) => !o && setAdjustRec(null)}
-        onSubmit={handleAdjustSubmit}
-        isSubmitting={adjust.isPending}
-      />
-
-      <RejectRecommendationDialog
-        rec={rejectRec}
-        open={!!rejectRec}
-        onOpenChange={(o) => !o && setRejectRec(null)}
-        onSubmit={handleRejectSubmit}
-        isSubmitting={reject.isPending}
-      />
-
-      <ConfirmActionDialog
-        open={!!pendingBulkAccept}
-        onOpenChange={(o) => !o && setPendingBulkAccept(null)}
-        title="Accept recommendations?"
-        description={
-          pendingBulkAccept
-            ? `Accept ${fmtInt(pendingBulkAccept.recs.length)} recommendation${
-                pendingBulkAccept.recs.length === 1 ? '' : 's'
-              }? A consolidated draft purchase order will be created per supplier. Draft POs are not counted as incoming stock until you confirm them.`
-            : ''
-        }
-        confirmLabel="Accept"
-        onConfirm={handleBulkAcceptConfirm}
-        isBusy={bulkAccept.isPending}
-      />
-
-      <BulkRejectDialog
-        count={pendingBulkReject?.recs.length ?? 0}
-        open={!!pendingBulkReject}
-        onOpenChange={(o) => !o && setPendingBulkReject(null)}
-        onSubmit={handleBulkRejectConfirm}
-        isSubmitting={bulkReject.isPending}
-      />
+      {/* Needs-cost banner (M8-C7) - not a third section, just a dismissible note. */}
+      {funding.needsCost.length > 0 && !bannerDismissed ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+          <Info className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="text-muted-foreground">
+            <span className="font-medium text-foreground tabular-nums">
+              {fmtInt(funding.needsCost.length)}
+            </span>{' '}
+            product{funding.needsCost.length === 1 ? '' : 's'} skipped - no supplier cost yet.
+          </span>
+          <Link
+            href={reviewCostHref}
+            className="font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+            title={
+              needsCostSkus.length === 1
+                ? `Review ${needsCostSkus[0]} in Products`
+                : 'Review these products in Products'
+            }
+          >
+            Review &amp; add cost
+          </Link>
+          <button
+            type="button"
+            className="ms-auto rounded-sm p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label="Dismiss"
+            onClick={() => setBannerDismissed(true)}
+          >
+            <X className="size-4" aria-hidden />
+          </button>
+        </div>
+      ) : null}
 
       <ConfirmActionDialog
         open={confirmOpen}
@@ -346,14 +263,26 @@ export function CashCopilotResults({
         title="Confirm decisions?"
         description={
           `This creates a consolidated draft purchase order per supplier from your ` +
-          `${fmtInt(stagedCount.total)} staged decision${stagedCount.total === 1 ? '' : 's'} ` +
-          `(${fmtInt(stagedCount.accepted)} accepted, ${fmtInt(stagedCount.adjusted)} adjusted). ` +
+          `${fmtInt(acceptedCount)} accepted line${acceptedCount === 1 ? '' : 's'}. ` +
           `Draft POs are held in Purchase Orders and are NOT counted as incoming stock until you ` +
           `confirm the draft there.`
         }
         confirmLabel="Confirm decisions"
-        onConfirm={handleConfirmDecisions}
-        isBusy={confirm.isPending}
+        onConfirm={handleConfirm}
+        isBusy={isConfirming}
+      />
+
+      {/* Row-click recommendation detail (M8-C10) - the pre-M8 row-detail view,
+          reused intact. Phase 2 feeds it the real recommendation (and its AI
+          summary / advisory / Q&A) instead of the mock-row adapter. */}
+      <ReorderExplanationDialog
+        rec={detailRec}
+        open={!!detailRec}
+        onOpenChange={(o) => !o && setDetailRec(null)}
+        recs={detailRecs}
+        totalCount={detailRecs.length}
+        onNavigate={setDetailRec}
+        poLink={detailRec ? poByRow[detailRec.id] ?? null : null}
       />
     </div>
   );

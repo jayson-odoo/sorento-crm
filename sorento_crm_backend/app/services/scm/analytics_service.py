@@ -777,16 +777,56 @@ def run_analytics(db: Session, scope: Optional[dict] = None,
 # Explain (deterministic debug — AC-M2.13)
 # ---------------------------------------------------------------------------
 
+def _demand_dos(db: Session, as_of: date, product_id: str,
+                warehouse_id: Optional[str]) -> list[dict]:
+    """M8-A2 — the delivery orders (DOs) that drove the outflow in the demand window,
+    as a navigable list (one row per DO: order id + DO number + date + qty out).
+
+    ``scm.consumption_v`` carries no order id, so this hits the base ``orders`` /
+    ``order_lines`` tables directly with the SAME window + cancellation filter the demand
+    aggregation uses (``is_cancelled = false``, ``order_date::date`` within
+    ``[as_of - WINDOW_DAYS, as_of)``). Filtered to ``warehouse_id`` when the cell has one;
+    otherwise all of the product's DOs in the window. Newest DO first."""
+    lo = _window_lo(as_of)
+    wh = "AND ol.warehouse_id = :wid" if warehouse_id else ""
+    params: dict[str, Any] = {"pid": product_id, "lo": lo, "as_of": as_of}
+    if warehouse_id:
+        params["wid"] = warehouse_id
+    rows = db.execute(text(f"""
+        SELECT o.id AS order_id, o.order_number AS do_number,
+               o.order_date, COALESCE(SUM(ol.quantity), 0) AS qty_out
+        FROM order_lines ol
+        JOIN orders o ON o.id = ol.order_id
+        WHERE o.is_cancelled = false
+          AND ol.product_id = :pid
+          AND o.order_date::date >= :lo AND o.order_date::date < :as_of
+          {wh}
+        GROUP BY o.id, o.order_number, o.order_date
+        ORDER BY o.order_date DESC NULLS LAST
+    """), params).mappings().all()
+    return [{
+        "order_id": str(r["order_id"]),
+        "do_number": r["do_number"],
+        "order_date": r["order_date"].isoformat() if r["order_date"] else None,
+        "qty_out": float(r["qty_out"] or 0.0),
+    } for r in rows]
+
+
 def explain_demand(db: Session, product_id: str, warehouse_id: Optional[str],
                    config: Optional[dict] = None) -> dict:
     """Deterministically re-derive one SKU's demand working: window, per-week sample
-    points, channel split, method, CV. Same inputs => identical output (no writes)."""
+    points, channel split, method, CV. Same inputs => identical output (no writes).
+
+    M8-A2: also carries ``demand_dos`` — the delivery orders behind the outflow in the
+    window as a navigable list (so days-cover demand reads as real DOs, not raw weekly
+    buckets)."""
     as_of = _as_of(config)
     policy = _abc_xyz_policy(db)
     windows = _bucket_windows(as_of)  # newest-first (from, to)
     # present oldest->newest for reading (index NUM_BUCKETS-1 down to 0)
     order = list(reversed(range(NUM_BUCKETS)))
     rows = _demand_rows(db, as_of, [product_id])
+    demand_dos = _demand_dos(db, as_of, product_id, warehouse_id)
     agg = _aggregate_demand(rows).get(_k(product_id, warehouse_id))
     if agg is None:
         return {
@@ -800,6 +840,7 @@ def explain_demand(db: Session, product_id: str, warehouse_id: Optional[str],
             "method_reason": "no outflow in the window",
             "band": None, "demand_cv": None, "avg_daily_demand": 0.0,
             "baseline_rate": 0.0, "spike_rate": 0.0,
+            "demand_dos": demand_dos,
         }
     combined = bucket_stats(agg["combined"], policy["x"], policy["y"], BUCKET_DAY_LENGTHS)
     return {
@@ -815,4 +856,5 @@ def explain_demand(db: Session, product_id: str, warehouse_id: Optional[str],
         "avg_daily_demand": round(combined["baseline_total"] / WINDOW_DAYS, 6),
         "baseline_rate": round(sum(agg["continuous"]) / WINDOW_DAYS, 6),
         "spike_rate": round(sum(agg["spike"]) / WINDOW_DAYS, 6),
+        "demand_dos": demand_dos,
     }
