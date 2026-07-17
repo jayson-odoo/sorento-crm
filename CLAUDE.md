@@ -86,13 +86,13 @@ For any development task, Claude boots and owns the local stack as **background 
 |----------|------------------------------------------------------------------------------------------------|------|-----------------|
 | Backend  | `venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` (in `sorento_crm_backend/`) | 8000 | `--reload` — backend file edits auto-restart uvicorn; nothing to do |
 | Worker   | `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES venv/bin/python worker.py` (in `sorento_crm_backend/`) | —    | **No reload.** Restart manually after editing any RQ task (`app/tasks/*`). |
-| Frontend | `npm run build && npm start` (in `sorento_crm_frontend/`)                                       | 3000 | **No HMR.** After any FE change: kill the session, `npm run build && npm start` again |
+| Frontend | `npm run dev` (in `sorento_crm_frontend/`)                                                      | 3000 | **HMR — edits hot-reload; no rebuild.** Keep ONE persistent `npm run dev` server; do NOT kill/rebuild it to see a change. Use `npm run build && npm start` ONLY for handoff / final verify (see "Frontend dev loop"). |
 | MCP      | `CRM_BASE_URL=http://localhost:8000 EXTERNAL_API_KEY=<from backend .env> backend venv's python -m sorento_crm_mcp` (in `sorento_crm_mcp/`; package installed in the backend venv) | 8765 | Restart manually after MCP code/catalog changes |
 
 - Run each as `run_in_background: true` Bash so logs are inspectable and sessions survive across turns.
 - Before booting, check ports (`lsof -i :3000 -i :8000 -i :8765 -sTCP:LISTEN`) and the worker (`ps aux | grep worker.py`) — if already running, reuse, don't double-boot.
 - **Worker is required for imports.** RQ jobs on the `imports` / `respond_io` queues (Excel imports, GRN lines, Respond.io sends) run ONLY on the worker — the API process no longer drains them in-process. No worker = uploads enqueue but never process. The `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` prefix is mandatory on macOS: RQ forks a work-horse and the Obj-C runtime aborts it (signal 6) without it. Needs `REDIS_URL` reachable (`redis-cli ping`). Run `worker.py` with `ENABLE_SCHEDULER` unset locally (cron ticks aren't needed for most dev).
-- After every frontend change set, rebuild + restart the FE session **proactively** (don't wait to be asked) and tell the user when :3000 is ready to test.
+- During internal iteration, FE edits hot-reload on the `npm run dev` server — no action needed. **Every handoff to the user must be a prod build:** before you ask them to test/review :3000, kill dev and `npm run build && npm start` (never hand off a dev server). It matches their prod-build test env and surfaces build-only (RSC / server-component / `next build` type) errors dev hides. See "Frontend dev loop".
 - Backend changes need no action beyond confirming uvicorn's reload log line — **except** edits to `app/tasks/*` (RQ tasks), which require restarting the Worker session.
 
 ## Architecture
@@ -215,7 +215,7 @@ Two paths, pick one:
 
 Use the `mcp__plugin_playwright_playwright__*` tools to drive Chromium against the running dev server.
 
-- Ensure FE dev server runs at `http://localhost:3000` (`npm run build && npm start` in `sorento_crm_frontend/`) and BE at `http://localhost:8000`.
+- Ensure the FE dev server runs at `http://localhost:3000` (`npm run dev` in `sorento_crm_frontend/`, HMR) and BE at `http://localhost:8000`. For a final pre-handoff verification, do it against a prod build (`npm run build && npm start`) — see "Frontend dev loop".
 - **Always navigate to a feature by clicking through the sidebar / top nav from the home page — never `browser_navigate` directly to a deep URL.** Direct URL navigation hides nav-config bugs (missing entries, wrong `moduleKey`, broken permission gating, hidden behind a collapsed group). The first verification step for any new page is "open the sidebar group it belongs to and confirm the entry renders, then click it."
 - Tool flow: land on `/`, `browser_snapshot` to find the relevant sidebar group button, `browser_click` to expand, then `browser_click` the leaf entry → `browser_snapshot` the destination → continue with `browser_click` / `browser_fill_form` / `browser_type` → re-snapshot to assert state.
 - Always check `browser_console_messages` after the interaction. Treat unexpected `error` / `warning` as a regression.
@@ -239,13 +239,14 @@ If unable to reach a browser (server down, sandboxed, etc.), state that explicit
 - AI / file-extraction / portal flows → spec required, real fixture required.
 - Pure visual / Tailwind tweak → MCP screenshot is sufficient.
 
-## Cache reset (frontend)
+## Frontend dev loop (HMR by default; build only at handoff)
 
-This project runs FE as a **production build** via `npm run build && npm start` — there is **no HMR**. Any FE code change requires a full rebuild before it shows up in the browser. Do not assume hot-reload.
+**The rule: `npm run dev` (HMR) for internal/team development; `npm run build && npm start` (prod) whenever handing off to the user.** These are the only two modes and the line between them is hard.
 
-- If FE changes don't appear: stop the server, `rm -rf sorento_crm_frontend/.next` (and optionally `node_modules/.cache`), `npm run build && npm start`, hard-refresh browser.
-- `npm run dev` exists but is not how this stack is normally run; using it can hide build-time errors (e.g. server component / RSC mistakes) that only surface during `next build`.
-- Playwright MCP verification flow: if the running server is `npm start`, file edits will NOT be visible until rebuild. The FE session is Claude-managed (see "Dev sessions"): kill it, `npm run build && npm start`, then verify. Only ask first if the :3000 process is one the user started themselves.
+- **Internal dev / iteration → `npm run dev`.** One persistent Claude-managed server on :3000; FE edits hot-reload almost instantly, **no rebuild**. Use this for ALL coding + Claude-side Playwright MCP verification while a task is in progress. Running `npm run build` on every change is the slow path and is NOT how to iterate — a full prototype build cycle costs minutes and is the main thing that makes FE work drag.
+- **Handoff to the user → `npm run build && npm start`, ALWAYS.** Any time you stop and ask the user to test / review / sign off on :3000, the running server MUST be a prod build — **never hand off a `npm run dev` server.** Kill dev, `npm run build && npm start`, then tell them :3000 is ready. This matches the user's prod-build test env AND surfaces build-only errors (RSC / server-component mistakes, type errors) that `next build` catches but `dev` hides. Also do a build before opening a PR.
+- **Auth on dev:** the dev server must share the backend `JWT_SECRET` via `.env.local` (`NEXTAUTH_SECRET`) or NextAuth login flaps on :3000. Fix the env — do NOT prod-build every iteration to dodge it. If dev auth genuinely can't be made to work in a given environment, fall back to a prod build for login-gated Playwright verification (and say so).
+- If HMR wedges (rare) or a change won't appear: `rm -rf sorento_crm_frontend/.next`, restart `npm run dev`, hard-refresh the browser.
 
 ## PR checklist
 

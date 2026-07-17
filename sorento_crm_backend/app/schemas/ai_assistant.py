@@ -13,6 +13,9 @@ class AIAssistantConfigUpdate(BaseModel):
     temperature: int = Field(0, ge=0, le=2)
     system_prompt: str = ""
     api_key: Optional[str] = Field(None, description="Optional replacement API key")
+    anthropic_api_key: Optional[str] = Field(
+        None, description="Optional replacement Anthropic key (SCM market web search)"
+    )
     enabled_tools: list[str] = Field(default_factory=list)
     rag_enabled: bool = True
     is_enabled: bool = True
@@ -27,6 +30,7 @@ class AIAssistantConfigResponse(BaseModel):
     temperature: int
     system_prompt: str
     api_key_masked: Optional[str] = None
+    anthropic_api_key_masked: Optional[str] = None
     enabled_tools: list[str]
     rag_enabled: bool
     is_enabled: bool

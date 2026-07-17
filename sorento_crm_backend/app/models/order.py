@@ -4,6 +4,7 @@ from sqlalchemy import (
     Column,
     String,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Text,
@@ -76,6 +77,8 @@ class Customer(Base):
     first_name = Column(String(120), nullable=True)
     last_name = Column(String(120), nullable=True)
     mobile_number = Column(String(50), nullable=True)
+    # SCM (M2): demand-nature channel routing via the customer's market segment.
+    market_segment_code = Column(String(50), ForeignKey("market_segments.code", ondelete="SET NULL"), nullable=True)
 
     orders = relationship("Order", back_populates="customer")
     customer_contacts = relationship(
@@ -267,4 +270,67 @@ class OrderLine(Base):
             unique=False,
         ),
         UniqueConstraint("order_id", "line_sequence", name="uq_order_lines_order_id_line_sequence"),
+    )
+
+
+class SalesOrder(Base):
+    """SCM sales order (demand / committed source). Public core record — survives
+    module uninstall. Sits with Order/DO in the order domain."""
+    __tablename__ = "sales_orders"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    so_number = Column(String(100), unique=True, nullable=False)
+    customer_id = Column(UUID(as_uuid=False), ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
+    order_date = Column(Date, nullable=True)
+    # Customer-requested delivery / ship-by date (M1-D14). Distinct from order_date
+    # (when the SO was raised); drives the FE "requested_delivery_date" column.
+    requested_delivery_date = Column(Date, nullable=True)
+    order_type = Column(String(50), nullable=True)  # lookup code (continuous / spike vocab)
+    priority = Column(String(20), nullable=True)
+    status = Column(String(50), default="open", nullable=False)
+    source_system = Column(String, nullable=True)
+    source_ref = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    customer = relationship("Customer")
+    lines = relationship(
+        "SalesOrderLine",
+        back_populates="sales_order",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("ix_sales_orders_customer_id", "customer_id"),
+        Index("ix_sales_orders_so_number", "so_number"),
+        Index("ix_sales_orders_status", "status"),
+    )
+
+
+class SalesOrderLine(Base):
+    """Open SO line — feeds committed / net-position views by product×warehouse."""
+    __tablename__ = "sales_order_lines"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    sales_order_id = Column(UUID(as_uuid=False), ForeignKey("sales_orders.id", ondelete="CASCADE"), nullable=False)
+    product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
+    warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=True)
+    qty_ordered = Column(Numeric(15, 4), default=0, nullable=False)
+    qty_delivered = Column(Numeric(15, 4), default=0, nullable=False)
+    priority = Column(String(20), nullable=True)  # inherit from header / override
+    line_status = Column(String(50), default="open", nullable=False)
+    source_system = Column(String, nullable=True)
+    source_ref = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    sales_order = relationship("SalesOrder", back_populates="lines")
+    product = relationship("Product")
+    warehouse = relationship("Warehouse")
+
+    __table_args__ = (
+        Index("ix_sales_order_lines_sales_order_id", "sales_order_id"),
+        Index("ix_sales_order_lines_product_id", "product_id"),
+        Index("ix_sales_order_lines_warehouse_id", "warehouse_id"),
+        Index("ix_sales_order_lines_product_warehouse_status", "product_id", "warehouse_id", "line_status"),
     )

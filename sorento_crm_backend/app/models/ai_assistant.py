@@ -33,6 +33,9 @@ class AIAssistantConfig(Base):
     temperature: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     api_key_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Dedicated Anthropic key — the SCM M5 market web search needs Anthropic while
+    # the assistant/explainer runs on the primary (OpenAI) key. DB-configurable.
+    anthropic_api_key_ciphertext: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled_tools: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, server_default="[]")
     rag_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")

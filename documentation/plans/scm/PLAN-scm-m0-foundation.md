@@ -64,3 +64,10 @@ views, module registration (dormant), RBAC, numbering, and a curated demo seed o
 - **Supplier realism** — seed plausible generic suppliers; do NOT fabricate real company identities/records (keep names clearly generic).
 - **Dual-head/down_revision** — check before writing the revision.
 - **product_suppliers already in public** — extend, don't recreate.
+
+## 8b. Build-time findings (M0, confirmed against the prod-copy — carry into later milestones)
+- **⚠ COST/PRICE DATA GAP (client-facing).** Only ~6,175 / 11,415 products have a non-zero `list_price`; **`cost_price` is null/0 on essentially all**, and the high-volume movers (WESERP10B, CWCY605…) are unpriced. Valuation (M1), ABC annual-value + margin (M2), and cash impact/ranking (M4) all need cost data — they will be **thin/zero on real prod until cost data exists**. The demo seed sets plausible `cost_price` on ~20 SKUs; **real value depends on the client supplying cost data.** Raise with the client.
+- **`stock_ledger` is snapshot/bulk-import only** (`BULK_IMPORT` + `SYSTEM_ADJUSTMENT`; no per-DO sales rows). So consumption/demand sources from **DO `order_lines`**, not the ledger — `scm.consumption_v` already reads DO. **Update the M2 plan accordingly.**
+- **`GRANT CREATE ON DATABASE ... TO <app_role>`** is required before the `scm` schema can be created (the app role has CREATE on `public` but not on the database). **Add this GRANT to the prod deploy steps, before `alembic upgrade`.**
+- **Demo seed is prod-guarded** — refuses unless `SCM_DEMO_SEED=1` AND a local DB host. Deploy applies migrations 273/274 + the GRANT only; **never the seed.**
+- **`product_suppliers.supplier_id` FK is `ON DELETE RESTRICT` in the live DB but the model declares `CASCADE`** — pre-existing mismatch (not introduced here); note for a future reconciliation.

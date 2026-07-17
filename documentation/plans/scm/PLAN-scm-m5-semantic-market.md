@@ -1,9 +1,30 @@
 # PLAN — SCM M5: Semantic Layer + Market Advisory
 
 **Slug:** `scm-m5-semantic-market` · **Milestone:** M5 · **UAC:** `scm-m5-semantic-market-acceptance-criteria.md`
-**Umbrella:** `PLAN-scm-reorder-copilot.md` · **Depends:** M0–M4 · **Status:** DRAFT (grilled, pre-code)
+**Umbrella:** `PLAN-scm-reorder-copilot.md` · **Depends:** M0–M4 · **Status:** BUILT (Part A + Part B
+committed; live web search key-gated fast-follow) — commits `f439454c5` (Part A) + `7e272e113` (Part B)
 **Type:** BE (bounded LLM flow + web-search research job) + advisory/explanation/viz UI
 **⚠ Read the `claude-api` skill before building the Anthropic web-search integration.**
+
+## Build status (2026-07-17, autonomous three-phase per part)
+- **Part A — explainer (DONE, live-verified):** `explainer_service` (explanation lazy-cached +
+  bounded Q&A; exact refusal; deterministic no-LLM degrade), prompt key
+  `scm_recommendation_explainer`, endpoints `/explanation` `/ask` `/advisory`. FE = AI-summary card +
+  Ask transcript in the explanation dialog. LLM-boundary clean (only writes `explanation`). pytest 16
+  + vitest. Verified against the real OpenAI LLM.
+- **Part B — market research + advisory (DONE except live search):** migration 280 (topic/signal/run),
+  `market_research_service` (topic CRUD, `list_signals`, `run_research`), advisory in
+  `explainer_service.market_advisory` (matches a stored signal by category id-or-code + currency,
+  condenses via the explainer flow, caches to `market_advisory`), prompt key `scm_market_advisory`,
+  Market Signals page (viz + Run research + topic CRUD) + sidebar entry. pytest 19 + vitest 32.
+- **KEY-GATED FAST-FOLLOW — the live Anthropic web search.** This env has no `ANTHROPIC_API_KEY` (only
+  OpenAI) and web search is Anthropic-only, so `_web_search_topic` cannot run/verify here. It is
+  implemented + isolated + key-guarded: no key → a persisted `status='failed'` run with error
+  "Anthropic web-search not configured (set ANTHROPIC_API_KEY)", never a crash. To enable: set
+  `ANTHROPIC_API_KEY`, **confirm the `web_search_20250305` tool version + model id against current
+  Anthropic docs** (pinned with a caveat in `market_research_service`), then a live Run research writes
+  real signals → advisory surfaces on matching recs. Everything else (persistence, CRUD, viz,
+  advisory-from-stored-signal) is fully working + verified.
 
 ## Goal
 The "wow": plain-language explanation + scoped Q&A per recommendation, and market/economic advisory

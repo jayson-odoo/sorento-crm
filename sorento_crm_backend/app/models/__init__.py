@@ -4,9 +4,9 @@
 from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission, SystemLog, SystemSetting, UserQuickAccess, UserListColumnConfig
 from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
-from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine
+from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
-from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine
+from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, CampaignType, MarketingCampaign
 from app.models.forms import Form, FormSection, FormField, FormVersion, FormSubmission
 from app.models.workflow_forms import (
@@ -65,6 +65,26 @@ from app.models.email_template import EmailTemplate
 from app.models.automation import Automation, AutomationRun
 from app.models.impersonation import ImpersonationSession, ContactImpersonationSession
 from app.models.email_outbox import EmailOutbox, EmailEventConfig
+from app.models.scm import (
+    ReorderPolicy,
+    ItemClassification,
+    AbcXyzPolicy,
+    SupplierScoringPolicy,
+    SupplierPerformance,
+    PurchasingBudget,
+    ReorderRun,
+    ReorderRecommendation,
+    RecommendationOverride,
+    OverrideReason,
+    ReasonActionMap,
+    CashRankingPolicy,
+    DemandNatureMap,
+    DemandStat,
+    MarketResearchTopic,
+    MarketSignal,
+    ScmAnalyticsRun,
+    MarketResearchRun,
+)
 
 __all__ = [
     "User",
@@ -85,6 +105,8 @@ __all__ = [
     "Customer",
     "CustomerContact",
     "OrderLine",
+    "SalesOrder",
+    "SalesOrderLine",
     "Warehouse",
     "StorageZone",
     "Stock",
@@ -100,6 +122,8 @@ __all__ = [
     "StockInquiry",
     "PurchaseRequestHeader",
     "PurchaseRequestLine",
+    "PurchaseOrder",
+    "PurchaseOrderLine",
     "Promotion",
     "PromotionGroup",
     "PromotionProduct",
@@ -194,6 +218,24 @@ __all__ = [
     "ContactImpersonationSession",
     "EmailOutbox",
     "EmailEventConfig",
+    "ReorderPolicy",
+    "ItemClassification",
+    "AbcXyzPolicy",
+    "SupplierScoringPolicy",
+    "SupplierPerformance",
+    "PurchasingBudget",
+    "ReorderRun",
+    "ReorderRecommendation",
+    "RecommendationOverride",
+    "OverrideReason",
+    "ReasonActionMap",
+    "CashRankingPolicy",
+    "DemandNatureMap",
+    "DemandStat",
+    "MarketResearchTopic",
+    "MarketSignal",
+    "ScmAnalyticsRun",
+    "MarketResearchRun",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy

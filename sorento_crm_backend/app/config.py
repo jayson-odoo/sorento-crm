@@ -104,6 +104,9 @@ class Settings(BaseSettings):
     embedding_model_version: str = "v1"
     embedding_dimensions: int = 1536
     openai_api_key: str | None = None
+    # SCM M5 market research — Anthropic web-search backend (key-gated; the run
+    # endpoint degrades to a 'failed' run row when unset, never crashes).
+    anthropic_api_key: str | None = None
     openai_embeddings_url: str = "https://api.openai.com/v1/embeddings"
     openai_chat_completions_url: str = "https://api.openai.com/v1/chat/completions"
 

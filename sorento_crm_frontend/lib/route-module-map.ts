@@ -9,6 +9,7 @@
 import { moduleRoutePrefixes as discoveredRoutePrefixes } from '@/modules/registry';
 
 const LEGACY_ROUTE_MODULE_PREFIXES: { prefix: string; moduleKey: string }[] = [
+  { prefix: '/scm', moduleKey: 'scm' },
   { prefix: '/order-management', moduleKey: 'order' },
   { prefix: '/master-data-management', moduleKey: 'product' },
   { prefix: '/complaint-management', moduleKey: 'complaints' },

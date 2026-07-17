@@ -1,0 +1,265 @@
+{
+  "_note": "M3 reorder-engine blessed golden set. Derived INDEPENDENTLY of the engine by scripts/scm_m3_golden_derive.py (plain-Python arithmetic + NormalDist). Pure-function maths only; the resolver's DB reads are covered by tests/scm/test_m3_resolver.py against the live M1/M2 tables.",
+  "z_scores": {
+    "0.90": 1.2815515655446006,
+    "0.95": 1.6448536269514715,
+    "0.98": 2.0537489106318225,
+    "0.99": 2.3263478740408408
+  },
+  "case_A_reorder_point_fixed": {
+    "demand_rate": 10.0,
+    "safety_days": 7.0,
+    "lead_time": 30.0,
+    "review_days": 30.0,
+    "net": 200,
+    "moq": 50,
+    "order_multiple": 12,
+    "safety_stock": 70.0,
+    "reorder_point": 370.0,
+    "order_up_to": 670.0,
+    "recommended_qty": 470.0,
+    "rounded_qty": 480.0,
+    "triggered": true,
+    "confidence": "high"
+  },
+  "case_B_periodic_review": {
+    "demand_rate": 5.0,
+    "safety_days": 7.0,
+    "lead_time": 20.0,
+    "review_days": 30.0,
+    "net": 150,
+    "moq": 100,
+    "order_multiple": 25,
+    "safety_stock": 35.0,
+    "reorder_point": 135.0,
+    "order_up_to": 285.0,
+    "recommended_qty": 135.0,
+    "rounded_qty": 150.0,
+    "triggered_on_cadence": true,
+    "triggered_off_cadence": false,
+    "confidence": "medium"
+  },
+  "case_C_min_max": {
+    "demand_rate": 8.0,
+    "safety_days": 7.0,
+    "lead_time": 15.0,
+    "min_override": 100.0,
+    "max_override": 500.0,
+    "net": 80,
+    "moq": 50,
+    "order_multiple": 10,
+    "safety_stock": 56.0,
+    "reorder_point": 176.0,
+    "order_up_to": 500.0,
+    "recommended_qty": 420.0,
+    "rounded_qty": 420.0,
+    "triggered": true,
+    "confidence": "low"
+  },
+  "case_D_statistical": {
+    "demand_rate": 10.0,
+    "demand_cv": 0.3,
+    "var_lt": 4.0,
+    "lead_time": 25.0,
+    "service_level": 0.95,
+    "safety_days": 7.0,
+    "safety_stock": 41.12134067378679,
+    "reorder_point": 291.1213406737868,
+    "safety_stock_thin_fallback": 70.0,
+    "reorder_point_thin_fallback": 320.0,
+    "fallback_method": "fixed_days"
+  },
+  "case_E_service_level_change": {
+    "service_level": 0.99,
+    "safety_stock": 58.15869685102102,
+    "note": "same inputs as case D but service_level 0.99 -> larger SS, no code change"
+  },
+  "case_F_network_surplus": {
+    "warehouses": [
+      "WH1",
+      "WH2",
+      "WH3"
+    ],
+    "demand_rates": [
+      10.0,
+      5.0,
+      8.0
+    ],
+    "nets": [
+      50.0,
+      200.0,
+      20.0
+    ],
+    "lead_time": 30.0,
+    "safety_days": 7.0,
+    "review_days": 30.0,
+    "moq": 50,
+    "order_multiple": 12,
+    "agg_demand": 23.0,
+    "agg_net": 270.0,
+    "safety_stock": 161.0,
+    "reorder_point": 851.0,
+    "order_up_to": 1541.0,
+    "recommended_qty": 1271.0,
+    "buy_qty": 1272,
+    "deficits": [
+      320.0,
+      0.0,
+      276.0
+    ],
+    "allocation": [
+      614,
+      147,
+      511
+    ],
+    "allocation_sum": 1272
+  },
+  "case_G_network_deficit_capped": {
+    "buy_qty": 400,
+    "deficits": [
+      320.0,
+      0.0,
+      276.0
+    ],
+    "demand_rates": [
+      10.0,
+      5.0,
+      8.0
+    ],
+    "allocation": [
+      215,
+      0,
+      185
+    ],
+    "allocation_sum": 400
+  },
+  "case_N_network_no_trigger_in_band": {
+    "warehouses": [
+      "WH1",
+      "WH2"
+    ],
+    "demand_rates": [
+      6.0,
+      4.0
+    ],
+    "nets": [
+      300.0,
+      200.0
+    ],
+    "lead_time": 30.0,
+    "safety_days": 7.0,
+    "review_days": 30.0,
+    "agg_demand": 10.0,
+    "agg_net": 500.0,
+    "safety_stock": 70.0,
+    "reorder_point": 370.0,
+    "order_up_to": 670.0,
+    "net_above_rop": true,
+    "net_below_oup": true,
+    "triggered_reorder_point": false,
+    "buy_qty": 0
+  },
+  "case_I_supplier_selection": {
+    "suppliers": {
+      "S1": {
+        "is_primary": true,
+        "unit_cost": 100,
+        "lead": 30,
+        "score": 0.7
+      },
+      "S2": {
+        "is_primary": false,
+        "unit_cost": 80,
+        "lead": 40,
+        "score": 0.9
+      },
+      "S3": {
+        "is_primary": false,
+        "unit_cost": 90,
+        "lead": 20,
+        "score": 0.6
+      }
+    },
+    "primary": {
+      "chosen": "S1",
+      "alternatives": [
+        "S2",
+        "S3"
+      ]
+    },
+    "best_score": {
+      "chosen": "S2",
+      "alternatives": [
+        "S1",
+        "S3"
+      ]
+    },
+    "lowest_cost": {
+      "chosen": "S2",
+      "alternatives": [
+        "S3",
+        "S1"
+      ]
+    }
+  },
+  "case_J_lead_time": {
+    "measured": {
+      "measured": 12.5,
+      "declared": 30,
+      "value": 12.5,
+      "source": "measured"
+    },
+    "declared": {
+      "measured": null,
+      "declared": 30,
+      "value": 30,
+      "source": "declared"
+    },
+    "default": {
+      "measured": null,
+      "declared": null,
+      "value": 30,
+      "source": "default"
+    }
+  },
+  "case_K_confidence": {
+    "X_adequate": "high",
+    "X_thin": "low",
+    "Y_adequate": "medium",
+    "Y_thin": "low",
+    "Z_adequate": "low",
+    "Z_thin": "low",
+    "unknown_adequate": "medium"
+  },
+  "case_L_rounding": {
+    "rec470_moq50_mult12": 480.0,
+    "rec30_moq100_mult25": 100.0,
+    "rec100_moq50_mult1": 100.0,
+    "rec121_moq0_mult20": 140.0,
+    "not_triggered": 0
+  },
+  "case_M_disposition": {
+    "dead": {
+      "on_hand": 500,
+      "last_movement_days": 200,
+      "dead_stock_days": 180,
+      "type": "dead",
+      "action": "discontinue_or_promo"
+    },
+    "overstock": {
+      "on_hand": 3650,
+      "demand_rate": 10.0,
+      "days_of_cover": 365.0,
+      "overstock_days": 120,
+      "type": "overstock",
+      "action": "hold_or_promo"
+    },
+    "transfer": {
+      "sku": "X",
+      "overstock_wh": "WH-A",
+      "short_wh": "WH-B",
+      "message": "consider transfer X WH-A\u2192WH-B",
+      "buy_qty_unchanged": true
+    }
+  }
+}

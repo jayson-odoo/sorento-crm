@@ -8,6 +8,7 @@ export interface AIAssistantConfig {
   temperature: number;
   system_prompt: string;
   api_key_masked: string | null;
+  anthropic_api_key_masked: string | null;
   enabled_tools: string[];
   rag_enabled: boolean;
   is_enabled: boolean;
@@ -21,6 +22,7 @@ export interface AIAssistantConfigUpdatePayload {
   temperature: number;
   system_prompt: string;
   api_key?: string | null;
+  anthropic_api_key?: string | null;
   enabled_tools: string[];
   rag_enabled: boolean;
   is_enabled: boolean;

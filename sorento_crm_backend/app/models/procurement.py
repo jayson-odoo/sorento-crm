@@ -33,9 +33,11 @@ class Supplier(Base):
     country = Column(String(100), nullable=True)
     payment_terms_days = Column(Integer, default=30, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    # SCM (M0): denormalized latest composite supplier score (written by M2 job).
+    current_performance_score = Column(Numeric, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
-    
+
     product_suppliers = relationship("ProductSupplier", back_populates="supplier")
     inbound_shipments = relationship("InboundShipment", back_populates="supplier")
     
@@ -53,8 +55,15 @@ class ProductSupplier(Base):
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=False)
     standard_lead_time_days = Column(Integer, nullable=True)
+    # SCM (M0): sourcing parameters used by the reorder engine.
+    moq = Column(Integer, nullable=True)
+    order_multiple = Column(Integer, nullable=True)
+    unit_cost = Column(Numeric(12, 2), nullable=True)
+    currency = Column(String(3), nullable=True)
+    is_primary_supplier = Column(Boolean, default=False, nullable=False)
+    lead_time_variability_days = Column(Numeric, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
-    
+
     product = relationship("Product", back_populates="product_suppliers")
     supplier = relationship("Supplier", back_populates="product_suppliers")
     
@@ -238,6 +247,11 @@ class PickingLine(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     picking_header_id = Column(UUID(as_uuid=False), ForeignKey("picking_headers.id", ondelete="CASCADE"), nullable=False)
     spo_allocation_id = Column(UUID(as_uuid=False), ForeignKey("spo_allocations.id", ondelete="SET NULL"), nullable=True)
+    # SCM (M0): soft link to the originating PO line when this pick is a goods-received
+    # against a purchase order (drives supplier lead-time / quality snapshots).
+    po_line_id = Column(UUID(as_uuid=False), ForeignKey("purchase_order_lines.id", ondelete="SET NULL"), nullable=True)
+    qty_accepted = Column(Integer, nullable=True)
+    qty_rejected = Column(Integer, nullable=True)
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
     quantity_expected = Column(Integer, nullable=False)
     quantity_picked = Column(Integer, nullable=False)
@@ -267,6 +281,71 @@ class PickingLine(Base):
         Index("ix_picking_lines_picking_header_id", "picking_header_id"),
         Index("ix_picking_lines_product_id", "product_id"),
         Index("ix_picking_lines_spo_allocation_id", "spo_allocation_id"),
+        Index("ix_picking_lines_po_line_id", "po_line_id"),
+    )
+
+
+class PurchaseOrder(Base):
+    """SCM purchase order (supply / on-order source). Public core record — survives
+    module uninstall. Sits with suppliers / PR in the procurement domain."""
+    __tablename__ = "purchase_orders"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    po_number = Column(String(100), unique=True, nullable=False)
+    supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True)
+    issue_date = Column(Date, nullable=True)
+    expected_date = Column(Date, nullable=True)
+    status = Column(String(50), default="draft", nullable=False)  # draft | draft_recommendation | active
+    currency = Column(String(3), nullable=True)
+    source_system = Column(String, nullable=True)
+    source_ref = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    supplier = relationship("Supplier")
+    lines = relationship(
+        "PurchaseOrderLine",
+        back_populates="purchase_order",
+        cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        Index("ix_purchase_orders_supplier_id", "supplier_id"),
+        Index("ix_purchase_orders_po_number", "po_number"),
+        Index("ix_purchase_orders_status", "status"),
+    )
+
+
+class PurchaseOrderLine(Base):
+    """Open PO line — feeds on-order / net-position views by product×warehouse."""
+    __tablename__ = "purchase_order_lines"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    purchase_order_id = Column(UUID(as_uuid=False), ForeignKey("purchase_orders.id", ondelete="CASCADE"), nullable=False)
+    product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
+    warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="RESTRICT"), nullable=True)
+    qty_ordered = Column(Numeric(15, 4), default=0, nullable=False)
+    qty_received = Column(Numeric(15, 4), default=0, nullable=False)
+    unit_cost = Column(Numeric(12, 2), nullable=True)
+    currency = Column(String(3), nullable=True)
+    expected_date = Column(Date, nullable=True)
+    moq_snapshot = Column(Integer, nullable=True)
+    order_multiple_snapshot = Column(Integer, nullable=True)
+    line_status = Column(String(50), default="open", nullable=False)
+    source_system = Column(String, nullable=True)
+    source_ref = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    purchase_order = relationship("PurchaseOrder", back_populates="lines")
+    product = relationship("Product")
+    warehouse = relationship("Warehouse")
+
+    __table_args__ = (
+        Index("ix_purchase_order_lines_purchase_order_id", "purchase_order_id"),
+        Index("ix_purchase_order_lines_product_id", "product_id"),
+        Index("ix_purchase_order_lines_warehouse_id", "warehouse_id"),
+        Index("ix_purchase_order_lines_product_warehouse_status", "product_id", "warehouse_id", "line_status"),
     )
 
 

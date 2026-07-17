@@ -1,0 +1,573 @@
+"""SCM M3 reorder engine — the deterministic core (no LLM, pure maths).
+
+Turns M2's stored inputs (``scm.demand_stat``, ``scm.item_classification``,
+``scm.supplier_performance``, ``product_suppliers``) + M1's net position
+(``scm.net_position_v``) into reorder decisions — *when* (trigger) and *how much*
+(qty) — driven by the resolved ``scm.reorder_policy`` ruleset. Produces buy +
+disposition recommendation dicts (frozen inputs) reproducible without stat versioning.
+
+Two layers:
+  1. **Pure maths** (top of file) — take plain values, no I/O, golden-testable in
+     isolation (``tests/scm/test_m3_engine.py`` asserts them against the blessed
+     ``fixtures/golden_m3.json`` derived independently by
+     ``scripts/scm_m3_golden_derive.py``). This is the TDD centrepiece.
+  2. **Resolver** (bottom) — reads the M1/M2 tables the same way the dashboard does
+     and feeds the pure maths (``tests/scm/test_m3_resolver.py``, Postgres savepoints).
+
+The background run job that loops all planning SKUs and PERSISTS ``reorder_run`` +
+``reorder_recommendation`` rows is a SEPARATE slice — this module only computes.
+
+LOCKED formulae (UAC M3-D1..D5):
+  SS(fixed_days)  = demand_rate * safety_days
+  SS(statistical) = Z(service_level) * sqrt(LT * sigma_d^2 + demand^2 * var_LT),
+                    sigma_d = demand_cv * demand_rate  (thin sample -> fixed_days fallback)
+  ROP             = demand_rate * LT + SS
+  order_up_to (S) = ROP + demand_rate * review_period_days ; min_max: S = max_override
+  recommended_qty = S - net (0 when not triggered / non-positive)
+  rounded_qty     = ceil(max(recommended, moq) / order_multiple) * order_multiple
+  trigger         = reorder_point: net<=ROP ; periodic_review: on-cadence & net<S ;
+                    min_max: net<=min_override
+  network buy     = aggregate demand+net -> S_agg - net_agg (rounded) ; allocate
+                    deficit-first then velocity-proportional surplus (sums to buy)
+  confidence      = X & adequate -> high ; Z or thin sample -> low ; else medium
+"""
+from __future__ import annotations
+
+import math
+import uuid
+from statistics import NormalDist
+from typing import Any, Optional
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.services.scm.reorder_policy import (
+    DEFAULT_DEAD_STOCK_DAYS,
+    DEFAULT_OVERSTOCK_DAYS,
+    global_policy_row,
+)
+
+# --- locked engine defaults (seeded into the global policy; editable thereafter) ---
+DEFAULT_SAFETY_DAYS = 7
+DEFAULT_LEAD_TIME_DAYS = 30
+DEFAULT_SERVICE_LEVEL = 0.95
+DEFAULT_REVIEW_PERIOD_DAYS = 30
+DEFAULT_FORECAST_WINDOW_DAYS = 90
+DEFAULT_SUPPLIER_SELECTION = "primary"
+
+# Most-specific-wins ordering for policy resolution (SKU beats cell beats class beats global).
+_SCOPE_RANK = {"sku": 3, "abc_xyz_cell": 2, "product_class": 1, "global": 0}
+
+_SEED = "engine"
+
+
+# ===========================================================================
+# Pure maths — no I/O, golden-testable in isolation
+# ===========================================================================
+
+def z_score(service_level: Optional[float]) -> float:
+    """Inverse-normal Z for a service level (0<sl<1). Deterministic via NormalDist."""
+    sl = float(service_level) if service_level is not None else DEFAULT_SERVICE_LEVEL
+    sl = min(max(sl, 1e-6), 1 - 1e-6)
+    return NormalDist().inv_cdf(sl)
+
+
+def resolve_policy(policies: list[dict[str, Any]], *, product_id: str,
+                   abc_xyz_cell: Optional[str] = None,
+                   product_class: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """Most-specific ACTIVE policy for a SKU: sku > abc_xyz_cell > product_class > global.
+
+    Ties within the same scope break on ``priority`` (higher wins), then ``scope_ref``
+    for determinism. Returns ``None`` only when nothing matches (a seeded global always
+    matches, so callers that ran ``ensure_reorder_policy_defaults`` get a policy).
+    """
+    active = [p for p in policies if p.get("is_active", True)]
+    matches = [p for p in active
+               if _policy_matches(p, product_id, abc_xyz_cell, product_class)]
+    if not matches:
+        return None
+    matches.sort(
+        key=lambda p: (_SCOPE_RANK.get(str(p.get("scope_type")), -1),
+                       p.get("priority") or 0,
+                       str(p.get("scope_ref") or "")),
+        reverse=True,
+    )
+    return matches[0]
+
+
+def _policy_matches(p: dict[str, Any], product_id: str, abc_xyz_cell: Optional[str],
+                    product_class: Optional[str]) -> bool:
+    st = p.get("scope_type")
+    if st == "global":
+        return True
+    if st == "sku":
+        return str(p.get("scope_ref")) == str(product_id)
+    if st == "abc_xyz_cell":
+        return abc_xyz_cell is not None and str(p.get("scope_ref")) == str(abc_xyz_cell)
+    if st == "product_class":
+        return product_class is not None and str(p.get("scope_ref")) == str(product_class)
+    return False
+
+
+def select_supplier(suppliers: list[dict], *,
+                    selection: str = DEFAULT_SUPPLIER_SELECTION) -> dict:
+    """Pick the sourcing supplier + attach ranked alternatives (AC-M3.5/3.6).
+
+    Each supplier dict carries: ``supplier_id``, ``unit_cost``, ``lead_time_days``
+    (measured-or-declared), ``composite_score``, ``is_primary`` (+ any extras the
+    resolver freezes). Precedence by ``selection`` toggle:
+      * ``primary``     (default): is_primary -> best composite_score -> lowest cost
+      * ``best_score``: best composite_score -> is_primary -> lowest cost
+      * ``lowest_cost``: lowest cost -> is_primary -> best composite_score
+    Single supplier -> used. Empty -> flagged ``exception='no_supplier'`` (never a
+    silent skip). ``alternatives`` = the ranked losers as {supplier_id, unit_cost,
+    lead_time_days, composite_score}.
+    """
+    if not suppliers:
+        return {"chosen": None, "alternatives": [], "exception": "no_supplier"}
+    ranked = sorted(suppliers, key=lambda s: _supplier_sort_key(s, selection))
+    chosen = ranked[0]
+    alternatives = [{
+        "supplier_id": s.get("supplier_id"),
+        "unit_cost": _num(s.get("unit_cost")),
+        "lead_time_days": _num(s.get("lead_time_days")),
+        "composite_score": _num(s.get("composite_score")),
+    } for s in ranked[1:]]
+    return {"chosen": chosen, "alternatives": alternatives, "exception": None}
+
+
+def _supplier_sort_key(s: dict, selection: str):
+    prim = 1 if s.get("is_primary") else 0
+    sc = _num(s.get("composite_score"))
+    # present-first (0), then higher score first (negate)
+    sc_key = (0, -sc) if sc is not None else (1, 0.0)
+    uc = _num(s.get("unit_cost"))
+    uc_key = (0, uc) if uc is not None else (1, 0.0)   # present-first, lower cost first
+    # Final deterministic tiebreak: two suppliers tied on every ranking factor must
+    # resolve to the SAME winner every call (never DB row order). supplier_id is stable.
+    sid = str(s.get("supplier_id") or "")
+    if selection == "best_score":
+        return (sc_key, -prim, uc_key, sid)
+    if selection == "lowest_cost":
+        return (uc_key, -prim, sc_key, sid)
+    return (-prim, sc_key, uc_key, sid)                # primary (default)
+
+
+def lead_time(measured: Optional[float], declared: Optional[float], *,
+              default: float = DEFAULT_LEAD_TIME_DAYS) -> tuple[float, str]:
+    """measured (M2 supplier_performance) -> declared (product_suppliers) -> policy
+    default; returns (days, source) so the fallback used is recorded (AC-M3.4)."""
+    if measured is not None:
+        return float(measured), "measured"
+    if declared is not None:
+        return float(declared), "declared"
+    return float(default), "default"
+
+
+def safety_stock(method: Optional[str], *, demand_rate: float,
+                 safety_days: float = DEFAULT_SAFETY_DAYS,
+                 service_level: float = DEFAULT_SERVICE_LEVEL,
+                 cv_d: Optional[float] = None, var_lt: Optional[float] = None,
+                 lead_time_days: float = DEFAULT_LEAD_TIME_DAYS,
+                 manual_value: Optional[float] = None) -> tuple[float, str, Optional[str]]:
+    """Safety stock by method. Returns (ss, method_used, fallback_note).
+
+    ``statistical`` needs both demand variability (cv_d) and lead-time variance
+    (var_lt) from M2; a thin sample (either None) FALLS BACK to fixed_days and records
+    it (never emits a bogus statistical SS). ``manual`` uses the policy value, falling
+    back to fixed_days when unset.
+    """
+    d = float(demand_rate or 0.0)
+    if method == "statistical":
+        if cv_d is None or var_lt is None:
+            return d * float(safety_days), "fixed_days", (
+                "statistical requested but demand/lead-time variance sample thin "
+                "-> fixed_days fallback")
+        sigma_d = float(cv_d) * d
+        variance = float(lead_time_days) * sigma_d ** 2 + d ** 2 * float(var_lt)
+        return z_score(service_level) * math.sqrt(max(variance, 0.0)), "statistical", None
+    if method == "manual":
+        if manual_value is None:
+            return d * float(safety_days), "fixed_days", (
+                "manual requested but no manual value -> fixed_days fallback")
+        return float(manual_value), "manual", None
+    return d * float(safety_days), "fixed_days", None
+
+
+def reorder_point(demand_rate: float, lead_time_days: float, ss: float) -> float:
+    return float(demand_rate) * float(lead_time_days) + float(ss)
+
+
+def order_up_to(rop: float, demand_rate: float,
+                review_days: float = DEFAULT_REVIEW_PERIOD_DAYS) -> float:
+    return float(rop) + float(demand_rate) * float(review_days)
+
+
+def trigger(policy_type: Optional[str], *, net: float, rop: Optional[float] = None,
+            min_level: Optional[float] = None, oup: Optional[float] = None,
+            on_cadence: bool = True) -> tuple[bool, Optional[str]]:
+    """Whether a buy fires + the human ``triggered_reason`` (AC-M3.7)."""
+    n = float(net)
+    if policy_type == "periodic_review":
+        if on_cadence and oup is not None and n < float(oup):
+            return True, f"periodic_review: net {_g(n)} < order-up-to {_g(oup)} on review cadence"
+        return False, None
+    if policy_type == "min_max":
+        if min_level is not None and n <= float(min_level):
+            return True, f"min_max: net {_g(n)} <= min {_g(min_level)}"
+        return False, None
+    if rop is not None and n <= float(rop):   # reorder_point (default)
+        return True, f"reorder_point: net {_g(n)} <= ROP {_g(rop)}"
+    return False, None
+
+
+def order_qty(triggered: bool, *, net: float, oup: Optional[float],
+              moq: Optional[float] = None,
+              order_multiple: Optional[float] = None) -> tuple[float, float]:
+    """(recommended_qty, rounded_qty). recommended = S - net (0 when not triggered or
+    non-positive); rounded floors at moq then rounds UP to order_multiple (AC-M3.3)."""
+    if not triggered or oup is None:
+        return 0.0, 0.0
+    recommended = float(oup) - float(net)
+    if recommended <= 0:
+        return 0.0, 0.0
+    return recommended, round_order_qty(recommended, moq, order_multiple)
+
+
+def round_order_qty(qty: float, moq: Optional[float],
+                    order_multiple: Optional[float]) -> float:
+    """Floor at moq, then round UP to the nearest order_multiple."""
+    q = float(qty)
+    if moq is not None and q < float(moq):
+        q = float(moq)
+    if order_multiple and float(order_multiple) > 0:
+        m = float(order_multiple)
+        q = math.ceil(q / m) * m
+    return float(q)
+
+
+def confidence(xyz_class: Optional[str], *, demand_adequate: bool = True,
+               supplier_adequate: bool = True) -> str:
+    """Deterministic (xyz x data-sufficiency) -> high|medium|low (AC-M3.12)."""
+    adequate = bool(demand_adequate) and bool(supplier_adequate)
+    if xyz_class == "X" and adequate:
+        return "high"
+    if xyz_class == "Z" or not adequate:
+        return "low"
+    return "medium"
+
+
+def days_of_cover(net: float, demand_rate: Optional[float]) -> Optional[float]:
+    """Forward cover = net / demand_rate; None when no demand or a deficit."""
+    if not demand_rate or float(demand_rate) <= 0:
+        return None
+    if float(net) < 0:
+        return None
+    return float(net) / float(demand_rate)
+
+
+# --- network aggregation + auto-allocation (AC-M3.8) -----------------------
+
+def _apportion(total: int, weights: list[float]) -> list[int]:
+    """Largest-remainder integer apportionment summing EXACTLY to ``total``."""
+    n = len(weights)
+    if n == 0:
+        return []
+    s = sum(weights)
+    if s <= 0:
+        base, rem = divmod(total, n)
+        return [base + (1 if i < rem else 0) for i in range(n)]
+    raw = [total * w / s for w in weights]
+    floors = [int(math.floor(x)) for x in raw]
+    rem = total - sum(floors)
+    order = sorted(range(n), key=lambda i: (-(raw[i] - floors[i]), i))
+    for k in range(rem):
+        floors[order[k % n]] += 1
+    return floors
+
+
+def allocate(buy_qty: float, warehouses: list[dict]) -> dict[str, int]:
+    """Split a network buy across warehouses: each warehouse's deficit first, then the
+    rounding surplus velocity-proportional (by demand). When buy < Σdeficit the whole
+    buy is apportioned proportional to deficit. Result sums EXACTLY to round(buy_qty).
+
+    ``warehouses``: [{warehouse_id, deficit, demand_rate}].
+    """
+    total = int(round(float(buy_qty)))
+    if total <= 0 or not warehouses:
+        return {w["warehouse_id"]: 0 for w in warehouses}
+    deficits = [max(float(w.get("deficit") or 0.0), 0.0) for w in warehouses]
+    demands = [float(w.get("demand_rate") or 0.0) for w in warehouses]
+    total_deficit = sum(deficits)
+    if total <= total_deficit:
+        weights = deficits                              # buy <= Σdeficit -> proportional to deficit
+    else:
+        surplus = total - total_deficit
+        total_demand = sum(demands)
+        if total_demand > 0:
+            weights = [deficits[i] + surplus * demands[i] / total_demand
+                       for i in range(len(warehouses))]
+        else:
+            even = surplus / len(warehouses)            # no demand signal -> even surplus
+            weights = [deficits[i] + even for i in range(len(warehouses))]
+    parts = _apportion(total, weights)
+    return {warehouses[i]["warehouse_id"]: parts[i] for i in range(len(warehouses))}
+
+
+def aggregate_network(warehouses: list[dict], *, lead_time_days: float,
+                      safety_days: float = DEFAULT_SAFETY_DAYS,
+                      review_days: float = DEFAULT_REVIEW_PERIOD_DAYS,
+                      moq: Optional[float] = None,
+                      order_multiple: Optional[float] = None) -> dict:
+    """Aggregate demand+net across warehouses, size one buy on the aggregate, and
+    auto-allocate it (AC-M3.8). ``warehouses``: [{warehouse_id, demand_rate, net}].
+    Uses fixed_days SS on the aggregate (network golden path).
+    """
+    agg_demand = sum(float(w["demand_rate"]) for w in warehouses)
+    agg_net = sum(float(w["net"]) for w in warehouses)
+    ss = agg_demand * float(safety_days)
+    rop = reorder_point(agg_demand, lead_time_days, ss)
+    oup = order_up_to(rop, agg_demand, review_days)
+    recommended = oup - agg_net
+    buy = round_order_qty(recommended, moq, order_multiple) if recommended > 0 else 0.0
+    per_wh = []
+    for w in warehouses:
+        d = float(w["demand_rate"])
+        rop_i = reorder_point(d, lead_time_days, d * float(safety_days))
+        per_wh.append({"warehouse_id": w["warehouse_id"],
+                       "deficit": max(rop_i - float(w["net"]), 0.0),
+                       "demand_rate": d, "reorder_point": rop_i})
+    alloc = allocate(buy, per_wh)
+    return {"agg_demand": agg_demand, "agg_net": agg_net, "safety_stock": ss,
+            "reorder_point": rop, "order_up_to": oup, "recommended_qty": recommended,
+            "buy_qty": buy, "warehouses": per_wh, "allocation": alloc}
+
+
+# --- disposition + transfer flag (AC-M3.9) ---------------------------------
+
+def disposition(*, on_hand: float, last_movement_days: Optional[float],
+                dead_stock_days: float, days_of_cover_val: Optional[float],
+                overstock_days: float) -> Optional[dict]:
+    """Dead (an ACTUAL stale movement > dead_stock_days) OR overstock (DoC >
+    overstock_days) → a disposition rec. Dead takes precedence. ``None`` when neither
+    applies.
+
+    A never-moved SKU (``last_movement_days is None``) is NOT dead — no consumption
+    history is not the same as a stale movement, and a stocked-but-idle SKU should not
+    be auto-flagged for discontinuation. It may still be overstock (independent DoC
+    check) when it has demand + high cover.
+    """
+    if not on_hand or float(on_hand) <= 0:
+        return None
+    is_dead = (last_movement_days is not None
+               and float(last_movement_days) > float(dead_stock_days))
+    if is_dead:
+        return {"type": "dead", "action": "discontinue_or_promo"}
+    if days_of_cover_val is not None and float(days_of_cover_val) > float(overstock_days):
+        return {"type": "overstock", "action": "hold_or_promo"}
+    return None
+
+
+def transfer_flags(sku: str, warehouses: list[dict]) -> list[dict]:
+    """Advisory transfer flags: same SKU overstock in one warehouse + short (net<ROP)
+    in another → "consider transfer". Buy qty is UNCHANGED (netting deferred).
+
+    ``warehouses``: [{warehouse_id, warehouse_code, overstock: bool, short: bool}].
+    """
+    over = [w for w in warehouses if w.get("overstock")]
+    short = [w for w in warehouses if w.get("short")]
+    flags: list[dict] = []
+    for a in over:
+        for b in short:
+            if a["warehouse_id"] == b["warehouse_id"]:
+                continue
+            frm = a.get("warehouse_code") or a["warehouse_id"]
+            to = b.get("warehouse_code") or b["warehouse_id"]
+            flags.append({"sku": sku, "from_warehouse": frm, "to_warehouse": to,
+                          "message": f"consider transfer {sku} {frm}→{to}"})
+    return flags
+
+
+def _num(v) -> Optional[float]:
+    return float(v) if v is not None else None
+
+
+def _g(v) -> str:
+    return f"{float(v):g}"
+
+
+# ===========================================================================
+# Policy defaults (idempotent ensure — never rely on an empty policy table)
+# ===========================================================================
+
+def ensure_reorder_policy_defaults(db: Session) -> None:
+    """Guarantee one GLOBAL ``scm.reorder_policy`` carrying the LOCKED M3 defaults.
+
+    Idempotent: only inserts when no global row exists at all, so re-runs and
+    hand-edited values are never clobbered. The two engine toggles that have no
+    dedicated column — ``supplier_selection`` and ``lead_time_default_days`` — ride in
+    the existing ``factor_toggles`` JSONB (no migration).
+    """
+    if global_policy_row(db) is not None:
+        return
+    toggles = ('{"supplier_selection": "%s", "lead_time_default_days": %d}'
+               % (DEFAULT_SUPPLIER_SELECTION, DEFAULT_LEAD_TIME_DAYS))
+    db.execute(text(
+        "INSERT INTO scm.reorder_policy "
+        "(id, scope_type, scope_ref, policy_type, service_level, safety_stock_method, "
+        " safety_days, review_period_days, forecast_window_days, baseline_source, "
+        " spike_handling, buy_scope, dead_stock_days, overstock_days, factor_toggles, "
+        " is_active, priority, source_system, source_ref, created_at, updated_at) "
+        "VALUES (:id, 'global', NULL, 'reorder_point', :sl, 'fixed_days', :sd, :rp, :fw, "
+        " 'continuous_only', 'committed_only', 'network', :dsd, :osd, "
+        " CAST(:toggles AS jsonb), true, 0, :src, 'defaults', now(), now())"
+    ), {"id": str(uuid.uuid4()), "sl": DEFAULT_SERVICE_LEVEL, "sd": DEFAULT_SAFETY_DAYS,
+        "rp": DEFAULT_REVIEW_PERIOD_DAYS, "fw": DEFAULT_FORECAST_WINDOW_DAYS,
+        "dsd": DEFAULT_DEAD_STOCK_DAYS, "osd": DEFAULT_OVERSTOCK_DAYS,
+        "toggles": toggles, "src": _SEED})
+
+
+# ===========================================================================
+# Resolver — reads M1/M2 tables and feeds the pure maths
+# ===========================================================================
+
+def load_policies(db: Session) -> list[dict]:
+    """All active reorder policies as plain dicts (for ``resolve_policy``)."""
+    rows = db.execute(text(
+        "SELECT id, scope_type, scope_ref, policy_type, service_level, safety_stock_method, "
+        "safety_days, review_period_days, forecast_window_days, spike_handling, buy_scope, "
+        "dead_stock_days, overstock_days, min_override, max_override, factor_toggles, "
+        "is_active, priority FROM scm.reorder_policy WHERE is_active = true"
+    )).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def policy_toggles(policy: Optional[dict]) -> dict:
+    """Read the engine toggles that live in ``factor_toggles`` with locked defaults."""
+    toggles = (policy or {}).get("factor_toggles") or {}
+    if not isinstance(toggles, dict):
+        toggles = {}
+    return {
+        "supplier_selection": toggles.get("supplier_selection", DEFAULT_SUPPLIER_SELECTION),
+        "lead_time_default_days": toggles.get("lead_time_default_days", DEFAULT_LEAD_TIME_DAYS),
+        "safety_stock_manual": toggles.get("safety_stock_manual"),
+    }
+
+
+def load_classification(db: Session, product_id: str,
+                        warehouse_id: Optional[str]) -> Optional[dict]:
+    row = db.execute(text(
+        "SELECT abc_class, xyz_class, demand_cv FROM scm.item_classification "
+        "WHERE product_id = :pid AND warehouse_id IS NOT DISTINCT FROM :wid"
+    ), {"pid": product_id, "wid": warehouse_id}).mappings().first()
+    return dict(row) if row else None
+
+
+def load_demand(db: Session, product_id: str,
+                warehouse_id: Optional[str]) -> Optional[dict]:
+    row = db.execute(text(
+        "SELECT avg_daily_demand, baseline_rate, spike_rate, demand_cv, sample_days, method "
+        "FROM scm.demand_stat WHERE product_id = :pid AND warehouse_id IS NOT DISTINCT FROM :wid"
+    ), {"pid": product_id, "wid": warehouse_id}).mappings().first()
+    return dict(row) if row else None
+
+
+def load_category_code(db: Session, product_id: str) -> Optional[str]:
+    return db.execute(text(
+        "SELECT pc.category_code FROM products p "
+        "LEFT JOIN product_categories pc ON pc.id = p.category_id WHERE p.id = :pid"
+    ), {"pid": product_id}).scalar()
+
+
+def load_net_position(db: Session, product_id: str,
+                      warehouse_id: Optional[str] = None) -> list[dict]:
+    sql = ("SELECT product_id, warehouse_id, quantity_on_hand, on_order, committed, "
+           "net_position FROM scm.net_position_v WHERE product_id = :pid")
+    params: dict[str, Any] = {"pid": product_id}
+    if warehouse_id is not None:
+        sql += " AND warehouse_id = :wid"
+        params["wid"] = warehouse_id
+    return [dict(r) for r in db.execute(text(sql), params).mappings().all()]
+
+
+def load_supplier_candidates(db: Session, product_id: str,
+                             *, default_lead: float = DEFAULT_LEAD_TIME_DAYS) -> list[dict]:
+    """Assemble the SKU's suppliers for ``select_supplier``, folding in the M2 measured
+    lead-time / composite / variance (supplier×product row preferred, supplier-level
+    fallback). Each dict carries declared + measured lead so ``lead_time`` precedence
+    can be applied downstream.
+    """
+    rows = db.execute(text(
+        "SELECT ps.supplier_id, su.supplier_code, su.supplier_name, "
+        "ps.standard_lead_time_days, ps.moq, ps.order_multiple, ps.unit_cost, ps.currency, "
+        "ps.is_primary_supplier, ps.lead_time_variability_days "
+        "FROM product_suppliers ps JOIN suppliers su ON su.id = ps.supplier_id "
+        "WHERE ps.product_id = :pid "
+        "ORDER BY ps.supplier_id"          # deterministic load order (stable tie input)
+    ), {"pid": product_id}).mappings().all()
+    out: list[dict] = []
+    for r in rows:
+        perf = _supplier_perf(db, r["supplier_id"], product_id)
+        measured_lead = perf.get("avg_lead_time_days") if perf else None
+        declared_lead = r["standard_lead_time_days"]
+        lt_val, lt_src = lead_time(_num(measured_lead), _num(declared_lead),
+                                   default=default_lead)
+        out.append({
+            "supplier_id": r["supplier_id"],
+            "supplier_code": r["supplier_code"],
+            "supplier_name": r["supplier_name"],
+            "is_primary": bool(r["is_primary_supplier"]),
+            "unit_cost": _num(r["unit_cost"]),
+            "currency": r["currency"],
+            "moq": _num(r["moq"]),
+            "order_multiple": _num(r["order_multiple"]),
+            "declared_lead_time_days": _num(declared_lead),
+            "measured_lead_time_days": _num(measured_lead),
+            "lead_time_days": lt_val,
+            "lead_time_source": lt_src,
+            "lead_time_variance": _num(perf.get("lead_time_variance")) if perf else None,
+            "declared_lead_variability": _num(r["lead_time_variability_days"]),
+            "composite_score": _num(perf.get("composite_score")) if perf else None,
+            "supplier_sample_size": (perf.get("sample_size") if perf else None),
+            "supplier_confidence": (perf.get("confidence") if perf else None),
+        })
+    return out
+
+
+def _supplier_perf(db: Session, supplier_id: str, product_id: str) -> Optional[dict]:
+    """supplier×product scorecard, falling back to the supplier-level (product NULL) row."""
+    row = db.execute(text(
+        "SELECT avg_lead_time_days, lead_time_variance, composite_score, sample_size, confidence "
+        "FROM scm.supplier_performance WHERE supplier_id = :sid AND product_id = :pid"
+    ), {"sid": supplier_id, "pid": product_id}).mappings().first()
+    if row:
+        return dict(row)
+    row = db.execute(text(
+        "SELECT avg_lead_time_days, lead_time_variance, composite_score, sample_size, confidence "
+        "FROM scm.supplier_performance WHERE supplier_id = :sid AND product_id IS NULL"
+    ), {"sid": supplier_id}).mappings().first()
+    return dict(row) if row else None
+
+
+def resolve_supplier_for_sku(db: Session, product_id: str, *,
+                             selection: str = DEFAULT_SUPPLIER_SELECTION,
+                             default_lead: float = DEFAULT_LEAD_TIME_DAYS) -> dict:
+    """DB-backed ``select_supplier``: read the SKU's product_suppliers + M2 scores and
+    pick the sourcing supplier (or flag the no-supplier exception)."""
+    return select_supplier(load_supplier_candidates(db, product_id, default_lead=default_lead),
+                           selection=selection)
+
+
+def resolve_policy_for_sku(db: Session, product_id: str,
+                           warehouse_id: Optional[str] = None,
+                           policies: Optional[list[dict]] = None) -> Optional[dict]:
+    """DB-backed ``resolve_policy``: read the SKU's classification cell + product class
+    and pick the most-specific active policy."""
+    policies = policies if policies is not None else load_policies(db)
+    cls = load_classification(db, product_id, warehouse_id)
+    cell = None
+    if cls and cls.get("abc_class") and cls.get("xyz_class"):
+        cell = f"{cls['abc_class']}-{cls['xyz_class']}"
+    category = load_category_code(db, product_id)
+    return resolve_policy(policies, product_id=product_id, abc_xyz_cell=cell,
+                          product_class=category)

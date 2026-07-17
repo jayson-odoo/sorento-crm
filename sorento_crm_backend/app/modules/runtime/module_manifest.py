@@ -95,6 +95,11 @@ _RAW: Dict[str, dict] = {
         "description": "Tokenized public pages for shared entities.",
         "dependencies": ["base"],
     },
+    "scm": {
+        "display_name": "Supply Chain & Inventory Optimisation",
+        "description": "Reorder engine, net-position views, demand classification, supplier performance.",
+        "dependencies": ["base", "product", "inventory", "order", "procurement"],
+    },
 }
 
 MODULE_MANIFEST: Dict[str, ModuleManifest] = {
