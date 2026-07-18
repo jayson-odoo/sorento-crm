@@ -108,7 +108,7 @@ describe('ReorderExplanationDialog', () => {
     expect(screen.getByText('Safety stock')).toBeInTheDocument();
     expect(screen.getByText('Order-up-to target')).toBeInTheDocument();
     expect(screen.getByText('Order quantity')).toBeInTheDocument();
-    expect(screen.getByText('Days of cover')).toBeInTheDocument();
+    expect(screen.getByText('Runway')).toBeInTheDocument();
 
     // the ROP arithmetic is made explicit (demand × lead time + safety stock)
     const ropStep = screen.getAllByText('Reorder point')[0].parentElement?.parentElement;
@@ -159,7 +159,7 @@ describe('ReorderExplanationDialog', () => {
     // (value + /day + demand pattern), same row as the buy variant.
     expect(screen.getByText('Forecast demand')).toBeInTheDocument();
     // Days-of-cover is derived from it: net ÷ daily demand = 856 days.
-    const docStep = screen.getByText('Days of cover').parentElement?.parentElement;
+    const docStep = screen.getByText('Runway').parentElement?.parentElement;
     expect(docStep?.textContent).toMatch(/1,731 ÷ 0\.08 \/day = 856 days/);
 
     // Still no buy-only maths on a disposition.

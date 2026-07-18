@@ -270,7 +270,7 @@ export function ProductPerspectiveGrid({
         id: 'days_of_cover',
         header: ({ column }) => (
           <div className="inline-flex items-center justify-end gap-1">
-            <DataGridColumnHeader title="Days of cover" column={column} />
+            <DataGridColumnHeader title="Runway" column={column} />
             <DaysOfCoverInfo />
           </div>
         ),
@@ -280,7 +280,7 @@ export function ProductPerspectiveGrid({
           </span>
         ),
         size: 130,
-        meta: { headerTitle: 'Days of cover', ...NUM },
+        meta: { headerTitle: 'Runway', ...NUM },
       },
       {
         // Column header is plain-language "Value"; the underlying field stays

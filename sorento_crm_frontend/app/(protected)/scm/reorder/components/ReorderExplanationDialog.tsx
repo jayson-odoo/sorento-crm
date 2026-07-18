@@ -511,7 +511,7 @@ function BuyDerivation({ rec }: { rec: ReorderRecommendation }) {
         why="On hand + on order − committed"
       />
       <Step
-        label="Days of cover"
+        label="Runway"
         value={rec.days_of_cover != null ? `${fmtInt(rec.days_of_cover)} days` : EM_DASH}
         why="How long the net position lasts at the forecast demand"
       />
@@ -571,7 +571,7 @@ function DispositionExplanation({ rec }: { rec: ReorderRecommendation }) {
         why={
           isDead
             ? 'No consumption recorded within the dead-stock window.'
-            : `Days of cover exceeds the ${REASON_NOUN.overstock}.`
+            : `Runway exceeds the ${REASON_NOUN.overstock}.`
         }
       />
       {/* Surface the demand that PRODUCED the days-of-cover so the "why" is
@@ -580,7 +580,7 @@ function DispositionExplanation({ rec }: { rec: ReorderRecommendation }) {
       {rec.days_of_cover != null ? (
         <Step
           emphasis
-          label="Days of cover"
+          label="Runway"
           why="Net position ÷ forecast demand"
           value={
             <>

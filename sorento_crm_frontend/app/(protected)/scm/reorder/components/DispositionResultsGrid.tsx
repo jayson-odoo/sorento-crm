@@ -110,7 +110,7 @@ function DispositionDetailDialog({
             <div className="grid grid-cols-2 gap-3 text-sm">
               <Fact label="Excess quantity" value={fmtInt(row.qty)} hint="units above target at this location" />
               <Fact
-                label="Days of cover"
+                label="Runway"
                 value={row.days_cover === null ? EM_DASH : fmtDoc(row.days_cover, false)}
                 hint="how long the stock lasts at current demand"
               />
@@ -170,7 +170,7 @@ function DispositionTable({
             <th className="px-3 py-2 text-left font-medium">Action</th>
             <th className="px-3 py-2 text-right font-medium">Qty</th>
             <th className="px-3 py-2 text-left font-medium">Warehouse</th>
-            <th className="px-3 py-2 text-right font-medium">Days cover</th>
+            <th className="px-3 py-2 text-right font-medium">Runway</th>
             <th className="px-3 py-2 text-left font-medium">Reason</th>
           </tr>
         </thead>
