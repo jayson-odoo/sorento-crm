@@ -124,8 +124,8 @@ describe('CashResultsGrid — Days cover drill reconciliation (M8-A2/A3)', () =>
   it('finite frozen rate → arithmetic net/rate=days reconciles; CV spelled in full', () => {
     // net 80, frozen rate 4/day, days_cover 20 → "80 / 4.0 = 20 days".
     renderGrid(recToPlanRow(rec({ net_position: 80, forecast_daily_demand: 4, days_of_cover: 20 })));
-    fireEvent.click(screen.getByLabelText('Explain days cover'));
-    expect(screen.getByText('Days cover = 20')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Explain runway'));
+    expect(screen.getByText('Runway = 20 days')).toBeInTheDocument();
     // arithmetic uses the FROZEN rate (4), not the live explain/demand window (99)
     expect(docText()).toContain('80 / 4.0 = 20 days');
     expect(docText()).not.toContain('99');
@@ -137,8 +137,8 @@ describe('CashResultsGrid — Days cover drill reconciliation (M8-A2/A3)', () =>
 
   it('days_cover=null on a DEFICIT net → undefined copy, never divides by zero (M8-A3)', () => {
     renderGrid(recToPlanRow(rec({ net_position: -30, days_of_cover: null, forecast_daily_demand: 4 })));
-    fireEvent.click(screen.getByLabelText('Explain days cover'));
-    expect(screen.getByText(/Days cover = undefined/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Explain runway'));
+    expect(screen.getByText(/Runway = undefined/i)).toBeInTheDocument();
     expect(screen.getByText(/Net is a deficit/i)).toBeInTheDocument();
     // the arithmetic line is suppressed — no "/ 0" ever printed
     expect(docText()).not.toContain('/ 0');
@@ -146,7 +146,7 @@ describe('CashResultsGrid — Days cover drill reconciliation (M8-A2/A3)', () =>
 
   it('rate<=0 (no measurable demand) → no-demand copy, no division (M8-A3)', () => {
     renderGrid(recToPlanRow(rec({ net_position: 80, days_of_cover: null, forecast_daily_demand: 0 })));
-    fireEvent.click(screen.getByLabelText('Explain days cover'));
+    fireEvent.click(screen.getByLabelText('Explain runway'));
     expect(screen.getByText(/No measurable daily demand/i)).toBeInTheDocument();
     expect(docText()).not.toContain('/ 0');
   });
@@ -154,7 +154,7 @@ describe('CashResultsGrid — Days cover drill reconciliation (M8-A2/A3)', () =>
   it('CV unavailable → renders a dash, not a fabricated 0', () => {
     useExplainDemand.mockReturnValue(demand(null));
     renderGrid(recToPlanRow(rec()));
-    fireEvent.click(screen.getByLabelText('Explain days cover'));
+    fireEvent.click(screen.getByLabelText('Explain runway'));
     expect(screen.getByText('Coefficient of variation')).toBeInTheDocument();
     // the CV value cell is an em dash (—), never 0.00
     expect(docText()).not.toContain('0.00');
@@ -284,6 +284,96 @@ describe('CashResultsGrid — order-qty drill shows the ROP formula (M8-A4 / M8-
     const text = docText();
     expect(text).toContain('20 +');
     expect(text).toContain('4.0/day x 14d lead');
+  });
+});
+
+describe('CashResultsGrid — product search + column sort (additive)', () => {
+  const supplier = (name: string, cost: number): SupplierChoice => ({
+    supplier_code: `SUP-${name.slice(0, 3).toUpperCase()}`, supplier_name: name,
+    unit_cost: cost, lead_time_days: 14, composite_score: 80, is_primary: true,
+  });
+  const rowA = recToPlanRow(rec({ id: 'rec-a', rank: 1, sku: 'AAA-1', product_name: 'Alpha Widget', warehouse_name: 'Penang DC', order_qty: 300, unit_cost: 10, days_of_cover: 5, supplier: supplier('Zeta Traders', 10) }));
+  const rowB = recToPlanRow(rec({ id: 'rec-b', rank: 2, sku: 'BBB-2', product_name: 'Bravo Gadget', warehouse_name: 'Johor DC', order_qty: 100, unit_cost: 50, days_of_cover: 30, supplier: supplier('Alpha Supplies', 50) }));
+  const rowC = recToPlanRow(rec({ id: 'rec-c', rank: 3, sku: 'CCC-3', product_name: 'Charlie Thing', warehouse_name: 'KL DC', order_qty: 200, unit_cost: 1, days_of_cover: 15, supplier: supplier('Mid Supply', 1) }));
+
+  function renderMulti(rows: M8PlanRow[] = [rowA, rowB, rowC]) {
+    const handlers = { onFund: vi.fn(), onReject: vi.fn(), onEdit: vi.fn() };
+    render(
+      <CashResultsGrid
+        within={rows}
+        over={[]}
+        decisions={Object.fromEntries(rows.map((r) => [r.id, null]))}
+        editedIds={new Set()}
+        budgetHeader={<div>budget-header</div>}
+        handlers={handlers}
+      />,
+    );
+  }
+
+  /** true when node `a` precedes node `b` in DOM order. */
+  const before = (a: string, b: string) =>
+    !!(screen.getByText(a).compareDocumentPosition(screen.getByText(b)) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  it('filters both-section rows by SKU / product / supplier (case-insensitive) with a live count', () => {
+    renderMulti();
+    // all three visible initially
+    expect(screen.getByText('Alpha Widget')).toBeInTheDocument();
+    expect(screen.getByText('Bravo Gadget')).toBeInTheDocument();
+    // supplier-name match: "alpha" hits Bravo's supplier "Alpha Supplies" AND "Alpha Widget"
+    fireEvent.change(screen.getByLabelText('Search buy recommendations'), { target: { value: 'alpha' } });
+    expect(screen.getByText('Alpha Widget')).toBeInTheDocument();
+    expect(screen.getByText('Bravo Gadget')).toBeInTheDocument();
+    expect(screen.queryByText('Charlie Thing')).toBeNull();
+    // section badge reflects the filtered count as "X of Y"
+    expect(screen.getByText('2 of 3')).toBeInTheDocument();
+  });
+
+  it('narrows to a single SKU and shows a no-match empty state when nothing matches', () => {
+    renderMulti();
+    fireEvent.change(screen.getByLabelText('Search buy recommendations'), { target: { value: 'bravo' } });
+    expect(screen.getByText('Bravo Gadget')).toBeInTheDocument();
+    expect(screen.queryByText('Alpha Widget')).toBeNull();
+    // clear restores everything
+    fireEvent.click(screen.getByLabelText('Clear search'));
+    expect(screen.getByText('Alpha Widget')).toBeInTheDocument();
+    // an unmatched query renders the section no-match copy
+    fireEvent.change(screen.getByLabelText('Search buy recommendations'), { target: { value: 'zzzz' } });
+    expect(screen.getByText(/No buys in this section match your search/i)).toBeInTheDocument();
+  });
+
+  it('sorts by Order qty asc → desc → back to default rank order on repeated header clicks', () => {
+    renderMulti();
+    // default = engine array order A, B, C
+    expect(before('Alpha Widget', 'Bravo Gadget')).toBe(true);
+    const orderQtyHeader = screen.getByRole('button', { name: 'Sort by Order qty' });
+    // asc: B(100) < C(200) < A(300)
+    fireEvent.click(orderQtyHeader);
+    expect(before('Bravo Gadget', 'Charlie Thing')).toBe(true);
+    expect(before('Charlie Thing', 'Alpha Widget')).toBe(true);
+    // desc: A(300) > C(200) > B(100)
+    fireEvent.click(orderQtyHeader);
+    expect(before('Alpha Widget', 'Charlie Thing')).toBe(true);
+    expect(before('Charlie Thing', 'Bravo Gadget')).toBe(true);
+    // third click restores the default rank order (A, B, C)
+    fireEvent.click(orderQtyHeader);
+    expect(before('Alpha Widget', 'Bravo Gadget')).toBe(true);
+    expect(before('Bravo Gadget', 'Charlie Thing')).toBe(true);
+  });
+
+  it('disables the drag handles when a sort is active and when a search is active; enabled in default view', () => {
+    renderMulti();
+    // default view: every row has a live drag handle
+    expect(screen.getByLabelText('Drag AAA-1 between sections')).toBeInTheDocument();
+    // sorting freezes the order → handles removed
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by Order qty' }));
+    expect(screen.queryByLabelText('Drag AAA-1 between sections')).toBeNull();
+    // reset sort back to default → handles return
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by Order qty' })); // desc
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by Order qty' })); // back to rank
+    expect(screen.getByLabelText('Drag AAA-1 between sections')).toBeInTheDocument();
+    // an active search also disables drag
+    fireEvent.change(screen.getByLabelText('Search buy recommendations'), { target: { value: 'a' } });
+    expect(screen.queryByLabelText('Drag AAA-1 between sections')).toBeNull();
   });
 });
 

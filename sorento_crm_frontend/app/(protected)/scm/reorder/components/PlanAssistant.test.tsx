@@ -68,6 +68,49 @@ describe('PlanAssistant — one surface, single Ask input (M8-E1 / M8-F6)', () =
   });
 });
 
+describe('PlanAssistant — knowledge sources (demo-only, no network)', () => {
+  it('is collapsed by default and expands to reveal the add controls + caption', () => {
+    renderAssistant();
+    // collapsed: subtle toggle, no controls yet
+    const toggle = screen.getByRole('button', { name: /Add knowledge source/i });
+    expect(screen.queryByRole('button', { name: /Add attachment/i })).toBeNull();
+    fireEvent.click(toggle);
+    expect(screen.getByRole('button', { name: /Add attachment/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Add link/i })).toBeInTheDocument();
+    expect(screen.getByText(/Sources ground what the assistant crawls against/i)).toBeInTheDocument();
+  });
+
+  it('adds + removes a link chip from local state without any network call', () => {
+    const fetchSpy = vi.fn();
+    (globalThis as unknown as { fetch: unknown }).fetch = fetchSpy;
+    renderAssistant();
+    fireEvent.click(screen.getByRole('button', { name: /Add knowledge source/i }));
+    fireEvent.change(screen.getByLabelText('Knowledge source URL'), {
+      target: { value: 'https://sorento.test/spec.pdf' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Add link/i }));
+    // chip renders
+    expect(screen.getByText('https://sorento.test/spec.pdf')).toBeInTheDocument();
+    // remove it
+    fireEvent.click(screen.getByRole('button', { name: /Remove https:\/\/sorento.test\/spec.pdf/i }));
+    expect(screen.queryByText('https://sorento.test/spec.pdf')).toBeNull();
+    // purely local — nothing hit the network
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(chatMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('captures picked file names as removable chips', () => {
+    renderAssistant();
+    fireEvent.click(screen.getByRole('button', { name: /Add knowledge source/i }));
+    const fileInput = screen.getByLabelText('Attach knowledge files') as HTMLInputElement;
+    const file = new File(['x'], 'forecast-2026.pdf', { type: 'application/pdf' });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+    expect(screen.getByText('forecast-2026.pdf')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Remove forecast-2026.pdf/i }));
+    expect(screen.queryByText('forecast-2026.pdf')).toBeNull();
+  });
+});
+
 describe('PlanAssistant — grounded answer (M8-E2)', () => {
   it('sends the question and renders the grounded assistant answer', async () => {
     chatMutateAsync.mockResolvedValue({ answer: 'The basin buy eats the most cash at RM 14,000.' });

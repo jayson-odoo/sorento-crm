@@ -377,20 +377,24 @@ export interface ApplyBudgetResult {
  */
 export async function getBuyRecommendationsForCash(
   runId: string,
-  budget: number = DEFAULT_BUDGET,
 ): Promise<ReorderRecommendation[]> {
   if (USE_M4_MOCKS) {
-    const { funded, deferred, needsCost } = computeFunding(MOCK_BUY_RECS, budget);
+    const { funded, deferred, needsCost } = computeFunding(MOCK_BUY_RECS, DEFAULT_BUDGET);
     // Return the union ordered by rank; the view re-splits/annotates itself.
     return [...funded, ...deferred, ...needsCost].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0));
   }
-  const params = new URLSearchParams({ type: 'buy', budget: String(budget), limit: '1000' });
-  const res = await apiFetch(
-    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/recommendations?${params}`,
-  );
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load recommendations'));
-  const body = (await res.json()) as RecommendationPage;
-  return body.data;
+  // Fetch EVERY buy row (not just the first 1000): the cash slider's ceiling is the
+  // Σ of all costed buys, so a truncated set would cap the slider well below the
+  // plan's true cash impact. Page past the endpoint's 1000-row limit like the
+  // disposition set does.
+  const PAGE = 1000; // endpoint's max `limit`
+  const first = await getRecommendations(runId, { pageIndex: 0, pageSize: PAGE, type: 'buy' });
+  const out = [...first.data];
+  for (let page = 1; page < first.pagination.total_pages; page += 1) {
+    const next = await getRecommendations(runId, { pageIndex: page, pageSize: PAGE, type: 'buy' });
+    out.push(...next.data);
+  }
+  return out;
 }
 
 /** Persist the chosen budget + funding split to the run ("Apply budget"). */

@@ -7,10 +7,15 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Bot,
+  ChevronDown,
+  ChevronRight,
   ExternalLink,
   GitCompareArrows,
+  Link2,
   ListChecks,
   Minus,
+  Paperclip,
+  Plus,
   SendHorizontal,
   Sparkles,
   Sparkle,
@@ -227,6 +232,8 @@ export function PlanAssistant({
           </div>
         )}
 
+        <KnowledgeSources />
+
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -265,6 +272,158 @@ function ThinkingBubble() {
           <span className="size-2 animate-bounce rounded-full bg-muted-foreground/70" />
         </div>
       </div>
+    </div>
+  );
+}
+
+/** A removable knowledge-source chip (attachment filename or link URL). */
+function SourceChip({
+  label,
+  icon,
+  onRemove,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onRemove: () => void;
+}) {
+  return (
+    <span className="inline-flex max-w-[14rem] items-center gap-1 rounded-md border bg-background px-1.5 py-0.5 text-2xs">
+      {icon}
+      <span className="truncate" title={label}>
+        {label}
+      </span>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove ${label}`}
+        className="shrink-0 rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <X className="size-3" aria-hidden />
+      </button>
+    </span>
+  );
+}
+
+/**
+ * DEMO-ONLY knowledge-source picker (no backend, no network): the buyer attaches
+ * files or pastes links to illustrate grounding the assistant against their own
+ * documents. Everything lives in local state and is NOT sent with the Ask request —
+ * it only shows the intended UX for the demo.
+ */
+function KnowledgeSources() {
+  const [open, setOpen] = useState(false);
+  const [files, setFiles] = useState<string[]>([]);
+  const [links, setLinks] = useState<string[]>([]);
+  const [linkDraft, setLinkDraft] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const count = files.length + links.length;
+
+  const addLink = () => {
+    const url = linkDraft.trim();
+    if (!url) return;
+    setLinks((prev) => (prev.includes(url) ? prev : [...prev, url]));
+    setLinkDraft('');
+  };
+
+  const onFilesPicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? []).map((f) => f.name);
+    if (picked.length) {
+      setFiles((prev) => [...prev, ...picked.filter((n) => !prev.includes(n))]);
+    }
+    // allow re-picking the same file
+    e.target.value = '';
+  };
+
+  return (
+    <div className="rounded-lg border bg-muted/20">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-1.5 px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-lg"
+      >
+        {open ? (
+          <ChevronDown className="size-3.5" aria-hidden />
+        ) : (
+          <ChevronRight className="size-3.5" aria-hidden />
+        )}
+        <Plus className="size-3.5" aria-hidden />
+        <span>{open ? 'Knowledge sources' : 'Add knowledge source'}</span>
+        {count > 0 ? (
+          <Badge variant="secondary" appearance="light" size="xs" className="ms-1">
+            {fmtInt(count)}
+          </Badge>
+        ) : null}
+      </button>
+
+      {open ? (
+        <div className="space-y-2 border-t px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              aria-label="Attach knowledge files"
+              onChange={onFilesPicked}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8"
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Paperclip className="size-3.5" aria-hidden />
+              Add attachment
+            </Button>
+            <div className="flex items-center gap-1.5">
+              <Input
+                value={linkDraft}
+                onChange={(e) => setLinkDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addLink();
+                  }
+                }}
+                placeholder="Paste a URL..."
+                aria-label="Knowledge source URL"
+                className="h-8 w-40"
+              />
+              <Button type="button" variant="outline" size="sm" className="h-8" onClick={addLink}>
+                <Plus className="size-3.5" aria-hidden />
+                Add link
+              </Button>
+            </div>
+          </div>
+
+          {count > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {files.map((name) => (
+                <SourceChip
+                  key={`file:${name}`}
+                  label={name}
+                  icon={<Paperclip className="size-3 shrink-0 text-muted-foreground" aria-hidden />}
+                  onRemove={() => setFiles((prev) => prev.filter((n) => n !== name))}
+                />
+              ))}
+              {links.map((url) => (
+                <SourceChip
+                  key={`link:${url}`}
+                  label={url}
+                  icon={<Link2 className="size-3 shrink-0 text-muted-foreground" aria-hidden />}
+                  onRemove={() => setLinks((prev) => prev.filter((u) => u !== url))}
+                />
+              ))}
+            </div>
+          ) : null}
+
+          <p className="text-2xs text-muted-foreground">
+            Sources ground what the assistant crawls against (demo).
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }

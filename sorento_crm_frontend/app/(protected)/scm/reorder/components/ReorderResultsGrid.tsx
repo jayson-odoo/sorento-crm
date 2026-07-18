@@ -420,13 +420,13 @@ export function ReorderResultsGrid({
         accessorKey: 'days_of_cover',
         header: ({ column }) => (
           <div className="inline-flex items-center gap-1">
-            <DataGridColumnHeader title="Days cover" column={column} />
+            <DataGridColumnHeader title="Runway" column={column} />
             <HeaderInfo tip={HEADER_TIPS.days_of_cover} />
           </div>
         ),
         cell: ({ row }) => fmtDoc(row.original.days_of_cover, false),
         size: 120,
-        meta: { headerTitle: 'Days cover', ...numMeta },
+        meta: { headerTitle: 'Runway', ...numMeta },
       },
       {
         accessorKey: 'reason_label',
