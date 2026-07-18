@@ -1,16 +1,19 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useDraggable, useDroppable } from '@dnd-kit/core';
 import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Clock,
   GripVertical,
   Info,
+  Search,
   ShoppingCart,
+  X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -46,6 +49,92 @@ import { useExplainDemand, useExplainNet } from '../hooks/useDrills';
 const COLS =
   'minmax(0,32px) minmax(0,52px) minmax(180px,1.5fr) minmax(0,76px) minmax(0,150px) minmax(0,120px) minmax(0,88px) minmax(0,120px) minmax(110px,1fr) minmax(160px,1.4fr) minmax(230px,1.4fr)';
 const MIN_TABLE_WIDTH = 1330;
+
+/** Client-side sort/search over the visible rows (additive to the drag experience).
+ *  'rank' asc IS the engine's default order — in that state (and only that state,
+ *  with an empty search) the rows stay drag-orderable; any other sort or an active
+ *  search disables drag so the two orderings never fight (see `dragDisabled`). */
+type SortCol = 'rank' | 'order_qty' | 'cash' | 'days_cover' | 'warehouse' | 'supplier';
+type SortDir = 'asc' | 'desc';
+
+function compareRows(col: SortCol, a: M8PlanRow, b: M8PlanRow): number {
+  switch (col) {
+    case 'order_qty':
+      return a.order_qty - b.order_qty;
+    case 'cash':
+      // Uncosted rows (null cash) sort to the low end regardless of direction basis.
+      return (m8CashImpact(a) ?? -Infinity) - (m8CashImpact(b) ?? -Infinity);
+    case 'days_cover':
+      return (a.days_cover ?? -Infinity) - (b.days_cover ?? -Infinity);
+    case 'warehouse':
+      return a.warehouse.localeCompare(b.warehouse);
+    case 'supplier':
+      return a.supplier.name.localeCompare(b.supplier.name);
+    case 'rank':
+    default:
+      return a.rank - b.rank;
+  }
+}
+
+/** Sort a section's rows. Rank-ascending returns the array untouched so the default
+ *  (engine) order — and the drag identity that rides on it — is preserved exactly. */
+function sortSection(rows: M8PlanRow[], col: SortCol, dir: SortDir): M8PlanRow[] {
+  if (col === 'rank' && dir === 'asc') return rows;
+  const factor = dir === 'asc' ? 1 : -1;
+  return [...rows].sort((a, b) => factor * compareRows(col, a, b));
+}
+
+/** Case-insensitive substring match over SKU code + product name + supplier name. */
+function matchesSearch(row: M8PlanRow, needle: string): boolean {
+  if (!needle) return true;
+  return (
+    row.sku.toLowerCase().includes(needle) ||
+    row.product_name.toLowerCase().includes(needle) ||
+    row.supplier.name.toLowerCase().includes(needle)
+  );
+}
+
+/** A clickable column header that toggles the client-side sort and shows the active
+ *  ▲/▼ indicator. `align` mirrors the numeric right-aligned columns. */
+function SortHeader({
+  label,
+  col,
+  activeCol,
+  dir,
+  onSort,
+  align = 'start',
+}: {
+  label: string;
+  col: SortCol;
+  activeCol: SortCol;
+  dir: SortDir;
+  onSort: (col: SortCol) => void;
+  align?: 'start' | 'end';
+}) {
+  const isActive = activeCol === col;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(col)}
+      title={`Sort by ${label}`}
+      aria-label={`Sort by ${label}`}
+      className={cn(
+        'inline-flex items-center gap-1 rounded-sm uppercase tracking-wide hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        align === 'end' && 'justify-end',
+        isActive && 'text-foreground',
+      )}
+    >
+      <span>{label}</span>
+      {isActive ? (
+        dir === 'asc' ? (
+          <ChevronUp className="size-3" aria-hidden />
+        ) : (
+          <ChevronDown className="size-3" aria-hidden />
+        )
+      ) : null}
+    </button>
+  );
+}
 
 export type M8RowDecision = 'accepted' | 'rejected' | null;
 
@@ -192,8 +281,8 @@ function DaysCoverDrill({ row }: { row: M8PlanRow }) {
       <DrillHeader
         title={
           undefinedCover
-            ? 'Days cover = undefined (deficit / no measurable demand)'
-            : `Days cover = ${fmtInt(row.days_cover)}`
+            ? 'Runway = undefined (deficit / no measurable demand)'
+            : `Runway = ${fmtInt(row.days_cover)} days`
         }
       />
       {undefinedCover ? (
@@ -488,6 +577,7 @@ function PlanRow({
   edited,
   po,
   rankLabel,
+  dragDisabled,
   handlers,
   onOpenDetail,
 }: {
@@ -499,6 +589,9 @@ function PlanRow({
   po?: RowPoLink;
   /** Sequential 1..N priority within the costed plan (M8-F) — defaults to the global rank. */
   rankLabel?: number;
+  /** When a sort/search is active the row order no longer maps to drag order, so the
+   *  drag handle is rendered inert to stop the two orderings fighting. */
+  dragDisabled?: boolean;
   handlers: RowHandlers;
   /** Open the recommendation detail view (M8-C10). Fires only on a bare-row click -
    *  clicks on the inline controls (buttons / links / inputs) are excluded. */
@@ -541,18 +634,20 @@ function PlanRow({
       )}
       style={{ gridTemplateColumns: COLS }}
     >
-      {/* drag handle */}
+      {/* drag handle — hidden while a sort/search is active (drag order is meaningless then) */}
       <div className="flex h-full items-center justify-center py-2 text-muted-foreground/40">
-        <button
-          type="button"
-          className="cursor-grab touch-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm active:cursor-grabbing"
-          title="Drag between sections"
-          aria-label={`Drag ${row.sku} between sections`}
-          {...attributes}
-          {...listeners}
-        >
-          <GripVertical className="size-4" aria-hidden />
-        </button>
+        {dragDisabled ? null : (
+          <button
+            type="button"
+            className="cursor-grab touch-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm active:cursor-grabbing"
+            title="Drag between sections"
+            aria-label={`Drag ${row.sku} between sections`}
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical className="size-4" aria-hidden />
+          </button>
+        )}
       </div>
 
       {/* rank */}
@@ -645,7 +740,7 @@ function PlanRow({
       <div className="px-1 py-2 text-right">
         <ExplainNumber
           value={row.days_cover === null ? EM_DASH : fmtInt(row.days_cover)}
-          title="Explain days cover"
+          title="Explain runway"
         >
           <DaysCoverDrill row={row} />
         </ExplainNumber>
@@ -826,24 +921,100 @@ export function CashResultsGrid({
   const [withinCollapsed, setWithinCollapsed] = useState(false);
   const [overCollapsed, setOverCollapsed] = useState(false);
 
+  // Client-side product search + column sort over the visible rows (additive).
+  const [search, setSearch] = useState('');
+  const [sortCol, setSortCol] = useState<SortCol>('rank');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const needle = search.trim().toLowerCase();
+  // Drag only makes sense in the untouched engine order (rank asc, no search); any
+  // other sort/search freezes the order so drag can't fight it (see PlanRow).
+  const dragDisabled = !(sortCol === 'rank' && sortDir === 'asc' && needle === '');
+
+  // asc → desc → back to the default rank order.
+  const onSort = (col: SortCol) => {
+    if (sortCol !== col) {
+      setSortCol(col);
+      setSortDir('asc');
+    } else if (sortDir === 'asc') {
+      setSortDir('desc');
+    } else {
+      setSortCol('rank');
+      setSortDir('asc');
+    }
+  };
+
+  const visibleWithin = useMemo(
+    () => sortSection(within.filter((r) => matchesSearch(r, needle)), sortCol, sortDir),
+    [within, needle, sortCol, sortDir],
+  );
+  const visibleOver = useMemo(
+    () => sortSection(over.filter((r) => matchesSearch(r, needle)), sortCol, sortDir),
+    [over, needle, sortCol, sortDir],
+  );
+  const withinBadge = needle
+    ? `${fmtInt(visibleWithin.length)} of ${fmtInt(within.length)}`
+    : fmtInt(within.length);
+  const overBadge = needle
+    ? `${fmtInt(visibleOver.length)} of ${fmtInt(over.length)}`
+    : fmtInt(over.length);
+
   return (
-    <div className="overflow-x-auto rounded-xl border">
-      <div style={{ minWidth: MIN_TABLE_WIDTH }}>
+    <div className="space-y-3">
+      {/* Product search — filters both sections by SKU / product / supplier. */}
+      <div className="relative w-full sm:max-w-xs">
+        <Search
+          className="pointer-events-none absolute start-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+          aria-hidden
+        />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search SKU, product, or supplier..."
+          aria-label="Search buy recommendations"
+          className="h-9 ps-8 pe-8"
+        />
+        {search ? (
+          <button
+            type="button"
+            onClick={() => setSearch('')}
+            aria-label="Clear search"
+            title="Clear search"
+            className="absolute end-2 top-1/2 -translate-y-1/2 rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <X className="size-4" aria-hidden />
+          </button>
+        ) : null}
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border">
+        <div style={{ minWidth: MIN_TABLE_WIDTH }}>
         {/* header row */}
         <div
           className="grid items-center border-b bg-muted/40 px-0 text-2xs font-medium uppercase tracking-wide text-muted-foreground"
           style={{ gridTemplateColumns: COLS }}
         >
           <div className="py-2" />
-          <div className="px-1 py-2">Rank</div>
+          <div className="px-1 py-2">
+            <SortHeader label="Rank" col="rank" activeCol={sortCol} dir={sortDir} onSort={onSort} />
+          </div>
           <div className="px-1 py-2">SKU</div>
           <div className="px-1 py-2">Type</div>
-          <div className="px-1 py-2 text-right">Order qty</div>
-          <div className="px-1 py-2 text-right">Cash impact</div>
+          <div className="px-1 py-2 text-right">
+            <SortHeader label="Order qty" col="order_qty" activeCol={sortCol} dir={sortDir} onSort={onSort} align="end" />
+          </div>
+          <div className="px-1 py-2 text-right">
+            <SortHeader label="Cash impact" col="cash" activeCol={sortCol} dir={sortDir} onSort={onSort} align="end" />
+          </div>
           <div className="px-1 py-2 text-right">Net</div>
-          <div className="px-1 py-2 text-right">Days cover</div>
-          <div className="px-1 py-2">Warehouse</div>
-          <div className="px-1 py-2">Supplier</div>
+          <div className="px-1 py-2 text-right">
+            <SortHeader label="Runway" col="days_cover" activeCol={sortCol} dir={sortDir} onSort={onSort} align="end" />
+          </div>
+          <div className="px-1 py-2">
+            <SortHeader label="Warehouse" col="warehouse" activeCol={sortCol} dir={sortDir} onSort={onSort} />
+          </div>
+          <div className="px-1 py-2">
+            <SortHeader label="Supplier" col="supplier" activeCol={sortCol} dir={sortDir} onSort={onSort} />
+          </div>
           <div className="px-1 py-2">Decision</div>
         </div>
 
@@ -858,7 +1029,7 @@ export function CashResultsGrid({
             <CheckCircle2 className="size-4 text-scm-incoming" aria-hidden />
             <span className="text-sm font-semibold">Within budget</span>
             <Badge variant="secondary" appearance="light" size="sm">
-              {fmtInt(within.length)}
+              {withinBadge}
             </Badge>
           </div>
           {budgetHeader}
@@ -866,8 +1037,8 @@ export function CashResultsGrid({
 
         {!withinCollapsed ? (
           <DroppableSection id="within">
-            {within.length ? (
-              within.map((row) => (
+            {visibleWithin.length ? (
+              visibleWithin.map((row) => (
                 <PlanRow
                   key={row.id}
                   row={row}
@@ -876,13 +1047,16 @@ export function CashResultsGrid({
                   edited={editedIds.has(row.id)}
                   po={poByRow?.[row.id]}
                   rankLabel={displayRank?.[row.id]}
+                  dragDisabled={dragDisabled}
                   handlers={handlers}
                   onOpenDetail={onOpenDetail}
                 />
               ))
             ) : (
               <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-                Nothing funded at this budget. Raise it or drag a row up to fund it.
+                {needle && within.length > 0
+                  ? 'No buys in this section match your search.'
+                  : 'Nothing funded at this budget. Raise it or drag a row up to fund it.'}
               </div>
             )}
           </DroppableSection>
@@ -898,7 +1072,7 @@ export function CashResultsGrid({
           <Clock className="size-4 text-scm-overstock" aria-hidden />
           <span className="font-semibold">Over budget</span>
           <Badge variant="secondary" appearance="light" size="sm">
-            {fmtInt(over.length)}
+            {overBadge}
           </Badge>
           <span className="text-2xs text-muted-foreground">
             drag a row up to fund it (pins), or raise the budget
@@ -907,8 +1081,8 @@ export function CashResultsGrid({
 
         {!overCollapsed ? (
           <DroppableSection id="over">
-            {over.length ? (
-              over.map((row) => (
+            {visibleOver.length ? (
+              visibleOver.map((row) => (
                 <PlanRow
                   key={row.id}
                   row={row}
@@ -917,17 +1091,21 @@ export function CashResultsGrid({
                   edited={editedIds.has(row.id)}
                   po={poByRow?.[row.id]}
                   rankLabel={displayRank?.[row.id]}
+                  dragDisabled={dragDisabled}
                   handlers={handlers}
                   onOpenDetail={onOpenDetail}
                 />
               ))
             ) : (
               <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-                Nothing deferred - the budget funds every costed buy.
+                {needle && over.length > 0
+                  ? 'No buys in this section match your search.'
+                  : 'Nothing deferred - the budget funds every costed buy.'}
               </div>
             )}
           </DroppableSection>
         ) : null}
+        </div>
       </div>
     </div>
   );

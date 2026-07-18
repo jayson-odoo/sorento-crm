@@ -763,9 +763,9 @@ def _compare_reason(cur: dict, prev: Optional[dict]) -> str:
     doc_c, doc_p = cur.get("doc"), prev.get("doc")
     if doc_c is not None and doc_p is not None:
         if doc_c < doc_p:
-            parts.append("days of cover has fallen")
+            parts.append("runway has fallen")
         elif doc_c > doc_p:
-            parts.append("days of cover has risen")
+            parts.append("runway has risen")
     if not parts:
         return "The inputs are broadly unchanged since the last plan."
     return "Because " + ", and ".join(parts) + "."
@@ -912,11 +912,11 @@ _RUN_CHAT_SYSTEM = (
     "You are a supply-chain planning assistant helping a manager review ONE reorder "
     "plan. You are given this plan's figures: aggregate totals plus a list of "
     "recommendations, each with its SKU, type (buy / stock allocation / exception), "
-    "order quantity, cash impact, net position, days of cover, reorder point, rank, "
+    "order quantity, cash impact, net position, runway (days of cover), reorder point, rank, "
     "funding status and supplier - plus, when relevant, prior-plan history, a computed "
     "budget split, and a live market reading.\n\n"
     "You may freely COUNT, SUM, RANK, FILTER, GROUP and COMPARE the figures you are "
-    "given - e.g. 'which buys are most urgent' (lowest days of cover), 'what would "
+    "given - e.g. 'which buys are most urgent' (lowest runway), 'what would "
     "defer if the budget were RM 200k' (walk the buys by rank, adding cash impact until "
     "the budget is spent; the rest defer), 'which supplier costs the most in total'. "
     "This is exactly your job - do it, do not refuse.\n\n"

@@ -427,14 +427,19 @@ def _emit_cell(run_id: str, row: dict, c: dict,
     # #8: a cell classified for disposition (dead OR overstock) must NOT also emit a buy
     # — buying more of dead/overstocked stock is contradictory. The disposition rec
     # below is the single action for that cell.
-    if not disp and c["triggered"] and chosen:
-        out.append(_build_rec(run_id, "buy", row, c, warehouse_id=str(row["warehouse_id"]),
-                              order_qty=c["recommended"], rounded=c["rounded"]))
-    elif not disp and c["triggered"] and not chosen:
-        out.append(_build_rec(run_id, "exception", row, c,
-                              warehouse_id=str(row["warehouse_id"]),
-                              order_qty=None, rounded=None,
-                              reason_label="no linked supplier — cannot source this reorder"))
+    # A triggered cell whose order qty rounds to 0 (net already at/above order-up-to
+    # once MOQ/multiple are applied) is NOT an actionable buy — "buy 0" is noise, so
+    # emit nothing. Mirrors the network path's `rounded > 0` gate (line ~516).
+    rounded = c["rounded"] or 0
+    if not disp and c["triggered"] and rounded > 0:
+        if chosen:
+            out.append(_build_rec(run_id, "buy", row, c, warehouse_id=str(row["warehouse_id"]),
+                                  order_qty=c["recommended"], rounded=c["rounded"]))
+        else:
+            out.append(_build_rec(run_id, "exception", row, c,
+                                  warehouse_id=str(row["warehouse_id"]),
+                                  order_qty=None, rounded=None,
+                                  reason_label="no linked supplier — cannot source this reorder"))
 
     # disposition (dead / overstock)
     if disp:
@@ -727,8 +732,8 @@ def _disposition_label(kind: str, c: dict) -> str:
     if kind == "dead":
         return "dead stock: no movement in the dead-stock window"
     doc = c.get("doc")
-    return f"overstock: {doc:g} days of cover exceeds the ceiling" if doc is not None \
-        else "overstock: days of cover exceeds the ceiling"
+    return f"overstock: runway of {doc:g} days exceeds the ceiling" if doc is not None \
+        else "overstock: runway exceeds the ceiling"
 
 
 def _reason_enum(policy_type: Optional[str]) -> str:
