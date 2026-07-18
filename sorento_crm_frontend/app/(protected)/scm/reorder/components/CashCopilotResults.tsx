@@ -57,13 +57,14 @@ export function CashCopilotResults({ plan }: { plan: M8PlanState }) {
   );
 
   const allRows = [...funding.within, ...funding.over];
-  // Slider ceiling = Σ all costed cash + ~10% headroom, rounded up to a step, so the
-  // full-fund end of the slider sits just past "buy everything" (min one step so the
-  // track is always draggable even on a tiny plan).
+  // Slider ceiling = the plan's TRUE cash impact (Σ all costed cash), rounded up to a
+  // step. No headroom: at max every buy is funded and free ≈ 0 — budgeting beyond the
+  // total buys nothing, so the slider must not run past it (min one step so the track
+  // is always draggable even on a tiny plan).
   const sliderMax = useMemo(() => {
     const total = allRows.reduce((s, r) => s + (m8CashImpact(r) ?? 0), 0);
     if (total <= 0) return BUDGET_STEP;
-    return Math.ceil((total * 1.1) / BUDGET_STEP) * BUDGET_STEP;
+    return Math.ceil(total / BUDGET_STEP) * BUDGET_STEP;
   }, [allRows]);
   // The confirm bar materialises draft POs, which only happens for ACCEPTED/adjusted
   // (decision-funded) lines - NOT merely for within-budget rows the user hasn't acted
