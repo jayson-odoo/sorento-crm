@@ -10,7 +10,7 @@ because the production text already equals the fallback.
 See ``documentation/plans/ideation/PLAN-ideation-ideate-intent.md`` (Group A).
 
 Revision ID: 272_ideate_intent_parser_prompt
-Revises: 271_audit_action_allow_import
+Revises: 9785e8947154
 Create Date: 2026-07-19
 """
 from alembic import op
@@ -19,7 +19,9 @@ from app.services.ai_prompt_seed import bump_prompt_to_fallback, seed_prompt_reg
 
 
 revision = "272_ideate_intent_parser_prompt"
-down_revision = "271_audit_action_allow_import"
+# Re-chained onto main's post-SCM-merge head (9785e8947154) so the ideation
+# migrations sit after the SCM chain instead of forking a second head off 271.
+down_revision = "9785e8947154"
 branch_labels = None
 depends_on = None
 
