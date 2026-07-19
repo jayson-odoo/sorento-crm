@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getCoreRowModel,
@@ -94,38 +94,52 @@ export default function RespondWorkspacesAdmin() {
   );
   const canFetchIdeationProducts = hasLiveIdeationPair || Boolean(editing);
 
-  const fetchIdeationProducts = useCallback(
-    async (query: string): Promise<SearchableSelectOption[]> => {
-      const result = await listIdeationProducts({
-        workspaceId: editing?.id ?? null,
-        baseUrl: form.ideation_shared_service_url.trim() || null,
-        apiKey: form.ideation_intake_api_key.trim() || null,
-      });
-      setIdeationProductError(result.error);
-      setIdeationProductNames((prev) => {
-        const next = { ...prev };
-        for (const p of result.products) next[p.id] = p.name;
-        return next;
-      });
-      const q = query.trim().toLowerCase();
-      return result.products
-        .filter((p) => !q || p.name.toLowerCase().includes(q))
-        .map((p) => ({ value: p.id, label: p.name }));
-    },
-    [editing?.id, form.ideation_shared_service_url, form.ideation_intake_api_key],
-  );
+  // Fetched product options for the (static-filter) SearchableSelect. Loaded once
+  // when the dialog opens; the proxy returns the whole list, the select filters it.
+  const [ideationProductOptions, setIdeationProductOptions] = useState<
+    SearchableSelectOption[]
+  >([]);
 
-  // Keep the trigger showing a name (or the id + note as a fallback) for the
-  // stored value even before/without a successful fetch — never a raw bare UUID.
-  const selectedIdeationOption: SearchableSelectOption | undefined = form
-    .ideation_product_id
-    ? {
-        value: form.ideation_product_id,
-        label:
-          ideationProductNames[form.ideation_product_id] ??
-          `${form.ideation_product_id} (name unavailable)`,
-      }
-    : undefined;
+  const loadIdeationProducts = useCallback(async () => {
+    const result = await listIdeationProducts({
+      workspaceId: editing?.id ?? null,
+      baseUrl: form.ideation_shared_service_url.trim() || null,
+      apiKey: form.ideation_intake_api_key.trim() || null,
+    });
+    setIdeationProductError(result.error);
+    setIdeationProductNames((prev) => {
+      const next = { ...prev };
+      for (const p of result.products) next[p.id] = p.name;
+      return next;
+    });
+    setIdeationProductOptions(
+      result.products.map((p) => ({ value: p.id, label: p.name })),
+    );
+  }, [editing?.id, form.ideation_shared_service_url, form.ideation_intake_api_key]);
+
+  // Fetch when the dialog is open AND we can reach shared-service (a live URL+key
+  // pair, or an existing workspace whose saved creds the proxy falls back to).
+  useEffect(() => {
+    if (dialogOpen && canFetchIdeationProducts) void loadIdeationProducts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogOpen, canFetchIdeationProducts, editing?.id]);
+
+  // Options: a clear entry + fetched products + the stored id (so the trigger
+  // shows a name even before a fetch resolves) — never a raw bare UUID.
+  const ideationProductSelectOptions: SearchableSelectOption[] = useMemo(() => {
+    const opts: SearchableSelectOption[] = [
+      { value: '', label: '— None —' },
+      ...ideationProductOptions,
+    ];
+    const sel = form.ideation_product_id;
+    if (sel && !opts.some((o) => o.value === sel)) {
+      opts.splice(1, 0, {
+        value: sel,
+        label: ideationProductNames[sel] ?? 'Selected product (name unavailable)',
+      });
+    }
+    return opts;
+  }, [ideationProductOptions, ideationProductNames, form.ideation_product_id]);
 
   const {
     data: workspaces = [],
@@ -527,10 +541,8 @@ export default function RespondWorkspacesAdmin() {
               <SearchableSelect
                 value={form.ideation_product_id}
                 onChange={(v) => setForm((f) => ({ ...f, ideation_product_id: v }))}
-                fetchOptions={fetchIdeationProducts}
-                selectedOption={selectedIdeationOption}
+                options={ideationProductSelectOptions}
                 disabled={!canFetchIdeationProducts}
-                clearable
                 placeholder={
                   canFetchIdeationProducts
                     ? 'Select a product…'
