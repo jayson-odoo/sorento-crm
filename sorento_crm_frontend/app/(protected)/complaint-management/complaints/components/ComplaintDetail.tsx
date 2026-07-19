@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle } from 'lucide-react';
+import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle, Ban } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
@@ -11,6 +11,9 @@ import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHan
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
+import { VoidBanner } from '@/components/common/VoidBanner';
+import { VoidDialog } from '@/components/common/VoidDialog';
+import { useFormVoid } from '@/hooks/useFormVoid';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { complaintStatusPillClass, complaintStatusLabel } from '@/lib/complaint-status';
@@ -94,6 +97,8 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   const canReject = useHasPermission('complaint_management.complaints.reject');
   const canProcess = useHasPermission('complaint_management.complaints.resolve');
   const canClose = useHasPermission('complaint_management.complaints.close');
+  const canVoid = useHasPermission('complaint_management.complaints.void');
+  const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const [approveDialogOpen, setApproveDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [processDialogOpen, setProcessDialogOpen] = useState(false);
@@ -124,7 +129,12 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
     sourceEntityId: isValidId ? complaintId : null,
     entityKey: complaint?.status,
   });
-  const businessCtasEnabled = handlingLock.businessCtasEnabled;
+  // A voided complaint is fully read-only — suppress every business CTA.
+  const isVoided = (complaint?.status ?? '').trim().toLowerCase() === 'voided';
+  const businessCtasEnabled = handlingLock.businessCtasEnabled && !isVoided;
+  const voidMutation = useFormVoid('complaints-management/complaints', complaintId, {
+    queryKeysToInvalidate: [['complaint', complaintId]],
+  });
   const [viewLinkCopying, setViewLinkCopying] = useState(false);
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
   const [editTechnicalResponseOpen, setEditTechnicalResponseOpen] = useState(false);
@@ -344,14 +354,16 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 Mark as closed
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem
-              onClick={() =>
-                router.push(`/complaint-management/complaints/${complaintId}/edit`)
-              }
-            >
-              <Edit className="size-4" />
-              Edit
-            </DropdownMenuItem>
+            {!isVoided && (
+              <DropdownMenuItem
+                onClick={() =>
+                  router.push(`/complaint-management/complaints/${complaintId}/edit`)
+                }
+              >
+                <Edit className="size-4" />
+                Edit
+              </DropdownMenuItem>
+            )}
             {canUseRespondChat && (
               <DropdownMenuItem onClick={() => setConversationSheetOpen(true)}>
                 <MessageSquare className="size-4" />
@@ -395,7 +407,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 View in system
               </DropdownMenuItem>
             )}
-            {canUseRespondChat && (
+            {canUseRespondChat && !isVoided && (
               <DropdownMenuItem
                 disabled={openingReplySheet || updateComplaintAndReplyMutation.isPending}
                 onClick={async () => {
@@ -413,13 +425,24 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                   : 'Update & Reply'}
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onClick={() => setDeleteDialogOpen(true)}
-            >
-              <Trash2 className="size-4" />
-              Delete
-            </DropdownMenuItem>
+            {canVoid && !isVoided && (
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() => setVoidDialogOpen(true)}
+              >
+                <Ban className="size-4" />
+                Void
+              </DropdownMenuItem>
+            )}
+            {!isVoided && (
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() => setDeleteDialogOpen(true)}
+              >
+                <Trash2 className="size-4" />
+                Delete
+              </DropdownMenuItem>
+            )}
           </DetailActionsMenu>
           <ComplaintNavigation complaintId={complaintId} />
         </div>
@@ -827,6 +850,20 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         />
       )}
 
+      <VoidBanner
+        voided={isVoided}
+        voidedByName={complaint.voided_by_name}
+        voidedAt={complaint.voided_at}
+        voidReason={complaint.void_reason}
+      />
+
+      <VoidDialog
+        open={voidDialogOpen}
+        onOpenChange={setVoidDialogOpen}
+        isPending={voidMutation.isPending}
+        onConfirm={(reason) => voidMutation.mutateAsync({ void_reason: reason })}
+      />
+
       <SlaActiveTrackerControls
         activeTracker={activeTracker}
         label={`Complaint${complaint.complaint_number ? ` · ${complaint.complaint_number}` : ''}`}
@@ -1007,6 +1044,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 data-guide-target="complaint-management.complaints.tech-team.notify-root-cause"
                 onClick={() => setNotifyRootCauseOpen(true)}
                 disabled={
+                  isVoided ||
                   !complaint.root_cause_id ||
                   !complaint.respond_inbox_url ||
                   notifyRootCauseMutation.isPending
@@ -1032,6 +1070,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 data-guide-target="complaint-management.complaints.tech-team.notify-resolution"
                 onClick={() => setNotifyResolutionOpen(true)}
                 disabled={
+                  isVoided ||
                   !complaint.resolution_id ||
                   !complaint.respond_inbox_url ||
                   notifyResolutionMutation.isPending

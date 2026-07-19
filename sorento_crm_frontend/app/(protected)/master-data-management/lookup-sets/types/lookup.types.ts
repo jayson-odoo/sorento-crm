@@ -57,6 +57,8 @@ export interface LookupBinding {
   column_name: string;
   table_label: string | null;
   column_label: string | null;
+  /** R2: option `value` the FE pre-selects on a NEW form bound to this field. */
+  default_value: string | null;
   created_at: string;
 }
 

@@ -48,6 +48,11 @@ class Complaint(Base):
     rejected_by = Column(Text, nullable=True)
     resolved_at = Column(DateTime(timezone=False), nullable=True)
     resolved_by = Column(Text, nullable=True)
+    # Void (terminal, irreversible). DB FK voided_by -> users.id added in migration
+    # 287_form_void (kept off the model, mirroring rejected_by/resolved_by Text).
+    void_reason = Column(Text, nullable=True)
+    voided_by = Column(Text, nullable=True)  # users.id of the actor who voided
+    voided_at = Column(DateTime(timezone=False), nullable=True)
     root_cause_id = Column(UUID(as_uuid=False), ForeignKey("complaint_root_causes.id", ondelete="RESTRICT"), nullable=True)
     resolution_id = Column(UUID(as_uuid=False), ForeignKey("complaint_resolutions.id", ondelete="RESTRICT"), nullable=True)
     root_cause_notified_at = Column(DateTime(timezone=False), nullable=True)

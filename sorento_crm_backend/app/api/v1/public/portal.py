@@ -544,6 +544,7 @@ _PORTAL_LOOKUP_SET_WHITELIST = {
     "complaints_customer_type",
     "complaints_defects_discovered",
     "procurement_sponsor_subject",
+    "procurement_sales_type",
 }
 
 
@@ -552,7 +553,14 @@ class LookupSetOption(BaseModel):
     label: str
 
 
-@router.get("/lookups/sets/{set_key}", response_model=list[LookupSetOption])
+class LookupSetResponse(BaseModel):
+    options: list[LookupSetOption]
+    # Binding default option the portal pre-selects on a NEW form (from
+    # lookup_bindings.default_value); mirrors the system LookupBoundField.
+    default_value: Optional[str] = None
+
+
+@router.get("/lookups/sets/{set_key}", response_model=LookupSetResponse)
 def lookup_set_options(
     set_key: str = Path(...),
     token: PortalToken = Depends(get_portal_token),
@@ -563,7 +571,7 @@ def lookup_set_options(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Lookup set not allowed for portal: {set_key}",
         )
-    from app.models.lookup import LookupOption, LookupSet
+    from app.models.lookup import LookupBinding, LookupOption, LookupSet
 
     s = db.query(LookupSet).filter(LookupSet.set_key == set_key).first()
     if not s:
@@ -574,7 +582,11 @@ def lookup_set_options(
         .order_by(LookupOption.sort_order)
         .all()
     )
-    return [LookupSetOption(value=o.value, label=o.label) for o in opts]
+    binding = db.query(LookupBinding).filter(LookupBinding.set_id == s.id).first()
+    return LookupSetResponse(
+        options=[LookupSetOption(value=o.value, label=o.label) for o in opts],
+        default_value=getattr(binding, "default_value", None) if binding else None,
+    )
 
 
 # ---------- Submissions ----------

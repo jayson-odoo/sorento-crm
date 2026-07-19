@@ -33,10 +33,10 @@ async def options_by_binding(
         .first()
     )
     if binding is None:
-        return {"set_key": None, "set_name": None, "options": []}
+        return {"set_key": None, "set_name": None, "default_value": None, "options": []}
     s = db.query(LookupSet).filter(LookupSet.id == binding.set_id).first()
     if s is None or (not s.is_active and not include_inactive):
-        return {"set_key": None, "set_name": None, "options": []}
+        return {"set_key": None, "set_name": None, "default_value": None, "options": []}
     q = db.query(LookupOption).filter(LookupOption.set_id == s.id)
     if not include_inactive:
         q = q.filter(LookupOption.is_active.is_(True))
@@ -49,7 +49,12 @@ async def options_by_binding(
             "keywords": [k.keyword for k in kws],
             "is_active": o.is_active,
         })
-    return {"set_key": s.set_key, "set_name": s.name, "options": options}
+    return {
+        "set_key": s.set_key,
+        "set_name": s.name,
+        "default_value": binding.default_value,  # FE pre-selects on a new form
+        "options": options,
+    }
 
 
 @router.get("/{set_key}/options")

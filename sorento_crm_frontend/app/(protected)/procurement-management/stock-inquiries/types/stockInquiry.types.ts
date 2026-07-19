@@ -22,6 +22,11 @@ export interface StockInquiry {
   rejected_at?: string | null;
   rejected_by?: string | null;
   rejected_by_name?: string | null;
+  /** R3 void audit fields (populated when status === 'voided'). */
+  voided_by?: string | null;
+  voided_by_name?: string | null;
+  voided_at?: string | null;
+  void_reason?: string | null;
   rejected_from?: string | null;
   reopen_reason?: string | null;
   reopened_at?: string | null;

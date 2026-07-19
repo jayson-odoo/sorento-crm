@@ -228,6 +228,11 @@ class ComplaintResponse(ComplaintBase):
     rejected_by_wa_phone: Optional[str] = None  # rejecter's wa.me digits (banner link)
     resolved_at: Optional[datetime] = None
     resolved_by: Optional[str] = None
+    # Void banner (BAN-1). voided_by is exposed as a resolved display name only (no UUID).
+    void_reason: Optional[str] = None
+    voided_at: Optional[datetime] = None
+    voided_by_name: Optional[str] = None
+    voided_by_wa_phone: Optional[str] = None
     assigned_to_name: Optional[str] = None
     handled_by_name: Optional[str] = None
     handled_by_wa_phone: Optional[str] = None  # holder's wa.me digits (banner link)

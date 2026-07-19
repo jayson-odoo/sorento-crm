@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle } from 'lucide-react';
+import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle, Ban } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
@@ -11,6 +11,9 @@ import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHan
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
+import { VoidBanner } from '@/components/common/VoidBanner';
+import { VoidDialog } from '@/components/common/VoidDialog';
+import { useFormVoid } from '@/hooks/useFormVoid';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { Button } from '@/components/ui/button';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -105,7 +108,9 @@ export default function StockInquiryDetail({
     sourceEntityId: isValidId ? inquiryId : null,
     entityKey: inquiry?.updated_at,
   });
-  const businessCtasEnabled = handlingLock.businessCtasEnabled;
+  // A voided stock inquiry is fully read-only — suppress every business CTA.
+  const isVoided = (inquiry?.status ?? '').trim().toLowerCase() === 'voided';
+  const businessCtasEnabled = handlingLock.businessCtasEnabled && !isVoided;
   const lockedCtaTitle = !businessCtasEnabled
     ? `Being handled by ${handlingLock.tracker?.handled_by_name ?? 'someone else'} — take over to act`
     : undefined;
@@ -114,11 +119,16 @@ export default function StockInquiryDetail({
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const [editPurchasingResponseOpen, setEditPurchasingResponseOpen] = useState(false);
   const [editPurchasingResponseValue, setEditPurchasingResponseValue] = useState('');
+  const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const canSubmitForProjectSales = useHasPermission('procurement.stock_inquiries.submit_for_project_sales');
   const canProjectSalesApprove = useHasPermission('procurement.stock_inquiries.project_sales_approve');
   const canProjectSalesReject = useHasPermission('procurement.stock_inquiries.project_sales_reject');
   const canPurchasingReject = useHasPermission('procurement.stock_inquiries.purchasing_reject');
   const canReopen = useHasPermission('procurement.stock_inquiries.reopen');
+  const canVoid = useHasPermission('procurement.stock_inquiries.void');
+  const voidMutation = useFormVoid('procurement/stock-inquiries', inquiryId, {
+    queryKeysToInvalidate: [['stock-inquiry', inquiryId]],
+  });
   const publicViewLinksEnabled = usePublicViewLinksEnabled();
 
   const handleExportExcel = async () => {
@@ -359,16 +369,18 @@ export default function StockInquiryDetail({
             </Button>
           )}
           <DetailActionsMenu ariaLabel="Stock inquiry actions">
-            <DropdownMenuItem
-              onClick={() =>
-                router.push(
-                  `/procurement-management/stock-inquiries/${inquiryId}/edit`,
-                )
-              }
-            >
-              <Edit className="size-4" />
-              Edit
-            </DropdownMenuItem>
+            {!isVoided && (
+              <DropdownMenuItem
+                onClick={() =>
+                  router.push(
+                    `/procurement-management/stock-inquiries/${inquiryId}/edit`,
+                  )
+                }
+              >
+                <Edit className="size-4" />
+                Edit
+              </DropdownMenuItem>
+            )}
             {activeTracker && (
               <DropdownMenuItem
                 onSelect={(e) => {
@@ -457,13 +469,24 @@ export default function StockInquiryDetail({
               <FileDown className="size-4" />
               {exporting ? 'Exporting…' : 'Export to Excel'}
             </DropdownMenuItem>
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onClick={() => setDeleteDialogOpen(true)}
-            >
-              <Trash2 className="size-4" />
-              Delete
-            </DropdownMenuItem>
+            {canVoid && !isVoided && (
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() => setVoidDialogOpen(true)}
+              >
+                <Ban className="size-4" />
+                Void
+              </DropdownMenuItem>
+            )}
+            {!isVoided && (
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() => setDeleteDialogOpen(true)}
+              >
+                <Trash2 className="size-4" />
+                Delete
+              </DropdownMenuItem>
+            )}
           </DetailActionsMenu>
           <StockInquiryNavigation inquiryId={inquiryId} />
         </div>
@@ -727,6 +750,20 @@ export default function StockInquiryDetail({
         />
       )}
 
+      <VoidBanner
+        voided={isVoided}
+        voidedByName={inquiry.voided_by_name}
+        voidedAt={inquiry.voided_at}
+        voidReason={inquiry.void_reason}
+      />
+
+      <VoidDialog
+        open={voidDialogOpen}
+        onOpenChange={setVoidDialogOpen}
+        isPending={voidMutation.isPending}
+        onConfirm={(reason) => voidMutation.mutateAsync({ void_reason: reason })}
+      />
+
       <SlaActiveTrackerControls
         activeTracker={activeTracker}
         label={`Stock Inquiry${inquiry.inquiry_number ? ` · ${inquiry.inquiry_number}` : ''}`}
@@ -808,19 +845,21 @@ export default function StockInquiryDetail({
               <div className="min-w-0 flex-1">
                 <InquiryReadValue>{inquiry.purchasing_response}</InquiryReadValue>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="shrink-0"
-                onClick={() => {
-                  setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
-                  setEditPurchasingResponseOpen(true);
-                }}
-                aria-label="Edit purchasing response"
-              >
-                <Edit className="size-4" />
-                Edit
-              </Button>
+              {!isVoided && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={() => {
+                    setEditPurchasingResponseValue(inquiry.purchasing_response ?? '');
+                    setEditPurchasingResponseOpen(true);
+                  }}
+                  aria-label="Edit purchasing response"
+                >
+                  <Edit className="size-4" />
+                  Edit
+                </Button>
+              )}
             </div>
           </div>
         </InquiryFormTableRow>

@@ -1263,6 +1263,7 @@ class PortalService:
             "total_project_value_text",
             "sponsor_subject",
             "sponsor_subject_other",
+            "sales_type",  # PR: project/cash_sales (lookup-bound); required for PR, routes CS
             "expected_delivery_date",
             "expected_po_date",
             "requested_by",

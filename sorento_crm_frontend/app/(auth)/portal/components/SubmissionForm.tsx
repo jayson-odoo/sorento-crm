@@ -38,6 +38,7 @@ import {
   lookupDebtors,
   lookupDeliveryOrders,
   lookupProducts,
+  lookupSet,
   saveDraft,
   statusLabel,
   submitDraft,
@@ -179,6 +180,12 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
     { name: 'project_title', label: 'Project title' },
     { name: 'purpose', label: 'Purpose', widget: 'textarea' },
     {
+      name: 'sales_type',
+      label: 'Sales type',
+      widget: 'lookup-select',
+      setKey: 'procurement_sales_type',
+    },
+    {
       name: 'expected_delivery_date',
       label: 'Expected delivery date',
       widget: 'date',
@@ -285,7 +292,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
 
   useEffect(() => {
     if (!submissionId) {
+      let cancelledNew = false;
       const next: Record<string, string | string[]> = {};
+      const lookupFields: FieldDef[] = [];
       for (const f of fieldDefs) {
         if (f.widget === 'do-multi-filter') {
           next[f.name] = [];
@@ -300,11 +309,31 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         } else {
           next[f.name] = '';
         }
+        if (f.widget === 'lookup-select' && f.setKey) lookupFields.push(f);
       }
-      setFields(next);
-      setComplaintLines([]);
-      setLoading(false);
-      return;
+      // Seed each lookup field's binding default (Default (new forms) in the lookup
+      // admin) so the portal pre-selects it just like the system form. Must happen
+      // HERE, not in the widget: this init does a full setFields replace that would
+      // otherwise wipe a widget-applied value.
+      void (async () => {
+        await Promise.all(
+          lookupFields.map((f) =>
+            lookupSet(f.setKey as string)
+              .then((r) => {
+                if (r.defaultValue && !next[f.name]) next[f.name] = r.defaultValue;
+              })
+              .catch(() => {}),
+          ),
+        );
+        if (!cancelledNew) {
+          setFields(next);
+          setComplaintLines([]);
+          setLoading(false);
+        }
+      })();
+      return () => {
+        cancelledNew = true;
+      };
     }
     let cancelled = false;
     (async () => {

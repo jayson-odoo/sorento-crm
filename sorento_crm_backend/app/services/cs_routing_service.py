@@ -27,6 +27,38 @@ CS_TEAM_SET_CODE = "customer_service"
 PINNABLE_USE_CASES = ("purchase_request", "sponsorship_form")
 
 
+def _normalized_conditions(match_conditions: Optional[list]) -> list:
+    """Validate + shape an incoming predicate list to [{field, operator, value}].
+
+    Rejects unknown operators and malformed predicates (422). An empty/None list is
+    the wildcard []. Field/value are stored as-is (strings); type-appropriate
+    operators are enforced in the UI, but the operator vocabulary is enforced here."""
+    from app.services.cs_routing_match import VALID_OPERATORS
+
+    if not match_conditions:
+        return []
+    out: list[dict] = []
+    for i, pred in enumerate(match_conditions):
+        if not isinstance(pred, dict):
+            raise handle_validation_error(f"match_conditions[{i}] must be an object.")
+        field = pred.get("field")
+        operator = pred.get("operator")
+        value = pred.get("value")
+        if not field or not isinstance(field, str):
+            raise handle_validation_error(f"match_conditions[{i}].field is required.")
+        if operator not in VALID_OPERATORS:
+            raise handle_validation_error(
+                f"match_conditions[{i}].operator must be one of {VALID_OPERATORS}; "
+                f"got {operator!r}."
+            )
+        out.append({"field": field, "operator": operator, "value": value})
+    # Store in canonical (sorted) order so the DB unique index
+    # md5(match_conditions::text) is deterministic per logical condition-set —
+    # matching app-side canonical_conditions (predicate order is not semantic; AND).
+    out.sort(key=lambda c: (str(c["field"]), str(c["operator"]), str(c["value"])))
+    return out
+
+
 class CsRoutingService:
     """Manage salesman → CS PIC pins and resolve the CS candidate pool."""
 
@@ -82,6 +114,72 @@ class CsRoutingService:
     def _candidate_ids(self) -> set[str]:
         return {c["id"] for c in self.list_candidates()}
 
+    # ---- routable fields (predicate builder) -------------------------------
+
+    # The form-header table backing each use_case (predicates match header fields).
+    _USE_CASE_TABLE = {
+        "purchase_request": "purchase_requests",
+        "sponsorship_form": "purchase_requests",
+        "complaint": "complaints",
+        "stock_inquiry": "stock_inquiries",
+    }
+    # Curated non-lookup header fields offered as routing dimensions per table
+    # (label, type). Excludes system/audit/status columns.
+    _CURATED_FIELDS: dict[str, list[tuple[str, str, str]]] = {
+        "purchase_requests": [
+            ("customer_name", "Customer Name", "string"),
+            ("project_title", "Project Title", "string"),
+            ("total_project_value", "Total Project Value", "numeric"),
+        ],
+        "complaints": [
+            ("customer_name", "Customer Name", "string"),
+            ("complaint_type", "Complaint Type", "string"),
+        ],
+        "stock_inquiries": [
+            ("customer_name", "Customer Name", "string"),
+        ],
+    }
+
+    def routable_fields(self, use_case: str) -> list[dict]:
+        """Fields a routing predicate can match, for a use_case's form. Lookup-bound
+        columns (with their options, type='lookup') + a curated set of common
+        string/numeric header fields."""
+        from app.models.lookup import LookupBinding, LookupOption, LookupSet
+
+        table = self._USE_CASE_TABLE.get(use_case)
+        if not table:
+            return []
+        fields: list[dict] = []
+        seen: set[str] = set()
+        # Lookup-bound columns on the table.
+        bindings = (
+            self.db.query(LookupBinding)
+            .filter(LookupBinding.table_name == table)
+            .all()
+        )
+        for b in bindings:
+            s = self.db.query(LookupSet).filter(LookupSet.id == b.set_id).first()
+            if not s:
+                continue
+            opts = (
+                self.db.query(LookupOption)
+                .filter(LookupOption.set_id == s.id, LookupOption.is_active.is_(True))
+                .order_by(LookupOption.sort_order.asc(), LookupOption.label.asc())
+                .all()
+            )
+            fields.append({
+                "field": b.column_name,
+                "label": b.column_name.replace("_", " ").title(),
+                "type": "lookup",
+                "options": [{"value": o.value, "label": o.label} for o in opts],
+            })
+            seen.add(b.column_name)
+        # Curated common fields (skip any already surfaced as a lookup).
+        for field, label, ftype in self._CURATED_FIELDS.get(table, []):
+            if field not in seen:
+                fields.append({"field": field, "label": label, "type": ftype})
+        return fields
+
     # ---- pin CRUD ----------------------------------------------------------
 
     def _require_contact(self, contact_id: str) -> RespondContact:
@@ -95,13 +193,19 @@ class CsRoutingService:
         return contact
 
     def list_for_contact(self, contact_id: str) -> list[dict]:
-        """All active pins for a contact, with the CS PIC's display name."""
+        """All active routing rows for a contact (predicates + priority + PIC name),
+        ordered by use_case then priority (the admin evaluation order)."""
         self._require_contact(contact_id)
         rows = (
             self.db.query(RespondContactCsRouting)
             .filter(
                 RespondContactCsRouting.respond_contact_id == contact_id,
                 RespondContactCsRouting.is_active.is_(True),
+            )
+            .order_by(
+                RespondContactCsRouting.use_case.asc(),
+                RespondContactCsRouting.priority.asc(),
+                RespondContactCsRouting.created_at.asc(),
             )
             .all()
         )
@@ -118,9 +222,12 @@ class CsRoutingService:
             u = users.get(r.cs_pic_user_id)
             out.append(
                 {
+                    "id": r.id,
                     "use_case": r.use_case,
                     "cs_pic_user_id": r.cs_pic_user_id,
                     "cs_pic_name": (u.name or u.email) if u else None,
+                    "match_conditions": r.match_conditions or [],
+                    "priority": r.priority or 0,
                 }
             )
         return out
@@ -131,13 +238,20 @@ class CsRoutingService:
         use_case: str,
         cs_pic_user_id: str,
         *,
+        match_conditions: Optional[list] = None,
+        priority: int = 0,
         created_by: Optional[str] = None,
     ) -> RespondContactCsRouting:
-        """Pin (or re-pin) a salesman to a CS PIC for one use_case.
+        """Create or update a routing row for (contact, use_case, condition-set).
 
-        Validates the use_case and that the CS PIC is a current member of the
-        procurement customer-service team (D5: pin must be a valid team member).
+        Uniqueness is per distinct condition-set (canonicalized), so a contact may
+        have several rows for the same use_case routing different predicate sets to
+        different PICs. Validates the use_case and that the CS PIC is a current member
+        of the procurement customer-service team (D5). ``match_conditions`` is stored
+        canonicalized so logically-equal sets collide on the unique index.
         """
+        from app.services.cs_routing_match import canonical_conditions
+
         self._require_contact(contact_id)
         if use_case not in PINNABLE_USE_CASES:
             raise handle_validation_error(
@@ -148,22 +262,32 @@ class CsRoutingService:
                 "Selected user is not a member of the customer-service team "
                 "(purchase_request agent, tier 1). Add them to the team first."
             )
-        row = (
-            self.db.query(RespondContactCsRouting)
-            .filter(
-                RespondContactCsRouting.respond_contact_id == contact_id,
-                RespondContactCsRouting.use_case == use_case,
-            )
-            .first()
+        conds = _normalized_conditions(match_conditions)
+        key = canonical_conditions(conds)
+        # Find an existing row with the SAME canonical condition-set (not just use_case).
+        row = next(
+            (
+                r
+                for r in self.db.query(RespondContactCsRouting).filter(
+                    RespondContactCsRouting.respond_contact_id == contact_id,
+                    RespondContactCsRouting.use_case == use_case,
+                )
+                if canonical_conditions(r.match_conditions or []) == key
+            ),
+            None,
         )
         if row:
             row.cs_pic_user_id = cs_pic_user_id
+            row.priority = priority
+            row.match_conditions = conds
             row.is_active = True
         else:
             row = RespondContactCsRouting(
                 respond_contact_id=contact_id,
                 use_case=use_case,
                 cs_pic_user_id=cs_pic_user_id,
+                match_conditions=conds,
+                priority=priority,
                 is_active=True,
                 created_by=created_by,
             )
@@ -172,17 +296,18 @@ class CsRoutingService:
         self.db.refresh(row)
         return row
 
-    def delete(self, contact_id: str, use_case: str) -> None:
-        """Clear a pin → that use_case reverts to round-robin. Idempotent."""
+    def delete(self, contact_id: str, use_case: str, row_id: Optional[str] = None) -> None:
+        """Clear routing rows. With ``row_id`` deletes one specific row; without it,
+        clears every row for (contact, use_case) → reverts to round-robin. Idempotent."""
         self._require_contact(contact_id)
-        row = (
-            self.db.query(RespondContactCsRouting)
-            .filter(
-                RespondContactCsRouting.respond_contact_id == contact_id,
-                RespondContactCsRouting.use_case == use_case,
-            )
-            .first()
+        q = self.db.query(RespondContactCsRouting).filter(
+            RespondContactCsRouting.respond_contact_id == contact_id,
+            RespondContactCsRouting.use_case == use_case,
         )
-        if row:
+        if row_id:
+            q = q.filter(RespondContactCsRouting.id == row_id)
+        rows = q.all()
+        for row in rows:
             self.db.delete(row)
+        if rows:
             self.db.commit()

@@ -310,6 +310,7 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'project_sales_reject',
     'purchasing_decide',
     'purchasing_respond',
+    'voided',
   ],
   purchase_request: [
     'submit',
@@ -318,6 +319,7 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'approved',
     'approval_rejected',
     'resolved',
+    'voided',
   ],
   sponsorship_form: [
     'submit',
@@ -326,6 +328,7 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'approved',
     'approval_rejected',
     'resolved',
+    'voided',
   ],
   complaint: [
     'submit',
@@ -333,6 +336,7 @@ export const FORM_SLA_EVENT_OPTIONS: Record<FormSLASourceType, readonly string[]
     'approved',
     'rejected',
     'resolved',
+    'voided',
   ],
   ticket: [
     'submit',

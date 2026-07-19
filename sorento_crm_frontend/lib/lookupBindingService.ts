@@ -12,6 +12,10 @@ export interface LookupBoundResponse {
   set_key: string | null;
   set_name: string | null;
   options: LookupBoundOption[];
+  /** Optional default option `value` the binding declares. The FE pre-selects it
+   *  on a NEW (empty) form only — never overriding an existing value on edit.
+   *  (Contract: `GET /api/v1/lookup/by-binding` now also returns `default_value`.) */
+  default_value?: string | null;
   /** True when the caller lacks permission to read this binding (403). The
    *  field degrades to its free-text fallback instead of erroring — see C4. */
   forbidden?: boolean;

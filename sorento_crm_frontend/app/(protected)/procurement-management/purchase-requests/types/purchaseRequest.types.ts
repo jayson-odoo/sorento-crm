@@ -33,6 +33,8 @@ export interface PurchaseRequest {
   delivery_address?: string | null;
   total_project_value?: number | null;
   total_project_value_text?: string | null;
+  /** R2: sales type (project / cash_sales), lookup-bound; routes CS assignment. */
+  sales_type?: string | null;
   sponsor_subject?: string | null;
   sponsor_subject_other?: string | null;
   expected_delivery_date?: string | null;
@@ -61,6 +63,11 @@ export interface PurchaseRequest {
   approval_comments?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  /** R3 void audit fields (populated when status === 'voided'). */
+  voided_by?: string | null;
+  voided_by_name?: string | null;
+  voided_at?: string | null;
+  void_reason?: string | null;
   lines?: PurchaseRequestLine[];
   attachments?: PurchaseRequestAttachment[];
   grand_total?: number | null;
@@ -100,6 +107,7 @@ export interface PurchaseRequestFormData {
   delivery_address?: string;
   total_project_value?: number;
   total_project_value_text?: string;
+  sales_type?: string;
   sponsor_subject?: string;
   sponsor_subject_other?: string;
   expected_delivery_date?: string;

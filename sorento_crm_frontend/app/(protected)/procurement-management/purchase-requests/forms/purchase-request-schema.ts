@@ -37,6 +37,9 @@ export const PurchaseRequestSchema = z.object({
   delivery_address: z.string().max(2000).optional().nullable(),
   total_project_value: projectValueSchema,
   total_project_value_text: z.string().max(2000).optional().nullable(),
+  // R2: sales type (project / cash_sales), lookup-bound. Required for purchase
+  // requests (see superRefine below); not applicable to sponsorship forms.
+  sales_type: z.string().max(50).optional().nullable(),
   sponsor_subject: z.string().max(500).optional().nullable(),
   sponsor_subject_other: z.string().max(2000).optional().nullable(),
   expected_delivery_date: z.string().optional().nullable(),
@@ -48,5 +51,26 @@ export const PurchaseRequestSchema = z.object({
   space_id: z.string().max(500).optional().nullable(),
   products: z.array(lineSchema),
 });
+
+/**
+ * Form-resolver schema: the base object + a conditional rule making `sales_type`
+ * mandatory on a Purchase Request (it drives CS routing). Sponsorship Forms share
+ * this schema and do not require it. Kept separate from `PurchaseRequestSchema`
+ * so the base object still exposes `.shape` for field-level unit tests.
+ */
+export const PurchaseRequestFormSchema = PurchaseRequestSchema.superRefine(
+  (data, ctx) => {
+    if (
+      data.request_type === 'purchase_request' &&
+      !(data.sales_type ?? '').trim()
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sales_type'],
+        message: 'Sales type is required.',
+      });
+    }
+  },
+);
 
 export type PurchaseRequestSchemaType = z.infer<typeof PurchaseRequestSchema>;

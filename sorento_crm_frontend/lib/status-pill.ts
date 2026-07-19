@@ -20,6 +20,9 @@ const STATUS_PILL_CLASS: Record<string, string> = {
   processed_by_cs: 'bg-emerald-100 text-emerald-800',
   resolved: 'bg-emerald-100 text-emerald-800',
   closed: 'bg-slate-200 text-slate-700',
+  // Voided = form was cancelled/annulled after creation. Neutral gray (muted),
+  // deliberately NOT red — voiding is administrative, not an error/rejection.
+  voided: 'bg-gray-200 text-gray-600',
 };
 
 /** Base classes for the pill chip (shape + sizing); pair with statusPillClass(). */

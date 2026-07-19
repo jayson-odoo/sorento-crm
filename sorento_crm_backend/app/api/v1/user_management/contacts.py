@@ -318,6 +318,11 @@ async def sync_contact(
 
 class CsRoutingPinRequest(BaseModel):
     cs_pic_user_id: str
+    # Predicate set [{field, operator, value}], AND-combined, matched against the
+    # form header fields. Empty/omitted = wildcard. Lower `priority` wins among
+    # matching rows for a form (pure admin order).
+    match_conditions: Optional[list] = None
+    priority: int = 0
 
 
 @router.get("/cs-routing/candidates")
@@ -369,12 +374,34 @@ async def upsert_contact_cs_routing(
             contact_id,
             use_case,
             payload.cs_pic_user_id,
+            match_conditions=payload.match_conditions,
+            priority=payload.priority,
             created_by=current_user.get("id"),
         )
         return {
+            "id": row.id,
             "use_case": row.use_case,
             "cs_pic_user_id": row.cs_pic_user_id,
+            "match_conditions": row.match_conditions or [],
+            "priority": row.priority or 0,
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/cs-routing/fields")
+async def list_cs_routing_fields(
+    use_case: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Routable predicate fields for a use_case's form (lookup + curated header fields)."""
+    try:
+        from app.services.cs_routing_service import CsRoutingService
+
+        return {"fields": CsRoutingService(db).routable_fields(use_case)}
     except HTTPException:
         raise
     except Exception as e:
@@ -385,14 +412,15 @@ async def upsert_contact_cs_routing(
 async def delete_contact_cs_routing(
     contact_id: str,
     use_case: str,
+    row_id: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Clear a pin → that use_case reverts to round-robin."""
+    """Clear routing rows for a use_case (or one ``row_id``) → reverts to round-robin."""
     try:
         from app.services.cs_routing_service import CsRoutingService
 
-        CsRoutingService(db).delete(contact_id, use_case)
+        CsRoutingService(db).delete(contact_id, use_case, row_id=row_id)
         return None
     except HTTPException:
         raise

@@ -45,6 +45,11 @@ export interface Complaint {
   technical_team_response?: string | null;
   status?: string | null;
   rejection_reason?: string | null;
+  /** R3 void audit fields (populated when status === 'voided'). */
+  voided_by?: string | null;
+  voided_by_name?: string | null;
+  voided_at?: string | null;
+  void_reason?: string | null;
   last_responded_by?: string | null;
   last_responded_by_name?: string | null;
   last_responded_at?: string | null;

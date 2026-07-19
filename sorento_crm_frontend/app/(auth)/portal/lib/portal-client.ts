@@ -572,14 +572,26 @@ export async function lookupDeliveryOrders(
   return unwrap<DOLookupItem[]>(res, 'Failed to load delivery orders.');
 }
 
-const _lookupSetCache: Record<string, LookupSetOption[]> = {};
-export async function lookupSet(setKey: string): Promise<LookupSetOption[]> {
+export interface LookupSetResult {
+  options: LookupSetOption[];
+  defaultValue: string | null;
+}
+
+const _lookupSetCache: Record<string, LookupSetResult> = {};
+export async function lookupSet(setKey: string): Promise<LookupSetResult> {
   if (_lookupSetCache[setKey]) return _lookupSetCache[setKey];
   const url = `/api/v1/public/portal/lookups/sets/${encodeURIComponent(setKey)}`;
   const res = await portalFetch(url);
-  const data = await unwrap<LookupSetOption[]>(res, 'Failed to load lookup options.');
-  _lookupSetCache[setKey] = data;
-  return data;
+  const data = await unwrap<{ options: LookupSetOption[]; default_value: string | null }>(
+    res,
+    'Failed to load lookup options.',
+  );
+  const result: LookupSetResult = {
+    options: data?.options ?? [],
+    defaultValue: data?.default_value ?? null,
+  };
+  _lookupSetCache[setKey] = result;
+  return result;
 }
 
 // ---------------------------------------------------------------------------

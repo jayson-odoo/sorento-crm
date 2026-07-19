@@ -1,8 +1,26 @@
 """Common Pydantic schemas."""
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from typing import Any, Dict, Optional, List, Generic, TypeVar
 
 T = TypeVar('T')
+
+
+class FormVoidRequest(BaseModel):
+    """Body for the per-form ``POST /{id}/void`` endpoints.
+
+    ``void_reason`` is required and must be free-text with at least 3 non-space
+    characters. Blank / whitespace-only / too-short values fail here (Pydantic
+    422) before the service runs (UAC SCH-3 / ACT-3).
+    """
+    void_reason: str = Field(..., description="Required free-text reason (>= 3 non-space chars).")
+
+    @field_validator("void_reason")
+    @classmethod
+    def _non_empty_min_len(cls, v: str) -> str:
+        cleaned = (v or "").strip()
+        if len(cleaned) < 3:
+            raise ValueError("A void reason of at least 3 characters is required.")
+        return cleaned
 
 # Shared ceiling for DataGrid list endpoints (`page`/`limit` pagination).
 # The frontend pagination selector offers up to 1000 rows per page; every
