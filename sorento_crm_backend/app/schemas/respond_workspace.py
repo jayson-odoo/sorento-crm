@@ -28,12 +28,25 @@ class RespondWorkspaceBase(BaseModel):
         max_length=64,
         description="Shared-service Product id this workspace's ideas map to (admin config).",
     )
+    ideation_embed_connection_id: Optional[str] = Field(
+        None,
+        max_length=128,
+        description="Ideas iframe embed connection id (matches the shared-service registry).",
+    )
+    ideation_embed_fe_base_url: Optional[str] = Field(
+        None,
+        max_length=512,
+        description="Ideas iframe FE root URL (shared-service frontend; the iframe points here, NOT the backend base).",
+    )
 
 
 class RespondWorkspaceCreate(RespondWorkspaceBase):
     api_key: str = Field(..., min_length=1, description="Plain API key pasted from Respond.io")
     ideation_intake_api_key: Optional[str] = Field(
         None, description="Plain ideation intake API key (Bearer token for create_idea)."
+    )
+    ideation_embed_signing_secret: Optional[str] = Field(
+        None, description="Plain ideation embed signing secret (mints the SSO assertion)."
     )
 
 
@@ -49,6 +62,11 @@ class RespondWorkspaceUpdate(BaseModel):
     ideation_product_id: Optional[str] = Field(None, max_length=64)
     ideation_intake_api_key: Optional[str] = Field(
         None, description="When set, replaces stored ideation intake key"
+    )
+    ideation_embed_connection_id: Optional[str] = Field(None, max_length=128)
+    ideation_embed_fe_base_url: Optional[str] = Field(None, max_length=512)
+    ideation_embed_signing_secret: Optional[str] = Field(
+        None, description="When set, replaces stored ideation embed signing secret"
     )
 
 
@@ -66,6 +84,9 @@ class RespondWorkspaceResponse(BaseModel):
     ideation_shared_service_url: Optional[str] = None
     ideation_product_id: Optional[str] = None
     ideation_intake_api_key_masked: Optional[str] = None
+    ideation_embed_connection_id: Optional[str] = None
+    ideation_embed_fe_base_url: Optional[str] = None
+    ideation_embed_signing_secret_masked: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

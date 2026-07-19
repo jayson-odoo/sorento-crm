@@ -55,6 +55,9 @@ interface FormState {
   ideation_shared_service_url: string;
   ideation_product_id: string;
   ideation_intake_api_key: string;
+  ideation_embed_connection_id: string;
+  ideation_embed_fe_base_url: string;
+  ideation_embed_signing_secret: string;
   is_active: boolean;
   is_default: boolean;
 }
@@ -68,6 +71,9 @@ const EMPTY_FORM: FormState = {
   ideation_shared_service_url: '',
   ideation_product_id: '',
   ideation_intake_api_key: '',
+  ideation_embed_connection_id: '',
+  ideation_embed_fe_base_url: '',
+  ideation_embed_signing_secret: '',
   is_active: true,
   is_default: false,
 };
@@ -213,6 +219,9 @@ export default function RespondWorkspacesAdmin() {
       ideation_shared_service_url: row.ideation_shared_service_url ?? '',
       ideation_product_id: row.ideation_product_id ?? '',
       ideation_intake_api_key: '',
+      ideation_embed_connection_id: row.ideation_embed_connection_id ?? '',
+      ideation_embed_fe_base_url: row.ideation_embed_fe_base_url ?? '',
+      ideation_embed_signing_secret: '',
       is_active: row.is_active,
       is_default: row.is_default,
     });
@@ -230,10 +239,14 @@ export default function RespondWorkspacesAdmin() {
         is_default: form.is_default,
         ideation_shared_service_url: form.ideation_shared_service_url.trim() || null,
         ideation_product_id: form.ideation_product_id.trim() || null,
+        ideation_embed_connection_id: form.ideation_embed_connection_id.trim() || null,
+        ideation_embed_fe_base_url: form.ideation_embed_fe_base_url.trim() || null,
       };
       if (form.api_key.trim()) body.api_key = form.api_key.trim();
       if (form.ideation_intake_api_key.trim())
         body.ideation_intake_api_key = form.ideation_intake_api_key.trim();
+      if (form.ideation_embed_signing_secret.trim())
+        body.ideation_embed_signing_secret = form.ideation_embed_signing_secret.trim();
       updateMutation.mutate({ id: editing.id, body });
     } else {
       if (!form.space_id.trim() || !form.api_key.trim()) {
@@ -251,6 +264,9 @@ export default function RespondWorkspacesAdmin() {
         ideation_shared_service_url: form.ideation_shared_service_url.trim() || null,
         ideation_product_id: form.ideation_product_id.trim() || null,
         ideation_intake_api_key: form.ideation_intake_api_key.trim() || null,
+        ideation_embed_connection_id: form.ideation_embed_connection_id.trim() || null,
+        ideation_embed_fe_base_url: form.ideation_embed_fe_base_url.trim() || null,
+        ideation_embed_signing_secret: form.ideation_embed_signing_secret.trim() || null,
       };
       createMutation.mutate(body);
     }
@@ -558,6 +574,65 @@ export default function RespondWorkspacesAdmin() {
                   Fetched live from the shared-service by name.
                 </p>
               )}
+            </div>
+            <div className="border-t pt-4 mt-1">
+              <p className="text-sm font-medium">Ideas embed (iframe SSO)</p>
+              <p className="text-xs text-muted-foreground">
+                Lets a logged-in user open the shared Ideas board inside the app with no
+                second login. Set all three on the default workspace to enable it; leave
+                blank to keep it off.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="ws-embed-conn">Embed connection ID</Label>
+              <Input
+                id="ws-embed-conn"
+                value={form.ideation_embed_connection_id}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, ideation_embed_connection_id: e.target.value }))
+                }
+                placeholder="Connection id from the shared-service embed registry"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="ws-embed-secret">
+                Embed signing secret{' '}
+                {editing && (
+                  <span className="text-muted-foreground">(leave blank to keep current)</span>
+                )}
+              </Label>
+              <Input
+                id="ws-embed-secret"
+                type="password"
+                value={form.ideation_embed_signing_secret}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, ideation_embed_signing_secret: e.target.value }))
+                }
+                placeholder={
+                  editing
+                    ? form.ideation_embed_signing_secret
+                      ? ''
+                      : (editing.ideation_embed_signing_secret_masked ?? '•••• (unchanged)')
+                    : 'Shared secret that signs the SSO assertion'
+                }
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="ws-embed-fe">Embed FE base URL</Label>
+              <Input
+                id="ws-embed-fe"
+                value={form.ideation_embed_fe_base_url}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, ideation_embed_fe_base_url: e.target.value }))
+                }
+                placeholder="https://chat.foundryx.my"
+              />
+              <p className="text-xs text-muted-foreground">
+                The shared-service <strong>frontend</strong> root the iframe points at
+                (e.g. <code>https://chat.foundryx.my</code>), NOT the backend / API URL
+                above. These are different values.
+              </p>
             </div>
             <div className="flex items-center gap-2">
               <Checkbox

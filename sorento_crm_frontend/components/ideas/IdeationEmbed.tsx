@@ -48,9 +48,9 @@ export function IdeationEmbed({ ideaId, title }: IdeationEmbedProps) {
     );
   }
 
-  // Token travels to the iframe per the embed framework (query param) — never shown to the user.
-  const separator = data.iframe_url.includes('?') ? '&' : '?';
-  const src = `${data.iframe_url}${separator}token=${encodeURIComponent(data.token)}`;
+  // Token travels to the iframe in the URL FRAGMENT (not a query param) so it stays
+  // out of server logs and the Referer header (AC-E-10) — never shown to the user.
+  const src = `${data.iframe_url}#token=${encodeURIComponent(data.token)}`;
 
   return (
     <iframe

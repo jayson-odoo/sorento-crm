@@ -22,7 +22,7 @@ import { extractApiError } from '@/lib/api-client';
 export interface IdeationEmbedSession {
   iframe_url: string;
   token: string;
-  expires_at: string;
+  expires_at: string | null;
 }
 
 export async function getIdeationEmbedSession(

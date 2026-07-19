@@ -70,6 +70,7 @@ class RespondWorkspaceService:
         if exists:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="space_id already exists")
         ideation_key = (data.ideation_intake_api_key or "").strip()
+        embed_secret = (data.ideation_embed_signing_secret or "").strip()
         row = RespondWorkspace(
             space_id=data.space_id.strip(),
             name=(data.name or "").strip() or None,
@@ -82,6 +83,15 @@ class RespondWorkspaceService:
             ideation_product_id=(data.ideation_product_id or "").strip() or None,
             ideation_intake_api_key_ciphertext=(
                 encrypt_secret(ideation_key) if ideation_key else None
+            ),
+            ideation_embed_connection_id=(
+                data.ideation_embed_connection_id or ""
+            ).strip() or None,
+            ideation_embed_fe_base_url=(
+                data.ideation_embed_fe_base_url or ""
+            ).strip() or None,
+            ideation_embed_signing_secret_ciphertext=(
+                encrypt_secret(embed_secret) if embed_secret else None
             ),
         )
         if data.is_default:
@@ -129,6 +139,16 @@ class RespondWorkspaceService:
             row.ideation_intake_api_key_ciphertext = encrypt_secret(
                 data.ideation_intake_api_key.strip()
             )
+        if data.ideation_embed_connection_id is not None:
+            row.ideation_embed_connection_id = (
+                data.ideation_embed_connection_id.strip() or None
+            )
+        if data.ideation_embed_fe_base_url is not None:
+            row.ideation_embed_fe_base_url = data.ideation_embed_fe_base_url.strip() or None
+        if data.ideation_embed_signing_secret is not None and data.ideation_embed_signing_secret.strip():
+            row.ideation_embed_signing_secret_ciphertext = encrypt_secret(
+                data.ideation_embed_signing_secret.strip()
+            )
         self.db.commit()
         self.db.refresh(row)
         return row
@@ -165,6 +185,11 @@ class RespondWorkspaceService:
             "ideation_intake_api_key_masked": _mask_optional_key(
                 row.ideation_intake_api_key_ciphertext
             ),
+            "ideation_embed_connection_id": row.ideation_embed_connection_id,
+            "ideation_embed_fe_base_url": row.ideation_embed_fe_base_url,
+            "ideation_embed_signing_secret_masked": _mask_optional_key(
+                row.ideation_embed_signing_secret_ciphertext
+            ),
             "created_at": row.created_at,
             "updated_at": row.updated_at,
         }
@@ -174,6 +199,18 @@ class RespondWorkspaceService:
         """Plaintext ideation intake API key for server-side use (create_idea
         Bearer token), or None when unset/undecryptable."""
         cipher = getattr(row, "ideation_intake_api_key_ciphertext", None)
+        if not cipher:
+            return None
+        try:
+            return decrypt_secret(cipher) or None
+        except ValueError:
+            return None
+
+    @staticmethod
+    def decrypt_ideation_embed_secret(row: RespondWorkspace) -> Optional[str]:
+        """Plaintext ideation embed signing secret for server-side use (minting the
+        SSO assertion), or None when unset/undecryptable."""
+        cipher = getattr(row, "ideation_embed_signing_secret_ciphertext", None)
         if not cipher:
             return None
         try:

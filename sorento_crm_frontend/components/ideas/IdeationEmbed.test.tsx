@@ -44,7 +44,7 @@ describe('IdeationEmbed', () => {
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 
-  it('renders the iframe with the token in the src on success', () => {
+  it('renders the iframe with the token in the URL fragment + sandbox on success', () => {
     mockHook.mockReturnValue({
       isPending: false,
       isError: false,
@@ -59,9 +59,12 @@ describe('IdeationEmbed', () => {
     render(<IdeationEmbed title="Ideas board" />);
     const iframe = document.querySelector('iframe');
     expect(iframe).not.toBeNull();
+    // Token rides the fragment (AC-E-10), not a query param.
     expect(iframe?.getAttribute('src')).toBe(
-      'https://ideation.example.invalid/embed/ideas?token=stub-embed-token',
+      'https://ideation.example.invalid/embed/ideas#token=stub-embed-token',
     );
+    expect(iframe?.getAttribute('src')).not.toContain('?token=');
+    expect(iframe?.getAttribute('sandbox')).toBeTruthy();
     expect(iframe?.getAttribute('title')).toBe('Ideas board');
   });
 

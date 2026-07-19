@@ -1,22 +1,22 @@
 """Slice D — Ideas iframe embed-session mint (SSO) endpoint + service.
 
-Keys back to ``documentation/plans/ideation/ideation-ideate-intent-acceptance-criteria.md``:
+Keys back to ``documentation/plans/ideation/ideation-embed-sso-acceptance-criteria.md``:
 
-- **AC-42 [BE]** — a logged-in sorento user's request mints a signed assertion
-  (``ideation_embed_signing_secret`` + ``ideation_embed_connection_id``), POSTs it to
-  ``{ideation_shared_service_url}/embed/session``, and returns
-  ``{ iframe_url, token, expires_at }`` — ``iframe_url`` = ``{shared}/embed/ideas[/{id}]``.
-- **AC-32 [BE]** — blank settings keep the feature DORMANT: a clean 4xx (not a 500)
+- **AC-E-2 [BE]** — a logged-in sorento user's request mints a signed assertion
+  (resolved embed signing secret + connection id), POSTs it to
+  ``{ideation_shared_service_url}/embed/session`` (backend base), and returns
+  ``{ iframe_url, token, expires_at }``.
+- **AC-E-3 [BE]** — ``iframe_url`` is built from the distinct FE base
+  (``ideation_embed_fe_base_url``), NOT the backend base used for the POST.
+- **AC-E-4 [BE]** — blank config keeps the feature DORMANT: a clean 4xx (not a 500)
   and no shared-service call.
-- **AC-44 [FE, mirrored here]** — a shared-service outage surfaces as a clean non-500
-  error the FE can turn into a retry state (never a raw 500 crash).
-- Secrets (signing secret, intake key, the minted assertion) are never echoed in the
-  response body.
+- **AC-E-12 [BE]** — secrets (signing secret, the minted assertion) are never echoed
+  in the response body.
 
-The shared-service ``/embed/session`` endpoint is in the DEFERRED capture-spine set
-(embed framework not built yet), so the live handshake is STUBBED here (monkeypatched
-``post_embed_session``). Live-iframe verification (AC-43 seamless auth, AC-45 link
-round-trip inside a real iframe) is DEFERRED to the shared-service embed dependency.
+The shared-service ``/embed/session`` handshake is STUBBED here (monkeypatched
+``post_embed_session``). DB-driven config resolution is covered in
+``test_ideation_embed_config.py``. Live-iframe verification is DEFERRED to the
+shared-service embed dependency.
 """
 from __future__ import annotations
 
@@ -36,25 +36,28 @@ from app.services.ideation_embed_service import (
 
 _SIGNING_SECRET = "test-embed-signing-secret-value"
 _CONNECTION_ID = "conn-ideation-1"
-_SHARED_URL = "https://shared.test"
+_SHARED_URL = "https://shared.test/be"       # backend base (POST /embed/session)
+_FE_URL = "https://shared.test"              # FE root (iframe_url) — distinct (AC-E-3)
 
 _USER = {"id": "user-uuid-1", "email": "staff@example.com", "name": "Staff Member"}
 
 
 @pytest.fixture
 def configured(monkeypatch):
-    """Populate the ideation embed settings so the feature is live."""
+    """Populate the ideation embed settings (.env fallback path) so the feature is
+    live without a DB workspace row (``db=None`` in the calls below)."""
     monkeypatch.setattr(svc.settings, "ideation_shared_service_url", _SHARED_URL)
+    monkeypatch.setattr(svc.settings, "ideation_embed_fe_base_url", _FE_URL)
     monkeypatch.setattr(svc.settings, "ideation_embed_signing_secret", _SIGNING_SECRET)
     monkeypatch.setattr(svc.settings, "ideation_embed_connection_id", _CONNECTION_ID)
     return monkeypatch
 
 
 # --------------------------------------------------------------------------- #
-# AC-42 — mint a signed assertion for the logged-in user                       #
+# AC-E-2 — mint a signed assertion for the logged-in user                      #
 # --------------------------------------------------------------------------- #
-def test_mint_assertion_is_signed_and_carries_identity(configured):
-    token = mint_embed_assertion(_USER)
+def test_mint_assertion_is_signed_and_carries_identity():
+    token = mint_embed_assertion(_USER, secret=_SIGNING_SECRET, connection_id=_CONNECTION_ID)
 
     decoded = jwt.decode(
         token,
@@ -67,18 +70,22 @@ def test_mint_assertion_is_signed_and_carries_identity(configured):
     assert decoded["connection_id"] == _CONNECTION_ID
     assert "exp" in decoded and "iat" in decoded
     # The signing secret is never carried inside the token payload.
-    assert _SIGNING_SECRET not in token or decoded.get("connection_id") == _CONNECTION_ID
     assert "signing_secret" not in decoded
 
 
-def test_mint_assertion_rejected_by_wrong_secret(configured):
-    token = mint_embed_assertion(_USER)
+def test_mint_assertion_rejected_by_wrong_secret():
+    token = mint_embed_assertion(_USER, secret=_SIGNING_SECRET, connection_id=_CONNECTION_ID)
     with pytest.raises(Exception):
         jwt.decode(token, "wrong-secret", algorithms=[settings.jwt_algorithm], audience="ideation-embed")
 
 
+def test_mint_assertion_dormant_when_secret_blank():
+    with pytest.raises(IdeationEmbedNotConfigured):
+        mint_embed_assertion(_USER, secret="", connection_id=_CONNECTION_ID)
+
+
 # --------------------------------------------------------------------------- #
-# AC-42 — create_embed_session posts to shared-service + returns the contract  #
+# AC-E-2/E-3 — create_embed_session posts to backend base, iframe uses fe base #
 # --------------------------------------------------------------------------- #
 def test_create_embed_session_board(configured, monkeypatch):
     captured: dict = {}
@@ -86,16 +93,17 @@ def test_create_embed_session_board(configured, monkeypatch):
     def _fake_post(base_url, payload):  # noqa: ANN001
         captured["base_url"] = base_url
         captured["payload"] = payload
-        return {"token": "embed-token-xyz", "expires_at": "2026-07-19T00:15:00+00:00"}
+        return {"token": "embed-token-xyz", "expires_at": "2026-07-20T00:15:00+00:00"}
 
     monkeypatch.setattr(svc, "post_embed_session", _fake_post)
 
-    result = create_embed_session(_USER, idea_id=None)
+    result = create_embed_session(None, _USER, idea_id=None)
 
+    # iframe_url is built from the FE base, NOT the backend base (AC-E-3)
     assert result["iframe_url"] == "https://shared.test/embed/ideas"
     assert result["token"] == "embed-token-xyz"
-    assert result["expires_at"] == "2026-07-19T00:15:00+00:00"
-    # The assertion (a signed JWT) was posted to the shared-service, with the connection id.
+    assert result["expires_at"] == "2026-07-20T00:15:00+00:00"
+    # The signed assertion was POSTed to the BACKEND base with the connection id.
     assert captured["base_url"] == _SHARED_URL
     assert captured["payload"]["connection_id"] == _CONNECTION_ID
     assert captured["payload"]["assertion"]  # a minted token, not blank
@@ -107,31 +115,64 @@ def test_create_embed_session_detail(configured, monkeypatch):
         svc, "post_embed_session",
         lambda base_url, payload: {"token": "t", "expires_at": "x"},
     )
-    result = create_embed_session(_USER, idea_id="idea-123")
+    result = create_embed_session(None, _USER, idea_id="idea-123")
     assert result["iframe_url"] == "https://shared.test/embed/ideas/idea-123"
 
 
+def test_backend_and_fe_bases_never_collapse(configured, monkeypatch):
+    """AC-E-3 explicit: the POST target and the iframe origin path differ."""
+    captured: dict = {}
+
+    def _fake_post(base_url, payload):  # noqa: ANN001
+        captured["base_url"] = base_url
+        return {"token": "t", "expires_at": "x"}
+
+    monkeypatch.setattr(svc, "post_embed_session", _fake_post)
+    result = create_embed_session(None, _USER, idea_id=None)
+    assert captured["base_url"].rstrip("/") == "https://shared.test/be"
+    assert result["iframe_url"].startswith("https://shared.test/embed/ideas")
+    assert "/be/embed/ideas" not in result["iframe_url"]
+
+
 # --------------------------------------------------------------------------- #
-# AC-32 — dormant when settings blank                                          #
+# AC-E-4 — dormant when any required field blank                                #
 # --------------------------------------------------------------------------- #
-def test_dormant_when_url_blank(monkeypatch):
+def _blank_all(monkeypatch):
     monkeypatch.setattr(svc.settings, "ideation_shared_service_url", None)
+    monkeypatch.setattr(svc.settings, "ideation_embed_fe_base_url", None)
+    monkeypatch.setattr(svc.settings, "ideation_embed_signing_secret", None)
+    monkeypatch.setattr(svc.settings, "ideation_embed_connection_id", None)
+
+
+def test_dormant_when_url_blank(monkeypatch):
+    _blank_all(monkeypatch)
+    monkeypatch.setattr(svc.settings, "ideation_embed_fe_base_url", _FE_URL)
     monkeypatch.setattr(svc.settings, "ideation_embed_signing_secret", _SIGNING_SECRET)
     monkeypatch.setattr(svc.settings, "ideation_embed_connection_id", _CONNECTION_ID)
     with pytest.raises(IdeationEmbedNotConfigured):
-        create_embed_session(_USER, idea_id=None)
+        create_embed_session(None, _USER, idea_id=None)
+
+
+def test_dormant_when_fe_base_blank(monkeypatch):
+    _blank_all(monkeypatch)
+    monkeypatch.setattr(svc.settings, "ideation_shared_service_url", _SHARED_URL)
+    monkeypatch.setattr(svc.settings, "ideation_embed_signing_secret", _SIGNING_SECRET)
+    monkeypatch.setattr(svc.settings, "ideation_embed_connection_id", _CONNECTION_ID)
+    with pytest.raises(IdeationEmbedNotConfigured):
+        create_embed_session(None, _USER, idea_id=None)
 
 
 def test_dormant_when_secret_blank(monkeypatch):
+    _blank_all(monkeypatch)
     monkeypatch.setattr(svc.settings, "ideation_shared_service_url", _SHARED_URL)
-    monkeypatch.setattr(svc.settings, "ideation_embed_signing_secret", None)
+    monkeypatch.setattr(svc.settings, "ideation_embed_fe_base_url", _FE_URL)
     monkeypatch.setattr(svc.settings, "ideation_embed_connection_id", _CONNECTION_ID)
     with pytest.raises(IdeationEmbedNotConfigured):
-        create_embed_session(_USER, idea_id=None)
+        create_embed_session(None, _USER, idea_id=None)
 
 
 # --------------------------------------------------------------------------- #
-# AC-44 (mirrored) — shared-service outage → clean upstream error, not a crash #
+# AC-E-4 (mirrored) — shared-service outage → clean upstream error, not a crash #
 # --------------------------------------------------------------------------- #
 def test_upstream_outage_raises_upstream_error(configured, monkeypatch):
     def _boom(base_url, payload):  # noqa: ANN001
@@ -139,13 +180,13 @@ def test_upstream_outage_raises_upstream_error(configured, monkeypatch):
 
     monkeypatch.setattr(svc, "post_embed_session", _boom)
     with pytest.raises(IdeationEmbedUpstreamError):
-        create_embed_session(_USER, idea_id=None)
+        create_embed_session(None, _USER, idea_id=None)
 
 
 def test_upstream_missing_token_raises(configured, monkeypatch):
     monkeypatch.setattr(svc, "post_embed_session", lambda base_url, payload: {"expires_at": "x"})
     with pytest.raises(IdeationEmbedUpstreamError):
-        create_embed_session(_USER, idea_id=None)
+        create_embed_session(None, _USER, idea_id=None)
 
 
 def test_post_embed_session_wraps_httpx_error(configured, monkeypatch):
@@ -182,10 +223,10 @@ def test_endpoint_returns_session(api_client):
     client, mp = api_client
     mp.setattr(
         "app.api.v1.integrations.ideation_embed.create_embed_session",
-        lambda user, *, idea_id=None: {
+        lambda db, user, *, idea_id=None: {
             "iframe_url": "https://shared.test/embed/ideas",
             "token": "embed-token-xyz",
-            "expires_at": "2026-07-19T00:15:00+00:00",
+            "expires_at": "2026-07-20T00:15:00+00:00",
         },
     )
     resp = client.post(_EMBED_URL, json={})
@@ -193,14 +234,14 @@ def test_endpoint_returns_session(api_client):
     body = resp.json()
     assert body["iframe_url"] == "https://shared.test/embed/ideas"
     assert body["token"] == "embed-token-xyz"
-    assert body["expires_at"] == "2026-07-19T00:15:00+00:00"
+    assert body["expires_at"] == "2026-07-20T00:15:00+00:00"
 
 
 def test_endpoint_detail_passes_idea_id(api_client):
     client, mp = api_client
     seen: dict = {}
 
-    def _capture(user, *, idea_id=None):  # noqa: ANN001
+    def _capture(db, user, *, idea_id=None):  # noqa: ANN001
         seen["idea_id"] = idea_id
         return {"iframe_url": f"https://shared.test/embed/ideas/{idea_id}", "token": "t", "expires_at": "x"}
 
@@ -213,7 +254,7 @@ def test_endpoint_detail_passes_idea_id(api_client):
 def test_endpoint_dormant_is_clean_4xx_not_500(api_client):
     client, mp = api_client
 
-    def _dormant(user, *, idea_id=None):  # noqa: ANN001
+    def _dormant(db, user, *, idea_id=None):  # noqa: ANN001
         raise IdeationEmbedNotConfigured("blank settings")
 
     mp.setattr("app.api.v1.integrations.ideation_embed.create_embed_session", _dormant)
@@ -225,7 +266,7 @@ def test_endpoint_dormant_is_clean_4xx_not_500(api_client):
 def test_endpoint_upstream_failure_is_not_500(api_client):
     client, mp = api_client
 
-    def _outage(user, *, idea_id=None):  # noqa: ANN001
+    def _outage(db, user, *, idea_id=None):  # noqa: ANN001
         raise IdeationEmbedUpstreamError("embed session upstream failed")
 
     mp.setattr("app.api.v1.integrations.ideation_embed.create_embed_session", _outage)
@@ -242,6 +283,7 @@ def test_endpoint_never_echoes_secrets(api_client, monkeypatch):
     minted assertion."""
     client, mp = api_client
     monkeypatch.setattr(svc.settings, "ideation_shared_service_url", _SHARED_URL)
+    monkeypatch.setattr(svc.settings, "ideation_embed_fe_base_url", _FE_URL)
     monkeypatch.setattr(svc.settings, "ideation_embed_signing_secret", _SIGNING_SECRET)
     monkeypatch.setattr(svc.settings, "ideation_embed_connection_id", _CONNECTION_ID)
     monkeypatch.setattr(

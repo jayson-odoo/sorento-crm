@@ -13,6 +13,9 @@ export interface RespondWorkspace {
   ideation_shared_service_url: string | null;
   ideation_product_id: string | null;
   ideation_intake_api_key_masked: string | null;
+  ideation_embed_connection_id: string | null;
+  ideation_embed_fe_base_url: string | null;
+  ideation_embed_signing_secret_masked: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -35,6 +38,9 @@ export interface RespondWorkspaceCreateBody {
   ideation_shared_service_url?: string | null;
   ideation_product_id?: string | null;
   ideation_intake_api_key?: string | null;
+  ideation_embed_connection_id?: string | null;
+  ideation_embed_fe_base_url?: string | null;
+  ideation_embed_signing_secret?: string | null;
 }
 
 export interface RespondWorkspaceUpdateBody {
@@ -48,6 +54,9 @@ export interface RespondWorkspaceUpdateBody {
   ideation_shared_service_url?: string | null;
   ideation_product_id?: string | null;
   ideation_intake_api_key?: string | null;
+  ideation_embed_connection_id?: string | null;
+  ideation_embed_fe_base_url?: string | null;
+  ideation_embed_signing_secret?: string | null;
 }
 
 export interface IdeationProductOption {

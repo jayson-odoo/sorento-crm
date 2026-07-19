@@ -140,6 +140,7 @@ class Settings(BaseSettings):
     ideation_intake_api_key: str | None = None       # IDEATION_INTAKE_API_KEY (secret)
     ideation_embed_signing_secret: str | None = None  # IDEATION_EMBED_SIGNING_SECRET (secret)
     ideation_embed_connection_id: str | None = None  # IDEATION_EMBED_CONNECTION_ID
+    ideation_embed_fe_base_url: str | None = None    # IDEATION_EMBED_FE_BASE_URL (iframe FE root)
 
     # Frontend app URL (for password reset and other links in emails)
     frontend_base_url: str | None = None

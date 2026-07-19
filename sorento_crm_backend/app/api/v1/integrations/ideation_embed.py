@@ -42,9 +42,8 @@ def create_ideation_embed_session(
     db: Session = Depends(get_db),
 ):
     """Mint an embed session for the logged-in user (board or a specific idea)."""
-    _ = db  # auth dependency owns the session; no query needed here
     try:
-        result = create_embed_session(current_user, idea_id=payload.idea_id)
+        result = create_embed_session(db, current_user, idea_id=payload.idea_id)
     except IdeationEmbedNotConfigured:
         # Feature dormant (settings blank) — clean 4xx, not a 500 (AC-32).
         raise HTTPException(

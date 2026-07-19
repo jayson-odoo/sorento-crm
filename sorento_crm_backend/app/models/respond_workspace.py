@@ -42,6 +42,15 @@ class RespondWorkspace(Base):
     # call). Blank => fall back to app.config settings, then fail-closed.
     ideation_shared_service_url = Column(String(512), nullable=True)
     ideation_intake_api_key_ciphertext = Column(Text, nullable=True)
+    # Ideas iframe embed SSO (DB-driven, per workspace — mirrors the intake-key
+    # pattern above). connection_id + FE base URL in plain text; the signing secret
+    # stored Fernet-encrypted (decrypt server-side to mint the SSO assertion). The
+    # FE base URL is the shared-service FRONTEND root the iframe points at — distinct
+    # from ideation_shared_service_url (the backend base for POST /embed/session).
+    # Any blank => fall back to app.config settings, then embed stays dormant.
+    ideation_embed_connection_id = Column(String(128), nullable=True)
+    ideation_embed_signing_secret_ciphertext = Column(Text, nullable=True)
+    ideation_embed_fe_base_url = Column(String(512), nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="true")
     is_default = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
