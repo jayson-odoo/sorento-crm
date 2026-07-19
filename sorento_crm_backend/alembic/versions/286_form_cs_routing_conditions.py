@@ -15,9 +15,13 @@ backward-safe:
    (contact, use_case, md5(match_conditions::text)) so one pin per distinct
    condition-set. Existing rows default to '[]' (wildcard) = identical behaviour.
 
-NOTE (merge): chained onto the worktree head 271. The isolated test DB is stamped
-to 271 first (the local DB sat at 285 from an unmerged SCM branch). At real merge,
-re-chain down_revision onto the then-current main head + renumber.
+NOTE (merge): chained onto the real main tip 274_ideation_workspace_config.
+285_market_signal_sources is NOT a leaf on main — merge migration
+9785e8947154 already consumed it into the ideation chain (272 -> 273 -> 274),
+so forking off 285 produced a second alembic head and broke `upgrade head`.
+285 remains an applied ancestor (reached via that merge before 286 runs); our
+forms migrations have no dependency on the ideation chain, so descending from
+its tip is safe and yields a single linear head (274 -> 286 -> 287).
 
 Idempotent, reversible.
 """
@@ -26,7 +30,7 @@ import sqlalchemy as sa
 
 
 revision = "286_form_cs_routing_conditions"
-down_revision = "285_market_signal_sources"
+down_revision = "274_ideation_workspace_config"
 branch_labels = None
 depends_on = None
 
