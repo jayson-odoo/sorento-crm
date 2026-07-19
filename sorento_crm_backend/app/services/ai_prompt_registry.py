@@ -1,7 +1,7 @@
 """AI assistant prompt registry — runtime resolver + PROMPT_KEYS constant.
 
 Industry-standard immutable-versions + movable-labels model
-(see ``docs/plans/PLAN-ai-assistant-prompt-registry.md`` §5/§6).
+(see ``documentation/plans/PLAN-ai-assistant-prompt-registry.md`` §5/§6).
 
 Runtime resolution:
 - ``get_prompt(db, name, label="production")`` — in-process TTL cache keyed by
@@ -90,6 +90,9 @@ def _semantic_parser_fallback() -> str:
         "products, promotions, customers, SLA, shipments).\n"
         "- form_submit: wants to CREATE a form — complaint, stock inquiry, purchase request, "
         "or sponsorship form.\n"
+        "- ideate: proposes a NEW product idea, feature wish, or improvement suggestion for "
+        "the software itself ('I wish it could...', 'can we add a feature that...', 'idea: ...'). "
+        "This is NOT a question about existing data and NOT a support form.\n"
         "- unknown: genuinely cannot tell; the request is too vague to route.\n\n"
         "RULES:\n"
         "- standalone_query: rewrite the turn into ONE self-contained question — resolve "
@@ -111,6 +114,37 @@ def _semantic_parser_fallback() -> str:
         "- Never invent ids, codes, customers, or products the user did not provide; leave "
         "unknown entity fields null.\n\n"
         "{{current_date}}"
+    )
+
+
+def _ideate_extractor_fallback() -> str:
+    """System prompt for the ideation brain extractor (D-CONFIRM). Reads a WhatsApp
+    ``ideate`` turn in the context of the current draft and emits STRUCTURED updates
+    (schema-forced): ``fields`` (answer key->value the user supplied), ``remove``
+    (answer keys to clear), ``confirm`` (explicit confirmation of a review summary).
+    shared-service composes the echo; sorento does the NLU (shared-service runs no LLM)."""
+    return (
+        "You are the ideation intake extractor for a CRM assistant. A user is proposing "
+        "or refining a product idea over WhatsApp. Your ONLY job: read their latest "
+        "message in the context of the current draft and emit the STRUCTURED updates the "
+        "downstream intake tool needs. You do NOT reply to the user and you do NOT write "
+        "prose — every field is a parameter.\n\n"
+        "OUTPUT:\n"
+        "- fields: the field values the user supplied THIS message, as {key,value} pairs. "
+        "Use the intake answer keys shown in the draft context (e.g. what, module, who). "
+        "Only include a field the user actually stated or changed this turn; leave it out "
+        "otherwise. Never invent values.\n"
+        "- remove: answer keys the user explicitly asked to clear or drop ('remove who', "
+        "'forget the module', 'no assignee').\n"
+        "- confirm: true ONLY when the draft status is 'review' AND the user explicitly "
+        "confirms the summary is correct ('yes', 'confirm', 'that's right', 'looks good'). "
+        "Any question, edit, or new detail is NOT a confirmation — set confirm=false and "
+        "put the change in fields/remove instead.\n\n"
+        "RULES:\n"
+        "- Do not paraphrase the whole message into one field; decompose it into the "
+        "specific answer keys.\n"
+        "- When the user only asks a question or chats, return empty fields/remove and "
+        "confirm=false.\n"
     )
 
 
@@ -395,6 +429,17 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=["current_date"],
         fallback=_semantic_parser_fallback,
+    ),
+    # --- Ideation pipeline brain extractor (D-CONFIRM) — active, gated by the
+    #     ideation config being set (dormant when unset). Emits structured
+    #     {fields, remove, confirm} for the external ideate-turn endpoint. ---
+    "ideate_extractor": PromptKeySpec(
+        name="ideate_extractor",
+        role="Ideate extractor — NLU for ideation turns (fields/remove/confirm)",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_ideate_extractor_fallback,
     ),
     # --- Superseded by semantic_parser (M0). Rows kept for trace history +
     #     prompt rollback; call sites removed. active=False → not offered as a

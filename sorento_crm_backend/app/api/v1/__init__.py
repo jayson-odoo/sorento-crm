@@ -142,6 +142,13 @@ api_router.include_router(
     tags=["integrations"],
     dependencies=[Depends(require_module_enabled_with_api_key("base"))],
 )
+# Ideas iframe embed-session mint (SSO, §5.3) — JWT logged-in user only (the
+# endpoint's get_current_user dependency enforces auth); never X-API-Key/n8n.
+api_router.include_router(
+    integrations.ideation_embed.router,
+    prefix="/integrations/ideation",
+    tags=["integrations"],
+)
 # Alias so /api/v1/integration-management/integration-logs/* works when requests hit backend directly (e.g. nginx)
 api_router.include_router(
     integrations.logs.router,

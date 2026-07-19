@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # Request idempotency (duplicate-submit / network-slowness backstop) — see
-    # docs/plans/PLAN-uniform-idempotency.md. Scoped to an allowlist of action endpoints
+    # documentation/plans/PLAN-uniform-idempotency.md. Scoped to an allowlist of action endpoints
     # in app/middleware/idempotency_middleware.py.
     idempotency_enabled: bool = True            # IDEMPOTENCY_ENABLED
     idempotency_mode: str = "enforce"           # IDEMPOTENCY_MODE: "enforce" | "observe"
@@ -130,6 +130,16 @@ class Settings(BaseSettings):
     # here only to derive the host to STRIP from guide tool-results and from
     # the assistant's final answer (see ai_assistant_service redaction).
     outline_base_url: str = "https://doc.foundryx.my"
+
+    # Ideation pipeline (ideate intent + Ideas iframe host). All .env-driven and
+    # DORMANT when blank: absent values make the feature inert without touching
+    # existing routes. Secrets are masked in any echo. create_idea is called over
+    # HTTP (server-to-server httpx to ideation_shared_service_url) — NOT MCP; there
+    # is deliberately no ideation_mcp_url (sorento_crm_mcp is read-only).
+    ideation_shared_service_url: str | None = None   # IDEATION_SHARED_SERVICE_URL
+    ideation_intake_api_key: str | None = None       # IDEATION_INTAKE_API_KEY (secret)
+    ideation_embed_signing_secret: str | None = None  # IDEATION_EMBED_SIGNING_SECRET (secret)
+    ideation_embed_connection_id: str | None = None  # IDEATION_EMBED_CONNECTION_ID
 
     # Frontend app URL (for password reset and other links in emails)
     frontend_base_url: str | None = None

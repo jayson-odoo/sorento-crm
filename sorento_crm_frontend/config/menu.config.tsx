@@ -34,6 +34,7 @@ import {
   Layout,
   LayoutGrid,
   LifeBuoy,
+  Lightbulb,
   Megaphone,
   MessageSquare,
   Monitor,
@@ -69,6 +70,13 @@ export const MENU_SIDEBAR: MenuConfig = [
     title: 'Dashboards',
     icon: LayoutGrid,
     path: '/',
+  },
+  {
+    // Ideas — hosts the shared-service ideation board/detail inside an iframe.
+    // Leaf link to '/ideas' (detail lives at '/ideas/{id}').
+    title: 'Ideas',
+    icon: Lightbulb,
+    path: '/ideas',
   },
   // Hidden: Public Profile
   // {

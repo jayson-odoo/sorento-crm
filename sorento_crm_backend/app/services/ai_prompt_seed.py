@@ -90,6 +90,61 @@ def _existing_custom_system_prompt(session: Session) -> str:
     return _html_to_text(cfg.system_prompt or "").strip()
 
 
+def _max_version(session: Session, name: str) -> int:
+    rows = (
+        session.query(AIPromptVersion.version)
+        .filter(AIPromptVersion.name == name)
+        .all()
+    )
+    return max((int(r[0]) for r in rows), default=0)
+
+
+def bump_prompt_to_fallback(bind: Connection, name: str) -> None:
+    """Idempotently publish the current hardcoded ``fallback()`` text for ``name``
+    as a NEW immutable version and move the ``production`` label to it — but ONLY
+    when the live production text differs from the fallback.
+
+    Existing installs already hold a seeded v1 (or a later admin edit) as the
+    ``production`` version; the plain ``seed_prompt_registry`` only inserts a v1
+    when missing, so it can never update a live row. This publishes a fresh
+    version (immutable-versions + movable-labels model) so a fallback change —
+    e.g. adding the ``ideate`` intent line to ``semantic_parser`` — actually
+    reaches the runtime. Safe to re-run: a second call is a no-op because the
+    production text now equals the fallback.
+    """
+    spec = PROMPT_KEYS.get(name)
+    if spec is None:
+        return
+    fallback_text = spec.fallback()
+    session = Session(bind=bind)
+    try:
+        label = (
+            session.query(AIPromptLabel)
+            .filter(AIPromptLabel.name == name, AIPromptLabel.label == "production")
+            .first()
+        )
+        if label is not None:
+            current = (
+                session.query(AIPromptVersion)
+                .filter(AIPromptVersion.id == label.version_id)
+                .first()
+            )
+            if current is not None and (current.template or "") == fallback_text:
+                return  # already published — idempotent no-op
+        # Publish the fallback as the next version and point production at it.
+        next_version = _max_version(session, name) + 1
+        new_row = _ensure_version(
+            session, name, next_version, fallback_text, list(spec.variables)
+        )
+        _set_label(session, name, "production", new_row.id)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 def seed_prompt_registry(bind: Connection) -> None:
     """Idempotent seed. Safe to run repeatedly."""
     session = Session(bind=bind)

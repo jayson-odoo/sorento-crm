@@ -5,7 +5,7 @@ emits parameters*, never prose (except ``standalone_query``, which is only an
 embedding seed for RAG — never shown to the user). A deterministic router then
 switches on ``intent`` + ``signals``.
 
-See ``docs/plans/PLAN-ai-assistant-structured-parser.md``.
+See ``documentation/plans/PLAN-ai-assistant-structured-parser.md``.
 
 ``PARSE_RESULT_JSON_SCHEMA`` is hand-written to satisfy OpenAI structured-output
 **strict** mode (every property required, ``additionalProperties: false``,
@@ -30,6 +30,7 @@ Intent = Literal[
     "record_action",    # mutate an existing record: close/cancel/approve (write)
     "data_query",       # live system data via MCP read tools
     "form_submit",      # CREATE a form entity (write)
+    "ideate",           # raw product idea / feature wish → ideation intake
     "unknown",          # parser low-confidence / parse failure default
 ]
 
@@ -106,14 +107,16 @@ PARSE_RESULT_JSON_SCHEMA: dict = {
             "enum": [
                 "capability", "smalltalk", "how_to", "definition",
                 "record_question", "record_action", "data_query",
-                "form_submit", "unknown",
+                "form_submit", "ideate", "unknown",
             ],
             "description": "The single processing branch this turn needs. capability=what the "
             "system can do; smalltalk=greeting/thanks; how_to=step-by-step from a user guide; "
             "definition=meaning of a term/status; record_question=facts about the record on "
             "screen; record_action=change an existing record (close/cancel/approve); "
             "data_query=look up live system data; form_submit=create a complaint/inquiry/PR/"
-            "sponsorship; unknown=cannot tell.",
+            "sponsorship; ideate=the user is proposing a NEW product idea / feature wish / "
+            "improvement suggestion (not asking about existing data or filing a support form); "
+            "unknown=cannot tell.",
         },
         "language": {
             "type": "string",

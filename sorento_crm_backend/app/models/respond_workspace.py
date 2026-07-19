@@ -31,6 +31,11 @@ class RespondWorkspace(Base):
     # Business WhatsApp number for this workspace's channel (E.164 digits).
     # Drives the portal verify page's wa.me click-to-chat escape hatch.
     whatsapp_number = Column(String(32), nullable=True)
+    # Ideation pipeline: the shared-service Product this workspace maps to
+    # (one sorento deployment -> one shared-service Product of kind=software).
+    # Stored as a UUID string; server-side only, NEVER rendered in the FE.
+    # NULL keeps ideation dormant/fail-closed for this workspace (no create_idea).
+    ideation_product_id = Column(String(64), nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="true")
     is_default = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

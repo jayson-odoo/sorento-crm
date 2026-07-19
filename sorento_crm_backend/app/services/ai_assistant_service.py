@@ -167,8 +167,9 @@ _LOW_CONFIDENCE_FLOOR = 0.4
 class _RouteDecision:
     """Deterministic router output (M0). ``kind`` names the processing branch:
     ``capability`` (zero-LLM catalog), ``record_answer`` (facts already loaded),
-    or ``agent`` (the tool-using loop). Flags refine the agent branch."""
-    kind: str  # "capability" | "record_answer" | "agent"
+    ``ideate`` (product idea → ideation intake / web redirect), or ``agent``
+    (the tool-using loop). Flags refine the agent branch."""
+    kind: str  # "capability" | "record_answer" | "ideate" | "agent"
     is_how_to: bool = False   # agent: deterministically pre-fetch the user guide
     skip_rag: bool = False    # agent: no live data needed → skip tool selection
 
@@ -912,6 +913,21 @@ class AIAssistantChatService:
                 request_started=request_started,
             )
 
+        # Ideate intent → the in-app WEB brain has NO respond_contacts row / no
+        # session_vars, so it CANNOT run the WhatsApp ideation intake (that lives
+        # in the external ideation-turn endpoint). It never calls create_idea;
+        # it just points the user at the Ideas board. Gated on the confidence
+        # floor exactly like capability so a shaky ideate guess falls through to
+        # the agent loop instead of hijacking a real CRM question (AC-04/AC-06).
+        if parse.intent == "ideate" and parse.confidence >= _LOW_CONFIDENCE_FLOOR:
+            return self._serve_ideate_redirect(
+                conv=conv,
+                user_id=user_id,
+                config=config,
+                message=message,
+                request_started=request_started,
+            )
+
         # M3a Clarifier: when the parser flags the turn as too ambiguous to answer
         # well (a wrong guess would be costly AND ambiguity changes the answer), ask
         # ONE question with enumerable options as chips instead of guessing. Max one
@@ -1338,6 +1354,12 @@ class AIAssistantChatService:
 
         if intent == "capability":
             return _RouteDecision(kind="capability")
+        # Product-idea / feature-wish turn → dedicated ideation branch (never
+        # falls through to record_answer/capability/agent). On WhatsApp this is
+        # the external ideation-turn endpoint (Group B); in the in-app web brain
+        # respond() short-circuits to a friendly /ideas redirect (AC-06).
+        if intent == "ideate":
+            return _RouteDecision(kind="ideate")
         if intent == "record_question" and parse.signals.targets_open_record and record_available:
             return _RouteDecision(kind="record_answer")
         if intent == "how_to":
@@ -1518,6 +1540,82 @@ class AIAssistantChatService:
         logger.info(
             "AI assistant capability answer served deterministically "
             "conversation_id=%s assistant_message_id=%s total_elapsed_ms=%.1f",
+            conv.id,
+            assistant_msg.id,
+            total_ms,
+        )
+        return conv, assistant_msg
+
+    def _serve_ideate_redirect(
+        self,
+        *,
+        conv: Any,
+        user_id: str,
+        config: AIAssistantConfig,
+        message: str,
+        request_started: float,
+    ) -> tuple[Any, AIAssistantMessage]:
+        """Deterministic redirect for an ``ideate`` turn in the in-app WEB brain.
+
+        The web assistant is keyed by ``user_id`` + ``AIAssistantConversation``
+        with NO ``respond_contacts`` row and NO ``session_vars`` — the state the
+        WhatsApp ideation intake needs (D6/D8). So it MUST NOT call
+        ``create_idea`` (proper intake is WhatsApp-first via the external
+        ideation-turn endpoint). Instead it points the user at the Ideas board.
+        Zero answer-LLM (the parser call already ran); mirrors the capability
+        short-circuit's persist / usage-log / trace-finalize (AC-06)."""
+        redirect_text = (
+            "Love the idea! You can capture and track product ideas on the "
+            "Ideas board — open it here: /ideas"
+        )
+        if self._turn_trace is not None:
+            self._turn_trace.add_span(
+                kind=KIND_CHAIN,
+                name="ideate_redirect (deterministic)",
+                input_json={"message": message[:2000]},
+                output_json={"content": redirect_text, "deterministic": True},
+            )
+        ideate_meta: dict[str, Any] = {
+            "links": self._extract_links_from_text(redirect_text),
+            "sources": [],
+            "selected_tools": [],
+            "tool_calls": [],
+            "suggestions": [],
+            "deterministic": "ideate_redirect",
+            "prompt_versions": list(self._turn_prompt_versions),
+        }
+        assistant_msg = self.append_message(
+            conv.id, "assistant", redirect_text, metadata_json=ideate_meta
+        )
+        total_ms = (time.perf_counter() - request_started) * 1000
+        # The redirect is zero-LLM, but the Semantic Parser call that routed us
+        # here IS billed — count its tokens so ideate turns don't undercount.
+        parse_usage = getattr(self, "_parse_token_usage", None) or {}
+        try:
+            self.db.add(
+                AIAssistantUsageLog(
+                    user_id=user_id,
+                    feature="ai_assistant",
+                    conversation_id=str(conv.id),
+                    message_id=str(assistant_msg.id),
+                    model=config.model,
+                    provider=config.provider,
+                    prompt_tokens=int(parse_usage.get("prompt_tokens", 0) or 0),
+                    completion_tokens=int(parse_usage.get("completion_tokens", 0) or 0),
+                    total_tokens=int(parse_usage.get("total_tokens", 0) or 0),
+                    tool_calls_count=0,
+                    response_time_ms=int(total_ms),
+                    was_answered=True,
+                )
+            )
+            self.db.commit()
+        except Exception:
+            logger.exception("Failed to insert ai_assistant_usage_logs row (ideate)")
+            self.db.rollback()
+        self._finalize_trace(assistant_msg, status="ok")
+        logger.info(
+            "AI assistant ideate redirect served conversation_id=%s "
+            "assistant_message_id=%s total_elapsed_ms=%.1f",
             conv.id,
             assistant_msg.id,
             total_ms,

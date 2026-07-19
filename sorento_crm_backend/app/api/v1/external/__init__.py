@@ -28,6 +28,7 @@ from app.api.v1.external import (
     contact_access_types,
     access_agent,
     memory,
+    ideation,
 )
 
 router = APIRouter()
@@ -59,3 +60,4 @@ router.include_router(it_support_tickets.router, prefix="/it-support/tickets", t
 router.include_router(contact_access_types.router, prefix="/contact-access-types", tags=["external"])
 router.include_router(access_agent.router, prefix="/access-agent", tags=["external"])
 router.include_router(memory.router, prefix="/memory", tags=["external"])
+router.include_router(ideation.router, prefix="/ideation", tags=["external"])
