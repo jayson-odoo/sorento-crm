@@ -5,6 +5,9 @@ manage workspaces (name, space_id, API key, base URL, default).
 """
 from __future__ import annotations
 
+import logging
+
+import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -19,7 +22,81 @@ from app.schemas.respond_workspace import (
 from app.services.respond_workspace_service import RespondWorkspaceService
 from app.services.uuid_path_param import validate_uuid_path
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/respond-workspaces", tags=["respond-workspaces"])
+
+_IDEATION_PRODUCTS_PATH = "/ideation/intake/products"
+_IDEATION_HTTP_TIMEOUT = 8.0
+
+
+@router.get("/ideation-products")
+def list_ideation_products(
+    workspace_id: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    _user: dict = Depends(require_permission("system.respond_workspaces.view")),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Proxy the shared-service software-product catalog for the Ideation-product
+    dropdown. Degrades gracefully — ALWAYS 200 with ``{products, error}``; never 500.
+
+    Resolution (live-preview wins over the saved workspace):
+      - ``base_url`` + ``api_key`` query overrides (admin typed them but hasn't
+        saved) are used verbatim when BOTH are present; else
+      - ``workspace_id`` -> the stored ``ideation_shared_service_url`` +
+        decrypted ``ideation_intake_api_key``.
+
+    Returns ``{"products": [{id, name}], "error": <str|null>}``.
+    """
+    resolved_url = (base_url or "").strip() or None
+    resolved_key = (api_key or "").strip() or None
+
+    # Fall back to the saved workspace only when the live-preview pair is incomplete.
+    if not (resolved_url and resolved_key) and workspace_id:
+        svc = RespondWorkspaceService(db)
+        row = svc.get(workspace_id)
+        if row is None:
+            return {"products": [], "error": "Workspace not found."}
+        if not resolved_url:
+            resolved_url = (getattr(row, "ideation_shared_service_url", None) or "").strip() or None
+        if not resolved_key:
+            resolved_key = svc.decrypt_ideation_api_key(row)
+
+    if not resolved_url or not resolved_key:
+        return {
+            "products": [],
+            "error": "Enter the Shared-service URL and Intake API key first.",
+        }
+
+    url = resolved_url.rstrip("/") + _IDEATION_PRODUCTS_PATH
+    try:
+        with httpx.Client(timeout=_IDEATION_HTTP_TIMEOUT) as client:
+            resp = client.get(url, headers={"Authorization": f"Bearer {resolved_key}"})
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        code = exc.response.status_code
+        if code in (401, 403):
+            return {"products": [], "error": "Shared-service rejected the Intake API key."}
+        logger.warning("ideation-products upstream HTTP %s: %s", code, exc)
+        return {"products": [], "error": f"Shared-service returned HTTP {code}."}
+    except httpx.HTTPError as exc:
+        logger.warning("ideation-products request failed: %s", exc)
+        return {"products": [], "error": "Could not reach the Shared-service."}
+    except ValueError as exc:
+        logger.warning("ideation-products malformed body: %s", exc)
+        return {"products": [], "error": "Shared-service returned a malformed response."}
+
+    if not isinstance(data, list):
+        return {"products": [], "error": "Shared-service returned an unexpected response."}
+
+    products = [
+        {"id": str(item["id"]), "name": str(item.get("name") or item["id"])}
+        for item in data
+        if isinstance(item, dict) and item.get("id")
+    ]
+    return {"products": products, "error": None}
 
 
 @router.get("", response_model=list[RespondWorkspaceResponse])

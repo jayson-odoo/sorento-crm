@@ -48,8 +48,9 @@ IDEATE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
             "type": "array",
             "description": (
                 "Field updates the user supplied this turn, as {key,value} pairs. "
-                "key is the intake answer key (e.g. module, who, what); value is the "
-                "user's answer as plain text. Empty when the turn adds nothing."
+                "key is the intake answer key (one of: problem, proposed_solution, "
+                "impact, department); value is the user's answer as plain text. "
+                "Empty when the turn adds nothing."
             ),
             "items": {
                 "type": "object",

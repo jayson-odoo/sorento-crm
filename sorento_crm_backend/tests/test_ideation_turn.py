@@ -76,8 +76,15 @@ def wired(monkeypatch):
     def _fake_get_contact_row(_db, respond_io_id):  # noqa: ANN001
         return _FakeContact(state["phone"], dict(state["store"]))
 
-    def _fake_resolve_product_id(_db):  # noqa: ANN001
-        return state["product_id"]
+    def _fake_resolve_ideation_config(_db):  # noqa: ANN001
+        # Base URL + intake key come from settings (so the settings-fallback
+        # tests still exercise a blank => fail-closed path); the product binding
+        # comes from the harness state (set_product_id / fail-closed tests).
+        base_url = (svc.settings.ideation_shared_service_url or "").strip() or None
+        api_key = (svc.settings.ideation_intake_api_key or "").strip() or None
+        return svc._IdeationConfig(
+            base_url=base_url, api_key=api_key, product_id=state["product_id"]
+        )
 
     def _fake_extract(_db, **_kw):  # noqa: ANN001
         return state["extraction"]
@@ -102,7 +109,7 @@ def wired(monkeypatch):
     overwrites = state["overwrites"]
 
     monkeypatch.setattr(svc, "_get_contact_row", _fake_get_contact_row)
-    monkeypatch.setattr(svc, "_resolve_product_id", _fake_resolve_product_id)
+    monkeypatch.setattr(svc, "_resolve_ideation_config", _fake_resolve_ideation_config)
     monkeypatch.setattr(svc, "extract_ideate_turn", _fake_extract)
     monkeypatch.setattr(svc, "call_create_idea", _fake_call_create_idea)
     monkeypatch.setattr(svc.settings, "ideation_shared_service_url", "https://shared.test")

@@ -46,6 +46,16 @@ _TIMEOUT_SECONDS = 15
 # create_idea statuses that CLOSE the draft → clear the pointer (§5.2).
 _TERMINAL_STATUSES = {"complete", "duplicate"}
 
+# Intake answer keys the brain extracts into (mirrors the shared-service intake
+# target_schema — problem / proposed_solution / impact / department; no module or
+# who — business submitters don't know the module, and the submitter identifies who).
+_IDEATION_FIELD_LABELS: dict[str, str] = {
+    "problem": "Problem statement",
+    "proposed_solution": "Proposed solution",
+    "impact": "Impact",
+    "department": "Department",
+}
+
 
 class IdeationServiceError(Exception):
     """Raised when the shared-service ``create_idea`` call cannot be completed
@@ -83,12 +93,47 @@ def _get_contact_row(db: Session, respond_io_id: str) -> _ContactState:
     return _ContactState(row.phone_number, _coerce_to_dict(row.session_vars))
 
 
-def _resolve_product_id(db: Session) -> str | None:
-    """The default workspace's shared-service Product binding, or None (fail-closed)."""
-    workspace = RespondWorkspaceService(db).get_default()
-    if workspace is None:
-        return None
-    return getattr(workspace, "ideation_product_id", None) or None
+class _IdeationConfig:
+    """Resolved ideation shared-service connection for a turn.
+
+    DB (default workspace row) is the source of truth; each field falls back to
+    ``app.config`` settings ONLY when the workspace field is blank (keeps legacy
+    ``.env`` installs working). Any missing piece => fail-closed (no create_idea).
+    """
+
+    __slots__ = ("base_url", "api_key", "product_id")
+
+    def __init__(self, base_url: str | None, api_key: str | None, product_id: str | None):
+        self.base_url = base_url
+        self.api_key = api_key
+        self.product_id = product_id
+
+    @property
+    def is_ready(self) -> bool:
+        return bool(self.base_url and self.api_key and self.product_id)
+
+
+def _resolve_ideation_config(db: Session) -> _IdeationConfig:
+    """Read base URL, intake API key, and Product binding from the DEFAULT
+    workspace (decrypting the key); fall back to ``app.config`` per-field when a
+    workspace field is blank. DB wins; settings are the legacy fallback."""
+    svc = RespondWorkspaceService(db)
+    workspace = svc.get_default()
+
+    base_url = None
+    api_key = None
+    product_id = None
+    if workspace is not None:
+        base_url = (getattr(workspace, "ideation_shared_service_url", None) or "").strip() or None
+        product_id = (getattr(workspace, "ideation_product_id", None) or "").strip() or None
+        api_key = svc.decrypt_ideation_api_key(workspace)
+
+    if not base_url:
+        base_url = (settings.ideation_shared_service_url or "").strip() or None
+    if not api_key:
+        api_key = (settings.ideation_intake_api_key or "").strip() or None
+
+    return _IdeationConfig(base_url=base_url, api_key=api_key, product_id=product_id)
 
 
 def call_create_idea(base_url: str, api_key: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -99,7 +144,9 @@ def call_create_idea(base_url: str, api_key: str, payload: dict[str, Any]) -> di
     url = base_url.rstrip("/") + _CREATE_IDEA_PATH
     try:
         with httpx.Client(timeout=_TIMEOUT_SECONDS) as client:
-            resp = client.post(url, json=payload, headers={"X-API-Key": api_key})
+            resp = client.post(
+                url, json=payload, headers={"Authorization": f"Bearer {api_key}"}
+            )
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPError as exc:
@@ -133,10 +180,12 @@ def handle_turn(
     prior_missing = ideation_state.get("missing") or []
 
     # (1) fail-closed: no product binding or dormant config → no create_idea call.
-    product_id = _resolve_product_id(db)
-    base_url = settings.ideation_shared_service_url
-    api_key = settings.ideation_intake_api_key
-    if not product_id or not base_url or not api_key:
+    #     Config is DB-driven (default workspace row); .env is only a fallback.
+    config = _resolve_ideation_config(db)
+    product_id = config.product_id
+    base_url = config.base_url
+    api_key = config.api_key
+    if not config.is_ready:
         return _graceful(
             "Idea capture isn't set up here yet, so I couldn't log that — please try "
             "again later or reach out to the team.",
@@ -150,6 +199,7 @@ def handle_turn(
         message_text=message_text,
         status=prior_status,
         missing=prior_missing,
+        field_labels=_IDEATION_FIELD_LABELS,
     )
 
     # (4) build the §5.1 input deterministically.

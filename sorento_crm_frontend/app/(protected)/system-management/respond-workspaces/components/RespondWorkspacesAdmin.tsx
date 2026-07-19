@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   getCoreRowModel,
@@ -11,7 +11,8 @@ import {
 import { Pencil, Plus, Star, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Card, CardHeader, CardTable } from '@/components/ui/card';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import {
   Dialog,
   DialogContent,
@@ -30,8 +31,13 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import {
+  SearchableSelect,
+  type SearchableSelectOption,
+} from '@/components/common/SearchableSelect';
+import {
   createRespondWorkspace,
   deleteRespondWorkspace,
+  listIdeationProducts,
   listRespondWorkspaces,
   setDefaultRespondWorkspace,
   updateRespondWorkspace,
@@ -46,6 +52,9 @@ interface FormState {
   base_url: string;
   whatsapp_number: string;
   api_key: string;
+  ideation_shared_service_url: string;
+  ideation_product_id: string;
+  ideation_intake_api_key: string;
   is_active: boolean;
   is_default: boolean;
 }
@@ -56,6 +65,9 @@ const EMPTY_FORM: FormState = {
   base_url: '',
   whatsapp_number: '',
   api_key: '',
+  ideation_shared_service_url: '',
+  ideation_product_id: '',
+  ideation_intake_api_key: '',
   is_active: true,
   is_default: false,
 };
@@ -67,6 +79,53 @@ export default function RespondWorkspacesAdmin() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  // Ideation-product dropdown state: fetched name cache (to resolve the stored id
+  // to a human name) + the last upstream error surfaced under the select.
+  const [ideationProductNames, setIdeationProductNames] = useState<
+    Record<string, string>
+  >({});
+  const [ideationProductError, setIdeationProductError] = useState<string | null>(null);
+
+  // The dropdown can query shared-service when we have a URL+key to preview live,
+  // OR when editing an existing workspace (the proxy falls back to its saved
+  // URL + decrypted key via workspace_id).
+  const hasLiveIdeationPair = Boolean(
+    form.ideation_shared_service_url.trim() && form.ideation_intake_api_key.trim(),
+  );
+  const canFetchIdeationProducts = hasLiveIdeationPair || Boolean(editing);
+
+  const fetchIdeationProducts = useCallback(
+    async (query: string): Promise<SearchableSelectOption[]> => {
+      const result = await listIdeationProducts({
+        workspaceId: editing?.id ?? null,
+        baseUrl: form.ideation_shared_service_url.trim() || null,
+        apiKey: form.ideation_intake_api_key.trim() || null,
+      });
+      setIdeationProductError(result.error);
+      setIdeationProductNames((prev) => {
+        const next = { ...prev };
+        for (const p of result.products) next[p.id] = p.name;
+        return next;
+      });
+      const q = query.trim().toLowerCase();
+      return result.products
+        .filter((p) => !q || p.name.toLowerCase().includes(q))
+        .map((p) => ({ value: p.id, label: p.name }));
+    },
+    [editing?.id, form.ideation_shared_service_url, form.ideation_intake_api_key],
+  );
+
+  // Keep the trigger showing a name (or the id + note as a fallback) for the
+  // stored value even before/without a successful fetch — never a raw bare UUID.
+  const selectedIdeationOption: SearchableSelectOption | undefined = form
+    .ideation_product_id
+    ? {
+        value: form.ideation_product_id,
+        label:
+          ideationProductNames[form.ideation_product_id] ??
+          `${form.ideation_product_id} (name unavailable)`,
+      }
+    : undefined;
 
   const {
     data: workspaces = [],
@@ -124,17 +183,22 @@ export default function RespondWorkspacesAdmin() {
   function openCreate() {
     setEditing(null);
     setForm(EMPTY_FORM);
+    setIdeationProductError(null);
     setDialogOpen(true);
   }
 
   function openEdit(row: RespondWorkspace) {
     setEditing(row);
+    setIdeationProductError(null);
     setForm({
       space_id: row.space_id,
       name: row.name ?? '',
       base_url: row.base_url ?? '',
       whatsapp_number: row.whatsapp_number ?? '',
       api_key: '',
+      ideation_shared_service_url: row.ideation_shared_service_url ?? '',
+      ideation_product_id: row.ideation_product_id ?? '',
+      ideation_intake_api_key: '',
       is_active: row.is_active,
       is_default: row.is_default,
     });
@@ -150,8 +214,12 @@ export default function RespondWorkspacesAdmin() {
         whatsapp_number: form.whatsapp_number.trim() || null,
         is_active: form.is_active,
         is_default: form.is_default,
+        ideation_shared_service_url: form.ideation_shared_service_url.trim() || null,
+        ideation_product_id: form.ideation_product_id.trim() || null,
       };
       if (form.api_key.trim()) body.api_key = form.api_key.trim();
+      if (form.ideation_intake_api_key.trim())
+        body.ideation_intake_api_key = form.ideation_intake_api_key.trim();
       updateMutation.mutate({ id: editing.id, body });
     } else {
       if (!form.space_id.trim() || !form.api_key.trim()) {
@@ -166,6 +234,9 @@ export default function RespondWorkspacesAdmin() {
         is_active: form.is_active,
         is_default: form.is_default,
         api_key: form.api_key.trim(),
+        ideation_shared_service_url: form.ideation_shared_service_url.trim() || null,
+        ideation_product_id: form.ideation_product_id.trim() || null,
+        ideation_intake_api_key: form.ideation_intake_api_key.trim() || null,
       };
       createMutation.mutate(body);
     }
@@ -302,6 +373,8 @@ export default function RespondWorkspacesAdmin() {
     enableRowSelection: true,
     onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
   });
 
   return (
@@ -326,9 +399,12 @@ export default function RespondWorkspacesAdmin() {
               }
             />
           </CardHeader>
-          <CardContent>
-            <DataGridTable />
-          </CardContent>
+          <CardTable>
+            <ScrollArea>
+              <DataGridTable />
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          </CardTable>
         </DataGrid>
       </Card>
 
@@ -397,6 +473,79 @@ export default function RespondWorkspacesAdmin() {
                 &quot;Message us on WhatsApp&quot; button when a verification code cannot be
                 delivered. Leave blank to hide that button.
               </p>
+            </div>
+            <div className="border-t pt-4 mt-1">
+              <p className="text-sm font-medium">Ideation connection</p>
+              <p className="text-xs text-muted-foreground">
+                Connects this workspace to the shared idea-intake service. Configure all
+                three on the default workspace to enable idea capture; leave blank to keep
+                it off.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="ws-ideation-url">Shared-service API URL</Label>
+              <Input
+                id="ws-ideation-url"
+                value={form.ideation_shared_service_url}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, ideation_shared_service_url: e.target.value }))
+                }
+                placeholder="http://localhost:8001"
+              />
+              <p className="text-xs text-muted-foreground">
+                The shared-service <strong>backend / API</strong> base URL (e.g.{' '}
+                <code>http://localhost:8001</code>), NOT its app/frontend URL. The
+                idea-intake endpoints live here.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="ws-ideation-key">
+                Intake API key{' '}
+                {editing && (
+                  <span className="text-muted-foreground">(leave blank to keep current)</span>
+                )}
+              </Label>
+              <Input
+                id="ws-ideation-key"
+                type="password"
+                value={form.ideation_intake_api_key}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, ideation_intake_api_key: e.target.value }))
+                }
+                placeholder={
+                  editing
+                    ? form.ideation_intake_api_key
+                      ? ''
+                      : (editing.ideation_intake_api_key_masked ?? '•••• (unchanged)')
+                    : 'Bearer token for the create_idea intake endpoint'
+                }
+                autoComplete="new-password"
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="ws-ideation-product">Ideation product</Label>
+              <SearchableSelect
+                value={form.ideation_product_id}
+                onChange={(v) => setForm((f) => ({ ...f, ideation_product_id: v }))}
+                fetchOptions={fetchIdeationProducts}
+                selectedOption={selectedIdeationOption}
+                disabled={!canFetchIdeationProducts}
+                clearable
+                placeholder={
+                  canFetchIdeationProducts
+                    ? 'Select a product…'
+                    : 'Enter the Shared-service URL + Intake API key first'
+                }
+                emptyMessage="No software products found for this key."
+              />
+              {ideationProductError && canFetchIdeationProducts ? (
+                <p className="text-xs text-destructive">{ideationProductError}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  The shared-service Product this workspace&apos;s ideas are filed under.
+                  Fetched live from the shared-service by name.
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <Checkbox

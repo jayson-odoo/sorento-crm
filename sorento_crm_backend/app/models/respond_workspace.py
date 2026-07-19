@@ -36,6 +36,12 @@ class RespondWorkspace(Base):
     # Stored as a UUID string; server-side only, NEVER rendered in the FE.
     # NULL keeps ideation dormant/fail-closed for this workspace (no create_idea).
     ideation_product_id = Column(String(64), nullable=True)
+    # Ideation shared-service connection (DB-driven, per workspace — mirrors the
+    # respond.io api_key encrypted pattern). base URL in plain text; the intake
+    # API key stored Fernet-encrypted (decrypt server-side for the create_idea
+    # call). Blank => fall back to app.config settings, then fail-closed.
+    ideation_shared_service_url = Column(String(512), nullable=True)
+    ideation_intake_api_key_ciphertext = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="true")
     is_default = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

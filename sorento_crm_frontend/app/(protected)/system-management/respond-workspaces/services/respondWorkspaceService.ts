@@ -10,6 +10,9 @@ export interface RespondWorkspace {
   is_active: boolean;
   is_default: boolean;
   api_key_masked: string | null;
+  ideation_shared_service_url: string | null;
+  ideation_product_id: string | null;
+  ideation_intake_api_key_masked: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -29,6 +32,9 @@ export interface RespondWorkspaceCreateBody {
   is_active?: boolean;
   is_default?: boolean;
   api_key: string;
+  ideation_shared_service_url?: string | null;
+  ideation_product_id?: string | null;
+  ideation_intake_api_key?: string | null;
 }
 
 export interface RespondWorkspaceUpdateBody {
@@ -39,9 +45,43 @@ export interface RespondWorkspaceUpdateBody {
   is_active?: boolean;
   is_default?: boolean;
   api_key?: string | null;
+  ideation_shared_service_url?: string | null;
+  ideation_product_id?: string | null;
+  ideation_intake_api_key?: string | null;
+}
+
+export interface IdeationProductOption {
+  id: string;
+  name: string;
+}
+
+export interface IdeationProductsResult {
+  products: IdeationProductOption[];
+  error: string | null;
 }
 
 const base = '/api/v1/system/respond-workspaces';
+
+/**
+ * Fetch the shared-service software-product catalog for the Ideation-product
+ * dropdown, via the sorento proxy. Live-preview (base_url + api_key the admin
+ * typed but hasn't saved) wins over the saved workspace_id. The proxy always
+ * responds 200 with `{products, error}`; a non-2xx here is a transport failure.
+ */
+export async function listIdeationProducts(params: {
+  workspaceId?: string | null;
+  baseUrl?: string | null;
+  apiKey?: string | null;
+}): Promise<IdeationProductsResult> {
+  const qs = new URLSearchParams();
+  if (params.workspaceId) qs.set('workspace_id', params.workspaceId);
+  if (params.baseUrl) qs.set('base_url', params.baseUrl);
+  if (params.apiKey) qs.set('api_key', params.apiKey);
+  const response = await apiFetch(`${base}/ideation-products?${qs.toString()}`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to fetch ideation products'));
+  return response.json();
+}
 
 export async function listRespondWorkspaces(): Promise<RespondWorkspace[]> {
   const response = await apiFetch(base);

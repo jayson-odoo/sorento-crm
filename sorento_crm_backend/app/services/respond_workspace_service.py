@@ -21,6 +21,14 @@ def _mask_key(_cipher: str) -> str:
     return f"****{plain[-4:]}"
 
 
+def _mask_optional_key(_cipher: Optional[str]) -> Optional[str]:
+    """Like ``_mask_key`` but returns None for an unset (nullable) ciphertext,
+    so the FE can tell "no key configured" apart from "key hidden"."""
+    if not _cipher:
+        return None
+    return _mask_key(_cipher)
+
+
 class RespondWorkspaceService:
     def __init__(self, db: Session):
         self.db = db
@@ -61,6 +69,7 @@ class RespondWorkspaceService:
         )
         if exists:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="space_id already exists")
+        ideation_key = (data.ideation_intake_api_key or "").strip()
         row = RespondWorkspace(
             space_id=data.space_id.strip(),
             name=(data.name or "").strip() or None,
@@ -69,6 +78,11 @@ class RespondWorkspaceService:
             is_active=data.is_active,
             is_default=data.is_default,
             api_key_ciphertext=encrypt_secret(data.api_key.strip()),
+            ideation_shared_service_url=(data.ideation_shared_service_url or "").strip() or None,
+            ideation_product_id=(data.ideation_product_id or "").strip() or None,
+            ideation_intake_api_key_ciphertext=(
+                encrypt_secret(ideation_key) if ideation_key else None
+            ),
         )
         if data.is_default:
             self._clear_default_others(keep_id=None)
@@ -107,6 +121,14 @@ class RespondWorkspaceService:
                 row.is_default = False
         if data.api_key is not None and data.api_key.strip():
             row.api_key_ciphertext = encrypt_secret(data.api_key.strip())
+        if data.ideation_shared_service_url is not None:
+            row.ideation_shared_service_url = data.ideation_shared_service_url.strip() or None
+        if data.ideation_product_id is not None:
+            row.ideation_product_id = data.ideation_product_id.strip() or None
+        if data.ideation_intake_api_key is not None and data.ideation_intake_api_key.strip():
+            row.ideation_intake_api_key_ciphertext = encrypt_secret(
+                data.ideation_intake_api_key.strip()
+            )
         self.db.commit()
         self.db.refresh(row)
         return row
@@ -138,9 +160,26 @@ class RespondWorkspaceService:
             "is_active": row.is_active,
             "is_default": bool(row.is_default),
             "api_key_masked": _mask_key(row.api_key_ciphertext),
+            "ideation_shared_service_url": row.ideation_shared_service_url,
+            "ideation_product_id": row.ideation_product_id,
+            "ideation_intake_api_key_masked": _mask_optional_key(
+                row.ideation_intake_api_key_ciphertext
+            ),
             "created_at": row.created_at,
             "updated_at": row.updated_at,
         }
+
+    @staticmethod
+    def decrypt_ideation_api_key(row: RespondWorkspace) -> Optional[str]:
+        """Plaintext ideation intake API key for server-side use (create_idea
+        Bearer token), or None when unset/undecryptable."""
+        cipher = getattr(row, "ideation_intake_api_key_ciphertext", None)
+        if not cipher:
+            return None
+        try:
+            return decrypt_secret(cipher) or None
+        except ValueError:
+            return None
 
     def to_select_dict(self, row: RespondWorkspace) -> dict:
         return {

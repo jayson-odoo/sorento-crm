@@ -18,10 +18,23 @@ class RespondWorkspaceBase(BaseModel):
     )
     is_active: bool = True
     is_default: bool = False
+    ideation_shared_service_url: Optional[str] = Field(
+        None,
+        max_length=512,
+        description="Ideation shared-service base URL (create_idea intake endpoint host).",
+    )
+    ideation_product_id: Optional[str] = Field(
+        None,
+        max_length=64,
+        description="Shared-service Product id this workspace's ideas map to (admin config).",
+    )
 
 
 class RespondWorkspaceCreate(RespondWorkspaceBase):
     api_key: str = Field(..., min_length=1, description="Plain API key pasted from Respond.io")
+    ideation_intake_api_key: Optional[str] = Field(
+        None, description="Plain ideation intake API key (Bearer token for create_idea)."
+    )
 
 
 class RespondWorkspaceUpdate(BaseModel):
@@ -32,6 +45,11 @@ class RespondWorkspaceUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_default: Optional[bool] = None
     api_key: Optional[str] = Field(None, description="When set, replaces stored key")
+    ideation_shared_service_url: Optional[str] = Field(None, max_length=512)
+    ideation_product_id: Optional[str] = Field(None, max_length=64)
+    ideation_intake_api_key: Optional[str] = Field(
+        None, description="When set, replaces stored ideation intake key"
+    )
 
 
 class RespondWorkspaceResponse(BaseModel):
@@ -45,6 +63,9 @@ class RespondWorkspaceResponse(BaseModel):
     is_active: bool
     is_default: bool = False
     api_key_masked: Optional[str] = None
+    ideation_shared_service_url: Optional[str] = None
+    ideation_product_id: Optional[str] = None
+    ideation_intake_api_key_masked: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
