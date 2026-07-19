@@ -77,6 +77,13 @@ PERMISSION_REGISTRY.append({
     "name": "Close Complaints",
     "description": "Permission to close an approved complaint that can't be resolved (status='closed'; closes the customer-service SLA stage). Separate from CS-processed so it can be granted/hidden independently.",
 })
+# Form void (per-form slug; mirrors the .process/.close precedent — a dedicated,
+# irreversible terminal "void with reason" action, granted/hidden independently).
+PERMISSION_REGISTRY.append({
+    "slug": "complaint_management.complaints.void",
+    "name": "Void Complaints",
+    "description": "Void a complaint (irreversible; sets status='voided' with a required reason, stops the SLA by config, notifies assignee/handler/salesperson).",
+})
 
 # SLA Management
 PERMISSION_REGISTRY.extend(_crud("sla_management", "sla_policies", "SLA Policies"))
@@ -144,6 +151,7 @@ PERMISSION_REGISTRY.extend([
     {"slug": "procurement.stock_inquiries.purchasing_approve", "name": "Purchasing respond to stock inquiry", "description": "Update & Reply is used to respond; this permission gates access to that action."},
     {"slug": "procurement.stock_inquiries.purchasing_reject", "name": "Purchasing reject stock inquiry", "description": "Reject stock inquiry (purchasing)."},
     {"slug": "procurement.stock_inquiries.reopen", "name": "Reopen rejected stock inquiry", "description": "Reopen a rejected stock inquiry back to its previous state (pending project sales or pending purchasing)."},
+    {"slug": "procurement.stock_inquiries.void", "name": "Void Stock Inquiries", "description": "Void a stock inquiry (irreversible; sets status='voided' with a required reason, stops the SLA by config, notifies assignee/handler/salesperson)."},
 ])
 PERMISSION_REGISTRY.extend(_crud("procurement", "purchase_requests", "Purchase Requests"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "sponsorship_forms", "Sponsorship Forms"))
@@ -151,6 +159,9 @@ PERMISSION_REGISTRY.extend([
     {"slug": "procurement.purchase_requests.send_for_approval", "name": "Send purchase request / sponsorship form for approval", "description": "Set request to pending approval and send approval link. Also grants Reject before sending for approval (mandatory reason)."},
     {"slug": "procurement.purchase_requests.process", "name": "Process purchase request / sponsorship form (CS)", "description": "Customer-service action: mark an approved purchase request or sponsorship form as processed by CS (status='processed_by_cs'; closes the customer-service SLA stage)."},
     {"slug": "procurement.purchase_requests.close", "name": "Close purchase request / sponsorship form (CS)", "description": "Customer-service action: close an approved purchase request or sponsorship form that can't be fulfilled (status='closed'; closes the customer-service SLA stage). Separate from Process so it can be granted independently."},
+    # PR + SF share the router AND the detail component, so they share one void slug
+    # (repo convention: procurement.purchase_requests.*). Grant/hidden together.
+    {"slug": "procurement.purchase_requests.void", "name": "Void Purchase Requests / Sponsorship Forms", "description": "Void a purchase request or sponsorship form (irreversible; sets status='voided' with a required reason, stops the SLA by config, notifies assignee/handler/salesperson)."},
 ])
 
 # Inventory

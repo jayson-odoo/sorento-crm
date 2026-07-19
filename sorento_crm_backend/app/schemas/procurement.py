@@ -661,6 +661,11 @@ class StockInquiryResponse(StockInquiryBase):
     reopened_by_name: Optional[str] = None
     handled_by_name: Optional[str] = None  # form-handling-lock holder display name
     handled_by_wa_phone: Optional[str] = None  # holder's wa.me digits (banner link)
+    # Void banner (BAN-1). voided_by is exposed as a resolved display name only (no UUID).
+    void_reason: Optional[str] = None
+    voided_at: Optional[datetime] = None
+    voided_by_name: Optional[str] = None
+    voided_by_wa_phone: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     attachments: Optional[List[StockInquiryAttachmentResponse]] = []
@@ -704,6 +709,7 @@ class PurchaseRequestHeaderBase(BaseModel):
     total_project_value_text: Optional[str] = None  # sponsorship form (e.g. 800K)
     sponsor_subject: Optional[str] = None  # sponsorship: showroom/mockup/others (lookup-bound)
     sponsor_subject_other: Optional[str] = None  # sponsorship: free-text detail when sponsor_subject='others'
+    sales_type: Optional[str] = None  # PR: project/cash_sales (lookup-bound); required for PR at service layer; SF ignores
     expected_delivery_date: Optional[date] = None
     expected_po_date: Optional[date] = None
     expected_po_date_text: Optional[str] = None
@@ -760,6 +766,7 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     total_project_value_text: Optional[str] = None
     sponsor_subject: Optional[str] = None
     sponsor_subject_other: Optional[str] = None
+    sales_type: Optional[str] = None  # PR sales type (project/cash_sales)
     expected_delivery_date: Optional[date] = None
     expected_po_date: Optional[date] = None
     expected_po_date_text: Optional[str] = None
@@ -842,6 +849,11 @@ class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     assigned_to_name: Optional[str] = None  # resolved display name
     handled_by_name: Optional[str] = None  # form-handling-lock holder display name
     handled_by_wa_phone: Optional[str] = None  # holder's wa.me digits (banner link)
+    # Void banner (BAN-1). voided_by is exposed as a resolved display name only (no UUID).
+    void_reason: Optional[str] = None
+    voided_at: Optional[datetime] = None
+    voided_by_name: Optional[str] = None
+    voided_by_wa_phone: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     lines: Optional[List[PurchaseRequestLineResponse]] = []
@@ -911,6 +923,7 @@ class PublicApprovalSummaryResponse(BaseModel):
     total_project_value: Optional[Decimal] = None  # sponsorship form (numeric)
     total_project_value_text: Optional[str] = None  # sponsorship form (descriptive)
     sponsor_subject: Optional[str] = None  # sponsorship form
+    sales_type: Optional[str] = None  # PR sales type (project/cash_sales); null for SF
     sponsor_subject_other: Optional[str] = None  # sponsorship form: free-text when 'others'
     requested_by: Optional[str] = None
     request_date: Optional[date] = None

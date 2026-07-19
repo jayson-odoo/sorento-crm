@@ -267,8 +267,14 @@ class RespondContactCsRouting(Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
-    use_case = Column(String(50), nullable=False)  # purchase_request | sponsorship_form
+    use_case = Column(String(50), nullable=False)  # purchase_request | sponsorship_form | complaint | stock_inquiry
     is_active = Column(Boolean, default=True, nullable=False)
+    # Generic predicate set: array of {field, operator, value}, AND-combined, evaluated
+    # against the form header's own fields. Empty [] = wildcard (always matches). The
+    # winning pin for a form = lowest `priority` among matching rows (created_at
+    # tiebreak). See app.services.cs_routing_match.
+    match_conditions = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    priority = Column(Integer, nullable=False, server_default="0")  # lower wins (pure admin order)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)
@@ -277,9 +283,10 @@ class RespondContactCsRouting(Base):
     cs_pic = relationship("User")
 
     __table_args__ = (
-        UniqueConstraint(
-            "respond_contact_id", "use_case", name="uq_cs_routing_contact_use_case"
-        ),
+        # Uniqueness is (respond_contact_id, use_case, md5(match_conditions::text)) —
+        # one pin per distinct condition-set per contact+use_case. It is an EXPRESSION
+        # unique index (uq_cs_routing_contact_use_case_conditions), created in the
+        # migration; SQLAlchemy can't model an md5(jsonb) expression index inline.
         Index("ix_cs_routing_contact", "respond_contact_id"),
         Index("ix_cs_routing_cs_pic", "cs_pic_user_id"),
     )

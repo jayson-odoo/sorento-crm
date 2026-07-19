@@ -45,11 +45,36 @@ class LookupBindingService:
                 f"Cannot bind: existing rows have values not in this set's options: "
                 f"{sorted(list(unknown))[:10]}"
             )
+        default_value = getattr(data, "default_value", None)
+        if default_value is not None and default_value not in opt_values:
+            raise handle_validation_error(
+                f"default_value {default_value!r} is not an option of this set."
+            )
         b = LookupBinding(
             id=str(uuid.uuid4()), tenant_id=s.tenant_id, set_id=set_id,
             table_name=data.table_name, column_name=data.column_name,
+            default_value=default_value,
         )
         self.db.add(b)
+        self.db.commit()
+        self.db.refresh(b)
+        return b
+
+    def set_default_value(self, binding_id: str, default_value: Optional[str]) -> LookupBinding:
+        """Set/clear a binding's default option (DV-2). Validates value ∈ set options."""
+        b = self.db.query(LookupBinding).filter(LookupBinding.id == binding_id).first()
+        if not b:
+            raise handle_not_found("LookupBinding", binding_id)
+        if default_value is not None:
+            opt_values = {
+                v for (v,) in self.db.query(LookupOption.value).filter(
+                    LookupOption.set_id == b.set_id).all()
+            }
+            if default_value not in opt_values:
+                raise handle_validation_error(
+                    f"default_value {default_value!r} is not an option of this set."
+                )
+        b.default_value = default_value
         self.db.commit()
         self.db.refresh(b)
         return b

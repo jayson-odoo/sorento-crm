@@ -2732,6 +2732,12 @@ class StockInquiryService:
         data["reopened_by_name"] = (
             self._resolve_user_display_name(inquiry.reopened_by) if inquiry.reopened_by else None
         )
+        # Void banner (BAN-1): resolve voided_by -> display name; wa phone null
+        # (no form-banner-person-links resolver on this branch).
+        data["voided_by_name"] = (
+            self._resolve_user_display_name(inquiry.voided_by) if getattr(inquiry, "voided_by", None) else None
+        )
+        data["voided_by_wa_phone"] = None
         links = self.entity_attachment_service.list_links("stock_inquiry", str(inquiry.id))
         data["attachments"] = [
             self.entity_attachment_service.serialize_link(
@@ -2742,6 +2748,107 @@ class StockInquiryService:
             for link in links
         ]
         return data
+
+    # ----- Void (terminal, irreversible) -----
+    # Stock inquiry has no resolved/closed lifecycle; the terminal states are
+    # 'rejected' (which can be reopened) and 'voided'. Everything else
+    # (new / pending_project_sales / pending_purchasing / responded) is voidable.
+    _VOID_BLOCKED_STATUSES: frozenset[str] = frozenset({"voided", "rejected"})
+
+    def void_inquiry(
+        self,
+        inquiry_id: str,
+        *,
+        void_reason: str,
+        actor_user_id: Optional[str] = None,
+        respond_user_id: Optional[str] = None,
+    ):
+        """Void a stock inquiry (irreversible). See ``PurchaseRequestService.void_request``."""
+        reason = (void_reason or "").strip()
+        if len(reason) < 3:
+            raise handle_validation_error(
+                "A void reason of at least 3 characters is required."
+            )
+        inquiry = self.get_inquiry(inquiry_id)
+        current = (getattr(inquiry, "status", None) or "").strip().lower()
+        if current in self._VOID_BLOCKED_STATUSES:
+            raise handle_conflict(
+                f"This stock inquiry cannot be voided from its current state "
+                f"({current or 'unknown'})."
+            )
+
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        inquiry.status = "voided"
+        inquiry.voided_by = actor_user_id
+        inquiry.voided_at = now_utc
+        inquiry.void_reason = reason
+        self.db.commit()
+        self.db.refresh(inquiry)
+
+        # Notify BEFORE emit (emit may resolve the tracker via 'voided' resolve_event,
+        # after which the in-app assignee/handler lookup would find nothing).
+        self._notify_inquiry_voided(
+            inquiry, actor_user_id=actor_user_id, respond_user_id=respond_user_id
+        )
+
+        try:
+            from app.services.form_sla_service import emit_form_event
+
+            emit_form_event(
+                self.db,
+                "stock_inquiry",
+                str(inquiry.id),
+                "voided",
+                contact_id=getattr(inquiry, "contact_id", None),
+                actor_user_id=actor_user_id,
+            )
+        except Exception as e:
+            logger.warning("Form SLA emit 'voided' failed for inquiry %s: %s", inquiry.id, e)
+
+        return inquiry
+
+    def _notify_inquiry_voided(
+        self,
+        inquiry: StockInquiry,
+        *,
+        actor_user_id: Optional[str],
+        respond_user_id: Optional[str],
+    ) -> None:
+        """Best-effort void notifications (NTF): assignee + handler in-app, salesperson WhatsApp."""
+        try:
+            from app.services.form_void_notify import notify_form_voided_in_app
+
+            notify_form_voided_in_app(
+                self.db,
+                source_entity_type="stock_inquiry",
+                source_entity_id=str(inquiry.id),
+                entity_number=getattr(inquiry, "inquiry_number", None),
+                actor_user_id=actor_user_id,
+            )
+        except Exception:
+            logger.warning("Void in-app notify failed for inquiry %s", inquiry.id, exc_info=True)
+
+        try:
+            number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
+            reason = (getattr(inquiry, "void_reason", None) or "").strip()
+            message_text = (
+                f"Your stock inquiry {number} has been voided. Reason: {reason}"
+                if reason
+                else f"Your stock inquiry {number} has been voided."
+            )
+            self._send_stock_inquiry_contact_message(
+                inquiry,
+                message_text=message_text,
+                crm_sender_user_id=actor_user_id,
+                respond_user_id_fallback=respond_user_id,
+                extra_context_vars={"update": "Voided", "message": message_text},
+            )
+        except Exception:
+            logger.warning(
+                "Void salesperson WhatsApp send failed for inquiry %s; void committed.",
+                inquiry.id,
+                exc_info=True,
+            )
 
     def get_neighbour_ids(self, inquiry_id: str) -> dict:
         """Return prev_id and next_id for the given inquiry (order: id desc, same as default list)."""
@@ -4462,6 +4569,125 @@ class PurchaseRequestService:
 
         return header
 
+    # ----- Void (terminal, irreversible) -----
+    # Blocked once terminal. PR uses status + approval_status: a rejected request
+    # sets BOTH status='rejected' and approval_status='rejected' (reject_submitted /
+    # decide_approval), so either signal blocks a second void.
+    _VOID_BLOCKED_STATUSES: frozenset[str] = frozenset(
+        {"voided", "rejected", "closed", "processed_by_cs"}
+    )
+
+    def void_request(
+        self,
+        request_id: str,
+        *,
+        void_reason: str,
+        actor_user_id: Optional[str] = None,
+        respond_user_id: Optional[str] = None,
+    ):
+        """Void a purchase request / sponsorship form (irreversible).
+
+        Requires a free-text reason (>= 3 chars), allowed only from a non-terminal
+        state. Sets status='voided' + the reason quad, emits the 'voided' form-SLA
+        event (SLA stop is pure config), then best-effort notifies assignee +
+        handling-lock holder (in-app) and the salesperson (WhatsApp).
+        """
+        reason = (void_reason or "").strip()
+        if len(reason) < 3:
+            raise handle_validation_error(
+                "A void reason of at least 3 characters is required."
+            )
+        header = self.get_request(request_id)
+        current = (getattr(header, "status", None) or "").strip().lower()
+        approval = (getattr(header, "approval_status", None) or "").strip().lower()
+        if current in self._VOID_BLOCKED_STATUSES or approval == "rejected":
+            raise handle_conflict(
+                f"This request cannot be voided from its current state "
+                f"({current or 'unknown'})."
+            )
+
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        header.status = "voided"
+        header.voided_by = actor_user_id
+        header.voided_at = now_utc
+        header.void_reason = reason
+        self.db.commit()
+        self.db.refresh(header)
+
+        rt = getattr(header, "request_type", None) or "purchase_request"
+
+        # Best-effort notify (never rolls back the committed void). MUST run BEFORE
+        # emit_form_event: when the config lists 'voided' in resolve_event, emit
+        # resolves the active tracker, and the in-app notify (which reads the
+        # NOT-yet-resolved tracker for the assignee/handler) would then find nothing.
+        self._notify_request_voided(
+            header, actor_user_id=actor_user_id, respond_user_id=respond_user_id
+        )
+
+        # Emit the 'voided' form-SLA event. NO direct tracker-stop code: whether the
+        # tracker closes is pure config (form_sla_config.resolve_event lists 'voided').
+        try:
+            from app.services.form_sla_service import emit_form_event
+
+            emit_form_event(
+                self.db,
+                rt,
+                str(header.id),
+                "voided",
+                contact_id=getattr(header, "contact_id", None),
+                actor_user_id=actor_user_id,
+            )
+        except Exception as e:
+            logger.warning("Form SLA emit 'voided' failed for request %s: %s", header.id, e)
+
+        return header
+
+    def _notify_request_voided(
+        self,
+        header: PurchaseRequestHeader,
+        *,
+        actor_user_id: Optional[str],
+        respond_user_id: Optional[str],
+    ) -> None:
+        """Best-effort void notifications (NTF): assignee + handler in-app, salesperson WhatsApp."""
+        rt = getattr(header, "request_type", None) or "purchase_request"
+        try:
+            from app.services.form_void_notify import notify_form_voided_in_app
+
+            notify_form_voided_in_app(
+                self.db,
+                source_entity_type=rt,
+                source_entity_id=str(header.id),
+                entity_number=getattr(header, "request_number", None),
+                actor_user_id=actor_user_id,
+            )
+        except Exception:
+            logger.warning("Void in-app notify failed for request %s", header.id, exc_info=True)
+
+        # Salesperson WhatsApp via the existing status-update choke point
+        # (send_text_or_template + integration_log on success AND failure).
+        try:
+            type_word = "sponsorship form" if rt == "sponsorship_form" else "purchase request"
+            number = (getattr(header, "request_number", None) or str(header.id)).strip()
+            reason = (getattr(header, "void_reason", None) or "").strip()
+            message_text = (
+                f"Your {type_word} {number} has been voided. "
+                f"Reason: {reason}" if reason else f"Your {type_word} {number} has been voided."
+            )
+            self._send_purchase_request_contact_message(
+                header,
+                message_text=message_text,
+                crm_sender_user_id=actor_user_id,
+                respond_user_id_fallback=respond_user_id,
+                extra_context_vars={"update": "Voided", "message": message_text},
+            )
+        except Exception:
+            logger.warning(
+                "Void salesperson WhatsApp send failed for request %s; void committed.",
+                header.id,
+                exc_info=True,
+            )
+
     def request_revision_by_token(self, token_value: str) -> dict[str, str]:
         """Trigger the external revise webhook for a rejected purchase request / sponsorship form public view."""
         view_token = (
@@ -4702,6 +4928,7 @@ class PurchaseRequestService:
             "contact_id",
             "space_id",
             "products",
+            "sales_type",  # project / cash_sales — required for PR (SF omits it); routes CS
         ),
         "sponsorship_form": (
             "sponsor_subject",

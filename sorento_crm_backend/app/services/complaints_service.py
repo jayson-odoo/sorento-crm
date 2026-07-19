@@ -360,6 +360,14 @@ class ComplaintService:
         else:
             data["rejected_by_name"] = None
             data["rejected_by_wa_phone"] = None
+        # Void banner (BAN-1): resolve voided_by -> display name; wa phone null
+        # (no form-banner-person-links resolver on this branch).
+        data["voided_by_name"] = (
+            self._resolve_user_display_name(data.get("voided_by"))
+            if data.get("voided_by")
+            else None
+        )
+        data["voided_by_wa_phone"] = None
         rc = getattr(complaint, "root_cause", None)
         data["root_cause_name"] = getattr(rc, "name", None) if rc is not None else None
         res = getattr(complaint, "resolution", None)
@@ -2249,6 +2257,139 @@ class ComplaintService:
             logger.warning("Form SLA emit 'resolved' failed for complaint %s: %s", complaint.id, e)
 
         return complaint
+
+    # ----- Void (terminal, irreversible) -----
+    # Blocked once terminal: rejected / resolved / closed / processed_by_cs (the CS
+    # completion states) or already voided. Everything else is voidable.
+    _VOID_BLOCKED_STATUSES: tuple[str, ...] = (
+        "voided",
+        "rejected",
+        "resolved",
+        "closed",
+        "processed_by_cs",
+    )
+
+    def void_complaint(
+        self,
+        complaint_id: str,
+        *,
+        void_reason: str,
+        actor_user_id: Optional[str] = None,
+        respond_user_id: Optional[str] = None,
+    ):
+        """Void a complaint (irreversible).
+
+        Requires a free-text reason (>= 3 chars), allowed only from a non-terminal
+        state. Sets status='voided' + the reason quad, emits the 'voided' form-SLA
+        event (SLA stop is pure config), then best-effort notifies assignee +
+        handling-lock holder (in-app) and the salesperson (WhatsApp).
+        """
+        import logging
+        from datetime import datetime, timezone
+
+        logger = logging.getLogger(__name__)
+        from app.services.error_handler import handle_conflict, handle_validation_error
+
+        reason = (void_reason or "").strip()
+        if len(reason) < 3:
+            raise handle_validation_error(
+                "A void reason of at least 3 characters is required."
+            )
+        complaint = self.get_complaint(complaint_id)
+        current = (getattr(complaint, "status", None) or "").strip().lower()
+        if current in self._VOID_BLOCKED_STATUSES:
+            raise handle_conflict(
+                f"This complaint cannot be voided from its current state "
+                f"({current or 'unknown'})."
+            )
+
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        complaint.status = "voided"
+        complaint.voided_by = actor_user_id
+        complaint.voided_at = now_utc
+        complaint.void_reason = reason
+        self.db.commit()
+        self.db.refresh(complaint)
+
+        # Notify BEFORE emit (emit may resolve the tracker via 'voided' resolve_event,
+        # after which the in-app assignee/handler lookup would find nothing).
+        self._notify_complaint_voided(
+            complaint, actor_user_id=actor_user_id, respond_user_id=respond_user_id
+        )
+
+        # Emit the 'voided' form-SLA event. NO direct tracker-stop code — the tracker
+        # closes only if form_sla_config.resolve_event lists 'voided' (pure config).
+        try:
+            from app.services.form_sla_service import emit_form_event
+
+            emit_form_event(
+                self.db,
+                "complaint",
+                str(complaint.id),
+                "voided",
+                contact_id=getattr(complaint, "contact_id", None),
+                actor_user_id=actor_user_id,
+            )
+        except Exception as e:
+            logger.warning("Form SLA emit 'voided' failed for complaint %s: %s", complaint.id, e)
+
+        return complaint
+
+    def _notify_complaint_voided(
+        self,
+        complaint,
+        *,
+        actor_user_id: Optional[str],
+        respond_user_id: Optional[str],
+    ) -> None:
+        """Best-effort void notifications (NTF): assignee + handler in-app, salesperson WhatsApp."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+        try:
+            from app.services.form_void_notify import notify_form_voided_in_app
+
+            notify_form_voided_in_app(
+                self.db,
+                source_entity_type="complaint",
+                source_entity_id=str(complaint.id),
+                entity_number=getattr(complaint, "complaint_number", None),
+                actor_user_id=actor_user_id,
+            )
+        except Exception:
+            logger.warning("Void in-app notify failed for complaint %s", complaint.id, exc_info=True)
+
+        # Salesperson WhatsApp via the existing complaint status-update path.
+        try:
+            identifier = self._identifier_from_respond_inbox_url(
+                getattr(complaint, "respond_inbox_url", None)
+            )
+            if not identifier:
+                return
+            number = (getattr(complaint, "complaint_number", None) or str(complaint.id)).strip()
+            reason = (getattr(complaint, "void_reason", None) or "").strip()
+            do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()
+            do_spec = f" for delivery order {do_number}" if do_number else ""
+            display_message = (
+                f"Your complaint {number}{do_spec} has been voided. Reason: {reason}"
+                if reason
+                else f"Your complaint {number}{do_spec} has been voided."
+            )
+            self._enqueue_respond_message_for_complaint(
+                complaint_id=str(complaint.id),
+                identifier=identifier,
+                display_message=display_message,
+                respond_user_id=(respond_user_id or "").strip() or identifier,
+                crm_sender_user_id=actor_user_id,
+                space_id=getattr(complaint, "space_id", None),
+                extra_context_vars={"update": "Voided", "message": display_message},
+            )
+        except Exception:
+            logger.warning(
+                "Void salesperson WhatsApp send failed for complaint %s; void committed.",
+                complaint.id,
+                exc_info=True,
+            )
 
     def sync_assignee_from_respond(self, complaint_id: str) -> dict:
         """

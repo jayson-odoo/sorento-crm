@@ -26,7 +26,7 @@ from app.schemas.complaints import (
 )
 from app.schemas.external.complaints import ComplaintIntegrationCreate
 from app.schemas.integration import IntegrationLogCreate
-from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest
 from app.schemas.procurement import ViewLinkRequest, ViewLinkResponse
 from app.services.error_handler import handle_internal_error
 from app.services.handling_lock_service import assert_can_act_on_form
@@ -1301,6 +1301,37 @@ async def close_complaint(
             crm_sender_user_id=current_user.get("id"),
         )
         db.commit()
+        return service.get_complaint_with_attachments(complaint_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{complaint_id}/void", response_model=ComplaintResponse)
+async def void_complaint(
+    complaint_id: str,
+    payload: FormVoidRequest,
+    current_user: dict = Depends(require_permission("complaint_management.complaints.void")),
+    db: Session = Depends(get_db),
+):
+    """Void a complaint (irreversible).
+
+    Requires a free-text reason and the ``complaint_management.complaints.void`` permission; allowed
+    only from a non-terminal state. Sets status='voided', emits the 'voided'
+    form-SLA event, and best-effort notifies assignee + handler (in-app) and the
+    salesperson (WhatsApp).
+    """
+    try:
+        validate_uuid_path(complaint_id, resource="Complaint")
+        respond_user_id = _respond_user_id_from_current_user(current_user)
+        service = ComplaintService(db)
+        service.void_complaint(
+            complaint_id,
+            void_reason=payload.void_reason,
+            actor_user_id=current_user.get("id"),
+            respond_user_id=respond_user_id,
+        )
         return service.get_complaint_with_attachments(complaint_id)
     except HTTPException:
         raise

@@ -4,7 +4,7 @@ import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   listLookupSets, getLookupSet, createLookupSet, updateLookupSet, deleteLookupSet,
   listOptions, createOption, updateOption, deleteOption,
-  listBindings, addBinding, removeBinding,
+  listBindings, addBinding, removeBinding, setBindingDefaultValue,
   listEligibility, resolveLookup,
 } from '../services/lookupSetService';
 import type { LookupSetFormData, LookupOptionFormData } from '../types/lookup.types';
@@ -114,6 +114,18 @@ export function useRemoveBinding(setId: string) {
       qc.invalidateQueries({ queryKey: [KEY, setId, 'bindings'] });
       qc.invalidateQueries({ queryKey: ['lookup-eligibility'] });
       toast.success('Binding removed');
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+export function useSetBindingDefaultValue(setId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ bindingId, default_value }: { bindingId: string; default_value: string | null }) =>
+      setBindingDefaultValue(setId, bindingId, default_value),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [KEY, setId, 'bindings'] });
+      toast.success('Default updated');
     },
     onError: (e: Error) => toast.error(e.message),
   });

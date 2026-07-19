@@ -28,7 +28,7 @@ from app.schemas.procurement import (
     ViewLinkResponse,
     BulkDeletePurchaseRequestsRequest,
 )
-from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest
 from app.services.error_handler import handle_internal_error
 from app.services.handling_lock_service import assert_can_act_on_form
 from app.config import settings
@@ -144,6 +144,16 @@ async def get_purchase_request(
                     "approver_display_name",
                     (user.name and user.name.strip()) or user.email or "",
                 )
+        # Void banner (BAN-1): resolve voided_by -> display name; wa phone null
+        # (no form-banner-person-links resolver on this branch).
+        setattr(
+            header,
+            "voided_by_name",
+            service._resolve_actor_display_name(getattr(header, "voided_by", None)) or None
+            if getattr(header, "voided_by", None)
+            else None,
+        )
+        setattr(header, "voided_by_wa_phone", None)
         links = service.entity_attachment_service.list_links("purchase_request", request_id)
         setattr(
             header,
@@ -479,6 +489,53 @@ async def close_request_by_cs(
             respond_user_id=respond_user_id,
             crm_sender_user_id=current_user.get("id"),
         )
+        return header
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{request_id}/void", response_model=PurchaseRequestHeaderResponse)
+async def void_purchase_request(
+    request_id: str,
+    payload: FormVoidRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Void a purchase request / sponsorship form (irreversible).
+
+    Requires a free-text reason and the void permission
+    ``procurement.purchase_requests.void`` (PR + SF share the router, the detail
+    component, and this slug). Allowed only from a non-terminal state. Sets
+    status='voided', emits the 'voided' form-SLA event, and best-effort notifies
+    assignee + handler (in-app) and the salesperson (WhatsApp).
+    """
+    try:
+        validate_uuid_path(request_id, resource="Request")
+        from app.services.user_service import UserPermissionService
+
+        service = PurchaseRequestService(db)
+        header = service.get_request(request_id)
+        slug = "procurement.purchase_requests.void"
+        if not UserPermissionService(db).check_user_has_permission(current_user["id"], slug):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission required: {slug}")
+        try:
+            respond_user_id = _respond_user_id_from_current_user(current_user)
+        except HTTPException:
+            respond_user_id = None
+        header = service.void_request(
+            request_id,
+            void_reason=payload.void_reason,
+            actor_user_id=current_user.get("id"),
+            respond_user_id=respond_user_id,
+        )
+        setattr(
+            header,
+            "voided_by_name",
+            service._resolve_actor_display_name(getattr(header, "voided_by", None)) or None,
+        )
+        setattr(header, "voided_by_wa_phone", None)
         return header
     except HTTPException:
         raise

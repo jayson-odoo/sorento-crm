@@ -1,0 +1,247 @@
+'use client';
+
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { GripVertical, Plus, Trash2, AlertTriangle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Sortable, SortableItem, SortableItemHandle } from '@/components/ui/sortable';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { PredicateBuilder } from './PredicateBuilder';
+import { isWildcard, type Predicate } from './predicateTypes';
+import {
+  getRoutingRules,
+  getCsCandidates,
+  getRoutableFields,
+  saveRoutingRules,
+  CS_USE_CASES,
+  type RoutingRule,
+} from './csRoutingMock';
+
+/**
+ * R2 — CS-routing predicate rules editor for a contact. Extends the old
+ * per-use_case pin table with an ORDERED (drag = priority) list of rules, each
+ * with a predicate builder. Highest row = highest priority; a new row appends
+ * last. A wildcard (no predicates) ordered above a more-specific row shadows it,
+ * so we surface a non-blocking warning.
+ *
+ * Phase 1: backed by the mock service in `csRoutingMock.ts` (documented contract
+ * there); reorder + edits are held in local working state and persisted via the
+ * mock `saveRoutingRules`.
+ */
+let ruleSeq = 1000;
+const newRuleId = () => `new-${ruleSeq++}`;
+
+export default function ContactCsRoutingRules({ contactId }: { contactId: string }) {
+  const { data: fetchedRules, isLoading: rulesLoading } = useQuery({
+    queryKey: ['cs-routing-rules', contactId],
+    queryFn: () => getRoutingRules(contactId),
+    enabled: !!contactId,
+  });
+  const { data: candidates = [], isLoading: candidatesLoading } = useQuery({
+    queryKey: ['cs-routing-candidates'],
+    queryFn: getCsCandidates,
+    staleTime: 60_000,
+  });
+  const { data: fields = [] } = useQuery({
+    queryKey: ['cs-routing-fields', 'purchase_request'],
+    queryFn: () => getRoutableFields('purchase_request'),
+    staleTime: 60_000,
+  });
+
+  const [rules, setRules] = useState<RoutingRule[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (fetchedRules) setRules(fetchedRules);
+  }, [fetchedRules]);
+
+  const candidateOptions = useMemo(
+    () => candidates.map((c) => ({ value: c.id, label: c.name, description: c.email })),
+    [candidates],
+  );
+
+  const patchRule = (id: string, patch: Partial<RoutingRule>) =>
+    setRules((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+
+  const addRule = () =>
+    setRules((prev) => [
+      ...prev,
+      {
+        id: newRuleId(),
+        use_case: 'purchase_request',
+        cs_pic_user_id: null,
+        cs_pic_name: null,
+        match_conditions: [],
+        priority: prev.length,
+      },
+    ]);
+
+  const removeRule = (id: string) =>
+    setRules((prev) => prev.filter((r) => r.id !== id));
+
+  // Warning: a wildcard row sitting above (earlier than) a more-specific row
+  // will always win first and shadow the specific one.
+  const wildcardShadowIndex = useMemo(() => {
+    for (let i = 0; i < rules.length; i++) {
+      if (isWildcard(rules[i].match_conditions)) {
+        const hasSpecificBelow = rules
+          .slice(i + 1)
+          .some((r) => !isWildcard(r.match_conditions));
+        if (hasSpecificBelow) return i;
+      }
+    }
+    return -1;
+  }, [rules]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const saved = await saveRoutingRules(contactId, rules);
+      setRules(saved);
+      toast.success('Routing rules saved');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save routing rules');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (rulesLoading || candidatesLoading) {
+    return (
+      <div className="px-6 pb-6 space-y-3">
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-24 w-full" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-6 pb-6 space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Route this salesman&apos;s forms to a specific CS PIC based on the form&apos;s own
+        fields. Rules are evaluated top-to-bottom — drag to reorder priority; the first
+        matching rule wins. A rule with no conditions is a catch-all.
+      </p>
+
+      {candidates.length === 0 ? (
+        <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+          No customer-service team configured yet. Add members to the customer-service
+          team before creating routing rules.
+        </div>
+      ) : rules.length === 0 ? (
+        <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+          No routing rules yet. Add a rule to pin CS assignment by form conditions;
+          without any rule the default round-robin applies.
+        </div>
+      ) : (
+        <>
+          {wildcardShadowIndex >= 0 ? (
+            <div
+              role="status"
+              className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+            >
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <p className="min-w-0">
+                A catch-all rule (no conditions) is ordered above a more specific rule —
+                it will match first and shadow the rules below it. Move specific rules
+                above catch-alls.
+              </p>
+            </div>
+          ) : null}
+
+          <Sortable
+            value={rules}
+            onValueChange={setRules}
+            getItemValue={(r) => r.id}
+            strategy="vertical"
+          >
+            <div className="space-y-3">
+              {rules.map((rule, index) => (
+                <SortableItem key={rule.id} value={rule.id}>
+                  <div className="rounded-md border p-3 space-y-3 bg-background">
+                    <div className="flex items-center gap-2">
+                      <SortableItemHandle aria-label="Drag to reorder">
+                        <GripVertical className="size-4 text-muted-foreground" />
+                      </SortableItemHandle>
+                      <span className="text-xs font-medium text-muted-foreground">
+                        Priority {index + 1}
+                      </span>
+                      <div className="ms-auto flex items-center gap-2">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => removeRule(rule.id)}
+                          aria-label="Remove rule"
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <span className="text-xs text-muted-foreground sm:w-24 shrink-0">
+                        Form type
+                      </span>
+                      <div className="w-full sm:w-56">
+                        <SearchableSelect
+                          value={rule.use_case}
+                          onChange={(v) => v && patchRule(rule.id, { use_case: v })}
+                          options={CS_USE_CASES.map((u) => ({ value: u.key, label: u.label }))}
+                          triggerClassName="h-9"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <span className="text-xs text-muted-foreground sm:w-24 shrink-0">
+                        Assign to
+                      </span>
+                      <div className="w-full sm:w-72">
+                        <SearchableSelect
+                          value={rule.cs_pic_user_id ?? ''}
+                          onChange={(v) => {
+                            const c = candidates.find((x) => x.id === v);
+                            patchRule(rule.id, {
+                              cs_pic_user_id: v || null,
+                              cs_pic_name: c?.name ?? null,
+                            });
+                          }}
+                          options={candidateOptions}
+                          placeholder="Select CS PIC"
+                          triggerClassName="h-9"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="border-t pt-3">
+                      <p className="text-xs font-medium mb-2">Conditions</p>
+                      <PredicateBuilder
+                        predicates={rule.match_conditions}
+                        fields={fields}
+                        onChange={(next: Predicate[]) =>
+                          patchRule(rule.id, { match_conditions: next })
+                        }
+                      />
+                    </div>
+                  </div>
+                </SortableItem>
+              ))}
+            </div>
+          </Sortable>
+        </>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" variant="outline" onClick={addRule} disabled={candidates.length === 0}>
+          <Plus className="size-4" /> Add rule
+        </Button>
+        <Button type="button" onClick={handleSave} disabled={saving || candidates.length === 0}>
+          {saving ? 'Saving…' : 'Save routing rules'}
+        </Button>
+      </div>
+    </div>
+  );
+}

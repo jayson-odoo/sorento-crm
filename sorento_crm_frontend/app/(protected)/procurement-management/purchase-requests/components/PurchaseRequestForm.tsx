@@ -50,7 +50,7 @@ import {
 import { getOrCreateViewLink } from '../services/purchaseRequestService';
 import { toast } from 'sonner';
 import {
-  PurchaseRequestSchema,
+  PurchaseRequestFormSchema,
   type PurchaseRequestSchemaType,
 } from '../forms/purchase-request-schema';
 import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
@@ -117,7 +117,7 @@ export default function PurchaseRequestForm({
   }, [requestId, request, expectedRequestType, router]);
 
   const form = useForm<PurchaseRequestSchemaType>({
-    resolver: zodResolver(PurchaseRequestSchema),
+    resolver: zodResolver(PurchaseRequestFormSchema),
     defaultValues: {
       request_type: defaultRequestType,
       request_number: null,
@@ -128,6 +128,7 @@ export default function PurchaseRequestForm({
       delivery_address: null,
       total_project_value: null,
       total_project_value_text: null,
+      sales_type: null,
       sponsor_subject: null,
       sponsor_subject_other: null,
       expected_delivery_date: null,
@@ -192,6 +193,7 @@ export default function PurchaseRequestForm({
         delivery_address: request.delivery_address ?? null,
         total_project_value: request.total_project_value != null ? Number(request.total_project_value) : null,
         total_project_value_text: request.total_project_value_text ?? null,
+        sales_type: request.sales_type ?? null,
         sponsor_subject: request.sponsor_subject ?? null,
         sponsor_subject_other: request.sponsor_subject_other ?? null,
         expected_delivery_date: request.expected_delivery_date
@@ -232,6 +234,8 @@ export default function PurchaseRequestForm({
         total_project_value_text: data.total_project_value_text?.trim()
           ? data.total_project_value_text.trim()
           : undefined,
+        // Sales type applies to purchase requests only; clear it on sponsorship forms.
+        sales_type: !isSponsorship ? data.sales_type ?? undefined : undefined,
         sponsor_subject: data.sponsor_subject ?? undefined,
         // Only carry the "Others" detail when the sponsor subject is 'others';
         // sending '' otherwise clears any stale parked text on the backend.
@@ -422,6 +426,44 @@ export default function PurchaseRequestForm({
                             placeholder="e.g. Showroom, Mock up, Others"
                             {...field}
                             value={field.value ?? ''}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+                {!isSponsorship && (
+                  <FormField
+                    control={form.control}
+                    name="sales_type"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>
+                          Sales Type <span className="text-destructive">*</span>
+                        </FormLabel>
+                        <FormControl>
+                          <LookupBoundField
+                            table="purchase_requests"
+                            column="sales_type"
+                            value={field.value}
+                            onChange={field.onChange}
+                            placeholder="Select sales type"
+                            renderFallback={() => (
+                              <Select
+                                key={field.value || 'empty'}
+                                onValueChange={field.onChange}
+                                value={field.value || undefined}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select sales type" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="project">Project</SelectItem>
+                                  <SelectItem value="cash_sales">Cash Sales</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            )}
                           />
                         </FormControl>
                         <FormMessage />

@@ -77,6 +77,9 @@ class LookupBinding(Base):
     set_id = Column(UUID(as_uuid=False), ForeignKey("lookup_sets.id", ondelete="CASCADE"), nullable=False)
     table_name = Column(String(100), nullable=False)
     column_name = Column(String(100), nullable=False)
+    # Optional default option value the FE pre-selects on a NEW form (never overrides
+    # an existing value on edit). Validated app-side to be an active option of the set.
+    default_value = Column(String(150), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
 

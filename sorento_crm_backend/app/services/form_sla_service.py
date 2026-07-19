@@ -62,16 +62,66 @@ def _utc_naive_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _clamp_offhours_due_to_workday_end(
+    cal, submit_naive_utc: datetime, due_naive_utc: datetime
+) -> datetime:
+    """One-sided relaxation of a working-*days* due date for off-hours submits.
+
+    The >=24h SLA branch (``add_business_days``) preserves the submission wall-clock
+    time-of-day. When the form was submitted *outside* a working window (weekend,
+    public holiday, before open, or after close), preserving that time-of-day is
+    unfair — e.g. Sat 09:01 + 24h → Mon 09:01, ≈ 1 minute of Monday working time.
+    In that case, guarantee the deadline is at least that working day's configured
+    ``work_day_end_time`` (e.g. → Mon 17:00, a full working day).
+
+    ONE-SIDED by construction (``max(raw, end_of_workday)``): it never moves a due
+    *earlier* than today's behaviour. An off-hours submit whose due already lands at
+    or after close (e.g. Fri 17:30 → Mon 17:30, or Sun 23:00 → Mon 23:00) is returned
+    unchanged. A submit that happened *inside* a working window keeps its preserved
+    time-of-day (byte-identical to today) — only genuinely off-hours submits relax.
+
+    Input and output are naive UTC (matching the tracker columns)."""
+    from app.services.calendar_service import DEFAULT_WORKING_TZ
+
+    start_t, end_t = cal.get_working_hours()
+    submit_local = submit_naive_utc.replace(tzinfo=timezone.utc).astimezone(DEFAULT_WORKING_TZ)
+    sd = submit_local.date()
+    submit_in_window = (
+        sd.weekday() in cal.get_working_weekdays()
+        and sd not in cal.get_public_holidays_between(sd, sd)
+        and start_t <= submit_local.timetz().replace(tzinfo=None) < end_t
+    )
+    if submit_in_window:
+        return due_naive_utc  # in-hours submit: preserve time-of-day (unchanged)
+
+    due_local = due_naive_utc.replace(tzinfo=timezone.utc).astimezone(DEFAULT_WORKING_TZ)
+    eod_local = due_local.replace(
+        hour=end_t.hour, minute=end_t.minute, second=0, microsecond=0
+    )
+    if due_local < eod_local:
+        return eod_local.astimezone(timezone.utc).replace(tzinfo=None)
+    return due_naive_utc
+
+
 def _working_due_naive(db: Session, start_dt: datetime, hours: float) -> datetime:
     """Forward form-SLA due date in *working days*: convert the policy hours to days
     (÷24) and add that many working days (skipping weekends + KL public holidays),
-    keeping the time-of-day. E.g. 72h → +3 working days. Returns naive UTC to match
-    the tracker columns. Falls back to calendar hours if the work calendar is
-    unavailable/misconfigured."""
+    keeping the time-of-day. E.g. 72h → +3 working days. For the working-days branch
+    (``hours >= 24``) a one-sided relaxation
+    (:func:`_clamp_offhours_due_to_workday_end`) then lifts the due of an *off-hours*
+    submission to at least that day's ``work_day_end_time`` (fixes the tight Sat-09:01
+    → Mon-09:01 case). The <24h branch already advances on the working-hours clock and
+    is untouched. Returns naive UTC to match the tracker columns. Falls back to
+    calendar hours if the work calendar is unavailable/misconfigured."""
     try:
         from app.services.calendar_service import CalendarService
-        out = CalendarService(db).add_working_days_from_hours(start_dt, hours)
+        cal = CalendarService(db)
+        out = cal.add_working_days_from_hours(start_dt, hours)
         if out is not None:
+            # Only the working-DAYS branch (>=24h, per add_working_days_from_hours)
+            # preserves submission time-of-day and needs the off-hours relaxation.
+            if float(hours) >= 24.0:
+                out = _clamp_offhours_due_to_workday_end(cal, start_dt, out)
             return out
     except Exception:  # pragma: no cover - defensive; never break form SLA start/escalate
         logger.warning(
@@ -777,7 +827,7 @@ class FormSLAOrchestrator:
             assignee = override_assignee  # default-approver wins over round-robin
         else:
             assignee = self._resolve_pinned_assignee(
-                config.source_entity_type, contact_id, team_id
+                config.source_entity_type, contact_id, team_id, source_entity_id
             )
             if not assignee:
                 assignee = agent_svc.get_next_assignee(str(agent.id), team_id)
@@ -856,39 +906,72 @@ class FormSLAOrchestrator:
             self._notify_assignee(tracker, kind="assigned")
         return tracker
 
-    # Procurement use_cases that consult the per-salesman CS pin table. Complaint
-    # (and any other form type) is deliberately excluded → always round-robin.
-    _PINNABLE_USE_CASES = frozenset({"purchase_request", "sponsorship_form"})
+    def _load_form_field_values(
+        self, source_entity_type: Optional[str], source_entity_id: Optional[str]
+    ) -> dict:
+        """Return the form header row's own fields as a plain dict (for predicate
+        evaluation). Empty dict on any miss — never raises."""
+        src = _ENTITY_NUMBER_SOURCE.get(source_entity_type or "")
+        if not src or not source_entity_id:
+            return {}
+        table = src[0]
+        try:
+            from sqlalchemy import text as _sql_text
+
+            row = self.db.execute(
+                _sql_text(f"SELECT row_to_json(t) AS j FROM {table} t WHERE t.id = :id"),
+                {"id": str(source_entity_id)},
+            ).first()
+            return dict(row[0]) if row and row[0] else {}
+        except Exception:
+            logger.warning(
+                "CS pin: failed to load form fields for %s/%s; predicates see no fields.",
+                source_entity_type,
+                source_entity_id,
+                exc_info=True,
+            )
+            return {}
 
     def _resolve_pinned_assignee(
         self,
         source_entity_type: Optional[str],
         contact_id: Optional[str],
         team_id: str,
+        source_entity_id: Optional[str] = None,
     ) -> Optional[dict]:
-        """Return the pinned CS PIC for (contact, use_case), or None to fall back.
+        """Return the CS PIC pinned for (contact, use_case) whose match-conditions
+        pass this form, or None to fall back to round-robin.
 
-        Returns an assignee dict shaped exactly like ``get_next_assignee`` so the
-        caller is branch-agnostic. Returns None (→ round-robin) when: the use_case
-        is not pinnable, there is no contact, no active pin exists, or the pinned
-        user is missing / inactive / no longer a member of the stage's tier-1 team.
-        Never raises — every failure degrades to round-robin so approval can't 500.
+        Generic predicate routing (any use_case): among a contact's active pins for
+        the use_case, keep those whose every ``{field, operator, value}`` predicate
+        matches the form header's fields, then pick the lowest ``priority``
+        (``created_at`` tiebreak); an empty condition list is a wildcard. Returns an
+        assignee dict shaped like ``get_next_assignee`` so the caller is
+        branch-agnostic. Returns None (→ round-robin) when there is no contact, no
+        matching pin, or the chosen user is missing / inactive / not a member of the
+        stage's tier-1 team. Never raises — every failure degrades to round-robin so
+        approval can't 500.
         """
-        if not contact_id or source_entity_type not in self._PINNABLE_USE_CASES:
+        if not contact_id or not source_entity_type:
             return None
         try:
             from app.models.access import RespondContactCsRouting, TeamMember
             from app.models.user import User, UserStatus
+            from app.services.cs_routing_match import select_pin_row
 
-            pin = (
+            pins = (
                 self.db.query(RespondContactCsRouting)
                 .filter(
                     RespondContactCsRouting.respond_contact_id == contact_id,
                     RespondContactCsRouting.use_case == source_entity_type,
                     RespondContactCsRouting.is_active.is_(True),
                 )
-                .first()
+                .all()
             )
+            if not pins:
+                return None
+            form_values = self._load_form_field_values(source_entity_type, source_entity_id)
+            pin = select_pin_row(pins, form_values)
             if not pin:
                 return None
             user_id = pin.cs_pic_user_id

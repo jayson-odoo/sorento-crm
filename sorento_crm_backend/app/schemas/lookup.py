@@ -103,6 +103,8 @@ class LookupSetResponse(BaseModel):
 class LookupBindingCreate(BaseModel):
     table_name: str = Field(min_length=1, max_length=100)
     column_name: str = Field(min_length=1, max_length=100)
+    # Optional default option value the FE pre-selects on a NEW form; validated ∈ set.
+    default_value: Optional[str] = Field(default=None, max_length=150)
 
 
 class LookupBindingResponse(BaseModel):
@@ -111,10 +113,15 @@ class LookupBindingResponse(BaseModel):
     set_id: str
     table_name: str
     column_name: str
+    default_value: Optional[str] = None  # option the FE pre-selects on a new form
     table_label: Optional[str] = None   # resolved from eligibility registry at query time
     column_label: Optional[str] = None  # resolved from eligibility registry at query time
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class LookupBindingDefaultUpdate(BaseModel):
+    default_value: Optional[str] = Field(default=None, max_length=150)
 
 
 class LookupEligibilityResponse(BaseModel):

@@ -115,6 +115,28 @@ export async function removeBinding(setId: string, bindingId: string): Promise<v
   if (!r.ok) throw new Error(await extractApiError(r, 'Failed to remove binding'));
 }
 
+/**
+ * R2 — set (or clear) the default option a binding pre-selects on new forms.
+ *
+ * EXPECTED API CONTRACT (Phase 2 wiring target — NOT yet implemented):
+ *   PATCH /api/v1/master-data/lookup-sets/{setId}/bindings/{bindingId}
+ *     body:  { default_value: string | null }   // null clears the default
+ *     200:   the updated LookupBinding (incl. default_value)
+ *   `default_value`, when non-null, MUST be an existing option `value` in the set
+ *   (validated app-side). The by-binding read (GET /api/v1/lookup/by-binding)
+ *   echoes it so LookupBoundField can pre-select it on new forms.
+ *
+ * PHASE 1 (current): MOCKED — no network call; echoes the input back.
+ */
+export async function setBindingDefaultValue(
+  setId: string,
+  bindingId: string,
+  default_value: string | null,
+): Promise<{ id: string; default_value: string | null }> {
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  return { id: bindingId, default_value };
+}
+
 // Eligibility
 
 export async function listEligibility(available = false): Promise<LookupEligibility[]> {

@@ -381,6 +381,11 @@ class StockInquiry(Base):
     reopen_reason = Column(Text, nullable=True)
     reopened_at = Column(DateTime(timezone=False), nullable=True)
     reopened_by = Column(Text, nullable=True)
+    # Void (terminal, irreversible). DB FK voided_by -> users.id added in migration
+    # 287_form_void (kept off the model, mirroring rejected_by/reopened_by).
+    void_reason = Column(Text, nullable=True)
+    voided_by = Column(Text, nullable=True)  # users.id of the actor who voided
+    voided_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=True)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=True)
 
@@ -410,6 +415,7 @@ class PurchaseRequestHeader(Base):
     total_project_value_text = Column(Text, nullable=True)  # descriptive e.g. "BULK ORDER EST RM1.6MIL"
     sponsor_subject = Column(Text, nullable=True)  # sponsorship: showroom/mockup/others (lookup-bound)
     sponsor_subject_other = Column(Text, nullable=True)  # sponsorship: free-text detail when sponsor_subject='others'
+    sales_type = Column(String(50), nullable=True)  # PR: project/cash_sales (lookup-bound); routes CS assignment. SF leaves NULL.
     expected_delivery_date = Column(Date, nullable=True)
     expected_po_date = Column(Date, nullable=True)
     expected_po_date_text = Column(Text, nullable=True)
@@ -435,6 +441,11 @@ class PurchaseRequestHeader(Base):
     rejected_by_id = Column(String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     approval_signature_ref = Column(Text, nullable=True)
     approval_comments = Column(Text, nullable=True)
+    # Void (terminal, irreversible). DB FK voided_by -> users.id added in migration
+    # 287_form_void (kept off the model, mirroring approver_user_id String(100)).
+    void_reason = Column(Text, nullable=True)
+    voided_by = Column(String(100), nullable=True)  # users.id of the actor who voided
+    voided_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

@@ -40,7 +40,7 @@ export function LookupSelect({
     setLoading(true);
     lookupSet(setKey)
       .then((data) => {
-        if (!cancelled) setOptions(data);
+        if (!cancelled) setOptions(data.options);
       })
       .catch(() => {
         if (!cancelled) setOptions([]);

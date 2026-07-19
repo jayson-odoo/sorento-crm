@@ -18,7 +18,7 @@ from app.schemas.procurement import (
     ViewLinkRequest,
     ViewLinkResponse,
 )
-from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, FormVoidRequest
 from app.services.error_handler import handle_internal_error
 from app.services.handling_lock_service import assert_can_act_on_form
 from app.config import settings as app_settings
@@ -492,6 +492,37 @@ async def reopen_stock_inquiry(
         reason = body.reason if body else None
         user_id = (current_user or {}).get("id")
         service.reopen_inquiry(inquiry_id, reason=reason, user_id=user_id)
+        return service.get_inquiry_for_response(inquiry_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{inquiry_id}/void", response_model=StockInquiryResponse)
+async def void_stock_inquiry(
+    inquiry_id: str,
+    payload: FormVoidRequest,
+    current_user: dict = Depends(require_permission("procurement.stock_inquiries.void")),
+    db: Session = Depends(get_db),
+):
+    """Void a stock inquiry (irreversible).
+
+    Requires a free-text reason and the ``procurement.stock_inquiries.void`` permission; allowed
+    only from a non-terminal state. Sets status='voided', emits the 'voided'
+    form-SLA event, and best-effort notifies assignee + handler (in-app) and the
+    salesperson (WhatsApp).
+    """
+    try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
+        respond_user_id = _respond_user_id_from_current_user(current_user)
+        service = StockInquiryService(db)
+        service.void_inquiry(
+            inquiry_id,
+            void_reason=payload.void_reason,
+            actor_user_id=current_user.get("id"),
+            respond_user_id=respond_user_id,
+        )
         return service.get_inquiry_for_response(inquiry_id)
     except HTTPException:
         raise

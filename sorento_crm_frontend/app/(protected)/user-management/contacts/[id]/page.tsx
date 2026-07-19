@@ -30,7 +30,7 @@ import { formatDate } from '@/lib/helpers';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import ContactAccessAgentsTable from './components/ContactAccessAgentsTable';
-import ContactCsRoutingTable from './components/ContactCsRoutingTable';
+import ContactCsRoutingRules from './components/routing/ContactCsRoutingRules';
 import ContactMarketSegmentSection from './components/ContactMarketSegmentSection';
 import ContactEditDialog from './components/ContactEditDialog';
 import ContactDeleteDialog from '../components/ContactDeleteDialog';
@@ -313,7 +313,7 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
           <CardHeader>
             <CardTitle>Customer Service Assignment</CardTitle>
           </CardHeader>
-          <ContactCsRoutingTable contactId={id} />
+          <ContactCsRoutingRules contactId={id} />
         </Card>
       </Container>
 

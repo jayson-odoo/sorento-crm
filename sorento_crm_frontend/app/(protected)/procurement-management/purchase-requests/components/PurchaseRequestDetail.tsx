@@ -60,8 +60,11 @@ import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHan
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
+import { VoidBanner } from '@/components/common/VoidBanner';
+import { VoidDialog } from '@/components/common/VoidDialog';
+import { useFormVoid } from '@/hooks/useFormVoid';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
-import { ArrowUpCircle, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { ArrowUpCircle, ThumbsUp, ThumbsDown, Ban } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
   AlertDialog,
@@ -110,6 +113,8 @@ export default function PurchaseRequestDetail({
   );
   const canProcess = useHasPermission('procurement.purchase_requests.process');
   const canClose = useHasPermission('procurement.purchase_requests.close');
+  const canVoid = useHasPermission('procurement.purchase_requests.void');
+  const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
@@ -151,7 +156,14 @@ export default function PurchaseRequestDetail({
     sourceEntityId: isValidId ? requestId : null,
     entityKey: request?.updated_at,
   });
-  const businessCtasEnabled = handlingLock.businessCtasEnabled;
+  // A voided form is fully read-only — every business CTA is suppressed. Folding
+  // it into businessCtasEnabled kills all the handling-gated CTAs at once; the
+  // few ungated actions (Edit / Delete) are guarded on !isVoided individually.
+  const isVoided = (request?.status ?? '').trim().toLowerCase() === 'voided';
+  const businessCtasEnabled = handlingLock.businessCtasEnabled && !isVoided;
+  const voidMutation = useFormVoid('procurement/purchase-requests', requestId, {
+    queryKeysToInvalidate: [['purchase-request', requestId]],
+  });
   const currencyFormat = useCurrencyFormat();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false);
@@ -607,23 +619,36 @@ export default function PurchaseRequestDetail({
                 )}
               </>
             )}
+            {canVoid && !isVoided && (
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() => setVoidDialogOpen(true)}
+              >
+                <Ban className="size-4" />
+                Void
+              </DropdownMenuItem>
+            )}
           </DetailActionsMenu>
           <PurchaseRequestNavigation
             basePath={basePath}
             requestId={requestId}
             ariaLabel={requestTypeLabelLower(request.request_type)}
           />
-          <Button
-            variant="outline"
-            onClick={() => router.push(`${basePath}/${requestId}/edit`)}
-          >
-            <Edit className="size-4" />
-            Edit
-          </Button>
-          <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-            <Trash2 className="size-4" />
-            Delete
-          </Button>
+          {!isVoided && (
+            <Button
+              variant="outline"
+              onClick={() => router.push(`${basePath}/${requestId}/edit`)}
+            >
+              <Edit className="size-4" />
+              Edit
+            </Button>
+          )}
+          {!isVoided && (
+            <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
+              <Trash2 className="size-4" />
+              Delete
+            </Button>
+          )}
         </div>
       </div>
 
@@ -856,6 +881,20 @@ export default function PurchaseRequestDetail({
         />
       )}
 
+      <VoidBanner
+        voided={isVoided}
+        voidedByName={request.voided_by_name}
+        voidedAt={request.voided_at}
+        voidReason={request.void_reason}
+      />
+
+      <VoidDialog
+        open={voidDialogOpen}
+        onOpenChange={setVoidDialogOpen}
+        isPending={voidMutation.isPending}
+        onConfirm={(reason) => voidMutation.mutateAsync({ void_reason: reason })}
+      />
+
       <SlaActiveTrackerControls
         activeTracker={activeTracker}
         label={`${typeLabel}${request.request_number ? ` · ${request.request_number}` : ''}`}
@@ -922,6 +961,20 @@ export default function PurchaseRequestDetail({
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Purpose</p>
                     <p className="font-medium">{request.purpose || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Sales Type</p>
+                    <p className="font-medium">
+                      {request.sales_type ? (
+                        <LookupBoundLabel
+                          table="purchase_requests"
+                          column="sales_type"
+                          value={request.sales_type}
+                        />
+                      ) : (
+                        '—'
+                      )}
+                    </p>
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Expected date of delivery</p>

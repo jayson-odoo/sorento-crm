@@ -10,7 +10,7 @@ from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.lookup import (
     LookupSetCreate, LookupSetUpdate, LookupSetResponse,
     LookupOptionCreate, LookupOptionUpdate, LookupOptionResponse,
-    LookupBindingCreate, LookupBindingResponse,
+    LookupBindingCreate, LookupBindingResponse, LookupBindingDefaultUpdate,
 )
 from app.services.error_handler import handle_internal_error
 from app.services.lookup_set_service import LookupSetService
@@ -225,6 +225,26 @@ async def add_binding(
         raise handle_internal_error(str(e))
 
 
+@router.patch("/{set_id}/bindings/{binding_id}", response_model=LookupBindingResponse)
+async def update_binding_default(
+    set_id: str,
+    binding_id: str,
+    data: LookupBindingDefaultUpdate,
+    current_user=Depends(require_permission("master_data.lookup_sets.edit")),
+    db: Session = Depends(get_db),
+):
+    """Set/clear the binding's default option (FE pre-select). Validated ∈ set."""
+    from fastapi import HTTPException
+    try:
+        validate_uuid_path(set_id, resource="Lookup Set")
+        b = LookupBindingService(db).set_default_value(binding_id, data.default_value)
+        return _binding_with_labels(b)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.delete("/{set_id}/bindings/{binding_id}")
 async def remove_binding(
     set_id: str,
@@ -251,6 +271,7 @@ def _binding_with_labels(b) -> dict:
         "set_id": b.set_id,
         "table_name": b.table_name,
         "column_name": b.column_name,
+        "default_value": getattr(b, "default_value", None),
         "table_label": elig.table_label if elig else None,
         "column_label": elig.column_label if elig else None,
         "created_at": b.created_at,
