@@ -194,6 +194,18 @@ def _handler_chat_latency_watchdog(db, task):
     return run_chat_latency_watchdog(db)
 
 
+def _handler_user_downloads_purge(db, task):
+    """Delete My Downloads rows and their stored objects past the retention window.
+
+    Nothing purged this table before; chat-history CSV exports make it matter."""
+    from app.models.user import SystemSetting
+    from app.services.download_service import purge_expired_downloads
+
+    settings = db.query(SystemSetting).first()
+    days = int(getattr(settings, "downloads_retention_days", 30) or 30) if settings else 30
+    return purge_expired_downloads(db, retention_days=days)
+
+
 def _handler_automation_runner(db, task):
     """Heartbeat for automations: dispatch every enabled automation whose next_run_at is due."""
     return AutomationService(db).evaluate_due()
@@ -386,6 +398,7 @@ def register_task_handlers():
     register_handler("system_health_watchdog", lambda db, task: run_health_watchdog(db))
     register_handler("system_health_daily_digest", lambda db, task: run_health_daily_digest(db, task))
     register_handler("chat_message_resolver", _handler_chat_message_resolver)
+    register_handler("user_downloads_purge", _handler_user_downloads_purge)
     register_handler("chat_latency_watchdog", _handler_chat_latency_watchdog)
     register_handler("scm_analytics", _handler_scm_analytics)
     register_handler("scm_reorder_run", _handler_scm_reorder_run)

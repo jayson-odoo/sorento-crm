@@ -21,6 +21,7 @@ from app.api.v1.system import (
     email_outbox,
     email_event_configs,
     respond_outbox,
+    chat_history,
 )
 from app.modules.runtime.guards import require_module_enabled_with_api_key
 
@@ -46,3 +47,4 @@ router.include_router(automation.router, tags=["automation"])
 router.include_router(email_outbox.router, tags=["email-outbox"])
 router.include_router(email_event_configs.router, tags=["email-event-configs"])
 router.include_router(respond_outbox.router, tags=["respond-outbox"])
+router.include_router(chat_history.router, tags=["chat-history"])

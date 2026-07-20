@@ -266,6 +266,9 @@ class SystemSetting(Base):
     # Below this many paired turns a window percentile is noise, so fleet-level
     # breach alerting stays quiet.
     chat_latency_min_sample = Column(Integer, nullable=False, server_default="30", default=30)
+    # My Downloads retention. Nothing purged this table before chat-history CSV exports
+    # made the storage cost real; the purge applies to every download kind.
+    downloads_retention_days = Column(Integer, nullable=False, server_default="30", default=30)
 
     # New products / import: default product_supplier (standard lead time + supplier)
     default_product_supplier_id = Column(

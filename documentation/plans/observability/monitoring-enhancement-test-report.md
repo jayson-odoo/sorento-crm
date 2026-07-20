@@ -6,7 +6,7 @@ Keyed to `monitoring-enhancement-acceptance-criteria.md`. Updated per slice.
 |-------|--------|
 | **S2 — scheduled task overdue** | **PASS** (2026-07-20) |
 | **S4 — WhatsApp latency SLA (CRM side)** | **PASS** (2026-07-20). n8n half handed off — see `n8n-contract-handoff.md`. Inert until it lands. |
-| S5 — chat history UI | not started |
+| **S5 — chat history admin UI** | **PASS** (2026-07-20) |
 | S1 — health dashboard | not started |
 | S3 — api_call_log | not started |
 | S6 — timezone | not started |
@@ -200,3 +200,77 @@ Applied to the local DB; `alembic current` → single head `291`.
   page), per the plan's sequencing.
 - The resolver has not been exercised against the live Respond API; its behaviour is
   pinned by a fake client. First real run happens once n8n starts populating `message_id`.
+
+
+---
+
+## S5 — chat history admin UI
+
+### Results
+
+| Id | Verdict | Evidence |
+|----|---------|----------|
+| OBS-S5-01 | PASS | `test_date_range_filters_on_sent_at`, `test_default_window_is_last_24h` — an unbounded scan of this table is never the intent. |
+| OBS-S5-02 | PASS | `test_contact_filter`, `test_direction_filter`. |
+| OBS-S5-03 | PASS | `test_search_matches_message_text`, `test_search_matches_phone` (also name). |
+| OBS-S5-04 | PASS | `test_newest_first`. |
+| OBS-S5-05 | PASS | `test_keyset_pagination_walks_without_gaps_or_repeats` — 10 rows over 5 pages, no repeats, no gaps. |
+| OBS-S5-06 | PASS | `test_ties_on_sent_at_are_broken_by_id` — five rows sharing one timestamp still paginate deterministically. |
+| OBS-S5-07 | PASS | `test_cursor_none_when_exhausted`. |
+| OBS-S5-08 | PASS | `test_thread_returns_messages_around_an_anchor`, `test_thread_is_scoped_to_one_contact`, `test_thread_ordered_oldest_first`. |
+| OBS-S5-09 | PASS | `test_outgoing_rows_carry_turn_latency` — latency sits on the reply, not the trigger. |
+| OBS-S5-10 | PASS | `test_breached_only_returns_both_sides_of_the_breaching_turn`, `test_breached_only_ignores_unresolved_rows`. |
+| OBS-S5-11 | PASS | `test_display_name_prefers_stored_name`, `test_display_name_falls_back_to_phone_not_respond_id` — the Respond id is never rendered. |
+| OBS-S5-12 | PASS | Browser-verified via the sidebar on a production build: nav entry renders, grid loads 50 real rows with resolved contact names, filters apply, empty state shows for an empty range, thread drawer opens scoped to the contact. Zero console errors. |
+
+### Suite results
+
+`pytest tests/test_chat_history_query.py tests/test_chat_latency.py tests/test_chat_message_resolver.py`
+→ **54 passed**. `tsc --noEmit` and `eslint` clean on the new files.
+
+### Deviations from the plan, and why
+
+1. **`chat_histories` was NOT registered in the `list_query` registry**, as the plan
+   proposed. That registry's export path returns the entire filtered set as JSON for the
+   browser to convert to XLSX — precisely the shape that falls over on this table. Export
+   goes through My Downloads instead (as agreed during the grill), and the grid uses a
+   dedicated endpoint because keyset paging does not fit list_query's page/limit contract.
+2. **"Breached only" returns both messages of a breaching turn**, not just the slow reply.
+   A lone outgoing row shows a slow answer with no visible question, which is useless for
+   triage.
+3. **Permission slugs are registered but granted to zero roles.**
+   `check_user_has_permission` short-circuits for superadmin/admin, which is how
+   `system.respond_outbox.view` operates at zero grants today. For a page rendering raw
+   customer messages, admin-only is the correct default. An earlier draft auto-granted to
+   peer roles; that was a silent no-op, so it was removed rather than left in place
+   pretending to work.
+
+### Defect found during browser verification
+
+The thread drawer opened scrolled to the oldest message. Because bot replies in this data
+run to hundreds of lines, the message the user actually clicked was several screens below
+the fold — the drawer claimed to show the transcript "around the selected message" while
+showing something else entirely. Fixed by scrolling the anchor into view on open.
+
+### Known limitation (not a defect in this slice)
+
+The thread orders by `sent_at`, which n8n currently fills with its own clock. On today's
+data a reply can therefore sort *before* the question it answers:
+
+```
+09:08  > CAN I SUBMIT SPONSORSHIP FORM
+09:11  < I have attached the file(s) below...   <- reply
+09:11  > i want to submit complain              <- the question it answers
+```
+
+This is the S4 root cause rendering faithfully, and it resolves itself once n8n sends the
+raw Respond timestamp. Deliberately not papered over with a `COALESCE(respond_ts, sent_at)`
+ordering, which would hide the underlying data problem while it still exists.
+
+### Migration
+
+`292_chat_history_admin_perms_and_purge` — two PII-scoped permission slugs,
+`system_settings.downloads_retention_days` (default 30), and seeds the
+`user_downloads_purge` daily task. That purge closes a real pre-existing gap: nothing has
+ever deleted `user_downloads` rows or their stored objects, so `complaint_pdf` artifacts
+have been accumulating since that feature shipped. Applied locally; single head `292`.

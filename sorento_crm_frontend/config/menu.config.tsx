@@ -762,6 +762,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'system.respond_outbox.view',
       },
       {
+        title: 'Chat History',
+        path: '/system-management/chat-history',
+        permission: 'system.chat_history.view',
+      },
+      {
         title: 'Email Event Configs',
         path: '/system-management/email-event-configs',
         permission: 'system.email_event_configs.view',
@@ -1608,6 +1613,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Respond Outbox',
         path: '/system-management/respond-outbox',
         permission: 'system.respond_outbox.view',
+      },
+      {
+        title: 'Chat History',
+        path: '/system-management/chat-history',
+        permission: 'system.chat_history.view',
       },
       {
         title: 'Email Event Configs',
