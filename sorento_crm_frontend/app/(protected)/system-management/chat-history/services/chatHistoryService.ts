@@ -17,11 +17,14 @@ function buildParams(filters: ChatHistoryFilters, extra: Record<string, string |
 
 export async function getChatMessages(
   filters: ChatHistoryFilters,
-  opts: { limit?: number; cursor?: string | null } = {},
+  opts: { page?: number; limit?: number; sort?: string; dir?: string; query?: string } = {},
 ): Promise<ChatMessageListResponse> {
   const params = buildParams(filters, {
+    page: opts.page ?? 1,
     limit: opts.limit ?? 50,
-    cursor: opts.cursor ?? undefined,
+    sort: opts.sort,
+    dir: opts.dir,
+    query: opts.query,
   });
   const response = await apiFetch(`/api/v1/system/chat-history?${params.toString()}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load chat messages'));

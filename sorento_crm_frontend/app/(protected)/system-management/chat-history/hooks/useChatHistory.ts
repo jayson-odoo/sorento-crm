@@ -2,34 +2,19 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import {
-  exportChatHistory,
-  getChatMessages,
-  getChatThread,
-} from '../services/chatHistoryService';
+import { exportChatHistory, getChatThread } from '../services/chatHistoryService';
 import type { ChatHistoryFilters } from '../types/chatHistory.types';
 
 export const CHAT_HISTORY_KEY = ['chat-history'] as const;
 
-export function useChatMessages(
-  filters: ChatHistoryFilters,
-  opts: { limit?: number; cursor?: string | null } = {},
-) {
-  return useQuery({
-    queryKey: [...CHAT_HISTORY_KEY, filters, opts.cursor ?? null, opts.limit ?? 50],
-    queryFn: () => getChatMessages(filters, opts),
-    // Keyset paging means the previous page stays valid while the next loads,
-    // so holding it avoids a full-grid flash on every page step.
-    placeholderData: (prev) => prev,
-    staleTime: 15_000,
-  });
-}
-
+/** A contact's full conversation, centred on `anchorId` when given. Also used by the
+ *  per-contact section on the contact detail page (anchorId omitted). */
 export function useChatThread(contactId: string | null, anchorId?: number) {
   return useQuery({
     queryKey: [...CHAT_HISTORY_KEY, 'thread', contactId, anchorId ?? null],
     queryFn: () => getChatThread(contactId as string, anchorId),
     enabled: Boolean(contactId),
+    staleTime: 15_000,
   });
 }
 

@@ -31,11 +31,17 @@ class ChatMessageRowResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ChatMessagePagination(BaseModel):
+    total: int
+    page: int
+
+
 class ChatMessageListResponse(BaseModel):
     data: list[ChatMessageRowResponse]
-    # Keyset cursor for the next page; null when the walk is exhausted. Deliberately
-    # not an offset — this table is large enough that deep OFFSET degrades badly.
-    next_cursor: Optional[str] = None
+    # Offset pagination, to fit the shared DataGrid contract (arbitrary page jumps +
+    # a total for the pager). The date filter bounds the scan. The CSV export path
+    # still walks by keyset for flat memory over the unbounded set.
+    pagination: ChatMessagePagination
     empty: bool = False
 
 

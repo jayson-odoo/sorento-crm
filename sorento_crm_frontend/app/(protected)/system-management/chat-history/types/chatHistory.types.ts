@@ -21,8 +21,7 @@ export interface ChatMessageRow {
 
 export interface ChatMessageListResponse {
   data: ChatMessageRow[];
-  /** Keyset cursor; null when exhausted. Not an offset — the table is large. */
-  next_cursor: string | null;
+  pagination: { total: number; page: number };
   empty: boolean;
 }
 

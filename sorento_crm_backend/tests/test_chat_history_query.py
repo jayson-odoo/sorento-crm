@@ -48,6 +48,17 @@ def db():
 NOW = datetime(2026, 7, 20, 12, 0, 0)
 
 
+def _list(db, **kw):
+    """Adapter: the grid uses offset paging; these behavioural tests only care about
+    the returned rows, so normalise both paths to a (rows, _) shape."""
+    kw.pop("cursor", None)
+    limit = kw.pop("limit", 50)
+    page = kw.pop("page", 1)
+    rows, _total = svc.list_messages_page(db, page=page, limit=limit, **kw)
+    return rows, None
+
+
+
 def _msg(
     db,
     *,
@@ -84,42 +95,42 @@ def _msg(
 def test_date_range_filters_on_sent_at(db):
     _msg(db, sent_at=NOW - timedelta(days=3), message="old")
     _msg(db, sent_at=NOW - timedelta(hours=2), message="recent")
-    rows, _ = svc.list_messages(db, date_from=NOW - timedelta(days=1), date_to=NOW)
+    rows, _ = _list(db, date_from=NOW - timedelta(days=1), date_to=NOW)
     assert [r.message for r in rows] == ["recent"]
 
 
 def test_default_window_is_last_24h(db):
     _msg(db, sent_at=NOW - timedelta(days=3), message="old")
     _msg(db, sent_at=NOW - timedelta(hours=2), message="recent")
-    rows, _ = svc.list_messages(db, now=NOW)
+    rows, _ = _list(db, now=NOW)
     assert [r.message for r in rows] == ["recent"]
 
 
 def test_contact_filter(db):
     _msg(db, sent_at=NOW, contact_id="111", message="a")
     _msg(db, sent_at=NOW, contact_id="222", message="b")
-    rows, _ = svc.list_messages(db, contact_id="222", date_from=NOW - timedelta(hours=1), date_to=NOW + timedelta(hours=1))
+    rows, _ = _list(db, contact_id="222", date_from=NOW - timedelta(hours=1), date_to=NOW + timedelta(hours=1))
     assert [r.message for r in rows] == ["b"]
 
 
 def test_direction_filter(db):
     _msg(db, sent_at=NOW, type="incoming", message="in")
     _msg(db, sent_at=NOW, type="outgoing", message="out")
-    rows, _ = svc.list_messages(db, direction="outgoing", date_from=NOW - timedelta(hours=1), date_to=NOW + timedelta(hours=1))
+    rows, _ = _list(db, direction="outgoing", date_from=NOW - timedelta(hours=1), date_to=NOW + timedelta(hours=1))
     assert [r.message for r in rows] == ["out"]
 
 
 def test_search_matches_message_text(db):
     _msg(db, sent_at=NOW, message="SRTKS2405 stock level")
     _msg(db, sent_at=NOW, message="how to submit complaint")
-    rows, _ = svc.list_messages(db, search="srtks", date_from=NOW - timedelta(hours=1), date_to=NOW + timedelta(hours=1))
+    rows, _ = _list(db, search="srtks", date_from=NOW - timedelta(hours=1), date_to=NOW + timedelta(hours=1))
     assert len(rows) == 1
 
 
 def test_search_matches_phone(db):
     _msg(db, sent_at=NOW, phone="+60111111111", message="a")
     _msg(db, sent_at=NOW, phone="+60222222222", message="b")
-    rows, _ = svc.list_messages(db, search="222222", date_from=NOW - timedelta(hours=1), date_to=NOW + timedelta(hours=1))
+    rows, _ = _list(db, search="222222", date_from=NOW - timedelta(hours=1), date_to=NOW + timedelta(hours=1))
     assert [r.message for r in rows] == ["b"]
 
 
@@ -129,7 +140,7 @@ def test_search_matches_phone(db):
 def test_newest_first(db):
     _msg(db, sent_at=NOW - timedelta(minutes=5), message="older")
     _msg(db, sent_at=NOW - timedelta(minutes=1), message="newer")
-    rows, _ = svc.list_messages(db, now=NOW)
+    rows, _ = _list(db, now=NOW)
     assert [r.message for r in rows] == ["newer", "older"]
 
 
@@ -211,7 +222,7 @@ def test_outgoing_rows_carry_turn_latency(db):
     _msg(db, sent_at=start, type="incoming", turn_id="t1", respond_ts=start)
     _msg(db, sent_at=start, type="outgoing", turn_id="t1", respond_ts=start + timedelta(seconds=6))
 
-    rows, _ = svc.list_messages(db, now=NOW)
+    rows, _ = _list(db, now=NOW)
     out = [r for r in rows if r.type == "outgoing"][0]
     inc = [r for r in rows if r.type == "incoming"][0]
     assert out.latency_seconds == pytest.approx(6.0)
@@ -231,7 +242,7 @@ def test_breached_only_returns_both_sides_of_the_breaching_turn(db):
     _msg(db, sent_at=slow, type="incoming", turn_id="s", respond_ts=slow)
     _msg(db, sent_at=slow, type="outgoing", turn_id="s", respond_ts=slow + timedelta(seconds=45))
 
-    rows, _ = svc.list_messages(db, now=NOW, breached_only=True, target_seconds=10)
+    rows, _ = _list(db, now=NOW, breached_only=True, target_seconds=10)
     assert {r.turn_id for r in rows} == {"s"}          # fast turn excluded entirely
     assert sorted(r.type for r in rows) == ["incoming", "outgoing"]
     # Latency is still reported on the reply only.
@@ -244,7 +255,7 @@ def test_breached_only_ignores_unresolved_rows(db):
     t = NOW - timedelta(minutes=5)
     _msg(db, sent_at=t, type="incoming", turn_id="u", respond_ts=None)
     _msg(db, sent_at=t, type="outgoing", turn_id="u", respond_ts=None)
-    rows, _ = svc.list_messages(db, now=NOW, breached_only=True, target_seconds=10)
+    rows, _ = _list(db, now=NOW, breached_only=True, target_seconds=10)
     assert rows == []
 
 
@@ -253,12 +264,51 @@ def test_breached_only_ignores_unresolved_rows(db):
 # --------------------------------------------------------------------------- #
 def test_display_name_prefers_stored_name(db):
     _msg(db, sent_at=NOW, first_name="Johnson", last_name=None, phone="+60165622487")
-    rows, _ = svc.list_messages(db, now=NOW)
+    rows, _ = _list(db, now=NOW)
     assert rows[0].contact_display == "Johnson (+60165622487)"
 
 
 def test_display_name_falls_back_to_phone_not_respond_id(db):
     _msg(db, sent_at=NOW, first_name=None, last_name=None, phone="+60165622487")
-    rows, _ = svc.list_messages(db, now=NOW)
+    rows, _ = _list(db, now=NOW)
     assert rows[0].contact_display == "+60165622487"
     assert "445239409" not in rows[0].contact_display
+
+
+# --------------------------------------------------------------------------- #
+# Offset paging (the grid path) — total + arbitrary page jump                 #
+# --------------------------------------------------------------------------- #
+def test_page_returns_total_for_the_filtered_set(db):
+    for i in range(7):
+        _msg(db, sent_at=NOW - timedelta(minutes=i), message=f"m{i}")
+    rows, total = svc.list_messages_page(db, now=NOW, page=1, limit=3)
+    assert total == 7
+    assert len(rows) == 3
+
+
+def test_page_jump_lands_on_the_right_slice(db):
+    for i in range(7):
+        _msg(db, sent_at=NOW - timedelta(minutes=i), message=f"m{i}")  # m0 newest
+    p1, _ = svc.list_messages_page(db, now=NOW, page=1, limit=3)
+    p3, _ = svc.list_messages_page(db, now=NOW, page=3, limit=3)
+    assert [r.message for r in p1] == ["m0", "m1", "m2"]
+    assert [r.message for r in p3] == ["m6"]  # last page, one row
+
+
+def test_sort_ascending(db):
+    _msg(db, sent_at=NOW - timedelta(minutes=5), message="older")
+    _msg(db, sent_at=NOW - timedelta(minutes=1), message="newer")
+    rows, _ = svc.list_messages_page(db, now=NOW, sort="sent_at", dir_="asc")
+    assert [r.message for r in rows] == ["older", "newer"]
+
+
+def test_breached_only_total_reflects_only_breached(db):
+    slow = NOW - timedelta(minutes=5)
+    fast = NOW - timedelta(minutes=8)
+    _msg(db, sent_at=fast, type="incoming", turn_id="f", respond_ts=fast)
+    _msg(db, sent_at=fast, type="outgoing", turn_id="f", respond_ts=fast + timedelta(seconds=2))
+    _msg(db, sent_at=slow, type="incoming", turn_id="s", respond_ts=slow)
+    _msg(db, sent_at=slow, type="outgoing", turn_id="s", respond_ts=slow + timedelta(seconds=45))
+    rows, total = svc.list_messages_page(db, now=NOW, breached_only=True, target_seconds=10)
+    assert total == 2  # both sides of the one breaching turn
+    assert {r.turn_id for r in rows} == {"s"}

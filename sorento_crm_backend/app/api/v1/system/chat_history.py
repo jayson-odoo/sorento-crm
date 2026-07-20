@@ -27,7 +27,7 @@ from app.services.chat_history_query import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
     get_thread,
-    list_messages,
+    list_messages_page,
 )
 from app.services.download_service import DownloadService
 from app.services.error_handler import handle_internal_error
@@ -44,37 +44,46 @@ def list_chat_messages(
     date_to: Optional[datetime] = Query(None),
     contact_id: Optional[str] = Query(None),
     direction: Optional[str] = Query(None, pattern="^(incoming|outgoing)$"),
+    # The DataGrid sends its free-text box as `query`; `search` is accepted too.
+    query: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     breached_only: bool = Query(False),
+    page: int = Query(1, ge=1),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
-    cursor: Optional[str] = Query(None, description="Keyset cursor from a prior page"),
+    sort: Optional[str] = Query(None),
+    dir: str = Query("desc", pattern="^(asc|desc)$"),
     current_user: dict = Depends(require_permission("system.chat_history.view")),
     db: Session = Depends(get_db),
 ):
-    """Messages newest-first. Defaults to the last 24h when no range is given."""
+    """Offset page of messages for the DataGrid. Defaults to the last 24h."""
     settings_target = _p99_target(db)
-    rows, next_cursor = list_messages(
+    rows, total = list_messages_page(
         db,
         date_from=date_from,
         date_to=date_to,
         contact_id=contact_id,
         direction=direction,
-        search=search,
+        search=query or search,
         breached_only=breached_only,
         target_seconds=settings_target,
+        page=page,
         limit=limit,
-        cursor=cursor,
+        sort=sort,
+        dir_=dir,
     )
     data = [ChatMessageRowResponse.model_validate(r, from_attributes=True) for r in rows]
-    return ChatMessageListResponse(data=data, next_cursor=next_cursor, empty=not data)
+    return ChatMessageListResponse(
+        data=data, pagination={"total": total, "page": page}, empty=not data
+    )
 
 
 @router.get("/chat-history/thread", response_model=ChatThreadResponse)
 def get_chat_thread(
     contact_id: str = Query(...),
     anchor_id: Optional[int] = Query(None, description="Centre the transcript on this message"),
-    before: int = Query(25, ge=0, le=200),
-    after: int = Query(25, ge=0, le=200),
+    # Wide by default so in-drawer search covers the whole conversation, not a slice.
+    before: int = Query(200, ge=0, le=500),
+    after: int = Query(200, ge=0, le=500),
     current_user: dict = Depends(require_permission("system.chat_history.view")),
     db: Session = Depends(get_db),
 ):
