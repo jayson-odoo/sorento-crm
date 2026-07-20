@@ -44,7 +44,7 @@ export default function IdeasBoardPage() {
         </Toolbar>
       </Container>
 
-      <Container>
+      <Container width="fluid">
         <IdeationEmbed title="Ideas board" />
       </Container>
     </>
