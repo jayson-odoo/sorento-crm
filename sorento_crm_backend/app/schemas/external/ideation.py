@@ -16,8 +16,22 @@ class IdeationTurnRequest(BaseModel):
             "WS-A). Used only when the CRM's respond_contacts row has no name."
         ),
     )
-    audio_attachment_ref: str | None = Field(
-        None, description="Optional reference to a transcribed voice note (D9)."
+    media_selection: str | None = Field(
+        None,
+        description=(
+            "Multi-modal capture (DC-7): the parser-extracted reference-positions "
+            "answering an outstanding media menu — e.g. '1,3', 'all', 'none'. Present "
+            "ONLY when session_vars.ideation.pending_media is set and the parser found "
+            "a position reference; otherwise absent (the turn is a normal ideate turn)."
+        ),
+    )
+    is_new_idea: bool | None = Field(
+        None,
+        description=(
+            "Multi-modal capture (DC-10): the semantic 'this is a new/different idea' "
+            "signal, extracted by the parser with the open-draft topic as context. When "
+            "true and a draft is open, sorento starts a fresh draft and discards the old."
+        ),
     )
 
 
