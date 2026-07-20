@@ -9,6 +9,13 @@ class IdeationTurnRequest(BaseModel):
 
     respond_io_id: str = Field(..., description="Respond.io contact id (not internal UUID).")
     message_text: str = Field(..., description="The user's latest raw turn.")
+    submitter_name: str | None = Field(
+        None,
+        description=(
+            "Optional sender display name from the Respond.io profile (n8n fallback, "
+            "WS-A). Used only when the CRM's respond_contacts row has no name."
+        ),
+    )
     audio_attachment_ref: str | None = Field(
         None, description="Optional reference to a transcribed voice note (D9)."
     )

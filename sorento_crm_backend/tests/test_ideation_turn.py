@@ -45,9 +45,10 @@ from app.services.ideation_turn_service import IdeationServiceError, handle_turn
 
 
 class _FakeContact:
-    def __init__(self, phone_number: str, session_vars: dict):
+    def __init__(self, phone_number: str, session_vars: dict, display_name=None):
         self.phone_number = phone_number
         self.session_vars = session_vars
+        self.display_name = display_name
 
 
 @pytest.fixture
@@ -65,6 +66,7 @@ def wired(monkeypatch):
 
     state = {
         "phone": "+60123456789",
+        "display_name": None,
         "store": {},
         "extraction": IdeateExtraction(fields={}, remove=[], confirm=False),
         "create_idea_result": None,
@@ -74,7 +76,9 @@ def wired(monkeypatch):
     }
 
     def _fake_get_contact_row(_db, respond_io_id):  # noqa: ANN001
-        return _FakeContact(state["phone"], dict(state["store"]))
+        return _FakeContact(
+            state["phone"], dict(state["store"]), display_name=state["display_name"]
+        )
 
     def _fake_resolve_ideation_config(_db):  # noqa: ANN001
         # Base URL + intake key come from settings (so the settings-fallback
@@ -141,6 +145,9 @@ def wired(monkeypatch):
         def set_product_id(self, pid):
             state["product_id"] = pid
 
+        def set_display_name(self, name):
+            state["display_name"] = name
+
     harness = _Harness()
     monkeypatch.setattr(svc, "overwrite_for_contact", _overwrite_capture)
     return harness
@@ -194,11 +201,89 @@ def test_input_shape_and_extraction_passthrough(wired):
 
     p = wired.payloads[0]
     assert p["product_id"] == "prod-uuid-1"
-    assert p["submitter"] == "+60123456789"  # phone E.164, not a contact-row id
+    # WS-A: the shared-service CreateIdeaIn field is ``submitter_contact_id`` (accepts
+    # a phone E.164). The legacy ``submitter`` key was silently dropped → "Unknown".
+    assert p["submitter_contact_id"] == "+60123456789"
+    assert "submitter" not in p
     assert p["message_text"] == "module is procurement, forget who"
     assert p["fields"] == {"module": "procurement"}
     assert p["remove"] == ["who"]
     assert p["confirm"] is False
+
+
+# --------------------------------------------------------------------------- #
+# WS-A / AC-CAP-1..3 — submitter name from the CRM contact, n8n fallback       #
+# --------------------------------------------------------------------------- #
+def test_submitter_name_from_crm_contact(wired):
+    """respond_contacts name wins → passed as submitter_name."""
+    wired.set_session_vars({})
+    wired.set_display_name("Aisha Rahman")
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(submitter_name="WA Profile Name")  # n8n value present but DB wins
+    assert wired.payloads[0]["submitter_name"] == "Aisha Rahman"
+
+
+def test_submitter_name_falls_back_to_n8n(wired):
+    """No CRM name → the n8n Respond.io-profile name is used."""
+    wired.set_session_vars({})
+    wired.set_display_name(None)
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(submitter_name="WA Profile Name")
+    assert wired.payloads[0]["submitter_name"] == "WA Profile Name"
+
+
+def test_submitter_name_absent_when_both_blank(wired):
+    """Neither source → no submitter_name key (shared-service serializes 'Unknown')."""
+    wired.set_session_vars({})
+    wired.set_display_name(None)
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(submitter_name=None)
+    assert "submitter_name" not in wired.payloads[0]
+
+
+# --------------------------------------------------------------------------- #
+# WS-B / AC-CAP-5..7 — raw_transcript accumulates across turns                 #
+# --------------------------------------------------------------------------- #
+def test_raw_transcript_accumulates_over_turns(wired):
+    """Each turn appends to the transcript; the payload carries the WHOLE convo,
+    not just the finalizing message. The pointer persists the running list."""
+    # Turn 1 — collecting, transcript = [msg1]
+    wired.set_session_vars({})
+    wired.set_create_idea(
+        {"draft_id": "d-7", "status": "collecting", "captured": {}, "missing": ["impact"], "reply_text": "ok"}
+    )
+    out1 = _turn(message_text="I want AI to update contractors on delivery")
+    assert wired.payloads[-1]["raw_transcript"] == "I want AI to update contractors on delivery"
+    assert out1["session_vars"]["ideation"]["transcript"] == [
+        "I want AI to update contractors on delivery"
+    ]
+
+    # Turn 2 — continuation adds a substantive turn.
+    wired.set_create_idea(
+        {"draft_id": "d-7", "status": "review", "captured": {}, "missing": [], "reply_text": "confirm?"}
+    )
+    _turn(message_text="impact is high ROI")
+    assert wired.payloads[-1]["raw_transcript"] == (
+        "I want AI to update contractors on delivery\nimpact is high ROI"
+    )
+
+    # Turn 3 — the finalizing "confirm" turn: transcript still holds the prior turns.
+    wired.set_create_idea(
+        {"draft_id": "d-7", "status": "complete", "captured": {}, "missing": [], "reply_text": "done",
+         "link": "https://fe-sorento.foundryx.my/ideas/d-7"}
+    )
+    _turn(message_text="okay i confirm")
+    assert wired.payloads[-1]["raw_transcript"] == (
+        "I want AI to update contractors on delivery\n"
+        "impact is high ROI\n"
+        "okay i confirm"
+    )
 
 
 # --------------------------------------------------------------------------- #
