@@ -175,6 +175,25 @@ def _handler_takeover_request_commit(db, task):
     return SlaTakeoverService(db).commit_due()
 
 
+def _handler_chat_message_resolver(db, task):
+    """Fill `respond_ts` / delivery status on chat rows from Respond itself.
+
+    n8n's `sent_at` is its own wall clock, so the round-trip SLA cannot be measured from
+    it. This resolves the authoritative Respond-side timestamp per message id, in
+    batches, so both ends of the measurement share one clock."""
+    from app.services.chat_message_resolver import resolve_pending
+
+    limit = int((task.metadata_ or {}).get("batch_limit", 200)) if task is not None else 200
+    return resolve_pending(db, limit=limit)
+
+
+def _handler_chat_latency_watchdog(db, task):
+    """Evaluate the WhatsApp round-trip p99 and the per-turn hard ceiling."""
+    from app.services.system_health_alert_service import run_chat_latency_watchdog
+
+    return run_chat_latency_watchdog(db)
+
+
 def _handler_automation_runner(db, task):
     """Heartbeat for automations: dispatch every enabled automation whose next_run_at is due."""
     return AutomationService(db).evaluate_due()
@@ -366,6 +385,8 @@ def register_task_handlers():
     register_handler("n8n_liveness_ping", lambda db, task: run_n8n_liveness_ping(db))
     register_handler("system_health_watchdog", lambda db, task: run_health_watchdog(db))
     register_handler("system_health_daily_digest", lambda db, task: run_health_daily_digest(db, task))
+    register_handler("chat_message_resolver", _handler_chat_message_resolver)
+    register_handler("chat_latency_watchdog", _handler_chat_latency_watchdog)
     register_handler("scm_analytics", _handler_scm_analytics)
     register_handler("scm_reorder_run", _handler_scm_reorder_run)
 

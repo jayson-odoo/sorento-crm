@@ -33,6 +33,15 @@ class ChatHistoryMessageIngestRequest(BaseModel):
     reply_to_message: Optional[str] = Field(
         None, description="Incoming quote-reply only: text of the replied-to message."
     )
+    turn_id: Optional[str] = Field(
+        None,
+        max_length=64,
+        description="n8n $execution.id, stamped on BOTH the incoming and the outgoing "
+        "save of one turn. Pairs a reply to the message that triggered it exactly, so "
+        "round-trip latency survives message bursts and reordering. Omit on proactive "
+        "sends (campaigns, SLA notices) — those are excluded from the latency SLA "
+        "rather than paired by proximity.",
+    )
 
 
 class ChatHistoryMessageIngestResponse(BaseModel):

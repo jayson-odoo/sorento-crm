@@ -66,6 +66,13 @@ def _mark_alerting(row: HealthAlertState, now: datetime, detail: str) -> None:
     row.last_detail = detail
 
 
+def _mark_ok(row: HealthAlertState, now: datetime) -> None:
+    """Clear the condition. `last_alerted_at` is deliberately left intact so the
+    cooldown still applies if the condition flaps straight back."""
+    row.state = "ok"
+    row.last_detail = None
+
+
 # ---------------------------------------------------------------------------
 # Condition evaluators — return (is_bad, detail)
 # ---------------------------------------------------------------------------
@@ -180,6 +187,97 @@ def _eval_scheduled_tasks(db: Session, now: datetime) -> tuple[bool, str]:
         parts.append(f"overdue ({len(overdue)}):\n{items}")
 
     return True, "Scheduled tasks — " + "; ".join(parts)
+
+
+def _eval_chat_latency(db: Session, now: datetime, settings) -> tuple[bool, str]:
+    """WhatsApp round-trip health, as three independent signals.
+
+    A single rolling percentile is not enough. At volume, one turn that never completes
+    — the shape a dropped webhook takes — never moves p99 at all, so it would degrade
+    silently. Hence a hard ceiling with no minimum sample, plus an explicit
+    unanswered-turn check whose subjects are absent from the distribution by definition.
+    """
+    from app.services import chat_latency_service as latency
+
+    target = int(getattr(settings, "chat_latency_p99_target_seconds", 10) or 10) if settings else 10
+    multiplier = int(getattr(settings, "chat_latency_ceiling_multiplier", 3) or 3) if settings else 3
+    no_reply_min = int(getattr(settings, "chat_latency_no_reply_minutes", 5) or 5) if settings else 5
+    min_sample = int(getattr(settings, "chat_latency_min_sample", 30) or 30) if settings else 30
+
+    window_start = now - timedelta(hours=1)
+    parts: list[str] = []
+
+    stats = latency.compute_latency_stats(db, since=window_start)
+    verdict = latency.evaluate_breach(stats, target_seconds=target, min_sample=min_sample)
+    if verdict.breached:
+        parts.append(f"degraded — {verdict.reason}")
+
+    ceiling = target * multiplier
+    stalled = latency.get_stalled_turns(db, since=window_start, ceiling_seconds=ceiling)
+    if stalled:
+        worst = max(stalled, key=lambda t: t.latency_seconds)
+        parts.append(
+            f"stalled turns ({len(stalled)}) past {ceiling}s ceiling — "
+            f"worst {worst.latency_seconds:.0f}s on turn {worst.turn_id}"
+        )
+
+    unanswered = latency.get_unanswered_turns(db, now=now, older_than_seconds=no_reply_min * 60)
+    if unanswered:
+        worst = unanswered[0]
+        parts.append(
+            f"no reply ({len(unanswered)}) after {no_reply_min}m — "
+            f"longest {worst.waiting_seconds / 60:.0f}m on turn {worst.turn_id}"
+        )
+
+    if not parts:
+        return False, ""
+    return True, "WhatsApp round trip — " + "; ".join(parts)
+
+
+def run_chat_latency_watchdog(db: Session) -> dict:
+    """Entry point for the `chat_latency_watchdog` scheduled task.
+
+    Shares the health_alert_state de-dup machinery with the other conditions, so a
+    sustained incident produces one alert plus one recovery notice rather than one per
+    evaluation tick.
+    """
+    from app.models.user import SystemSetting
+
+    settings = db.query(SystemSetting).first()
+    if settings is not None and settings.health_alerts_enabled is False:
+        return {"skipped": "alerts_disabled"}
+
+    now = _utcnow_naive()
+    is_bad, detail = _eval_chat_latency(db, now, settings)
+
+    row = _get_state(db, "chat_latency")
+    fired = recovered = False
+
+    if is_bad:
+        if _should_fire(row, now):
+            _notify_admins(
+                db, settings,
+                subject="⚠️ System health alert: chat_latency",
+                lines=[detail],
+                is_alert=True,
+                dedup_id=f"alert:chat_latency:{now:%Y-%m-%dT%H:%M:%S}",
+            )
+            _mark_alerting(row, now, detail)
+            fired = True
+    else:
+        if row.state == "alerting":
+            _notify_admins(
+                db, settings,
+                subject="✅ Recovered: chat_latency",
+                lines=["WhatsApp round trip is back within its SLA."],
+                is_alert=False,
+                dedup_id=f"recovered:chat_latency:{now:%Y-%m-%dT%H:%M:%S}",
+            )
+            recovered = True
+        _mark_ok(row, now)
+
+    db.commit()
+    return {"bad": is_bad, "detail": detail, "fired": fired, "recovered": recovered}
 
 
 # ---------------------------------------------------------------------------

@@ -254,6 +254,18 @@ class SystemSetting(Base):
     # interval. Clamped to [60s, 30min] so it degrades sanely from a 30s task to a daily
     # one. Per-task override lives in scheduled_tasks.metadata->>'grace_percent'.
     health_task_grace_percent = Column(Integer, nullable=False, server_default="25", default=25)
+    # WhatsApp round-trip SLA: user presses send -> our reply is accepted by Respond.
+    # The clock stops at "sent", not delivered — see chat_latency_service.
+    chat_latency_p99_target_seconds = Column(Integer, nullable=False, server_default="10", default=10)
+    # A single turn past target x this multiplier alerts on its own, with no minimum
+    # sample size: at volume, one stalled turn would never move a windowed percentile.
+    chat_latency_ceiling_multiplier = Column(Integer, nullable=False, server_default="3", default=3)
+    # An incoming with no reply after this long is the shape a dropped webhook takes —
+    # the turn never completes, so it never enters the latency distribution at all.
+    chat_latency_no_reply_minutes = Column(Integer, nullable=False, server_default="5", default=5)
+    # Below this many paired turns a window percentile is noise, so fleet-level
+    # breach alerting stays quiet.
+    chat_latency_min_sample = Column(Integer, nullable=False, server_default="30", default=30)
 
     # New products / import: default product_supplier (standard lead time + supplier)
     default_product_supplier_id = Column(

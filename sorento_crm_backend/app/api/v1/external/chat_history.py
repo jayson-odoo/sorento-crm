@@ -59,10 +59,10 @@ def ingest_chat_message(
         """
         INSERT INTO chat_histories (
             channel, contact_id, phone_number, message, sent_at, first_name, last_name, type,
-            message_id, result, reply_to_message_id, reply_to_message
+            message_id, result, reply_to_message_id, reply_to_message, turn_id, ingest_at
         ) VALUES (
             :channel, :contact_id, :phone_number, :message, :sent_at, :first_name, :last_name, :type,
-            :message_id, :result, :reply_to_message_id, :reply_to_message
+            :message_id, :result, :reply_to_message_id, :reply_to_message, :turn_id, :ingest_at
         )
         RETURNING id
         """
@@ -88,6 +88,10 @@ def ingest_chat_message(
                 "result": json.dumps(payload.result) if payload.result is not None else None,
                 "reply_to_message_id": payload.reply_to_message_id,
                 "reply_to_message": payload.reply_to_message,
+                "turn_id": payload.turn_id,
+                # Our clock at ingest. Never the SLA clock — its only job is to make
+                # webhook lag (ingest_at - respond_ts) separable from agent time.
+                "ingest_at": datetime.now(tz=timezone.utc).replace(tzinfo=None),
             },
         )
         message_id = result.scalar_one()
