@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.health_alert_state import HealthAlertState
 from app.models.integration import IntegrationLog
 from app.models.scheduled_task import ScheduledTask
@@ -62,6 +64,13 @@ def _mark_alerting(row: HealthAlertState, now: datetime, detail: str) -> None:
     row.state = "alerting"
     row.last_alerted_at = now
     row.last_detail = detail
+
+
+def _mark_ok(row: HealthAlertState, now: datetime) -> None:
+    """Clear the condition. `last_alerted_at` is deliberately left intact so the
+    cooldown still applies if the condition flaps straight back."""
+    row.state = "ok"
+    row.last_detail = None
 
 
 # ---------------------------------------------------------------------------
@@ -107,25 +116,168 @@ def _eval_failed_integrations(db: Session, now: datetime, threshold: int) -> tup
     return True, f"Integration failure spike — {detail}"
 
 
+_MALAYSIA_TZ = timezone(timedelta(hours=8))
+
+
+def _humanize_delta(delta: timedelta) -> str:
+    """'23m late' beats '0:23:04.184' in an email a human has to act on."""
+    total = int(delta.total_seconds())
+    if total < 60:
+        return f"{total}s"
+    if total < 3600:
+        return f"{total // 60}m"
+    if total < 86400:
+        hours, minutes = divmod(total // 60, 60)
+        return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+    days, hours = divmod(total // 3600, 24)
+    return f"{days}d {hours}h" if hours else f"{days}d"
+
+
+def _humanize_interval(task: ScheduledTask) -> str:
+    value = int(getattr(task, "interval_value", 0) or 0)
+    unit = str(getattr(task, "interval_unit", "") or "")
+    if value == 1 and unit.endswith("s"):
+        unit = unit[:-1]
+    return f"every {value} {unit}".strip()
+
+
+def _malaysia_wall_clock(dt: Optional[datetime]) -> str:
+    """Naive-UTC column -> Malaysia wall clock. Recipients are in MYT."""
+    if not isinstance(dt, datetime):
+        return "never"
+    aware = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+    return aware.astimezone(_MALAYSIA_TZ).strftime("%d/%m/%Y %H:%M") + " MYT"
+
+
+def _task_run_log_url(task: ScheduledTask) -> str:
+    base = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+    path = f"/system-management/scheduled-tasks/{getattr(task, 'id', '')}"
+    return f"{base}{path}" if base else path
+
+
 def _eval_scheduled_tasks(db: Session, now: datetime) -> tuple[bool, str]:
-    """Bad if any enabled task last-run failed or is overdue past its interval."""
+    """Bad if any enabled task last-run failed or is overdue past its grace period.
+
+    Overdue comes from the shared helper in `scheduled_task_service`, the same one
+    the health dashboard card calls, so the two surfaces cannot disagree. The old
+    inline `next_run_at` query is gone: that column is display-only and the
+    scheduler never consulted it, which is why this alert fired on healthy tasks.
+    """
+    from app.services.scheduled_task_service import get_overdue_tasks
+
     tasks = db.query(ScheduledTask).filter(ScheduledTask.enabled.is_(True)).all()
     failed = [t.key for t in tasks if (t.last_status or "") == "failed"]
-    # Match health.py _scheduled_tasks_health "overdue": enabled AND next_run_at past.
-    # (NULL next_run_at is a brief just-seeded window the 10s heartbeat fills; excluding
-    # it avoids a transient false alert while still catching genuinely stuck schedules.)
-    overdue = [
-        t.key for t in tasks
-        if t.next_run_at is not None and t.next_run_at < now
-    ]
+    overdue = get_overdue_tasks(db, now)
+
     if not failed and not overdue:
         return False, ""
+
     parts = []
     if failed:
         parts.append("last-run failed: " + ", ".join(sorted(set(failed))))
     if overdue:
-        parts.append("overdue: " + ", ".join(sorted(set(overdue))))
+        # Itemized: the previous body was a bare list of keys, which told the
+        # reader nothing about which run was late or by how much.
+        items = "\n".join(
+            f"  • {o.task.key} ({o.task.name}) — {_humanize_interval(o.task)}, "
+            f"last run {_malaysia_wall_clock(o.task.last_run_at)}, "
+            f"{_humanize_delta(o.late_by)} late — {_task_run_log_url(o.task)}"
+            for o in overdue
+        )
+        parts.append(f"overdue ({len(overdue)}):\n{items}")
+
     return True, "Scheduled tasks — " + "; ".join(parts)
+
+
+def _eval_chat_latency(db: Session, now: datetime, settings) -> tuple[bool, str]:
+    """WhatsApp round-trip health, as three independent signals.
+
+    A single rolling percentile is not enough. At volume, one turn that never completes
+    — the shape a dropped webhook takes — never moves p99 at all, so it would degrade
+    silently. Hence a hard ceiling with no minimum sample, plus an explicit
+    unanswered-turn check whose subjects are absent from the distribution by definition.
+    """
+    from app.services import chat_latency_service as latency
+
+    target = int(getattr(settings, "chat_latency_p99_target_seconds", 10) or 10) if settings else 10
+    multiplier = int(getattr(settings, "chat_latency_ceiling_multiplier", 3) or 3) if settings else 3
+    no_reply_min = int(getattr(settings, "chat_latency_no_reply_minutes", 5) or 5) if settings else 5
+    min_sample = int(getattr(settings, "chat_latency_min_sample", 30) or 30) if settings else 30
+
+    window_start = now - timedelta(hours=1)
+    parts: list[str] = []
+
+    stats = latency.compute_latency_stats(db, since=window_start)
+    verdict = latency.evaluate_breach(stats, target_seconds=target, min_sample=min_sample)
+    if verdict.breached:
+        parts.append(f"degraded — {verdict.reason}")
+
+    ceiling = target * multiplier
+    stalled = latency.get_stalled_turns(db, since=window_start, ceiling_seconds=ceiling)
+    if stalled:
+        worst = max(stalled, key=lambda t: t.latency_seconds)
+        parts.append(
+            f"stalled turns ({len(stalled)}) past {ceiling}s ceiling — "
+            f"worst {worst.latency_seconds:.0f}s on turn {worst.turn_id}"
+        )
+
+    unanswered = latency.get_unanswered_turns(db, now=now, older_than_seconds=no_reply_min * 60)
+    if unanswered:
+        worst = unanswered[0]
+        parts.append(
+            f"no reply ({len(unanswered)}) after {no_reply_min}m — "
+            f"longest {worst.waiting_seconds / 60:.0f}m on turn {worst.turn_id}"
+        )
+
+    if not parts:
+        return False, ""
+    return True, "WhatsApp round trip — " + "; ".join(parts)
+
+
+def run_chat_latency_watchdog(db: Session) -> dict:
+    """Entry point for the `chat_latency_watchdog` scheduled task.
+
+    Shares the health_alert_state de-dup machinery with the other conditions, so a
+    sustained incident produces one alert plus one recovery notice rather than one per
+    evaluation tick.
+    """
+    from app.models.user import SystemSetting
+
+    settings = db.query(SystemSetting).first()
+    if settings is not None and settings.health_alerts_enabled is False:
+        return {"skipped": "alerts_disabled"}
+
+    now = _utcnow_naive()
+    is_bad, detail = _eval_chat_latency(db, now, settings)
+
+    row = _get_state(db, "chat_latency")
+    fired = recovered = False
+
+    if is_bad:
+        if _should_fire(row, now):
+            _notify_admins(
+                db, settings,
+                subject="⚠️ System health alert: chat_latency",
+                lines=[detail],
+                is_alert=True,
+                dedup_id=f"alert:chat_latency:{now:%Y-%m-%dT%H:%M:%S}",
+            )
+            _mark_alerting(row, now, detail)
+            fired = True
+    else:
+        if row.state == "alerting":
+            _notify_admins(
+                db, settings,
+                subject="✅ Recovered: chat_latency",
+                lines=["WhatsApp round trip is back within its SLA."],
+                is_alert=False,
+                dedup_id=f"recovered:chat_latency:{now:%Y-%m-%dT%H:%M:%S}",
+            )
+            recovered = True
+        _mark_ok(row, now)
+
+    db.commit()
+    return {"bad": is_bad, "detail": detail, "fired": fired, "recovered": recovered}
 
 
 # ---------------------------------------------------------------------------
@@ -195,10 +347,10 @@ def run_health_daily_digest(db: Session, task=None) -> dict:
     now = _utcnow_naive()
     cutoff = now - timedelta(hours=24)
 
-    email_h = health_mod._email_outbox_health(db, cutoff)
-    imports_h = health_mod._imports_health(db, cutoff)
+    email_h = health_mod._email_outbox_health(db, cutoff, now)
+    imports_h = health_mod._imports_health(db, cutoff, now)
     tasks_h = health_mod._scheduled_tasks_health(db, now)
-    integ_h = health_mod._integrations_health(db, cutoff)
+    integ_h = health_mod._integrations_health(db, cutoff, now)
     audit_h = health_mod._audit_activity_health(db, cutoff, now)
     live_bad, live_detail = _eval_n8n_liveness(db, now)
 

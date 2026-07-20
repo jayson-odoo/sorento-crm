@@ -1,4 +1,7 @@
 """Scheduled tasks API: list, detail, update, run logs, run-now."""
+from datetime import datetime
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -12,9 +15,13 @@ from app.schemas.scheduled_task import (
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, PaginationResponse
 from app.services.scheduled_task_service import (
+    DEFAULT_GRACE_PERCENT,
+    compute_due_at,
+    compute_grace,
     get_task,
     list_tasks,
     list_runs,
+    resolve_grace_percent,
     update_task as update_task_config,
     run_task_now,
 )
@@ -22,8 +29,34 @@ from app.services.scheduled_task_service import (
 router = APIRouter()
 
 
-def _task_to_response(task: ScheduledTask) -> ScheduledTaskResponse:
-    return ScheduledTaskResponse.model_validate(task)
+def _task_to_response(task: ScheduledTask, grace_percent: Optional[int] = None) -> ScheduledTaskResponse:
+    resp = ScheduledTaskResponse.model_validate(task)
+
+    # Derived overdue state, from the same helper the health card and the watchdog
+    # alert use — so the detail page can never disagree with either of them.
+    now = datetime.utcnow()
+    effective_percent = grace_percent if grace_percent is not None else DEFAULT_GRACE_PERCENT
+    meta = getattr(task, "metadata_", None)
+    if isinstance(meta, dict) and "grace_percent" in meta:
+        try:
+            effective_percent = int(meta["grace_percent"])
+        except (TypeError, ValueError):
+            pass
+
+    due_at = compute_due_at(task)
+    grace = compute_grace(task, grace_percent)
+
+    resp.grace_percent = effective_percent
+    resp.grace_seconds = int(grace.total_seconds())
+    resp.due_at = due_at
+
+    start_at = getattr(task, "start_at", None)
+    not_started = isinstance(start_at, datetime) and start_at > now
+    if due_at is not None and not not_started and bool(getattr(task, "enabled", False)):
+        resp.late_by_seconds = max(0, int((now - due_at).total_seconds()))
+        resp.is_overdue = now > due_at + grace
+
+    return resp
 
 
 @router.get("/scheduled-tasks", response_model=ListResponse[ScheduledTaskResponse])
@@ -33,7 +66,8 @@ async def list_scheduled_tasks(
 ):
     """List all scheduled tasks."""
     tasks = list_tasks(db)
-    data = [_task_to_response(t) for t in tasks]
+    grace_percent = resolve_grace_percent(db)  # one settings read for the whole list
+    data = [_task_to_response(t, grace_percent) for t in tasks]
     return ListResponse(
         data=data,
         pagination=PaginationResponse(total=len(data), page=1, limit=len(data) or 50),
@@ -51,7 +85,7 @@ async def get_scheduled_task(
     task = get_task(db, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Scheduled task not found")
-    return _task_to_response(task)
+    return _task_to_response(task, resolve_grace_percent(db))
 
 
 @router.patch("/scheduled-tasks/{task_id}", response_model=ScheduledTaskResponse)
@@ -79,7 +113,7 @@ async def update_scheduled_task(
     )
     if not updated:
         raise HTTPException(status_code=404, detail="Scheduled task not found")
-    return _task_to_response(updated)
+    return _task_to_response(updated, resolve_grace_percent(db))
 
 
 @router.get("/scheduled-tasks/{task_id}/runs", response_model=ListResponse[ScheduledTaskRunResponse])

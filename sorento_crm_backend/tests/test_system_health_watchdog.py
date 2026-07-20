@@ -93,7 +93,16 @@ def _integ_log(db, *, channel, status, created_at=NOW, error_code=None):
     return log
 
 
-def _task(db, *, key, enabled=True, last_status=None, next_run_at=None):
+def _task(
+    db,
+    *,
+    key,
+    enabled=True,
+    last_status=None,
+    next_run_at=None,
+    last_run_at=None,
+    created_at=None,
+):
     t = ScheduledTask(
         id=str(uuid.uuid4()),
         key=key,
@@ -103,6 +112,8 @@ def _task(db, *, key, enabled=True, last_status=None, next_run_at=None):
         interval_value=10,
         last_status=last_status,
         next_run_at=next_run_at,
+        last_run_at=last_run_at,
+        created_at=created_at or (NOW - timedelta(days=1)),
     )
     db.add(t)
     db.commit()
@@ -215,26 +226,66 @@ def test_scheduled_tasks_last_failed_is_bad(db):
 
 
 def test_scheduled_tasks_overdue_is_bad(db):
-    _task(db, key="import_job", last_status="success", next_run_at=NOW - timedelta(minutes=1))
+    """Overdue is now last_run_at + interval + grace, not next_run_at."""
+    _task(
+        db,
+        key="import_job",
+        last_status="success",
+        last_run_at=NOW - timedelta(hours=2),  # 10m interval -> ~1h50m late
+    )
     bad, detail = svc._eval_scheduled_tasks(db, NOW)
     assert bad is True
     assert "overdue" in detail
 
 
+def test_scheduled_tasks_overdue_detail_is_itemized(db):
+    """The old body was a bare list of keys, so the reader couldn't tell which run."""
+    _task(db, key="import_job", last_status="success", last_run_at=NOW - timedelta(hours=2))
+    _, detail = svc._eval_scheduled_tasks(db, NOW)
+    assert "import_job" in detail
+    assert "every 10 minutes" in detail
+    assert "MYT" in detail          # last run rendered in Malaysia wall clock
+    assert "late" in detail         # explicit lateness
+    assert "/system-management/scheduled-tasks/" in detail  # deep link
+
+
 def test_scheduled_tasks_healthy_not_bad(db):
-    _task(db, key="ok_task", last_status="success", next_run_at=NOW + timedelta(minutes=5))
+    _task(db, key="ok_task", last_status="success", last_run_at=NOW - timedelta(minutes=1))
     bad, _ = svc._eval_scheduled_tasks(db, NOW)
     assert bad is False
 
 
-def test_scheduled_tasks_null_next_run_not_overdue(db):
-    _task(db, key="just_seeded", last_status="success", next_run_at=None)
+def test_scheduled_tasks_late_within_grace_not_bad(db):
+    """The standing false alarm: 1m past a 10m interval, inside the 150s grace."""
+    _task(db, key="jittery", last_status="success", last_run_at=NOW - timedelta(minutes=11))
     bad, _ = svc._eval_scheduled_tasks(db, NOW)
     assert bad is False
+
+
+def test_scheduled_tasks_stale_next_run_at_does_not_alert(db):
+    """next_run_at is display-only; a stale value must not resurrect the old bug."""
+    _task(
+        db,
+        key="display_only",
+        last_status="success",
+        last_run_at=NOW - timedelta(minutes=1),
+        next_run_at=NOW - timedelta(days=30),
+    )
+    bad, _ = svc._eval_scheduled_tasks(db, NOW)
+    assert bad is False
+
+
+def test_scheduled_tasks_never_run_is_overdue(db):
+    """Previously excluded via the NULL next_run_at carve-out, hiding stuck tasks."""
+    _task(db, key="just_seeded", last_status=None, last_run_at=None,
+          created_at=NOW - timedelta(days=1))
+    bad, detail = svc._eval_scheduled_tasks(db, NOW)
+    assert bad is True
+    assert "just_seeded" in detail
 
 
 def test_scheduled_tasks_disabled_ignored(db):
-    _task(db, key="off", enabled=False, last_status="failed", next_run_at=NOW - timedelta(hours=1))
+    _task(db, key="off", enabled=False, last_status="failed", last_run_at=NOW - timedelta(hours=1))
     bad, _ = svc._eval_scheduled_tasks(db, NOW)
     assert bad is False
 
@@ -248,8 +299,8 @@ def notify_spy(monkeypatch):
     monkeypatch.setattr(
         svc,
         "_notify_admins",
-        lambda db, settings, *, subject, lines, is_alert, task=None: calls.append(
-            {"subject": subject, "lines": lines, "is_alert": is_alert}
+        lambda db, settings, *, subject, lines, is_alert, task=None, dedup_id=None: calls.append(
+            {"subject": subject, "lines": lines, "is_alert": is_alert, "dedup_id": dedup_id}
         ),
     )
     return calls
@@ -326,15 +377,18 @@ def test_watchdog_skips_when_alerts_disabled(db, notify_spy):
 def _stub_digest_blocks(monkeypatch):
     from app.api.v1.system import health as health_mod
 
-    monkeypatch.setattr(health_mod, "_email_outbox_health", lambda db, cutoff: None)
-    monkeypatch.setattr(health_mod, "_imports_health", lambda db, cutoff: None)
+    monkeypatch.setattr(health_mod, "_email_outbox_health", lambda db, cutoff, window_end: None)
+    monkeypatch.setattr(health_mod, "_imports_health", lambda db, cutoff, window_end: None)
     monkeypatch.setattr(health_mod, "_scheduled_tasks_health", lambda db, now: None)
-    monkeypatch.setattr(health_mod, "_integrations_health", lambda db, cutoff: None)
+    monkeypatch.setattr(health_mod, "_integrations_health", lambda db, cutoff, window_end: None)
     monkeypatch.setattr(health_mod, "_audit_activity_health", lambda db, cutoff, now: None)
 
 
 def test_digest_builds_lines_and_notifies_once(db, notify_spy, monkeypatch):
     _stub_digest_blocks(monkeypatch)
+    # `sent` reflects resolved recipients, so the fallback needs someone to fall back
+    # to: with no users seeded at all the digest reports sent=False.
+    _assign(db, _user(db), _role(db, "superadmin"))
     out = svc.run_health_daily_digest(db)
     assert out["sent"] is True
     assert len(notify_spy) == 1

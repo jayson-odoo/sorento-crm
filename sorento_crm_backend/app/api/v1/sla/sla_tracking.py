@@ -29,7 +29,12 @@ from app.schemas.sla import (
 )
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
-from app.services.error_handler import handle_internal_error, handle_validation_error, handle_not_found
+from app.services.error_handler import (
+    AppException,
+    handle_internal_error,
+    handle_validation_error,
+    handle_not_found,
+)
 from app.models.sla import ConversationSLATracking, ConversationSLAEventLog, SLAPolicyTier
 from app.models.user import User
 from app.services.banner_person_service import (
@@ -793,6 +798,14 @@ async def create_sla_tracking(
         return fresh
     except HTTPException:
         raise
+    except AppException:
+        # A deliberate 4xx (e.g. "Conversation is already responded.") is a refusal,
+        # not an integration failure. `handle_validation_error` returns AppException,
+        # NOT HTTPException, so without this arm it fell through to the generic
+        # handler below and was logged as status="failed" — which is why every
+        # historical sla_management "failure" is one benign idempotency race.
+        # The global handler in app/main.py still serialises it to the caller.
+        raise
     except Exception as e:
         try:
             log_service.create_integration_log(
@@ -1246,6 +1259,17 @@ async def create_sla_tracking_integration(
             "is_update": is_update,
             "already_active": already_active,
         }
+    except HTTPException:
+        raise
+    except AppException:
+        # A deliberate refusal — "Respond contact not found for phone number: X" —
+        # is a 400 about the caller's input, not a server fault. `handle_validation_error`
+        # returns AppException, NOT HTTPException, so the bare arm below re-wrapped it
+        # into 500 / INTERNAL_ERROR and the real message survived only as a string
+        # stuffed inside the 500 body. Same fix as create_/update_/delete_sla_tracking;
+        # this handler is a separate function and was missed.
+        # The global handler in app/main.py still serialises it to the caller.
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -1315,6 +1339,14 @@ async def update_sla_tracking(
         setattr(fresh, "updated_in_request", not already_resolved)
         return fresh
     except HTTPException:
+        raise
+    except AppException:
+        # A deliberate 4xx (e.g. "Conversation is already responded.") is a refusal,
+        # not an integration failure. `handle_validation_error` returns AppException,
+        # NOT HTTPException, so without this arm it fell through to the generic
+        # handler below and was logged as status="failed" — which is why every
+        # historical sla_management "failure" is one benign idempotency race.
+        # The global handler in app/main.py still serialises it to the caller.
         raise
     except Exception as e:
         try:
@@ -1414,6 +1446,14 @@ async def delete_sla_tracking(
         )
         return None
     except HTTPException:
+        raise
+    except AppException:
+        # A deliberate 4xx (e.g. "Conversation is already responded.") is a refusal,
+        # not an integration failure. `handle_validation_error` returns AppException,
+        # NOT HTTPException, so without this arm it fell through to the generic
+        # handler below and was logged as status="failed" — which is why every
+        # historical sla_management "failure" is one benign idempotency race.
+        # The global handler in app/main.py still serialises it to the caller.
         raise
     except Exception as e:
         try:

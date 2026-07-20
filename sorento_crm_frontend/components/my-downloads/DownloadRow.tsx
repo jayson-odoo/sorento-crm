@@ -20,6 +20,7 @@ import { fetchDownloadUrl, type MyDownload } from '@/services/myDownloadsService
 
 export const KIND_LABEL: Record<string, string> = {
   complaint_pdf: 'Complaint PDF',
+  chat_history_export: 'Chat History CSV',
 };
 
 export function StatusBadge({ status }: { status: MyDownload['status'] }) {

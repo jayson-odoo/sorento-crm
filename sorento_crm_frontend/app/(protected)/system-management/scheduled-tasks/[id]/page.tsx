@@ -32,39 +32,13 @@ import {
 } from '../hooks/useScheduledTasks';
 import { ScheduledTaskForm } from '../components/ScheduledTaskForm';
 import { RunLogsTable } from '../components/RunLogsTable';
-import type {
-  ScheduledTask,
-  ScheduledTaskUpdateBody,
-} from '../types/scheduledTask.types';
 import type { FormValues } from '../components/ScheduledTaskForm';
+import { mapFormToUpdateBody } from '../lib/mapFormToUpdateBody';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 
 type DetailPageProps = {
   params: Promise<{ id: string }>;
 };
-
-function mapFormToUpdateBody(
-  values: FormValues,
-  task: ScheduledTask,
-): ScheduledTaskUpdateBody {
-  const body: ScheduledTaskUpdateBody = {
-    name: values.name,
-    description: values.description ?? null,
-    enabled: values.enabled,
-    interval_value: values.interval_value,
-    interval_unit: values.interval_unit,
-    timezone: values.timezone,
-    start_at: values.start_at ? values.start_at.toISOString() : null,
-  };
-  if (task.key === 'user_sla_daily_summary') {
-    body.metadata = {
-      ...(task.metadata || {}),
-      send_in_app: values.send_in_app !== false,
-      send_email: values.send_email !== false,
-    };
-  }
-  return body;
-}
 
 export default function ScheduledTaskDetailPage({ params }: DetailPageProps) {
   const { id } = use(params);

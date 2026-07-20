@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     # documentation/plans/PLAN-uniform-idempotency.md. Scoped to an allowlist of action endpoints
     # in app/middleware/idempotency_middleware.py.
     idempotency_enabled: bool = True            # IDEMPOTENCY_ENABLED
+    # Ops kill switch for external-request telemetry. On by default; exists so a
+    # write-path problem can be shut off without a deploy.
+    api_call_log_enabled: bool = True           # API_CALL_LOG_ENABLED
     idempotency_mode: str = "enforce"           # IDEMPOTENCY_MODE: "enforce" | "observe"
     idempotency_result_ttl: int = 10            # dedupe window seconds (a repeat within this is collapsed)
     idempotency_lock_ttl: int = 60              # in-flight lock seconds (must exceed max handler duration)

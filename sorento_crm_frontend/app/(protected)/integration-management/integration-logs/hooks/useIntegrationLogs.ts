@@ -12,6 +12,8 @@ export function useIntegrationLogs(params: DataGridApiFetchParams & {
   business_id?: string;
   created_from?: string;
   created_to?: string;
+  status_code?: string;
+  error_contains?: string[];
 }) {
   return useQuery<DataGridApiResponse<IntegrationLog>>({
     queryKey: ['integrationLogs', params],

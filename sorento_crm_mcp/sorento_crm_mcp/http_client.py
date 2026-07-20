@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import uuid
 from typing import Any, Mapping, MutableMapping
 
 import httpx
@@ -79,6 +80,20 @@ class CRMClient:
                 rendered = rendered.replace("{" + k + "}", str(v))
         params = {k: v for k, v in (query or {}).items() if v is not None}
         method_upper = method.upper()
+
+        # Attribution for the CRM's api_call_log. Without these the backend
+        # cannot tell MCP from n8n at all — both authenticate with the same
+        # shared EXTERNAL_API_KEY and send nothing else to distinguish them.
+        # correlation_id joins our elapsed_ms below to the server-side span, so
+        # network time and server time can be told apart.
+        correlation_id = str(uuid.uuid4())
+        call_headers = {
+            "X-Source": "mcp",
+            "X-Correlation-Id": correlation_id,
+        }
+        if tool_name:
+            call_headers["X-Tool-Name"] = tool_name
+
         started = time.perf_counter()
         logger.info(
             "CRM request start: tool=%s %s %s path_params=%s params=%s body=%s timeout=%.1fs",
@@ -91,14 +106,17 @@ class CRMClient:
             float(self._settings.request_timeout_seconds),
         )
         try:
-            r = await self._client.request(method_upper, rendered, params=params, json=body)
+            r = await self._client.request(
+                method_upper, rendered, params=params, json=body, headers=call_headers
+            )
         except httpx.RequestError as e:
             err_type = type(e).__name__
             detail = str(e) or repr(e)
             elapsed_ms = (time.perf_counter() - started) * 1000
             logger.warning(
-                "CRM request failed: tool=%s %s %s params=%s body=%s elapsed_ms=%.1f — %s: %s",
+                "CRM request failed: tool=%s corr=%s %s %s params=%s body=%s elapsed_ms=%.1f — %s: %s",
                 tool_name or "-",
+                correlation_id,
                 method_upper,
                 rendered,
                 params,
@@ -120,8 +138,9 @@ class CRMClient:
         body = r.content
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info(
-            "CRM request done: tool=%s %s %s status=%s elapsed_ms=%.1f bytes=%s response_preview=%s",
+            "CRM request done: tool=%s corr=%s %s %s status=%s elapsed_ms=%.1f bytes=%s response_preview=%s",
             tool_name or "-",
+            correlation_id,
             method_upper,
             rendered,
             r.status_code,

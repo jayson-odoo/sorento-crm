@@ -1,9 +1,11 @@
 'use client';
 
+import { Fragment, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -16,16 +18,12 @@ import {
 import { useHealthSummary } from '../hooks/useHealth';
 import type {
   AuditActivityHealth,
+  FailureSignature,
   EmailOutboxHealth,
   ImportsHealth,
   IntegrationsHealth,
   ScheduledTasksHealth,
 } from '../types/health.types';
-
-/** ISO timestamp for "24 hours ago" — used to scope integration drill-downs. */
-function last24hFromIso(): string {
-  return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-}
 
 /**
  * Build the audit-logs drill-down href for a single trend day.
@@ -39,21 +37,66 @@ function auditDayHref(date: string): string {
   return `/system-management/audit-logs?${params.toString()}`;
 }
 
-/** Build the integration-logs drill-down href for a channel's failed rows in the last 24h. */
-function integrationFailedHref(channel: string): string {
+/**
+ * Build the integration-logs drill-down href for a channel's failed rows.
+ *
+ * The window MUST be the one the dashboard is currently showing — this used to
+ * hardcode "last 24h", so widening the picker to 30d produced a link that
+ * landed on a different (smaller) set of rows than the count you clicked.
+ */
+function integrationFailedHref(
+  channel: string,
+  range: { date_from?: string; date_to?: string },
+): string {
   const params = new URLSearchParams({
     integration_channel: channel,
     status: 'failed',
-    created_from: last24hFromIso(),
   });
+  if (range.date_from) params.set('created_from', range.date_from);
+  if (range.date_to) params.set('created_to', range.date_to);
   return `/integration-management/integration-logs?${params.toString()}`;
 }
 
-function MetricValue({ label, value }: { label: string; value: string | number }) {
+/**
+ * Drill-down for ONE cause rather than a whole channel.
+ *
+ * Narrowed by `status_code` and `filter_terms` on top of the channel filter —
+ * a channel mixes several faults, so channel+status alone would land on all of
+ * them. `filter_terms` is used rather than the sample message because the sample
+ * embeds a record id that differs per row; every term is sent and the backend
+ * ANDs them, because one term alone cannot separate two faults sharing a prefix.
+ */
+function failureCauseHref(
+  channel: string,
+  failure: FailureSignature,
+  range: { date_from?: string; date_to?: string },
+): string {
+  const params = new URLSearchParams({
+    integration_channel: channel,
+    status: 'failed',
+  });
+  if (range.date_from) params.set('created_from', range.date_from);
+  if (range.date_to) params.set('created_to', range.date_to);
+  if (failure.status_code !== null) params.set('status_code', String(failure.status_code));
+  for (const term of failure.filter_terms ?? []) params.append('error_contains', term);
+  return `/integration-management/integration-logs?${params.toString()}`;
+}
+
+function MetricValue({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string | number;
+  /** Secondary line, e.g. the all-time figure behind a windowed number. */
+  hint?: string;
+}) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-2xl font-semibold text-foreground">{value}</span>
       <span className="text-xs text-muted-foreground">{label}</span>
+      {hint && <span className="text-[11px] text-muted-foreground/80">{hint}</span>}
     </div>
   );
 }
@@ -81,10 +124,14 @@ function EmailOutboxCard({ data }: { data: EmailOutboxHealth | null }) {
       <CardContent>
         {data ? (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <MetricValue label="Pending" value={data.pending} />
-            <MetricValue label="Sent" value={data.sent} />
-            <MetricValue label="Failed" value={data.failed} />
-            <MetricValue label="Cancelled" value={data.cancelled} />
+            <MetricValue label="Pending" value={data.pending} hint="as of now" />
+            <MetricValue label="Sent" value={data.sent} hint="all time" />
+            <MetricValue
+              label="Failed in window"
+              value={data.failed_in_window ?? data.failed_last_24h}
+              hint={`${data.failed} all time`}
+            />
+            <MetricValue label="Cancelled" value={data.cancelled} hint="all time" />
           </div>
         ) : (
           <SectionEmpty message="Email outbox not available." />
@@ -100,11 +147,17 @@ function ImportsCard({ data }: { data: ImportsHealth | null }) {
     <Card>
       <CardHeader>
         <CardTitle>Imports (24h)</CardTitle>
-        {data && (
+        {data && data.total_last_24h === 0 ? (
+          // A 0% success rate over an empty window reads as a failure. It isn't:
+          // nothing ran.
+          <Badge variant="secondary" appearance="light" size="sm">
+            No activity
+          </Badge>
+        ) : data ? (
           <Badge variant={warn ? 'warning' : 'success'} appearance="light" size="sm">
             {data.success_rate}% success
           </Badge>
-        )}
+        ) : null}
       </CardHeader>
       <CardContent>
         {data ? (
@@ -181,7 +234,14 @@ function ScheduledTasksCard({ data }: { data: ScheduledTasksHealth | null }) {
   );
 }
 
-function IntegrationsCard({ data }: { data: IntegrationsHealth | null }) {
+function IntegrationsCard({
+  data,
+  range,
+}: {
+  data: IntegrationsHealth | null;
+  /** The window the dashboard is showing, so drill-downs match the counts. */
+  range: { date_from?: string; date_to?: string };
+}) {
   const channels = data?.channels ?? [];
   return (
     <Card>
@@ -200,32 +260,85 @@ function IntegrationsCard({ data }: { data: IntegrationsHealth | null }) {
                 <TableHead>Channel</TableHead>
                 <TableHead className="text-right">Success</TableHead>
                 <TableHead className="text-right">Failed</TableHead>
+                <TableHead className="text-right" title="Logged as a failure but expected — e.g. an idempotency race">
+                  Benign
+                </TableHead>
+                <TableHead className="text-right" title="Still in progress (pending/processing)">
+                  In flight
+                </TableHead>
                 <TableHead className="text-right">Total</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {channels.map((c) => (
-                <TableRow key={c.channel}>
-                  <TableCell className="max-w-40 truncate" title={c.channel}>
-                    {c.channel}
-                  </TableCell>
-                  <TableCell className="text-right">{c.success}</TableCell>
-                  <TableCell className="text-right">
-                    {c.failed > 0 ? (
-                      <Link
-                        href={integrationFailedHref(c.channel)}
-                        data-testid={`health-integration-failed-link-${c.channel}`}
-                        className="cursor-pointer font-medium text-destructive underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
-                        title={`View ${c.failed} failed ${c.channel} log(s) from the last 24h`}
-                      >
-                        {c.failed}
-                      </Link>
-                    ) : (
-                      c.failed
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">{c.total}</TableCell>
-                </TableRow>
+                <Fragment key={c.channel}>
+                  <TableRow className={c.top_failures?.length ? 'border-b-0' : undefined}>
+                    <TableCell className="max-w-40 truncate" title={c.channel}>
+                      {c.channel}
+                    </TableCell>
+                    <TableCell className="text-right">{c.success}</TableCell>
+                    <TableCell className="text-right">
+                      {c.failed > 0 ? (
+                        <Link
+                          href={integrationFailedHref(c.channel, range)}
+                          data-testid={`health-integration-failed-link-${c.channel}`}
+                          className="cursor-pointer font-medium text-destructive underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
+                          title={`View ${c.failed} failed ${c.channel} log(s) in the selected window`}
+                        >
+                          {c.failed}
+                        </Link>
+                      ) : (
+                        c.failed
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      {c.benign > 0 ? (
+                        <span title="Expected outcome logged as a failure — not an incident">
+                          {c.benign}
+                        </span>
+                      ) : (
+                        c.benign
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground">{c.in_flight}</TableCell>
+                    <TableCell className="text-right">{c.total}</TableCell>
+                  </TableRow>
+                  {/* The causes, inline. A count tells you something broke; this
+                      tells you what, without a round-trip to the logs page. */}
+                  {(c.top_failures ?? []).length > 0 && (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell colSpan={6} className="pt-0">
+                        <ul
+                          className="space-y-1 pl-2"
+                          data-testid={`health-integration-failures-${c.channel}`}
+                        >
+                          {c.top_failures.map((f) => (
+                            <li key={`${f.status_code ?? 'none'}:${f.signature}`}>
+                              <Link
+                                href={failureCauseHref(c.channel, f, range)}
+                                data-testid={`health-integration-failure-link-${c.channel}-${f.status_code ?? 'none'}`}
+                                title={`View the ${f.count} log(s) for this cause\n\n${f.sample_message}`}
+                                className="flex items-start gap-2 rounded px-1 py-0.5 text-xs text-muted-foreground hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+                              >
+                                <Badge variant="destructive" appearance="light" size="sm">
+                                  {f.count}×
+                                </Badge>
+                                {f.status_code !== null && (
+                                  <Badge variant="secondary" appearance="light" size="sm">
+                                    {f.status_code}
+                                  </Badge>
+                                )}
+                                <span className="min-w-0 flex-1 truncate underline-offset-2 hover:underline">
+                                  {f.sample_message}
+                                </span>
+                              </Link>
+                            </li>
+                          ))}
+                        </ul>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
               ))}
             </TableBody>
           </Table>
@@ -326,29 +439,113 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
   );
 }
 
-export default function HealthDashboard() {
-  const { data, isLoading, isError, error, refetch } = useHealthSummary();
+/** `datetime-local` value for "now minus N hours", in the browser's own zone. */
+function localInput(offsetHours: number): string {
+  const d = new Date(Date.now() - offsetHours * 3600_000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
-  if (isLoading) return <DashboardSkeleton />;
+const RANGE_PRESETS: { label: string; hours: number }[] = [
+  { label: '24h', hours: 24 },
+  { label: '7d', hours: 24 * 7 },
+  { label: '30d', hours: 24 * 30 },
+];
+
+export default function HealthDashboard() {
+  const [dateFrom, setDateFrom] = useState(() => localInput(24));
+  const [dateTo, setDateTo] = useState(() => localInput(0));
+
+  const range = useMemo(
+    () => ({
+      date_from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
+      date_to: dateTo ? new Date(dateTo).toISOString() : undefined,
+    }),
+    [dateFrom, dateTo],
+  );
+
+  const { data, isLoading, isError, error, refetch } = useHealthSummary(range);
+
+  const rangeBar = (
+    <Card className="mb-5">
+      <CardContent className="flex flex-wrap items-end gap-3 pt-6">
+        <div className="space-y-1">
+          <span className="text-xs text-muted-foreground">From</span>
+          <Input
+            type="datetime-local"
+            value={dateFrom}
+            data-testid="health-range-from"
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="w-56"
+          />
+        </div>
+        <div className="space-y-1">
+          <span className="text-xs text-muted-foreground">To</span>
+          <Input
+            type="datetime-local"
+            value={dateTo}
+            data-testid="health-range-to"
+            onChange={(e) => setDateTo(e.target.value)}
+            className="w-56"
+          />
+        </div>
+        <div className="flex gap-1">
+          {RANGE_PRESETS.map((p) => (
+            <Button
+              key={p.label}
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDateFrom(localInput(p.hours));
+                setDateTo(localInput(0));
+              }}
+            >
+              {p.label}
+            </Button>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground basis-full">
+          Filters records by when they were created. Backlog figures (Pending, task
+          counts) are always as of now — a range cannot apply to a live queue.
+        </p>
+      </CardContent>
+    </Card>
+  );
+
+  if (isLoading)
+    return (
+      <>
+        {rangeBar}
+        <DashboardSkeleton />
+      </>
+    );
 
   if (isError || !data) {
     return (
-      <ErrorCard
-        message={error instanceof Error ? error.message : 'Failed to load system health.'}
-        onRetry={() => refetch()}
-      />
+      <>
+        {rangeBar}
+        <ErrorCard
+          message={error instanceof Error ? error.message : 'Failed to load system health.'}
+          onRetry={() => refetch()}
+        />
+      </>
     );
   }
 
   return (
+    <>
+    {rangeBar}
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
       <EmailOutboxCard data={data.email_outbox} />
       <ImportsCard data={data.imports} />
       <ScheduledTasksCard data={data.scheduled_tasks} />
-      <IntegrationsCard data={data.integrations} />
+      <div className="lg:col-span-2">
+        <IntegrationsCard data={data.integrations} range={range} />
+      </div>
       <div className="lg:col-span-2">
         <AuditActivityCard data={data.audit_activity} />
       </div>
     </div>
+    </>
   );
 }

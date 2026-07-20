@@ -9,8 +9,11 @@ export async function getIntegrationLogs(params: DataGridApiFetchParams & {
   business_id?: string;
   created_from?: string;
   created_to?: string;
+  /** Health-dashboard failure drill-down: narrows to one cause. */
+  status_code?: string;
+  error_contains?: string[];
 }): Promise<DataGridApiResponse<IntegrationLog>> {
-  const { pageIndex, pageSize, sorting, searchQuery, status, integration_channel, business_table, business_id, created_from, created_to } = params;
+  const { pageIndex, pageSize, sorting, searchQuery, status, integration_channel, business_table, business_id, created_from, created_to, status_code, error_contains } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -24,7 +27,11 @@ export async function getIntegrationLogs(params: DataGridApiFetchParams & {
     ...(business_id ? { business_id } : {}),
     ...(created_from ? { created_from } : {}),
     ...(created_to ? { created_to } : {}),
+    ...(status_code ? { status_code } : {}),
+
   });
+  // Repeated key, not comma-joined: each term is a separate LIKE the backend ANDs.
+  for (const term of error_contains ?? []) queryParams.append('error_contains', term);
   const response = await apiFetch(`/api/v1/integrations/logs?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch integration logs');
   return response.json();

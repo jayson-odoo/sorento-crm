@@ -7,11 +7,23 @@ import IntegrationLogsList from './IntegrationLogsList';
 // --- next/navigation mock (drills seed filters from the URL) -----------------
 const replace = vi.fn();
 const push = vi.fn();
-let searchParams: Record<string, string> = {};
+let searchParams: Record<string, string | string[]> = {};
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace, push }),
   usePathname: () => '/integration-management/integration-logs',
-  useSearchParams: () => ({ get: (k: string) => searchParams[k] ?? null }),
+  useSearchParams: () => ({
+    // Mirrors URLSearchParams: `get` returns the first value, `getAll` the list.
+    // A fixture may seed either a string or an array (error_contains repeats).
+    get: (k: string) => {
+      const v = searchParams[k];
+      return (Array.isArray(v) ? v[0] : v) ?? null;
+    },
+    getAll: (k: string) => {
+      const v = searchParams[k];
+      if (v == null) return [];
+      return Array.isArray(v) ? v : [v];
+    },
+  }),
 }));
 
 // --- data + mutation hook mocks ---------------------------------------------
@@ -159,5 +171,56 @@ describe('IntegrationLogsList — System Health drill-down seeding', () => {
     expect(args.status).toBeUndefined();
     expect(args.integration_channel).toBeUndefined();
     expect(args.created_from).toBeUndefined();
+  });
+});
+
+describe('IntegrationLogsList — failure-cause drill-down (OBS-S1-19, OBS-S1-20)', () => {
+  it('seeds status_code and error_contains from the URL into the query', () => {
+    searchParams = {
+      status: 'failed',
+      integration_channel: 'respond_io',
+      status_code: '401',
+      error_contains: ["Client error '", "/message'"],
+    };
+    mockData();
+    renderWithClient(<IntegrationLogsList />);
+
+    const args = lastArgs();
+    expect(args.status_code).toBe('401');
+    // AND-ed terms: one alone cannot separate two faults sharing a prefix.
+    expect(args.error_contains).toEqual(["Client error '", "/message'"]);
+  });
+
+  it('shows a banner naming the cause being filtered', () => {
+    // Without this the list is silently narrowed and reads as "only 428 rows
+    // exist", with no on-screen reason and no control in the filter panel.
+    searchParams = { status_code: '401', error_contains: ["Client error '"] };
+    mockData();
+    renderWithClient(<IntegrationLogsList />);
+
+    const banner = screen.getByTestId('integration-logs-cause-filter');
+    expect(banner).toHaveTextContent('HTTP 401');
+    expect(banner).toHaveTextContent("Client error '");
+  });
+
+  it('clearing the cause banner widens back to all failures', () => {
+    searchParams = { status: 'failed', status_code: '401', error_contains: ["Client error '"] };
+    mockData();
+    renderWithClient(<IntegrationLogsList />);
+
+    fireEvent.click(screen.getByTestId('integration-logs-cause-filter-clear'));
+
+    const args = lastArgs();
+    expect(args.status_code).toBeUndefined();
+    expect(args.error_contains).toBeUndefined();
+    // the channel/status drill-down survives — only the cause narrowing is dropped
+    expect(args.status).toBe('failed');
+  });
+
+  it('renders no cause banner when the URL carries no cause filter', () => {
+    searchParams = { status: 'failed' };
+    mockData();
+    renderWithClient(<IntegrationLogsList />);
+    expect(screen.queryByTestId('integration-logs-cause-filter')).not.toBeInTheDocument();
   });
 });

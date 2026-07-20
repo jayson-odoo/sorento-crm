@@ -137,3 +137,49 @@ class DownloadService:
         self.db.commit()
         self.db.refresh(row)
         return row
+
+
+def purge_expired_downloads(db, retention_days: int = 30, now=None) -> dict:
+    """Delete download rows and their stored objects past the retention window.
+
+    Nothing has ever purged `user_downloads`. With `complaint_pdf` as the only producer
+    that went unnoticed; adding a chat-history CSV export — the largest artifact the
+    system produces — makes it a real cost. Applies to every `kind`, not just the new one.
+
+    Storage deletion is best-effort per row: an object that is already gone, or a
+    provider hiccup, must not block reclaiming the rest.
+    """
+    import logging
+    from datetime import datetime, timedelta
+
+    from app.models.download import UserDownload
+    from app.services.storage_router import get_backend
+
+    log = logging.getLogger(__name__)
+    now = now or datetime.utcnow()
+    cutoff = now - timedelta(days=max(1, int(retention_days)))
+
+    rows = db.query(UserDownload).filter(UserDownload.created_at < cutoff).all()
+    deleted = objects_removed = errors = 0
+
+    for row in rows:
+        if row.storage_key:
+            try:
+                get_backend(row.storage_provider or "s3").delete_file(row.storage_key)
+                objects_removed += 1
+            except Exception as e:  # noqa: BLE001 - reclaim the row regardless
+                errors += 1
+                log.warning(
+                    "purge_expired_downloads: could not delete %s (%s): %s",
+                    row.storage_key, row.storage_provider, e,
+                )
+        db.delete(row)
+        deleted += 1
+
+    db.commit()
+    return {
+        "cutoff": cutoff.isoformat(),
+        "rows_deleted": deleted,
+        "objects_removed": objects_removed,
+        "storage_errors": errors,
+    }

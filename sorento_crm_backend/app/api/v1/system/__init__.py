@@ -1,6 +1,7 @@
 """System-level API routes."""
 from fastapi import APIRouter, Depends
 from app.api.v1.system import (
+    api_call_logs,
     health,
     import_logs,
     jobs,
@@ -21,12 +22,14 @@ from app.api.v1.system import (
     email_outbox,
     email_event_configs,
     respond_outbox,
+    chat_history,
 )
 from app.modules.runtime.guards import require_module_enabled_with_api_key
 
 router = APIRouter(dependencies=[Depends(require_module_enabled_with_api_key("base"))])
 
 router.include_router(health.router, tags=["health"])
+router.include_router(api_call_logs.router, tags=["api-call-logs"])
 router.include_router(import_logs.router, tags=["import-logs"])
 router.include_router(jobs.router, tags=["jobs"])
 router.include_router(calendar.router, tags=["calendar"])
@@ -46,3 +49,4 @@ router.include_router(automation.router, tags=["automation"])
 router.include_router(email_outbox.router, tags=["email-outbox"])
 router.include_router(email_event_configs.router, tags=["email-event-configs"])
 router.include_router(respond_outbox.router, tags=["respond-outbox"])
+router.include_router(chat_history.router, tags=["chat-history"])

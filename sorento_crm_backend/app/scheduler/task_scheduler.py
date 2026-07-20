@@ -175,6 +175,53 @@ def _handler_takeover_request_commit(db, task):
     return SlaTakeoverService(db).commit_due()
 
 
+def _handler_chat_message_resolver(db, task):
+    """Fill `respond_ts` / delivery status on chat rows from Respond itself.
+
+    n8n's `sent_at` is its own wall clock, so the round-trip SLA cannot be measured from
+    it. This resolves the authoritative Respond-side timestamp per message id, in
+    batches, so both ends of the measurement share one clock."""
+    from app.services.chat_message_resolver import resolve_pending
+
+    limit = int((task.metadata_ or {}).get("batch_limit", 200)) if task is not None else 200
+    return resolve_pending(db, limit=limit)
+
+
+def _handler_chat_latency_watchdog(db, task):
+    """Evaluate the WhatsApp round-trip p99 and the per-turn hard ceiling."""
+    from app.services.system_health_alert_service import run_chat_latency_watchdog
+
+    return run_chat_latency_watchdog(db)
+
+
+def _handler_user_downloads_purge(db, task):
+    """Delete My Downloads rows and their stored objects past the retention window.
+
+    Nothing purged this table before; chat-history CSV exports make it matter."""
+    from app.models.user import SystemSetting
+    from app.services.download_service import purge_expired_downloads
+
+    settings = db.query(SystemSetting).first()
+    days = int(getattr(settings, "downloads_retention_days", 30) or 30) if settings else 30
+    return purge_expired_downloads(db, retention_days=days)
+
+
+def _handler_api_call_log_prune(db, task):
+    """Two-stage retention: NULL payloads at 30d, DELETE rows at 180d.
+
+    Split because payloads are the bulk of the bytes and the shortest-lived
+    value, while the metadata row stays useful for trend analysis."""
+    from app.models.user import SystemSetting
+    from app.services.api_call_log_service import prune_api_call_log
+
+    settings = db.query(SystemSetting).first()
+    payload_days = int(getattr(settings, "api_call_log_payload_retention_days", 30) or 30) if settings else 30
+    row_days = int(getattr(settings, "api_call_log_row_retention_days", 180) or 180) if settings else 180
+    return prune_api_call_log(
+        db, payload_retention_days=payload_days, row_retention_days=row_days
+    )
+
+
 def _handler_automation_runner(db, task):
     """Heartbeat for automations: dispatch every enabled automation whose next_run_at is due."""
     return AutomationService(db).evaluate_due()
@@ -366,6 +413,10 @@ def register_task_handlers():
     register_handler("n8n_liveness_ping", lambda db, task: run_n8n_liveness_ping(db))
     register_handler("system_health_watchdog", lambda db, task: run_health_watchdog(db))
     register_handler("system_health_daily_digest", lambda db, task: run_health_daily_digest(db, task))
+    register_handler("chat_message_resolver", _handler_chat_message_resolver)
+    register_handler("user_downloads_purge", _handler_user_downloads_purge)
+    register_handler("api_call_log_prune", _handler_api_call_log_prune)
+    register_handler("chat_latency_watchdog", _handler_chat_latency_watchdog)
     register_handler("scm_analytics", _handler_scm_analytics)
     register_handler("scm_reorder_run", _handler_scm_reorder_run)
 
