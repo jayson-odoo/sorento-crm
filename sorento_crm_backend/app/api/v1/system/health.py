@@ -70,6 +70,9 @@ class FailureSignatureOut(BaseModel):
     sample_message: str
     status_code: Optional[int] = None
     count: int = 0
+    # Literal substrings shared by the whole group, AND-ed by the log-list
+    # drill-down. A list, not one substring — see integration_failure_signature.
+    filter_terms: list[str] = []
 
 
 class IntegrationChannelHealth(BaseModel):
@@ -267,6 +270,7 @@ def _integrations_health(db: Session, cutoff: datetime, window_end: datetime) ->
                     sample_message=f.sample_message,
                     status_code=f.status_code,
                     count=f.count,
+                    filter_terms=f.filter_terms,
                 )
                 for f in top_failures(failed_rows.get(key, []))
             ]

@@ -324,6 +324,43 @@ would render as ~758 unique one-off errors and the pattern would be invisible.
    `…/integration-logs?integration_channel=respond_io&status=failed&created_from=2026-06-20T09:05:00.000Z&created_to=2026-07-20T09:05:00.000Z`.
 4. Following it lands on **`1 - 50 of 821`** — the destination count equals the number clicked.
 
+### Per-cause drill-down (OBS-S1-17 .. OBS-S1-20)
+
+Each cause on the card is itself a link, filtered to that cause alone:
+channel + status + range + `status_code` + AND-ed `error_contains` terms. The
+log list shows a banner naming the active cause with a **"Show all failures"**
+escape hatch, because the cause filter has no control in the filter panel.
+
+Live verification, card count vs link count:
+
+| Cause | Card | Link lands on |
+|---|---|---|
+| respond_io 401 | 428 | **428** |
+| respond_io 403 | 330 | **330** |
+| respond_io template removed | 18 | **18** |
+
+Clearing the banner widens 428 → 821 (all failures) and drops the banner. Console clean.
+
+### Defect found: one filter term was not enough (found in the browser, not by tests)
+
+The first cut sent a single `error_contains` — the longest stable substring.
+Clicking the 401 cause showed **433** rows against a card reading **428**.
+
+The 5 extra rows were a genuinely different fault: `401` against
+`/conversation/status` rather than `/message`. The longest stable run of the
+`/message` message stops at the url version digit (`…api.respond.io/v`, because
+`v2`'s digit is a volatile token), and that prefix is shared by both faults. One
+substring simply cannot express the group.
+
+Fix: emit **all** stable segments (min 4 chars, capped at 6) and AND them —
+`/message'` is short but decisive, so the minimum length had to come down from
+12 to 4. `test_card_count_equals_link_count` now seeds exactly this two-endpoint
+shape and asserts card count == link count for every cause, so the invariant is
+pinned in sqlite rather than depending on live data.
+
+Worth noting: every unit test passed on the single-term version. The mismatch was
+only visible by comparing two numbers on two different screens.
+
 ### Defect found while wiring the drill-down
 
 `integrationFailedHref` hardcoded `created_from = now - 24h` while the dashboard could be

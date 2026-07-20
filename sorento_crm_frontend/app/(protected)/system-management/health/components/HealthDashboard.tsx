@@ -18,6 +18,7 @@ import {
 import { useHealthSummary } from '../hooks/useHealth';
 import type {
   AuditActivityHealth,
+  FailureSignature,
   EmailOutboxHealth,
   ImportsHealth,
   IntegrationsHealth,
@@ -53,6 +54,31 @@ function integrationFailedHref(
   });
   if (range.date_from) params.set('created_from', range.date_from);
   if (range.date_to) params.set('created_to', range.date_to);
+  return `/integration-management/integration-logs?${params.toString()}`;
+}
+
+/**
+ * Drill-down for ONE cause rather than a whole channel.
+ *
+ * Narrowed by `status_code` and `filter_terms` on top of the channel filter —
+ * a channel mixes several faults, so channel+status alone would land on all of
+ * them. `filter_terms` is used rather than the sample message because the sample
+ * embeds a record id that differs per row; every term is sent and the backend
+ * ANDs them, because one term alone cannot separate two faults sharing a prefix.
+ */
+function failureCauseHref(
+  channel: string,
+  failure: FailureSignature,
+  range: { date_from?: string; date_to?: string },
+): string {
+  const params = new URLSearchParams({
+    integration_channel: channel,
+    status: 'failed',
+  });
+  if (range.date_from) params.set('created_from', range.date_from);
+  if (range.date_to) params.set('created_to', range.date_to);
+  if (failure.status_code !== null) params.set('status_code', String(failure.status_code));
+  for (const term of failure.filter_terms ?? []) params.append('error_contains', term);
   return `/integration-management/integration-logs?${params.toString()}`;
 }
 
@@ -287,21 +313,25 @@ function IntegrationsCard({
                           data-testid={`health-integration-failures-${c.channel}`}
                         >
                           {c.top_failures.map((f) => (
-                            <li
-                              key={`${f.status_code ?? 'none'}:${f.signature}`}
-                              className="flex items-start gap-2 text-xs text-muted-foreground"
-                            >
-                              <Badge variant="destructive" appearance="light" size="sm">
-                                {f.count}×
-                              </Badge>
-                              {f.status_code !== null && (
-                                <Badge variant="secondary" appearance="light" size="sm">
-                                  {f.status_code}
+                            <li key={`${f.status_code ?? 'none'}:${f.signature}`}>
+                              <Link
+                                href={failureCauseHref(c.channel, f, range)}
+                                data-testid={`health-integration-failure-link-${c.channel}-${f.status_code ?? 'none'}`}
+                                title={`View the ${f.count} log(s) for this cause\n\n${f.sample_message}`}
+                                className="flex items-start gap-2 rounded px-1 py-0.5 text-xs text-muted-foreground hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
+                              >
+                                <Badge variant="destructive" appearance="light" size="sm">
+                                  {f.count}×
                                 </Badge>
-                              )}
-                              <span className="min-w-0 flex-1 truncate" title={f.sample_message}>
-                                {f.sample_message}
-                              </span>
+                                {f.status_code !== null && (
+                                  <Badge variant="secondary" appearance="light" size="sm">
+                                    {f.status_code}
+                                  </Badge>
+                                )}
+                                <span className="min-w-0 flex-1 truncate underline-offset-2 hover:underline">
+                                  {f.sample_message}
+                                </span>
+                              </Link>
                             </li>
                           ))}
                         </ul>

@@ -605,6 +605,8 @@ class IntegrationLogService:
         business_id: Optional[str] = None,
         created_from: Optional[datetime] = None,
         created_to: Optional[datetime] = None,
+        status_code: Optional[int] = None,
+        error_contains: Optional[list] = None,
         exclude_healthcheck: bool = True,
     ):
         """List integration logs with pagination and filtering."""
@@ -630,6 +632,29 @@ class IntegrationLogService:
                 q = q.filter(IntegrationLog.created_at >= created_from)
             if created_to:
                 q = q.filter(IntegrationLog.created_at <= created_to)
+            if status_code is not None:
+                q = q.filter(IntegrationLog.status_code == status_code)
+            if error_contains:
+                # Drill-down from a health-dashboard failure signature. Each term is
+                # a literal stable substring of the group's message (volatile ids
+                # stripped). They are AND-ed: one term alone is not enough to pin a
+                # group, because the longest stable run of one fault can also be a
+                # prefix of a different fault on a neighbouring endpoint.
+                #
+                # Escape LIKE wildcards so a `%` or `_` inside a real error message
+                # cannot widen the match.
+                terms = [error_contains] if isinstance(error_contains, str) else error_contains
+                for raw in terms:
+                    if not raw:
+                        continue
+                    term = (
+                        raw.replace("\\", "\\\\")
+                        .replace("%", "\\%")
+                        .replace("_", "\\_")
+                    )
+                    q = q.filter(
+                        IntegrationLog.error_message.ilike(f"%{term}%", escape="\\")
+                    )
 
             q = q.order_by(IntegrationLog.created_at.desc())
             

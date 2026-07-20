@@ -38,6 +38,16 @@ export interface FailureSignature {
   sample_message: string;
   status_code: number | null;
   count: number;
+  /**
+   * Literal substrings shared by every row in this group, AND-ed by the
+   * drill-down filter. Not `sample_message` — that embeds a record id and would
+   * select the single row it came from.
+   *
+   * A list rather than one substring: the longest single run of one fault can
+   * also be a prefix of a different fault (401 on /message vs /conversation/status),
+   * which returned 433 rows for a group of 428. Empty when nothing stable exists.
+   */
+  filter_terms: string[];
 }
 
 export interface IntegrationChannelHealth {

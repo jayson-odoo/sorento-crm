@@ -157,6 +157,10 @@ already been trained to ignore alert email.
 | **OBS-S1-14** `[BE][T]` | **Given** an httpx failure carrying the boilerplate `"For more information check: <mdn url>"` suffix, **When** displayed, **Then** the suffix is trimmed — unless trimming would blank the message, in which case the original is kept. |
 | **OBS-S1-15** `[FE][E2E]` | **Given** a channel with failures, **When** the card renders, **Then** the **top 3 distinct causes** appear inline beneath the channel row with per-cause count, status code and an **un-masked** sample message — so the cause is readable without navigating away. |
 | **OBS-S1-16** `[FE][E2E]` | **Given** the admin has changed the dashboard date range, **When** they click a Failed count, **Then** the drill-down carries **that** range (not a hardcoded 24h), and the destination row count **equals** the number clicked. |
+| **OBS-S1-17** `[BE][T]` | **Given** a failure signature, **When** its drill-down filter is built, **Then** it emits **every** stable substring of the message (volatile tokens removed), not just the longest — one term cannot separate two faults sharing a prefix. |
+| **OBS-S1-18** `[BE][T]` | **Given** an `error_contains` term containing a LIKE wildcard (`%` or `_`), **When** filtering, **Then** it is escaped and matched literally. |
+| **OBS-S1-19** `[FE][BE][T]` | **Given** a cause rendered on the card, **When** the admin clicks it, **Then** the log list is filtered by channel + status + range + `status_code` + all `error_contains` terms, and lands on **exactly** the count shown on the card. |
+| **OBS-S1-20** `[FE][T]` | **Given** the log list opened with a cause filter, **When** it renders, **Then** a banner names the cause (code + terms) and offers **"Show all failures"** — the cause filter has no control in the filter panel, so without the banner the list would be silently narrowed. |
 
 > Context (not an AC): `respond_io` historical failures are overwhelmingly 401/403 against obvious
 > test contacts (`id:123456`, `55555`, `9999`). Noted so the reviewer does not mistake them for a

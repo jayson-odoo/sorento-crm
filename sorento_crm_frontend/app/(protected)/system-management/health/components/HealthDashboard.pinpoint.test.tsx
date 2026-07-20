@@ -62,18 +62,21 @@ const withFailures: HealthSummary = {
             sample_message: "Client error '401 Unauthorized' for url 'https://api.respond.io/v2/contact/id:55555/message'",
             status_code: 401,
             count: 428,
+            filter_terms: ["Unauthorized' for url 'https://api.respond.io/v", "Client error '", "/contact/id:", "/message'"],
           },
           {
             signature: "client error '<n> forbidden' for url '<url>'",
             sample_message: "Client error '403 Forbidden' for url 'https://api.respond.io/v2/contact/id:437264483/message'",
             status_code: 403,
             count: 330,
+            filter_terms: ["Forbidden' for url 'https://api.respond.io/v", "Client error '", "/contact/id:", "/message'"],
           },
           {
             signature: '<n>h window closed and template send skipped',
             sample_message: "24h window closed and template send skipped for use case 'sla_daily_summary'",
             status_code: null,
             count: 18,
+            filter_terms: ['h window closed and template send skipped for use case'],
           },
         ],
       },
@@ -132,6 +135,70 @@ describe('HealthDashboard: pinpointing an integration failure', () => {
     // count and message rather than an empty badge.
     const list = screen.getByTestId('health-integration-failures-respond_io');
     expect(list).toHaveTextContent('18×');
+  });
+
+  it('each cause links to the log rows for THAT cause, not the whole channel', () => {
+    renderWith(withFailures);
+
+    const url = hrefUrl(
+      screen.getByTestId('health-integration-failure-link-respond_io-401'),
+    );
+    expect(url.pathname).toBe('/integration-management/integration-logs');
+    expect(url.searchParams.get('integration_channel')).toBe('respond_io');
+    expect(url.searchParams.get('status')).toBe('failed');
+    // Without these two the link would land on all 776 failures, not the 428.
+    expect(url.searchParams.get('status_code')).toBe('401');
+    // Every term travels as its own repeated key; the backend ANDs them.
+    const terms = url.searchParams.getAll('error_contains');
+    expect(terms).toContain("Client error '");
+    expect(terms).toContain("/message'");
+  });
+
+  it('a cause with no HTTP code still links, narrowed by text alone', () => {
+    renderWith(withFailures);
+    const url = hrefUrl(
+      screen.getByTestId('health-integration-failure-link-respond_io-none'),
+    );
+    expect(url.searchParams.get('status_code')).toBeNull();
+    expect(url.searchParams.getAll('error_contains')).toContainEqual(
+      expect.stringContaining('window closed'),
+    );
+  });
+
+  it('omits error_contains when no stable substring exists', () => {
+    // An all-volatile message yields no stable terms. Sending an empty term
+    // would be a no-op filter that silently widens the result to the whole
+    // channel — better to omit it and let the status code do the narrowing.
+    renderWith({
+      ...base,
+      integrations: {
+        channels: [
+          {
+            channel: 'respond_io',
+            success: 0,
+            failed: 2,
+            benign: 0,
+            in_flight: 0,
+            total: 2,
+            top_failures: [
+              {
+                signature: '<id> <n>',
+                sample_message: '3f2b1c4e-9a1d-4f7e-88aa-1b2c3d4e5f60 404',
+                status_code: 500,
+                count: 2,
+                filter_terms: [],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const url = hrefUrl(
+      screen.getByTestId('health-integration-failure-link-respond_io-500'),
+    );
+    expect(url.searchParams.getAll('error_contains')).toEqual([]);
+    expect(url.searchParams.get('status_code')).toBe('500');
   });
 
   it('drill-down carries the dashboard window, so the link matches the count', () => {

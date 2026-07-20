@@ -130,5 +130,80 @@ def test_trimming_never_eats_the_leading_error():
     assert top_failures(rows)[0].sample_message == "For more information check: nothing"
 
 
+# --------------------------------------------------------------------------- #
+# filter_text — the substring that selects the whole group in the log list     #
+# --------------------------------------------------------------------------- #
+_RESPOND_401 = (
+    "Client error '401 Unauthorized' for url "
+    "'https://api.respond.io/v2/contact/id:55555/message'"
+)
+# Same channel, same code, same opening prose — different endpoint. This is the
+# real pair that exposed the single-term bug.
+_RESPOND_401_OTHER_ENDPOINT = (
+    "Client error '401 Unauthorized' for url "
+    "'https://api.respond.io/v2/contact/id:55555/conversation/status'"
+)
+
+
+def test_filter_terms_exclude_volatile_tokens():
+    """The sample message embeds a contact id. Filtering the log list on it would
+    return the ONE row it came from, not the 428 rows the count refers to."""
+    terms = top_failures([_Row(status_code=401, error_message=_RESPOND_401, count=428)])[0].filter_terms
+    assert terms
+    assert not any("55555" in t for t in terms)
+
+
+def test_filter_terms_are_literal_substrings_of_the_original():
+    """They are fed to a SQL LIKE, so each must appear verbatim in every row of
+    the group — a normalised form with `<id>` placeholders would match nothing."""
+    terms = top_failures([_Row(status_code=403, error_message=_RESPOND_401)])[0].filter_terms
+    for t in terms:
+        assert t in _RESPOND_401
+
+
+def test_filter_terms_separate_two_faults_sharing_a_long_prefix():
+    """The regression this list exists for.
+
+    The longest single stable run of the /message fault stops at the url version
+    digit ("…api.respond.io/v"), which is ALSO a prefix of the /conversation/status
+    fault. Filtering on that one run returned 433 rows for a group of 428. The
+    full term set must be able to tell them apart.
+    """
+    a = top_failures([_Row(status_code=401, error_message=_RESPOND_401)])[0].filter_terms
+    b = top_failures([_Row(status_code=401, error_message=_RESPOND_401_OTHER_ENDPOINT)])[0].filter_terms
+
+    # AND-ing a's terms must not match b's message, and vice versa.
+    assert not all(t in _RESPOND_401_OTHER_ENDPOINT for t in a)
+    assert not all(t in _RESPOND_401 for t in b)
+
+
+def test_filter_terms_keep_the_long_descriptive_run():
+    rows = [
+        _Row(
+            status_code=None,
+            error_message=(
+                "24h window closed and template send skipped for use case "
+                "'sla_daily_summary': configured template was removed on sync"
+            ),
+            count=18,
+        )
+    ]
+    terms = top_failures(rows)[0].filter_terms
+    assert any("window closed and template send skipped" in t for t in terms)
+
+
+def test_filter_terms_are_capped():
+    """The whole set travels in a URL; an unbounded list would blow it up."""
+    message = " and ".join(f"segment{i} number {i}" for i in range(40))
+    assert len(top_failures([_Row(status_code=500, error_message=message)])[0].filter_terms) <= 6
+
+
+def test_filter_terms_empty_when_message_is_all_volatile():
+    """A message of nothing but ids has no stable substring. Better to emit
+    nothing than a fragment that would over-match unrelated rows."""
+    rows = [_Row(status_code=500, error_message="3f2b1c4e-9a1d-4f7e-88aa-1b2c3d4e5f60 404")]
+    assert top_failures(rows)[0].filter_terms == []
+
+
 def test_empty_input_returns_empty():
     assert top_failures([]) == []
