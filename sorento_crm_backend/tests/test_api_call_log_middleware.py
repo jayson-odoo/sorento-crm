@@ -62,6 +62,10 @@ def client(written, monkeypatch):
     async def internal():
         return {"ok": True}
 
+    @router.get("/api/v1/master-data/products")
+    async def internal_but_mcp_reachable():
+        return {"data": []}
+
     application = FastAPI()
     application.include_router(router)
     application.add_middleware(ApiCallLogMiddleware)
@@ -85,6 +89,27 @@ def test_exactly_one_row_per_request(client, written):
     for _ in range(3):
         client.post("/api/v1/external/brand-new-route", json={"echo": "x"})
     assert len(written) == 3
+
+
+def test_mcp_calls_to_NON_external_routes_are_logged(client, written):
+    """Found in verification, not by a test: MCP tools mostly proxy ordinary CRM
+    endpoints — the products catalogue is /api/v1/master-data/*, not
+    /api/v1/external/*. Scoping on the path prefix alone silently missed most
+    MCP traffic while the client was sending full attribution."""
+    client.get(
+        "/api/v1/master-data/products",
+        headers={"X-Source": "mcp", "X-Tool-Name": "crm_master_products_list"},
+    )
+    assert len(written) == 1
+    assert written[0]["source"] == "mcp"
+    assert written[0]["tool_name"] == "crm_master_products_list"
+
+
+def test_same_route_without_attribution_is_not_logged(client, written):
+    """The UI hits this route constantly. Only self-identifying callers get
+    recorded, or the table fills with its own application's traffic."""
+    client.get("/api/v1/master-data/products")
+    assert written == []
 
 
 def test_internal_routes_are_not_logged(client, written):

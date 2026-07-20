@@ -435,6 +435,28 @@ prepends the cwd and resolves correctly. **Any MCP test run from this worktree m
 `python -m pytest`, not the `pytest` entry point** — otherwise it silently tests the wrong
 tree and a green run means nothing.
 
+### Defect found in regression verification: the middleware missed most MCP traffic
+
+Driving a real tool through the running MCP server (`crm_master_products_list`) returned
+correct data but produced **no log row**. The middleware was scoped to
+`/api/v1/external/*`, and most MCP tools proxy ordinary CRM endpoints — that catalogue is
+`/api/v1/master-data/products`. So the client was sending full attribution and the server
+was discarding it, for the majority of MCP calls.
+
+The plan's wording was "every `/api/v1/external/*` route **and every MCP-originated
+call**"; only the first half had been implemented. Scope is now
+`path.startswith('/api/v1/external') OR X-Source present`. Keyed on the header rather than
+an endpoint allowlist so any self-identifying caller is recorded wherever it lands, while
+internal UI traffic (no `X-Source`) stays out and cannot feed the table its own reads.
+
+Verified live: `/api/v1/master-data/products` now logs `source=mcp
+tool=crm_master_products_list`, with the same correlation id across the 307 redirect and
+the followed 200 — so the redirect hop is visible rather than hidden.
+
+Not caught by any test, because every test asserted the prefix behaviour that was
+implemented. Two tests added: MCP-on-non-external is logged, and the same route without
+attribution is not.
+
 ### Pre-existing failure, not fixed here
 
 `sorento_crm_mcp/tests/test_presenters.py::test_stock_uses_relabelled_location_fields`

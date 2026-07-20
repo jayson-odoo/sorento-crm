@@ -34,6 +34,33 @@ _MAX_BUFFER_BYTES = 262144
 _OVERSIZE_MARKER = "[body too large to log]"
 
 
+def _is_sourced_call(headers: dict) -> bool:
+    """True when the caller identified itself with `X-Source` (today: the MCP client).
+
+    Needed because MCP tools mostly proxy ordinary CRM endpoints — the products
+    catalogue lives at `/api/v1/master-data/*`, not under `/api/v1/external/*`.
+    Scoping on the path prefix alone silently missed most MCP traffic even though
+    the client was sending full attribution.
+
+    Deliberately keyed on the header rather than on an endpoint list: any caller
+    that identifies itself gets recorded, wherever it lands.
+    """
+    for key, value in headers.items():
+        if key.strip().lower() == "x-source" and (value or "").strip():
+            return True
+    return False
+
+
+def _should_log(path: str, headers: dict) -> bool:
+    """External routes, plus any self-identifying (MCP) caller on any route.
+
+    Internal UI traffic sends no `X-Source` and does not sit under the external
+    prefix, so the health dashboard's polling and this table's own reads stay out
+    — logging them would feed the table its own traffic.
+    """
+    return path.startswith(_LOGGED_PREFIX) or _is_sourced_call(headers)
+
+
 def _decode_headers(raw) -> dict:
     out = {}
     for key, value in raw or []:
@@ -53,13 +80,13 @@ class ApiCallLogMiddleware:
             return await self.app(scope, receive, send)
 
         path = scope.get("path", "") or ""
-        if not path.startswith(_LOGGED_PREFIX):
+        method = scope.get("method", "GET")
+        headers = _decode_headers(scope.get("headers"))
+
+        if not _should_log(path, headers):
             return await self.app(scope, receive, send)
         if not getattr(settings, "api_call_log_enabled", True):
             return await self.app(scope, receive, send)
-
-        method = scope.get("method", "GET")
-        headers = _decode_headers(scope.get("headers"))
 
         # ---- buffer the request body so it can be logged AND replayed ----
         body = b""
