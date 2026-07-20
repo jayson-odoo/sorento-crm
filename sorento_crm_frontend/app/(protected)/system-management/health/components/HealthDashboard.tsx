@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -24,11 +24,6 @@ import type {
   ScheduledTasksHealth,
 } from '../types/health.types';
 
-/** ISO timestamp for "24 hours ago" — used to scope integration drill-downs. */
-function last24hFromIso(): string {
-  return new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-}
-
 /**
  * Build the audit-logs drill-down href for a single trend day.
  * The trend date is a UTC calendar day (YYYY-MM-DD); scope the whole UTC day.
@@ -41,13 +36,23 @@ function auditDayHref(date: string): string {
   return `/system-management/audit-logs?${params.toString()}`;
 }
 
-/** Build the integration-logs drill-down href for a channel's failed rows in the last 24h. */
-function integrationFailedHref(channel: string): string {
+/**
+ * Build the integration-logs drill-down href for a channel's failed rows.
+ *
+ * The window MUST be the one the dashboard is currently showing — this used to
+ * hardcode "last 24h", so widening the picker to 30d produced a link that
+ * landed on a different (smaller) set of rows than the count you clicked.
+ */
+function integrationFailedHref(
+  channel: string,
+  range: { date_from?: string; date_to?: string },
+): string {
   const params = new URLSearchParams({
     integration_channel: channel,
     status: 'failed',
-    created_from: last24hFromIso(),
   });
+  if (range.date_from) params.set('created_from', range.date_from);
+  if (range.date_to) params.set('created_to', range.date_to);
   return `/integration-management/integration-logs?${params.toString()}`;
 }
 
@@ -203,7 +208,14 @@ function ScheduledTasksCard({ data }: { data: ScheduledTasksHealth | null }) {
   );
 }
 
-function IntegrationsCard({ data }: { data: IntegrationsHealth | null }) {
+function IntegrationsCard({
+  data,
+  range,
+}: {
+  data: IntegrationsHealth | null;
+  /** The window the dashboard is showing, so drill-downs match the counts. */
+  range: { date_from?: string; date_to?: string };
+}) {
   const channels = data?.channels ?? [];
   return (
     <Card>
@@ -233,37 +245,70 @@ function IntegrationsCard({ data }: { data: IntegrationsHealth | null }) {
             </TableHeader>
             <TableBody>
               {channels.map((c) => (
-                <TableRow key={c.channel}>
-                  <TableCell className="max-w-40 truncate" title={c.channel}>
-                    {c.channel}
-                  </TableCell>
-                  <TableCell className="text-right">{c.success}</TableCell>
-                  <TableCell className="text-right">
-                    {c.failed > 0 ? (
-                      <Link
-                        href={integrationFailedHref(c.channel)}
-                        data-testid={`health-integration-failed-link-${c.channel}`}
-                        className="cursor-pointer font-medium text-destructive underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
-                        title={`View ${c.failed} failed ${c.channel} log(s) from the last 24h`}
-                      >
-                        {c.failed}
-                      </Link>
-                    ) : (
-                      c.failed
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    {c.benign > 0 ? (
-                      <span title="Expected outcome logged as a failure — not an incident">
-                        {c.benign}
-                      </span>
-                    ) : (
-                      c.benign
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">{c.in_flight}</TableCell>
-                  <TableCell className="text-right">{c.total}</TableCell>
-                </TableRow>
+                <Fragment key={c.channel}>
+                  <TableRow className={c.top_failures?.length ? 'border-b-0' : undefined}>
+                    <TableCell className="max-w-40 truncate" title={c.channel}>
+                      {c.channel}
+                    </TableCell>
+                    <TableCell className="text-right">{c.success}</TableCell>
+                    <TableCell className="text-right">
+                      {c.failed > 0 ? (
+                        <Link
+                          href={integrationFailedHref(c.channel, range)}
+                          data-testid={`health-integration-failed-link-${c.channel}`}
+                          className="cursor-pointer font-medium text-destructive underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none"
+                          title={`View ${c.failed} failed ${c.channel} log(s) in the selected window`}
+                        >
+                          {c.failed}
+                        </Link>
+                      ) : (
+                        c.failed
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground">
+                      {c.benign > 0 ? (
+                        <span title="Expected outcome logged as a failure — not an incident">
+                          {c.benign}
+                        </span>
+                      ) : (
+                        c.benign
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right text-muted-foreground">{c.in_flight}</TableCell>
+                    <TableCell className="text-right">{c.total}</TableCell>
+                  </TableRow>
+                  {/* The causes, inline. A count tells you something broke; this
+                      tells you what, without a round-trip to the logs page. */}
+                  {(c.top_failures ?? []).length > 0 && (
+                    <TableRow className="hover:bg-transparent">
+                      <TableCell colSpan={6} className="pt-0">
+                        <ul
+                          className="space-y-1 pl-2"
+                          data-testid={`health-integration-failures-${c.channel}`}
+                        >
+                          {c.top_failures.map((f) => (
+                            <li
+                              key={`${f.status_code ?? 'none'}:${f.signature}`}
+                              className="flex items-start gap-2 text-xs text-muted-foreground"
+                            >
+                              <Badge variant="destructive" appearance="light" size="sm">
+                                {f.count}×
+                              </Badge>
+                              {f.status_code !== null && (
+                                <Badge variant="secondary" appearance="light" size="sm">
+                                  {f.status_code}
+                                </Badge>
+                              )}
+                              <span className="min-w-0 flex-1 truncate" title={f.sample_message}>
+                                {f.sample_message}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </Fragment>
               ))}
             </TableBody>
           </Table>
@@ -399,6 +444,7 @@ export default function HealthDashboard() {
           <Input
             type="datetime-local"
             value={dateFrom}
+            data-testid="health-range-from"
             onChange={(e) => setDateFrom(e.target.value)}
             className="w-56"
           />
@@ -408,6 +454,7 @@ export default function HealthDashboard() {
           <Input
             type="datetime-local"
             value={dateTo}
+            data-testid="health-range-to"
             onChange={(e) => setDateTo(e.target.value)}
             className="w-56"
           />
@@ -463,7 +510,7 @@ export default function HealthDashboard() {
       <ImportsCard data={data.imports} />
       <ScheduledTasksCard data={data.scheduled_tasks} />
       <div className="lg:col-span-2">
-        <IntegrationsCard data={data.integrations} />
+        <IntegrationsCard data={data.integrations} range={range} />
       </div>
       <div className="lg:col-span-2">
         <AuditActivityCard data={data.audit_activity} />

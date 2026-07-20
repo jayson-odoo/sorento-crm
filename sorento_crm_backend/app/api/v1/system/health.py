@@ -22,6 +22,7 @@ from app.services.integration_outcome import (
     OUTCOME_SUCCESS,
     classify,
 )
+from app.services.integration_failure_signature import top_failures
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -64,6 +65,13 @@ class ScheduledTasksHealth(BaseModel):
     last_run_failed: int = 0
 
 
+class FailureSignatureOut(BaseModel):
+    signature: str
+    sample_message: str
+    status_code: Optional[int] = None
+    count: int = 0
+
+
 class IntegrationChannelHealth(BaseModel):
     channel: str
     success: int = 0
@@ -75,6 +83,9 @@ class IntegrationChannelHealth(BaseModel):
     # but rendered in no bucket, which is why a channel could show 0/0 of 13.
     in_flight: int = 0
     total: int = 0
+    # The distinct faults behind `failed`, worst first. A count alone says
+    # something broke; this says what, without leaving the dashboard.
+    top_failures: list[FailureSignatureOut] = []
 
 
 class IntegrationsHealth(BaseModel):
@@ -200,6 +211,7 @@ def _integrations_health(db: Session, cutoff: datetime, window_end: datetime) ->
                 IntegrationLog.integration_channel,
                 IntegrationLog.status,
                 IntegrationLog.error_message,
+                IntegrationLog.status_code,
                 func.count(IntegrationLog.id),
             )
             .filter(
@@ -213,11 +225,16 @@ def _integrations_health(db: Session, cutoff: datetime, window_end: datetime) ->
                 IntegrationLog.integration_channel,
                 IntegrationLog.status,
                 IntegrationLog.error_message,
+                IntegrationLog.status_code,
             )
             .all()
         )
         by_channel: dict[str, IntegrationChannelHealth] = {}
-        for channel, status, error_message, n in rows:
+        # Only rows classified FAILED feed the signature list — a benign row
+        # carries an error_message too, and surfacing it as a "fault to chase"
+        # would undo the classification work upstream.
+        failed_rows: dict[str, list[SimpleNamespace]] = {}
+        for channel, status, error_message, status_code, n in rows:
             key = channel or "unknown"
             entry = by_channel.setdefault(key, IntegrationChannelHealth(channel=key))
             n = int(n)
@@ -233,10 +250,26 @@ def _integrations_health(db: Session, cutoff: datetime, window_end: datetime) ->
                 entry.success += n
             elif outcome == OUTCOME_FAILED:
                 entry.failed += n
+                failed_rows.setdefault(key, []).append(
+                    SimpleNamespace(
+                        status_code=status_code, error_message=error_message, count=n
+                    )
+                )
             elif outcome == OUTCOME_BENIGN:
                 entry.benign += n
             else:
                 entry.in_flight += n
+
+        for key, entry in by_channel.items():
+            entry.top_failures = [
+                FailureSignatureOut(
+                    signature=f.signature,
+                    sample_message=f.sample_message,
+                    status_code=f.status_code,
+                    count=f.count,
+                )
+                for f in top_failures(failed_rows.get(key, []))
+            ]
         channels = sorted(by_channel.values(), key=lambda c: c.channel)
         return IntegrationsHealth(channels=channels)
     except Exception:  # noqa: BLE001

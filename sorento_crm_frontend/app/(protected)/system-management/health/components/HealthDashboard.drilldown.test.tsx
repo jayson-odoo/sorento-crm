@@ -84,8 +84,8 @@ describe('HealthDashboard drill-down: Integration failed counts', () => {
       ...base,
       integrations: {
         channels: [
-          { channel: 'respond_io', success: 8, failed: 3, benign: 0, in_flight: 0, total: 11 },
-          { channel: 'n8n', success: 5, failed: 0, benign: 0, in_flight: 0, total: 5 },
+          { channel: 'respond_io', success: 8, failed: 3, benign: 0, in_flight: 0, total: 11, top_failures: [] },
+          { channel: 'n8n', success: 5, failed: 0, benign: 0, in_flight: 0, total: 5, top_failures: [] },
         ],
       },
     });

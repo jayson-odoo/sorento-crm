@@ -61,7 +61,18 @@ def _stub_all_blocks(monkeypatch):
         lambda db, cutoff, window_end: mod.IntegrationsHealth(
             channels=[
                 mod.IntegrationChannelHealth(
-                    channel="respond_io", success=8, failed=1, total=9
+                    channel="respond_io",
+                    success=8,
+                    failed=1,
+                    total=9,
+                    top_failures=[
+                        mod.FailureSignatureOut(
+                            signature="unauthorized",
+                            sample_message="Unauthorized",
+                            status_code=401,
+                            count=1,
+                        )
+                    ],
                 )
             ]
         ),
@@ -103,6 +114,10 @@ def test_health_summary_returns_all_blocks(client, monkeypatch):
     assert body["imports"]["success_rate"] == 75.0
     assert body["scheduled_tasks"]["overdue"] == 1
     assert body["integrations"]["channels"][0]["channel"] == "respond_io"
+    # The failure count is only actionable if the cause travels with it.
+    fault = body["integrations"]["channels"][0]["top_failures"][0]
+    assert fault["status_code"] == 401
+    assert fault["sample_message"] == "Unauthorized"
     assert body["audit_activity"]["count_last_24h"] == 12
 
 

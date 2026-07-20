@@ -274,3 +274,61 @@ ordering, which would hide the underlying data problem while it still exists.
 `user_downloads_purge` daily task. That purge closes a real pre-existing gap: nothing has
 ever deleted `user_downloads` rows or their stored objects, so `complaint_pdf` artifacts
 have been accumulating since that feature shipped. Applied locally; single head `292`.
+
+---
+
+## S1 — health dashboard: honest counts, then actionable ones
+
+### Results
+
+| UAC | Verdict | Evidence |
+|---|---|---|
+| OBS-S1-01 | PASS | `date_from`/`date_to` on `GET /system/health/summary`; window threaded into the email, imports and integrations builders. |
+| OBS-S1-02..04 | PASS | Four-bucket classification (success / failed / benign / in flight) in `integration_outcome.py`; the buckets sum to the channel total, so `n8n_crm_chat_outbound` no longer renders 0/0 of 13. |
+| OBS-S1-05 | PASS | Writer fixed at 3 sites in `sla_tracking.py`. Root cause: `handle_validation_error` returns `AppException`, **not** `HTTPException`, so a deliberate 4xx refusal fell through the `except Exception` arm and was logged `status="failed"`. |
+| OBS-S1-06/07 | PASS | `_BENIGN_SIGNATURES` is a per-channel allowlist. Live 30d: `sla_management` 46 raw failures → 0 failed / 52 benign, while `respond_io`'s 1029 real 401/403s stayed failures. |
+| OBS-S1-08 | PASS | Email Queue leads with `Failed in window`, all-time demoted to a hint — the 63 that read as a live incident was an all-time total. |
+| OBS-S1-09/10 | PASS | Drill-through link + explicit empty states. |
+| OBS-S1-11/12 | PASS | `integration_failure_signature.py` — uuids, digit runs and ISO timestamps masked; `status_code` participates in the key so 401 and 403 stay separate. |
+| OBS-S1-13 | PASS | Only `OUTCOME_FAILED` rows feed the signature list; benign/in-flight rows are excluded so the classification is not undone at render time. |
+| OBS-S1-14 | PASS | httpx `"For more information check: <mdn url>"` suffix trimmed, with the original kept if trimming would blank the row. |
+| OBS-S1-15 | PASS | Top 3 causes render inline under the channel row with count, status code and un-masked message. |
+| OBS-S1-16 | PASS | Drill-down carries the selected range; verified end-to-end below. |
+
+### Suite results
+
+- `pytest tests/test_integration_failure_signature.py` — 15 passed
+- `pytest tests/test_integration_outcome_classification.py` — 13 passed
+- `pytest tests/test_health_summary.py` — 3 passed
+- `npx vitest run "app/(protected)/system-management"` — 95 passed (20 files)
+
+### Live-data validation (OBS-S1-11..16)
+
+Against the local prod-copy DB over a 30-day window, `respond_io` shows 821 failures.
+Those 821 collapse to **three** distinct causes:
+
+| Count | Code | Cause |
+|---|---|---|
+| 428 | 401 | `Client error '401 Unauthorized' for url '…/contact/id:55555/message'` |
+| 330 | 403 | `Client error '403 Forbidden' for url '…/contact/id:437264483/message'` |
+| 18 | — | `24h window closed and template send skipped for use case 'sla_daily_summary': configured template was removed on sync` |
+
+The digit masking is doing the work here: the contact id varies per row, so without it these
+would render as ~758 unique one-off errors and the pattern would be invisible.
+
+### Browser verification (prod build, `:3002`, reached via the sidebar)
+
+1. Sidebar → System Management → System Health → click **30d**.
+2. The `respond_io` row renders the three causes inline. Console: 0 errors, 0 warnings.
+3. The Failed link resolves to
+   `…/integration-logs?integration_channel=respond_io&status=failed&created_from=2026-06-20T09:05:00.000Z&created_to=2026-07-20T09:05:00.000Z`.
+4. Following it lands on **`1 - 50 of 821`** — the destination count equals the number clicked.
+
+### Defect found while wiring the drill-down
+
+`integrationFailedHref` hardcoded `created_from = now - 24h` while the dashboard could be
+showing 7 or 30 days. Clicking "821 failed" on a 30d view landed on the last 24h — a
+different, much smaller set than the number clicked, with nothing on screen to say so. The
+href now takes the dashboard's own range. This is exactly the class of bug the range picker
+introduced in OBS-S1-01 and it went unnoticed until the count was checked against the
+destination, so the e2e assertion above pins the row count, not just the URL.

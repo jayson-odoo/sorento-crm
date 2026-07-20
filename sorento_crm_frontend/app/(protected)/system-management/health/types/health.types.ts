@@ -30,6 +30,16 @@ export interface ScheduledTasksHealth {
   last_run_failed: number;
 }
 
+/** One distinct fault behind a channel's `failed` count. */
+export interface FailureSignature {
+  /** Normalised grouping key (ids/timestamps masked) — not for display. */
+  signature: string;
+  /** A real un-masked message, safe to paste into a log search. */
+  sample_message: string;
+  status_code: number | null;
+  count: number;
+}
+
 export interface IntegrationChannelHealth {
   channel: string;
   success: number;
@@ -39,6 +49,8 @@ export interface IntegrationChannelHealth {
   /** Still in progress. Previously counted in `total` but rendered nowhere. */
   in_flight: number;
   total: number;
+  /** The distinct faults behind `failed`, worst first (max 3). */
+  top_failures: FailureSignature[];
 }
 
 export interface IntegrationsHealth {

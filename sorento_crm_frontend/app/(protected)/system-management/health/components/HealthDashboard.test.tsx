@@ -17,7 +17,7 @@ const fullSummary: HealthSummary = {
   imports: { total_last_24h: 4, finished_last_24h: 3, failed_last_24h: 1, success_rate: 75 },
   scheduled_tasks: { total: 5, overdue: 1, last_run_failed: 0 },
   integrations: {
-    channels: [{ channel: 'respond_io', success: 8, failed: 1, benign: 0, in_flight: 0, total: 9 }],
+    channels: [{ channel: 'respond_io', success: 8, failed: 1, benign: 0, in_flight: 0, total: 9, top_failures: [] }],
   },
   audit_activity: {
     count_last_24h: 12,
