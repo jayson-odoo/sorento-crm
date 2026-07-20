@@ -36,6 +36,16 @@ from app.services.conversation_variables_service import (
     overwrite_for_contact,
 )
 from app.services.ideation_extractor import IdeateExtraction, extract_ideate_turn
+from app.services.ideation_media_service import (
+    MediaCandidate,
+    MediaClients,
+    build_menu_text,
+    default_clients,
+    extract_media_candidates,
+    fold_captions_into_text,
+    parse_selection,
+    snapshot_and_caption,
+)
 from app.services.respond_workspace_service import RespondWorkspaceService
 
 logger = logging.getLogger(__name__)
@@ -187,19 +197,72 @@ def _graceful(reply_text: str, session_vars: dict[str, Any], *, status: str) -> 
     return {"status": status, "reply_text": reply_text, "session_vars": session_vars}
 
 
+def _default_fetch_recent_messages(db: Session, respond_io_id: str) -> dict[str, Any]:
+    """Pull the contact's recent messages from the Respond List Messages API (DC-3).
+    Best-effort: any transport/auth failure yields an empty payload → no menu, the
+    turn proceeds without lookback (never a 500 on the send sub-flow)."""
+    try:
+        from app.services.integration_service import RespondClient
+
+        client = RespondClient.for_identifier(db, respond_io_id)
+        return client.list_messages(respond_io_id, limit=50)
+    except Exception:  # noqa: BLE001 — lookback is a nicety, never fatal
+        logger.warning("ideation media lookback failed for respond_io_id=%s", respond_io_id, exc_info=True)
+        return {"items": []}
+
+
+def _candidates_to_state(candidates: list[MediaCandidate]) -> list[dict[str, Any]]:
+    return [
+        {
+            "source_msg_id": c.source_msg_id,
+            "kind": c.kind,
+            "url": c.url,
+            "filename": c.filename,
+            "received_at": c.received_at.isoformat() if c.received_at else None,
+        }
+        for c in candidates
+    ]
+
+
+def _state_to_candidates(rows: list[dict[str, Any]]) -> list[MediaCandidate]:
+    out: list[MediaCandidate] = []
+    for r in rows or []:
+        received = r.get("received_at")
+        try:
+            received_dt = datetime.fromisoformat(received) if received else None
+        except (TypeError, ValueError):
+            received_dt = None
+        out.append(
+            MediaCandidate(
+                source_msg_id=str(r.get("source_msg_id") or ""),
+                kind=str(r.get("kind") or "file"),
+                url=str(r.get("url") or ""),
+                filename=r.get("filename"),
+                received_at=received_dt,
+            )
+        )
+    return out
+
+
 def handle_turn(
     db: Session,
     *,
     respond_io_id: str,
     message_text: str,
     submitter_name: str | None = None,
-    audio_attachment_ref: str | None = None,
+    media_selection: str | None = None,
+    is_new_idea: bool | None = None,
+    media_clients: MediaClients | None = None,
+    fetch_recent_messages: Any = None,
 ) -> dict[str, Any]:
     """Handle one `ideate` turn. Returns ``{ status, reply_text, link?, session_vars }``.
 
     ``session_vars`` in the return is always the FULL, updated blob (AC-10).
     ``submitter_name`` is the n8n Respond.io-profile fallback used only when the
-    CRM's respond_contacts row has no name (WS-A)."""
+    CRM's respond_contacts row has no name (WS-A). ``media_selection`` /
+    ``is_new_idea`` drive multi-modal capture (Group F); ``media_clients`` and
+    ``fetch_recent_messages`` are injectable seams (Respond/storage/vision) that
+    default to the real integrations — tests stub them."""
     contact = _get_contact_row(db, respond_io_id)
     session_vars = contact.session_vars
     ideation_state = session_vars.get("ideation") or {}
@@ -207,6 +270,23 @@ def handle_turn(
     prior_status = ideation_state.get("status")
     prior_missing = ideation_state.get("missing") or []
     prior_transcript = ideation_state.get("transcript") or []
+    pending_media = ideation_state.get("pending_media") or None
+    seen_media_ids: set[str] = set(ideation_state.get("seen_media_ids") or [])
+
+    turn_text = (message_text or "").strip()
+
+    # (0) is_new_idea restart (DC-10): the user started a genuinely different idea
+    # while an old draft was open. Discard the old draft, start fresh — reset the
+    # pointer, transcript, and any media state so nothing leaks across ideas.
+    discard_draft_id: str | None = None
+    if is_new_idea and draft_id:
+        discard_draft_id = draft_id
+        draft_id = None
+        prior_status = None
+        prior_missing = []
+        prior_transcript = []
+        pending_media = None
+        seen_media_ids = set()
 
     # Submitter name: the CRM respond_contacts name wins; the n8n-supplied Respond.io
     # profile name is the fallback (WS-A / AC-CAP-1..3). Never "".
@@ -217,7 +297,6 @@ def handle_turn(
     # Cumulative transcript (WS-B / AC-CAP-5..7): append this turn to the running
     # log so the created idea's raw_text is the WHOLE conversation, not just the
     # finalizing "okay i confirm". Bounded to the last _TRANSCRIPT_MAX_TURNS.
-    turn_text = (message_text or "").strip()
     transcript_list = list(prior_transcript)
     if turn_text:
         transcript_list.append(turn_text)
@@ -238,6 +317,42 @@ def handle_turn(
             status="unconfigured",
         )
 
+    # (2) multi-modal capture (Group F). Resolve this turn's media into three things:
+    #   attachments   → durably-captured picked media to send to create_idea
+    #   menu_text      → a media menu to append to this reply (a new lookback)
+    #   pending_media/seen_media_ids → the carried state written back below.
+    clients = media_clients or default_clients()
+    attachments: list[dict[str, Any]] = []
+    menu_text: str | None = None
+
+    if media_selection is not None and pending_media:
+        # (2a) Selection answer (DC-7): resolve positions → snapshot picked media.
+        candidates = _state_to_candidates(pending_media)
+        picked = parse_selection(media_selection, candidates)
+        if picked:
+            attachments = snapshot_and_caption(picked, clients)
+        seen_media_ids |= {c.source_msg_id for c in candidates}
+        pending_media = None
+    elif pending_media:
+        # (2b) A menu was outstanding but this turn is not a selection (no position
+        # reference) → dismiss it (backward-only, low friction) and proceed normally.
+        seen_media_ids |= {str(r.get("source_msg_id") or "") for r in pending_media}
+        pending_media = None
+    else:
+        # (2c) New lookback (DC-1/2/3): pull recent inbound media not already offered.
+        fetcher = fetch_recent_messages or (lambda: _default_fetch_recent_messages(db, respond_io_id))
+        try:
+            payload_msgs = fetcher()
+        except Exception:  # noqa: BLE001 — lookback nicety, never fatal
+            payload_msgs = {"items": []}
+        candidates = [
+            c for c in extract_media_candidates(payload_msgs or {})
+            if c.source_msg_id not in seen_media_ids
+        ]
+        if candidates:
+            pending_media = _candidates_to_state(candidates)
+            menu_text = build_menu_text(candidates)
+
     # (3) brain extraction (D-CONFIRM): structured update, never free text.
     extraction: IdeateExtraction = extract_ideate_turn(
         db,
@@ -247,14 +362,16 @@ def handle_turn(
         field_labels=_IDEATION_FIELD_LABELS,
     )
 
-    # (4) build the §5.1 input deterministically.
+    # (4) build the §5.1 input deterministically. Captions fold into message_text so
+    # create_idea's semantic collection/dedup sees the visual content (DC-6/9).
+    message_for_intake = fold_captions_into_text(message_text, attachments)
     payload: dict[str, Any] = {
         "product_id": product_id,
         # Shared-service CreateIdeaIn field is ``submitter_contact_id`` (accepts a
         # phone E.164 and find-or-creates the contact copy). Sending the legacy key
         # ``submitter`` silently dropped it → every idea's submitter was "Unknown".
         "submitter_contact_id": contact.phone_number,
-        "message_text": message_text,
+        "message_text": message_for_intake,
         "raw_transcript": raw_transcript,
         "fields": extraction.fields,
         "remove": extraction.remove,
@@ -262,10 +379,12 @@ def handle_turn(
     }
     if effective_submitter_name:
         payload["submitter_name"] = effective_submitter_name
-    if audio_attachment_ref:
-        payload["audio_attachment_ref"] = audio_attachment_ref
+    if attachments:
+        payload["attachments"] = attachments
     if draft_id:  # omitted on turn 1 (AC-12); passed through on continuation (AC-13/17)
         payload["draft_id"] = draft_id
+    if discard_draft_id:  # is_new_idea restart (DC-10)
+        payload["discard_draft_id"] = discard_draft_id
 
     try:
         result = call_create_idea(base_url, api_key, payload)
@@ -282,12 +401,17 @@ def handle_turn(
     reply_text = result.get("reply_text") or ""
     link = result.get("link")
 
+    # The media menu is appended to THIS reply (DC-8) — the create_idea echo first,
+    # then "which of these files relate?".
+    if menu_text:
+        reply_text = f"{reply_text}\n\n{menu_text}" if reply_text else menu_text
+
     # (5) read-modify-write: only touch the `ideation` key, preserve all others.
     new_session_vars = dict(session_vars)
     if status_val in _TERMINAL_STATUSES:
         new_session_vars.pop("ideation", None)  # AC-13c/14/15
     else:  # collecting or review → keep the pointer (AC-12/12b/13b)
-        new_session_vars["ideation"] = {
+        ideation_blob: dict[str, Any] = {
             "draft_id": result_draft_id,
             "status": status_val,
             "missing": list(result.get("missing") or []),
@@ -295,6 +419,13 @@ def handle_turn(
             "transcript": transcript_list,
             "updated_at": _now_iso(),
         }
+        # Carry the media state (Group F): the outstanding menu + everything already
+        # offered, so a later turn resolves the selection and we never re-nag.
+        if pending_media:
+            ideation_blob["pending_media"] = pending_media
+        if seen_media_ids:
+            ideation_blob["seen_media_ids"] = sorted(seen_media_ids)
+        new_session_vars["ideation"] = ideation_blob
     overwrite_for_contact(db, respond_io_id=respond_io_id, state=new_session_vars)
 
     response: dict[str, Any] = {
