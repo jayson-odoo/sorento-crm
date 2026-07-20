@@ -487,3 +487,48 @@ hide a broken server behind a 4xx, which would be the opposite regression.
 `sorento_crm_mcp/tests/test_presenters.py::test_stock_uses_relabelled_location_fields`
 fails on the base tree as well (verified by stashing this slice's MCP changes and
 re-running). Unrelated to telemetry; left alone to keep the slice scoped.
+
+
+---
+
+## Final regression verification (pre-PR)
+
+Scoped to the test files covering the 30 backend modules the diff touches, rather than the
+full 262-file suite — a full run costs 40+ min and re-verifies untouched subsystems. Every
+failure was then re-run on a base-commit worktree, because a failing test is only a
+regression if it passes on base.
+
+| Suite | This branch | Base | New regressions |
+|---|---|---|---|
+| Affected backend (29 files) | 300 passed, 2 failed, 4 errors | same names | **0** |
+| SLA (29 files) | 287 passed, 10 failed | same names | **0** |
+| MCP (`python -m pytest`) | 125 passed, 1 failed | same name | **0** |
+| Frontend (full vitest) | 10 failed | 13 failed | **0** |
+
+Pre-existing failures confirmed identical on base, not touched by this branch:
+
+- `test_smart_chat_send.py` — 2 (`422 != 200` on the send route)
+- `test_rbac.py` — 4 errors (`sqlalchemy.exc.OperationalError` in the fixture)
+- `test_conversation_sla_coverage_fanout.py` — 6
+- `test_sla_assignee_team_derivation.py` — 3, `test_sla_due_escalations.py` — 1
+  (all `400 != 200` on "Cannot escalate a resolved conversation SLA tracking" — the tests
+  and the service disagree on the base tree)
+- `sorento_crm_mcp/tests/test_presenters.py` — 1
+- Frontend: portal `LookupSelect` (2), `notification-channels-preference` (3),
+  `settings/system-health` (5)
+
+The frontend count went 13 → 10 because this branch fixes the `created_from` indicator
+assertion; the two `AccessAgentForm` cases are order-dependent flakes in code this branch
+never touches.
+
+### Live end-to-end checks
+
+- `POST /external/chat-history/messages` → 201 with a real row id, and the logged payload
+  matches the sent body — the middleware's buffer-and-replay does not corrupt the n8n
+  ingest path (the single largest regression risk in this branch).
+- MCP server booted and real tools driven over streamable-HTTP: correct data returned.
+- Integration logs (4046 rows unfiltered), scheduled tasks (16, prune task seeded), health
+  (5 cards, 0 overdue), chat history, api-call-log — all reached via the sidebar, console
+  clean.
+- Migrations 289–293, single head, chained onto a committed migration. No new migrations
+  on `main`; merges clean.
