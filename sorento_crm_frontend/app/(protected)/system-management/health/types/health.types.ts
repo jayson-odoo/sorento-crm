@@ -6,10 +6,14 @@
  * (the FE renders an empty state for a null block, never an error).
  */
 export interface EmailOutboxHealth {
+  /** Lifetime ledger totals — NOT windowed. Shown alongside the windowed count so
+   *  an all-time figure never reads as a live incident. */
   pending: number;
   sent: number;
   failed: number;
   cancelled: number;
+  /** Failures whose rows were created inside the selected window. */
+  failed_in_window: number;
   failed_last_24h: number;
 }
 
@@ -30,6 +34,10 @@ export interface IntegrationChannelHealth {
   channel: string;
   success: number;
   failed: number;
+  /** Logged as failed but expected (e.g. an idempotency race). */
+  benign: number;
+  /** Still in progress. Previously counted in `total` but rendered nowhere. */
+  in_flight: number;
   total: number;
 }
 

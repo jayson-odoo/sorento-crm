@@ -14,9 +14,17 @@ UTC for the SQL comparison.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+
+from app.services.integration_outcome import (
+    OUTCOME_BENIGN,
+    OUTCOME_FAILED,
+    OUTCOME_SUCCESS,
+    classify,
+)
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -31,10 +39,15 @@ router = APIRouter()
 # Response schema
 # ---------------------------------------------------------------------------
 class EmailOutboxHealth(BaseModel):
+    # Lifetime totals — these are backlog/ledger figures, not windowed. Rendering
+    # them without the windowed count is what made 63 all-time failures read as a
+    # live incident.
     pending: int = 0
     sent: int = 0
     failed: int = 0
     cancelled: int = 0
+    # Failures whose rows were created inside the selected window.
+    failed_in_window: int = 0
     failed_last_24h: int = 0
 
 
@@ -55,6 +68,12 @@ class IntegrationChannelHealth(BaseModel):
     channel: str
     success: int = 0
     failed: int = 0
+    # Logged as a failure but expected — e.g. an idempotency race. Broken out so a
+    # benign outcome stops reading as an incident.
+    benign: int = 0
+    # Still in progress (pending/processing/queued). Previously counted in `total`
+    # but rendered in no bucket, which is why a channel could show 0/0 of 13.
+    in_flight: int = 0
     total: int = 0
 
 
@@ -84,7 +103,7 @@ class HealthSummaryResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Metric builders — each guarded so a missing model omits its block
 # ---------------------------------------------------------------------------
-def _email_outbox_health(db: Session, cutoff: datetime) -> Optional[EmailOutboxHealth]:
+def _email_outbox_health(db: Session, cutoff: datetime, window_end: datetime) -> Optional[EmailOutboxHealth]:
     try:
         from app.models.email_outbox import EmailOutbox
 
@@ -95,7 +114,11 @@ def _email_outbox_health(db: Session, cutoff: datetime) -> Optional[EmailOutboxH
         )
         failed_24h = (
             db.query(func.count(EmailOutbox.id))
-            .filter(EmailOutbox.status == "failed", EmailOutbox.updated_at >= cutoff)
+            .filter(
+                EmailOutbox.status == "failed",
+                EmailOutbox.created_at >= cutoff,
+                EmailOutbox.created_at <= window_end,
+            )
             .scalar()
             or 0
         )
@@ -104,13 +127,14 @@ def _email_outbox_health(db: Session, cutoff: datetime) -> Optional[EmailOutboxH
             sent=int(counts.get("sent", 0)),
             failed=int(counts.get("failed", 0)),
             cancelled=int(counts.get("cancelled", 0)),
+            failed_in_window=int(failed_24h),
             failed_last_24h=int(failed_24h),
         )
     except Exception:  # noqa: BLE001 — a missing/legacy table omits the block, never 500s
         return None
 
 
-def _imports_health(db: Session, cutoff: datetime) -> Optional[ImportsHealth]:
+def _imports_health(db: Session, cutoff: datetime, window_end: datetime) -> Optional[ImportsHealth]:
     # NOTE: The plan's "import_logs" block wants a `finished` success status and
     # per-user scoping aggregated across users for the admin view. Only ImportJob
     # (`import_jobs`) carries a `finished` status enum + a user_id column; the
@@ -166,7 +190,7 @@ def _scheduled_tasks_health(db: Session, now: datetime) -> Optional[ScheduledTas
         return None
 
 
-def _integrations_health(db: Session, cutoff: datetime) -> Optional[IntegrationsHealth]:
+def _integrations_health(db: Session, cutoff: datetime, window_end: datetime) -> Optional[IntegrationsHealth]:
     try:
         from app.models.integration import IntegrationLog
         from app.services.n8n_liveness_service import HEALTHCHECK_CHANNEL
@@ -175,27 +199,44 @@ def _integrations_health(db: Session, cutoff: datetime) -> Optional[Integrations
             db.query(
                 IntegrationLog.integration_channel,
                 IntegrationLog.status,
+                IntegrationLog.error_message,
                 func.count(IntegrationLog.id),
             )
             .filter(
                 IntegrationLog.created_at >= cutoff,
+                IntegrationLog.created_at <= window_end,
                 # Liveness probes are not a business integration channel — the
                 # watchdog/digest surface their status separately.
                 IntegrationLog.integration_channel != HEALTHCHECK_CHANNEL,
             )
-            .group_by(IntegrationLog.integration_channel, IntegrationLog.status)
+            .group_by(
+                IntegrationLog.integration_channel,
+                IntegrationLog.status,
+                IntegrationLog.error_message,
+            )
             .all()
         )
         by_channel: dict[str, IntegrationChannelHealth] = {}
-        for channel, status, n in rows:
+        for channel, status, error_message, n in rows:
             key = channel or "unknown"
             entry = by_channel.setdefault(key, IntegrationChannelHealth(channel=key))
             n = int(n)
             entry.total += n
-            if status == "success":
+            outcome = classify(
+                SimpleNamespace(
+                    integration_channel=key,
+                    status=status,
+                    error_message=error_message,
+                )
+            )
+            if outcome == OUTCOME_SUCCESS:
                 entry.success += n
-            elif status == "failed":
+            elif outcome == OUTCOME_FAILED:
                 entry.failed += n
+            elif outcome == OUTCOME_BENIGN:
+                entry.benign += n
+            else:
+                entry.in_flight += n
         channels = sorted(by_channel.values(), key=lambda c: c.channel)
         return IntegrationsHealth(channels=channels)
     except Exception:  # noqa: BLE001
@@ -236,6 +277,10 @@ def _audit_activity_health(db: Session, cutoff: datetime, now: datetime) -> Opti
 
 @router.get("/health/summary", response_model=HealthSummaryResponse)
 async def get_health_summary(
+    date_from: Optional[datetime] = Query(
+        None, description="Window start. Filters on each record's created_at."
+    ),
+    date_to: Optional[datetime] = Query(None, description="Window end."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -246,13 +291,23 @@ async def get_health_summary(
     (Audit Logs, Import Logs, Integration Logs) under System Management."""
     now_aware = datetime.now(timezone.utc)
     now = now_aware.replace(tzinfo=None)  # naive UTC to match stored columns
-    cutoff = now - timedelta(hours=24)
+
+    # Windowed metrics honour the caller's range and filter on `created_at`.
+    # Point-in-time figures (queue backlogs, task counts) are always "as of now" —
+    # a date range cannot meaningfully apply to a live backlog, and the response
+    # labels them so the UI can say so rather than implying they were filtered.
+    if date_from is not None or date_to is not None:
+        cutoff = (date_from or (now - timedelta(days=365))).replace(tzinfo=None)
+        window_end = (date_to or now).replace(tzinfo=None)
+    else:
+        cutoff = now - timedelta(hours=24)
+        window_end = now
 
     return HealthSummaryResponse(
         generated_at=now_aware,
-        email_outbox=_email_outbox_health(db, cutoff),
-        imports=_imports_health(db, cutoff),
+        email_outbox=_email_outbox_health(db, cutoff, window_end),
+        imports=_imports_health(db, cutoff, window_end),
         scheduled_tasks=_scheduled_tasks_health(db, now),
-        integrations=_integrations_health(db, cutoff),
+        integrations=_integrations_health(db, cutoff, window_end),
         audit_activity=_audit_activity_health(db, cutoff, now),
     )

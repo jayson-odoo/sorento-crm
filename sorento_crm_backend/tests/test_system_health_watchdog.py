@@ -377,10 +377,10 @@ def test_watchdog_skips_when_alerts_disabled(db, notify_spy):
 def _stub_digest_blocks(monkeypatch):
     from app.api.v1.system import health as health_mod
 
-    monkeypatch.setattr(health_mod, "_email_outbox_health", lambda db, cutoff: None)
-    monkeypatch.setattr(health_mod, "_imports_health", lambda db, cutoff: None)
+    monkeypatch.setattr(health_mod, "_email_outbox_health", lambda db, cutoff, window_end: None)
+    monkeypatch.setattr(health_mod, "_imports_health", lambda db, cutoff, window_end: None)
     monkeypatch.setattr(health_mod, "_scheduled_tasks_health", lambda db, now: None)
-    monkeypatch.setattr(health_mod, "_integrations_health", lambda db, cutoff: None)
+    monkeypatch.setattr(health_mod, "_integrations_health", lambda db, cutoff, window_end: None)
     monkeypatch.setattr(health_mod, "_audit_activity_health", lambda db, cutoff, now: None)
 
 

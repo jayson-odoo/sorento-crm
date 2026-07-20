@@ -1,9 +1,11 @@
 'use client';
 
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -49,11 +51,21 @@ function integrationFailedHref(channel: string): string {
   return `/integration-management/integration-logs?${params.toString()}`;
 }
 
-function MetricValue({ label, value }: { label: string; value: string | number }) {
+function MetricValue({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string | number;
+  /** Secondary line, e.g. the all-time figure behind a windowed number. */
+  hint?: string;
+}) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-2xl font-semibold text-foreground">{value}</span>
       <span className="text-xs text-muted-foreground">{label}</span>
+      {hint && <span className="text-[11px] text-muted-foreground/80">{hint}</span>}
     </div>
   );
 }
@@ -81,10 +93,14 @@ function EmailOutboxCard({ data }: { data: EmailOutboxHealth | null }) {
       <CardContent>
         {data ? (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <MetricValue label="Pending" value={data.pending} />
-            <MetricValue label="Sent" value={data.sent} />
-            <MetricValue label="Failed" value={data.failed} />
-            <MetricValue label="Cancelled" value={data.cancelled} />
+            <MetricValue label="Pending" value={data.pending} hint="as of now" />
+            <MetricValue label="Sent" value={data.sent} hint="all time" />
+            <MetricValue
+              label="Failed in window"
+              value={data.failed_in_window ?? data.failed_last_24h}
+              hint={`${data.failed} all time`}
+            />
+            <MetricValue label="Cancelled" value={data.cancelled} hint="all time" />
           </div>
         ) : (
           <SectionEmpty message="Email outbox not available." />
@@ -100,11 +116,17 @@ function ImportsCard({ data }: { data: ImportsHealth | null }) {
     <Card>
       <CardHeader>
         <CardTitle>Imports (24h)</CardTitle>
-        {data && (
+        {data && data.total_last_24h === 0 ? (
+          // A 0% success rate over an empty window reads as a failure. It isn't:
+          // nothing ran.
+          <Badge variant="secondary" appearance="light" size="sm">
+            No activity
+          </Badge>
+        ) : data ? (
           <Badge variant={warn ? 'warning' : 'success'} appearance="light" size="sm">
             {data.success_rate}% success
           </Badge>
-        )}
+        ) : null}
       </CardHeader>
       <CardContent>
         {data ? (
@@ -200,6 +222,12 @@ function IntegrationsCard({ data }: { data: IntegrationsHealth | null }) {
                 <TableHead>Channel</TableHead>
                 <TableHead className="text-right">Success</TableHead>
                 <TableHead className="text-right">Failed</TableHead>
+                <TableHead className="text-right" title="Logged as a failure but expected — e.g. an idempotency race">
+                  Benign
+                </TableHead>
+                <TableHead className="text-right" title="Still in progress (pending/processing)">
+                  In flight
+                </TableHead>
                 <TableHead className="text-right">Total</TableHead>
               </TableRow>
             </TableHeader>
@@ -224,6 +252,16 @@ function IntegrationsCard({ data }: { data: IntegrationsHealth | null }) {
                       c.failed
                     )}
                   </TableCell>
+                  <TableCell className="text-right text-muted-foreground">
+                    {c.benign > 0 ? (
+                      <span title="Expected outcome logged as a failure — not an incident">
+                        {c.benign}
+                      </span>
+                    ) : (
+                      c.benign
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground">{c.in_flight}</TableCell>
                   <TableCell className="text-right">{c.total}</TableCell>
                 </TableRow>
               ))}
@@ -326,29 +364,111 @@ function ErrorCard({ message, onRetry }: { message: string; onRetry: () => void 
   );
 }
 
-export default function HealthDashboard() {
-  const { data, isLoading, isError, error, refetch } = useHealthSummary();
+/** `datetime-local` value for "now minus N hours", in the browser's own zone. */
+function localInput(offsetHours: number): string {
+  const d = new Date(Date.now() - offsetHours * 3600_000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 
-  if (isLoading) return <DashboardSkeleton />;
+const RANGE_PRESETS: { label: string; hours: number }[] = [
+  { label: '24h', hours: 24 },
+  { label: '7d', hours: 24 * 7 },
+  { label: '30d', hours: 24 * 30 },
+];
+
+export default function HealthDashboard() {
+  const [dateFrom, setDateFrom] = useState(() => localInput(24));
+  const [dateTo, setDateTo] = useState(() => localInput(0));
+
+  const range = useMemo(
+    () => ({
+      date_from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
+      date_to: dateTo ? new Date(dateTo).toISOString() : undefined,
+    }),
+    [dateFrom, dateTo],
+  );
+
+  const { data, isLoading, isError, error, refetch } = useHealthSummary(range);
+
+  const rangeBar = (
+    <Card className="mb-5">
+      <CardContent className="flex flex-wrap items-end gap-3 pt-6">
+        <div className="space-y-1">
+          <span className="text-xs text-muted-foreground">From</span>
+          <Input
+            type="datetime-local"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+            className="w-56"
+          />
+        </div>
+        <div className="space-y-1">
+          <span className="text-xs text-muted-foreground">To</span>
+          <Input
+            type="datetime-local"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+            className="w-56"
+          />
+        </div>
+        <div className="flex gap-1">
+          {RANGE_PRESETS.map((p) => (
+            <Button
+              key={p.label}
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setDateFrom(localInput(p.hours));
+                setDateTo(localInput(0));
+              }}
+            >
+              {p.label}
+            </Button>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground basis-full">
+          Filters records by when they were created. Backlog figures (Pending, task
+          counts) are always as of now — a range cannot apply to a live queue.
+        </p>
+      </CardContent>
+    </Card>
+  );
+
+  if (isLoading)
+    return (
+      <>
+        {rangeBar}
+        <DashboardSkeleton />
+      </>
+    );
 
   if (isError || !data) {
     return (
-      <ErrorCard
-        message={error instanceof Error ? error.message : 'Failed to load system health.'}
-        onRetry={() => refetch()}
-      />
+      <>
+        {rangeBar}
+        <ErrorCard
+          message={error instanceof Error ? error.message : 'Failed to load system health.'}
+          onRetry={() => refetch()}
+        />
+      </>
     );
   }
 
   return (
+    <>
+    {rangeBar}
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
       <EmailOutboxCard data={data.email_outbox} />
       <ImportsCard data={data.imports} />
       <ScheduledTasksCard data={data.scheduled_tasks} />
-      <IntegrationsCard data={data.integrations} />
+      <div className="lg:col-span-2">
+        <IntegrationsCard data={data.integrations} />
+      </div>
       <div className="lg:col-span-2">
         <AuditActivityCard data={data.audit_activity} />
       </div>
     </div>
+    </>
   );
 }

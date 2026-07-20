@@ -347,10 +347,10 @@ def run_health_daily_digest(db: Session, task=None) -> dict:
     now = _utcnow_naive()
     cutoff = now - timedelta(hours=24)
 
-    email_h = health_mod._email_outbox_health(db, cutoff)
-    imports_h = health_mod._imports_health(db, cutoff)
+    email_h = health_mod._email_outbox_health(db, cutoff, now)
+    imports_h = health_mod._imports_health(db, cutoff, now)
     tasks_h = health_mod._scheduled_tasks_health(db, now)
-    integ_h = health_mod._integrations_health(db, cutoff)
+    integ_h = health_mod._integrations_health(db, cutoff, now)
     audit_h = health_mod._audit_activity_health(db, cutoff, now)
     live_bad, live_detail = _eval_n8n_liveness(db, now)
 
