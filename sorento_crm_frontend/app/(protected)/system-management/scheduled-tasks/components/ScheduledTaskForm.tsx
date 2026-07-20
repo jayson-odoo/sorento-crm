@@ -27,6 +27,14 @@ function toLocalInputValue(d: Date | undefined | null): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** Seconds -> the shortest honest phrasing, e.g. 150 -> "2m 30s". */
+function formatGrace(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  const rem = seconds % 60;
+  return rem ? `${mins}m ${rem}s` : `${mins}m`;
+}
+
 const schema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().nullable().optional(),
@@ -37,6 +45,14 @@ const schema = z.object({
   start_at: z.date().nullable().optional(),
   send_in_app: z.boolean().optional(),
   send_email: z.boolean().optional(),
+  // Empty string = "use the global default". NaN is what an `Input type=number`
+  // yields for non-numeric text, so it must be rejected explicitly.
+  grace_percent: z
+    .union([z.literal(''), z.number().int().min(0).max(1000)])
+    .optional()
+    .refine((v) => v === '' || v === undefined || !Number.isNaN(v), {
+      message: 'Enter a whole number, or leave blank to use the global default',
+    }),
 });
 
 export type FormValues = z.infer<typeof schema>;
@@ -72,6 +88,10 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
         task.key === 'user_sla_daily_summary'
           ? (task.metadata?.send_email as boolean | undefined) !== false
           : true,
+      grace_percent:
+        typeof task.metadata?.grace_percent === 'number'
+          ? (task.metadata.grace_percent as number)
+          : '',
     },
   });
 
@@ -89,6 +109,12 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
     setValue(
       'start_at',
       task.start_at ? parseDateTimeAsUTC(task.start_at) ?? undefined : undefined,
+    );
+    setValue(
+      'grace_percent',
+      typeof task.metadata?.grace_percent === 'number'
+        ? (task.metadata.grace_percent as number)
+        : '',
     );
     if (task.key === 'user_sla_daily_summary') {
       setValue(
@@ -185,6 +211,33 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
           <Label htmlFor="timezone">Timezone</Label>
           <Input id="timezone" {...register('timezone')} placeholder="UTC" />
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="grace_percent">Grace period (%)</Label>
+        <Input
+          id="grace_percent"
+          type="number"
+          min={0}
+          max={1000}
+          placeholder={
+            task.grace_percent != null ? `${task.grace_percent} (global default)` : 'Global default'
+          }
+          {...register('grace_percent', {
+            setValueAs: (v) => (v === '' || v === null ? '' : Number(v)),
+          })}
+        />
+        {errors.grace_percent && (
+          <p className="text-sm text-destructive">{errors.grace_percent.message}</p>
+        )}
+        <p className="text-xs text-muted-foreground">
+          How late this task may run before it counts as overdue, as a percentage of its own
+          interval. Clamped to between 1 minute and 30 minutes.
+          {task.grace_seconds != null && (
+            <> Currently <strong>{formatGrace(task.grace_seconds)}</strong>.</>
+          )}{' '}
+          Leave blank to use the global default.
+        </p>
       </div>
 
       <div className="space-y-2">

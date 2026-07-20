@@ -250,6 +250,10 @@ class SystemSetting(Base):
     health_notify_user_ids = Column(ARRAY(String), nullable=True)  # digest + alert recipients (individual users), unioned with role members
     health_integration_fail_threshold = Column(Integer, nullable=False, server_default="10", default=10)  # per-channel 24h failed spike
     health_audit_volume_floor = Column(Integer, nullable=False, server_default="0", default=0)  # 0 = floor alert disabled
+    # Default overdue tolerance for scheduled tasks, as a percentage of each task's own
+    # interval. Clamped to [60s, 30min] so it degrades sanely from a 30s task to a daily
+    # one. Per-task override lives in scheduled_tasks.metadata->>'grace_percent'.
+    health_task_grace_percent = Column(Integer, nullable=False, server_default="25", default=25)
 
     # New products / import: default product_supplier (standard lead time + supplier)
     default_product_supplier_id = Column(

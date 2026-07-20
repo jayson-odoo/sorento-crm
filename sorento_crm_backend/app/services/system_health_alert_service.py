@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.health_alert_state import HealthAlertState
 from app.models.integration import IntegrationLog
 from app.models.scheduled_task import ScheduledTask
@@ -107,24 +109,76 @@ def _eval_failed_integrations(db: Session, now: datetime, threshold: int) -> tup
     return True, f"Integration failure spike — {detail}"
 
 
+_MALAYSIA_TZ = timezone(timedelta(hours=8))
+
+
+def _humanize_delta(delta: timedelta) -> str:
+    """'23m late' beats '0:23:04.184' in an email a human has to act on."""
+    total = int(delta.total_seconds())
+    if total < 60:
+        return f"{total}s"
+    if total < 3600:
+        return f"{total // 60}m"
+    if total < 86400:
+        hours, minutes = divmod(total // 60, 60)
+        return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+    days, hours = divmod(total // 3600, 24)
+    return f"{days}d {hours}h" if hours else f"{days}d"
+
+
+def _humanize_interval(task: ScheduledTask) -> str:
+    value = int(getattr(task, "interval_value", 0) or 0)
+    unit = str(getattr(task, "interval_unit", "") or "")
+    if value == 1 and unit.endswith("s"):
+        unit = unit[:-1]
+    return f"every {value} {unit}".strip()
+
+
+def _malaysia_wall_clock(dt: Optional[datetime]) -> str:
+    """Naive-UTC column -> Malaysia wall clock. Recipients are in MYT."""
+    if not isinstance(dt, datetime):
+        return "never"
+    aware = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+    return aware.astimezone(_MALAYSIA_TZ).strftime("%d/%m/%Y %H:%M") + " MYT"
+
+
+def _task_run_log_url(task: ScheduledTask) -> str:
+    base = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+    path = f"/system-management/scheduled-tasks/{getattr(task, 'id', '')}"
+    return f"{base}{path}" if base else path
+
+
 def _eval_scheduled_tasks(db: Session, now: datetime) -> tuple[bool, str]:
-    """Bad if any enabled task last-run failed or is overdue past its interval."""
+    """Bad if any enabled task last-run failed or is overdue past its grace period.
+
+    Overdue comes from the shared helper in `scheduled_task_service`, the same one
+    the health dashboard card calls, so the two surfaces cannot disagree. The old
+    inline `next_run_at` query is gone: that column is display-only and the
+    scheduler never consulted it, which is why this alert fired on healthy tasks.
+    """
+    from app.services.scheduled_task_service import get_overdue_tasks
+
     tasks = db.query(ScheduledTask).filter(ScheduledTask.enabled.is_(True)).all()
     failed = [t.key for t in tasks if (t.last_status or "") == "failed"]
-    # Match health.py _scheduled_tasks_health "overdue": enabled AND next_run_at past.
-    # (NULL next_run_at is a brief just-seeded window the 10s heartbeat fills; excluding
-    # it avoids a transient false alert while still catching genuinely stuck schedules.)
-    overdue = [
-        t.key for t in tasks
-        if t.next_run_at is not None and t.next_run_at < now
-    ]
+    overdue = get_overdue_tasks(db, now)
+
     if not failed and not overdue:
         return False, ""
+
     parts = []
     if failed:
         parts.append("last-run failed: " + ", ".join(sorted(set(failed))))
     if overdue:
-        parts.append("overdue: " + ", ".join(sorted(set(overdue))))
+        # Itemized: the previous body was a bare list of keys, which told the
+        # reader nothing about which run was late or by how much.
+        items = "\n".join(
+            f"  • {o.task.key} ({o.task.name}) — {_humanize_interval(o.task)}, "
+            f"last run {_malaysia_wall_clock(o.task.last_run_at)}, "
+            f"{_humanize_delta(o.late_by)} late — {_task_run_log_url(o.task)}"
+            for o in overdue
+        )
+        parts.append(f"overdue ({len(overdue)}):\n{items}")
+
     return True, "Scheduled tasks — " + "; ".join(parts)
 
 

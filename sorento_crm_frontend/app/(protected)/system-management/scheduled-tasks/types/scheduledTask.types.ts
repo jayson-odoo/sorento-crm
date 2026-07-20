@@ -15,6 +15,13 @@ export interface ScheduledTask {
   metadata?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
+  /** Derived overdue state, computed server-side from `last_run_at + interval`.
+   *  Note `next_run_at` above is display-only and is NOT what drives these. */
+  due_at: string | null;
+  grace_percent: number | null;
+  grace_seconds: number | null;
+  is_overdue: boolean;
+  late_by_seconds: number | null;
 }
 
 export interface ScheduledTaskRun {

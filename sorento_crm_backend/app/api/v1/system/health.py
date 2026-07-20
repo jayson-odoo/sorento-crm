@@ -144,17 +144,13 @@ def _scheduled_tasks_health(db: Session, now: datetime) -> Optional[ScheduledTas
     try:
         from app.models.scheduled_task import ScheduledTask
 
+        from app.services.scheduled_task_service import get_overdue_tasks
+
         total = db.query(func.count(ScheduledTask.id)).scalar() or 0
-        overdue = (
-            db.query(func.count(ScheduledTask.id))
-            .filter(
-                ScheduledTask.enabled.is_(True),
-                (ScheduledTask.next_run_at.is_(None))
-                | (ScheduledTask.next_run_at < now),
-            )
-            .scalar()
-            or 0
-        )
+        # Shared with the watchdog alert (system_health_alert_service) so the card
+        # and the email can never disagree. Derived from last_run_at + interval,
+        # not from the display-only next_run_at this used to read.
+        overdue = len(get_overdue_tasks(db, now))
         last_run_failed = (
             db.query(func.count(ScheduledTask.id))
             .filter(ScheduledTask.last_status == "failed")

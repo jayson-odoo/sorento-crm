@@ -103,6 +103,129 @@ def get_due_tasks(db: Session) -> list[ScheduledTask]:
     return [t for t in enabled if _is_task_due(t, now)]
 
 
+# --------------------------------------------------------------------------- #
+# Overdue detection — the single source of truth                              #
+#                                                                             #
+# Both the health dashboard card and the watchdog alert email call the helpers #
+# below. They previously each ran their own inline query against `next_run_at`, #
+# a column `compute_next_run` documents as display-only and which the scheduler #
+# never consults — and they disagreed with each other on NULL handling, so the  #
+# card could report overdue tasks the email stayed silent about.               #
+# --------------------------------------------------------------------------- #
+
+DEFAULT_GRACE_PERCENT = 25
+GRACE_FLOOR = timedelta(seconds=60)
+GRACE_CEILING = timedelta(minutes=30)
+
+
+class OverdueTask:
+    """A task past `due_at + grace`, with the numbers an alert needs to be actionable."""
+
+    __slots__ = ("task", "due_at", "grace", "late_by")
+
+    def __init__(self, task: ScheduledTask, due_at: datetime, grace: timedelta, late_by: timedelta):
+        self.task = task
+        self.due_at = due_at
+        self.grace = grace
+        self.late_by = late_by
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<OverdueTask {_task_key(self.task)} late_by={self.late_by}>"
+
+
+def compute_due_at(task: ScheduledTask) -> Optional[datetime]:
+    """When this task's next run was owed, on the scheduler's own terms.
+
+    Mirrors `_is_task_due`: a task is owed a run at `last_run_at + interval`, or
+    immediately if it has never run. Returns None when `start_at` is still in the
+    future, i.e. the task is not yet expected to have run at all.
+    """
+    start_at = getattr(task, "start_at", None)
+    start_at = start_at if isinstance(start_at, datetime) else None
+
+    last_run = getattr(task, "last_run_at", None)
+    if not isinstance(last_run, datetime):
+        # Never ran: owed since it was allowed to start. `created_at` is the
+        # fallback so a task seeded without `start_at` still has an honest
+        # baseline rather than being skipped (the old watchdog dropped these).
+        created_at = getattr(task, "created_at", None)
+        return start_at or (created_at if isinstance(created_at, datetime) else None)
+
+    delta = _interval_delta(
+        str(getattr(task, "interval_unit")),
+        int(getattr(task, "interval_value")),
+    )
+    return last_run + delta
+
+
+def compute_grace(task: ScheduledTask, grace_percent: Optional[int] = None) -> timedelta:
+    """Tolerance before lateness counts as a problem.
+
+    A flat percentage misbehaves at both ends of our interval range — 25% of a
+    daily task is six hours, 25% of a 30s task is under eight seconds — so the
+    result is clamped. A per-task `metadata.grace_percent` overrides the global
+    default for the handful of tasks with unusual timing.
+    """
+    percent = DEFAULT_GRACE_PERCENT if grace_percent is None else grace_percent
+
+    meta = getattr(task, "metadata_", None)
+    if isinstance(meta, dict) and "grace_percent" in meta:
+        try:
+            percent = int(meta["grace_percent"])
+        except (TypeError, ValueError):
+            pass  # malformed override: fall back to the global value
+
+    percent = max(0, percent)
+    interval = _interval_delta(
+        str(getattr(task, "interval_unit")),
+        int(getattr(task, "interval_value")),
+    )
+    grace = timedelta(seconds=interval.total_seconds() * percent / 100)
+    return max(GRACE_FLOOR, min(grace, GRACE_CEILING))
+
+
+def resolve_grace_percent(db: Session) -> int:
+    """Global default grace percentage from system settings."""
+    try:
+        from app.models.user import SystemSetting
+
+        row = db.query(SystemSetting).first()
+        value = getattr(row, "health_task_grace_percent", None) if row else None
+        return int(value) if value is not None else DEFAULT_GRACE_PERCENT
+    except Exception:  # noqa: BLE001 - settings table absent in some test fixtures
+        return DEFAULT_GRACE_PERCENT
+
+
+def get_overdue_tasks(
+    db: Session,
+    now: Optional[datetime] = None,
+    grace_percent: Optional[int] = None,
+) -> list["OverdueTask"]:
+    """Enabled tasks that are late beyond their grace period, worst first."""
+    now = now or datetime.utcnow()
+    if grace_percent is None:
+        grace_percent = resolve_grace_percent(db)
+
+    tasks = db.query(ScheduledTask).filter(ScheduledTask.enabled.is_(True)).all()
+
+    overdue: list[OverdueTask] = []
+    for task in tasks:
+        start_at = getattr(task, "start_at", None)
+        if isinstance(start_at, datetime) and start_at > now:
+            continue  # not expected to have run yet
+
+        due_at = compute_due_at(task)
+        if due_at is None:
+            continue
+
+        grace = compute_grace(task, grace_percent)
+        if now > due_at + grace:
+            overdue.append(OverdueTask(task, due_at, grace, now - due_at))
+
+    overdue.sort(key=lambda o: o.late_by, reverse=True)
+    return overdue
+
+
 def get_task(db: Session, task_id: str) -> Optional[ScheduledTask]:
     """Get a scheduled task by id."""
     return db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
