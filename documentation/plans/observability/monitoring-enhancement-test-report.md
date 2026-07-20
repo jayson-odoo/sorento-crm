@@ -457,6 +457,31 @@ Not caught by any test, because every test asserted the prefix behaviour that wa
 implemented. Two tests added: MCP-on-non-external is logged, and the same route without
 attribution is not.
 
+### Pre-existing bug fixed on request: 500 for a legitimate 400 (OBS-S1-05b)
+
+`create_sla_tracking_integration` — the endpoint n8n calls to open a conversation SLA —
+wrapped every failure in `except Exception: raise handle_internal_error(str(e))`. A
+deliberate refusal ("Respond contact not found for phone number: X") is raised as an
+`AppException` carrying 400 / VALIDATION_ERROR, so it was re-wrapped into
+500 / INTERNAL_ERROR with the real message surviving only as a string stuffed inside the
+500 body. `HTTPException` was flattened the same way, being a subclass of `Exception`.
+
+Same bug class as the three handlers fixed in S1; this one is a separate function and was
+missed. Found by exercising the live endpoint during the regression pass, not by a test.
+
+Held back initially because flipping 500→400 on n8n's hot path could change its error
+branching; the user confirmed n8n does not branch on error code, so it is fixed here.
+
+Internal-regression check before changing it: no test asserts 500 for this endpoint, no
+frontend calls it, and the handler writes an `integration_log` only on the SUCCESS path —
+so the change is confined to the status code and body, with no logging side effects.
+
+Live, after: `400 {"message": "Respond contact not found for phone number: +60100000000",
+"code": "VALIDATION_ERROR"}`. Malformed body still 422.
+
+Five tests added, including `test_a_genuine_crash_is_still_a_500` — the narrowing must not
+hide a broken server behind a 4xx, which would be the opposite regression.
+
 ### Pre-existing failure, not fixed here
 
 `sorento_crm_mcp/tests/test_presenters.py::test_stock_uses_relabelled_location_fields`

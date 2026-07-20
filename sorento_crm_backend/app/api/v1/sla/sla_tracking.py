@@ -1259,6 +1259,17 @@ async def create_sla_tracking_integration(
             "is_update": is_update,
             "already_active": already_active,
         }
+    except HTTPException:
+        raise
+    except AppException:
+        # A deliberate refusal — "Respond contact not found for phone number: X" —
+        # is a 400 about the caller's input, not a server fault. `handle_validation_error`
+        # returns AppException, NOT HTTPException, so the bare arm below re-wrapped it
+        # into 500 / INTERNAL_ERROR and the real message survived only as a string
+        # stuffed inside the 500 body. Same fix as create_/update_/delete_sla_tracking;
+        # this handler is a separate function and was missed.
+        # The global handler in app/main.py still serialises it to the caller.
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 
