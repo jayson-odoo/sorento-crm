@@ -1,19 +1,5 @@
 import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
 import { Container } from '@/components/common/container';
-import {
-  Toolbar,
-  ToolbarActions,
-  ToolbarHeading,
-  ToolbarTitle,
-} from '@/components/common/toolbar';
 import { IdeationEmbed } from '@/components/ideas/IdeationEmbed';
 
 export const metadata: Metadata = {
@@ -22,31 +8,11 @@ export const metadata: Metadata = {
 };
 
 export default function IdeasBoardPage() {
+  // No outer toolbar/breadcrumb — the embedded Ideas workspace renders its own
+  // heading; a second "Ideas" title above the iframe was redundant.
   return (
-    <>
-      <Container>
-        <Toolbar>
-          <ToolbarHeading>
-            <ToolbarTitle>Ideas</ToolbarTitle>
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink href="/">Home</BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Ideas</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </ToolbarHeading>
-          <ToolbarActions></ToolbarActions>
-        </Toolbar>
-      </Container>
-
-      <Container>
-        <IdeationEmbed title="Ideas board" />
-      </Container>
-    </>
+    <Container width="fluid">
+      <IdeationEmbed title="Ideas board" />
+    </Container>
   );
 }

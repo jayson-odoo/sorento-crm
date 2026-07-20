@@ -46,6 +46,10 @@ _TIMEOUT_SECONDS = 15
 # create_idea statuses that CLOSE the draft → clear the pointer (§5.2).
 _TERMINAL_STATUSES = {"complete", "duplicate"}
 
+# Cap the accumulated transcript (WS-B) so a very long conversation can't bloat
+# session_vars / the create_idea payload. Keeps the most recent turns.
+_TRANSCRIPT_MAX_TURNS = 50
+
 # Intake answer keys the brain extracts into (mirrors the shared-service intake
 # target_schema — problem / proposed_solution / impact / department; no module or
 # who — business submitters don't know the module, and the submitter identifies who).
@@ -64,11 +68,28 @@ class IdeationServiceError(Exception):
 
 
 class _ContactState:
-    __slots__ = ("phone_number", "session_vars")
+    __slots__ = ("phone_number", "session_vars", "display_name")
 
-    def __init__(self, phone_number: str, session_vars: dict[str, Any]):
+    def __init__(
+        self,
+        phone_number: str,
+        session_vars: dict[str, Any],
+        display_name: str | None = None,
+    ):
         self.phone_number = phone_number
         self.session_vars = session_vars
+        # Human name from respond_contacts (WS-A). None when the CRM has no name
+        # for this contact → handle_turn falls back to the n8n-supplied name.
+        self.display_name = display_name
+
+
+def _derive_display_name(name: Any, first_name: Any, last_name: Any) -> str | None:
+    """Prefer the full ``name``; else join first+last; else None (never ""). WS-A."""
+    full = (name or "").strip()
+    if full:
+        return full
+    parts = " ".join(p for p in ((first_name or "").strip(), (last_name or "").strip()) if p)
+    return parts or None
 
 
 def _now_iso() -> str:
@@ -80,8 +101,8 @@ def _get_contact_row(db: Session, respond_io_id: str) -> _ContactState:
     404 when no contact matches (n8n only routes ideate turns for known contacts)."""
     row = db.execute(
         text(
-            "SELECT phone_number, session_vars FROM respond_contacts "
-            "WHERE respond_io_id = :cid"
+            "SELECT phone_number, name, first_name, last_name, session_vars "
+            "FROM respond_contacts WHERE respond_io_id = :cid"
         ),
         {"cid": respond_io_id},
     ).first()
@@ -90,7 +111,11 @@ def _get_contact_row(db: Session, respond_io_id: str) -> _ContactState:
             status_code=http_status.HTTP_404_NOT_FOUND,
             detail=f"Respond contact not found for respond_io_id={respond_io_id!r}.",
         )
-    return _ContactState(row.phone_number, _coerce_to_dict(row.session_vars))
+    return _ContactState(
+        row.phone_number,
+        _coerce_to_dict(row.session_vars),
+        display_name=_derive_display_name(row.name, row.first_name, row.last_name),
+    )
 
 
 class _IdeationConfig:
@@ -167,17 +192,37 @@ def handle_turn(
     *,
     respond_io_id: str,
     message_text: str,
+    submitter_name: str | None = None,
     audio_attachment_ref: str | None = None,
 ) -> dict[str, Any]:
     """Handle one `ideate` turn. Returns ``{ status, reply_text, link?, session_vars }``.
 
-    ``session_vars`` in the return is always the FULL, updated blob (AC-10)."""
+    ``session_vars`` in the return is always the FULL, updated blob (AC-10).
+    ``submitter_name`` is the n8n Respond.io-profile fallback used only when the
+    CRM's respond_contacts row has no name (WS-A)."""
     contact = _get_contact_row(db, respond_io_id)
     session_vars = contact.session_vars
     ideation_state = session_vars.get("ideation") or {}
     draft_id = ideation_state.get("draft_id")
     prior_status = ideation_state.get("status")
     prior_missing = ideation_state.get("missing") or []
+    prior_transcript = ideation_state.get("transcript") or []
+
+    # Submitter name: the CRM respond_contacts name wins; the n8n-supplied Respond.io
+    # profile name is the fallback (WS-A / AC-CAP-1..3). Never "".
+    effective_submitter_name = (
+        contact.display_name or (submitter_name or "").strip() or None
+    )
+
+    # Cumulative transcript (WS-B / AC-CAP-5..7): append this turn to the running
+    # log so the created idea's raw_text is the WHOLE conversation, not just the
+    # finalizing "okay i confirm". Bounded to the last _TRANSCRIPT_MAX_TURNS.
+    turn_text = (message_text or "").strip()
+    transcript_list = list(prior_transcript)
+    if turn_text:
+        transcript_list.append(turn_text)
+    transcript_list = transcript_list[-_TRANSCRIPT_MAX_TURNS:]
+    raw_transcript = "\n".join(transcript_list)
 
     # (1) fail-closed: no product binding or dormant config → no create_idea call.
     #     Config is DB-driven (default workspace row); .env is only a fallback.
@@ -205,12 +250,18 @@ def handle_turn(
     # (4) build the §5.1 input deterministically.
     payload: dict[str, Any] = {
         "product_id": product_id,
-        "submitter": contact.phone_number,
+        # Shared-service CreateIdeaIn field is ``submitter_contact_id`` (accepts a
+        # phone E.164 and find-or-creates the contact copy). Sending the legacy key
+        # ``submitter`` silently dropped it → every idea's submitter was "Unknown".
+        "submitter_contact_id": contact.phone_number,
         "message_text": message_text,
+        "raw_transcript": raw_transcript,
         "fields": extraction.fields,
         "remove": extraction.remove,
         "confirm": extraction.confirm,
     }
+    if effective_submitter_name:
+        payload["submitter_name"] = effective_submitter_name
     if audio_attachment_ref:
         payload["audio_attachment_ref"] = audio_attachment_ref
     if draft_id:  # omitted on turn 1 (AC-12); passed through on continuation (AC-13/17)
@@ -240,6 +291,8 @@ def handle_turn(
             "draft_id": result_draft_id,
             "status": status_val,
             "missing": list(result.get("missing") or []),
+            # Persist the running transcript so the NEXT turn appends to it (WS-B).
+            "transcript": transcript_list,
             "updated_at": _now_iso(),
         }
     overwrite_for_contact(db, respond_io_id=respond_io_id, state=new_session_vars)

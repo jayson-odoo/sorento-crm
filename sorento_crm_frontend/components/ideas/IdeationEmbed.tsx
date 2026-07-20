@@ -1,9 +1,18 @@
 'use client';
 
 import { AlertCircle } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 import { ContentLoader } from '@/components/common/content-loader';
 import { Button } from '@/components/ui/button';
 import { useIdeationEmbedSession } from '@/hooks/useIdeationEmbedSession';
+
+function safeOrigin(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
 
 interface IdeationEmbedProps {
   /** Opaque idea id for the detail view; omit for the board. Never rendered as visible text (AC-41). */
@@ -20,6 +29,37 @@ interface IdeationEmbedProps {
 export function IdeationEmbed({ ideaId, title }: IdeationEmbedProps) {
   const { data, isPending, isError, refetch, isFetching } =
     useIdeationEmbedSession(ideaId);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const embedOrigin = data ? safeOrigin(data.iframe_url) : null;
+
+  // Silent re-mint (WS-C3 / AC-CAP-12): the embedded grid posts a refresh request
+  // when its short-lived embed token expires mid-session. The HOST re-runs the
+  // /embed/session handshake (refetch) and posts the fresh token back into the
+  // iframe so interactive editing never breaks. Origin-checked both ways — the
+  // host stays the gate for who may mint (5-min token unchanged).
+  useEffect(() => {
+    if (!embedOrigin) return;
+    async function onMessage(event: MessageEvent) {
+      if (event.origin !== embedOrigin) return;
+      if (
+        !event.data ||
+        event.data.type !== 'ideation-embed:token-refresh-request'
+      ) {
+        return;
+      }
+      const res = await refetch();
+      const token = res.data?.token;
+      const target = iframeRef.current?.contentWindow;
+      if (token && target) {
+        target.postMessage(
+          { type: 'ideation-embed:token', token },
+          embedOrigin,
+        );
+      }
+    }
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [embedOrigin, refetch]);
 
   if (isPending) {
     return (
@@ -54,6 +94,7 @@ export function IdeationEmbed({ ideaId, title }: IdeationEmbedProps) {
 
   return (
     <iframe
+      ref={iframeRef}
       title={title}
       src={src}
       className="h-[calc(100vh-8rem)] min-h-[70vh] w-full rounded-lg border border-border bg-background"

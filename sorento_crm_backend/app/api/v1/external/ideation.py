@@ -46,6 +46,7 @@ def ideation_turn(
             db,
             respond_io_id=payload.respond_io_id,
             message_text=payload.message_text,
+            submitter_name=payload.submitter_name,
             audio_attachment_ref=payload.audio_attachment_ref,
         )
         response_payload = IdeationTurnResponse(**result)
