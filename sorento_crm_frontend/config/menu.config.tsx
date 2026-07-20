@@ -767,6 +767,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'system.chat_history.view',
       },
       {
+        title: 'API Call Log',
+        path: '/system-management/api-call-logs',
+        permission: 'system_management.api_call_log.view',
+      },
+      {
         title: 'Email Event Configs',
         path: '/system-management/email-event-configs',
         permission: 'system.email_event_configs.view',
@@ -1618,6 +1623,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Chat History',
         path: '/system-management/chat-history',
         permission: 'system.chat_history.view',
+      },
+      {
+        title: 'API Call Log',
+        path: '/system-management/api-call-logs',
+        permission: 'system_management.api_call_log.view',
       },
       {
         title: 'Email Event Configs',

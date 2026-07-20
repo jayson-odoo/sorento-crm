@@ -25,6 +25,7 @@ from app.api.v1 import api_router
 from app.services.error_handler import AppException
 from app.middleware.logging_middleware import LoggingMiddleware
 from app.middleware.idempotency_middleware import IdempotencyMiddleware
+from app.middleware.api_call_log_middleware import ApiCallLogMiddleware
 
 # Configure logging
 logging.basicConfig(
@@ -52,6 +53,9 @@ app.add_middleware(LoggingMiddleware)
 # proxy retry, two tabs) so harmful side effects (SLA assignment, Respond sends,
 # status transitions) execute exactly once. See app/middleware/idempotency_middleware.py.
 app.add_middleware(IdempotencyMiddleware)
+# Telemetry for /api/v1/external/* — total coverage by construction, so a new
+# external route is logged the day it is added rather than opt-in per endpoint.
+app.add_middleware(ApiCallLogMiddleware)
 
 # Compress JSON responses. List endpoints (products, attachments) return 50-70KB
 # of JSON per page; uncompressed transfer was ~1s of "content download" on prod.

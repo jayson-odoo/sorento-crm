@@ -269,6 +269,10 @@ class SystemSetting(Base):
     # My Downloads retention. Nothing purged this table before chat-history CSV exports
     # made the storage cost real; the purge applies to every download kind.
     downloads_retention_days = Column(Integer, nullable=False, server_default="30", default=30)
+    # api_call_log retention, two-stage: payloads are the bulk of the bytes and
+    # the shortest-lived value, the metadata row stays useful much longer.
+    api_call_log_payload_retention_days = Column(Integer, nullable=False, server_default="30", default=30)
+    api_call_log_row_retention_days = Column(Integer, nullable=False, server_default="180", default=180)
 
     # New products / import: default product_supplier (standard lead time + supplier)
     default_product_supplier_id = Column(

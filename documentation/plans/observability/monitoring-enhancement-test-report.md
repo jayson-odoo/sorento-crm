@@ -369,3 +369,74 @@ different, much smaller set than the number clicked, with nothing on screen to s
 href now takes the dashboard's own range. This is exactly the class of bug the range picker
 introduced in OBS-S1-01 and it went unnoticed until the count was checked against the
 destination, so the e2e assertion above pins the row count, not just the URL.
+
+---
+
+## S3 — `api_call_log` request telemetry
+
+### Results
+
+| UAC | Verdict | Evidence |
+|---|---|---|
+| OBS-S3-01 | PASS | Migration 293: `api_call_log` + 4 indexes, two `system_settings` retention columns, prune task seed, view permission. Single head. |
+| OBS-S3-02 | PASS | `ApiCallLogMiddleware` (pure ASGI) writes exactly one row per request, synchronously. |
+| OBS-S3-03 | PASS | `test_a_brand_new_route_is_logged` drives a route the middleware has never seen, with no per-endpoint code. |
+| OBS-S3-04 | PASS | Key-based redaction (recursive, case-insensitive) + 8KB truncation. Redaction runs **before** truncation. |
+| OBS-S3-05 | PASS | `X-Source` / `X-Tool-Name` / `X-Correlation-Id` recorded; live row shows `source=mcp tool=stock_balance corr=verify-s3-001`. |
+| OBS-S3-06 | PASS | Missing header → `source='unknown'`, row still written. |
+| OBS-S3-07 | PASS | MCP client sends all three headers, correlation id unique per call; 6 tests in `sorento_crm_mcp/tests/`. |
+| OBS-S3-08 | PASS | Live-exercised: work-calendar, team-members, respond-contacts, contact-access-types, next-assignee, plus a 404 — all previously unlogged, all produced rows. |
+| OBS-S3-09 | PASS | `integration_log` untouched by this slice. |
+| OBS-S3-10 | PASS | Two-stage prune: payloads NULL at 30d, rows DELETE at 180d, both configurable. |
+| OBS-S3-11 | PASS | `test_a_failing_log_write_does_not_break_the_response`. |
+| OBS-S3-12 | PASS | Page reached via sidebar; source/outcome/date/correlation filters + search; empty state renders; console clean. |
+| OBS-S3-13 | PASS | Measured below. |
+
+### Suite results
+
+- `pytest tests/test_api_call_log_{service,middleware,prune}.py` — 61 passed
+- `python -m pytest tests/` (MCP) — 125 passed, 1 pre-existing failure (see below)
+
+### Latency cost (OBS-S3-13)
+
+Synchronous logging is the deliberate choice — a buffered writer drops exactly the
+records you need when the process dies. Measured on the same endpoint, 80 requests each,
+after warmup, toggling `API_CALL_LOG_ENABLED`:
+
+| | p50 | p95 | p99 |
+|---|---|---|---|
+| With logging | 2.19 ms | 2.64 ms | 3.54 ms |
+| Without | 2.37 ms | 2.69 ms | 2.82 ms |
+
+The p50/p95 delta is inside run-to-run noise (with-logging measured marginally *faster* at
+p50, which is noise, not a speedup). The real cost shows at p99: **~0.7 ms**. The isolated
+row-write is p50 0.40 ms against a warm pool.
+
+A `API_CALL_LOG_ENABLED` settings flag was added as an ops kill switch — it made this
+measurement possible, and it means a write-path problem can be shut off without a deploy.
+
+### Deviation from the plan
+
+The plan called for a Phase-1 mocked FE prototype. Skipped: the response contract is fully
+pinned by OBS-S3-01 and the page is a standard DataGrid listing with a detail drawer, so
+there was no UX question a mock would have answered. Built directly against real rows.
+
+### Defect found: pytest resolved the MCP package to the MAIN checkout, not this worktree
+
+The first run of the new MCP tests failed with `KeyError: 'X-Source'` — the headers I had
+just added were absent. They were absent because
+`../sorento_crm_backend/venv/bin/pytest` imported
+`sorento_crm_mcp` from `/Users/tehjayson/Documents/foundryx/sorento_crm/sorento_crm_mcp/`
+(the pip-installed editable path, which points at the main checkout) rather than from the
+worktree. The tests were passing/failing against unmodified code.
+
+Confirmed by printing `module.__file__` from inside a pytest run. `python -m pytest`
+prepends the cwd and resolves correctly. **Any MCP test run from this worktree must use
+`python -m pytest`, not the `pytest` entry point** — otherwise it silently tests the wrong
+tree and a green run means nothing.
+
+### Pre-existing failure, not fixed here
+
+`sorento_crm_mcp/tests/test_presenters.py::test_stock_uses_relabelled_location_fields`
+fails on the base tree as well (verified by stashing this slice's MCP changes and
+re-running). Unrelated to telemetry; left alone to keep the slice scoped.
