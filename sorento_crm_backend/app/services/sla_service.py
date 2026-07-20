@@ -345,6 +345,30 @@ def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
+def _working_clock_start(db, start_dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalize an SLA clock start to the next working-window open.
+
+    A clock that would start when nobody is working (weekend, public holiday,
+    before open, after close) starts at the next window open instead, so the
+    responder gets the whole window the policy promises. Returns aware UTC (naive
+    ``start_dt`` treated as UTC), matching the rest of this module. Falls back to
+    ``start_dt`` if the work calendar is unavailable/misconfigured."""
+    if start_dt is None:
+        return None
+    try:
+        from app.services.calendar_service import CalendarService
+
+        out = CalendarService(db).next_working_window_open(start_dt)
+        if out is not None:
+            return _to_aware_utc(out)
+    except Exception:  # pragma: no cover - defensive; never break SLA create/escalate
+        import logging
+        logging.getLogger(__name__).warning(
+            "working clock-start normalization failed; using the raw start.", exc_info=True
+        )
+    return _to_aware_utc(start_dt)
+
+
 def _working_due(db, start_dt: Optional[datetime], hours: float) -> Optional[datetime]:
     """Forward SLA due date in *working days*: convert the policy hours to days
     (÷24) and add that many working days (skipping weekends + KL public holidays),
@@ -2157,13 +2181,16 @@ class ConversationSLATrackingService:
             f"Auto-escalation: tier {from_tier} response due time breached"
         )
 
+        # The tier clock starts when work can actually begin (next working-window
+        # open); escalated_at keeps the true escalation instant for audit.
+        clock_start = _working_clock_start(self.db, now_utc)
         setattr(tracking, "current_tier", current_tier)
-        setattr(tracking, "current_tier_started_at", now_utc)
+        setattr(tracking, "current_tier_started_at", clock_start)
         setattr(tracking, "escalated_at", now_utc)
         setattr(tracking, "escalation_reason", reason)
-        setattr(tracking, "due_at", _working_due(self.db, now_utc, response_hours))
-        # On escalation, due_at_resolution = escalation time (now) + resolution_hours (working hours)
-        setattr(tracking, "due_at_resolution", _working_due(self.db, now_utc, resolution_hours))
+        setattr(tracking, "due_at", _working_due(self.db, clock_start, response_hours))
+        # On escalation, due_at_resolution = clock start + resolution_hours (working hours)
+        setattr(tracking, "due_at_resolution", _working_due(self.db, clock_start, resolution_hours))
         # Snapshot the escalated-FROM owner BEFORE the assignee is overwritten so the
         # escalation event log records who missed at the prior tier (banner link).
         prev_assigned_to_id = getattr(tracking, "assigned_to_id", None)
@@ -3378,8 +3405,11 @@ class ConversationSLATrackingService:
             tracking_dict["initiated_at"] = _to_aware_utc(tracking_dict["initiated_at"])
 
         if not tracking_dict.get("current_tier_started_at"):
-            tracking_dict["current_tier_started_at"] = now_utc
+            # Automatic start: the clock begins when work can actually begin.
+            # initiated_at above keeps the true event instant for audit.
+            tracking_dict["current_tier_started_at"] = _working_clock_start(self.db, now_utc)
         else:
+            # Caller-supplied start is authoritative — stored verbatim, not normalized.
             tracking_dict["current_tier_started_at"] = _to_aware_utc(tracking_dict["current_tier_started_at"])
 
         # Reset escalation and resolution fields
