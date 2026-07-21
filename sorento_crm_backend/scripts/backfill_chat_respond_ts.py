@@ -73,30 +73,57 @@ def main() -> int:
                 ChatHistory.sent_at >= datetime.utcnow() - timedelta(days=args.days)
             )
 
-        for row in q.order_by(ChatHistory.id.asc()).yield_per(args.batch):
-            scanned += 1
-            ts = respond_ts_from_message_id(row.message_id, sent_at=row.sent_at)
-            if ts is None:
-                skipped += 1
-                continue
+        # Keyset batches, NOT `yield_per`. `yield_per` opens a psycopg2 named
+        # (server-side) cursor, and the mid-loop commit below closes the transaction
+        # that cursor belongs to -- the next fetch then dies with "named cursor isn't
+        # valid anymore". Streaming and committing are mutually exclusive here, so we
+        # page explicitly instead.
+        #
+        # `id > last_id` (not OFFSET) because each commit removes rows from the
+        # filter's own result set: an offset would skip forward over unprocessed rows
+        # by exactly as many as it just fixed.
+        last_id = 0
+        while True:
+            rows = (
+                q.filter(ChatHistory.id > last_id)
+                .order_by(ChatHistory.id.asc())
+                .limit(args.batch)
+                .all()
+            )
+            if not rows:
+                break
+            last_id = rows[-1].id
 
-            row.respond_ts = ts
-            derived += 1
+            for row in rows:
+                scanned += 1
+                ts = respond_ts_from_message_id(row.message_id, sent_at=row.sent_at)
+                if ts is None:
+                    skipped += 1
+                    continue
 
-            # Respond issued an id for this message, so `not_sent` was the resolver
-            # giving up, not evidence of a message that never existed.
-            if row.delivery_status == "not_sent":
-                row.delivery_status = None
-                row.resolve_attempts = 0
-                cleared += 1
+                derived += 1
+                # Respond issued an id for this message, so `not_sent` was the resolver
+                # giving up, not evidence of a message that never existed.
+                clears = row.delivery_status == "not_sent"
+                if clears:
+                    cleared += 1
 
-            if not args.dry_run and derived % args.batch == 0:
+                if args.dry_run:
+                    # Assign nothing at all: a dirty row would be flushed to the
+                    # transaction by autoflush before the next SELECT, making a
+                    # "report only" run issue UPDATEs.
+                    continue
+
+                row.respond_ts = ts
+                if clears:
+                    row.delivery_status = None
+                    row.resolve_attempts = 0
+
+            if not args.dry_run:
                 db.commit()
 
         if args.dry_run:
             db.rollback()
-        else:
-            db.commit()
     finally:
         db.close()
 
