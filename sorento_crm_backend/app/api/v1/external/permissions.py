@@ -18,7 +18,7 @@ permission with no grant path silently 403s the feature it was meant to protect.
 """
 from __future__ import annotations
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db, get_external_api_user
@@ -51,6 +51,47 @@ def require_external_permission(permission_slug: str):
                     "code": "permission_denied",
                     "message": f"Permission required: {permission_slug}",
                     "permission": permission_slug,
+                },
+            )
+        return current_user
+
+    return _require
+
+
+def require_external_permission_for_path(
+    permissions: dict[str, str], *, param: str = "entity"
+):
+    """Like ``require_external_permission`` but picks the slug from a path param.
+
+    Needed where one route serves several entities: ingesting a warehouse must
+    check the warehouse permission, not whichever slug happened to be written
+    into the decorator. Hardcoding one slug there would let an integration
+    permitted to edit products also write suppliers.
+
+    An unmapped value is refused rather than defaulted -- falling back to some
+    other entity's permission is exactly the confusion this exists to prevent.
+    """
+
+    def _require(
+        request: Request,
+        current_user: dict = Depends(get_external_api_user),
+        db: Session = Depends(get_db),
+    ) -> dict:
+        entity = request.path_params.get(param)
+        slug = permissions.get(entity)
+        if slug is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "unknown_entity", "message": f"Unknown entity '{entity}'"},
+            )
+        service = UserPermissionService(db)
+        if not service.check_user_has_permission(current_user["id"], slug):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "permission_denied",
+                    "message": f"Permission required: {slug}",
+                    "permission": slug,
                 },
             )
         return current_user

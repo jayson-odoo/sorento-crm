@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends
 from app.api.v1.external.permissions import (
     EXTERNAL_ENDPOINT_PERMISSIONS,
     require_external_permission,
+    require_external_permission_for_path,
 )
 from app.api.v1.external import (
     packing_lists,
@@ -45,9 +46,30 @@ from app.api.v1.external import (
     access_agent,
     memory,
     ideation,
+    ingest,
 )
 
 router = APIRouter()
+
+# Ingest and current-state reads for the ESB. One route serves several
+# entities, each carrying a different permission, so the guard resolves the
+# slug from the path rather than being fixed at mount (see permissions.py).
+router.include_router(
+    ingest.ingest_router,
+    prefix="/ingest",
+    tags=["external"],
+    dependencies=[
+        Depends(require_external_permission_for_path(ingest.INGEST_PERMISSIONS))
+    ],
+)
+router.include_router(
+    ingest.read_router,
+    prefix="/read",
+    tags=["external"],
+    dependencies=[
+        Depends(require_external_permission_for_path(ingest.READ_PERMISSIONS))
+    ],
+)
 
 router.include_router(
     packing_lists.router,

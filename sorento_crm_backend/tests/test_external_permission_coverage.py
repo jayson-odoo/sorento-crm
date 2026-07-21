@@ -16,6 +16,11 @@ from app.api.v1.external.permissions import EXTERNAL_ENDPOINT_PERMISSIONS
 from app.main import app as fastapi_app
 from app.rbac.permission_registry import PERMISSION_REGISTRY
 
+# Prefixes whose permission is resolved from the path at request time,
+# because one route serves several entities with different slugs. Kept as an
+# explicit allowlist so adding one is a deliberate act, not an oversight.
+PATH_RESOLVED_PREFIXES = {"ingest", "read"}
+
 
 def _external_routes():
     return [
@@ -50,7 +55,33 @@ class TestCoverage:
                 mounted.add(tail.split("/")[0])
 
         mapped = {k.split("/")[0] for k in EXTERNAL_ENDPOINT_PERMISSIONS}
-        assert mounted <= mapped, f"mounted but unmapped: {sorted(mounted - mapped)}"
+        # These serve several entities from one route, so their slug is resolved
+        # from the path at request time rather than fixed at mount. Listed
+        # explicitly, and their maps are asserted below -- an unguarded router
+        # cannot hide here just by being named 'ingest'.
+        assert mounted <= mapped | PATH_RESOLVED_PREFIXES, (
+            f"mounted but unmapped: {sorted(mounted - mapped - PATH_RESOLVED_PREFIXES)}"
+        )
+
+    def test_path_resolved_routes_cover_every_entity_they_serve(self):
+        # The escape hatch above is only safe if these maps are complete: an
+        # entity present in ingest but missing from the permission map would be
+        # refused at runtime, which is safe, but silently unreachable.
+        from app.api.v1.external.ingest import INGEST_PERMISSIONS, READ_PERMISSIONS
+        from app.services.master_ingest_service import ENTITY_SPECS
+
+        assert set(INGEST_PERMISSIONS) == set(ENTITY_SPECS)
+        assert set(READ_PERMISSIONS) == set(ENTITY_SPECS)
+
+    def test_ingest_and_read_use_different_slugs_per_entity(self):
+        # Writing a warehouse must not be authorised by the products slug.
+        from app.api.v1.external.ingest import INGEST_PERMISSIONS, READ_PERMISSIONS
+
+        assert len(set(INGEST_PERMISSIONS.values())) == len(INGEST_PERMISSIONS)
+        assert len(set(READ_PERMISSIONS.values())) == len(READ_PERMISSIONS)
+        # ...and reading must not require the write permission.
+        for entity, write_slug in INGEST_PERMISSIONS.items():
+            assert READ_PERMISSIONS[entity] != write_slug
 
 
 class TestSlugsAreReal:

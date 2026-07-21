@@ -64,6 +64,29 @@ def _neutralized_pg_defaults(metadata):
             column.server_default = original
 
 
+def enable_sqlite_savepoints(engine) -> None:
+    """Make SAVEPOINT / ``begin_nested()`` work on sqlite.
+
+    pysqlite does not emit BEGIN where SQLAlchemy expects it, so a nested
+    transaction can fail with "no such savepoint" on RELEASE. Whether it does is
+    order-dependent -- the same test passes alone and fails after another module
+    has touched the engine -- which makes it a nasty thing to debug later.
+
+    This is the workaround from SQLAlchemy's pysqlite notes: disable the
+    driver's implicit transaction handling and emit BEGIN ourselves. Postgres
+    needs none of this; production savepoints work natively.
+    """
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _disable_implicit_begin(dbapi_connection, _record):  # pragma: no cover - infra
+        dbapi_connection.isolation_level = None
+
+    @event.listens_for(engine, "begin")
+    def _emit_begin(conn):  # pragma: no cover - infra
+        conn.exec_driver_sql("BEGIN")
+
+
 def create_all_sqlite_safe(metadata, engine, tables=None) -> None:
     """Run ``metadata.create_all(engine)`` with pg-cast server defaults stripped.
 
