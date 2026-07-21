@@ -49,6 +49,8 @@ export type SearchableSelectProps = {
   clearable?: boolean;
   /** Trigger size — shared with Radix SelectTrigger. Default `md`. */
   size?: SelectTriggerSize;
+  /** Forwarded to the trigger so a <Label htmlFor> can point at it. */
+  id?: string;
   placeholder?: string;
   emptyMessage?: string;
   disabled?: boolean;
@@ -67,6 +69,7 @@ export function SearchableSelect({
   fetchOptions,
   selectedOption,
   clearable = false,
+  id,
   size,
   placeholder = 'Select...',
   emptyMessage = 'No results found.',
@@ -157,6 +160,7 @@ export function SearchableSelect({
         <button
           type="button"
           disabled={isDisabled}
+          id={id}
           data-slot="searchable-select-trigger"
           // Radix SelectTrigger exposes role=combobox; keep parity so callers and tests
           // can find the trigger by role, and screen readers announce expanded state.

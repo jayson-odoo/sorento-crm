@@ -97,16 +97,13 @@ export const dropdownMigrationAllowlist = [
   'app/(protected)/ticket-management/tickets/[id]/page.tsx',
   'app/(protected)/ticket-management/tickets/components/TicketsList.tsx',
   'app/(protected)/ticket-management/tickets/new/page.tsx',
-  'app/(protected)/user-management/contacts/[id]/components/ContactAccessAgentsTable.tsx',
-  'app/(protected)/user-management/contacts/[id]/components/ContactCsRoutingTable.tsx',
-  'app/(protected)/user-management/settings/components/timezone-select.tsx',
+  // DEFERRED (not a plain dropdown-select): role picker hangs off a 28px icon-only
+  // trigger. The standard component always renders a text trigger + chevron, so migrating
+  // as-is would visibly regress it. Needs a trigger escape hatch first.
   'app/(protected)/user-management/settings/notifications/page.tsx',
-  'app/(protected)/user-management/settings/page.tsx',
+  // PARTIAL: the latency-percentile select is migrated; the two notify-roles / notify-users
+  // pickers share the icon-only trigger problem described above.
   'app/(protected)/user-management/settings/system-health/page.tsx',
-  'app/(protected)/user-management/teams/[id]/components/team-members-list.tsx',
-  'app/(protected)/user-management/users/[id]/components/user-profile-edit-dialog.tsx',
-  'app/(protected)/user-management/users/components/user-add-dialog.tsx',
-  'app/(protected)/user-management/users/components/user-list.tsx',
   'app/(protected)/workflow-forms-management/components/WorkflowDynamicFields.tsx',
   'app/(protected)/workflow-forms-management/components/WorkflowFormBuilder.tsx',
   'app/(protected)/workflow-forms-management/components/WorkflowHeaderSectionsEditor.tsx',

@@ -5,13 +5,7 @@ import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LoaderCircleIcon, UserPlus } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { getUsersSelect } from '@/services/userSelectService';
 import { extractApiError } from '@/lib/api-client';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
@@ -404,16 +398,16 @@ const SystemHealthSettingsPage = () => {
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="chat-latency-percentile">Alert on percentile</Label>
-              <Select value={latencyPercentile} onValueChange={setLatencyPercentile}>
-                <SelectTrigger id="chat-latency-percentile" data-testid="chat-latency-percentile">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="50">p50 (median)</SelectItem>
-                  <SelectItem value="95">p95</SelectItem>
-                  <SelectItem value="99">p99</SelectItem>
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                id="chat-latency-percentile"
+                value={latencyPercentile}
+                onChange={setLatencyPercentile}
+                options={[
+                  { value: '50', label: 'p50 (median)' },
+                  { value: '95', label: 'p95' },
+                  { value: '99', label: 'p99' },
+                ]}
+              />
               <div className="text-muted-foreground text-2sm">
                 p50, p95 and p99 are always computed and shown; this picks which one
                 is held to the target.
