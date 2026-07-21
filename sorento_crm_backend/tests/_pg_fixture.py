@@ -47,6 +47,78 @@ def pg_session() -> Session:
         connection.close()
 
 
+_BLANK = {}
+
+
+def blank_schema_engine():
+    """An Engine over a blank copy of the **entire** schema, built once per run.
+
+    This is the replacement for ``create_engine("sqlite:///:memory:")`` plus
+    ``Base.metadata.create_all(engine)``, which was the dominant fixture shape
+    in this suite. It gives the same thing that pattern was reaching for -- an
+    empty database with every table present -- without sqlite's differences in
+    typing, constraint enforcement and transaction semantics.
+
+    All 199 tables emit in well under a second, so the cost is paid once for the
+    whole session rather than per test. Data isolation is the caller's job: use
+    ``blank_session()``, which discards writes.
+
+    ``scm`` is translated alongside the default schema, so the ``scm.*`` models
+    -- which could not be created on sqlite at all -- are included.
+    """
+    if "engine" not in _BLANK:
+        from app import models  # noqa: F401  register every model's table
+
+        name = f"zzt_blank_{uuid.uuid4().hex[:10]}"
+        admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+        admin.exec_driver_sql(f'CREATE SCHEMA "{name}"')
+        admin.exec_driver_sql(f'CREATE SCHEMA "{name}_scm"')
+        admin.close()
+
+        scoped = engine.execution_options(
+            schema_translate_map={None: name, "scm": f"{name}_scm"}
+        )
+        with scoped.connect() as connection:
+            Base.metadata.create_all(connection, checkfirst=False)
+            connection.commit()
+
+        _BLANK["engine"] = scoped
+        _BLANK["name"] = name
+    return _BLANK["engine"]
+
+
+def drop_blank_schema():
+    """Tear down the shared blank schema. Called from the session fixture."""
+    name = _BLANK.pop("name", None)
+    _BLANK.pop("engine", None)
+    if name:
+        admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+        admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
+        admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_scm" CASCADE')
+        admin.close()
+
+
+@contextmanager
+def blank_session() -> Session:
+    """A session over the blank schema whose writes are all discarded.
+
+    ``join_transaction_mode="create_savepoint"`` is what makes this work with
+    tests that call ``commit()``: the session's commits land on a savepoint
+    inside the outer transaction, so they are visible to the test and to any
+    code under it, and the outer rollback still discards everything. Without it
+    a committing test would leak rows into the next one.
+    """
+    connection = blank_schema_engine().connect()
+    transaction = connection.begin()
+    session = Session(bind=connection, join_transaction_mode="create_savepoint")
+    try:
+        yield session
+    finally:
+        session.close()
+        transaction.rollback()
+        connection.close()
+
+
 def _globally_required_tables():
     """Tables the app's global SQLAlchemy listeners query on every flush.
 
