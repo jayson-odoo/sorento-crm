@@ -27,11 +27,13 @@ class User(Base):
     name = Column(String, nullable=True)
     # Optional phone number used for user contact.
     contact_number = Column(String, nullable=True)
-    status = Column(
-        SQLEnum(UserStatus, name="UserStatus", native_enum=True,
-                values_callable=lambda obj: [e.value for e in obj]),
-        default=UserStatus.INACTIVE.value, nullable=False,
-    )
+    # Intentionally String, NOT SQLEnum, even though production types this column
+    # as the native `UserStatus` enum. A SQLEnum column returns an enum MEMBER, and
+    # call sites compare with `str(user.status) != "ACTIVE"` — in Python 3.12+ that
+    # renders as "UserStatus.ACTIVE", so the comparison fails and every login is
+    # rejected with "Account not activated" (auth.py). Switching the column type
+    # means auditing every `.status` read first.
+    status = Column(String, default=UserStatus.INACTIVE.value, nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     last_sign_in_at = Column(DateTime(timezone=False), nullable=True)
