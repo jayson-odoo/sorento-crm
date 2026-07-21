@@ -215,7 +215,13 @@ const SystemHealthSettingsPage = () => {
               // Selections are shown as badges beside this control, so the trigger stays the
               // compact icon button it has always been rather than a select box.
               renderTrigger={() => (
-                <Button variant="outline" mode="icon" className="h-7! w-7!">
+                <Button
+                  variant="outline"
+                  mode="icon"
+                  className="h-7! w-7!"
+                  data-testid="notify-roles-trigger"
+                  aria-label="Add notify roles"
+                >
                   <UserPlus className="size-3.5!" />
                 </Button>
               )}
@@ -254,7 +260,13 @@ const SystemHealthSettingsPage = () => {
               emptyMessage="No users found."
               className="w-[260px]"
               renderTrigger={() => (
-                <Button variant="outline" mode="icon" className="h-7! w-7!">
+                <Button
+                  variant="outline"
+                  mode="icon"
+                  className="h-7! w-7!"
+                  data-testid="notify-users-trigger"
+                  aria-label="Add notify users"
+                >
                   <UserPlus className="size-3.5!" />
                 </Button>
               )}

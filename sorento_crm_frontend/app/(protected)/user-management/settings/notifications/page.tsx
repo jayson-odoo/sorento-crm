@@ -245,7 +245,13 @@ const NotificationSettingsPage = () => {
                             // Picked roles render as badges beside this control, so the trigger
                             // stays the compact icon button it has always been.
                             renderTrigger={() => (
-                              <Button variant="outline" mode="icon" className="h-7! w-7!">
+                              <Button
+                                variant="outline"
+                                mode="icon"
+                                className="h-7! w-7!"
+                                data-testid="notify-roles-trigger"
+                                aria-label="Add notify roles"
+                              >
                                 <UserPlus className="size-3.5!" />
                               </Button>
                             )}

@@ -275,12 +275,17 @@ export function SearchableSelect({
       {/* Portalled so a dialog's overflow can't clip the menu when it flips upward. */}
       <PopoverPortal>
       <PopoverContent
-        className={cn('w-(--radix-popper-anchor-width) p-0', className)}
+        className={cn(
+            // Cap to the space Radix measured, or a long list makes the menu taller than
+            // the viewport and the search box gets pushed off-screen on short windows.
+            'w-(--radix-popper-anchor-width) max-h-(--radix-popper-available-height) flex flex-col p-0',
+            className,
+          )}
         align="start"
       >
-        <Command shouldFilter={false}>
+        <Command shouldFilter={false} className="max-h-full min-h-0 flex flex-col">
           <CommandInput placeholder="Search..." value={query} onValueChange={handleQueryChange} />
-          <CommandList>
+          <CommandList className="min-h-0 flex-1 overflow-y-auto">
             {loading ? (
               <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" /> Searching...
