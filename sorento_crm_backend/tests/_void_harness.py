@@ -58,18 +58,39 @@ _MODELS = [
 ACTOR_GRANTS: dict[str, set[str]] = {}
 
 
+def _clear(session) -> None:
+    """Empty this harness's tables, children before parents."""
+    for model in reversed(_MODELS):
+        session.query(model).delete(synchronize_session=False)
+    session.commit()
+
+
 def make_session():
     """A session over the blank schema, with this harness's tables emptied.
 
     Bound to the engine rather than to a held-open connection: these tests
     commit, and pinning one connection per session exhausted the pool and hung
-    the run. Isolation instead comes from clearing the tables the void flow
-    touches, in reverse dependency order so foreign keys stay satisfied.
+    the run.
+
+    Because the writes really are committed, isolation has to be explicit at
+    BOTH ends. Clearing only on the way in still left the last void test's rows
+    in the shared schema, which broke test_sla_kpi -- it counts SLA rows, and
+    this harness owns several SLA tables. So close() clears on the way out too.
     """
     session = Session(bind=blank_schema_engine(), autoflush=False)
-    for model in reversed(_MODELS):
-        session.query(model).delete(synchronize_session=False)
-    session.commit()
+    _clear(session)
+
+    original_close = session.close
+
+    def close_and_clear(*args, **kwargs):
+        try:
+            session.rollback()
+            _clear(session)
+        except Exception:
+            pass
+        return original_close(*args, **kwargs)
+
+    session.close = close_and_clear  # type: ignore[method-assign]
     return session
 
 

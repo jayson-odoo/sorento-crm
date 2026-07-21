@@ -20,6 +20,15 @@ locally, matched by its business code. Creating a second one under a new id
 would corrupt master data in a way that is painful to unpick, so an unclaimed
 local match is adopted and linked instead.
 
+**Dry run is a real run that is taken back.** ``ingest(..., dry_run=True)``
+resolves and applies every record exactly as a live sync would, then rolls the
+transaction back. Simulating the resolution separately would create a second
+code path that can disagree with the first, and a preview that disagrees with
+the sync it predicts is worse than no preview: it is trusted and wrong. For
+records that would overwrite an existing row -- an adoption above all, where the
+row holds hand-entered data -- the result carries a field-level diff of what
+would be replaced.
+
 Ingest emits **no lifecycle events** (AC-AC-18). A record arriving *from*
 AutoCount must never trigger a write back to it. Nothing here calls an emitter,
 and nothing here should ever be given one.
@@ -30,6 +39,7 @@ import enum
 import logging
 import uuid
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, ValidationError
@@ -80,11 +90,17 @@ class RecordResult:
     # field -> reason. Machine-readable so the ESB quarantines per record
     # without parsing prose (AC-AC-13).
     errors: dict[str, str] = field(default_factory=dict)
+    # Dry run only. column -> {"current": ..., "incoming": ...} for the values
+    # this record would overwrite on an existing row. None when nothing would be
+    # overwritten (a create), which is a different statement from an empty dict
+    # (an existing row matched, but no value actually changes).
+    diff: Optional[dict[str, dict[str, Any]]] = None
 
 
 @dataclass
 class IngestResult:
     records: list[RecordResult] = field(default_factory=list)
+    dry_run: bool = False
 
     @property
     def created(self) -> int:
@@ -104,6 +120,10 @@ class IngestResult:
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            # Echoed so a caller can never mistake a preview for a completed
+            # sync -- the two responses are otherwise identical in shape, which
+            # is deliberate but would be dangerous without this flag.
+            "dry_run": self.dry_run,
             "summary": {
                 "total": len(self.records),
                 "created": self.created,
@@ -117,6 +137,7 @@ class IngestResult:
                     "outcome": r.outcome.value,
                     "entity_id": r.entity_id,
                     **({"errors": r.errors} if r.errors else {}),
+                    **({"diff": r.diff} if r.diff is not None else {}),
                 }
                 for r in self.records
             ],
@@ -252,8 +273,24 @@ class MasterIngestService:
         self.db = db
         self.integration_id = integration_id
         self.refs = IntegrationReferenceService(db)
+        # Set for the duration of a dry-run ingest. Read by _apply to decide
+        # whether to capture a before/after diff; the rollback that makes the
+        # run harmless is handled in ingest().
+        self._dry_run = False
 
-    def ingest(self, entity_type: str, records: list[dict]) -> IngestResult:
+    def ingest(
+        self, entity_type: str, records: list[dict], *, dry_run: bool = False
+    ) -> IngestResult:
+        """Apply a batch of canonical records.
+
+        With ``dry_run`` the records are resolved and applied exactly as they
+        would be for real -- adoption matching, reference conflicts, unique
+        constraints and all -- and the whole transaction is then rolled back.
+        Simulating the resolution instead would produce a preview that can
+        disagree with the sync it claims to predict, which is worse than no
+        preview at all; the only way to know what the database would do is to
+        ask it and then take it back.
+        """
         spec = ENTITY_SPECS.get(entity_type)
         if spec is None:
             raise UnsupportedIngestEntity(
@@ -261,9 +298,18 @@ class MasterIngestService:
                 f"Expected one of: {', '.join(sorted(ENTITY_SPECS))}"
             )
 
-        result = IngestResult()
-        for raw in records:
-            result.records.append(self._ingest_one(entity_type, spec, raw))
+        result = IngestResult(dry_run=dry_run)
+        self._dry_run = dry_run
+        try:
+            for raw in records:
+                result.records.append(self._ingest_one(entity_type, spec, raw))
+        finally:
+            self._dry_run = False
+            if dry_run:
+                # In a finally, so an unexpected error mid-batch cannot leave a
+                # partially-applied preview sitting in the session for whatever
+                # commits next.
+                self.db.rollback()
         return result
 
     def _ingest_one(self, entity_type: str, spec: EntitySpec, raw: dict) -> RecordResult:
@@ -287,10 +333,13 @@ class MasterIngestService:
         # fails too -- turning "12 bad rows" into "nothing imported".
         savepoint = self.db.begin_nested()
         try:
-            outcome, entity_id = self._apply(entity_type, spec, payload)
+            outcome, entity_id, diff = self._apply(entity_type, spec, payload)
             savepoint.commit()
             return RecordResult(
-                source_ref=payload.source_ref, outcome=outcome, entity_id=entity_id
+                source_ref=payload.source_ref,
+                outcome=outcome,
+                entity_id=entity_id,
+                diff=diff,
             )
         except MissingReference as exc:
             savepoint.rollback()
@@ -320,14 +369,17 @@ class MasterIngestService:
                 errors={"_": str(exc)},
             )
 
-    def _apply(self, entity_type: str, spec: EntitySpec, payload: Any) -> tuple[IngestOutcome, str]:
+    def _apply(
+        self, entity_type: str, spec: EntitySpec, payload: Any
+    ) -> tuple[IngestOutcome, str, Optional[dict[str, dict[str, Any]]]]:
         columns = spec.to_columns(payload, self.db)
 
         existing_id = self.refs.resolve(entity_type=entity_type, source_ref=payload.source_ref)
         if existing_id is not None:
+            diff = self._diff(spec, existing_id, columns)
             self._update(spec, existing_id, columns)
             self._link(entity_type, existing_id, payload)
-            return IngestOutcome.UPDATED, existing_id
+            return IngestOutcome.UPDATED, existing_id, diff
 
         # First sync: adopt a local record with the same business code rather
         # than creating a duplicate under a new id.
@@ -339,9 +391,13 @@ class MasterIngestService:
                 raise ReferenceConflict(
                     f"{spec.code_column}={payload.code!r} is already linked to another source"
                 )
+            # Captured before the UPDATE, and the reason the dry run exists: an
+            # adoption overwrites a row somebody typed in by hand, and the
+            # operator gets no other chance to see what it replaces.
+            diff = self._diff(spec, adopted, columns)
             self._update(spec, adopted, columns)
             self._link(entity_type, adopted, payload)
-            return IngestOutcome.UPDATED, adopted
+            return IngestOutcome.UPDATED, adopted, diff
 
         new_id = str(uuid.uuid4())
         cols = ", ".join(["id", *columns])
@@ -351,7 +407,44 @@ class MasterIngestService:
             {"id": new_id, **columns},
         )
         self._link(entity_type, new_id, payload)
-        return IngestOutcome.CREATED, new_id
+        # Nothing existed to overwrite, so there is no diff to report. Distinct
+        # from {} -- see RecordResult.diff.
+        return IngestOutcome.CREATED, new_id, None
+
+    def _diff(
+        self, spec: EntitySpec, entity_id: str, columns: dict[str, Any]
+    ) -> Optional[dict[str, dict[str, Any]]]:
+        """Values this record would replace on an existing row.
+
+        Dry run only: a real ingest is about to write these anyway, and reading
+        every row back would cost a SELECT per record for nothing.
+
+        Only columns whose value actually changes are reported. An operator
+        reviewing a sync is asking "what am I about to lose?", and burying three
+        real changes in twelve unchanged fields answers a different question.
+        """
+        if not self._dry_run:
+            return None
+
+        # Column names come from the module's own to_columns mappings, never
+        # from the payload, so interpolating them is safe -- same basis as the
+        # UPDATE and INSERT below.
+        selected = ", ".join(columns)
+        row = (
+            self.db.execute(
+                text(f"SELECT {selected} FROM {spec.table} WHERE id = :id"), {"id": entity_id}
+            )
+            .mappings()
+            .first()
+        )
+        if row is None:
+            return None
+
+        return {
+            column: {"current": row.get(column), "incoming": incoming}
+            for column, incoming in columns.items()
+            if _value_changed(row.get(column), incoming)
+        }
 
     def _update(self, spec: EntitySpec, entity_id: str, columns: dict[str, Any]) -> None:
         assignments = ", ".join(f"{c} = :{c}" for c in columns)
@@ -368,6 +461,36 @@ class MasterIngestService:
             source_doc_no=payload.source_doc_no,
             integration_id=self.integration_id,
         )
+
+
+def _value_changed(current: Any, incoming: Any) -> bool:
+    """Whether writing ``incoming`` over ``current`` would change anything.
+
+    Numbers are compared by value rather than by type. The database hands back
+    ``Decimal('0.00')`` where the canonical payload carries ``Decimal('0')`` or
+    an int, and reporting that as a change would fill an operator's diff with
+    edits that are not edits -- which trains them to skim the one that is.
+    """
+    if current is None or incoming is None:
+        return (current is None) != (incoming is None)
+
+    numeric = (int, float, Decimal)
+    if (
+        isinstance(current, numeric)
+        and isinstance(incoming, numeric)
+        # bool subclasses int, so without this guard Decimal(str(True)) raises
+        # InvalidOperation. Booleans fall through to plain equality, which is
+        # what they want -- and since is_active is on every canonical shape,
+        # this is the common path, not an edge case.
+        and not isinstance(current, bool)
+        and not isinstance(incoming, bool)
+    ):
+        try:
+            return Decimal(str(current)) != Decimal(str(incoming))
+        except (InvalidOperation, ValueError):
+            return str(current) != str(incoming)
+
+    return current != incoming
 
 
 def _field_errors(exc: ValidationError) -> dict[str, str]:

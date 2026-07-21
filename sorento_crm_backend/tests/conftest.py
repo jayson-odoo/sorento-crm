@@ -37,6 +37,68 @@ def _drop_blank_schema_at_end():
         pass
 
 
+_ORIGINAL_COLUMN_TYPES: dict = {}
+
+
+def _snapshot_column_types():
+    """Record every model column's declared type, once, before any test runs."""
+    if _ORIGINAL_COLUMN_TYPES:
+        return
+    try:
+        from app.database import Base
+        from app import models  # noqa: F401  register every table
+
+        for table in Base.metadata.tables.values():
+            for column in table.columns:
+                _ORIGINAL_COLUMN_TYPES[(table.key, column.key)] = (
+                    column.type,
+                    column.server_default,
+                )
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _restore_column_types():
+    """Undo any test's in-place rewrite of the shared model metadata.
+
+    Several sqlite fixtures still do this in their setup:
+
+        if isinstance(col.type, (JSONB, ARRAY)):
+            col.type = JSON()
+
+    ``Model.__table__`` is process-global and those rewrites were never undone.
+    While the whole suite ran on sqlite that was invisible. Now that converted
+    tests run on Postgres in the same process, one shimmed module leaves later
+    tests binding JSON into columns Postgres types as ``varchar[]``:
+
+        column "notify_stock_role_ids" is of type character varying[]
+        but expression is of type json
+
+    The symptom lands in files that contain no sqlite at all and only in
+    full-suite runs -- test_sla_takeover_cooldown and test_sla_kpi both failed
+    this way, from a shim in test_chat_latency.
+
+    Restoring before each test makes the two substrates coexist: a shimming
+    fixture still re-applies its rewrite for its own test, and the next test
+    starts from the real schema. Once no shims remain this becomes a no-op that
+    costs one dict walk per test, and it keeps a future one from silently
+    corrupting its neighbours.
+    """
+    _snapshot_column_types()
+    for (table_key, column_key), (col_type, server_default) in _ORIGINAL_COLUMN_TYPES.items():
+        try:
+            from app.database import Base
+
+            column = Base.metadata.tables[table_key].columns[column_key]
+            if column.type is not col_type:
+                column.type = col_type
+                column.server_default = server_default
+        except Exception:
+            pass
+    yield
+
+
 _IDEMP_REDIS = []  # process-wide cache: [client] or [None]
 
 

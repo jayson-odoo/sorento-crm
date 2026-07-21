@@ -288,7 +288,11 @@ def wired_chat(seeded: Session, monkeypatch):
     svc_module.resolve_references = lambda _db, _q: ResolutionResult(  # type: ignore[assignment]
         tokens=[], resolutions=[], elapsed_ms=0.0
     )
-    monkeypatch.setattr(svc_module, "text", lambda _expr: __import__("sqlalchemy").literal(0))
+    # The rate-limit clause is `func.now() - text("interval '1 minute'")`. It
+    # used to be stubbed to literal(0), because sqlite cannot parse an interval
+    # literal. On Postgres that stub yields `now() - 0` -- "operator does not
+    # exist: timestamp with time zone - integer". The real interval works here,
+    # so the clause now runs exactly as production runs it.
 
     provider = _FakeProvider()
     monkeypatch.setattr(svc_module, "get_provider", lambda *a, **k: provider)
