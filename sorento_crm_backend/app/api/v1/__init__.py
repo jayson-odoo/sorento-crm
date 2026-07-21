@@ -198,19 +198,6 @@ api_router.include_router(
     dependencies=[Depends(require_module_enabled_with_api_key("scm"))],
 )
 
-# Public quoting customer-approval endpoint — unauthenticated, must be mounted
-# OUTSIDE the commercial_core module guard.
-try:
-    from app.modules.commercial_core.routes import commercial_public_quoting as _public_quoting
-    api_router.include_router(
-        _public_quoting.router,
-        prefix="/public/commercial",
-        tags=["commercial-public-quoting"],
-    )
-except Exception:  # noqa: BLE001
-    # commercial_core not installed yet — skip silently.
-    pass
-
 # Auto-discovery of self-contained modules under app/modules/<key>/.
 # Additive: skips prefixes already registered above (LEGACY_REGISTERED_PREFIXES).
 from app.modules.runtime.discovery import discover_module_routers  # noqa: E402

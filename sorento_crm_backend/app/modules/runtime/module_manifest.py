@@ -122,7 +122,6 @@ def manifest_dependency_graph() -> Dict[str, Set[str]]:
 # Fallback only when DB table `app_module_bundles` has no rows (or unknown key without a row).
 MODULE_BUNDLES: Dict[str, List[str]] = {
     "core_ops": ["base", "product", "inventory", "order", "resources"],
-    "commercial_plus": ["base", "product", "inventory", "order", "resources", "marketing", "procurement"],
     "service_desk": [
         "base",
         "resources",
