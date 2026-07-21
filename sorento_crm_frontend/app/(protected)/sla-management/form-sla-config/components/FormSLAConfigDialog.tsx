@@ -11,13 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   Popover,
   PopoverContent,
@@ -263,22 +257,15 @@ export default function FormSLAConfigDialog({
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="grid gap-1.5">
             <Label>Form type</Label>
-            <Select
+            <SearchableSelect
               value={sourceType}
-              onValueChange={(v) => setSourceType(v as FormSLASourceType)}
+              onChange={(v) => setSourceType(v as FormSLASourceType)}
               disabled={!!existing}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {FORM_TYPES.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {FORM_SLA_TYPE_LABELS[t]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={FORM_TYPES.map((t) => ({
+                value: t,
+                label: FORM_SLA_TYPE_LABELS[t],
+              }))}
+            />
           </div>
 
           <div className="grid gap-1.5">
@@ -292,18 +279,15 @@ export default function FormSLAConfigDialog({
 
           <div className="grid gap-1.5">
             <Label>SLA policy</Label>
-            <Select value={policyId} onValueChange={setPolicyId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select policy" />
-              </SelectTrigger>
-              <SelectContent>
-                {(policiesQuery.data?.data ?? []).map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name} ({p.code})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={policyId}
+              onChange={setPolicyId}
+              options={(policiesQuery.data?.data ?? []).map((p) => ({
+                value: p.id,
+                label: `${p.name} (${p.code})`,
+              }))}
+              placeholder="Select policy"
+            />
           </div>
 
           <div className="grid gap-1.5">
@@ -326,18 +310,12 @@ export default function FormSLAConfigDialog({
 
           <div className="grid gap-1.5">
             <Label>Start event</Label>
-            <Select value={startEvent} onValueChange={setStartEvent}>
-              <SelectTrigger>
-                <SelectValue placeholder="When does the timer start?" />
-              </SelectTrigger>
-              <SelectContent>
-                {eventOptions.map((e) => (
-                  <SelectItem key={e} value={e}>
-                    {e}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={startEvent}
+              onChange={setStartEvent}
+              options={eventOptions.map((e) => ({ value: e, label: e }))}
+              placeholder="When does the timer start?"
+            />
           </div>
 
           <div className="grid gap-1.5">
@@ -370,36 +348,31 @@ export default function FormSLAConfigDialog({
 
           <div className="grid gap-1.5">
             <Label>Next stage on resolve (optional)</Label>
-            <Select value={nextConfigId} onValueChange={setNextConfigId}>
-              <SelectTrigger>
-                <SelectValue placeholder="None" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE_VALUE}>None</SelectItem>
-                {sameTypeConfigs.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.stage_code}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={nextConfigId}
+              onChange={setNextConfigId}
+              options={[
+                { value: NONE_VALUE, label: 'None' },
+                ...sameTypeConfigs.map((c) => ({
+                  value: c.id,
+                  label: c.stage_code,
+                })),
+              ]}
+              placeholder="None"
+            />
           </div>
 
           <div className="grid gap-1.5">
             <Label>Advance to next stage only on event (optional)</Label>
-            <Select value={advanceOnEvent} onValueChange={setAdvanceOnEvent}>
-              <SelectTrigger>
-                <SelectValue placeholder="Any resolve event" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={NONE_VALUE}>Any resolve event</SelectItem>
-                {eventOptions.map((e) => (
-                  <SelectItem key={e} value={e}>
-                    {e}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={advanceOnEvent}
+              onChange={setAdvanceOnEvent}
+              options={[
+                { value: NONE_VALUE, label: 'Any resolve event' },
+                ...eventOptions.map((e) => ({ value: e, label: e })),
+              ]}
+              placeholder="Any resolve event"
+            />
             <span className="text-xs text-muted-foreground">
               Spawn the next stage only when resolved by this event (e.g. approved →
               customer service, while rejected just closes the stage). Blank = any.

@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Container } from '@/components/common/container';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableTextarea } from '@/components/common/find-in-text/SearchableTextarea';
 import {
   usePromptVersion,
@@ -341,18 +342,19 @@ export function PromptDetail({ name }: { name: string }) {
                 <div className="space-y-2 rounded-md border p-3">
                   <div className="flex items-center gap-2 text-xs">
                     <span className="text-muted-foreground">Compare current draft against:</span>
-                    <select
-                      className="rounded border bg-background px-2 py-1 text-xs"
-                      value={diffAgainst ?? ''}
-                      onChange={(e) => setDiffAgainst(Number(e.target.value))}
-                      data-testid="diff-base-select"
-                    >
-                      {meta.versions.map((v) => (
-                        <option key={v.id} value={v.version}>
-                          v{v.version}
-                        </option>
-                      ))}
-                    </select>
+                    <div data-testid="diff-base-select">
+                      <SearchableSelect
+                        value={diffAgainst != null ? String(diffAgainst) : ''}
+                        onChange={(v) => setDiffAgainst(Number(v))}
+                        options={meta.versions.map((v) => ({
+                          value: String(v.version),
+                          label: `v${v.version}`,
+                        }))}
+                        placeholder="Select version"
+                        size="sm"
+                        triggerClassName="w-28"
+                      />
+                    </div>
                   </div>
                   {diffAgainstQuery.data ? (
                     <DiffView

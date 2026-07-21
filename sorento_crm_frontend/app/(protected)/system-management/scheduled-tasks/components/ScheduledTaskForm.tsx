@@ -8,13 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import type { ScheduledTask } from '../types/scheduledTask.types';
 import { parseDateTimeAsUTC } from '@/lib/helpers';
 
@@ -192,20 +186,17 @@ export function ScheduledTaskForm({ task, onSubmit, isSubmitting }: ScheduledTas
         </div>
         <div className="space-y-2">
           <Label htmlFor="interval_unit">Interval unit</Label>
-          <Select
+          <SearchableSelect
+            id="interval_unit"
             value={intervalUnit}
-            onValueChange={(v) => setValue('interval_unit', v as 'seconds' | 'minutes' | 'hours' | 'days', { shouldDirty: true })}
-          >
-            <SelectTrigger id="interval_unit">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="seconds">Seconds</SelectItem>
-              <SelectItem value="minutes">Minutes</SelectItem>
-              <SelectItem value="hours">Hours</SelectItem>
-              <SelectItem value="days">Days</SelectItem>
-            </SelectContent>
-          </Select>
+            onChange={(v) => setValue('interval_unit', v as 'seconds' | 'minutes' | 'hours' | 'days', { shouldDirty: true })}
+            options={[
+              { value: 'seconds', label: 'Seconds' },
+              { value: 'minutes', label: 'Minutes' },
+              { value: 'hours', label: 'Hours' },
+              { value: 'days', label: 'Days' },
+            ]}
+          />
         </div>
         <div className="space-y-2">
           <Label htmlFor="timezone">Timezone</Label>
