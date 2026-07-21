@@ -164,8 +164,36 @@ jobs:
             sh -c "pip install --no-cache-dir -q 'pytest>=8.0' 'pytest-asyncio>=0.24' && \
                    python -m pytest /app/tests -q -p no:cacheprovider"
 
+  validate-frontend:
+    name: Validate frontend (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # Match the frontend Dockerfile base (node:20-alpine).
+          node-version: 20
+          cache: npm
+          cache-dependency-path: sorento_crm_frontend/package-lock.json
+
+      # `--force` mirrors local install: React 19 peer-dep conflicts are expected
+      # and documented in CLAUDE.md.
+      - name: Install dependencies
+        working-directory: sorento_crm_frontend
+        run: npm ci --force
+
+      # The FULL vitest suite (198 files / 1168 tests) — green and verified
+      # deterministic across repeated runs, so gating on all of it is safe.
+      # Needs no database or service containers; api-client calls are mocked.
+      - name: Run vitest suite (executing gate)
+        working-directory: sorento_crm_frontend
+        run: npx vitest run
+
   build-and-deploy:
-    needs: [validate-backend, validate-mcp]
+    needs: [validate-backend, validate-mcp, validate-frontend]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
