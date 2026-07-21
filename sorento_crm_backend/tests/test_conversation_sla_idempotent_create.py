@@ -17,13 +17,9 @@ import uuid
 from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import text
 
-from app.database import Base
 from app.models.access import AccessAgent, AgentTeam, RespondContact, Team
-from app.models.lookup import LookupBinding  # validator listener checks this table
 from app.models.sla import (
     ConversationSLAEventLog,
     ConversationSLATracking,
@@ -33,61 +29,23 @@ from app.models.sla import (
 from app.models.user import User
 from app.schemas.sla import ConversationSLATrackingCreate
 from app.services.sla_service import ConversationSLATrackingService
+from tests._pg_fixture import blank_session
 
 PHONE = "+60123456789"
 
 
+# No DDL shims here any more. JSONB and its pg server_default are native, and
+# AgentTeam's partial unique indexes keep their postgresql_where clause instead
+# of collapsing into a plain UNIQUE that falsely collided multi-tier rows.
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    # RespondContact.session_vars is JSONB with a pg-specific server_default;
-    # swap both out so SQLite can render the DDL.
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for col in list(RespondContact.__table__.columns):
-        if isinstance(col.type, JSONB):
-            col.type = GenericJSON()
-            col.server_default = None
-
-    # AgentTeam's partial unique indexes (postgresql_where) render as plain UNIQUE
-    # on SQLite and falsely collide multi-tier rows — strip them for the fixture.
-    AgentTeam.__table__.indexes = {
-        ix
-        for ix in AgentTeam.__table__.indexes
-        if ix.name
-        not in {
-            "uq_agent_teams_agent_code_tier_null",
-            "uq_agent_teams_agent_code_tier_not_null",
-        }
-    }
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            SLAPolicy.__table__,
-            SLAPolicyTier.__table__,
-            ConversationSLATracking.__table__,
-            ConversationSLAEventLog.__table__,
-            RespondContact.__table__,
-            User.__table__,
-            AccessAgent.__table__,
-            AgentTeam.__table__,
-            Team.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        # Some SLA lookups issue raw SQL against unqualified table names, which
+        # schema_translate_map does not rewrite; align search_path so they hit
+        # the blank schema.
+        schema = session.get_bind()._execution_options["schema_translate_map"][None]
+        session.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+        yield session
 
 
 def _seed(db) -> dict:

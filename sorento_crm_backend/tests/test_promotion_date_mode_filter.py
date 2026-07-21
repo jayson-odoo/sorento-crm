@@ -5,63 +5,22 @@ import uuid
 from datetime import date, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.audit import AuditLog
-from app.models.embeddings import EmbeddingQueue
-from app.models.lookup import LookupBinding, LookupOption, LookupSet
-from app.models.marketing import (
-    Promotion,
-    PromotionAttachment,
-    PromotionGroup,
-    PromotionProduct,
-)
-from app.models.product import Product
-from app.models.resources import Attachment, AttachmentDirectory, AttachmentType
+from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
+from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.marketing_service import PromotionService
-
-
-@compiles(JSONB, "sqlite")
-def _jsonb_as_json_on_sqlite(_element, _compiler, **_kw):
-    return "JSON"
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            AttachmentDirectory.__table__,
-            AttachmentType.__table__,
-            Attachment.__table__,
-            Product.__table__,
-            Promotion.__table__,
-            PromotionGroup.__table__,
-            PromotionProduct.__table__,
-            PromotionAttachment.__table__,
-            LookupSet.__table__,
-            LookupOption.__table__,
-            LookupBinding.__table__,
-            AuditLog.__table__,
-            EmbeddingQueue.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    """A blank Postgres schema, rolled back after the test.
+
+    Was in-memory sqlite with a JSONB->JSON compile shim and a hand-listed
+    subset of tables. The real schema has all 199 and the real column types.
+    """
+    with blank_session() as session:
+        yield session
 
 
 TODAY = datetime.utcnow().date()
@@ -87,6 +46,29 @@ def _seed_promotion(
     db.add(promo)
     db.flush()
     return promo.id
+
+
+def _seed_product(db) -> str:
+    """A product plus the category/UOM rows its NOT NULL FKs require."""
+    product_id = str(uuid.uuid4())
+    category_id = str(uuid.uuid4())
+    uom_id = str(uuid.uuid4())
+    db.add(ProductCategory(id=category_id, category_code="CAT1", category_name="Category One"))
+    db.add(UnitOfMeasure(id=uom_id, uom_code="EA", uom_name="Each"))
+    db.flush()
+    db.add(
+        Product(
+            id=product_id,
+            product_code="SKU-1",
+            product_name="SKU One",
+            category_id=category_id,
+            base_uom_id=uom_id,
+            list_price=0,
+            is_active=True,
+        )
+    )
+    db.flush()
+    return product_id
 
 
 @pytest.fixture
@@ -208,9 +190,10 @@ def test_promotion_ids_only_falls_back_to_expired_promo(db, seeded):
 
 
 def test_product_ids_only_falls_back_to_expired_promo(db, seeded):
-    # product_ids filter only consults promotion_products.product_id — no
-    # products row needed (sqlite doesn't enforce the FK here).
-    product_id = str(uuid.uuid4())
+    # The filter itself only consults promotion_products.product_id, but the
+    # column is a real FK, so the product (and its category/UOM parents) must
+    # exist. sqlite let this be a dangling UUID.
+    product_id = _seed_product(db)
     group = PromotionGroup(
         id=uuid.uuid4(),  # UUID(as_uuid=True) column wants the object, not str
         promotion_id=seeded["just_ended"],

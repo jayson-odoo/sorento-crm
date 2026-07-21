@@ -458,14 +458,45 @@ substantially weaker one:
 | A fresh empty engine per test | `integrations.name` and `users.email` are unique against rows migration 297 already created. Uniqueness held trivially against an empty table. |
 | No SAVEPOINT semantics | Per-record ingest isolation — what stops one bad row costing a 10,000-row batch — was unprovable, and broke outright once `app.main` registered its global flush listeners. |
 
-### 15.2 Converting the rest of the suite (separate work)
+### 15.2 The whole suite moves off sqlite
 
-123 of ~130 backend test files build their own `create_engine("sqlite://")`. Any of them asserting
-transactional behaviour, FK enforcement, uniqueness against seeded data, JSONB, or the `scm.*`
-schema models is proving less than it appears to. The two helpers above are the migration path and
-cover every case met so far.
+**Decision: no sqlite anywhere in the backend test suite.** Not converted opportunistically -- all
+121 remaining files, in one sweep.
 
-Mostly mechanical — swap the fixture, scope the assertions — but each file's assertions have to be
-re-read against a non-empty database, and some will surface real defects as these nine did. That is
-the point, and also why it cannot be a blind sweep. Best done incrementally, converting a file when
-it is touched for other reasons, rather than as one large PR.
+The enabling helper is `blank_session()`, which replaces the suite's dominant fixture shape:
+
+```python
+# before
+engine = create_engine("sqlite:///:memory:")
+Base.metadata.create_all(engine)
+session = sessionmaker(bind=engine)()
+
+# after
+with blank_session() as session:
+    ...
+```
+
+It yields a session over an empty copy of the **entire** real schema -- all 199 tables including
+the `scm.*` models sqlite could not create at all -- built once per session in about 0.6s, with
+every write discarded at teardown. `join_transaction_mode="create_savepoint"` means tests that call
+`commit()` still work and are still rolled back, so the conversion does not force fixtures to be
+rewritten around a different transaction model.
+
+Three fixture shapes now cover everything:
+
+| Helper | Use for |
+|---|---|
+| `blank_session()` | the default. An empty full schema. Replaces every in-memory sqlite fixture. |
+| `pg_session()` | tests that must read real data. Scope assertions to `ZZT-` rows. |
+| `pg_empty_schema(tables)` | a subset schema in isolation, where the full one is unhelpful. |
+
+**Why a sweep and not attrition.** The sqlite failures were not inert. `test_rbac.py`'s four tests
+failed at baseline with `OperationalError`, which reads as sqlite schema flakiness and had been
+carried as such; on Postgres the real cause appeared immediately -- the fixture passes `role_id=`
+to `User`, a column that no longer exists. That defect was legible only after the substrate was
+right, and the same masking is presumed elsewhere. Leaving 121 files on sqlite means leaving an
+unknown number of real defects behind a misleading error message.
+
+The DoD for the sweep: no `create_engine("sqlite` anywhere under `tests/`, `_sqlite_compat.py`
+deleted, the sqlite type-compiler shims removed from `conftest.py`, and the failing-test set no
+larger than the 128-name baseline captured before the work began.

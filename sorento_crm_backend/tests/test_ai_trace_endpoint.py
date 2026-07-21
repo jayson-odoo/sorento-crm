@@ -6,65 +6,32 @@
 - 403 for a principal lacking ``system.ai_assistant_settings.view``.
 
 Mirrors the TestClient + controllable-permission fixture used by
-``test_ai_prompt_registry.py``. In-memory SQLite, no network.
+``test_ai_prompt_registry.py``. Blank Postgres schema, no network.
 """
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-from app.database import Base
 from app.models.ai_assistant import (
     AIAssistantConversation,
     AIAssistantMessage,
     AIAssistantSpan,
     AIAssistantTrace,
 )
-from app.models.audit import AuditLog
-from app.models.lookup import LookupBinding
-from app.models.user import SystemSetting, User
-
-
-@compiles(JSONB, "sqlite")  # type: ignore[misc]
-def _jsonb_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
-
-
-@compiles(ARRAY, "sqlite")  # type: ignore[misc]
-def _array_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
-
-
-_TABLES = [
-    User.__table__,
-    SystemSetting.__table__,
-    AIAssistantConversation.__table__,
-    AIAssistantMessage.__table__,
-    AIAssistantTrace.__table__,
-    AIAssistantSpan.__table__,
-    LookupBinding.__table__,
-    AuditLog.__table__,
-]
+from app.models.user import User
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db() -> Session:
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=_TABLES)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    """A blank Postgres schema, rolled back after the test.
+
+    Was an in-memory sqlite engine over a hand-listed subset of tables with
+    JSONB/ARRAY compiled to TEXT. The blank schema carries all of them.
+    """
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 # UUID-typed columns reject slug ids — use valid UUIDs. User.id is a String PK.
@@ -80,9 +47,14 @@ _NT_MSG_ID = "bbbbbbbb-0000-0000-0000-000000000002"
 @pytest.fixture
 def traced_message(db: Session) -> str:
     """Seed a message with a trace + two spans; return the message id."""
+    # User flushed before the conversation: the FK to users has no ORM
+    # relationship behind it, so the unit of work orders the mappers by table
+    # name (conversations first). sqlite did not enforce the FK; Postgres does.
     user = User(id="u-ep", email="ep@test.com", name="EP", status="ACTIVE")
+    db.add(user)
+    db.flush()
     conv = AIAssistantConversation(id=_CONV_ID, user_id="u-ep", title="T")
-    db.add_all([user, conv])
+    db.add(conv)
     db.flush()
     msg = AIAssistantMessage(id=_MSG_ID, conversation_id=_CONV_ID, role="assistant", content="a")
     db.add(msg)
@@ -99,6 +71,9 @@ def traced_message(db: Session) -> str:
         span_count=2,
     )
     db.add(trace)
+    # Flush the trace before pointing the message at it: messages sort before
+    # traces by table name, so the UPDATE would otherwise hit the FK first.
+    db.flush()
     db.add_all(
         [
             AIAssistantSpan(
@@ -122,8 +97,10 @@ def traced_message(db: Session) -> str:
 def notrace_message(db: Session) -> str:
     """A message with no trace at all."""
     user = User(id="u-nt", email="nt@test.com", name="NT", status="ACTIVE")
+    db.add(user)
+    db.flush()
     conv = AIAssistantConversation(id=_NT_CONV_ID, user_id="u-nt", title="T")
-    db.add_all([user, conv])
+    db.add(conv)
     db.flush()
     db.add(AIAssistantMessage(id=_NT_MSG_ID, conversation_id=_NT_CONV_ID, role="assistant", content="a"))
     db.commit()

@@ -2,59 +2,37 @@
 THEM while away — no manage_team permission. Plus the covered party may list + revoke
 their own coverage.
 
-Service-level (routes gate only get_current_user, no permission). Mirrors the sqlite
-fixture pattern in test_coverage_hod_assign.
+Service-level (routes gate only get_current_user, no permission). Mirrors the
+Postgres fixture pattern in test_coverage_hod_assign.
 """
 from __future__ import annotations
 
 import uuid
 
 import pytest
-from sqlalchemy import JSON, create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import text
 
-from app.database import Base
 from app.models.access import Team, TeamMember
 from app.models.notification import (
     Notification,
     NotificationDelivery,
     NotificationSubscription,
 )
-from app.models.lookup import LookupBinding  # listener-table workaround
 from app.models.user import User
 from app.services.coverage_subscription_service import CoverageSubscriptionService
 from app.services.error_handler import AppException
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    for col in Notification.__table__.columns:
-        if col.name == "data":
-            col.type = JSON()
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            User.__table__,
-            Team.__table__,
-            TeamMember.__table__,
-            NotificationSubscription.__table__,
-            Notification.__table__,
-            NotificationDelivery.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        # descendant_team_ids runs a raw-SQL recursive CTE on an unqualified
+        # `teams`, which schema_translate_map does not rewrite -- see the note in
+        # test_coverage_hod_assign. Align search_path with the blank schema.
+        schema = session.get_bind()._execution_options["schema_translate_map"][None]
+        session.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+        yield session
 
 
 def _user(db, name, **kw) -> str:

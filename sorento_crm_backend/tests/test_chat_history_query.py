@@ -11,39 +11,16 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import BigInteger, Integer, create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.types import JSON
 
-from app.database import Base
 from app.models.chat_history import ChatHistory
 from app.services import chat_history_query as svc
-
-
-def _prep(*models):
-    for model in models:
-        for col in model.__table__.columns:
-            if isinstance(col.type, (JSONB, ARRAY)):
-                col.type = JSON()
-                col.server_default = None
-            if col.primary_key and isinstance(col.type, BigInteger):
-                col.type = Integer()
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    _prep(ChatHistory)
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=[ChatHistory.__table__])
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    with blank_session() as session:
+        yield session
 
 
 NOW = datetime(2026, 7, 20, 12, 0, 0)

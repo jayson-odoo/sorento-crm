@@ -110,6 +110,17 @@ def blank_session() -> Session:
     """
     connection = blank_schema_engine().connect()
     transaction = connection.begin()
+
+    # schema_translate_map only rewrites ORM/Table constructs. A route issuing
+    # raw text() SQL -- and several do -- resolves its table names through
+    # search_path instead, which would send those writes to the REAL public
+    # tables while the test read an empty scratch schema and saw nothing.
+    #
+    # That failure is silent and writes live data, so pin search_path too. SET
+    # LOCAL scopes it to this transaction, which is discarded below.
+    name = _BLANK["name"]
+    connection.exec_driver_sql(f'SET LOCAL search_path TO "{name}", "{name}_scm"')
+
     session = Session(bind=connection, join_transaction_mode="create_savepoint")
     try:
         yield session

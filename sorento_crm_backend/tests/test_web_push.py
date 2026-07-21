@@ -12,36 +12,17 @@ import types
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.types import JSON as GenericJSON
 
-from app.database import Base
-from app.models.lookup import LookupBinding
 from app.models.notification import Notification, NotificationDelivery, PushSubscription
 from app.models.user import User
 from app.services.notification_service import NotificationService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
-    for t in (Notification.__table__, NotificationDelivery.__table__):
-        for col in list(t.columns):
-            if isinstance(col.type, JSONB):
-                col.type = GenericJSON()
-                col.server_default = None
-    Base.metadata.create_all(engine, tables=[
-        Notification.__table__, NotificationDelivery.__table__, PushSubscription.__table__,
-        User.__table__, LookupBinding.__table__,
-    ])
-    s = sessionmaker(bind=engine)()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        yield session
 
 
 def _user(db):

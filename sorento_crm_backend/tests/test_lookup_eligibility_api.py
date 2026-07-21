@@ -4,12 +4,12 @@ Auth bypass pattern follows test_lookup_sets_api.py exactly.
 """
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 # MUST be first app import — resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
+
+from tests._pg_fixture import blank_session
 
 
 _SUPERADMIN_USER_ID = "test-admin-user"
@@ -45,46 +45,34 @@ def _seed_superadmin(db: Session) -> None:
 
 @pytest.fixture
 def client():
+    """TestClient over an empty Postgres schema carrying the full real DDL.
+
+    Was in-memory SQLite with a hand-listed subset of tables. That list had to
+    name every table the request path touches, which is brittle once app-wide
+    flush listeners join in; the blank schema has all of them. Empty rather
+    than the live database because this file seeds its own superadmin, whose
+    role slug is unique.
+    """
     from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
-    from app.models.user import User, UserRole, UserRoleAssignment
-    from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
 
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    tables = [
-        User.__table__,
-        UserRole.__table__,
-        UserRoleAssignment.__table__,
-        LookupSet.__table__,
-        LookupOption.__table__,
-        LookupOptionKeyword.__table__,
-        LookupBinding.__table__,
-    ]
-    from app.database import Base
-    Base.metadata.create_all(engine, tables=tables)
+    with blank_session() as db:
+        _seed_superadmin(db)
 
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = SessionLocal()
-    _seed_superadmin(db)
+        def _override_get_db():
+            yield db
 
-    def _override_get_db():
-        yield db
+        def _override_current_user():
+            return {"id": _SUPERADMIN_USER_ID, "email": "admin@test.com"}
 
-    def _override_current_user():
-        return {"id": _SUPERADMIN_USER_ID, "email": "admin@test.com"}
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[get_current_user] = _override_current_user
+        app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
 
-    app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user] = _override_current_user
-    app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
-
-    with TestClient(app) as c:
-        yield c
-
-    app.dependency_overrides.clear()
-    db.close()
+        try:
+            with TestClient(app) as c:
+                yield c
+        finally:
+            app.dependency_overrides.clear()
 
 
 # ---------------------------------------------------------------------------

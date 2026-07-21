@@ -12,70 +12,35 @@ planner / semantic-compressor decomposition:
   preservation) and for < 400-char payloads; provider failure → raw unchanged +
   error span, never raises.
 
-Everything runs against in-memory SQLite. Postgres-only JSONB columns on
-``SystemSetting`` are compiled to TEXT (CLAUDE.md sqlite gotchas); prompt
-resolution rides the registry's hardcoded fallback (no prompt rows seeded →
-``version=None``), so no prompt tables are required.
+Everything runs against a blank copy of the real Postgres schema, so JSONB
+columns on ``SystemSetting`` are genuine JSONB. Prompt resolution rides the
+registry's hardcoded fallback (no prompt rows seeded → ``version=None``), so no
+prompt rows need seeding.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-from app.database import Base
 from app.models.ai_assistant import AIAssistantConfig
-from app.models.audit import AuditLog
-from app.models.lookup import LookupBinding
-from app.models.user import SystemSetting, User
+from app.models.user import SystemSetting
 from app.services.ai_assistant_service import AIAssistantChatService
 from app.services.ai_trace import KIND_LLM, TurnTrace
-
-
-# --- sqlite type mapping ---------------------------------------------------- #
-
-
-@compiles(JSONB, "sqlite")  # type: ignore[misc]
-def _jsonb_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
-
-
-@compiles(ARRAY, "sqlite")  # type: ignore[misc]
-def _array_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
-
-
-_TABLES = [
-    User.__table__,
-    SystemSetting.__table__,
-    AIAssistantConfig.__table__,
-    # Globally-registered listeners from other test modules fire on our inserts
-    # when the full suite runs (CLAUDE.md gotcha) — create their tables
-    # defensively so insert order across modules is robust.
-    LookupBinding.__table__,
-    AuditLog.__table__,
-]
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db() -> Session:
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=_TABLES)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    """A blank Postgres schema, rolled back after the test.
+
+    Was an in-memory sqlite engine over a hand-listed subset of tables with
+    JSONB/ARRAY compiled to TEXT. The blank schema carries every table, so the
+    defensive listener-table list is no longer needed.
+    """
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 @pytest.fixture

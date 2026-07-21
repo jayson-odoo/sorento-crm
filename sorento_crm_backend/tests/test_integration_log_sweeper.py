@@ -10,34 +10,25 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session
 
 from app.models.integration import IntegrationLog
 from app.services.integration_service import IntegrationLogService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db_session():
-    """SQLite-backed session with integration_log + lookup_bindings tables.
+    """A blank Postgres schema, rolled back after the test.
 
-    The wider model set uses JSONB columns that SQLite can't render; we don't
-    need most of them. lookup_bindings is required because a global SQLAlchemy
-    before-insert listener (`lookup_write_listener`) validates writes against
-    it — once the listener is registered via app import side-effects in
-    another test, every IntegrationLog INSERT/UPDATE looks for the table.
+    Was an in-memory sqlite engine carrying a hand-picked pair of tables. That
+    list existed only because the wider model set uses JSONB columns sqlite
+    cannot render. The blank schema has every table, so lookup_bindings --
+    which the global `lookup_write_listener` queries on every IntegrationLog
+    INSERT/UPDATE -- is present without having to be named.
     """
-    from app.models.lookup import LookupBinding
-
-    engine = create_engine("sqlite:///:memory:")
-    IntegrationLog.__table__.create(bind=engine)
-    LookupBinding.__table__.create(bind=engine)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 def _make_sent_log(session: Session, processed_at: datetime, *, status="sent") -> IntegrationLog:

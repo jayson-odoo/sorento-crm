@@ -15,19 +15,14 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.main import app  # noqa: F401  (import first: app.dependencies alone is circular)
-from app.database import Base
 from app.dependencies import get_current_user_or_api_key, get_db, get_external_api_user
 from app.models.access import RespondContact
 from app.models.chat_history import ChatHistory
-from app.models.integration import IntegrationLog  # routes write integration logs
-from app.models.lookup import LookupBinding  # validator listener checks this table
 from app.services.conversation_variables_service import get_referenced_result_set
 from tests._external_auth import external_permissions_granted
+from tests._pg_fixture import blank_session
 
 RESPOND_IO_ID = "437264483"
 MESSAGE_ID = "1780751891000000"
@@ -46,42 +41,8 @@ RESULT_SET = [
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    # JSONB columns carry pg-specific types/server_defaults; swap for SQLite DDL.
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for table in (RespondContact.__table__, ChatHistory.__table__, IntegrationLog.__table__):
-        for col in table.columns:
-            if isinstance(col.type, JSONB):
-                col.type = GenericJSON()
-                col.server_default = None
-
-    # SQLite only autoincrements INTEGER PRIMARY KEY; BigInteger doesn't alias rowid.
-    from sqlalchemy import Integer
-
-    ChatHistory.__table__.c.id.type = Integer()
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            RespondContact.__table__,
-            ChatHistory.__table__,
-            IntegrationLog.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        yield session
 
 
 @pytest.fixture

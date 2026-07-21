@@ -19,6 +19,24 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.compiler import compiles
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _drop_blank_schema_at_end():
+    """Drop the scratch schema ``blank_session()`` builds, however the run ends.
+
+    Without this, every pytest process leaves a ``zzt_blank_*`` schema of ~199
+    tables behind in the shared database; 222 of them accumulated before this
+    was wired up. Session-scoped and autouse so an interrupted or failing run
+    still cleans up after itself.
+    """
+    yield
+    try:
+        from tests._pg_fixture import drop_blank_schema
+
+        drop_blank_schema()
+    except Exception:
+        pass
+
+
 _IDEMP_REDIS = []  # process-wide cache: [client] or [None]
 
 

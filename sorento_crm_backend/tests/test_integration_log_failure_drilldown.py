@@ -13,21 +13,23 @@ theoretical: real error messages contain `%` (percent-encoded urls) and `_`
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.database import Base
 from app.models.integration import IntegrationLog
 from app.services.integration_service import IntegrationLogService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine, tables=[IntegrationLog.__table__])
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    """A blank Postgres schema, rolled back after the test.
+
+    Was in-memory sqlite. The LIKE-escaping assertions below are the reason
+    this matters most in this file: sqlite's LIKE and Postgres's differ in
+    case handling and in how ESCAPE is applied, so a green sqlite run said
+    little about the query the service actually issues in production.
+    """
+    with blank_session() as session:
+        yield session
 
 
 def _log(session, *, channel="respond_io", status="failed", status_code=None, error=None, minutes_ago=1):

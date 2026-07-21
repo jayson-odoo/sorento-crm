@@ -1,34 +1,21 @@
 """Tests for DownloadService source-scoped queries (print-count + per-entity list).
 
-UserDownload has no JSONB / FK / lookup-bound columns, so an isolated sqlite
-in-memory table is enough — no listener tables required.
+Runs against a blank copy of the real Postgres schema, so UserDownload's actual
+column types and defaults are the ones under test.
 """
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.download import DownloadStatus, UserDownload
+from app.models.download import DownloadStatus
 from app.services.download_service import DownloadService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=[UserDownload.__table__])
-    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = Session()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        yield session
 
 
 def _mk(svc, **kw):
@@ -65,7 +52,8 @@ def test_list_for_user_by_source_filters_and_orders_newest_first(db):
     # noise: other user + other entity
     _mk(svc, user_id="u2", source_entity_type="complaint", source_entity_id="c1")
     _mk(svc, user_id="u1", source_entity_type="complaint", source_entity_id="c2")
-    # sqlite func.now() has 1s resolution -> set distinct created_at explicitly.
+    # Rows created in the same statement batch share a now(); set distinct
+    # created_at explicitly so the ordering assertion is deterministic.
     a.created_at = base
     b.created_at = base + timedelta(minutes=5)
     db.commit()

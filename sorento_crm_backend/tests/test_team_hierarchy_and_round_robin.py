@@ -4,11 +4,8 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import text
 
-from app.database import Base
 from app.models.access import (
     AccessAgent,
     AgentTeam,
@@ -16,7 +13,6 @@ from app.models.access import (
     Team,
     TeamMember,
 )
-from app.models.lookup import LookupBinding  # listener-table workaround
 from app.models.user import User
 from app.schemas.user import TeamCreate, TeamUpdate
 from app.services.user_service import (
@@ -25,33 +21,19 @@ from app.services.user_service import (
     descendant_team_ids,
 )
 from app.services.error_handler import AppException
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            User.__table__,
-            AccessAgent.__table__,
-            Team.__table__,
-            TeamMember.__table__,
-            AgentTeam.__table__,
-            AgentTeamRoundRobinCursor.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        # descendant_team_ids() runs a recursive CTE as raw text() SQL over an
+        # unqualified `teams`, which schema_translate_map does not rewrite -- see
+        # the note in test_coverage_hod_assign. Align search_path with the blank
+        # schema so it reads this test's teams and not the real ones.
+        schema = session.get_bind()._execution_options["schema_translate_map"][None]
+        session.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+        yield session
 
 
 def _user(db, name) -> str:

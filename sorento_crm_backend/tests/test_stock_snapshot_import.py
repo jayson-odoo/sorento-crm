@@ -11,64 +11,20 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.audit import AuditLog
 from app.models.inventory import Stock, StockLedger, Warehouse
-from app.models.lookup import LookupBinding, LookupOption, LookupSet
-from app.models.product import Product
-from app.services import inventory_service as inventory_service_mod
+from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.inventory_service import StockService
+from tests._pg_fixture import blank_session
 
 
-@pytest.fixture(autouse=True)
-def _silence_import_log(monkeypatch):
-    """ImportLog uses JSONB so we can't create that table on SQLite — skip it.
-
-    bulk_import_stock already catches the failure, but the broken commit puts
-    the test session in PendingRollback state. Replace the call with a no-op so
-    we can keep querying the session after the import.
-    """
-
-    class _Noop:
-        def __init__(self, *_a, **_kw):
-            pass
-
-        def create_import_log(self, *args, **kwargs):
-            return None
-
-    monkeypatch.setattr(inventory_service_mod, "ImportLogService", _Noop)
-
-
+# The old sqlite fixture stubbed out ImportLogService, because ImportLog's JSONB
+# columns could not be created on sqlite. The real schema has the table, so the
+# import log is now exercised for real rather than skipped.
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            Warehouse.__table__,
-            Product.__table__,
-            Stock.__table__,
-            StockLedger.__table__,
-            LookupSet.__table__,
-            LookupOption.__table__,
-            LookupBinding.__table__,
-            AuditLog.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        yield session
 
 
 def _seed(db, *, active_wh: bool = True, qty: int = 50, code_suffix: str = "A"):
@@ -81,14 +37,28 @@ def _seed(db, *, active_wh: bool = True, qty: int = 50, code_suffix: str = "A"):
             is_active=active_wh,
         )
     )
+    # category_id and base_uom_id are real foreign keys, so the parent rows must
+    # exist. The sqlite fixture invented loose UUIDs for both, which only worked
+    # because sqlite did not enforce the constraint.
+    category = ProductCategory(
+        id=str(uuid.uuid4()),
+        category_code=f"CAT-{code_suffix}",
+        category_name=f"Category {code_suffix}",
+    )
+    uom = UnitOfMeasure(
+        id=str(uuid.uuid4()), uom_code=f"UOM-{code_suffix}", uom_name="Each"
+    )
+    db.add_all([category, uom])
+    db.flush()
+
     prod_id = str(uuid.uuid4())
     db.add(
         Product(
             id=prod_id,
             product_code=f"SKU-{code_suffix}",
             product_name=f"Product {code_suffix}",
-            category_id=str(uuid.uuid4()),
-            base_uom_id=str(uuid.uuid4()),
+            category_id=category.id,
+            base_uom_id=uom.id,
             list_price=0,
         )
     )

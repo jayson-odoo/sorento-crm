@@ -6,9 +6,9 @@ Covers ``app/services/ai_trace.py``:
 - flush being best-effort (never raising on a broken session),
 - ``sweep_expired_traces`` retention buckets (ok vs error/flagged TTLs).
 
-Everything runs against in-memory SQLite. Postgres-only column types are
-mapped to sqlite equivalents via ``@compiles`` hooks (CLAUDE.md sqlite
-gotchas: JSONB -> TEXT, ARRAY -> TEXT; pg ``UUID(as_uuid=False)`` works as-is).
+Everything runs against a blank copy of the real Postgres schema, so the column
+types, NOT NULLs and foreign keys are production's rather than sqlite's
+approximations of them.
 """
 from __future__ import annotations
 
@@ -18,21 +18,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-from app.database import Base
 from app.models.ai_assistant import (
     AIAssistantConversation,
     AIAssistantMessage,
     AIAssistantSpan,
     AIAssistantTrace,
 )
-from app.models.audit import AuditLog
-from app.models.lookup import LookupBinding
 from app.models.user import SystemSetting, User
 from app.services.ai_trace import (
     KIND_AGENT,
@@ -41,57 +34,24 @@ from app.services.ai_trace import (
     _truncate_payload,
     sweep_expired_traces,
 )
-
-
-# --- sqlite type mapping ---------------------------------------------------- #
-
-
-@compiles(JSONB, "sqlite")  # type: ignore[misc]
-def _jsonb_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
-
-
-@compiles(ARRAY, "sqlite")  # type: ignore[misc]
-def _array_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
-
-
-_TABLES = [
-    User.__table__,
-    SystemSetting.__table__,
-    AIAssistantConversation.__table__,
-    AIAssistantMessage.__table__,
-    AIAssistantTrace.__table__,
-    AIAssistantSpan.__table__,
-    # Globally-registered listeners from other test modules fire on our inserts
-    # when the full suite runs (CLAUDE.md gotcha) — create their tables
-    # defensively so insert order across modules is robust.
-    LookupBinding.__table__,
-    AuditLog.__table__,
-]
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db() -> Session:
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=_TABLES)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    """A blank Postgres schema, rolled back after the test.
+
+    Was an in-memory sqlite engine over a hand-listed subset of tables, with
+    JSONB/ARRAY compiled down to TEXT. The blank schema carries every table, so
+    the defensive listener-table list is no longer needed either.
+    """
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 # UUID-typed columns (conversation/message/trace/span ids) reject non-UUID
 # strings on read-back — use valid UUIDs. User.id is a String PK, so a plain
 # slug is fine there.
-# Must contain hex letters — SQLite's NUMERIC affinity coerces all-digit
-# hyphenated strings to floats on read-back.
 _CONV_ID = "0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d"
 _MSG_ID = "1b2c3d4e-5f6a-7b8c-9d0e-1f2a3b4c5d6e"
 
@@ -99,9 +59,15 @@ _MSG_ID = "1b2c3d4e-5f6a-7b8c-9d0e-1f2a3b4c5d6e"
 @pytest.fixture
 def message(db: Session) -> AIAssistantMessage:
     """A committed assistant message the trace can FK onto."""
+    # Flushed in two stages: AIAssistantConversation declares an FK to users but
+    # no ORM relationship, so the unit of work has no dependency edge and orders
+    # the mappers by table name -- conversations before users. sqlite did not
+    # enforce the FK, so a single add_all() worked there; Postgres rejects it.
     user = User(id="u-trace", email="trace@test.com", name="Trace User", status="ACTIVE")
+    db.add(user)
+    db.flush()
     conv = AIAssistantConversation(id=_CONV_ID, user_id="u-trace", title="T")
-    db.add_all([user, conv])
+    db.add(conv)
     db.flush()
     msg = AIAssistantMessage(
         id=_MSG_ID, conversation_id=_CONV_ID, role="assistant", content="answer"

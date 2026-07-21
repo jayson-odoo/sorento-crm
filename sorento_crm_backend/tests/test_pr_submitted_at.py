@@ -11,38 +11,22 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine
+from app.models.procurement import PurchaseRequestHeader
 from app.models.portal import PortalToken
 import app.services.form_sla_service as form_sla_service_mod
 from app.services.portal_service import PortalService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            PurchaseRequestHeader.__table__,
-            PurchaseRequestLine.__table__,
-            PortalToken.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    """A blank Postgres schema, rolled back after the test.
+
+    Was in-memory sqlite over a hand-listed subset of the procurement tables.
+    """
+    with blank_session() as session:
+        yield session
 
 
 @pytest.fixture(autouse=True)

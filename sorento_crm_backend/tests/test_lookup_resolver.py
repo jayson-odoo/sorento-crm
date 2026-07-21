@@ -1,39 +1,22 @@
 import pytest
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
 
 from app.schemas.lookup import LookupSetCreate, LookupOptionCreate, LookupKeywordIn
 from app.services.lookup_set_service import LookupSetService
 from app.services.lookup_option_service import LookupOptionService
 from app.services.lookup_resolver import LookupResolverService
 from app.services.error_handler import AppException
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db_session():
-    from app.database import Base
-    from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
-    engine = create_engine("sqlite:///:memory:")
+    """Empty Postgres schema over the full real DDL.
 
-    @event.listens_for(engine, "connect")
-    def _enable_fk(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            LookupSet.__table__, LookupOption.__table__,
-            LookupOptionKeyword.__table__, LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    Blank rather than the live database because the resolver matches on
+    set_key "region" globally -- live lookup rows would change what resolves.
+    """
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 @pytest.fixture

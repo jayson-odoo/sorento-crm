@@ -6,20 +6,20 @@ Auth bypass pattern:
   → app.dependencies during partial initialisation).
 - Inside the fixture, import get_current_user / get_db lazily (after app.main is
   already in sys.modules), override them on app.dependency_overrides.
-- Seed SQLite with a real 'superadmin' role so
+- Seed a real 'superadmin' role so
   UserPermissionService.check_user_has_permission always returns True, bypassing
   every permission slug check without touching the guard logic.
-- Only create the specific tables needed (not Base.metadata.create_all) to avoid
-  PostgreSQL-specific types (JSONB, ARRAY) that SQLite can't compile.
+- Run against a blank Postgres schema holding the whole real DDL, so no table
+  list has to be maintained and the types are the production ones.
 """
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 # MUST be first app import — resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
+
+from tests._pg_fixture import blank_session
 
 
 _SUPERADMIN_USER_ID = "test-admin-user"
@@ -62,54 +62,32 @@ def _seed_superadmin(db: Session) -> None:
 
 @pytest.fixture
 def client():
-    """TestClient with SQLite in-memory DB + superadmin user seeded.
+    """TestClient over an empty Postgres schema + superadmin user seeded.
 
-    Only creates the specific tables needed to avoid JSONB/ARRAY PostgreSQL types.
+    Blank rather than the live database on two counts: the seeded superadmin
+    role slug is unique, and test_list_with_query_filter asserts an absolute
+    result count that only holds on an empty slate.
     """
     from app.dependencies import get_current_user, get_current_user_or_api_key, get_db  # safe: app.main already loaded
-    from app.models.user import User, UserRole, UserRoleAssignment
-    from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
 
-    # StaticPool + check_same_thread=False: ensures a single shared in-memory DB
-    # across the test and multiple threads (TestClient runs routes in a thread).
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    # Only create the tables we need; avoids PostgreSQL-specific types (JSONB/ARRAY)
-    # in other models that SQLite can't compile.
-    tables = [
-        User.__table__,
-        UserRole.__table__,
-        UserRoleAssignment.__table__,
-        LookupSet.__table__,
-        LookupOption.__table__,
-        LookupOptionKeyword.__table__,
-        LookupBinding.__table__,
-    ]
-    from app.database import Base
-    Base.metadata.create_all(engine, tables=tables)
+    with blank_session() as db:
+        _seed_superadmin(db)
 
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = SessionLocal()
-    _seed_superadmin(db)
+        def _override_get_db():
+            yield db
 
-    def _override_get_db():
-        yield db
+        def _override_current_user():
+            return {"id": _SUPERADMIN_USER_ID, "email": "admin@test.com"}
 
-    def _override_current_user():
-        return {"id": _SUPERADMIN_USER_ID, "email": "admin@test.com"}
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[get_current_user] = _override_current_user
+        app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
 
-    app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user] = _override_current_user
-    app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
-
-    with TestClient(app) as c:
-        yield c
-
-    app.dependency_overrides.clear()
-    db.close()
+        try:
+            with TestClient(app) as c:
+                yield c
+        finally:
+            app.dependency_overrides.clear()
 
 
 # ---------------------------------------------------------------------------

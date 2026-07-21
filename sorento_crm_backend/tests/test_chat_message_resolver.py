@@ -11,43 +11,18 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy import BigInteger, Integer
-from sqlalchemy.types import JSON
 
-from app.database import Base
 from app.models.chat_history import ChatHistory
 from app.services import chat_message_resolver as svc
+from tests._pg_fixture import blank_session
 
 
-def _prep(*models):
-    for model in models:
-        for col in model.__table__.columns:
-            if isinstance(col.type, (JSONB, ARRAY)):
-                col.type = JSON()
-                col.server_default = None
-            # sqlite only autoincrements INTEGER PRIMARY KEY, not BIGINT, so the
-            # BigInteger surrogate key would insert NULL. Postgres uses a sequence
-            # and is unaffected. Same DDL-only shim style as tests/conftest.py.
-            if col.primary_key and isinstance(col.type, BigInteger):
-                col.type = Integer()
-
-
+# No column-type shims needed: on the real schema JSONB/ARRAY are native and the
+# BigInteger primary key is backed by a sequence, so inserts fill it themselves.
 @pytest.fixture
 def db():
-    _prep(ChatHistory)
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=[ChatHistory.__table__])
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    with blank_session() as session:
+        yield session
 
 
 NOW = datetime(2026, 7, 20, 12, 0, 0)

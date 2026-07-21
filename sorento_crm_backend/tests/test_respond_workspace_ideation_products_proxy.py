@@ -8,32 +8,27 @@ ALWAYS returns ``{products, error}`` (never 500). Covers:
 - graceful empty + error on an upstream failure / rejected key;
 - disabled hint when neither the live pair nor a resolvable workspace is present.
 
-Deterministic/offline: sqlite + a stubbed ``httpx.Client``; no live shared-service.
+Deterministic/offline: a blank Postgres schema + a stubbed ``httpx.Client``; no
+live shared-service.
 """
 from __future__ import annotations
 
+import uuid
+
 import httpx
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 import app.api.v1.system.respond_workspaces as rw
-from app.database import Base
 from app.models.respond_workspace import RespondWorkspace
 from app.schemas.respond_workspace import RespondWorkspaceCreate
 from app.services.respond_workspace_service import RespondWorkspaceService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def session():
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine, tables=[RespondWorkspace.__table__])
-    Session = sessionmaker(bind=engine)
-    s = Session()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 class _FakeResponse:
@@ -167,8 +162,14 @@ def test_missing_config_returns_hint_not_error(session, monkeypatch):
 
 
 def test_unknown_workspace_returns_error(session, monkeypatch):
+    # A well-formed id that is simply absent. The previous literal here was
+    # "does-not-exist", which is not a UUID at all: sqlite compared it as text
+    # and returned no row, so the test passed for the wrong reason. Postgres
+    # rejects it before the lookup, which hides the branch under test -- see the
+    # separate malformed-id defect noted in the report.
+    absent_id = str(uuid.uuid4())
     _patch_httpx(monkeypatch, response=_FakeResponse(json_body=[]))
-    out = _call(session, workspace_id="does-not-exist", base_url=None, api_key=None)
+    out = _call(session, workspace_id=absent_id, base_url=None, api_key=None)
     assert out["products"] == []
     assert out["error"] == "Workspace not found."
 

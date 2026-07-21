@@ -11,12 +11,12 @@ directly in the DB (the admin route would 403 for this user).
 import uuid
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 # MUST be first app import — resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
+
+from tests._pg_fixture import blank_session
 
 _NONADMIN_USER_ID = "test-nonadmin-user"
 _NONADMIN_ROLE_ID = "role-viewer-noperm"
@@ -55,62 +55,34 @@ def _seed_nonadmin_and_data(db: Session) -> None:
     db.commit()
 
 
-def _make_engine_db():
-    from app.models.user import (
-        User,
-        UserRole,
-        UserRoleAssignment,
-        UserPermission,
-        UserRolePermission,
-    )
-    from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
-    from app.database import Base
-
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            User.__table__,
-            UserRole.__table__,
-            UserRoleAssignment.__table__,
-            UserPermission.__table__,
-            UserRolePermission.__table__,
-            LookupSet.__table__,
-            LookupOption.__table__,
-            LookupOptionKeyword.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    return engine, SessionLocal()
-
-
 @pytest.fixture
 def nonadmin_client():
+    """TestClient over an empty Postgres schema carrying the full real DDL.
+
+    Empty because the whole point is a user with ZERO permission grants: run
+    against the live database, the seeded role would collide on slug and the
+    real grant rows would undermine the 403 pin in B-4.
+    """
     from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
 
-    engine, db = _make_engine_db()
-    _seed_nonadmin_and_data(db)
+    with blank_session() as db:
+        _seed_nonadmin_and_data(db)
 
-    def _override_get_db():
-        yield db
+        def _override_get_db():
+            yield db
 
-    def _override_current_user():
-        return {"id": _NONADMIN_USER_ID, "email": "user@test.com"}
+        def _override_current_user():
+            return {"id": _NONADMIN_USER_ID, "email": "user@test.com"}
 
-    app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user] = _override_current_user
-    app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[get_current_user] = _override_current_user
+        app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
 
-    with TestClient(app) as c:
-        yield c
-
-    app.dependency_overrides.clear()
-    db.close()
+        try:
+            with TestClient(app) as c:
+                yield c
+        finally:
+            app.dependency_overrides.clear()
 
 
 # ---- B-1 / B-2 / B-3 : non-admin can READ lookup options ----
@@ -150,17 +122,16 @@ def test_by_binding_401_unauthenticated():
     """No user override → real auth runs → no token → 401."""
     from app.dependencies import get_db
 
-    engine, db = _make_engine_db()
-    _seed_nonadmin_and_data(db)
+    with blank_session() as db:
+        _seed_nonadmin_and_data(db)
 
-    def _override_get_db():
-        yield db
+        def _override_get_db():
+            yield db
 
-    app.dependency_overrides[get_db] = _override_get_db
-    try:
-        with TestClient(app) as c:
-            r = c.get("/api/v1/lookup/by-binding?table=forms&column=form_type")
-            assert r.status_code == 401, r.text
-    finally:
-        app.dependency_overrides.clear()
-        db.close()
+        app.dependency_overrides[get_db] = _override_get_db
+        try:
+            with TestClient(app) as c:
+                r = c.get("/api/v1/lookup/by-binding?table=forms&column=form_type")
+                assert r.status_code == 401, r.text
+        finally:
+            app.dependency_overrides.clear()

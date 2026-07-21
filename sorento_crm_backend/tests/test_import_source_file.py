@@ -12,38 +12,23 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.job import ImportJob, JobStatus
 import app.services.import_source_store as store_mod
 from app.services.import_source_store import store_import_source_file
 import app.api.v1.system.jobs as jobs_api
-
-
-@compiles(JSONB, "sqlite")
-def _jsonb_as_json_on_sqlite(_element, _compiler, **_kw):
-    return "JSON"
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    ImportJob.__table__.create(bind=engine)
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    try:
+    """A blank Postgres schema, rolled back after the test.
+
+    Was in-memory sqlite with a JSONB->JSON compiler shim. On Postgres the
+    JSONB columns on import_jobs are the real thing, so no shim is needed.
+    """
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 class _RecordingBackend:

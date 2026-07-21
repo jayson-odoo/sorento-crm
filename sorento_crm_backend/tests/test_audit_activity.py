@@ -1,6 +1,6 @@
 """Cross-Entity Activity Timeline — GET /api/v1/audit/activity.
 
-Exercises the real label resolver over a small sqlite fixture: seeded
+Exercises the real label resolver over a blank Postgres schema: seeded
 AuditLog rows plus a couple of live entity rows (complaint, order, user) so
 entity_id -> human label resolution is genuinely tested, including the
 hard-deleted fallback (an audit row whose live row is gone). Auth-deny is
@@ -10,52 +10,22 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.types import JSON
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.audit import AuditLog
 from app.models.user import User
 from app.models.complaints import Complaint
 from app.models.order import Order
-from app.models.lookup import LookupBinding
 from app.services.activity_service import get_activity_feed
-
-
-def _swap_jsonb(*models):
-    """sqlite has no JSONB — swap to generic JSON for DDL (CLAUDE.md gotcha)."""
-    for model in models:
-        for col in model.__table__.columns:
-            if isinstance(col.type, JSONB):
-                col.type = JSON()
-                col.server_default = None
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    _swap_jsonb(AuditLog, User, Complaint, Order)
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    # LookupBinding table required: a globally-registered write-listener queries
-    # lookup_bindings on inserts when the full suite runs (CLAUDE.md gotcha).
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            AuditLog.__table__,
-            User.__table__,
-            Complaint.__table__,
-            Order.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    session = sessionmaker(bind=engine)()
+    with blank_session() as session:
+        yield from _seeded(session)
 
+
+def _seeded(session):
     now = datetime(2026, 6, 30, 9, 0, 0)
 
     # --- live entity rows (for label resolution) ---
@@ -122,7 +92,6 @@ def db():
         "deleted_order": deleted_order_id,
     }
     yield session
-    session.close()
 
 
 def test_happy_path_resolves_labels_changes_and_actors(db):

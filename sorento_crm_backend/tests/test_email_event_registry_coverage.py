@@ -23,14 +23,10 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.email_outbox import EmailEventConfig, EmailOutbox
-from app.models.lookup import LookupBinding  # validator listener checks this table
 from app.models.notification import Notification, NotificationDelivery
+from tests._pg_fixture import blank_session
 from app.services import email_outbox_service
 from app.services.email_event_registry import EMAIL_EVENT_REGISTRY, get_event_def
 from app.services.email_outbox_service import UnknownEmailEvent
@@ -73,39 +69,12 @@ def test_fallback_event_key_is_registered():
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for table in (
-        EmailOutbox.__table__,
-        Notification.__table__,
-    ):
-        for col in list(table.columns):
-            if isinstance(col.type, JSONB):
-                col.type = GenericJSON()
-                col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            EmailOutbox.__table__,
-            EmailEventConfig.__table__,
-            Notification.__table__,
-            NotificationDelivery.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    # Previously an in-memory sqlite bind that had to downgrade EmailOutbox's and
+    # Notification's JSONB columns to generic JSON in the shared model metadata --
+    # a mutation that outlived this fixture. On the blank schema the real JSONB
+    # DDL is used as-is.
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 class _FakeUser:
