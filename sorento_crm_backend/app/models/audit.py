@@ -12,9 +12,13 @@ class AuditLog(Base):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     entity_type = Column(String(100), nullable=False, index=True)
+    # Polymorphic: holds whatever the audited entity's PK is, which is NOT always a
+    # UUID (e.g. MarketSegment's PK is a `code` like 'MSEG-A'). Must stay text —
+    # production currently types this column `uuid`, which silently rejects those
+    # rows, so market-segment changes have never been audited. See migration 297.
     entity_id = Column(String(100), nullable=False, index=True)
     action = Column(String(20), nullable=False)  # INSERT | UPDATE | DELETE
-    user_id = Column(String(100), nullable=True)  # system, or user id when available
+    user_id = Column(UUID(as_uuid=False), nullable=True)  # system, or user id when available
     # Acting contact (respond_contacts.id) for portal/public-link writes where there is
     # no staff user_id. NULL for staff writes and the `system` automation principal.
     # Display resolves this to the contact name BEFORE the user_id -> staff / "System" fallback.

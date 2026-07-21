@@ -261,7 +261,7 @@ def test_agent_loop_dedups_identical_tool_calls_via_cache(db_session: Session, m
     cfg.is_enabled = True
     db_session.commit()
 
-    turn_cache = _TurnToolCache(user_id="u-1", conversation_id="conv-1", turn_id="turn-1")
+    turn_cache = _TurnToolCache(user_id="95709c37-0fb4-5c00-8686-536c019e6fb7", conversation_id="conv-1", turn_id="turn-1")
 
     text, tool_calls, _usage = svc._run_agent_loop(
         config=cfg,

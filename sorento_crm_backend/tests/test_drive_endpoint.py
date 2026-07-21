@@ -29,10 +29,8 @@ from sqlalchemy.pool import StaticPool
 # MUST be first app import — resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 
-_USER_ID = "test-user-drive"
-_ROLE_ID = "role-superadmin-drive"
-
-
+_USER_ID = "773b536d-c675-5a29-b44c-37f956462ba0"
+_ROLE_ID = "eb0d8146-c1be-524b-a31a-34b5cdc1ac01"
 def _seed_user(db: Session) -> None:
     from app.models.user import User, UserRole, UserRoleAssignment
 

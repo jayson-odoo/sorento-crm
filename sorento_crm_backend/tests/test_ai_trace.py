@@ -99,8 +99,8 @@ _MSG_ID = "1b2c3d4e-5f6a-7b8c-9d0e-1f2a3b4c5d6e"
 @pytest.fixture
 def message(db: Session) -> AIAssistantMessage:
     """A committed assistant message the trace can FK onto."""
-    user = User(id="u-trace", email="trace@test.com", name="Trace User", status="ACTIVE")
-    conv = AIAssistantConversation(id=_CONV_ID, user_id="u-trace", title="T")
+    user = User(id="7c795c3a-ade7-5a82-bf9a-aacee7e6a5b8", email="trace@test.com", name="Trace User", status="ACTIVE")
+    conv = AIAssistantConversation(id=_CONV_ID, user_id="7c795c3a-ade7-5a82-bf9a-aacee7e6a5b8", title="T")
     db.add_all([user, conv])
     db.flush()
     msg = AIAssistantMessage(
@@ -184,7 +184,7 @@ def test_truncate_payload_non_serializable_falls_back_to_envelope():
 
 
 def _build_trace() -> TurnTrace:
-    tt = TurnTrace(user_id="u-trace", conversation_id=_CONV_ID, session_id="s-1", env="test")
+    tt = TurnTrace(user_id="7c795c3a-ade7-5a82-bf9a-aacee7e6a5b8", conversation_id=_CONV_ID, session_id="s-1", env="test")
     tt.add_llm_span(
         name="chat gpt-4o",
         model="gpt-4o",
