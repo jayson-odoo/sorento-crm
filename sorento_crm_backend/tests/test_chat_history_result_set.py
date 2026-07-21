@@ -27,6 +27,7 @@ from app.models.chat_history import ChatHistory
 from app.models.integration import IntegrationLog  # routes write integration logs
 from app.models.lookup import LookupBinding  # validator listener checks this table
 from app.services.conversation_variables_service import get_referenced_result_set
+from tests._external_auth import external_permissions_granted
 
 RESPOND_IO_ID = "437264483"
 MESSAGE_ID = "1780751891000000"
@@ -94,7 +95,11 @@ def client(db):
     app.dependency_overrides[get_external_api_user] = _user
     app.dependency_overrides[get_current_user_or_api_key] = _user
     app.dependency_overrides[get_db] = _db
-    yield TestClient(app)
+    # Authorization is deliberately out of scope here: this suite mocks the
+    # database, so the real RBAC lookup cannot answer. Enforcement is covered
+    # by test_external_permission_guard / _coverage.
+    with external_permissions_granted():
+        yield TestClient(app)
     app.dependency_overrides.clear()
 
 

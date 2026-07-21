@@ -145,7 +145,8 @@ def create_product_attachment(
         access_levels=payload.access_levels,
     )
     service = ProductAttachmentService(db)
-    created_by = None if current_user.get("id") == "system" else current_user["id"]
+    # The integration's principal is a real users row, so attribution is recorded.
+    created_by = current_user["id"]
     result = service.create_product_attachment(data, created_by=created_by)
     try:
         AttachmentFieldLinkService(db).apply_template_to_row(
@@ -195,7 +196,8 @@ def _link_attachment_to_products_bulk(
     attachment_row = (
         db.query(Attachment).filter(Attachment.id == attachment_id).first()
     )
-    created_by = None if current_user.get("id") == "system" else current_user["id"]
+    # The integration's principal is a real users row, so attribution is recorded.
+    created_by = current_user["id"]
     linked: list[ProductAttachmentBulkLinkItem] = []
     skipped_product_codes: list[str] = []
     already_linked: list[str] = []

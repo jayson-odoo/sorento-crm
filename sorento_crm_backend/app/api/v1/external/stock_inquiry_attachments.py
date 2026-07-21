@@ -31,9 +31,8 @@ def link_stock_inquiry_attachment(
             detail="Stock inquiry not found",
         )
 
+    # The integration's principal is a real users row, so attribution is recorded.
     created_by = current_user.get("id")
-    if created_by == "system" or not created_by:
-        created_by = None
 
     service = EntityAttachmentService(db)
     link = service.create_attachment_and_link(

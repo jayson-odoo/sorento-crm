@@ -58,9 +58,8 @@ def link_entity_attachment(
     entity_id = (payload.entity_id or "").strip()
     _assert_entity_exists(db, entity_type, entity_id)
 
+    # The integration's principal is a real users row, so attribution is recorded.
     created_by = current_user.get("id")
-    if created_by == "system" or not created_by:
-        created_by = None
 
     service = EntityAttachmentService(db)
     attachment_type_code = (

@@ -542,7 +542,10 @@ def api_client(monkeypatch):
     app.dependency_overrides[get_db] = lambda: None
     app.dependency_overrides[get_external_api_user] = lambda: {"id": "system"}
     try:
-        yield TestClient(app), logs, monkeypatch
+        # Authorization is out of scope here (get_db is stubbed to None);
+        # enforcement is covered by test_external_permission_guard/_coverage.
+        with external_permissions_granted():
+            yield TestClient(app), logs, monkeypatch
     finally:
         app.dependency_overrides.clear()
 
@@ -584,6 +587,7 @@ def test_endpoint_logs_on_failure(api_client):
 # Group F — multi-modal capture (DC-1..DC-10)                                  #
 # --------------------------------------------------------------------------- #
 from app.services.ideation_media_service import MediaClients  # noqa: E402
+from tests._external_auth import external_permissions_granted
 
 
 def _stub_media_clients(caption="a sketch of an export button"):
