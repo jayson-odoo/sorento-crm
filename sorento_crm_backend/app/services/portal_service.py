@@ -315,7 +315,34 @@ class PortalService:
             token.token, base_url, submission_type, token_row=token
         )
         text = self._build_send_message_text(contact, portal_url, token.expires_at)
-        RespondClient().send_message(respond_io_id, text)
+        # Log the attempt to the Respond outbox whether it succeeds or fails.
+        # This send previously wrote nothing, so a 401/403 here left no trace in
+        # integration_logs at all — the admin saw an error and the outbox stayed
+        # empty. Keep the raise: the caller maps it to a 502 so the admin gets
+        # immediate feedback rather than a silent queue.
+        from app.services.integration_service import log_respond_send
+
+        request_payload = {"message": {"type": "text", "text": text}}
+        try:
+            response = RespondClient().send_message(respond_io_id, text)
+        except Exception as e:
+            log_respond_send(
+                self.db,
+                business_table="portal_tokens",
+                business_id=str(token.id),
+                identifier=respond_io_id,
+                request_payload=request_payload,
+                exc=e,
+            )
+            raise
+        log_respond_send(
+            self.db,
+            business_table="portal_tokens",
+            business_id=str(token.id),
+            identifier=respond_io_id,
+            request_payload=request_payload,
+            response=response,
+        )
         return {
             "token": token.token,
             "expires_at": token.expires_at.isoformat(),

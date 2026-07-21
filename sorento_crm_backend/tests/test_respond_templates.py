@@ -315,12 +315,18 @@ def test_window_closed_when_no_incoming(db):
 def test_window_falls_back_to_chat_history_on_api_error(db):
     from app.services import respond_messaging_service as svc
 
+    # chat_histories.contact_id holds the Respond.io id, NOT the internal
+    # respond_contacts UUID — every one of the 1,519 production rows is numeric
+    # and joins on respond_io_id. Seeding a UUID here made the fallback lookup
+    # miss, so this test used to assert the pre-fix behaviour (window always
+    # CLOSED on API error) rather than the fix.
+    respond_io_id = "123"
     contact_id = str(uuid.uuid4())
     db.add(
         ChatHistory(
             id=1,
             channel="whatsapp",
-            contact_id=contact_id,
+            contact_id=respond_io_id,
             phone_number="+60123",
             message="hi",
             sent_at=datetime.utcnow() - timedelta(hours=1),
@@ -332,7 +338,7 @@ def test_window_falls_back_to_chat_history_on_api_error(db):
     client = MagicMock()
     client.list_messages.side_effect = RuntimeError("boom")
     with patch("app.services.integration_service.RespondClient", return_value=client):
-        state = svc.get_window_state(db, "id:123", respond_contact_id=contact_id)
+        state = svc.get_window_state(db, f"id:{respond_io_id}", respond_contact_id=contact_id)
     assert state["open"] is True
     assert state["source"] == "chat_history"
 
