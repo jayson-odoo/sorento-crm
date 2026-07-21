@@ -51,6 +51,8 @@ export function IntegrationFormDialog({
   // and PO/SQ/SO writes) -- without a base URL there is nowhere to push.
   const [baseUrl, setBaseUrl] = useState('');
   const [outboundKey, setOutboundKey] = useState('');
+  // Abuse ceiling, not a quota. Blank uses the platform default.
+  const [rateLimit, setRateLimit] = useState('');
 
   // This SearchableSelect is static-options only, so the roster is fetched
   // once and filtered client-side rather than searched server-side.
@@ -80,6 +82,12 @@ export function IntegrationFormDialog({
     // Never prefilled: the server does not return it, and a blank field on
     // save means "keep existing" rather than "clear".
     setOutboundKey('');
+    setRateLimit(
+      String(
+        ((integration?.config_json ?? {}) as Record<string, unknown>)
+          .rate_limit_per_minute ?? '',
+      ),
+    );
   }, [open, integration]);
 
   const submit = async () => {
@@ -94,7 +102,11 @@ export function IntegrationFormDialog({
           type,
           act_as_user_id: actAsUserId,
           is_active: isActive,
-          config_json: { ...(integration.config_json ?? {}), base_url: baseUrl || undefined },
+          config_json: {
+            ...(integration.config_json ?? {}),
+            base_url: baseUrl || undefined,
+            rate_limit_per_minute: rateLimit === '' ? undefined : Number(rateLimit),
+          },
           // Omitted when blank so the stored credential is kept. Sending an
           // empty object would clear it, which reads as an outage, not an edit.
           ...(outboundKey ? { credentials_json: { api_key: outboundKey } } : {}),
@@ -106,7 +118,14 @@ export function IntegrationFormDialog({
         type,
         act_as_user_id: actAsUserId,
         is_active: isActive,
-        ...(baseUrl ? { config_json: { base_url: baseUrl } } : {}),
+        ...(baseUrl || rateLimit
+          ? {
+              config_json: {
+                ...(baseUrl ? { base_url: baseUrl } : {}),
+                ...(rateLimit ? { rate_limit_per_minute: Number(rateLimit) } : {}),
+              },
+            }
+          : {}),
         ...(outboundKey ? { credentials_json: { api_key: outboundKey } } : {}),
       });
     }
@@ -191,6 +210,22 @@ export function IntegrationFormDialog({
             <p className="text-xs text-muted-foreground">
               The key Sorento presents when calling out. Encrypted at rest and never
               shown again. Leave blank to keep the existing one.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="integration-rate-limit">Rate limit (requests/minute)</Label>
+            <Input
+              id="integration-rate-limit"
+              type="number"
+              min={0}
+              value={rateLimit}
+              onChange={(e) => setRateLimit(e.target.value)}
+              placeholder="Default (600)"
+            />
+            <p className="text-xs text-muted-foreground">
+              Per-integration abuse ceiling — one noisy caller cannot throttle the
+              others. Blank uses the default; 0 disables limiting.
             </p>
           </div>
 

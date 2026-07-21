@@ -195,6 +195,7 @@ export function IntegrationDetailView({ id }: { id: string }) {
 
   const config = (integration.config_json ?? {}) as Record<string, unknown>;
   const outboundUrl = (config.base_url as string) || '';
+  const rateLimit = config.rate_limit_per_minute as number | undefined;
 
   return (
     <div className="space-y-4 p-4 md:p-6">
@@ -250,6 +251,15 @@ export function IntegrationDetailView({ id }: { id: string }) {
               <span className="font-mono">••••••••</span>
             ) : (
               <span className="text-muted-foreground">Not set</span>
+            )}
+          </Field>
+          <Field label="Rate limit">
+            {rateLimit === 0 ? (
+              <span className="text-muted-foreground">Disabled — no ceiling applied</span>
+            ) : rateLimit ? (
+              `${rateLimit} requests/minute`
+            ) : (
+              <span className="text-muted-foreground">Default (600/minute)</span>
             )}
           </Field>
           <Field label="Status">

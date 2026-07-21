@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from app.models.integration import Integration
 from app.models.user import User
 from app.services.integration_key_service import AuthFailure, IntegrationKeyService
+from app.services.integration_rate_limit import check_integration_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,24 @@ def resolve_integration_principal(db: Session, presented_key: Optional[str]) -> 
         raise _unauthorized(failure.value)
 
     assert integration is not None  # resolve() returns one or the other
+
+    # Applied after authentication so the bucket is per integration rather than
+    # per IP: one noisy caller must not throttle the others (AC-AC-10). Placed
+    # before principal resolution so a caller in a hot retry loop is turned away
+    # without further database work.
+    outcome = check_integration_rate_limit(integration)
+    if not outcome.allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": "rate_limited",
+                "message": f"Rate limit exceeded ({outcome.limit}/minute)",
+                "limit_per_minute": outcome.limit,
+            },
+            # Without this the caller can only guess, and a well-behaved
+            # integration degrades into hammering us.
+            headers={"Retry-After": str(outcome.retry_after_seconds or 60)},
+        )
 
     if not integration.act_as_user_id:
         # Nullable until the seed migration populates it. Continuing without a
