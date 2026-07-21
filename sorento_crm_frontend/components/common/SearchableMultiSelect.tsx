@@ -59,6 +59,17 @@ export type SearchableMultiSelectProps = {
    * which `badgeText` / `description` cannot express.
    */
   renderOption?: (opt: SearchableMultiSelectOption) => React.ReactNode;
+  /**
+   * Replace the whole trigger — for pickers that hang off an icon button rather than a select
+   * box, where the default trigger + chevron would be wrong. Must render one focusable element.
+   */
+  renderTrigger?: (state: {
+    selected: SearchableMultiSelectOption[];
+    open: boolean;
+    disabled: boolean;
+  }) => React.ReactNode;
+  /** Notified whenever the search text changes, in both modes. */
+  onSearchChange?: (query: string) => void;
 };
 
 export function SearchableMultiSelect({
@@ -75,6 +86,8 @@ export function SearchableMultiSelect({
   triggerClassName,
   renderTriggerLabel,
   renderOption,
+  renderTrigger,
+  onSearchChange,
 }: SearchableMultiSelectProps) {
   const isAsync = typeof fetchOptions === 'function';
   const [open, setOpen] = React.useState(false);
@@ -202,9 +215,17 @@ export function SearchableMultiSelect({
   };
   const remove = (v: string) => onChange(value.filter((x) => x !== v));
 
+  const handleQueryChange = (q: string) => {
+    setQuery(q);
+    onSearchChange?.(q);
+  };
+
   return (
     <Popover open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
       <PopoverTrigger asChild>
+        {renderTrigger ? (
+          renderTrigger({ selected: chosen, open, disabled: isDisabled })
+        ) : (
         <button
           type="button"
           disabled={isDisabled}
@@ -251,12 +272,13 @@ export function SearchableMultiSelect({
           )}
           <ChevronDown className="size-4 shrink-0 self-start mt-1 opacity-60 -me-0.5" />
         </button>
+        )}
       </PopoverTrigger>
       {/* Portalled so a dialog's overflow can't clip the menu when it flips upward. */}
       <PopoverPortal>
       <PopoverContent className={cn('w-(--radix-popper-anchor-width) p-0', className)} align="start">
         <Command shouldFilter={false}>
-          <CommandInput placeholder="Search..." value={query} onValueChange={setQuery} />
+          <CommandInput placeholder="Search..." value={query} onValueChange={handleQueryChange} />
           {!loading && selectable.length > 0 ? (
             <div className="border-b p-1">
               <button

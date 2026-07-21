@@ -18,23 +18,9 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import {
-  Command,
-  CommandCheck,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { Switch } from '@/components/ui/switch';
 import { useSettings } from '../components/settings-context';
 
@@ -101,17 +87,7 @@ const SystemHealthSettingsPage = () => {
     String(settings.chatLatencyMinSample ?? 30),
   );
 
-  const toggleRole = (roleId: string) => {
-    setRoleIds((prev) =>
-      prev.includes(roleId) ? prev.filter((id) => id !== roleId) : [...prev, roleId],
-    );
-  };
 
-  const toggleUser = (userId: string) => {
-    setUserIds((prev) =>
-      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId],
-    );
-  };
 
   const mutation = useMutation({
     mutationFn: async () => {
@@ -231,37 +207,20 @@ const SystemHealthSettingsPage = () => {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <Popover>
-              <PopoverTrigger asChild>
+            <SearchableMultiSelect
+              value={roleIds}
+              onChange={setRoleIds}
+              emptyMessage="No roles found."
+              className="w-[220px]"
+              // Selections are shown as badges beside this control, so the trigger stays the
+              // compact icon button it has always been rather than a select box.
+              renderTrigger={() => (
                 <Button variant="outline" mode="icon" className="h-7! w-7!">
                   <UserPlus className="size-3.5!" />
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[220px] p-0" align="start" side="bottom">
-                <Command>
-                  <CommandInput placeholder="Search roles..." />
-                  <CommandList>
-                    <CommandEmpty>No roles found.</CommandEmpty>
-                    <CommandGroup>
-                      <ScrollArea>
-                        {roles?.map((role) => {
-                          const isSelected = roleIds.includes(role.id);
-                          return (
-                            <CommandItem
-                              key={role.id}
-                              onSelect={() => toggleRole(role.id)}
-                            >
-                              <span className="grow">{role.name}</span>
-                              {isSelected && <CommandCheck />}
-                            </CommandItem>
-                          );
-                        })}
-                      </ScrollArea>
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+              )}
+              options={(roles ?? []).map((role) => ({ value: role.id, label: role.name }))}
+            />
             <div className="flex flex-wrap items-center gap-2">
               {roleIds.length > 0 ? (
                 roleIds.map((roleId) => {
@@ -289,38 +248,22 @@ const SystemHealthSettingsPage = () => {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <Popover>
-              <PopoverTrigger asChild>
+            <SearchableMultiSelect
+              value={userIds}
+              onChange={setUserIds}
+              emptyMessage="No users found."
+              className="w-[260px]"
+              renderTrigger={() => (
                 <Button variant="outline" mode="icon" className="h-7! w-7!">
                   <UserPlus className="size-3.5!" />
                 </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[260px] p-0" align="start" side="bottom">
-                <Command>
-                  <CommandInput placeholder="Search users..." />
-                  <CommandList>
-                    <CommandEmpty>No users found.</CommandEmpty>
-                    <CommandGroup>
-                      <ScrollArea>
-                        {users?.map((user) => {
-                          const isSelected = userIds.includes(user.id);
-                          return (
-                            <CommandItem
-                              key={user.id}
-                              value={`${user.name ?? ''} ${user.email}`}
-                              onSelect={() => toggleUser(user.id)}
-                            >
-                              <span className="grow truncate">{user.name || user.email}</span>
-                              {isSelected && <CommandCheck />}
-                            </CommandItem>
-                          );
-                        })}
-                      </ScrollArea>
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+              )}
+              options={(users ?? []).map((user) => ({
+                value: user.id,
+                label: user.name || user.email,
+                searchText: `${user.name ?? ''} ${user.email}`,
+              }))}
+            />
             <div className="flex flex-wrap items-center gap-2">
               {userIds.length > 0 ? (
                 userIds.map((userId) => {

@@ -39,7 +39,20 @@ export type SearchableSelectProps = {
    * Async mode: server-search. Called with the popover search text (empty on open for the
    * first page), debounced 300ms. Results replace the list; stale responses are dropped.
    */
-  fetchOptions?: (query: string) => Promise<SearchableSelectOption[]>;
+  fetchOptions?: (query: string, pageIndex: number) => Promise<SearchableSelectOption[]>;
+  /**
+   * Async mode: append pages instead of replacing, with a "Load more" row while the last
+   * fetch came back full. Without this the list is whatever one page returns, which
+   * quietly caps how much of a large catalog is reachable.
+   */
+  paginated?: boolean;
+  /** Async + paginated: page size used to decide whether another page may exist. Default 50. */
+  pageSize?: number;
+  /**
+   * Notified whenever the search text changes, in BOTH modes. Static-mode callers use this to
+   * widen a locally-filtered list with a server refetch.
+   */
+  onSearchChange?: (query: string) => void;
   /**
    * Async mode: the currently-selected option, so the trigger label + checkmark survive
    * when `value` isn't in the fetched page. Callers already hold the selected entity.
@@ -60,6 +73,16 @@ export type SearchableSelectProps = {
   renderTriggerLabel?: (opt: SearchableSelectOption) => React.ReactNode;
   /** Render a custom option body (status dots, icons). Defaults to label + description. */
   renderOption?: (opt: SearchableSelectOption) => React.ReactNode;
+  /**
+   * Replace the whole trigger. For pickers that hang off something other than a select box —
+   * an icon button, say — where the default trigger + chevron would be wrong.
+   * Receives the resolved selection and open state; must render a single focusable element.
+   */
+  renderTrigger?: (state: {
+    selected: SearchableSelectOption | null;
+    open: boolean;
+    disabled: boolean;
+  }) => React.ReactNode;
 };
 
 export function SearchableSelect({
@@ -69,6 +92,9 @@ export function SearchableSelect({
   fetchOptions,
   selectedOption,
   clearable = false,
+  paginated = false,
+  pageSize = 50,
+  onSearchChange,
   id,
   size,
   placeholder = 'Select...',
@@ -78,6 +104,7 @@ export function SearchableSelect({
   triggerClassName,
   renderTriggerLabel,
   renderOption,
+  renderTrigger,
 }: SearchableSelectProps) {
   const isAsync = typeof fetchOptions === 'function';
   const [open, setOpen] = React.useState(false);
@@ -88,24 +115,49 @@ export function SearchableSelect({
   const [query, setQuery] = React.useState('');
   const lastQueryRef = React.useRef<string>('\u0000'); // sentinel: never equals a real query
 
+  const [page, setPage] = React.useState(0);
+  const [hasMore, setHasMore] = React.useState(false);
+  const [loadingMore, setLoadingMore] = React.useState(false);
+
   const runFetch = React.useCallback(
     async (q: string) => {
       if (!fetchOptions) return;
       lastQueryRef.current = q;
       setLoading(true);
       try {
-        const items = await fetchOptions(q);
+        const items = await fetchOptions(q, 0);
         if (lastQueryRef.current !== q) return; // stale
         setAsyncOptions(items);
+        setPage(0);
+        setHasMore(paginated && items.length >= pageSize);
       } catch {
         if (lastQueryRef.current !== q) return;
         setAsyncOptions([]);
+        setHasMore(false);
       } finally {
         if (lastQueryRef.current === q) setLoading(false);
       }
     },
-    [fetchOptions],
+    [fetchOptions, paginated, pageSize],
   );
+
+  const loadMore = React.useCallback(async () => {
+    if (!fetchOptions || loadingMore) return;
+    const next = page + 1;
+    setLoadingMore(true);
+    try {
+      const items = await fetchOptions(query, next);
+      // A query change mid-flight invalidates this page.
+      if (lastQueryRef.current !== query) return;
+      setAsyncOptions((prev) => [...prev, ...items]);
+      setPage(next);
+      setHasMore(items.length >= pageSize);
+    } catch {
+      setHasMore(false);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [fetchOptions, loadingMore, page, query, pageSize]);
 
   // Eager first page on open; debounced fetch on query change (async mode only).
   React.useEffect(() => {
@@ -135,15 +187,32 @@ export function SearchableSelect({
     return null;
   }, [baseOptions, value, isAsync, selectedOption]);
 
+  // Static mode filters here rather than delegating to cmdk, so that (a) `onSearchChange`
+  // callers see the same text the list is filtered by, and (b) matching is the same
+  // all-tokens substring rule SearchableMultiSelect uses. cmdk's fuzzy subsequence scoring
+  // surfaced loose matches ("kuala" hitting "North Dakota/Beulah"), which is hard to explain
+  // and differed between the two halves of one standard. Async mode is filtered server-side.
+  const visibleOptions = React.useMemo(() => {
+    if (isAsync) return baseOptions;
+    const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return baseOptions;
+    return baseOptions.filter((opt) => {
+      const haystack = (
+        opt.searchText ?? `${opt.label} ${opt.description ?? ''}`
+      ).toLowerCase();
+      return tokens.every((t) => haystack.includes(t));
+    });
+  }, [isAsync, baseOptions, query]);
+
   const grouped = React.useMemo(() => {
     const map = new Map<string, SearchableSelectOption[]>();
-    for (const opt of baseOptions) {
+    for (const opt of visibleOptions) {
       const key = opt.group ?? '';
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(opt);
     }
     return Array.from(map.entries());
-  }, [baseOptions]);
+  }, [visibleOptions]);
 
   const misconfigured = !isAsync && options === undefined;
   const isDisabled = disabled || misconfigured;
@@ -154,9 +223,17 @@ export function SearchableSelect({
     setOpen(false);
   };
 
+  const handleQueryChange = (q: string) => {
+    setQuery(q);
+    onSearchChange?.(q);
+  };
+
   return (
     <Popover open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
       <PopoverTrigger asChild>
+        {renderTrigger ? (
+          renderTrigger({ selected, open, disabled: isDisabled })
+        ) : (
         <button
           type="button"
           disabled={isDisabled}
@@ -193,6 +270,7 @@ export function SearchableSelect({
             <ChevronDown className="size-4 shrink-0 opacity-60 -me-0.5" />
           )}
         </button>
+        )}
       </PopoverTrigger>
       {/* Portalled so a dialog's overflow can't clip the menu when it flips upward. */}
       <PopoverPortal>
@@ -200,20 +278,16 @@ export function SearchableSelect({
         className={cn('w-(--radix-popper-anchor-width) p-0', className)}
         align="start"
       >
-        <Command shouldFilter={!isAsync}>
-          <CommandInput
-            placeholder="Search..."
-            value={isAsync ? query : undefined}
-            onValueChange={isAsync ? setQuery : undefined}
-          />
+        <Command shouldFilter={false}>
+          <CommandInput placeholder="Search..." value={query} onValueChange={handleQueryChange} />
           <CommandList>
             {loading ? (
               <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" /> Searching...
               </div>
-            ) : (
+            ) : visibleOptions.length === 0 ? (
               <CommandEmpty>{emptyMessage}</CommandEmpty>
-            )}
+            ) : null}
             {grouped.map(([groupKey, opts]) => (
               <CommandGroup key={groupKey || '__ungrouped__'} heading={groupKey || undefined}>
                 {opts.map((opt) => (
@@ -246,6 +320,20 @@ export function SearchableSelect({
                 ))}
               </CommandGroup>
             ))}
+            {hasMore ? (
+              <div className="border-t p-1">
+                <button
+                  type="button"
+                  data-slot="searchable-select-load-more"
+                  onClick={() => void loadMore()}
+                  disabled={loadingMore}
+                  className="flex w-full items-center justify-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent disabled:opacity-60"
+                >
+                  {loadingMore ? <Loader2 className="size-4 animate-spin" /> : null}
+                  {loadingMore ? 'Loading…' : 'Load more'}
+                </button>
+              </div>
+            ) : null}
           </CommandList>
         </Command>
       </PopoverContent>

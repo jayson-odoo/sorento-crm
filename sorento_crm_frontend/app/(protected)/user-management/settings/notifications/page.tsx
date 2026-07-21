@@ -25,22 +25,8 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Command,
-  CommandCheck,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
 import { Form, FormControl, FormField, FormItem } from '@/components/ui/form';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import {
   Table,
   TableBody,
@@ -181,17 +167,6 @@ const NotificationSettingsPage = () => {
     form.reset();
   };
 
-  const toggleRoleSelection = (
-    field: keyof NotificationSettingsSchemaType,
-    roleId: string,
-  ) => {
-    const currentValues = form.getValues()[field] as string[];
-    const updatedValues = currentValues.includes(roleId)
-      ? currentValues.filter((id) => id !== roleId)
-      : [...currentValues, roleId];
-
-    form.setValue(field, updatedValues, { shouldDirty: true });
-  };
 
   const isProcessing = mutation.status === 'pending';
 
@@ -252,56 +227,33 @@ const NotificationSettingsPage = () => {
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-3">
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <Button
-                                variant="outline"
-                                mode="icon"
-                                className="h-7! w-7!"
-                              >
+                          <SearchableMultiSelect
+                            value={
+                              (form.watch(
+                                roleIdsField as keyof NotificationSettingsSchemaType,
+                              ) as string[]) ?? []
+                            }
+                            onChange={(next) =>
+                              form.setValue(
+                                roleIdsField as keyof NotificationSettingsSchemaType,
+                                next,
+                                { shouldDirty: true },
+                              )
+                            }
+                            emptyMessage="No roles found."
+                            className="w-[200px]"
+                            // Picked roles render as badges beside this control, so the trigger
+                            // stays the compact icon button it has always been.
+                            renderTrigger={() => (
+                              <Button variant="outline" mode="icon" className="h-7! w-7!">
                                 <UserPlus className="size-3.5!" />
                               </Button>
-                            </PopoverTrigger>
-                            <PopoverContent
-                              className="w-[200px] p-0"
-                              align="start"
-                              side="bottom"
-                            >
-                              <Command>
-                                <CommandInput placeholder="Search roles..." />
-                                <CommandList>
-                                  <CommandEmpty>No roles found.</CommandEmpty>
-                                  <CommandGroup>
-                                    <ScrollArea>
-                                      {roles?.map((role) => {
-                                        const isSelected = (
-                                          form.watch(
-                                            roleIdsField as keyof NotificationSettingsSchemaType,
-                                          ) as string[]
-                                        ).includes(role.id);
-                                        return (
-                                          <CommandItem
-                                            key={role.id}
-                                            onSelect={() =>
-                                              toggleRoleSelection(
-                                                roleIdsField as keyof NotificationSettingsSchemaType,
-                                                role.id,
-                                              )
-                                            }
-                                          >
-                                            <span className="grow">
-                                              {role.name}
-                                            </span>
-                                            {isSelected && <CommandCheck />}
-                                          </CommandItem>
-                                        );
-                                      })}
-                                    </ScrollArea>
-                                  </CommandGroup>
-                                </CommandList>
-                              </Command>
-                            </PopoverContent>
-                          </Popover>
+                            )}
+                            options={(roles ?? []).map((role) => ({
+                              value: role.id,
+                              label: role.name,
+                            }))}
+                          />
                           <div className="flex items-center flex-wrap gap-2">
                             {(
                               form.watch(

@@ -48,14 +48,6 @@ export const dropdownMigrationAllowlist = [
   'app/(protected)/order-management/order-statuses/components/OrderStatusesList.tsx',
   'app/(protected)/order-management/orders/components/OrderForm.tsx',
   'app/(protected)/order-management/orders/components/OrdersList.tsx',
-  // DEFERRED (standard component lacks the capability, not a styling issue):
-  // both ProductCombobox files drive a parent-side server refetch via onSearch, which the
-  // standard's static mode never exposes; ProductComboboxSearchable is paginated
-  // (pageIndex/hasMore/load-more) and the standard's async mode fetches one page only.
-  // Migrating either as-is would silently drop catalog reach on a large product list.
-  'app/(protected)/procurement-management/packing-lists/components/ProductCombobox.tsx',
-  'app/(protected)/procurement-management/packing-lists/components/ProductComboboxSearchable.tsx',
-  'app/(protected)/procurement-management/spo-allocations/components/ProductCombobox.tsx',
   'app/(protected)/resource-management/attachment-directories/components/AttachmentsInFolderPanel.tsx',
   'app/(protected)/resource-management/attachments/components/AttachmentBrowser.tsx',
   'app/(protected)/resource-management/attachments/components/AttachmentBulkImportDialog.tsx',
@@ -93,13 +85,6 @@ export const dropdownMigrationAllowlist = [
   'app/(protected)/ticket-management/tickets/[id]/page.tsx',
   'app/(protected)/ticket-management/tickets/components/TicketsList.tsx',
   'app/(protected)/ticket-management/tickets/new/page.tsx',
-  // DEFERRED (not a plain dropdown-select): role picker hangs off a 28px icon-only
-  // trigger. The standard component always renders a text trigger + chevron, so migrating
-  // as-is would visibly regress it. Needs a trigger escape hatch first.
-  'app/(protected)/user-management/settings/notifications/page.tsx',
-  // PARTIAL: the latency-percentile select is migrated; the two notify-roles / notify-users
-  // pickers share the icon-only trigger problem described above.
-  'app/(protected)/user-management/settings/system-health/page.tsx',
   'app/(protected)/workflow-forms-management/components/WorkflowDynamicFields.tsx',
   'app/(protected)/workflow-forms-management/components/WorkflowFormBuilder.tsx',
   'app/(protected)/workflow-forms-management/components/WorkflowHeaderSectionsEditor.tsx',
