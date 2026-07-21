@@ -2,7 +2,10 @@
 
 > **UAC:** `documentation/plans/autocount/autocount-integration-acceptance-criteria.md` — the contract.
 > **Counterpart repo:** `foundryx-shared-service` → `documentation/plans/sprint-4/13-autocount-esb.md`
-> **Status:** Group A GRILLED + LOCKED (2026-07-21, decisions A1–A8 in §2). Groups B–I still DRAFT.
+> **Status:** Group A **BUILT** (AC-01–10, 38, 39; 13 commits). UAC Group D **BUILT** as
+> sequencing Phase B (`integration_references`). Remaining groups DRAFT.
+> **Caution:** sequencing letters (§11 Phase A–H) and UAC letters (Group A–I) are different
+> schemes and only A coincides.
 > **Self-contained** — you can start from this file without the originating design conversation.
 
 ## 1. What is being built and why
@@ -217,19 +220,64 @@ current values to do that.
 - Batched (never per-record round-trips), canonical shape, scope-enforced.
 - Paginated with a documented cap; exceeding it errors rather than silently truncating.
 
-## 5. Group D — `source_system` / `source_ref`
+## 5. Group D — source tracking via a reference table
 
-Every consumed table gains:
+> **Naming:** the sequencing table in §11 uses letters (**Phase A–H**) that do **not** match the UAC
+> group letters (**Group A–I**). Only A coincides. This section is **UAC Group D**, delivered as
+> **sequencing Phase B**. Read the two schemes as separate vocabularies.
 
-- `source_system` — `manual` | `seed` | `autocount`
-- `source_ref` — AutoCount's **stable surrogate key** (`DocKey`), **not** `DocNo`
+> **Revised 2026-07-21 (built).** The original design put `source_system` / `source_ref` columns on
+> every consumed table. That is superseded by a single mapping table, `integration_references`.
 
-`DocNo` is mutable — AutoCount exposes a `NewDocNo` field. Correlating on it breaks when a document
-is renumbered. Store `DocNo` for display if useful; correlate on `DocKey`.
+Consumed entities: `products`, `stock`, `warehouses`, `suppliers`, `customers`,
+`picking_headers`, `picking_lines`, `orders`, `order_lines`.
 
-**A real backfill migration is required** (AC-AC-23), not seed-if-absent. Existing production rows
-backfill to `source_system='manual'`. Add a unique index supporting `(source_system, source_ref)`
-lookup. Leaving old rows unpopulated breaks the first sync in a way that is hard to diagnose later.
+```
+integration_references
+  id, entity_type, entity_id,        -- which business table, which row
+  source_system,                     -- 'autocount'
+  source_ref,                        -- AutoCount DocKey (stable)
+  source_doc_no,                     -- display only, expected to change
+  integration_id,                    -- which integration wrote it
+  first_seen_at, last_synced_at, created_at, updated_at
+
+  UNIQUE (source_system, entity_type, source_ref)   -- one document -> one record
+  UNIQUE (entity_type, entity_id)                   -- one record  -> one origin
+  INDEX  (entity_type, entity_id), (source_ref), (integration_id), (last_synced_at)
+```
+
+**Why a table rather than columns.** The nine tables hold ~110k rows (`order_lines` 68k, `orders`
+25k, `products` 11k). Columns would mean nine migrations plus a backfill writing `manual` into every
+existing row — 110k rows carrying no information, and an invariant every future manual create would
+have to maintain or quietly break. The table also makes "what came from AutoCount?" one query
+instead of nine, and lets a tenth entity type arrive with no DDL.
+
+**No backfill (revises AC-AC-23).** Absence of a reference means the record was created locally.
+That delivers what AC-AC-23 protects against — no row left in a state that breaks a later sync —
+without materialising rows that say nothing.
+
+**`source_ref` is `DocKey`, never `DocNo`** (AC-AC-22). `DocNo` is mutable — AutoCount exposes
+`NewDocNo` — so correlating on it would create a duplicate the first time a document is renumbered.
+`DocNo` is kept in `source_doc_no` for display.
+
+**The cost of polymorphism, and how it is paid.** `entity_id` addresses nine tables, so it cannot
+carry a foreign key. Two guarantees a FK would have given are enforced in
+`IntegrationReferenceService` instead:
+
+- **`entity_type` is an allowlist.** It resolves to a table name and arrives from an ingest payload;
+  an unchecked value is an injection surface. Unknown types raise before reaching SQL.
+- **A reference whose target was deleted does not resolve**, and is cleared when read. Nothing
+  cascades, so a stale row would otherwise make ingest "update" a record that is gone. Deliberately
+  not a scheduled sweep — `ENABLE_SCHEDULER` is opt-in and defaults off, and a correctness guarantee
+  must not depend on an env var somebody forgot.
+- **A second claimant on a `source_ref` raises** rather than silently returning the existing
+  mapping, which would leave the caller believing it linked a record it did not.
+
+**Identifier typing trap.** The consumed tables key on Postgres `uuid`, but `entity_id` is varchar
+because the nine keys are not all the same type. `resolve()` therefore returns `str`, and
+`UUID(x) == str(x)` is **False** — comparing with `==` would make ingest treat every existing record
+as new and create exactly the duplicates this table prevents. Compare as strings, or pass the value
+into a query filter and let SQLAlchemy cast it.
 
 ## 6. Group E — per-field ownership
 
@@ -321,8 +369,8 @@ a separate plan decided on its own merits.
 
 | Phase | Scope | Depends on |
 |---|---|---|
-| **A** | Integration object + per-integration keys + scopes + rotation + rate limit + n8n migration | — |
-| **B** | `source_system`/`source_ref` columns + backfill migration | A |
+| **A** | Integration object + per-integration keys + RBAC enforcement + rotation + rate limit + n8n cutover (UAC Group A). **BUILT** | — |
+| **B** | Source tracking — `integration_references` table (UAC Group D). **BUILT** — no backfill; absence means locally created | A |
 | **C** | Ingest for masters (Product, Supplier, Customer, Warehouse) + read endpoints for diffing | B |
 | **D** | New masters (Tax, Payment Terms) | B |
 | **E** | Ingest for transactions (GRN, DO) | C |

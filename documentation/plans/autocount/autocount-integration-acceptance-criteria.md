@@ -1,6 +1,7 @@
 # AutoCount Integration (Sorento side) — User Acceptance Criteria
 
-> **Status:** Group A GRILLED + LOCKED (2026-07-21). Groups B–I still DRAFT.
+> **Status:** Group A **BUILT** (2026-07-21). Group D **BUILT** via a reference table rather
+> than per-table columns — see AC-AC-21/23 below. Remaining groups DRAFT.
 > Contract for `documentation/plans/autocount/PLAN-autocount-integration.md`
 > **Counterpart repo:** `foundryx-shared-service` → `documentation/plans/sprint-4/13-autocount-esb-acceptance-criteria.md`
 > **Read that first if you need the full picture.** This file is self-contained for the Sorento work.
@@ -234,13 +235,17 @@ Delivery Order (+lines), Goods Received Note (+lines).
 
 ## Group D — `source_system` / `source_ref`
 
-### AC-AC-21 `[BE]` Consumed tables carry source columns
-**Given** every table the ESB writes
-**When** the migration runs
-**Then** each has `source_system` (`manual`/`seed`/`autocount`) and `source_ref`
-**And** existing rows backfill to `manual`
-**And** a unique index supports lookup by `(source_system, source_ref)`.
-> Pattern already designed in `SCM_Module_Build_Plan.md`; extend beyond the SCM branch.
+### AC-AC-21 `[BE]` Consumed records carry a source system and reference
+**Given** every entity the ESB writes
+**When** a record is ingested
+**Then** an `integration_references` row maps `(entity_type, entity_id)` to
+`(source_system, source_ref)`
+**And** a unique index on `(source_system, entity_type, source_ref)` makes ingest idempotent
+**And** a unique index on `(entity_type, entity_id)` gives each record exactly one origin.
+> **Revised 2026-07-21 (built).** A mapping table, not columns on nine tables: those hold ~110k
+> rows, and columns would need nine migrations plus a backfill of rows carrying no information.
+> Entities: products, stock, warehouses, suppliers, customers, picking_headers, picking_lines,
+> orders, order_lines.
 
 ### AC-AC-22 `[BE]` `source_ref` holds AutoCount's stable key
 **Given** an AutoCount document with `DocKey` and `DocNo`
@@ -248,11 +253,14 @@ Delivery Order (+lines), Goods Received Note (+lines).
 **Then** `source_ref` holds the stable surrogate (`DocKey`), not the mutable `DocNo`
 **And** a renumbered document still resolves to the same Sorento row.
 
-### AC-AC-23 `[BE]` Backfill is a real migration, not seed-if-absent
+### AC-AC-23 `[BE]` No record is left ambiguous about its origin
 **Given** existing production rows
 **When** this ships
-**Then** a migration populates the new columns for rows that already exist
+**Then** absence of an `integration_references` row means the record was created locally
 **And** no row is left in a state that breaks a later sync.
+> **Revised 2026-07-21 (built).** The original wording required a backfill populating columns. With
+> a mapping table that would mean ~110k rows asserting "not from AutoCount", plus an invariant every
+> future manual create must maintain or silently break. Absence carries the same meaning at no cost.
 
 ---
 
