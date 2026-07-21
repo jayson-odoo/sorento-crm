@@ -46,7 +46,6 @@ export const dropdownMigrationAllowlist = [
   'app/(protected)/master-data-management/products/components/ProductsList.tsx',
   'app/(protected)/master-data-management/shared/components/BrandCombobox.tsx',
   'app/(protected)/master-data-management/shared/components/CategoryCombobox.tsx',
-  'app/(protected)/master-data-management/units-of-measure/components/UOMForm.tsx',
   'app/(protected)/network/user-cards/author/content.tsx',
   'app/(protected)/network/user-cards/mini-cards/content.tsx',
   'app/(protected)/network/user-cards/nft/content.tsx',
