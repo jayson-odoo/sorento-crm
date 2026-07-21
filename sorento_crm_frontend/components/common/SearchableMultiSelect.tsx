@@ -53,6 +53,12 @@ export type SearchableMultiSelectProps = {
   triggerClassName?: string;
   /** Override the trigger body entirely (default = removable chips). */
   renderTriggerLabel?: (selected: SearchableMultiSelectOption[]) => React.ReactNode;
+  /**
+   * Render the option body (everything right of the checkbox). Parity with SearchableSelect.
+   * Needed by pickers whose rows carry their own interactive bits — a tooltip trigger, say —
+   * which `badgeText` / `description` cannot express.
+   */
+  renderOption?: (opt: SearchableMultiSelectOption) => React.ReactNode;
 };
 
 export function SearchableMultiSelect({
@@ -68,6 +74,7 @@ export function SearchableMultiSelect({
   className,
   triggerClassName,
   renderTriggerLabel,
+  renderOption,
 }: SearchableMultiSelectProps) {
   const isAsync = typeof fetchOptions === 'function';
   const [open, setOpen] = React.useState(false);
@@ -290,6 +297,9 @@ export function SearchableMultiSelect({
                       <div className="mt-0.5 flex size-4 items-center justify-center rounded-sm border border-input">
                         {isSelected ? <Check className="size-3" /> : null}
                       </div>
+                      {renderOption ? (
+                        renderOption(opt)
+                      ) : (
                       <div className="flex flex-1 flex-col">
                         <div className="flex items-center gap-2">
                           <span>{opt.label}</span>
@@ -305,6 +315,7 @@ export function SearchableMultiSelect({
                           </span>
                         ) : null}
                       </div>
+                      )}
                     </CommandItem>
                   );
                 })}

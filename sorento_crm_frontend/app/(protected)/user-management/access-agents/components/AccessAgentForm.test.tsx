@@ -98,62 +98,35 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.f
 
 // --- Radix Select -> native <select> --------------------------------------
 // Collect SelectItem descendants into <option>s so value/onValueChange round-trip.
-vi.mock('@/components/ui/select', () => {
-  function collectItems(node: React.ReactNode, out: Array<{ value: string; label: React.ReactNode }>) {
-    React.Children.forEach(node, (child) => {
-      if (!React.isValidElement(child)) return;
-      const el = child as React.ReactElement<{ value?: string; children?: React.ReactNode }>;
-      if (el.props && typeof el.props.value === 'string' && el.type && (el.type as { __isSelectItem?: boolean }).__isSelectItem) {
-        out.push({ value: el.props.value, label: el.props.children });
-      } else if (el.props && el.props.children) {
-        collectItems(el.props.children, out);
-      }
-    });
-  }
-
-  const SelectItem = (props: { value: string; children?: React.ReactNode }) => <>{props.children}</>;
-  (SelectItem as unknown as { __isSelectItem: boolean }).__isSelectItem = true;
-
-  const Select = ({
+// The component now uses the standard SearchableSelect. Mock it as a native <select> so the
+// options are in the DOM without driving a popover — the assertions here are about labels and
+// the value that reaches the form, not about popover mechanics.
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: ({
     value,
-    onValueChange,
-    children,
+    onChange,
+    options = [],
+    placeholder,
   }: {
     value?: string;
-    onValueChange?: (v: string) => void;
-    children?: React.ReactNode;
-  }) => {
-    const items: Array<{ value: string; label: React.ReactNode }> = [];
-    collectItems(children, items);
-    return (
-      <select
-        data-testid="native-select"
-        value={value}
-        onChange={(e) => onValueChange?.(e.target.value)}
-      >
-        {items.map((it) => (
-          <option key={it.value} value={it.value}>
-            {it.label}
-          </option>
-        ))}
-      </select>
-    );
-  };
-
-  return {
-    Select,
-    SelectItem,
-    SelectContent: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
-    SelectTrigger: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
-    SelectValue: () => null,
-    SelectGroup: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
-    SelectLabel: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
-    SelectSeparator: () => null,
-    SelectIndicator: () => null,
-    SelectScrollUpButton: () => null,
-    SelectScrollDownButton: () => null,
-  };
-});
+    onChange?: (v: string) => void;
+    options?: Array<{ value: string; label: string; disabled?: boolean }>;
+    placeholder?: string;
+  }) => (
+    <select
+      data-testid="native-select"
+      aria-label={placeholder}
+      value={value}
+      onChange={(e) => onChange?.(e.target.value)}
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value} disabled={o.disabled}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
 
 const POLICIES = [
   { id: 'pol-std', code: 'STANDARD', name: 'Standard', is_active: true },
