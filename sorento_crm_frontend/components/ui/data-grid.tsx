@@ -63,6 +63,14 @@ export interface DataGridProps<TData extends object> {
   loadingMessage?: ReactNode | string;
   emptyMessage?: ReactNode | string;
   /**
+   * Optional row grouping. Return a label when `row` starts a new group, or
+   * null/undefined otherwise; the grid draws a divider row above it.
+   *
+   * The caller owns the grouping rule. Members must already be contiguous —
+   * order them server-side — or the same group will render more than once.
+   */
+  renderGroupHeader?: (row: any, previousRow: any | null) => ReactNode | null;
+  /**
    * Optional per-user per-listing key for persisting column visibility/order.
    * Expected to be the RBAC view permission slug (e.g. `order_management.orders.view`).
    */

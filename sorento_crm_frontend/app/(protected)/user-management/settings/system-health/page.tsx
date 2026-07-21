@@ -5,6 +5,13 @@ import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { LoaderCircleIcon, UserPlus } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { getUsersSelect } from '@/services/userSelectService';
 import { extractApiError } from '@/lib/api-client';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
@@ -36,6 +43,15 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
 import { useSettings } from '../components/settings-context';
+
+/** Clamp a free-text number field to a positive integer (>= 1).
+ *  These settings are durations and counts — 0 is not a meaningful value and
+ *  would either disable the check silently or divide the window to nothing. */
+function toPositiveInt(raw: string, fallback: number): number {
+  const n = parseInt(raw, 10);
+  if (Number.isNaN(n) || n < 1) return fallback;
+  return n;
+}
 
 /** Clamp a free-text number field to a non-negative integer. */
 function toNonNegativeInt(raw: string, fallback: number): number {
@@ -73,6 +89,23 @@ const SystemHealthSettingsPage = () => {
   const [auditFloor, setAuditFloor] = useState<string>(
     String(settings.healthAuditVolumeFloor ?? 0),
   );
+  // WhatsApp round-trip SLA. These drive the chat_latency_watchdog task; until
+  // now they were only reachable by editing system_settings directly.
+  const [latencyTarget, setLatencyTarget] = useState<string>(
+    String(settings.chatLatencyTargetSeconds ?? 10),
+  );
+  const [latencyPercentile, setLatencyPercentile] = useState<string>(
+    String(settings.chatLatencyPercentile ?? 99),
+  );
+  const [latencyMultiplier, setLatencyMultiplier] = useState<string>(
+    String(settings.chatLatencyCeilingMultiplier ?? 3),
+  );
+  const [latencyNoReply, setLatencyNoReply] = useState<string>(
+    String(settings.chatLatencyNoReplyMinutes ?? 5),
+  );
+  const [latencyMinSample, setLatencyMinSample] = useState<string>(
+    String(settings.chatLatencyMinSample ?? 30),
+  );
 
   const toggleRole = (roleId: string) => {
     setRoleIds((prev) =>
@@ -106,6 +139,23 @@ const SystemHealthSettingsPage = () => {
             auditFloor,
             settings.healthAuditVolumeFloor ?? 0,
           ),
+          chat_latency_p99_target_seconds: toPositiveInt(
+            latencyTarget,
+            settings.chatLatencyTargetSeconds ?? 10,
+          ),
+          chat_latency_percentile: Number(latencyPercentile),
+          chat_latency_ceiling_multiplier: toPositiveInt(
+            latencyMultiplier,
+            settings.chatLatencyCeilingMultiplier ?? 3,
+          ),
+          chat_latency_no_reply_minutes: toPositiveInt(
+            latencyNoReply,
+            settings.chatLatencyNoReplyMinutes ?? 5,
+          ),
+          chat_latency_min_sample: toPositiveInt(
+            latencyMinSample,
+            settings.chatLatencyMinSample ?? 30,
+          ),
         }),
       });
       if (!response.ok) {
@@ -128,6 +178,11 @@ const SystemHealthSettingsPage = () => {
     setRoleIds([...initialRoleIds]);
     setUserIds([...initialUserIds]);
     setFailThreshold(String(settings.healthIntegrationFailThreshold ?? 10));
+    setLatencyTarget(String(settings.chatLatencyTargetSeconds ?? 10));
+    setLatencyPercentile(String(settings.chatLatencyPercentile ?? 99));
+    setLatencyMultiplier(String(settings.chatLatencyCeilingMultiplier ?? 3));
+    setLatencyNoReply(String(settings.chatLatencyNoReplyMinutes ?? 5));
+    setLatencyMinSample(String(settings.chatLatencyMinSample ?? 30));
     setAuditFloor(String(settings.healthAuditVolumeFloor ?? 0));
   };
 
@@ -332,6 +387,110 @@ const SystemHealthSettingsPage = () => {
               to 0 to disable the low-volume check.
             </div>
           </div>
+        </div>
+
+        {/* WhatsApp round-trip latency SLA */}
+        <div className="space-y-4 border-t pt-6">
+          <div>
+            <h3 className="text-sm font-medium">WhatsApp round-trip latency</h3>
+            <p className="text-muted-foreground text-2sm mt-1">
+              Measures the user pressing send to our reply being accepted by Respond,
+              on Respond&apos;s clock. Three independent triggers: the percentile below,
+              a per-turn hard ceiling, and turns that never get a reply at all — a
+              percentile alone cannot see a turn that never completes.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="chat-latency-percentile">Alert on percentile</Label>
+              <Select value={latencyPercentile} onValueChange={setLatencyPercentile}>
+                <SelectTrigger id="chat-latency-percentile" data-testid="chat-latency-percentile">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="50">p50 (median)</SelectItem>
+                  <SelectItem value="95">p95</SelectItem>
+                  <SelectItem value="99">p99</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="text-muted-foreground text-2sm">
+                p50, p95 and p99 are always computed and shown; this picks which one
+                is held to the target.
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="chat-latency-target">Target (seconds)</Label>
+              <Input
+                id="chat-latency-target"
+                data-testid="chat-latency-target"
+                type="number"
+                min={1}
+                value={latencyTarget}
+                onChange={(e) => setLatencyTarget(e.target.value)}
+              />
+              <div className="text-muted-foreground text-2sm">
+                The SLA the chosen percentile must stay under.
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="chat-latency-multiplier">Hard ceiling multiplier</Label>
+              <Input
+                id="chat-latency-multiplier"
+                data-testid="chat-latency-multiplier"
+                type="number"
+                min={1}
+                value={latencyMultiplier}
+                onChange={(e) => setLatencyMultiplier(e.target.value)}
+              />
+              <div className="text-muted-foreground text-2sm">
+                Any single turn slower than target x this alerts immediately, with no
+                minimum sample.
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="chat-latency-no-reply">No-reply alert (minutes)</Label>
+              <Input
+                id="chat-latency-no-reply"
+                data-testid="chat-latency-no-reply"
+                type="number"
+                min={1}
+                value={latencyNoReply}
+                onChange={(e) => setLatencyNoReply(e.target.value)}
+              />
+              <div className="text-muted-foreground text-2sm">
+                An incoming message with no reply after this long is reported.
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="chat-latency-min-sample">Minimum sample</Label>
+              <Input
+                id="chat-latency-min-sample"
+                data-testid="chat-latency-min-sample"
+                type="number"
+                min={1}
+                value={latencyMinSample}
+                onChange={(e) => setLatencyMinSample(e.target.value)}
+              />
+              <div className="text-muted-foreground text-2sm">
+                Below this many turns in the hour, no percentile is claimed — a p99
+                over six turns is just the slowest of six.
+              </div>
+            </div>
+          </div>
+
+          <Alert appearance="light">
+            <AlertTitle data-testid="chat-latency-summary">
+              Alerts when p{latencyPercentile} exceeds {latencyTarget || '?'}s over at least{' '}
+              {latencyMinSample || '?'} turns in the last hour, when any single turn exceeds{' '}
+              {Number(latencyTarget) * Number(latencyMultiplier) || '?'}s, or when a message
+              goes {latencyNoReply || '?'} minutes without a reply.
+            </AlertTitle>
+          </Alert>
         </div>
       </CardContent>
       <CardFooter className="flex justify-end gap-4 py-5 px-10">

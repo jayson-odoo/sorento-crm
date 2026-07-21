@@ -203,12 +203,15 @@ def _eval_chat_latency(db: Session, now: datetime, settings) -> tuple[bool, str]
     multiplier = int(getattr(settings, "chat_latency_ceiling_multiplier", 3) or 3) if settings else 3
     no_reply_min = int(getattr(settings, "chat_latency_no_reply_minutes", 5) or 5) if settings else 5
     min_sample = int(getattr(settings, "chat_latency_min_sample", 30) or 30) if settings else 30
+    percentile = int(getattr(settings, "chat_latency_percentile", 99) or 99) if settings else 99
 
     window_start = now - timedelta(hours=1)
     parts: list[str] = []
 
     stats = latency.compute_latency_stats(db, since=window_start)
-    verdict = latency.evaluate_breach(stats, target_seconds=target, min_sample=min_sample)
+    verdict = latency.evaluate_breach(
+        stats, target_seconds=target, min_sample=min_sample, percentile=percentile
+    )
     if verdict.breached:
         parts.append(f"degraded — {verdict.reason}")
 

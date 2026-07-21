@@ -87,6 +87,22 @@ function mapSettingsFromApi(raw: Record<string, unknown> | null): SystemSetting 
       typeof raw.health_audit_volume_floor === 'number'
         ? raw.health_audit_volume_floor
         : 0,
+    chatLatencyTargetSeconds:
+      typeof raw.chat_latency_p99_target_seconds === 'number'
+        ? raw.chat_latency_p99_target_seconds
+        : 10,
+    chatLatencyPercentile:
+      typeof raw.chat_latency_percentile === 'number' ? raw.chat_latency_percentile : 99,
+    chatLatencyCeilingMultiplier:
+      typeof raw.chat_latency_ceiling_multiplier === 'number'
+        ? raw.chat_latency_ceiling_multiplier
+        : 3,
+    chatLatencyNoReplyMinutes:
+      typeof raw.chat_latency_no_reply_minutes === 'number'
+        ? raw.chat_latency_no_reply_minutes
+        : 5,
+    chatLatencyMinSample:
+      typeof raw.chat_latency_min_sample === 'number' ? raw.chat_latency_min_sample : 30,
     smtp: raw.smtp as SystemSetting['smtp'] ?? null,
   } as SystemSetting;
 }
@@ -153,6 +169,11 @@ function createDefaultSettings(): SystemSetting {
     healthNotifyUserIds: [],
     healthIntegrationFailThreshold: 10,
     healthAuditVolumeFloor: 0,
+    chatLatencyTargetSeconds: 10,
+    chatLatencyPercentile: 99,
+    chatLatencyCeilingMultiplier: 3,
+    chatLatencyNoReplyMinutes: 5,
+    chatLatencyMinSample: 30,
     smtp: null,
   };
 }

@@ -62,66 +62,41 @@ def _utc_naive_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _clamp_offhours_due_to_workday_end(
-    cal, submit_naive_utc: datetime, due_naive_utc: datetime
-) -> datetime:
-    """One-sided relaxation of a working-*days* due date for off-hours submits.
+def _working_clock_start_naive(db: Session, start_dt: datetime) -> datetime:
+    """Normalize an SLA clock start to the next working-window open.
 
-    The >=24h SLA branch (``add_business_days``) preserves the submission wall-clock
-    time-of-day. When the form was submitted *outside* a working window (weekend,
-    public holiday, before open, or after close), preserving that time-of-day is
-    unfair — e.g. Sat 09:01 + 24h → Mon 09:01, ≈ 1 minute of Monday working time.
-    In that case, guarantee the deadline is at least that working day's configured
-    ``work_day_end_time`` (e.g. → Mon 17:00, a full working day).
+    A form submitted when nobody is working (weekend, public holiday, before open,
+    after close) starts its clock at the next window open instead of the raw submit
+    instant — so the responder gets the whole window the policy promises. Returns
+    naive UTC to match the tracker columns; a start already inside a window is
+    returned unchanged. Falls back to ``start_dt`` if the work calendar is
+    unavailable/misconfigured."""
+    try:
+        from app.services.calendar_service import CalendarService
 
-    ONE-SIDED by construction (``max(raw, end_of_workday)``): it never moves a due
-    *earlier* than today's behaviour. An off-hours submit whose due already lands at
-    or after close (e.g. Fri 17:30 → Mon 17:30, or Sun 23:00 → Mon 23:00) is returned
-    unchanged. A submit that happened *inside* a working window keeps its preserved
-    time-of-day (byte-identical to today) — only genuinely off-hours submits relax.
-
-    Input and output are naive UTC (matching the tracker columns)."""
-    from app.services.calendar_service import DEFAULT_WORKING_TZ
-
-    start_t, end_t = cal.get_working_hours()
-    submit_local = submit_naive_utc.replace(tzinfo=timezone.utc).astimezone(DEFAULT_WORKING_TZ)
-    sd = submit_local.date()
-    submit_in_window = (
-        sd.weekday() in cal.get_working_weekdays()
-        and sd not in cal.get_public_holidays_between(sd, sd)
-        and start_t <= submit_local.timetz().replace(tzinfo=None) < end_t
-    )
-    if submit_in_window:
-        return due_naive_utc  # in-hours submit: preserve time-of-day (unchanged)
-
-    due_local = due_naive_utc.replace(tzinfo=timezone.utc).astimezone(DEFAULT_WORKING_TZ)
-    eod_local = due_local.replace(
-        hour=end_t.hour, minute=end_t.minute, second=0, microsecond=0
-    )
-    if due_local < eod_local:
-        return eod_local.astimezone(timezone.utc).replace(tzinfo=None)
-    return due_naive_utc
+        out = CalendarService(db).next_working_window_open(start_dt)
+        if out is not None:
+            return out
+    except Exception:  # pragma: no cover - defensive; never break form SLA start/escalate
+        logger.warning(
+            "form working clock-start normalization failed; using the raw start.",
+            exc_info=True,
+        )
+    return start_dt
 
 
 def _working_due_naive(db: Session, start_dt: datetime, hours: float) -> datetime:
     """Forward form-SLA due date in *working days*: convert the policy hours to days
     (÷24) and add that many working days (skipping weekends + KL public holidays),
-    keeping the time-of-day. E.g. 72h → +3 working days. For the working-days branch
-    (``hours >= 24``) a one-sided relaxation
-    (:func:`_clamp_offhours_due_to_workday_end`) then lifts the due of an *off-hours*
-    submission to at least that day's ``work_day_end_time`` (fixes the tight Sat-09:01
-    → Mon-09:01 case). The <24h branch already advances on the working-hours clock and
-    is untouched. Returns naive UTC to match the tracker columns. Falls back to
-    calendar hours if the work calendar is unavailable/misconfigured."""
+    keeping the time-of-day. E.g. 72h → +3 working days. The start is first
+    normalized to the next working-window open (see
+    :func:`_working_clock_start_naive`), so Sat 09:01 + 24h is due Tue at the window
+    open, not Mon 09:01. Returns naive UTC to match the tracker columns. Falls back
+    to calendar hours if the work calendar is unavailable/misconfigured."""
     try:
         from app.services.calendar_service import CalendarService
-        cal = CalendarService(db)
-        out = cal.add_working_days_from_hours(start_dt, hours)
+        out = CalendarService(db).add_working_days_from_hours(start_dt, hours)
         if out is not None:
-            # Only the working-DAYS branch (>=24h, per add_working_days_from_hours)
-            # preserves submission time-of-day and needs the off-hours relaxation.
-            if float(hours) >= 24.0:
-                out = _clamp_offhours_due_to_workday_end(cal, start_dt, out)
             return out
     except Exception:  # pragma: no cover - defensive; never break form SLA start/escalate
         logger.warning(
@@ -551,11 +526,14 @@ class FormSLAOrchestrator:
         response_hrs = float(getattr(next_tier, "response_hours", 24) or 24)
         resolution_hrs = float(getattr(next_tier, "resolution_hours", 24) or 24)
         tracker.current_tier = actual_tier
-        tracker.current_tier_started_at = now
+        # The tier clock starts when work can actually begin; escalated_at keeps the
+        # true escalation instant for audit.
+        clock_start = _working_clock_start_naive(self.db, now)
+        tracker.current_tier_started_at = clock_start
         tracker.escalated_at = now
         tracker.escalation_reason = reason
-        tracker.due_at = _working_due_naive(self.db, now, response_hrs)
-        tracker.due_at_resolution = _working_due_naive(self.db, now, resolution_hrs)
+        tracker.due_at = _working_due_naive(self.db, clock_start, response_hrs)
+        tracker.due_at_resolution = _working_due_naive(self.db, clock_start, resolution_hrs)
         # Snapshot the escalated-FROM owner BEFORE the assignee overwrite so the
         # escalation event log records who missed at the prior tier (banner link).
         prev_assigned_to_id = tracker.assigned_to_id
@@ -859,6 +837,7 @@ class FormSLAOrchestrator:
             )
 
         now = _utc_naive_now()
+        clock_start = _working_clock_start_naive(self.db, now)
         response_hrs = float(getattr(tier_row, "response_hours", 24) or 24)
         resolution_hrs = float(getattr(tier_row, "resolution_hours", 24) or 24)
         tracker = ConversationSLATracking(
@@ -870,10 +849,12 @@ class FormSLAOrchestrator:
                 else None
             ),
             assigned_to_id=assignee["id"],
+            # initiated_at is the true submit instant (audit); the tier clock starts
+            # when work can actually begin — the next working-window open.
             initiated_at=now,
-            current_tier_started_at=now,
-            due_at=_working_due_naive(self.db, now, response_hrs),
-            due_at_resolution=_working_due_naive(self.db, now, resolution_hrs),
+            current_tier_started_at=clock_start,
+            due_at=_working_due_naive(self.db, clock_start, response_hrs),
+            due_at_resolution=_working_due_naive(self.db, clock_start, resolution_hrs),
             is_responded=False,
             is_resolved=False,
             respond_contact_id=contact_id,

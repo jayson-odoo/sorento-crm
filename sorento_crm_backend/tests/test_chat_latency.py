@@ -383,3 +383,56 @@ def test_watchdog_quiet_when_healthy(wdb, monkeypatch):
     out = alert_svc.run_chat_latency_watchdog(wdb)
     assert out["bad"] is False and out["fired"] is False and out["recovered"] is False
     assert sent == []
+
+
+# --------------------------------------------------------------------------- #
+# Configurable alerting percentile (OBS-S4-20)                                #
+# --------------------------------------------------------------------------- #
+class TestConfigurablePercentile:
+    """p50/p95/p99 were all computed but only p99 could alert, hardcoded.
+
+    Which percentile you hold yourself to is a policy decision — a chattier
+    channel may want p95 — so it belongs in settings, not in the code.
+    """
+
+    def _stats(self):
+        # 100 turns: 95 fast, 4 at 20s, 1 at 60s.
+        # p95 = 5.0 (the 95th value), p99 = 20.0, max = 60.0.
+        values = [5.0] * 95 + [20.0] * 4 + [60.0]
+        return svc.compute_latency_stats_from_values(values)
+
+    def test_p99_is_the_default(self):
+        stats = self._stats()
+        v = svc.evaluate_breach(stats, target_seconds=10, min_sample=30)
+        assert v.breached is True          # p99 = 20 > 10
+        assert "p99" in v.reason
+
+    def test_p95_can_be_selected(self):
+        stats = self._stats()
+        v = svc.evaluate_breach(stats, target_seconds=10, min_sample=30, percentile=95)
+        # p95 = 5s, comfortably inside a 10s target — the same data that breaches
+        # at p99 passes at p95. That is the whole point of making it selectable.
+        assert v.breached is False
+
+    def test_p95_still_breaches_when_it_should(self):
+        stats = svc.compute_latency_stats_from_values([50.0] * 100)
+        v = svc.evaluate_breach(stats, target_seconds=10, min_sample=30, percentile=95)
+        assert v.breached is True
+        assert "p95" in v.reason
+
+    def test_p50_is_selectable(self):
+        stats = self._stats()
+        v = svc.evaluate_breach(stats, target_seconds=1, min_sample=30, percentile=50)
+        assert v.breached is True
+        assert "p50" in v.reason
+
+    def test_unknown_percentile_falls_back_to_p99(self):
+        """A bad settings value must not silently disable alerting."""
+        stats = self._stats()
+        v = svc.evaluate_breach(stats, target_seconds=10, min_sample=30, percentile=42)
+        assert v.breached is True
+        assert "p99" in v.reason
+
+    def test_min_sample_still_applies_to_any_percentile(self):
+        stats = svc.compute_latency_stats_from_values([50.0] * 5)
+        assert svc.evaluate_breach(stats, target_seconds=10, min_sample=30, percentile=95).breached is False

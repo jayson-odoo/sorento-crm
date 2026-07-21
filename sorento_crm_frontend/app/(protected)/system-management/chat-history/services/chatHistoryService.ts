@@ -17,7 +17,15 @@ function buildParams(filters: ChatHistoryFilters, extra: Record<string, string |
 
 export async function getChatMessages(
   filters: ChatHistoryFilters,
-  opts: { page?: number; limit?: number; sort?: string; dir?: string; query?: string } = {},
+  opts: {
+    page?: number;
+    limit?: number;
+    sort?: string;
+    dir?: string;
+    query?: string;
+    /** Server-orders rows so group members stay contiguous across pages. */
+    group_by?: string;
+  } = {},
 ): Promise<ChatMessageListResponse> {
   const params = buildParams(filters, {
     page: opts.page ?? 1,
@@ -25,6 +33,7 @@ export async function getChatMessages(
     sort: opts.sort,
     dir: opts.dir,
     query: opts.query,
+    group_by: opts.group_by,
   });
   const response = await apiFetch(`/api/v1/system/chat-history?${params.toString()}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load chat messages'));

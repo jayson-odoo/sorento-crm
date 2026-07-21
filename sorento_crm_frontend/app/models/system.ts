@@ -98,6 +98,17 @@ export interface SystemSetting {
   /** Expected minimum daily audit-event volume; 0 disables the low-volume warning. */
   healthAuditVolumeFloor: number;
 
+  /** WhatsApp round-trip SLA: the latency target the chosen percentile is held to. */
+  chatLatencyTargetSeconds: number;
+  /** Which computed percentile alerts (50 / 95 / 99). p50 and p95 are always shown. */
+  chatLatencyPercentile: number;
+  /** Per-turn hard ceiling = target x this. Fires on ONE bad turn, no minimum sample. */
+  chatLatencyCeilingMultiplier: number;
+  /** Minutes an incoming message may sit unanswered before alerting. */
+  chatLatencyNoReplyMinutes: number;
+  /** Below this many turns no percentile is claimed, so the window stays quiet. */
+  chatLatencyMinSample: number;
+
   smtp?: {
     smtp_host?: string | null;
     smtp_port?: string | null;
