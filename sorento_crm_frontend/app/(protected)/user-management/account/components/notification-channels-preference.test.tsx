@@ -11,40 +11,81 @@ import NotificationChannelsPreference from './notification-channels-preference';
 
 const res = (ok: boolean, body: unknown = {}) => ({ ok, json: async () => body }) as Response;
 
+/**
+ * The panel renders the per-event SLA notify matrix: one switch per
+ * (channel x event) pair plus the WhatsApp daily-summary toggle. It used to be
+ * two coarse switches ("Escalation & assignment alerts" / "Daily SLA summary");
+ * these tests were rewritten when the matrix landed.
+ */
 describe('NotificationChannelsPreference (TCK-31 UX1)', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('loads and reflects fetched channel prefs', async () => {
-    (apiFetch as any).mockResolvedValueOnce(res(true, { notify_whatsapp: true, notify_whatsapp_summary: false }));
+  it('reflects each fetched per-event preference independently', async () => {
+    (apiFetch as any).mockResolvedValueOnce(
+      res(true, {
+        notify_email_on_assignment: true,
+        notify_email_on_escalation: false,
+        notify_whatsapp_on_assignment: true,
+        notify_whatsapp_on_escalation: false,
+        notify_whatsapp_summary: true,
+      }),
+    );
     render(<NotificationChannelsPreference />);
-    const escalation = await screen.findByLabelText('Escalation & assignment alerts');
-    const summary = screen.getByLabelText('Daily SLA summary');
-    await waitFor(() => expect(escalation).toBeChecked());
-    expect(summary).not.toBeChecked();
+
+    const emailAssign = await screen.findByLabelText('Email on assignment');
+    await waitFor(() => expect(emailAssign).toBeChecked());
+
+    // Each key maps to its own switch — a matrix, not one coarse toggle.
+    expect(screen.getByLabelText('Email on escalation')).not.toBeChecked();
+    expect(screen.getByLabelText('WhatsApp on assignment')).toBeChecked();
+    expect(screen.getByLabelText('WhatsApp on escalation')).not.toBeChecked();
+    expect(screen.getByLabelText('WhatsApp daily SLA summary')).toBeChecked();
   });
 
-  it('PATCHes the toggled channel', async () => {
-    (apiFetch as any).mockResolvedValueOnce(res(true, { notify_whatsapp: false, notify_whatsapp_summary: false }));
-    render(<NotificationChannelsPreference />);
-    const escalation = await screen.findByLabelText('Escalation & assignment alerts');
+  it('defaults the email toggles on and the WhatsApp toggles off when absent', async () => {
     (apiFetch as any).mockResolvedValueOnce(res(true, {}));
-    fireEvent.click(escalation);
+    render(<NotificationChannelsPreference />);
+
+    const emailAssign = await screen.findByLabelText('Email on assignment');
+    await waitFor(() => expect(emailAssign).toBeChecked());
+
+    expect(screen.getByLabelText('Email on escalation')).toBeChecked();
+    expect(screen.getByLabelText('Email on deadline extended')).toBeChecked();
+    expect(screen.getByLabelText('WhatsApp on assignment')).not.toBeChecked();
+    expect(screen.getByLabelText('WhatsApp daily SLA summary')).not.toBeChecked();
+  });
+
+  it('PATCHes only the toggled key', async () => {
+    (apiFetch as any).mockResolvedValueOnce(
+      res(true, { notify_whatsapp_on_escalation: false, notify_email_on_assignment: true }),
+    );
+    render(<NotificationChannelsPreference />);
+
+    const waEscalation = await screen.findByLabelText('WhatsApp on escalation');
+    (apiFetch as any).mockResolvedValueOnce(res(true, {}));
+    fireEvent.click(waEscalation);
+
     await waitFor(() => {
       const patch = (apiFetch as any).mock.calls.find(
         (c: unknown[]) => (c[1] as RequestInit | undefined)?.method === 'PATCH',
       );
       expect(patch).toBeTruthy();
-      expect(JSON.parse((patch[1] as RequestInit).body as string)).toEqual({ notify_whatsapp: true });
+      // Single-key payload: sending the whole matrix would clobber concurrent edits.
+      expect(JSON.parse((patch[1] as RequestInit).body as string)).toEqual({
+        notify_whatsapp_on_escalation: true,
+      });
     });
     expect(toast.success).toHaveBeenCalled();
   });
 
-  it('reverts on PATCH failure', async () => {
-    (apiFetch as any).mockResolvedValueOnce(res(true, { notify_whatsapp: false, notify_whatsapp_summary: false }));
+  it('reverts the switch on PATCH failure', async () => {
+    (apiFetch as any).mockResolvedValueOnce(res(true, { notify_whatsapp_summary: false }));
     render(<NotificationChannelsPreference />);
-    const summary = await screen.findByLabelText('Daily SLA summary');
+
+    const summary = await screen.findByLabelText('WhatsApp daily SLA summary');
     (apiFetch as any).mockResolvedValueOnce(res(false));
     fireEvent.click(summary);
+
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(summary).not.toBeChecked();
   });
