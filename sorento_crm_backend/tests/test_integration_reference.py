@@ -1,4 +1,4 @@
-"""Phase B — the integration reference table (UAC Group D).
+"""Phase B -- the integration reference table (UAC Group D).
 
 Replaces the plan's per-table `source_system`/`source_ref` columns with a single
 polymorphic mapping table: the business tables stay untouched, and adding

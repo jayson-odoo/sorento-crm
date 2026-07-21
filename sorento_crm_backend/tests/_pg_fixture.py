@@ -2,12 +2,12 @@
 
 sqlite is the wrong substrate for anything transactional here. It does not
 share Postgres's SAVEPOINT semantics, its constraint enforcement differs, and
-`schema="scm"` models cannot be created on it at all — so a sqlite test can
+`schema="scm"` models cannot be created on it at all -- so a sqlite test can
 pass while proving nothing about production, and break the moment an unrelated
 module registers a global Session listener.
 
 Everything runs inside one outer transaction that is rolled back at teardown, so
-`begin_nested()` becomes a real nested savepoint and no test data survives —
+`begin_nested()` becomes a real nested savepoint and no test data survives --
 verified against the shared local database, which holds real records.
 
 **Scope your assertions.** The tables are not empty. Counting all rows in
