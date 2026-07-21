@@ -127,15 +127,64 @@ export function SearchableMultiSelect({
     return value.map((v) => byValue.get(v) ?? { value: v, label: v });
   }, [baseOptions, selectedSet, isAsync, selectedOptions, value]);
 
+  // Static mode filters here rather than delegating to cmdk, because Select all must act on
+  // exactly the rows the user can see — and cmdk never tells us which those are. Async mode is
+  // already filtered server-side, so its options pass through untouched.
+  const visibleOptions = React.useMemo(() => {
+    if (isAsync) return baseOptions;
+    const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return baseOptions;
+    return baseOptions.filter((opt) => {
+      const haystack = (
+        opt.searchText ?? `${opt.label} ${opt.description ?? ''} ${opt.badgeText ?? ''}`
+      ).toLowerCase();
+      return tokens.every((t) => haystack.includes(t));
+    });
+  }, [isAsync, baseOptions, query]);
+
   const grouped = React.useMemo(() => {
     const map = new Map<string, SearchableMultiSelectOption[]>();
-    for (const opt of baseOptions) {
+    for (const opt of visibleOptions) {
       const key = opt.group ?? '';
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(opt);
     }
     return Array.from(map.entries());
-  }, [baseOptions]);
+  }, [visibleOptions]);
+
+  // Select all targets the visible, non-disabled rows only — never a disabled option, and never
+  // a row the active search has filtered out.
+  const selectable = React.useMemo(
+    () => visibleOptions.filter((o) => !o.disabled),
+    [visibleOptions],
+  );
+  const allVisibleSelected =
+    selectable.length > 0 && selectable.every((o) => selectedSet.has(o.value));
+
+  const isFiltered = !isAsync && query.trim().length > 0;
+  const selectAllLabel = allVisibleSelected
+    ? isFiltered
+      ? `Clear ${selectable.length} matching`
+      : 'Clear all'
+    : isFiltered
+      ? `Select ${selectable.length} matching`
+      : isAsync
+        ? // Async only ever holds the loaded page, so promising "all" would be a lie.
+          `Select all ${selectable.length} loaded`
+        : `Select all (${selectable.length})`;
+
+  const toggleAll = () => {
+    const visibleValues = selectable.map((o) => o.value);
+    if (allVisibleSelected) {
+      const drop = new Set(visibleValues);
+      onChange(value.filter((v) => !drop.has(v)));
+    } else {
+      const merged = [...value];
+      const have = new Set(value);
+      for (const v of visibleValues) if (!have.has(v)) merged.push(v);
+      onChange(merged);
+    }
+  };
 
   const misconfigured = !isAsync && options === undefined;
   const isDisabled = disabled || misconfigured;
@@ -193,20 +242,31 @@ export function SearchableMultiSelect({
         </button>
       </PopoverTrigger>
       <PopoverContent className={cn('w-(--radix-popper-anchor-width) p-0', className)} align="start">
-        <Command shouldFilter={!isAsync}>
-          <CommandInput
-            placeholder="Search..."
-            value={isAsync ? query : undefined}
-            onValueChange={isAsync ? setQuery : undefined}
-          />
+        <Command shouldFilter={false}>
+          <CommandInput placeholder="Search..." value={query} onValueChange={setQuery} />
+          {!loading && selectable.length > 0 ? (
+            <div className="border-b p-1">
+              <button
+                type="button"
+                data-slot="searchable-multi-select-all"
+                onClick={toggleAll}
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+              >
+                <div className="flex size-4 items-center justify-center rounded-sm border border-input">
+                  {allVisibleSelected ? <Check className="size-3" /> : null}
+                </div>
+                <span className="flex-1 text-left font-medium">{selectAllLabel}</span>
+              </button>
+            </div>
+          ) : null}
           <CommandList>
             {loading ? (
               <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
                 <Loader2 className="size-4 animate-spin" /> Searching...
               </div>
-            ) : (
+            ) : visibleOptions.length === 0 ? (
               <CommandEmpty>{emptyMessage}</CommandEmpty>
-            )}
+            ) : null}
             {grouped.map(([groupKey, opts]) => (
               <CommandGroup key={groupKey || '__ungrouped__'} heading={groupKey || undefined}>
                 {opts.map((opt) => {
@@ -214,7 +274,9 @@ export function SearchableMultiSelect({
                   return (
                     <CommandItem
                       key={opt.value}
-                      value={opt.searchText ?? `${opt.label} ${opt.description ?? ''}`}
+                      // Filtering is ours now, so this only has to be unique — two options
+                      // sharing a label would otherwise collide in cmdk's keyboard nav.
+                      value={opt.value}
                       disabled={opt.disabled}
                       onSelect={() => toggle(opt.value)}
                       className="flex items-start gap-2"
