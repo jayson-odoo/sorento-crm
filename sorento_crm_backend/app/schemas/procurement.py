@@ -436,7 +436,12 @@ class PickingHeaderBase(BaseModel):
     total_cost: Optional[Decimal] = None
     notes: Optional[str] = None
 
-    @field_validator("picked_by_user_id", "inspected_by_user_id", mode="before")
+    # source_entity_id is physically a uuid column on picking_headers (the model
+    # declares String, but the live column is uuid), so SQLAlchemy hands back a
+    # UUID object that strict str validation rejects — coerce like the user ids.
+    @field_validator(
+        "picked_by_user_id", "inspected_by_user_id", "source_entity_id", mode="before"
+    )
     @classmethod
     def coerce_user_id_to_str(cls, v: object) -> Optional[str]:
         if v is None:
