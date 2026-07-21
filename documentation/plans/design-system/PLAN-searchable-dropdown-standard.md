@@ -19,9 +19,12 @@ in the interim.
 
 ### Corrections to this plan, learned in Phase 1
 
-- **Baseline was wrong.** Plan said "start 118 (110 + 8)". The real auto-seeded allowlist was
-  **133**. The 8 bespoke `*Combobox.tsx` slated for folding-in **no longer exist** on `main` —
-  that planned work has already evaporated. Burn-down metric is 131 → 0.
+- **Baseline count was wrong.** Plan said "start 118 (110 + 8)". The real auto-seeded allowlist
+  was **133**; burn-down metric is 131 → 0. The 8 bespoke `*Combobox.tsx` **do still exist** and
+  are still in scope, exactly as originally planned: `BrandCombobox`, `CategoryCombobox`
+  (master-data), `PackingListCombobox`, `ProductCombobox` ×2, `WarehouseCombobox`,
+  `SupplierCombobox`, `ProductComboboxSearchable` (procurement). The two portal
+  `AsyncCombobox`/`AsyncMultiCombobox` remain out of scope per AC15.
 - **Select all is doctrine for multi-select** (added Phase 1, not in the original plan). Acts on
   the *visible* (filtered) rows, skips `disabled`, and in async mode labels itself
   "Select all N loaded" because it can only see the fetched page. To know the visible set the
