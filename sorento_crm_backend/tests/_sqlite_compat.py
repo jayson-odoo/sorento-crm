@@ -64,8 +64,14 @@ def _neutralized_pg_defaults(metadata):
             column.server_default = original
 
 
-def create_all_sqlite_safe(metadata, engine) -> None:
-    """Run ``metadata.create_all(engine)`` with pg-cast server defaults stripped."""
+def create_all_sqlite_safe(metadata, engine, tables=None) -> None:
+    """Run ``metadata.create_all(engine)`` with pg-cast server defaults stripped.
+
+    ``tables`` restricts creation to a specific list of ``Table`` objects. Pass it
+    when the full metadata cannot be emitted on sqlite at all: the SCM models
+    declare ``schema="scm"`` and sqlite has no schemas, so a whole-metadata
+    create_all fails with "unknown database scm" regardless of type compatibility.
+    """
     _register_pg_functions(engine)
     with _neutralized_pg_defaults(metadata):
-        metadata.create_all(engine)
+        metadata.create_all(engine, tables=tables)
