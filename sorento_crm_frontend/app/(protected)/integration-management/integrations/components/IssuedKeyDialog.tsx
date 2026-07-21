@@ -55,6 +55,11 @@ export function IssuedKeyDialog({
         className="max-h-[90vh] overflow-y-auto sm:max-w-lg"
         onPointerDownOutside={(e) => e.preventDefault()}
         onEscapeKeyDown={(e) => e.preventDefault()}
+        // Hidden until the key is copied. Browser verification caught the X
+        // still rendering while the guard silently swallowed its click -- a
+        // control that looks live and does nothing reads as a broken app, and
+        // the user retries instead of copying the key they are about to lose.
+        showCloseButton={acknowledged}
       >
         <DialogHeader>
           <DialogTitle>Copy your API key</DialogTitle>
