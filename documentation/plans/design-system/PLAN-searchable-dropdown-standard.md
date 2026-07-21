@@ -3,19 +3,39 @@
 > UAC: [`searchable-dropdown-standard-acceptance-criteria.md`](./searchable-dropdown-standard-acceptance-criteria.md) (contract; grill-locked).
 > Governs: `PRINCIPLES.md` > `ADR-PRODUCT-STANDARDS.md`. FE-only.
 
-**Status:** PHASE 1 COMMITTED on `feat/searchable-dropdown-standard` (branched off `main`).
-Component upgraded + ESLint ban + allowlist (133→132) + reference migration
-(LookupSetFormDialog). Verified against main baseline: lint errors 318→318 (rule contributes 0;
-+7 intentional `warn`-level native-`<select>` advisories), `tsc` clean in all touched files,
-vitest shows no new failures (suite has 7–8 pre-existing flaky failures either way).
+**Status:** PHASE 1 DONE, PR open on `feat/searchable-dropdown-standard` (branched off `main`).
+Component upgraded + ESLint ban + allowlist (133→131) + reference migrations
+(`LookupSetFormDialog`, `BindingAddDialog` — 4 dropdowns). Browser-verified on a prod build via
+the sidebar: search filters, selection commits, dependent dropdown unlocks, 0 console errors.
+Against main baseline: lint errors 318→318 (this rule contributes 0; +7 intentional `warn`-level
+native-`<select>` advisories), `tsc` clean in all touched files, no new vitest failures.
+
+Phase 2 (staged domain migrations + tests) starts with **master-data-management (8 files)**.
 
 Carve-out note: this work originally sat uncommitted on the stale `fix/pr-rejected-by-uuid`
 branch (92 commits behind). Re-applied cleanly onto `main`; `useLookupSets.ts` was deliberately
 NOT carried over — the stale copy would have reverted `useSetBindingDefaultValue`, added to main
 in the interim.
 
-Live browser screenshot (AC5/AC1) still pending. Phase 2 (staged domain migrations + tests) not
-started.
+### Corrections to this plan, learned in Phase 1
+
+- **Baseline was wrong.** Plan said "start 118 (110 + 8)". The real auto-seeded allowlist was
+  **133**. The 8 bespoke `*Combobox.tsx` slated for folding-in **no longer exist** on `main` —
+  that planned work has already evaporated. Burn-down metric is 131 → 0.
+- **Select all is doctrine for multi-select** (added Phase 1, not in the original plan). Acts on
+  the *visible* (filtered) rows, skips `disabled`, and in async mode labels itself
+  "Select all N loaded" because it can only see the fetched page. To know the visible set the
+  component had to own filtering, which moved static matching from cmdk fuzzy scoring to
+  all-tokens substring.
+- **The in-dialog risk was clipping, not the focus trap.** `PopoverContent` does not portal, and
+  `dialog-content` is `overflow-y-auto`, so a popover that flips to `side="top"` is laid out at
+  correct coordinates but never painted — the search box silently disappears.
+  `getBoundingClientRect` reports it as on-screen, so only a screenshot catches it. Fixed via a
+  new `PopoverPortal` used by the two standard components only. **Phase 2 migrates ~25 more
+  in-dialog dropdowns — screenshot each, don't trust DOM assertions.**
+- **A green lint proves nothing about coverage.** `BindingAddDialog` sat unmigrated on an
+  already-"done" page because it was grandfathered in the allowlist. Per-PR completion check must
+  be `grep` over the whole domain folder, not the lint result.
 
 ## Goal
 
