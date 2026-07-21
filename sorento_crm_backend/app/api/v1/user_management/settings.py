@@ -79,6 +79,14 @@ class SystemSettingUpdate(BaseModel):
     health_notify_user_ids: Optional[list[str]] = None
     health_integration_fail_threshold: Optional[int] = Field(None, ge=1, le=100000)
     health_audit_volume_floor: Optional[int] = Field(None, ge=0, le=1000000)
+    # WhatsApp round-trip latency SLA (S4). Must appear in BOTH this schema and
+    # the GET dict below — inheriting the column is not enough, the GET builds a
+    # manual dict and silently drops anything not listed there.
+    chat_latency_p99_target_seconds: Optional[int] = Field(None, ge=1, le=3600)
+    chat_latency_percentile: Optional[int] = Field(None, ge=1, le=99)
+    chat_latency_ceiling_multiplier: Optional[int] = Field(None, ge=1, le=100)
+    chat_latency_no_reply_minutes: Optional[int] = Field(None, ge=1, le=1440)
+    chat_latency_min_sample: Optional[int] = Field(None, ge=1, le=100000)
 
 
 class SmtpTestResult(BaseModel):
@@ -174,6 +182,11 @@ async def get_settings(
                 "health_notify_user_ids": getattr(settings, "health_notify_user_ids", None) if settings else None,
                 "health_integration_fail_threshold": getattr(settings, "health_integration_fail_threshold", 10) if settings else None,
                 "health_audit_volume_floor": getattr(settings, "health_audit_volume_floor", 0) if settings else None,
+                "chat_latency_p99_target_seconds": getattr(settings, "chat_latency_p99_target_seconds", 10) if settings else None,
+                "chat_latency_percentile": getattr(settings, "chat_latency_percentile", 99) if settings else None,
+                "chat_latency_ceiling_multiplier": getattr(settings, "chat_latency_ceiling_multiplier", 3) if settings else None,
+                "chat_latency_no_reply_minutes": getattr(settings, "chat_latency_no_reply_minutes", 5) if settings else None,
+                "chat_latency_min_sample": getattr(settings, "chat_latency_min_sample", 30) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]

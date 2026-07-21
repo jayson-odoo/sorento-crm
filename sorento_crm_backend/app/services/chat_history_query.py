@@ -200,6 +200,7 @@ def list_messages_page(
     page: int = 1,
     limit: int = DEFAULT_LIMIT,
     sort: Optional[str] = None,
+    group_by: Optional[str] = None,
     dir_: str = "desc",
     now: Optional[datetime] = None,
 ) -> tuple[list[ChatMessageRow], int]:
@@ -242,12 +243,35 @@ def list_messages_page(
     }.get(sort or "sent_at", ChatHistory.sent_at)
     ordering = sort_col.asc() if dir_ == "asc" else sort_col.desc()
 
-    page_rows = (
-        q.order_by(ordering, ChatHistory.id.desc())
-        .offset((page - 1) * limit)
-        .limit(limit)
-        .all()
-    )
+    # Grouping is a server-ordering concern. The listing is offset-paginated, so
+    # unless group members are contiguous the UI can only group *within a page* —
+    # every page then shows fragments of many groups and the header counts lie.
+    #
+    # `date` deliberately keeps the default ordering: a fixed +8h offset preserves
+    # ordering, so `sent_at desc` already yields contiguous Malaysia calendar
+    # dates. Re-ordering would change behaviour for no gain.
+    # "contact_date" is contact-outer, date-inner — the same ordering, with the
+    # frontend drawing date subheaders inside each contact run.
+    if group_by in ("contact", "contact_date"):
+        # phone_number, not first_name — a display name is nullable and not
+        # unique, so it cannot define a group boundary.
+        page_rows = (
+            q.order_by(
+                ChatHistory.phone_number.asc(),
+                ChatHistory.sent_at.desc(),
+                ChatHistory.id.desc(),
+            )
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
+    else:
+        page_rows = (
+            q.order_by(ordering, ChatHistory.id.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
 
     latencies = _turn_latencies(db, page_rows)
     return [_to_row(r, latencies) for r in page_rows], total

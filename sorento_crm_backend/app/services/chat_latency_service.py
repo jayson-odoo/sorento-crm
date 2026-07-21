@@ -186,8 +186,9 @@ def get_stalled_turns(
     return [t for t in get_turns(db, since) if t.latency_seconds > ceiling_seconds]
 
 
-def compute_latency_stats(db: Session, since: datetime) -> LatencyStats:
-    values = [t.latency_seconds for t in get_turns(db, since)]
+def compute_latency_stats_from_values(values: list[float]) -> LatencyStats:
+    """Stats from a bare list — the pure core, so percentile behaviour is
+    testable without constructing turns in a database."""
     if not values:
         return LatencyStats(count=0, p50=None, p95=None, p99=None, max=None)
     return LatencyStats(
@@ -199,20 +200,43 @@ def compute_latency_stats(db: Session, since: datetime) -> LatencyStats:
     )
 
 
+def compute_latency_stats(db: Session, since: datetime) -> LatencyStats:
+    return compute_latency_stats_from_values(
+        [t.latency_seconds for t in get_turns(db, since)]
+    )
+
+
+# Percentiles the watchdog can alert on. Restricted to the ones that are
+# meaningful to state as a policy — an arbitrary quantile would also make the
+# alert text ("p87 …") unreadable.
+_ALERT_PERCENTILES = {50: "p50", 95: "p95", 99: "p99"}
+DEFAULT_ALERT_PERCENTILE = 99
+
+
 def evaluate_breach(
     stats: LatencyStats,
     target_seconds: float,
     min_sample: int = DEFAULT_MIN_SAMPLE,
+    percentile: int = DEFAULT_ALERT_PERCENTILE,
 ) -> BreachVerdict:
-    """Fleet-level verdict. Quiet on an empty or too-small window."""
-    if stats.count == 0 or stats.p99 is None:
+    """Fleet-level verdict. Quiet on an empty or too-small window.
+
+    `percentile` selects which computed percentile is held to `target_seconds`.
+    An unrecognised value falls back to p99 rather than disabling the check — a
+    bad settings value must not silently switch alerting off.
+    """
+    label = _ALERT_PERCENTILES.get(int(percentile or 0), "p99")
+    observed = getattr(stats, label)
+
+    if stats.count == 0 or observed is None:
         return BreachVerdict(False, None)
     if stats.count < min_sample:
         return BreachVerdict(False, None)
-    if stats.p99 > target_seconds:
+    if observed > target_seconds:
         return BreachVerdict(
             True,
-            f"p99 {stats.p99:.1f}s over {stats.count} turns exceeds target {target_seconds:.0f}s",
+            f"{label} {observed:.1f}s over {stats.count} turns "
+            f"exceeds target {target_seconds:.0f}s",
         )
     return BreachVerdict(False, None)
 

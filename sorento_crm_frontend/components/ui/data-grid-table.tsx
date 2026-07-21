@@ -515,8 +515,33 @@ function DataGridTable<TData>() {
             ))
           ) : table.getRowModel().rows.length ? (
             table.getRowModel().rows.map((row: Row<TData>, index) => {
+              // Optional grouping. `renderGroupHeader` returns a label when this
+              // row starts a new group, or null otherwise — so a grid that does
+              // not opt in behaves exactly as before.
+              //
+              // The caller decides what a group is; the grid only draws the
+              // divider. Group members must already be contiguous (order them
+              // server-side), or a group will appear more than once.
+              const groupHeader = props.renderGroupHeader?.(
+                row.original as TData,
+                index === 0 ? null : (table.getRowModel().rows[index - 1].original as TData),
+              );
               return (
                 <Fragment key={row.id}>
+                  {groupHeader != null && (
+                    <tr
+                      className="bg-muted/50"
+                      data-testid="data-grid-group-header"
+                      data-group-label={typeof groupHeader === 'string' ? groupHeader : undefined}
+                    >
+                      <td
+                        colSpan={row.getVisibleCells().length}
+                        className="px-4 py-2 text-xs font-medium text-muted-foreground"
+                      >
+                        {groupHeader}
+                      </td>
+                    </tr>
+                  )}
                   <DataGridTableBodyRow row={row} key={index}>
                     {row.getVisibleCells().map((cell: Cell<TData, unknown>, colIndex) => {
                       return (

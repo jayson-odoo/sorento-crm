@@ -51,6 +51,11 @@ def list_chat_messages(
     page: int = Query(1, ge=1),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     sort: Optional[str] = Query(None),
+    group_by: Optional[str] = Query(
+        None,
+        pattern="^(date|contact|contact_date)$",
+        description="Server-orders rows so group members are contiguous across pages.",
+    ),
     dir: str = Query("desc", pattern="^(asc|desc)$"),
     current_user: dict = Depends(require_permission("system.chat_history.view")),
     db: Session = Depends(get_db),
@@ -69,6 +74,7 @@ def list_chat_messages(
         page=page,
         limit=limit,
         sort=sort,
+        group_by=group_by,
         dir_=dir,
     )
     data = [ChatMessageRowResponse.model_validate(r, from_attributes=True) for r in rows]

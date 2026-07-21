@@ -266,6 +266,9 @@ class SystemSetting(Base):
     # Below this many paired turns a window percentile is noise, so fleet-level
     # breach alerting stays quiet.
     chat_latency_min_sample = Column(Integer, nullable=False, server_default="30", default=30)
+    # Which computed percentile the watchdog holds to the target. Policy, not
+    # implementation — a chattier channel may reasonably choose p95.
+    chat_latency_percentile = Column(Integer, nullable=False, server_default="99", default=99)
     # My Downloads retention. Nothing purged this table before chat-history CSV exports
     # made the storage cost real; the purge applies to every download kind.
     downloads_retention_days = Column(Integer, nullable=False, server_default="30", default=30)

@@ -11,6 +11,11 @@ type MockSettings = {
   healthNotifyRoleIds: string[];
   healthIntegrationFailThreshold: number;
   healthAuditVolumeFloor: number;
+  chatLatencyTargetSeconds: number;
+  chatLatencyPercentile: number;
+  chatLatencyCeilingMultiplier: number;
+  chatLatencyNoReplyMinutes: number;
+  chatLatencyMinSample: number;
 };
 
 const mockSettings: MockSettings = {
@@ -19,6 +24,11 @@ const mockSettings: MockSettings = {
   healthNotifyRoleIds: ['role-admin'],
   healthIntegrationFailThreshold: 10,
   healthAuditVolumeFloor: 5,
+  chatLatencyTargetSeconds: 10,
+  chatLatencyPercentile: 99,
+  chatLatencyCeilingMultiplier: 3,
+  chatLatencyNoReplyMinutes: 5,
+  chatLatencyMinSample: 30,
 };
 
 const mockRoles = [
@@ -37,6 +47,23 @@ vi.mock('@/lib/api-client', () => ({
 }));
 vi.mock('sonner', () => ({ toast: { custom: vi.fn() } }));
 
+/** The settings POST, located by URL.
+ *
+ * `apiFetch` is also used by the page's user-select query, so it is not
+ * necessarily call[0] — indexing by position made these tests depend on request
+ * ordering they do not control. */
+function saveCall(): [string, { body: string }] {
+  const call = apiFetch.mock.calls.find(
+    ([url]: [string]) => typeof url === 'string' && url.includes('/settings/general'),
+  );
+  if (!call) throw new Error('settings save was never issued');
+  return call as [string, { body: string }];
+}
+
+function savedBody(): Record<string, unknown> {
+  return JSON.parse(saveCall()[1].body);
+}
+
 function wrap(node: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(<QueryClientProvider client={qc}>{node}</QueryClientProvider>);
@@ -48,6 +75,11 @@ function resetSettings() {
   mockSettings.healthNotifyRoleIds = ['role-admin'];
   mockSettings.healthIntegrationFailThreshold = 10;
   mockSettings.healthAuditVolumeFloor = 5;
+  mockSettings.chatLatencyTargetSeconds = 10;
+  mockSettings.chatLatencyPercentile = 99;
+  mockSettings.chatLatencyCeilingMultiplier = 3;
+  mockSettings.chatLatencyNoReplyMinutes = 5;
+  mockSettings.chatLatencyMinSample = 30;
 }
 
 describe('SystemHealthSettingsPage', () => {
@@ -77,16 +109,26 @@ describe('SystemHealthSettingsPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
 
-    await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
-    const [url, opts] = apiFetch.mock.calls[0];
+    await waitFor(() => expect(saveCall()).toBeDefined());
+    const [url, opts] = saveCall();
     expect(url).toBe('/api/user-management/settings/general');
     expect(opts.method).toBe('POST');
     expect(JSON.parse(opts.body)).toEqual({
       health_digest_enabled: true,
       health_alerts_enabled: false,
       health_notify_role_ids: ['role-admin'],
+      // The page has always sent this; the expectation omitted it, which the
+      // exact deep-equal now catches.
+      health_notify_user_ids: [],
       health_integration_fail_threshold: 10,
       health_audit_volume_floor: 5,
+      // Latency SLA — asserted exactly rather than via toMatchObject, so a key
+      // silently added to or dropped from the payload fails here.
+      chat_latency_p99_target_seconds: 10,
+      chat_latency_percentile: 99,
+      chat_latency_ceiling_multiplier: 3,
+      chat_latency_no_reply_minutes: 5,
+      chat_latency_min_sample: 30,
     });
   });
 
@@ -100,7 +142,7 @@ describe('SystemHealthSettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
 
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
-    const body = JSON.parse(apiFetch.mock.calls[0][1].body);
+    const body = savedBody();
     // blank -> NaN -> falls back to the seeded 10
     expect(body.health_integration_fail_threshold).toBe(10);
   });
@@ -115,7 +157,7 @@ describe('SystemHealthSettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
 
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
-    const body = JSON.parse(apiFetch.mock.calls[0][1].body);
+    const body = savedBody();
     // negative -> falls back to the seeded 5
     expect(body.health_audit_volume_floor).toBe(5);
   });
@@ -130,7 +172,7 @@ describe('SystemHealthSettingsPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
 
     await waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
-    const body = JSON.parse(apiFetch.mock.calls[0][1].body);
+    const body = savedBody();
     expect(body.health_integration_fail_threshold).toBe(25);
   });
 
@@ -138,7 +180,7 @@ describe('SystemHealthSettingsPage', () => {
     mockSettings.healthNotifyRoleIds = [];
     wrap(<SystemHealthSettingsPage />);
     expect(
-      screen.getByText(/no roles selected/i),
+      screen.getByText(/no roles or users selected/i),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/fall back to superadmin and admin users/i),
@@ -147,6 +189,82 @@ describe('SystemHealthSettingsPage', () => {
 
   it('does not warn when notifications are on and at least one role is selected', () => {
     wrap(<SystemHealthSettingsPage />);
-    expect(screen.queryByText(/no roles selected/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no roles or users selected/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('SystemHealthSettingsPage — WhatsApp round-trip latency (OBS-S4-21)', () => {
+  beforeEach(() => {
+    apiFetch.mockReset();
+    apiFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+    resetSettings();
+  });
+
+  function payload() {
+    return savedBody();
+  }
+
+  it('seeds every latency field from saved settings', () => {
+    mockSettings.chatLatencyTargetSeconds = 12;
+    mockSettings.chatLatencyMinSample = 40;
+    wrap(<SystemHealthSettingsPage />);
+
+    expect((screen.getByTestId('chat-latency-target') as HTMLInputElement).value).toBe('12');
+    expect((screen.getByTestId('chat-latency-min-sample') as HTMLInputElement).value).toBe('40');
+  });
+
+  it('saves the latency settings as snake_case keys', async () => {
+    wrap(<SystemHealthSettingsPage />);
+    fireEvent.change(screen.getByTestId('chat-latency-target'), { target: { value: '15' } });
+    fireEvent.change(screen.getByTestId('chat-latency-no-reply'), { target: { value: '7' } });
+    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+
+    await waitFor(() => expect(apiFetch).toHaveBeenCalled());
+    const body = payload();
+    expect(body.chat_latency_p99_target_seconds).toBe(15);
+    expect(body.chat_latency_no_reply_minutes).toBe(7);
+    expect(body.chat_latency_percentile).toBe(99);
+  });
+
+  it('clamps a blank or zero duration back to the saved value', async () => {
+    // 0 is not a meaningful duration here — it would either disable the check
+    // silently or collapse the window, so it must not be persisted.
+    wrap(<SystemHealthSettingsPage />);
+    fireEvent.change(screen.getByTestId('chat-latency-target'), { target: { value: '' } });
+    fireEvent.change(screen.getByTestId('chat-latency-min-sample'), { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+
+    await waitFor(() => expect(apiFetch).toHaveBeenCalled());
+    const body = payload();
+    expect(body.chat_latency_p99_target_seconds).toBe(10);
+    expect(body.chat_latency_min_sample).toBe(30);
+  });
+
+  it('summarises all three triggers in plain language', () => {
+    mockSettings.chatLatencyTargetSeconds = 10;
+    mockSettings.chatLatencyCeilingMultiplier = 3;
+    wrap(<SystemHealthSettingsPage />);
+
+    const summary = screen.getByTestId('chat-latency-summary');
+    expect(summary).toHaveTextContent('p99 exceeds 10s');
+    expect(summary).toHaveTextContent('30 turns');
+    // ceiling is derived, not typed — the operator should not have to multiply
+    expect(summary).toHaveTextContent('30s');
+    expect(summary).toHaveTextContent('5 minutes');
+  });
+
+  it('recomputes the derived ceiling as the inputs change', () => {
+    wrap(<SystemHealthSettingsPage />);
+    fireEvent.change(screen.getByTestId('chat-latency-target'), { target: { value: '20' } });
+
+    expect(screen.getByTestId('chat-latency-summary')).toHaveTextContent('60s');
+  });
+
+  it('reset restores the saved latency values', () => {
+    wrap(<SystemHealthSettingsPage />);
+    fireEvent.change(screen.getByTestId('chat-latency-target'), { target: { value: '99' } });
+    fireEvent.click(screen.getByRole('button', { name: /reset/i }));
+
+    expect((screen.getByTestId('chat-latency-target') as HTMLInputElement).value).toBe('10');
   });
 });

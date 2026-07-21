@@ -39,3 +39,12 @@ export interface ChatHistoryFilters {
   search?: string;
   breached_only?: boolean;
 }
+
+/**
+ * Grouping the listing applies.
+ *
+ * Server-side, not a rendering choice: the grid is offset-paginated, so unless
+ * the API orders group members contiguously the UI could only group within the
+ * current page — every page would show fragments of many groups.
+ */
+export type ChatHistoryGroupBy = 'none' | 'date' | 'contact' | 'contact_date';

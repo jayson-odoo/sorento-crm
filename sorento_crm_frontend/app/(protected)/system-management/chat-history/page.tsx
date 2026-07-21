@@ -40,16 +40,28 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { buildGroupHeader } from './groupHeader';
 import { getChatMessages } from './services/chatHistoryService';
 import { useExportChatHistory } from './hooks/useChatHistory';
 import { ChatThreadDrawer } from './components/ChatThreadDrawer';
-import type { ChatHistoryFilters, ChatMessageRow } from './types/chatHistory.types';
+import type {
+  ChatHistoryFilters,
+  ChatHistoryGroupBy,
+  ChatMessageRow,
+} from './types/chatHistory.types';
 
 function localInput(offsetHours: number): string {
   const d = new Date(Date.now() - offsetHours * 3600_000);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+const GROUP_BY_OPTIONS = [
+  { value: 'none', label: 'No grouping' },
+  { value: 'date', label: 'Group by date' },
+  { value: 'contact', label: 'Group by contact' },
+  { value: 'contact_date', label: 'Group by contact, then date' },
+];
 
 const DIRECTION_OPTIONS = [
   { value: '', label: 'All directions' },
@@ -74,6 +86,7 @@ export default function ChatHistoryPage() {
   const [direction, setDirection] = useState('');
   const [breachedOnly, setBreachedOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [groupBy, setGroupBy] = useState<ChatHistoryGroupBy>('none');
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'sent_at', desc: true }]);
@@ -90,7 +103,7 @@ export default function ChatHistoryPage() {
   );
 
   const { data, isLoading } = useQuery({
-    queryKey: ['chat-history', filters, searchQuery, pagination, sorting],
+    queryKey: ['chat-history', filters, searchQuery, pagination, sorting, groupBy],
     queryFn: () =>
       getChatMessages(filters, {
         page: pagination.pageIndex + 1,
@@ -98,6 +111,7 @@ export default function ChatHistoryPage() {
         sort: sorting[0]?.id,
         dir: sorting[0]?.desc ? 'desc' : 'asc',
         query: searchQuery || undefined,
+        group_by: groupBy === 'none' ? undefined : groupBy,
       }),
     staleTime: 15_000,
     placeholderData: (prev) => prev,
@@ -173,6 +187,8 @@ export default function ChatHistoryPage() {
     ],
     [],
   );
+
+  const renderGroupHeader = useMemo(() => buildGroupHeader(groupBy), [groupBy]);
 
   const table = useReactTable({
     columns,
@@ -273,6 +289,20 @@ export default function ChatHistoryPage() {
                     placeholder="All directions"
                   />
                 </div>
+                <div className="space-y-1" data-testid="chat-history-group-by">
+                  <Label className="text-xs">Group by</Label>
+                  <SearchableSelect
+                    options={GROUP_BY_OPTIONS}
+                    value={groupBy}
+                    onChange={(v) => {
+                      setGroupBy(v as ChatHistoryGroupBy);
+                      // Grouping changes the server ordering, so the current
+                      // page number no longer refers to the same rows.
+                      resetPage();
+                    }}
+                    placeholder="No grouping"
+                  />
+                </div>
                 <div>
                   <Button
                     variant={breachedOnly ? 'primary' : 'outline'}
@@ -339,6 +369,7 @@ export default function ChatHistoryPage() {
           onRowClick={(row: ChatMessageRow) => setSelected(row)}
           standardToolbar={false}
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+          renderGroupHeader={renderGroupHeader}
           emptyMessage="No messages in this range. Widen the date range or clear filters — chat history is written by the n8n WhatsApp flow."
         >
           <Card>
