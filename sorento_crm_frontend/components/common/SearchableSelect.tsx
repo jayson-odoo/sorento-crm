@@ -11,7 +11,7 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import {
   selectTriggerVariants,
   type SelectTriggerSize,
@@ -186,6 +186,8 @@ export function SearchableSelect({
           )}
         </button>
       </PopoverTrigger>
+      {/* Portalled so a dialog's overflow can't clip the menu when it flips upward. */}
+      <PopoverPortal>
       <PopoverContent
         className={cn('w-(--radix-popper-anchor-width) p-0', className)}
         align="start"
@@ -239,6 +241,7 @@ export function SearchableSelect({
           </CommandList>
         </Command>
       </PopoverContent>
+      </PopoverPortal>
     </Popover>
   );
 }

@@ -40,7 +40,6 @@ export const dropdownMigrationAllowlist = [
   'app/(protected)/marketing-management/promotions/components/PromotionForm.tsx',
   'app/(protected)/marketing-management/promotions/components/PromotionsList.tsx',
   'app/(protected)/master-data-management/brands/components/BrandsList.tsx',
-  'app/(protected)/master-data-management/lookup-sets/components/BindingAddDialog.tsx',
   'app/(protected)/master-data-management/products/[id]/components/ProductVariantPickerDialog.tsx',
   'app/(protected)/master-data-management/products/components/ProductForm.tsx',
   'app/(protected)/master-data-management/products/components/ProductSuppliersSection.tsx',

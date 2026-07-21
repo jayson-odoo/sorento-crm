@@ -11,7 +11,7 @@ import {
   CommandItem,
   CommandList,
 } from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Popover, PopoverContent, PopoverPortal, PopoverTrigger } from '@/components/ui/popover';
 import {
   selectTriggerVariants,
   type SelectTriggerSize,
@@ -241,6 +241,8 @@ export function SearchableMultiSelect({
           <ChevronDown className="size-4 shrink-0 self-start mt-1 opacity-60 -me-0.5" />
         </button>
       </PopoverTrigger>
+      {/* Portalled so a dialog's overflow can't clip the menu when it flips upward. */}
+      <PopoverPortal>
       <PopoverContent className={cn('w-(--radix-popper-anchor-width) p-0', className)} align="start">
         <Command shouldFilter={false}>
           <CommandInput placeholder="Search..." value={query} onValueChange={setQuery} />
@@ -307,6 +309,7 @@ export function SearchableMultiSelect({
           </CommandList>
         </Command>
       </PopoverContent>
+      </PopoverPortal>
     </Popover>
   );
 }
