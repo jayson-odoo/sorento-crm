@@ -26,7 +26,7 @@ from app.models.user import (
 )
 from app.services.integration_key_crypto import hash_api_key
 from app.services.integration_seed import (
-    LEGACY_INTEGRATION_NAME,
+    LEGACY_KEY_OWNER,
     SEEDED_INTEGRATIONS,
     seed_integrations,
 )
@@ -138,7 +138,8 @@ class TestIntegrationRows:
     def test_creates_one_row_per_seeded_integration_plus_legacy(self, db):
         seed_integrations(db, external_api_key="sk_legacy", legacy_act_as_user_id="legacy-act-as")
         names = {i.name for i in db.query(Integration).all()}
-        assert names == set(SEEDED_INTEGRATIONS) | {LEGACY_INTEGRATION_NAME}
+        # No extra legacy row: the env key lands on the n8n integration itself.
+        assert names == set(SEEDED_INTEGRATIONS)
 
     def test_mcp_gets_its_own_integration(self, db):
         # AC-AC-09a: n8n reaches read-only tools through the MCP server, so
@@ -148,7 +149,7 @@ class TestIntegrationRows:
 
     def test_each_integration_points_at_its_own_principal(self, db):
         seed_integrations(db, external_api_key="sk_legacy", legacy_act_as_user_id="legacy-act-as")
-        rows = db.query(Integration).filter(Integration.name != LEGACY_INTEGRATION_NAME).all()
+        rows = db.query(Integration).all()
         principals = [r.act_as_user_id for r in rows]
         assert all(principals)
         assert len(set(principals)) == len(principals), "principals must not be shared"
@@ -158,6 +159,8 @@ class TestIntegrationRows:
         # show it to. Keys are issued deliberately, through the UI.
         seed_integrations(db, external_api_key="sk_legacy", legacy_act_as_user_id="legacy-act-as")
         for name in SEEDED_INTEGRATIONS:
+            if name == LEGACY_KEY_OWNER:
+                continue  # carries the existing env key
             row = db.query(Integration).filter_by(name=name).one()
             assert db.query(IntegrationApiKey).filter_by(integration_id=row.id).count() == 0
 
@@ -165,24 +168,22 @@ class TestIntegrationRows:
 class TestLegacyKey:
     def test_seeds_the_existing_key_so_current_callers_keep_working(self, db):
         seed_integrations(db, external_api_key="sk_legacy", legacy_act_as_user_id="legacy-act-as")
-        legacy = db.query(Integration).filter_by(name=LEGACY_INTEGRATION_NAME).one()
-        key = db.query(IntegrationApiKey).filter_by(integration_id=legacy.id).one()
+        owner = db.query(Integration).filter_by(name=LEGACY_KEY_OWNER).one()
+        key = db.query(IntegrationApiKey).filter_by(integration_id=owner.id).one()
         assert key.key_hash == hash_api_key("sk_legacy")
 
-    def test_legacy_acts_as_the_existing_principal_so_behaviour_is_unchanged(self, db):
-        # Pointing it anywhere else would silently change what today's callers
-        # are allowed to do at the moment of cutover.
+    def test_env_key_owner_uses_its_own_principal(self, db):
+        # n8n owns the carried-over key, so it is attributed as n8n rather
+        # than as a shared legacy identity nobody can tell apart.
         seed_integrations(db, external_api_key="sk_legacy", legacy_act_as_user_id="legacy-act-as")
-        legacy = db.query(Integration).filter_by(name=LEGACY_INTEGRATION_NAME).one()
-        assert legacy.act_as_user_id == "legacy-act-as"
+        owner = db.query(Integration).filter_by(name=LEGACY_KEY_OWNER).one()
+        principal = db.query(User).filter(User.id == owner.act_as_user_id).one()
+        assert principal.email == "n8n@integrations.local"
 
     def test_absent_env_key_seeds_no_legacy_key_rather_than_an_empty_hash(self, db):
         # AC-AC-09. An empty or null hash that authenticated anyone would be
         # the worst possible outcome of a missing env var.
         seed_integrations(db, external_api_key=None, legacy_act_as_user_id="legacy-act-as")
-        legacy = db.query(Integration).filter_by(name=LEGACY_INTEGRATION_NAME).first()
-        if legacy is not None:
-            assert db.query(IntegrationApiKey).filter_by(integration_id=legacy.id).count() == 0
         assert db.query(IntegrationApiKey).count() == 0
 
     def test_blank_env_key_seeds_no_legacy_key(self, db):

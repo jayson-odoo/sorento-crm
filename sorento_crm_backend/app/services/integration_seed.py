@@ -39,7 +39,19 @@ from app.services.integration_key_crypto import hash_api_key, key_prefix
 
 logger = logging.getLogger(__name__)
 
-LEGACY_INTEGRATION_NAME = "legacy-shared-key"
+# The integration that inherits the existing EXTERNAL_API_KEY value.
+#
+# n8n rather than the MCP server, because only one row can hold that value
+# (key_hash is unique) and the two callers differ enormously in migration cost:
+# n8n has the key pasted as a literal across ~40 nodes, while the MCP server
+# reads it from a single env var on one service. Giving it to the expensive
+# caller means n8n keeps working untouched *and* is correctly attributed, while
+# the MCP server takes its own key at deploy time.
+#
+# Until that happens the MCP server presents the same value and therefore
+# authenticates as n8n. That is a known, temporary attribution inaccuracy, not
+# an access grant -- both are Admin-equivalent today either way.
+LEGACY_KEY_OWNER = "n8n"
 
 # name -> (type, human label). One integration per real caller, so revoking one
 # cannot affect another -- the defect the single shared key has today.
@@ -140,13 +152,17 @@ def _ensure_integration(
 def seed_integrations(
     db: Session,
     external_api_key: Optional[str],
-    legacy_act_as_user_id: Optional[str],
+    legacy_act_as_user_id: Optional[str] = None,
 ) -> None:
-    """Create integration principals, roles, integration rows and the legacy key.
+    """Create integration principals, roles, integration rows and carry the env key.
 
-    Safe to run repeatedly. ``external_api_key`` absent or blank seeds no legacy
-    key at all -- never an empty hash, which would be an authentication bypass
-    rather than a missing feature.
+    Safe to run repeatedly. ``external_api_key`` absent or blank carries nothing
+    over -- never an empty hash, which would be an authentication bypass rather
+    than a missing feature.
+
+    ``legacy_act_as_user_id`` is accepted for compatibility with the original
+    migration signature and is no longer used: the key now belongs to the n8n
+    integration, which has its own principal.
     """
     permission_ids = _admin_permission_ids(db)
 
@@ -158,40 +174,46 @@ def seed_integrations(
         # migration has nobody to show it to. An admin issues it deliberately.
         _ensure_integration(db, name, type_, user.id)
 
-    _seed_legacy_key(db, external_api_key, legacy_act_as_user_id)
+    _carry_over_env_key(db, external_api_key)
     logger.info("integration_seed: complete")
 
 
-def _seed_legacy_key(
-    db: Session, external_api_key: Optional[str], legacy_act_as_user_id: Optional[str]
-) -> None:
+def _carry_over_env_key(db: Session, external_api_key: Optional[str]) -> None:
+    """Attach the existing EXTERNAL_API_KEY value to the n8n integration."""
     if not external_api_key or not external_api_key.strip():
         # Loud, because the operator needs to know current callers were not
-        # carried over -- but not fatal, since a fresh install has no legacy key.
+        # carried over -- but not fatal, since a fresh install has no such key.
         logger.warning(
-            "integration_seed: EXTERNAL_API_KEY absent; no legacy key seeded. "
-            "Existing callers using the shared key will stop authenticating once "
-            "the env fallback is removed."
+            "integration_seed: EXTERNAL_API_KEY absent; nothing carried over. "
+            "Existing callers using the shared key will stop authenticating."
         )
         return
 
     key = external_api_key.strip()
-    legacy = _ensure_integration(db, LEGACY_INTEGRATION_NAME, "legacy", legacy_act_as_user_id)
-
     key_hash = hash_api_key(key)
-    already = db.query(IntegrationApiKey).filter_by(key_hash=key_hash).first()
-    if already is not None:
+    if db.query(IntegrationApiKey).filter_by(key_hash=key_hash).first() is not None:
+        return
+
+    owner = db.query(Integration).filter(Integration.name == LEGACY_KEY_OWNER).first()
+    if owner is None:
+        logger.error(
+            "integration_seed: '%s' integration missing; env key not carried over",
+            LEGACY_KEY_OWNER,
+        )
         return
 
     db.add(
         IntegrationApiKey(
-            integration_id=legacy.id,
+            integration_id=owner.id,
             key_hash=key_hash,
             key_prefix=key_prefix(key),
         )
     )
     db.flush()
     logger.info(
-        "integration_seed: legacy shared key carried over as integration '%s'",
-        LEGACY_INTEGRATION_NAME,
+        "integration_seed: existing EXTERNAL_API_KEY carried over to '%s'. "
+        "The MCP server presents the same value and will authenticate as '%s' "
+        "until it is issued its own key.",
+        LEGACY_KEY_OWNER,
+        LEGACY_KEY_OWNER,
     )

@@ -1,163 +1,189 @@
 'use client';
 
-import { useState } from 'react';
-import { KeyRound, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  ColumnDef,
+  PaginationState,
+  SortingState,
+  getCoreRowModel,
+  getFilteredRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
+import { Plus, Search } from 'lucide-react';
 
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardFooter, CardTable } from '@/components/ui/card';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Input } from '@/components/ui/input';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
-import {
-  useDeleteIntegration,
-  useIntegrations,
-  useIssueKey,
-  useRevokeKey,
-  useRotateKey,
-} from '../hooks/useIntegrations';
-import type { Integration, IssuedKey } from '../types/integration.types';
+import { useIntegrations } from '../hooks/useIntegrations';
+import type { Integration } from '../types/integration.types';
 import { IntegrationFormDialog } from './IntegrationFormDialog';
-import { IssuedKeyDialog } from './IssuedKeyDialog';
 
-function StatusBadge({ integration }: { integration: Integration }) {
-  if (!integration.is_active) return <Badge variant="secondary">Inactive</Badge>;
-  if (integration.status === 'ERROR') return <Badge variant="destructive">Error</Badge>;
-  if (integration.status === 'ACTIVE') return <Badge variant="success">Active</Badge>;
-  // UNVERIFIED is the honest default: the integration exists but has never
-  // successfully authenticated, so claiming "Active" would overstate it.
-  return <Badge variant="outline">Unverified</Badge>;
-}
-
-function KeysPanel({ integration }: { integration: Integration }) {
-  const issue = useIssueKey();
-  const rotate = useRotateKey();
-  const revoke = useRevokeKey();
-  const [issued, setIssued] = useState<IssuedKey | null>(null);
-  const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
-
-  const live = integration.keys.filter((k) => k.is_active);
-  const retired = integration.keys.filter((k) => !k.is_active);
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={async () => setIssued(await issue.mutateAsync(integration.id))}
-          disabled={issue.isPending}
-        >
-          <KeyRound className="size-4" /> Issue key
-        </Button>
-        {live.length > 0 && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={async () =>
-              setIssued(
-                await rotate.mutateAsync({ integrationId: integration.id, graceDays: 7 }),
-              )
-            }
-            disabled={rotate.isPending}
-          >
-            <RefreshCw className="size-4" /> Rotate (7-day grace)
-          </Button>
-        )}
-      </div>
-
-      {integration.keys.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No keys issued. This integration cannot authenticate until one is created.
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b text-left text-muted-foreground">
-                <th className="py-2 pr-3 font-medium">Key</th>
-                <th className="py-2 pr-3 font-medium">Last used</th>
-                <th className="py-2 pr-3 font-medium">Status</th>
-                <th className="py-2 pr-3 font-medium" />
-              </tr>
-            </thead>
-            <tbody>
-              {[...live, ...retired].map((key) => (
-                <tr key={key.id} className="border-b last:border-0">
-                  <td className="py-2 pr-3 font-mono text-xs">{key.key_prefix}…</td>
-                  <td className="py-2 pr-3">
-                    {/* Whether the caller actually migrated. Without this,
-                        closing a grace window is guesswork. */}
-                    {key.last_used_at ? (
-                      formatDateTimeInMalaysia(key.last_used_at)
-                    ) : (
-                      <span className="text-muted-foreground">Never used</span>
-                    )}
-                  </td>
-                  <td className="py-2 pr-3">
-                    {key.revoked_at ? (
-                      <Badge variant="secondary">Revoked</Badge>
-                    ) : key.expires_at && !key.is_active ? (
-                      <Badge variant="secondary">Expired</Badge>
-                    ) : key.expires_at ? (
-                      <Badge variant="outline">
-                        Expires {formatDateTimeInMalaysia(key.expires_at)}
-                      </Badge>
-                    ) : (
-                      <Badge variant="success">Active</Badge>
-                    )}
-                  </td>
-                  <td className="py-2 pr-3 text-right">
-                    {key.is_active && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => setConfirmRevoke(key.id)}
-                      >
-                        Revoke
-                      </Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      <IssuedKeyDialog issued={issued} onClose={() => setIssued(null)} />
-
-      {/* Revoking is destructive and immediate — never one click. */}
-      <ConfirmDeleteDialog
-        open={!!confirmRevoke}
-        onOpenChange={(open) => !open && setConfirmRevoke(null)}
-        title="Revoke this key?"
-        description="The key stops working immediately. Any caller still using it will fail to authenticate until it is replaced. This action cannot be undone."
-        successMessage="Key revoked"
-        onDelete={async () => {
-          if (confirmRevoke) {
-            await revoke.mutateAsync({
-              integrationId: integration.id,
-              keyId: confirmRevoke,
-            });
-          }
-        }}
-        onSuccess={() => setConfirmRevoke(null)}
-      />
-    </div>
-  );
+export function StatusCell({ integration }: { integration: Integration }) {
+  if (!integration.is_active) {
+    return <Badge variant="secondary" appearance="light" size="sm">Inactive</Badge>;
+  }
+  if (integration.status === 'ERROR') {
+    return <Badge variant="destructive" appearance="light" size="sm">Error</Badge>;
+  }
+  if (integration.status === 'ACTIVE') {
+    return <Badge variant="success" appearance="light" size="sm">Connected</Badge>;
+  }
+  // UNVERIFIED is honest: the row exists but has never successfully
+  // authenticated, so "Connected" would overstate it.
+  return <Badge variant="outline" size="sm">Unverified</Badge>;
 }
 
 export function IntegrationsView() {
-  const { data: integrations, isLoading, isError, error } = useIntegrations();
-  const remove = useDeleteIntegration();
+  const router = useRouter();
+  const { data, isLoading, isError, error } = useIntegrations();
+  const [search, setSearch] = useState('');
   const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<Integration | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState<Integration | null>(null);
+  const [sorting, setSorting] = useState<SortingState>([{ id: 'name', desc: false }]);
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 25,
+  });
 
-  if (isLoading) {
-    return <p className="p-6 text-sm text-muted-foreground">Loading integrations…</p>;
-  }
+  const rows = useMemo(() => {
+    const all = data ?? [];
+    if (!search.trim()) return all;
+    const q = search.toLowerCase();
+    return all.filter(
+      (i) =>
+        i.name.toLowerCase().includes(q) ||
+        i.type.toLowerCase().includes(q) ||
+        (i.act_as_user_name ?? '').toLowerCase().includes(q),
+    );
+  }, [data, search]);
+
+  const columns = useMemo<ColumnDef<Integration>[]>(
+    () => [
+      {
+        accessorKey: 'name',
+        id: 'name',
+        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
+        size: 260,
+        cell: ({ row }) => (
+          <div className="min-w-0">
+            <div className="truncate font-medium" title={row.original.name}>
+              {row.original.name}
+            </div>
+            <div
+              className="truncate text-xs text-muted-foreground"
+              title={row.original.act_as_user_name ?? undefined}
+            >
+              {row.original.act_as_user_name ? (
+                `Acts as ${row.original.act_as_user_name}`
+              ) : (
+                // Fails closed at the auth layer, so say so rather than
+                // leaving a blank that reads as "fine".
+                <span className="text-destructive">No principal — cannot authenticate</span>
+              )}
+            </div>
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'type',
+        id: 'type',
+        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
+        size: 150,
+        cell: ({ row }) => <span className="truncate">{row.original.type}</span>,
+      },
+      {
+        accessorKey: 'status',
+        id: 'status',
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        size: 130,
+        cell: ({ row }) => <StatusCell integration={row.original} />,
+      },
+      {
+        id: 'keys',
+        header: ({ column }) => <DataGridColumnHeader title="Keys" column={column} />,
+        size: 110,
+        cell: ({ row }) => {
+          const live = row.original.keys.filter((k) => k.is_active).length;
+          if (row.original.keys.length === 0) {
+            return <span className="text-xs text-muted-foreground">None</span>;
+          }
+          return (
+            <span className="text-xs">
+              {live} active
+              {row.original.keys.length > live && (
+                <span className="text-muted-foreground">
+                  {' '}
+                  / {row.original.keys.length - live} retired
+                </span>
+              )}
+            </span>
+          );
+        },
+      },
+      {
+        accessorKey: 'last_used_at',
+        id: 'last_used_at',
+        header: ({ column }) => <DataGridColumnHeader title="Last used" column={column} />,
+        size: 180,
+        cell: ({ row }) =>
+          row.original.last_used_at ? (
+            <span className="truncate">
+              {formatDateTimeInMalaysia(row.original.last_used_at)}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
+      },
+      {
+        accessorKey: 'last_error',
+        id: 'last_error',
+        header: ({ column }) => <DataGridColumnHeader title="Last error" column={column} />,
+        size: 220,
+        cell: ({ row }) =>
+          row.original.last_error ? (
+            <span className="truncate text-destructive" title={row.original.last_error}>
+              {row.original.last_error}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
+      },
+      {
+        accessorKey: 'created_at',
+        id: 'created_at',
+        header: ({ column }) => <DataGridColumnHeader title="Created" column={column} />,
+        size: 160,
+        cell: ({ row }) => (
+          <span className="truncate">{formatDateTimeInMalaysia(row.original.created_at)}</span>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId: (row) => row.id,
+    state: { sorting, pagination },
+    onSortingChange: setSorting,
+    onPaginationChange: setPagination,
+    getCoreRowModel: getCoreRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+  });
 
   if (isError) {
     return (
@@ -169,132 +195,59 @@ export function IntegrationsView() {
     );
   }
 
-  const rows = integrations ?? [];
-
   return (
     <div className="space-y-4 p-4 md:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold">Integrations</h1>
-          <p className="text-sm text-muted-foreground">
-            Systems that call Sorento with an API key. Each one authenticates as its own
-            user, so its role decides what it can reach.
-          </p>
-        </div>
-        <Button
-          onClick={() => {
-            setEditing(null);
-            setFormOpen(true);
-          }}
-        >
-          <Plus className="size-4" /> Add integration
-        </Button>
+      <div>
+        <h1 className="text-xl font-semibold">Integrations</h1>
+        <p className="text-sm text-muted-foreground">
+          Systems that call Sorento with an API key. Each authenticates as its own user, so
+          that user&apos;s role decides what it can reach.
+        </p>
       </div>
 
-      {rows.length === 0 ? (
-        // Explicit empty state with a next step, never a blank panel.
-        <Card>
-          <CardContent className="py-10 text-center">
-            <p className="font-medium">No integrations yet</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Add one to give a system its own API key, instead of sharing a single
-              credential between callers.
-            </p>
-            <Button
-              className="mt-4"
-              onClick={() => {
-                setEditing(null);
-                setFormOpen(true);
-              }}
-            >
-              <Plus className="size-4" /> Add integration
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-4">
-          {rows.map((integration) => (
-            <Card key={integration.id}>
-              <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <CardTitle className="flex flex-wrap items-center gap-2">
-                    <span className="truncate" title={integration.name}>
-                      {integration.name}
-                    </span>
-                    <StatusBadge integration={integration} />
-                    <Badge variant="outline">{integration.type}</Badge>
-                  </CardTitle>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Acts as{' '}
-                    {integration.act_as_user_name ? (
-                      <span className="font-medium">{integration.act_as_user_name}</span>
-                    ) : (
-                      // Fails closed at the auth layer; say so rather than
-                      // leaving a blank that reads as "fine".
-                      <span className="text-destructive">
-                        no principal — this integration cannot authenticate
-                      </span>
-                    )}
-                    {' · '}
-                    {integration.last_used_at
-                      ? `last used ${formatDateTimeInMalaysia(integration.last_used_at)}`
-                      : 'never used'}
-                  </p>
-                  {integration.last_error && (
-                    <p className="mt-1 text-sm text-destructive">
-                      Last error: {integration.last_error}
-                    </p>
-                  )}
-                </div>
-                <div className="flex shrink-0 gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setEditing(integration);
-                      setFormOpen(true);
-                    }}
-                  >
-                    <Pencil className="size-4" /> Edit
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setConfirmDelete(integration)}
-                  >
-                    <Trash2 className="size-4" /> Delete
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <KeysPanel integration={integration} />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      <IntegrationFormDialog
-        open={formOpen}
-        onOpenChange={setFormOpen}
-        integration={editing}
-      />
-
-      <ConfirmDeleteDialog
-        open={!!confirmDelete}
-        onOpenChange={(open) => !open && setConfirmDelete(null)}
-        title="Confirm delete"
-        description={
-          confirmDelete
-            ? `Delete "${confirmDelete.name}" and all ${confirmDelete.keys.length} of its API key(s). Any caller using them will stop authenticating immediately. This action cannot be undone.`
-            : ''
+      <DataGrid
+        table={table}
+        recordCount={rows.length}
+        isLoading={isLoading}
+        tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+        onRowClick={(row) =>
+          router.push(`/integration-management/integrations/${row.id}`)
         }
-        successMessage="Integration deleted"
-        onDelete={async () => {
-          if (confirmDelete) await remove.mutateAsync(confirmDelete.id);
-        }}
-        onSuccess={() => setConfirmDelete(null)}
-      />
+      >
+        <Card>
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <div className="relative w-full max-w-xs">
+                <Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  className="ps-9"
+                  placeholder="Search integrations..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+            }
+            primaryAction={
+              <Button onClick={() => setFormOpen(true)}>
+                <Plus className="size-4" /> Connect integration
+              </Button>
+            }
+            exportConfig={false}
+          />
+          <CardTable>
+            <ScrollArea>
+              <DataGridTable />
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          </CardTable>
+          <CardFooter>
+            <DataGridPagination />
+          </CardFooter>
+        </Card>
+      </DataGrid>
+
+      <IntegrationFormDialog open={formOpen} onOpenChange={setFormOpen} />
     </div>
   );
 }

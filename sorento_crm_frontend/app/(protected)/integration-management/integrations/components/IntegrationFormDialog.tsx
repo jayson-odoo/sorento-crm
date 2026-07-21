@@ -46,6 +46,11 @@ export function IntegrationFormDialog({
   const [type, setType] = useState('autocount_esb');
   const [actAsUserId, setActAsUserId] = useState<string | null>(null);
   const [isActive, setIsActive] = useState(true);
+  // Outbound half of the integration: where Sorento pushes to, and the
+  // credential it presents. Required for Group F (document lifecycle events
+  // and PO/SQ/SO writes) -- without a base URL there is nowhere to push.
+  const [baseUrl, setBaseUrl] = useState('');
+  const [outboundKey, setOutboundKey] = useState('');
 
   // This SearchableSelect is static-options only, so the roster is fetched
   // once and filtered client-side rather than searched server-side.
@@ -71,6 +76,10 @@ export function IntegrationFormDialog({
     setType(integration?.type ?? 'autocount_esb');
     setActAsUserId(integration?.act_as_user_id ?? null);
     setIsActive(integration?.is_active ?? true);
+    setBaseUrl(((integration?.config_json ?? {}) as Record<string, unknown>).base_url as string ?? '');
+    // Never prefilled: the server does not return it, and a blank field on
+    // save means "keep existing" rather than "clear".
+    setOutboundKey('');
   }, [open, integration]);
 
   const submit = async () => {
@@ -80,7 +89,16 @@ export function IntegrationFormDialog({
       // it, which reads to an operator as an outage rather than an edit.
       await update.mutateAsync({
         id: integration.id,
-        payload: { name, type, act_as_user_id: actAsUserId, is_active: isActive },
+        payload: {
+          name,
+          type,
+          act_as_user_id: actAsUserId,
+          is_active: isActive,
+          config_json: { ...(integration.config_json ?? {}), base_url: baseUrl || undefined },
+          // Omitted when blank so the stored credential is kept. Sending an
+          // empty object would clear it, which reads as an outage, not an edit.
+          ...(outboundKey ? { credentials_json: { api_key: outboundKey } } : {}),
+        },
       });
     } else {
       await create.mutateAsync({
@@ -88,6 +106,8 @@ export function IntegrationFormDialog({
         type,
         act_as_user_id: actAsUserId,
         is_active: isActive,
+        ...(baseUrl ? { config_json: { base_url: baseUrl } } : {}),
+        ...(outboundKey ? { credentials_json: { api_key: outboundKey } } : {}),
       });
     }
     onOpenChange(false);
@@ -140,6 +160,37 @@ export function IntegrationFormDialog({
             <p className="text-xs text-muted-foreground">
               Every record this integration writes is attributed to this user, and its
               role decides what the integration may reach.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="integration-base-url">Outbound base URL</Label>
+            <Input
+              id="integration-base-url"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="https://esb.foundryx.my"
+            />
+            <p className="text-xs text-muted-foreground">
+              Where Sorento pushes documents and lifecycle events. Leave blank for
+              systems that only call in, such as n8n.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="integration-outbound-key">Outbound credential</Label>
+            <Input
+              id="integration-outbound-key"
+              type="password"
+              value={outboundKey}
+              onChange={(e) => setOutboundKey(e.target.value)}
+              placeholder={
+                integration?.has_credentials ? 'Stored — leave blank to keep' : 'API key for the target system'
+              }
+            />
+            <p className="text-xs text-muted-foreground">
+              The key Sorento presents when calling out. Encrypted at rest and never
+              shown again. Leave blank to keep the existing one.
             </p>
           </div>
 
