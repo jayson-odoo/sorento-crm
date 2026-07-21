@@ -80,7 +80,7 @@ already been trained to ignore alert email.
 
 | Id | Given / When / Then |
 |----|---------------------|
-| **OBS-S4-07** `[BE][T]` | **Given** the new `chat_delivery_resolver` scheduled task (60s), **When** it runs, **Then** it selects `chat_histories` rows where `message_id IS NOT NULL AND respond_ts IS NULL AND resolve_attempts < 5`, capped at ~200 per run, ordered oldest-first. |
+| **OBS-S4-07** `[BE][T]` | **Given** the new `chat_delivery_resolver` scheduled task (60s), **When** it runs, **Then** it selects `chat_histories` rows where `message_id IS NOT NULL AND (respond_ts IS NULL OR delivery_status IS NULL) AND resolve_attempts < 5`, capped at ~200 per run, ordered oldest-first. **Revised 2026-07-21** (was `respond_ts IS NULL` alone): `respond_ts` now lands at ingest via OBS-S4-26, so skipping on it would leave Delivery permanently blank on every ingested row. |
 | **OBS-S4-08** `[BE][T]` | **Given** a selected row, **When** the resolver calls `RespondClient.get_message` (`app/services/integration_service.py:335`) with identifier `id:{contact_id}` and the row's `message_id`, **Then** on success it writes `respond_ts` (Respond `sent` timestamp) and `delivery_status`, and on later runs also `delivered_ts` / `read_ts` when present. |
 | **OBS-S4-09** `[BE][T]` | **Given** a `404 / message not found`, **When** the resolver handles it, **Then** `resolve_attempts` is incremented and no `respond_ts` is written; **and** at `resolve_attempts == 5` the row is marked `delivery_status = 'not_sent'` and stops being selected. Not-found means **NOT SENT** — never "assume sent". |
 | **OBS-S4-10** `[BE][T]` | **Given** a transport error / 5xx from Respond, **When** the resolver handles it, **Then** the run does not abort the whole batch; the row is retried on the next tick and the task run is logged with a partial-success summary. |
@@ -215,3 +215,24 @@ already been trained to ignore alert email.
 | **OBS-X-04** | **Given** retention, **When** configured, **Then**: `api_call_log` payload → NULL @ 30d, row → DELETE @ 180d; `user_downloads` → file + row DELETE @ 30d. All thresholds live in `system_settings` and are user-editable. |
 | **OBS-X-05** | **Given** any handoff to the user, **When** they are asked to test on :3000, **Then** a **production build** (`npm run build && npm start`) is running — never a dev server. |
 | **OBS-X-06** | **Given** every slice, **When** Phase 2 completes, **Then** its ids are keyed PASS / FAIL / DEFERRED in `monitoring-enhancement-test-report.md`. |
+
+### S4 addendum — `respond_ts` derived at ingest (added 2026-07-21)
+
+Found on production after S4 shipped: `turn_id` was pairing rows correctly, but **every**
+`respond_ts` was NULL, so `chat_history_query` dropped every turn and the admin grid showed
+"—" in Latency and Delivery on every row. The resolver — the only writer of `respond_ts` —
+was failing every call (`resolve_attempts` climbing 1→5 on production rows).
+
+Root cause of the blank column is that the SLA clock had a single point of failure. Respond
+mints `messageId` as the message's epoch-**microsecond** timestamp, so the authoritative
+clock already arrives in the ingest payload and never needed an HTTP round trip.
+
+| Id | Given / When / Then |
+|----|---------------------|
+| **OBS-S4-26** `[BE][T]` | **Given** an ingest payload carrying a Respond `message_id`, **When** `POST /external/chat-history/messages` inserts the row, **Then** `respond_ts` is derived from the id (µs epoch) and written in the same INSERT — no resolver round trip required for the SLA clock. |
+| **OBS-S4-27** `[BE][T]` | **Given** an inbound WhatsApp id whose microseconds are exactly zero (`1784602116000000`), **When** it is parsed, **Then** the whole-second value is accepted — that granularity is Respond's, not a rounding artefact. |
+| **OBS-S4-28** `[BE][T]` | **Given** an id that is not a plausible timestamp (a sequence id like `1234556`, a millisecond epoch, a non-numeric string, or NULL), **When** it is parsed, **Then** `respond_ts` stays NULL and the row sits out of the SLA — never a guessed value. A short id read as µs lands in 1970 and would otherwise inject a 56-year round trip into the p99. |
+| **OBS-S4-29** `[BE][T]` | **Given** a derived timestamp more than 1 day from the row's `sent_at`, **When** it is validated, **Then** it is rejected. Guards the two classic misparses (µs read as ms → year 58xxx; ms read as µs → 1970), which miss by decades, while tolerating `sent_at`'s known drift of seconds. |
+| **OBS-S4-30** `[BE][T]` | **Given** two ingested rows sharing one `turn_id`, **When** the admin grid is queried, **Then** `latency_seconds` is populated on the **outgoing** row only and the incoming row stays blank. |
+| **OBS-S4-31** `[BE]` | **Given** the historical rows whose `respond_ts` never resolved, **When** `scripts/backfill_chat_respond_ts.py` runs, **Then** it derives `respond_ts` with the *same* parser as the live path, and clears `delivery_status='not_sent'` **only** on rows it could derive a timestamp for (Respond minting an id proves the message existed, so `not_sent` was the resolver giving up). Idempotent: a second run reports zero changes. |
+| **OBS-S4-32** `[BE]` | **Given** a resolver 404, **When** it is handled, **Then** it is logged. Previously silent, which made a resolver 404-looping on every row indistinguishable from one that never ran — the reason this defect stayed invisible. |
