@@ -1,19 +1,15 @@
 'use client';
 
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Switch } from '@/components/ui/switch';
 
 const Webhooks = () => {
+  const [eventType, setEventType] = useState('1');
   return (
     <Card className="pb-2.5">
       <CardHeader id="webhooks">
@@ -58,16 +54,17 @@ const Webhooks = () => {
             Event Type
           </span>
           <div className="grow min-w-48">
-            <Select defaultValue="1">
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1">All Events</SelectItem>
-                <SelectItem value="2">Option 2</SelectItem>
-                <SelectItem value="3">Option 3</SelectItem>
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={eventType}
+              onChange={setEventType}
+              placeholder="Select"
+              triggerClassName="w-full"
+              options={[
+                { value: '1', label: 'All Events' },
+                { value: '2', label: 'Option 2' },
+                { value: '3', label: 'Option 3' },
+              ]}
+            />
           </div>
         </div>
         <div className="flex items-center flex-wrap lg:flex-nowrap gap-2.5 mb-2.5">

@@ -5,13 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 
 const AdvancedSettingsAddress = () => {
   const [address, setAddress] = useState('');
@@ -41,16 +35,17 @@ const AdvancedSettingsAddress = () => {
         <div className="flex items-baseline flex-wrap lg:flex-nowrap gap-2.5">
           <Label className="flex w-full max-w-56">Country</Label>
           <div className="grow">
-            <Select value={country} onValueChange={setCountry}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1">Spain</SelectItem>
-                <SelectItem value="2">Option 2</SelectItem>
-                <SelectItem value="3">Option 3</SelectItem>
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={country}
+              onChange={setCountry}
+              placeholder="Select"
+              triggerClassName="w-full"
+              options={[
+                { value: '1', label: 'Spain' },
+                { value: '2', label: 'Option 2' },
+                { value: '3', label: 'Option 3' },
+              ]}
+            />
           </div>
         </div>
         <div className="flex items-baseline flex-wrap lg:flex-nowrap gap-2.5">
