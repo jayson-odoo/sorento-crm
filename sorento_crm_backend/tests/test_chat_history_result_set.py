@@ -12,6 +12,7 @@ Run with:
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -298,3 +299,72 @@ def test_get_referenced_result_set_scoped_to_contact(client, db):
         get_referenced_result_set(db, respond_io_id="other-contact", message_id=MESSAGE_ID)
         is None
     )
+
+
+# ------------------------------------------- respond_ts derived at ingest
+#
+# Respond's message id IS the message's epoch-microsecond timestamp, so the SLA
+# clock lands on the row at ingest instead of waiting on the resolver's HTTP call.
+
+
+def test_ingest_derives_respond_ts_from_message_id(client, db):
+    r = client.post("/api/v1/external/chat-history/messages", json=_ingest_payload())
+    assert r.status_code == 201
+
+    row = db.query(ChatHistory).filter(ChatHistory.id == r.json()["id"]).one()
+    # 1780751891000000us -> 2026-06-06 13:18:11 UTC
+    assert row.respond_ts == datetime(2026, 6, 6, 13, 18, 11)
+
+
+def test_ingest_without_message_id_leaves_respond_ts_null(client, db):
+    payload = _ingest_payload()
+    payload.pop("message_id")
+    r = client.post("/api/v1/external/chat-history/messages", json=payload)
+    assert r.status_code == 201
+
+    row = db.query(ChatHistory).filter(ChatHistory.id == r.json()["id"]).one()
+    assert row.respond_ts is None
+
+
+def test_ingest_with_non_timestamp_message_id_leaves_respond_ts_null(client, db):
+    """A sequence-style id must not resolve to 1970 and fake a 56-year round trip."""
+    r = client.post(
+        "/api/v1/external/chat-history/messages",
+        json=_ingest_payload(message_id="1234556"),
+    )
+    assert r.status_code == 201
+
+    row = db.query(ChatHistory).filter(ChatHistory.id == r.json()["id"]).one()
+    assert row.respond_ts is None
+
+
+def test_ingested_turn_yields_latency_in_the_admin_grid(client, db):
+    """The whole chain: two ingests, one turn_id, a latency the grid can render.
+
+    This is the failure the fix targets — turn_id was pairing correctly but every
+    respond_ts was NULL, so the Latency column showed a dash on every row.
+    """
+    from app.services.chat_history_query import list_messages_page
+
+    turn = "9399053"
+    client.post("/api/v1/external/chat-history/messages", json=_ingest_payload(
+        type="incoming", message="Check stock",
+        message_id="1784602082000000",   # 02:48:02.000
+        sent_at=1784602082000, result=None, turn_id=turn,
+    ))
+    client.post("/api/v1/external/chat-history/messages", json=_ingest_payload(
+        type="outgoing", message="Here's what I've got so far",
+        message_id="1784602125363985",   # 02:48:45.363985
+        sent_at=1784602125363, result=None, turn_id=turn,
+    ))
+
+    rows, _ = list_messages_page(
+        db,
+        date_from=datetime(2026, 7, 21, 0, 0),
+        date_to=datetime(2026, 7, 21, 23, 59),
+    )
+    outgoing = [r for r in rows if r.type == "outgoing"]
+    assert len(outgoing) == 1
+    assert outgoing[0].latency_seconds == pytest.approx(43.363985, abs=1e-5)
+    # Latency belongs to the reply only — the inbound row must stay blank.
+    assert all(r.latency_seconds is None for r in rows if r.type == "incoming")

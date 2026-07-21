@@ -18,6 +18,7 @@ from app.schemas.external.chat_history import (
     ChatHistoryMessagesResponse,
 )
 from app.schemas.integration import IntegrationLogCreate
+from app.services.chat_message_resolver import respond_ts_from_message_id
 from app.services.integration_service import IntegrationLogService
 
 logger = logging.getLogger(__name__)
@@ -59,10 +60,12 @@ def ingest_chat_message(
         """
         INSERT INTO chat_histories (
             channel, contact_id, phone_number, message, sent_at, first_name, last_name, type,
-            message_id, result, reply_to_message_id, reply_to_message, turn_id, ingest_at
+            message_id, result, reply_to_message_id, reply_to_message, turn_id, ingest_at,
+            respond_ts
         ) VALUES (
             :channel, :contact_id, :phone_number, :message, :sent_at, :first_name, :last_name, :type,
-            :message_id, :result, :reply_to_message_id, :reply_to_message, :turn_id, :ingest_at
+            :message_id, :result, :reply_to_message_id, :reply_to_message, :turn_id, :ingest_at,
+            :respond_ts
         )
         RETURNING id
         """
@@ -92,6 +95,13 @@ def ingest_chat_message(
                 # Our clock at ingest. Never the SLA clock — its only job is to make
                 # webhook lag (ingest_at - respond_ts) separable from agent time.
                 "ingest_at": datetime.now(tz=timezone.utc).replace(tzinfo=None),
+                # Respond's `messageId` IS the message's epoch-microsecond timestamp,
+                # so the SLA clock is already in this payload — no resolver round trip
+                # needed for it. Null when the id isn't a plausible timestamp; the
+                # resolver still backstops those rows.
+                "respond_ts": respond_ts_from_message_id(
+                    payload.message_id, sent_at=sent_at
+                ),
             },
         )
         message_id = result.scalar_one()
