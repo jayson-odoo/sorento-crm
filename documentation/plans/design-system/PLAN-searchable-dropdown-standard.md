@@ -3,10 +3,19 @@
 > UAC: [`searchable-dropdown-standard-acceptance-criteria.md`](./searchable-dropdown-standard-acceptance-criteria.md) (contract; grill-locked).
 > Governs: `PRINCIPLES.md` > `ADR-PRODUCT-STANDARDS.md`. FE-only.
 
-**Status:** PHASE 1 IN PROGRESS (uncommitted). Component upgraded + ESLint ban + allowlist
-(133→132) + doctrine docs + reference migration (LookupSetFormDialog) all landed and passing
-build/lint/types. Live browser screenshot (AC5/AC1) still pending — Playwright MCP wedged this
-session; re-verify after MCP restart. Phase 2 (staged domain migrations + tests) not started.
+**Status:** PHASE 1 COMMITTED on `feat/searchable-dropdown-standard` (branched off `main`).
+Component upgraded + ESLint ban + allowlist (133→132) + reference migration
+(LookupSetFormDialog). Verified against main baseline: lint errors 318→318 (rule contributes 0;
++7 intentional `warn`-level native-`<select>` advisories), `tsc` clean in all touched files,
+vitest shows no new failures (suite has 7–8 pre-existing flaky failures either way).
+
+Carve-out note: this work originally sat uncommitted on the stale `fix/pr-rejected-by-uuid`
+branch (92 commits behind). Re-applied cleanly onto `main`; `useLookupSets.ts` was deliberately
+NOT carried over — the stale copy would have reverted `useSetBindingDefaultValue`, added to main
+in the interim.
+
+Live browser screenshot (AC5/AC1) still pending. Phase 2 (staged domain migrations + tests) not
+started.
 
 ## Goal
 

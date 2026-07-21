@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown, Loader2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   Command,
@@ -12,30 +12,46 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  selectTriggerVariants,
+  type SelectTriggerSize,
+} from '@/components/common/select-trigger-variants';
 
 export type SearchableMultiSelectOption = {
   value: string;
   label: string;
   /** Optional grouping header (renders one CommandGroup per distinct group). */
   group?: string;
-  /** Free-text used by the fuzzy filter; falls back to label. */
+  /** Free-text used by the fuzzy filter (static mode); falls back to label + description. */
   searchText?: string;
   /** Optional secondary line under the label. */
   description?: string;
   /** When set, render a small badge after the label (e.g. "owned by X"). */
   badgeText?: string;
+  /** Per-option disabled. */
+  disabled?: boolean;
 };
 
 export type SearchableMultiSelectProps = {
   value: string[];
   onChange: (value: string[]) => void;
-  options: SearchableMultiSelectOption[];
+  /** Static mode: full option set, filtered client-side. Mutually exclusive with `fetchOptions`. */
+  options?: SearchableMultiSelectOption[];
+  /** Async mode: server-search, debounced 300ms, stale-dropped. Empty query on open = first page. */
+  fetchOptions?: (query: string) => Promise<SearchableMultiSelectOption[]>;
+  /**
+   * Async mode: the currently-selected options, so trigger chips + checkmarks survive when the
+   * selected values aren't in the fetched page.
+   */
+  selectedOptions?: SearchableMultiSelectOption[];
+  /** Trigger size — shared with Radix SelectTrigger. Default `md`. */
+  size?: SelectTriggerSize;
   placeholder?: string;
   emptyMessage?: string;
   disabled?: boolean;
   className?: string;
   triggerClassName?: string;
-  /** Format the trigger label given the current selection. Defaults to "{count} selected". */
+  /** Override the trigger body entirely (default = removable chips). */
   renderTriggerLabel?: (selected: SearchableMultiSelectOption[]) => React.ReactNode;
 };
 
@@ -43,6 +59,9 @@ export function SearchableMultiSelect({
   value,
   onChange,
   options,
+  fetchOptions,
+  selectedOptions,
+  size,
   placeholder = 'Select...',
   emptyMessage = 'No results found.',
   disabled = false,
@@ -50,62 +69,144 @@ export function SearchableMultiSelect({
   triggerClassName,
   renderTriggerLabel,
 }: SearchableMultiSelectProps) {
+  const isAsync = typeof fetchOptions === 'function';
   const [open, setOpen] = React.useState(false);
-  const selectedSet = React.useMemo(() => new Set(value), [value]);
-  const selectedOptions = React.useMemo(
-    () => options.filter((o) => selectedSet.has(o.value)),
-    [options, selectedSet],
+
+  const [asyncOptions, setAsyncOptions] = React.useState<SearchableMultiSelectOption[]>([]);
+  const [loading, setLoading] = React.useState(false);
+  const [query, setQuery] = React.useState('');
+  const lastQueryRef = React.useRef<string>(' ');
+
+  const runFetch = React.useCallback(
+    async (q: string) => {
+      if (!fetchOptions) return;
+      lastQueryRef.current = q;
+      setLoading(true);
+      try {
+        const items = await fetchOptions(q);
+        if (lastQueryRef.current !== q) return;
+        setAsyncOptions(items);
+      } catch {
+        if (lastQueryRef.current !== q) return;
+        setAsyncOptions([]);
+      } finally {
+        if (lastQueryRef.current === q) setLoading(false);
+      }
+    },
+    [fetchOptions],
   );
+
+  React.useEffect(() => {
+    if (!isAsync || !open) return;
+    const t = setTimeout(() => void runFetch(query), query === '' ? 0 : 300);
+    return () => clearTimeout(t);
+  }, [isAsync, open, query, runFetch]);
+
+  React.useEffect(() => {
+    if (open) return;
+    setQuery('');
+    lastQueryRef.current = ' ';
+  }, [open]);
+
+  const baseOptions = React.useMemo(
+    () => (isAsync ? asyncOptions : (options ?? [])),
+    [isAsync, asyncOptions, options],
+  );
+  const selectedSet = React.useMemo(() => new Set(value), [value]);
+
+  // Resolve selected options for chips: prefer fetched/static, fall back to selectedOptions prop.
+  const chosen = React.useMemo(() => {
+    const byValue = new Map<string, SearchableMultiSelectOption>();
+    for (const o of baseOptions) if (selectedSet.has(o.value)) byValue.set(o.value, o);
+    if (isAsync) {
+      for (const o of selectedOptions ?? []) {
+        if (selectedSet.has(o.value) && !byValue.has(o.value)) byValue.set(o.value, o);
+      }
+    }
+    // Preserve `value` ordering; unknown values render as bare chips.
+    return value.map((v) => byValue.get(v) ?? { value: v, label: v });
+  }, [baseOptions, selectedSet, isAsync, selectedOptions, value]);
 
   const grouped = React.useMemo(() => {
     const map = new Map<string, SearchableMultiSelectOption[]>();
-    for (const opt of options) {
+    for (const opt of baseOptions) {
       const key = opt.group ?? '';
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(opt);
     }
     return Array.from(map.entries());
-  }, [options]);
+  }, [baseOptions]);
+
+  const misconfigured = !isAsync && options === undefined;
+  const isDisabled = disabled || misconfigured;
 
   const toggle = (v: string) => {
-    if (selectedSet.has(v)) {
-      onChange(value.filter((x) => x !== v));
-    } else {
-      onChange([...value, v]);
-    }
+    if (selectedSet.has(v)) onChange(value.filter((x) => x !== v));
+    else onChange([...value, v]);
   };
-
-  const triggerLabel = renderTriggerLabel
-    ? renderTriggerLabel(selectedOptions)
-    : selectedOptions.length === 0
-      ? placeholder
-      : `${selectedOptions.length} selected`;
+  const remove = (v: string) => onChange(value.filter((x) => x !== v));
 
   return (
-    <Popover open={open} onOpenChange={(o) => !disabled && setOpen(o)}>
+    <Popover open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          disabled={disabled}
+          disabled={isDisabled}
+          data-slot="searchable-multi-select-trigger"
           className={cn(
-            'flex h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs transition-[color,box-shadow] outline-none',
-            'focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]',
-            'data-[state=open]:border-ring',
-            disabled && 'cursor-not-allowed opacity-50',
+            selectTriggerVariants({ size }),
+            // Chips grow the trigger vertically; keep border/focus identical, drop the fixed height.
+            'h-auto min-h-8.5 flex-wrap gap-1 py-1',
             triggerClassName,
           )}
         >
-          <span className={cn('truncate', selectedOptions.length === 0 && 'text-muted-foreground')}>
-            {triggerLabel}
-          </span>
-          <ChevronDown className="size-4 opacity-50" />
+          {renderTriggerLabel ? (
+            <span className="flex-1 text-left">{renderTriggerLabel(chosen)}</span>
+          ) : chosen.length === 0 ? (
+            <span className="flex-1 truncate text-left text-muted-foreground">{placeholder}</span>
+          ) : (
+            <span className="flex flex-1 flex-wrap gap-1">
+              {chosen.map((opt) => (
+                <span
+                  key={opt.value}
+                  className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-xs"
+                >
+                  <span className="truncate">{opt.label}</span>
+                  <span
+                    role="button"
+                    tabIndex={-1}
+                    aria-label={`Remove ${opt.label}`}
+                    className="opacity-60 hover:opacity-100"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      remove(opt.value);
+                    }}
+                  >
+                    <X className="size-3" />
+                  </span>
+                </span>
+              ))}
+            </span>
+          )}
+          <ChevronDown className="size-4 shrink-0 self-start mt-1 opacity-60 -me-0.5" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className={cn('w-[--radix-popover-trigger-width] p-0', className)} align="start">
-        <Command shouldFilter>
-          <CommandInput placeholder="Search..." />
+      <PopoverContent className={cn('w-(--radix-popper-anchor-width) p-0', className)} align="start">
+        <Command shouldFilter={!isAsync}>
+          <CommandInput
+            placeholder="Search..."
+            value={isAsync ? query : undefined}
+            onValueChange={isAsync ? setQuery : undefined}
+          />
           <CommandList>
-            <CommandEmpty>{emptyMessage}</CommandEmpty>
+            {loading ? (
+              <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" /> Searching...
+              </div>
+            ) : (
+              <CommandEmpty>{emptyMessage}</CommandEmpty>
+            )}
             {grouped.map(([groupKey, opts]) => (
               <CommandGroup key={groupKey || '__ungrouped__'} heading={groupKey || undefined}>
                 {opts.map((opt) => {
@@ -114,6 +215,7 @@ export function SearchableMultiSelect({
                     <CommandItem
                       key={opt.value}
                       value={opt.searchText ?? `${opt.label} ${opt.description ?? ''}`}
+                      disabled={opt.disabled}
                       onSelect={() => toggle(opt.value)}
                       className="flex items-start gap-2"
                     >
