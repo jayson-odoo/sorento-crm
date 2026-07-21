@@ -27,7 +27,7 @@ class ImportJob(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_id = Column(String, unique=True, nullable=False, index=True)  # RQ job ID
     job_type = Column(String, nullable=False)  # e.g., 'stock_import', 'order_import'
-    status = Column(SQLEnum(JobStatus, native_enum=False, length=20, values_callable=lambda obj: [e.value for e in obj]), default=JobStatus.PENDING.value, nullable=False, index=True)
+    status = Column(SQLEnum(JobStatus, name="jobstatus", native_enum=True, values_callable=lambda obj: [e.value for e in obj]), default=JobStatus.PENDING.value, nullable=False, index=True)
     user_id = Column(String, nullable=False, index=True)
     
     # Job metadata

@@ -165,7 +165,7 @@ class MarketingCampaign(Base):
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=True)
     budget = Column(Numeric(15, 2), nullable=True)
-    target_audience = Column(Text, nullable=True)
+    target_audience = Column(String, nullable=True)
     status = Column(String, default=CampaignStatus.PLANNING.value, nullable=False)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

@@ -92,8 +92,7 @@ def seed_order_statuses(db: Session) -> int:
                 status_code=status["status_code"],
                 status_name=status["status_name"],
                 description=status["description"],
-                # `sequence` is a String column in the model.
-                sequence=str(status["sequence"]),
+                sequence=status["sequence"],
                 is_final_status=status["is_final_status"],
             )
         )

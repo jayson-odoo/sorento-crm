@@ -32,7 +32,7 @@ class OrderStatus(Base):
     status_code = Column(String(50), unique=True, nullable=False)
     status_name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
-    sequence = Column(String, default="0", nullable=False)
+    sequence = Column(Integer, default=0, nullable=False)
     is_final_status = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     

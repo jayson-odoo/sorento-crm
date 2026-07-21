@@ -1,6 +1,7 @@
 """User management models."""
 import enum
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Index, Integer, UniqueConstraint
+from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -26,7 +27,11 @@ class User(Base):
     name = Column(String, nullable=True)
     # Optional phone number used for user contact.
     contact_number = Column(String, nullable=True)
-    status = Column(String, default=UserStatus.INACTIVE.value, nullable=False)
+    status = Column(
+        SQLEnum(UserStatus, name="UserStatus", native_enum=True,
+                values_callable=lambda obj: [e.value for e in obj]),
+        default=UserStatus.INACTIVE.value, nullable=False,
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     last_sign_in_at = Column(DateTime(timezone=False), nullable=True)
@@ -207,7 +212,7 @@ class SystemSetting(Base):
     
     notify_stock_email = Column(Boolean, default=True, nullable=False)
     notify_stock_web = Column(Boolean, default=True, nullable=False)
-    notify_stock_threshold = Column(String, default="10", nullable=False)
+    notify_stock_threshold = Column(Integer, default=10, nullable=False)
     notify_stock_role_ids = Column(ARRAY(String), nullable=True)
     notify_new_order_email = Column(Boolean, default=True, nullable=False)
     notify_new_order_web = Column(Boolean, default=True, nullable=False)
