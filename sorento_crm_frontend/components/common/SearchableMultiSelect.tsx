@@ -202,6 +202,10 @@ export function SearchableMultiSelect({
           type="button"
           disabled={isDisabled}
           data-slot="searchable-multi-select-trigger"
+          // Radix SelectTrigger exposes role=combobox; keep parity so callers and tests
+          // can find the trigger by role, and screen readers announce expanded state.
+          role="combobox"
+          aria-expanded={open}
           className={cn(
             selectTriggerVariants({ size }),
             // Chips grow the trigger vertically; keep border/focus identical, drop the fixed height.

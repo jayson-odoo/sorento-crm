@@ -158,6 +158,10 @@ export function SearchableSelect({
           type="button"
           disabled={isDisabled}
           data-slot="searchable-select-trigger"
+          // Radix SelectTrigger exposes role=combobox; keep parity so callers and tests
+          // can find the trigger by role, and screen readers announce expanded state.
+          role="combobox"
+          aria-expanded={open}
           className={cn(selectTriggerVariants({ size }), triggerClassName)}
         >
           <span className={cn('flex-1 truncate text-left', !selected && 'text-muted-foreground')}>
