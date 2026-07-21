@@ -1,5 +1,4 @@
 """Shared dependencies for FastAPI routes."""
-import hmac
 import time
 from fastapi import Depends, HTTPException, status, Request, Header
 from fastapi.security import OAuth2PasswordBearer
@@ -489,97 +488,37 @@ def require_any_permission_with_api_key(permission_slugs: List[str]):
     return _require
 
 
-def _user_dict_from_api_key_act_as(db: Session, request: Request) -> dict:
-    """Build current_user for valid X-API-Key: act-as DB user if configured, else legacy system user."""
-    import logging
-    logger = logging.getLogger(__name__)
-    started = time.perf_counter()
-    act_as_id = getattr(settings, "external_api_key_act_as_user_id", None) or None
-    if not act_as_id:
-        user = {
-            "id": "system",
-            "email": "api@system",
-            "role_id": "system",
-            "name": "API User",
-            "avatar": None,
-            "status": "ACTIVE",
-            "role_name": "API",
-        }
-        from app.audit_context import set_audit_context
-
-        ip = request.client.host if request.client else None
-        set_audit_context(user["id"], ip)
-        elapsed_ms = (time.perf_counter() - started) * 1000
-        logger.info("auth.api_key_act_as fallback_system_user elapsed_ms=%.1f", elapsed_ms)
-        return user
-
-    from app.models.user import User
-
-    row = (
-        db.query(User)
-        .filter(User.id == act_as_id, User.is_trashed.is_(False))
-        .first()
-    )
-    elapsed_ms = (time.perf_counter() - started) * 1000
-    logger.info("auth.api_key_act_as db_lookup elapsed_ms=%.1f found=%s", elapsed_ms, bool(row))
-    if not row:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key configuration: act-as user not found",
-        )
-    user = {
-        "id": row.id,
-        "email": row.email,
-        "role_id": None,
-        "name": row.name,
-        "avatar": row.avatar,
-        "status": row.status,
-        "role_name": None,
-    }
-    from app.audit_context import set_audit_context
-
-    ip = request.client.host if request.client else None
-    set_audit_context(str(getattr(row, "id", "") or ""), ip)
-    return user
-
-
 async def get_external_api_user(
+    request: Request,
     api_key: Optional[str] = Depends(get_api_key),
+    db: Session = Depends(get_db),
 ) -> dict:
-    """Validate external API key and return system user dict."""
-    import logging
-    logger = logging.getLogger(__name__)
+    """Authenticate an integration API key and return the principal it acts as.
+
+    Was: a plain ``!=`` against the shared ``EXTERNAL_API_KEY`` env var, returning
+    a hardcoded ``{"id": "system"}`` that matched no row in the database. Callers
+    could not be told apart, the key could not be rotated or revoked, and the
+    comparison leaked timing.
+
+    Now: the key resolves through ``integration_api_keys`` to the integration's
+    ``act_as_user_id`` -- a real user, so writes attribute correctly and ordinary
+    RBAC applies. Nothing reads the env var at runtime; the legacy shared key
+    keeps working because its *hash* was seeded as an integration (AC-AC-09).
+    """
+    from app.audit_context import set_audit_context
+    from app.services.integration_auth import resolve_integration_principal
 
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key is required",
+            detail={"code": "api_key_required", "message": "API key is required"},
         )
 
-    valid_api_key = getattr(settings, 'external_api_key', None)
-    if not valid_api_key:
-        logger.warning("API key provided but EXTERNAL_API_KEY not configured")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key authentication not configured",
-        )
+    user = resolve_integration_principal(db, api_key)
 
-    if api_key != valid_api_key:
-        logger.warning("Invalid API key provided")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key",
-        )
-
-    return {
-        "id": "system",
-        "email": "api@system",
-        "role_id": "system",
-        "name": "API User",
-        "avatar": None,
-        "status": "ACTIVE",
-        "role_name": "API",
-    }
+    ip = request.client.host if request.client else None
+    set_audit_context(str(user["id"]), ip)
+    return user
 
 
 def get_current_user_or_api_key(
@@ -604,26 +543,18 @@ def get_current_user_or_api_key(
     # If API key is provided, validate it
     if api_key:
         auth_mode = "api_key"
-        # Validate API key against environment variable
-        valid_api_key = getattr(settings, 'external_api_key', None)
-        if not valid_api_key:
-            logger.warning("API key provided but EXTERNAL_API_KEY not configured")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="API key authentication not configured"
-            )
-        
-        # Constant-time compare to avoid leaking the key byte-by-byte via response
-        # timing (security audit 2026-06-29).
-        if not hmac.compare_digest(str(api_key), str(valid_api_key)):
-            logger.warning(f"Invalid API key provided")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid API key"
-            )
+        # Resolves through integration_api_keys to the integration's principal.
+        # The env var is no longer consulted at runtime -- the legacy shared key
+        # keeps working because its hash was seeded as an integration, not
+        # because anything reads EXTERNAL_API_KEY (AC-AC-01 / AC-AC-09).
+        from app.audit_context import set_audit_context
+        from app.services.integration_auth import resolve_integration_principal
 
-        user = _user_dict_from_api_key_act_as(db, request)
-        user["auth_method"] = "api_key"
+        user = resolve_integration_principal(db, api_key)
+
+        ip = request.client.host if request.client else None
+        set_audit_context(str(user["id"]), ip)
+
         elapsed_ms = (time.perf_counter() - started) * 1000
         logger.info("auth.get_current_user_or_api_key done mode=%s elapsed_ms=%.1f", auth_mode, elapsed_ms)
         return user
