@@ -220,6 +220,13 @@ PERMISSION_REGISTRY.extend([
     {"slug": "integration.respond_templates.edit", "name": "Edit WhatsApp Template Defaults", "description": "Set or clear the default template + param mapping per auto-send use case."},
     {"slug": "integration.respond_templates.sync", "name": "Sync WhatsApp Templates", "description": "Trigger a Respond.io channel + template sync."},
 ])
+# Managing integration records and their API keys. Separate from
+# integration_logs.*: reading what an integration did and being able to mint a
+# credential for it are very different levels of trust.
+PERMISSION_REGISTRY.extend(_crud("integration", "integrations", "Integrations"))
+PERMISSION_REGISTRY.extend([
+    {"slug": "integration.integrations.manage_keys", "name": "Manage Integration API Keys", "description": "Issue, rotate and revoke API keys for an integration. Grants the ability to mint a working credential."},
+])
 # Capabilities exposed only over /api/v1/external, for integration callers
 # (n8n, the MCP server, the AutoCount ESB). These have no human-facing screen,
 # so no slug existed until AC-AC-05 required every external endpoint to enforce
