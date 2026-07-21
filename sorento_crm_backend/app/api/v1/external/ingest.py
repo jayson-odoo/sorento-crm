@@ -43,12 +43,16 @@ logger = logging.getLogger(__name__)
 # Per-entity permissions. Ingest writes, so it takes the edit slug; reads take
 # view. Deliberately the same slugs the UI uses.
 INGEST_PERMISSIONS = {
+    "product_categories": "master_data.product_categories.edit",
+    "units_of_measure": "master_data.units_of_measure.edit",
     "warehouses": "inventory.warehouses.edit",
     "suppliers": "procurement.suppliers.edit",
     "customers": "order_management.customers.edit",
     "products": "master_data.products.edit",
 }
 READ_PERMISSIONS = {
+    "product_categories": "master_data.product_categories.view",
+    "units_of_measure": "master_data.units_of_measure.view",
     "warehouses": "inventory.warehouses.view",
     "suppliers": "procurement.suppliers.view",
     "customers": "order_management.customers.view",

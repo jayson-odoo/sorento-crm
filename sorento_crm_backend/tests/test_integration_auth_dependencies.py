@@ -13,40 +13,35 @@ directly.
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 # app.dependencies cannot be imported first -- doing so hits a pre-existing
 # circular import (partially initialized app.dependencies). Importing app.main
 # initialises the package fully, which is what the other TestClient suites do.
 import app.main  # noqa: F401  isort:skip
 
-from app.database import Base
 from app.dependencies import get_db, get_external_api_user
 from app.models.integration import Integration, IntegrationApiKey
 from app.models.user import User
 from app.services.integration_key_service import IntegrationKeyService
-from tests._sqlite_compat import create_all_sqlite_safe
+from tests._pg_fixture import pg_empty_schema
 
 _TABLES = [User.__table__, Integration.__table__, IntegrationApiKey.__table__]
 
 
 @pytest.fixture()
-def session_factory():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
-    create_all_sqlite_safe(Base.metadata, engine, tables=_TABLES)
-    return sessionmaker(bind=engine)
+def db():
+    """An empty Postgres schema.
+
+    Empty rather than the live database because these tests seed integrations
+    under fixed names ("n8n") that the real table already holds, and Postgres
+    enforces the unique constraint sqlite's throwaway engine never saw.
+    """
+    with pg_empty_schema(_TABLES) as session:
+        yield session
 
 
 @pytest.fixture()
-def db(session_factory):
-    session = session_factory()
-    yield session
-    session.close()
-
-
-@pytest.fixture()
-def client(session_factory, db):
+def client(db):
     app = FastAPI()
 
     @app.get("/probe")
@@ -101,7 +96,7 @@ class TestExternalApiUserDependency:
         integration = _integration(db)
         svc = IntegrationKeyService(db)
         key = svc.issue_key(integration)
-        svc.revoke_key(db.query(IntegrationApiKey).one())
+        svc.revoke_key(db.query(IntegrationApiKey).filter_by(integration_id=integration.id).one())
 
         assert client.get("/probe", headers={"X-API-Key": key}).status_code == 401
 

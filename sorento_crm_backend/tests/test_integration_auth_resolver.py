@@ -16,35 +16,32 @@ never appear in any message.
 """
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.database import Base
 from app.models.integration import Integration, IntegrationApiKey
 from app.models.user import User
 from app.services.integration_auth import resolve_integration_principal
 from app.services.integration_key_service import IntegrationKeyService
-from tests._sqlite_compat import create_all_sqlite_safe
+from tests._pg_fixture import pg_session, unique_code
 
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite://")
-    create_all_sqlite_safe(
-        Base.metadata,
-        engine,
-        tables=[User.__table__, Integration.__table__, IntegrationApiKey.__table__],
-    )
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    with pg_session() as session:
+        yield session
 
 
-def _integration(db, name="foundryx-esb", is_active=True, with_user=True):
+def _integration(db, name=None, is_active=True, with_user=True):
+    """A throwaway integration and its principal.
+
+    Uniquely named: `integrations.name` and `users.email` are unique and the
+    live tables already hold the seeded rows, where the old sqlite fixture
+    started empty and could reuse fixed names.
+    """
+    name = name or unique_code("INT")
     user_id = None
     if with_user:
         user = User(
-            email=f"{name}@integrations.local",
+            email=f"{name}@integrations.local".lower(),
             name=f"Integration {name}",
             status="ACTIVE",
             is_integration=True,
@@ -58,6 +55,12 @@ def _integration(db, name="foundryx-esb", is_active=True, with_user=True):
     return row
 
 
+def _key_row(db, integration):
+    """The integration's own key. The table holds real rows, so `.one()` has to
+    be scoped or it is asserting against production data."""
+    return db.query(IntegrationApiKey).filter_by(integration_id=integration.id).one()
+
+
 class TestSuccessfulResolution:
     def test_returns_the_act_as_user_not_a_synthetic_principal(self, db):
         integration = _integration(db)
@@ -68,7 +71,7 @@ class TestSuccessfulResolution:
         # AC-AC-05a: the string "system" is exactly what this replaces.
         assert principal["id"] == integration.act_as_user_id
         assert principal["id"] != "system"
-        assert principal["email"] == "foundryx-esb@integrations.local"
+        assert principal["email"] == f"{integration.name}@integrations.local".lower()
 
     def test_records_which_integration_the_call_came_from(self, db):
         # AC-AC-02/38: attribution must survive to the audit trail, and two
@@ -79,7 +82,7 @@ class TestSuccessfulResolution:
         principal = resolve_integration_principal(db, key)
 
         assert principal["integration_id"] == integration.id
-        assert principal["integration_name"] == "foundryx-esb"
+        assert principal["integration_name"] == integration.name
 
     def test_marks_the_auth_method(self, db):
         integration = _integration(db)
@@ -88,7 +91,7 @@ class TestSuccessfulResolution:
 
     def test_two_integrations_resolve_to_their_own_principals(self, db):
         svc = IntegrationKeyService(db)
-        n8n, esb = _integration(db, name="n8n"), _integration(db, name="esb")
+        n8n, esb = _integration(db), _integration(db)
         n8n_key, esb_key = svc.issue_key(n8n), svc.issue_key(esb)
 
         assert resolve_integration_principal(db, n8n_key)["id"] == n8n.act_as_user_id
@@ -110,7 +113,7 @@ class TestRefusals:
 
         integration = _integration(db)
         key = IntegrationKeyService(db).issue_key(integration)
-        db.query(IntegrationApiKey).one().expires_at = datetime.utcnow() - timedelta(seconds=1)
+        _key_row(db, integration).expires_at = datetime.utcnow() - timedelta(seconds=1)
         db.flush()
 
         with pytest.raises(HTTPException) as exc:
@@ -122,7 +125,7 @@ class TestRefusals:
         integration = _integration(db)
         svc = IntegrationKeyService(db)
         key = svc.issue_key(integration)
-        svc.revoke_key(db.query(IntegrationApiKey).one())
+        svc.revoke_key(_key_row(db, integration))
 
         with pytest.raises(HTTPException) as exc:
             resolve_integration_principal(db, key)
@@ -147,15 +150,22 @@ class TestRefusals:
             resolve_integration_principal(db, key)
         assert exc.value.status_code == 401
 
-    def test_missing_act_as_user_row_is_refused(self, db):
+    def test_the_principal_cannot_be_deleted_while_in_use(self, db):
+        # Replaces a sqlite test that deleted the act-as user and asserted the
+        # resolver refused the dangling reference. On Postgres that state is
+        # unreachable: act_as_user_id is ON DELETE RESTRICT, so the delete
+        # itself fails. The sqlite fixture never enabled foreign-key
+        # enforcement, so it was rehearsing a scenario the database prevents.
+        #
+        # The guarantee worth pinning is the stronger one: an integration's
+        # principal cannot be removed out from under it. The resolver keeps its
+        # defensive branch for a dangling id, but nothing can now produce one.
         integration = _integration(db)
-        key = IntegrationKeyService(db).issue_key(integration)
-        db.query(User).filter(User.id == integration.act_as_user_id).delete()
-        db.flush()
+        IntegrationKeyService(db).issue_key(integration)
 
-        with pytest.raises(HTTPException) as exc:
-            resolve_integration_principal(db, key)
-        assert exc.value.status_code == 401
+        with pytest.raises(Exception):
+            db.query(User).filter(User.id == integration.act_as_user_id).delete()
+            db.flush()
 
     def test_trashed_act_as_user_is_refused(self, db):
         # Deactivating the principal must actually stop the integration, or

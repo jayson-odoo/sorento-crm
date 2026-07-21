@@ -434,3 +434,38 @@ and see it in the UI; approve a document and observe `PENDING → SYNCED`; attem
 AutoCount-owned field and be blocked.
 
 A test report keyed to AC ids (PASS / FAIL / DEFERRED) is required before merge.
+
+### 15.1 Postgres, not sqlite
+
+Every test in this feature runs against Postgres. The helpers live in `tests/_pg_fixture.py`:
+
+- `pg_session()` — the live database inside a transaction that is rolled back. Use for anything
+  reading or writing real tables. **Scope assertions to test-created rows** (`unique_code()` yields
+  a `ZZT-` prefixed value); those tables hold production data, so a bare `count()` or `.one()` is
+  answering a different question than the one asked.
+- `pg_empty_schema(tables)` — the same model DDL emitted into a throwaway Postgres schema via
+  `schema_translate_map`. Use where a blank slate is the point (seeding, fixed-name fixtures). FK
+  dependencies and the tables the global flush listeners query are pulled in automatically.
+
+**Why this is not a style preference.** Converting these nine files surfaced three defects the
+sqlite versions could not have caught, because sqlite was not merely a different database but a
+substantially weaker one:
+
+| What sqlite did | What it hid |
+|---|---|
+| Every id is VARCHAR | `integration_references.integration_id` is `uuid` with an FK to `integrations`. A test passed the string `"int-9"` and was green. |
+| Foreign keys unenforced (no `PRAGMA foreign_keys`) | `act_as_user_id` is `ON DELETE RESTRICT`. A test deleted an in-use principal and asserted the resolver coped — rehearsing a state the database forbids, while the real guarantee went untested. |
+| A fresh empty engine per test | `integrations.name` and `users.email` are unique against rows migration 297 already created. Uniqueness held trivially against an empty table. |
+| No SAVEPOINT semantics | Per-record ingest isolation — what stops one bad row costing a 10,000-row batch — was unprovable, and broke outright once `app.main` registered its global flush listeners. |
+
+### 15.2 Converting the rest of the suite (separate work)
+
+123 of ~130 backend test files build their own `create_engine("sqlite://")`. Any of them asserting
+transactional behaviour, FK enforcement, uniqueness against seeded data, JSONB, or the `scm.*`
+schema models is proving less than it appears to. The two helpers above are the migration path and
+cover every case met so far.
+
+Mostly mechanical — swap the fixture, scope the assertions — but each file's assertions have to be
+re-read against a non-empty database, and some will surface real defects as these nine did. That is
+the point, and also why it cannot be a blind sweep. Best done incrementally, converting a file when
+it is touched for other reasons, rather than as one large PR.

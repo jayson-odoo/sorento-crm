@@ -264,3 +264,151 @@ class TestBatchSummary:
         result = svc.ingest("warehouses", [])
         assert result.created == 0
         assert result.records == []
+
+
+class TestCategoriesAndUnitsOfMeasure:
+    """Both exist so products can be ingested at all.
+
+    ``products.category_id`` and ``products.base_uom_id`` are NOT NULL, so
+    without these two entity types every product in a first sync reports
+    retryable forever -- there is no path by which the parent could arrive.
+    """
+
+    def test_a_category_is_created(self, db, svc):
+        result = svc.ingest(
+            "product_categories",
+            [{"source_ref": "DK-C1", "code": "ZZT-CAT-1", "name": "Fasteners"}],
+        )
+        assert result.created == 1
+        assert (
+            db.execute(
+                text("SELECT category_name FROM product_categories WHERE category_code = 'ZZT-CAT-1'")
+            ).scalar()
+            == "Fasteners"
+        )
+
+    def test_a_unit_of_measure_is_created(self, db, svc):
+        result = svc.ingest(
+            "units_of_measure", [{"source_ref": "DK-U1", "code": "ZZT-UOM-1", "name": "Each"}]
+        )
+        assert result.created == 1
+        assert (
+            db.execute(
+                text("SELECT uom_name FROM units_of_measure WHERE uom_code = 'ZZT-UOM-1'")
+            ).scalar()
+            == "Each"
+        )
+
+    def test_both_are_idempotent_on_the_source_reference(self, db, svc):
+        svc.ingest(
+            "product_categories",
+            [{"source_ref": "DK-C1", "code": "ZZT-CAT-1", "name": "Fasteners"}],
+        )
+        result = svc.ingest(
+            "product_categories",
+            [{"source_ref": "DK-C1", "code": "ZZT-CAT-1", "name": "Renamed"}],
+        )
+        assert result.updated == 1
+        assert (
+            db.execute(
+                text("SELECT count(*) FROM product_categories WHERE category_code LIKE 'ZZT-%'")
+            ).scalar()
+            == 1
+        )
+
+    def test_a_product_is_retryable_until_its_category_exists(self, db, svc):
+        # AC-AC-16, and the reason these two entities were added: the ESB
+        # re-drains rather than reporting bad data.
+        svc.ingest("units_of_measure", [{"source_ref": "DK-U1", "code": "ZZT-UOM-1", "name": "Each"}])
+        result = svc.ingest(
+            "products",
+            [
+                {
+                    "source_ref": "DK-P1",
+                    "code": "ZZT-PRD-1",
+                    "name": "Bolt",
+                    "category_code": "ZZT-CAT-MISSING",
+                    "uom_code": "ZZT-UOM-1",
+                }
+            ],
+        )
+        assert result.retryable == 1
+        assert result.failed == 0
+
+    def test_a_product_is_retryable_until_its_uom_exists(self, db, svc):
+        svc.ingest(
+            "product_categories",
+            [{"source_ref": "DK-C1", "code": "ZZT-CAT-1", "name": "Fasteners"}],
+        )
+        result = svc.ingest(
+            "products",
+            [
+                {
+                    "source_ref": "DK-P1",
+                    "code": "ZZT-PRD-1",
+                    "name": "Bolt",
+                    "category_code": "ZZT-CAT-1",
+                    "uom_code": "ZZT-UOM-MISSING",
+                }
+            ],
+        )
+        assert result.retryable == 1
+        assert result.failed == 0
+
+    def test_the_product_lands_once_both_parents_have_synced(self, db, svc):
+        # The sequencing end to end: category, then UoM, then the product that
+        # could not previously be created.
+        svc.ingest(
+            "product_categories",
+            [{"source_ref": "DK-C1", "code": "ZZT-CAT-1", "name": "Fasteners"}],
+        )
+        svc.ingest("units_of_measure", [{"source_ref": "DK-U1", "code": "ZZT-UOM-1", "name": "Each"}])
+        result = svc.ingest(
+            "products",
+            [
+                {
+                    "source_ref": "DK-P1",
+                    "code": "ZZT-PRD-1",
+                    "name": "Bolt",
+                    "category_code": "ZZT-CAT-1",
+                    "uom_code": "ZZT-UOM-1",
+                    "list_price": "12.50",
+                }
+            ],
+        )
+
+        assert result.created == 1
+        row = db.execute(
+            text(
+                "SELECT p.product_name, c.category_code, u.uom_code "
+                "FROM products p "
+                "JOIN product_categories c ON c.id = p.category_id "
+                "JOIN units_of_measure u ON u.id = p.base_uom_id "
+                "WHERE p.product_code = 'ZZT-PRD-1'"
+            )
+        ).first()
+        # Resolved to the ids of the records just synced, not to some other
+        # category that happened to share a name.
+        assert row == ("Bolt", "ZZT-CAT-1", "ZZT-UOM-1")
+
+    def test_the_category_is_matched_by_code_not_by_name(self, db, svc):
+        # The bug this pins: the lookup keyed on category_name, so a payload
+        # whose code and name differ resolved to the wrong category or to none.
+        svc.ingest(
+            "product_categories",
+            [{"source_ref": "DK-C1", "code": "ZZT-CAT-1", "name": "Totally Different Name"}],
+        )
+        svc.ingest("units_of_measure", [{"source_ref": "DK-U1", "code": "ZZT-UOM-1", "name": "Each"}])
+        result = svc.ingest(
+            "products",
+            [
+                {
+                    "source_ref": "DK-P1",
+                    "code": "ZZT-PRD-1",
+                    "name": "Bolt",
+                    "category_code": "ZZT-CAT-1",
+                    "uom_code": "ZZT-UOM-1",
+                }
+            ],
+        )
+        assert result.created == 1

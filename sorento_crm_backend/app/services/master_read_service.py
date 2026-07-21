@@ -28,6 +28,18 @@ logger = logging.getLogger(__name__)
 # Canonical field -> source column, per entity. The inverse of the ingest
 # mapping, so what the ESB reads back is shaped like what it sent.
 _READ_COLUMNS: dict[str, dict[str, str]] = {
+    "product_categories": {
+        "code": "category_code",
+        "name": "category_name",
+        "description": "description",
+        "is_active": "is_active",
+    },
+    "units_of_measure": {
+        "code": "uom_code",
+        "name": "uom_name",
+        "description": "description",
+        "is_active": "is_active",
+    },
     "warehouses": {
         "code": "warehouse_code",
         "name": "warehouse_name",

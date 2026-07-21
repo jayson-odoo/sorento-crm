@@ -33,6 +33,26 @@ class _Canonical(BaseModel):
     source_doc_no: Optional[str] = Field(None, max_length=100)
 
 
+class CanonicalProductCategory(_Canonical):
+    """Products cannot be created without a category (products.category_id is
+    NOT NULL), so this must sync before products or every product reports
+    retryable."""
+
+    code: str = Field(..., min_length=1, max_length=100)
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class CanonicalUnitOfMeasure(_Canonical):
+    """Likewise for products.base_uom_id."""
+
+    code: str = Field(..., min_length=1, max_length=100)
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    is_active: bool = True
+
+
 class CanonicalWarehouse(_Canonical):
     code: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)

@@ -8,49 +8,48 @@ Pins the shape the rest of the group depends on:
   AC-AC-05a an integration acts as a real users row, never the string "system"
   AC-AC-05b integration users carry is_integration, distinct from is_protected
   AC-AC-06  rotation links new key to old via rotated_from_id
+
+Runs against Postgres. These tables are seeded (n8n, sorento-mcp, foundryx-esb
+in migration 297), so every query is scoped to the records the test created --
+a bare `.one()` would pick up production rows and pass or fail for reasons
+having nothing to do with the assertion.
 """
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine, inspect
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import inspect
 
-from app.database import Base
 from app.models.integration import Integration, IntegrationApiKey
 from app.models.user import User
 from app.services.integration_key_crypto import generate_api_key, hash_api_key, key_prefix
-from tests._sqlite_compat import create_all_sqlite_safe
+from tests._pg_fixture import pg_session, unique_code
 
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite://")
-    # Only the tables under test. A whole-metadata create_all cannot work on
-    # sqlite here: the SCM models declare schema="scm", which sqlite has no
-    # concept of. create_all_sqlite_safe additionally strips the Postgres-cast
-    # server defaults ('{}'::jsonb) that sqlite's DDL compiler rejects.
-    create_all_sqlite_safe(
-        Base.metadata,
-        engine,
-        tables=[User.__table__, Integration.__table__, IntegrationApiKey.__table__],
+    with pg_session() as session:
+        yield session
+
+
+def _user(db, name=None):
+    name = name or unique_code("USR")
+    row = User(
+        email=f"{name}@integrations.local".lower(),
+        name=name,
+        status="ACTIVE",
+        is_integration=True,
     )
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
-
-
-def _user(db, email="esb@integrations.local", name="FoundryX ESB"):
-    row = User(email=email, name=name, status="ACTIVE", is_integration=True)
     db.add(row)
     db.flush()
     return row
 
 
-def _integration(db, name="foundryx-esb", **kw):
+def _integration(db, name=None, **kw):
+    name = name or unique_code("INT")
     row = Integration(
         name=name,
         type=kw.pop("type", "autocount_esb"),
-        act_as_user_id=kw.pop("act_as_user_id", None) or _user(db, f"{name}@integrations.local").id,
+        act_as_user_id=kw.pop("act_as_user_id", None) or _user(db, name).id,
         **kw,
     )
     db.add(row)
@@ -58,11 +57,16 @@ def _integration(db, name="foundryx-esb", **kw):
     return row
 
 
+def _keys(db, integration):
+    """Keys belonging to one integration, so seeded rows stay out of the way."""
+    return db.query(IntegrationApiKey).filter_by(integration_id=integration.id)
+
+
 class TestIntegrationRecord:
     def test_persists_with_the_documented_columns(self, db):
-        row = _integration(db)
+        row = _integration(db, name="ZZT-esb")
         assert row.id
-        assert row.name == "foundryx-esb"
+        assert row.name == "ZZT-esb"
         assert row.type == "autocount_esb"
         assert row.act_as_user_id
         assert row.created_at is not None
@@ -71,6 +75,7 @@ class TestIntegrationRecord:
         # A brand-new integration has not proven it can talk to anything yet.
         # Claiming ACTIVE before a successful call would misreport health.
         row = _integration(db)
+        db.refresh(row)
         assert row.status == "UNVERIFIED"
         assert row.is_active is True
 
@@ -90,19 +95,41 @@ class TestIntegrationRecord:
         assert row.credentials_json == "gAAAAAB-ciphertext"
 
     def test_name_is_unique(self, db):
-        _integration(db, name="n8n")
-        db.commit()
+        name = unique_code("DUP")
+        _integration(db, name=name)
+        with pytest.raises(Exception):
+            _integration(db, name=name)
+            db.flush()
+
+    def test_collides_with_the_seeded_integrations_too(self, db):
+        # Worth stating on Postgres: the uniqueness that matters in practice is
+        # against the rows migration 297 already created, not against a name the
+        # test invented. On sqlite the table was empty and this was unprovable.
         with pytest.raises(Exception):
             _integration(db, name="n8n")
-            db.commit()
+            db.flush()
 
     def test_act_as_user_id_is_a_real_user_fk(self, db):
         # AC-AC-05a: the fake {"id": "system"} principal is what this replaces.
-        cols = {c["name"]: c for c in inspect(db.get_bind()).get_columns("integrations")}
+        inspector = inspect(db.get_bind())
+        cols = {c["name"] for c in inspector.get_columns("integrations")}
         assert "act_as_user_id" in cols
-        fks = inspect(db.get_bind()).get_foreign_keys("integrations")
+        fks = inspector.get_foreign_keys("integrations")
         target = [fk for fk in fks if fk["referred_table"] == "users"]
         assert target, "act_as_user_id must be a FK to users"
+
+    def test_the_user_fk_is_enforced_not_merely_declared(self, db):
+        # sqlite does not enforce foreign keys unless PRAGMA foreign_keys is on,
+        # which the old fixture never set -- so the declaration above was the
+        # only thing under test. Postgres enforces it.
+        row = Integration(
+            name=unique_code("ORPHAN"),
+            type="autocount_esb",
+            act_as_user_id="not-a-real-user-id",
+        )
+        db.add(row)
+        with pytest.raises(Exception):
+            db.flush()
 
 
 class TestIntegrationApiKey:
@@ -125,18 +152,28 @@ class TestIntegrationApiKey:
     def test_key_hash_is_unique_across_integrations(self, db):
         # Verification is an indexed lookup on key_hash, so a collision would
         # make the caller's identity ambiguous.
-        a, b = _integration(db, name="n8n"), _integration(db, name="mcp")
+        a, b = _integration(db), _integration(db)
         plaintext = generate_api_key()
-        db.add(IntegrationApiKey(integration_id=a.id, key_hash=hash_api_key(plaintext), key_prefix="sk_x"))
-        db.commit()
-        db.add(IntegrationApiKey(integration_id=b.id, key_hash=hash_api_key(plaintext), key_prefix="sk_x"))
+        db.add(
+            IntegrationApiKey(
+                integration_id=a.id, key_hash=hash_api_key(plaintext), key_prefix="sk_x"
+            )
+        )
+        db.flush()
+        db.add(
+            IntegrationApiKey(
+                integration_id=b.id, key_hash=hash_api_key(plaintext), key_prefix="sk_x"
+            )
+        )
         with pytest.raises(Exception):
-            db.commit()
+            db.flush()
 
     def test_new_key_has_no_expiry_and_no_revocation(self, db):
         integration = _integration(db)
         key = IntegrationApiKey(
-            integration_id=integration.id, key_hash=hash_api_key(generate_api_key()), key_prefix="sk_abc"
+            integration_id=integration.id,
+            key_hash=hash_api_key(generate_api_key()),
+            key_prefix="sk_abc",
         )
         db.add(key)
         db.flush()
@@ -149,7 +186,9 @@ class TestIntegrationApiKey:
     def test_rotation_links_new_key_to_the_one_it_replaced(self, db):
         integration = _integration(db)
         old = IntegrationApiKey(
-            integration_id=integration.id, key_hash=hash_api_key(generate_api_key()), key_prefix="sk_old"
+            integration_id=integration.id,
+            key_hash=hash_api_key(generate_api_key()),
+            key_prefix="sk_old",
         )
         db.add(old)
         db.flush()
@@ -169,7 +208,7 @@ class TestIntegrationApiKey:
 
     def test_two_integrations_hold_independent_keys(self, db):
         # AC-AC-02: revoking one must not affect the other.
-        n8n, esb = _integration(db, name="n8n"), _integration(db, name="esb")
+        n8n, esb = _integration(db), _integration(db)
         k1 = IntegrationApiKey(
             integration_id=n8n.id, key_hash=hash_api_key(generate_api_key()), key_prefix="sk_1"
         )
@@ -182,15 +221,16 @@ class TestIntegrationApiKey:
         k1.revoked_at = datetime.utcnow()
         db.flush()
 
-        assert k1.revoked_at is not None
-        assert k2.revoked_at is None
+        assert _keys(db, n8n).one().revoked_at is not None
+        assert _keys(db, esb).one().revoked_at is None
 
 
 class TestUserIsIntegrationFlag:
     def test_users_carry_is_integration_defaulting_false(self, db):
-        human = User(email="human@example.com", name="Human", status="ACTIVE")
+        human = User(email=f"{unique_code('HUM')}@example.com".lower(), name="Human", status="ACTIVE")
         db.add(human)
         db.flush()
+        db.refresh(human)
         assert human.is_integration is False
 
     def test_is_integration_is_distinct_from_is_protected(self, db):
@@ -198,5 +238,6 @@ class TestUserIsIntegrationFlag:
         # automation_service.py:34. An integration user marked is_protected
         # would silently start receiving automation email.
         row = _user(db)
+        db.refresh(row)
         assert row.is_integration is True
         assert row.is_protected is False

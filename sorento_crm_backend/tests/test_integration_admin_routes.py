@@ -10,28 +10,28 @@ careless response field would publish credentials to every client that can read
 the list.
 """
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 import app.main  # noqa: F401  isort:skip
 
-from app.database import Base
 from app.models.integration import Integration, IntegrationApiKey
 from app.models.user import User
 from app.services.integration_admin_service import IntegrationAdminService
 from app.services.integration_key_service import IntegrationKeyService
-from tests._sqlite_compat import create_all_sqlite_safe
+from tests._pg_fixture import pg_empty_schema
 
 _TABLES = [User.__table__, Integration.__table__, IntegrationApiKey.__table__]
 
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite://")
-    create_all_sqlite_safe(Base.metadata, engine, tables=_TABLES)
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    """An empty Postgres schema.
+
+    Empty because these tests create integrations under fixed names ("n8n",
+    "esb") that the live table already holds under a unique constraint, and
+    several assert on ``.one()`` over the whole table.
+    """
+    with pg_empty_schema(_TABLES) as session:
+        yield session
 
 
 @pytest.fixture()

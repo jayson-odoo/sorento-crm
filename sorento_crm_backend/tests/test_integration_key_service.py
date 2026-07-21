@@ -14,10 +14,7 @@ never migrated" from "this key was never valid".
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.database import Base
 from app.models.integration import Integration, IntegrationApiKey
 from app.models.user import User
 from app.services.integration_key_service import (
@@ -25,20 +22,13 @@ from app.services.integration_key_service import (
     AuthFailure,
     IntegrationKeyService,
 )
-from tests._sqlite_compat import create_all_sqlite_safe
+from tests._pg_fixture import pg_session, unique_code
 
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite://")
-    create_all_sqlite_safe(
-        Base.metadata,
-        engine,
-        tables=[User.__table__, Integration.__table__, IntegrationApiKey.__table__],
-    )
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    with pg_session() as session:
+        yield session
 
 
 @pytest.fixture()
@@ -46,8 +36,20 @@ def svc(db):
     return IntegrationKeyService(db)
 
 
-def _integration(db, name="foundryx-esb", is_active=True):
-    user = User(email=f"{name}@integrations.local", name=name, status="ACTIVE", is_integration=True)
+def _integration(db, name=None, is_active=True):
+    """A throwaway integration.
+
+    Named uniquely because `integrations` is seeded (n8n, sorento-mcp,
+    foundryx-esb) and `name` is unique -- the old sqlite fixture started from an
+    empty table and could reuse fixed names freely.
+    """
+    name = name or unique_code("INT")
+    user = User(
+        email=f"{name}@integrations.local".lower(),
+        name=name,
+        status="ACTIVE",
+        is_integration=True,
+    )
     db.add(user)
     db.flush()
     row = Integration(name=name, type="autocount_esb", act_as_user_id=user.id, is_active=is_active)
@@ -56,13 +58,24 @@ def _integration(db, name="foundryx-esb", is_active=True):
     return row
 
 
+def _keys(db, integration):
+    """Keys of one integration. The table holds real rows, so an unscoped
+    `.one()` would be asserting against production data."""
+    return db.query(IntegrationApiKey).filter_by(integration_id=integration.id)
+
+
+def _superseded(db, integration):
+    """The pre-rotation key: the one nothing was rotated from."""
+    return _keys(db, integration).filter_by(rotated_from_id=None).one()
+
+
 class TestIssue:
     def test_returns_plaintext_once_and_persists_only_a_hash(self, db, svc):
         integration = _integration(db)
         plaintext = svc.issue_key(integration)
 
         assert plaintext.startswith("sk_")
-        stored = db.query(IntegrationApiKey).one()
+        stored = _keys(db, integration).one()
         assert stored.key_hash != plaintext
         assert stored.key_prefix == plaintext[: len(stored.key_prefix)]
 
@@ -78,7 +91,7 @@ class TestIssue:
         # integrations nobody touched.
         integration = _integration(db)
         svc.issue_key(integration)
-        assert db.query(IntegrationApiKey).one().expires_at is None
+        assert _keys(db, integration).one().expires_at is None
 
 
 class TestResolveFailures:
@@ -101,7 +114,7 @@ class TestResolveFailures:
     def test_revoked_key_reports_revoked(self, db, svc):
         integration = _integration(db)
         plaintext = svc.issue_key(integration)
-        svc.revoke_key(db.query(IntegrationApiKey).one())
+        svc.revoke_key(_keys(db, integration).one())
 
         resolved, failure = svc.resolve(plaintext)
         assert resolved is None
@@ -112,7 +125,7 @@ class TestResolveFailures:
         # like "this key never existed".
         integration = _integration(db)
         plaintext = svc.issue_key(integration)
-        key = db.query(IntegrationApiKey).one()
+        key = _keys(db, integration).one()
         key.expires_at = datetime.utcnow() - timedelta(seconds=1)
         db.flush()
 
@@ -142,7 +155,7 @@ class TestRotation:
         svc.issue_key(integration)
         svc.rotate_key(integration)
 
-        old = db.query(IntegrationApiKey).filter_by(rotated_from_id=None).one()
+        old = _superseded(db, integration)
         assert old.expires_at is not None
         remaining = old.expires_at - datetime.utcnow()
         assert timedelta(days=DEFAULT_GRACE_DAYS) - remaining < timedelta(minutes=1)
@@ -153,7 +166,7 @@ class TestRotation:
         svc.issue_key(integration)
         svc.rotate_key(integration, grace_days=1)
 
-        old = db.query(IntegrationApiKey).filter_by(rotated_from_id=None).one()
+        old = _superseded(db, integration)
         assert old.expires_at - datetime.utcnow() < timedelta(days=1, minutes=1)
 
     def test_new_key_links_back_to_the_one_it_replaced(self, db, svc):
@@ -161,8 +174,8 @@ class TestRotation:
         svc.issue_key(integration)
         svc.rotate_key(integration)
 
-        old = db.query(IntegrationApiKey).filter_by(rotated_from_id=None).one()
-        new = db.query(IntegrationApiKey).filter(IntegrationApiKey.rotated_from_id.isnot(None)).one()
+        old = _superseded(db, integration)
+        new = _keys(db, integration).filter(IntegrationApiKey.rotated_from_id.isnot(None)).one()
         assert new.rotated_from_id == old.id
 
     def test_old_key_stops_working_once_the_window_lapses(self, db, svc):
@@ -170,7 +183,7 @@ class TestRotation:
         old = svc.issue_key(integration)
         new = svc.rotate_key(integration)
 
-        stale = db.query(IntegrationApiKey).filter_by(rotated_from_id=None).one()
+        stale = _superseded(db, integration)
         stale.expires_at = datetime.utcnow() - timedelta(seconds=1)
         db.flush()
 
@@ -185,7 +198,7 @@ class TestRotation:
         old = svc.issue_key(integration)
         svc.rotate_key(integration)
 
-        stale = db.query(IntegrationApiKey).filter_by(rotated_from_id=None).one()
+        stale = _superseded(db, integration)
         stale.expires_at = datetime.utcnow() - timedelta(seconds=1)
         db.flush()
 
@@ -199,7 +212,7 @@ class TestRotation:
         old = svc.issue_key(integration)
         svc.rotate_key(integration)
 
-        stale = db.query(IntegrationApiKey).filter_by(rotated_from_id=None).one()
+        stale = _superseded(db, integration)
         svc.revoke_key(stale)
 
         assert svc.resolve(old)[1] is AuthFailure.KEY_REVOKED
@@ -208,16 +221,16 @@ class TestRotation:
 class TestIsolationBetweenIntegrations:
     def test_revoking_one_integrations_key_leaves_the_other_working(self, db, svc):
         # AC-AC-02 -- the defect the single shared EXTERNAL_API_KEY has today.
-        n8n, esb = _integration(db, name="n8n"), _integration(db, name="esb")
+        n8n, esb = _integration(db), _integration(db)
         n8n_key, esb_key = svc.issue_key(n8n), svc.issue_key(esb)
 
-        svc.revoke_key(db.query(IntegrationApiKey).filter_by(integration_id=n8n.id).one())
+        svc.revoke_key(_keys(db, n8n).one())
 
         assert svc.resolve(n8n_key)[1] is AuthFailure.KEY_REVOKED
         assert svc.resolve(esb_key)[0].id == esb.id
 
     def test_each_key_resolves_to_its_own_integration(self, db, svc):
-        n8n, esb = _integration(db, name="n8n"), _integration(db, name="esb")
+        n8n, esb = _integration(db), _integration(db)
         assert svc.resolve(svc.issue_key(n8n))[0].id == n8n.id
         assert svc.resolve(svc.issue_key(esb))[0].id == esb.id
 
@@ -228,7 +241,7 @@ class TestUsageTracking:
         plaintext = svc.issue_key(integration)
         svc.resolve(plaintext)
 
-        assert db.query(IntegrationApiKey).one().last_used_at is not None
+        assert _keys(db, integration).one().last_used_at is not None
         assert integration.last_used_at is not None
 
     def test_old_key_usage_is_visible_before_expiry(self, db, svc):
@@ -239,7 +252,7 @@ class TestUsageTracking:
         svc.rotate_key(integration)
         svc.resolve(old)
 
-        stale = db.query(IntegrationApiKey).filter_by(rotated_from_id=None).one()
+        stale = _superseded(db, integration)
         assert stale.last_used_at is not None
 
     def test_failed_resolve_does_not_stamp_last_used(self, db, svc):
@@ -247,5 +260,5 @@ class TestUsageTracking:
         svc.issue_key(integration)
         svc.resolve("sk_wrong")
 
-        assert db.query(IntegrationApiKey).one().last_used_at is None
+        assert _keys(db, integration).one().last_used_at is None
         assert integration.last_used_at is None

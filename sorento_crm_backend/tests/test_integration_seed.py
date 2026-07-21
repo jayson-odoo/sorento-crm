@@ -12,10 +12,7 @@ migration that half-applied then re-ran must not produce duplicate principals
 or a second legacy key.
 """
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.database import Base
 from app.models.integration import Integration, IntegrationApiKey
 from app.models.user import (
     User,
@@ -30,7 +27,7 @@ from app.services.integration_seed import (
     SEEDED_INTEGRATIONS,
     seed_integrations,
 )
-from tests._sqlite_compat import create_all_sqlite_safe
+from tests._pg_fixture import pg_empty_schema
 
 _TABLES = [
     User.__table__,
@@ -45,12 +42,16 @@ _TABLES = [
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite://")
-    create_all_sqlite_safe(Base.metadata, engine, tables=_TABLES)
-    session = sessionmaker(bind=engine)()
-    _seed_admin_role(session)
-    yield session
-    session.close()
+    """An empty Postgres schema, not the live one.
+
+    Seeding is the one thing here that genuinely needs a blank slate: migration
+    297 has already run against the real database, so "creates one integration
+    per entry" would be asserting against rows this test did not create. The
+    tables are still emitted from the real model DDL -- only the data is empty.
+    """
+    with pg_empty_schema(_TABLES) as session:
+        _seed_admin_role(session)
+        yield session
 
 
 def _seed_admin_role(db):

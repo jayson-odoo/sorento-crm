@@ -38,6 +38,8 @@ from sqlalchemy.orm import Session
 
 from app.schemas.canonical_masters import (
     CanonicalCustomer,
+    CanonicalProductCategory,
+    CanonicalUnitOfMeasure,
     CanonicalProduct,
     CanonicalSupplier,
     CanonicalWarehouse,
@@ -132,6 +134,24 @@ class EntitySpec:
     to_columns: Callable[[BaseModel, Session], dict[str, Any]]
 
 
+def _category_columns(payload: Any, db: Session) -> dict[str, Any]:
+    return {
+        "category_code": payload.code,
+        "category_name": payload.name,
+        "description": payload.description,
+        "is_active": payload.is_active,
+    }
+
+
+def _uom_columns(payload: Any, db: Session) -> dict[str, Any]:
+    return {
+        "uom_code": payload.code,
+        "uom_name": payload.name,
+        "description": payload.description,
+        "is_active": payload.is_active,
+    }
+
+
 def _warehouse_columns(payload: Any, db: Session) -> dict[str, Any]:
     return {
         "warehouse_code": payload.code,
@@ -188,7 +208,7 @@ def _product_columns(payload: Any, db: Session) -> dict[str, Any]:
     # makes the row uncreatable. That is a sequencing problem, not bad data.
     if not payload.category_code:
         raise MissingReference("category_code", "")
-    category_id = _lookup_id(db, "product_categories", "category_name", payload.category_code)
+    category_id = _lookup_id(db, "product_categories", "category_code", payload.category_code)
     if category_id is None:
         raise MissingReference("category_code", payload.category_code)
 
@@ -211,6 +231,15 @@ def _product_columns(payload: Any, db: Session) -> dict[str, Any]:
 
 
 ENTITY_SPECS: dict[str, EntitySpec] = {
+    # Categories and UoMs first: products.category_id and base_uom_id are
+    # NOT NULL, so a product whose category has not synced yet is retryable
+    # and stays that way until these land.
+    "product_categories": EntitySpec(
+        "product_categories", CanonicalProductCategory, "category_code", _category_columns
+    ),
+    "units_of_measure": EntitySpec(
+        "units_of_measure", CanonicalUnitOfMeasure, "uom_code", _uom_columns
+    ),
     "warehouses": EntitySpec("warehouses", CanonicalWarehouse, "warehouse_code", _warehouse_columns),
     "suppliers": EntitySpec("suppliers", CanonicalSupplier, "supplier_code", _supplier_columns),
     "customers": EntitySpec("customers", CanonicalCustomer, "customer_code", _customer_columns),

@@ -41,10 +41,12 @@ class ReferenceConflict(ValueError):
     """
 
 
-# The nine tables the ESB writes. Values are real table names and are only ever
+# The tables the ESB writes. Values are real table names and are only ever
 # used after membership in this set has been confirmed.
 SUPPORTED_ENTITY_TYPES = {
     "products",
+    "product_categories",
+    "units_of_measure",
     "stock",
     "warehouses",
     "suppliers",
