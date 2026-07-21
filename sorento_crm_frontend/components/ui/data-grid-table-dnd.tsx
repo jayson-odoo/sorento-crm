@@ -148,8 +148,26 @@ function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: Dra
               ))
             ) : table.getRowModel().rows.length ? (
               table.getRowModel().rows.map((row: Row<TData>, index) => {
+                // Same optional grouping as the non-draggable DataGridTable.
+                // Both branches need it: columnsDraggable defaults to TRUE, so
+                // this component — not the other one — is what most listings
+                // actually render through.
+                const groupHeader = props.renderGroupHeader?.(
+                  row.original as TData,
+                  index === 0 ? null : (table.getRowModel().rows[index - 1].original as TData),
+                );
                 return (
                   <Fragment key={row.id}>
+                    {groupHeader != null && (
+                      <tr className="bg-muted/50" data-testid="data-grid-group-header">
+                        <td
+                          colSpan={row.getVisibleCells().length}
+                          className="px-4 py-2 text-xs font-medium text-muted-foreground"
+                        >
+                          {groupHeader}
+                        </td>
+                      </tr>
+                    )}
                     <DataGridTableBodyRow row={row} key={index}>
                       {row.getVisibleCells().map((cell: Cell<TData, unknown>) => {
                         return (
