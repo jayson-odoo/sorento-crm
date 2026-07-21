@@ -16,29 +16,15 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 from sqlalchemy import BigInteger, Integer
 from sqlalchemy.types import JSON
 
 from app.database import Base
 from app.models.chat_history import ChatHistory
 from app.services import chat_latency_service as svc
+from tests._pg_fixture import blank_session
 
-
-def _prep(*models):
-    for model in models:
-        for col in model.__table__.columns:
-            if isinstance(col.type, (JSONB, ARRAY)):
-                col.type = JSON()
-                col.server_default = None
-            # sqlite only autoincrements INTEGER PRIMARY KEY, not BIGINT, so the
-            # BigInteger surrogate key would insert NULL. Postgres uses a sequence
-            # and is unaffected. Same DDL-only shim style as tests/conftest.py.
-            if col.primary_key and isinstance(col.type, BigInteger):
-                col.type = Integer()
 
 
 _MODELS = [ChatHistory]
@@ -46,16 +32,8 @@ _MODELS = [ChatHistory]
 
 @pytest.fixture
 def db():
-    _prep(*_MODELS)
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=[m.__table__ for m in _MODELS])
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    with blank_session() as session:
+        yield session
 
 
 NOW = datetime(2026, 7, 20, 12, 0, 0)
@@ -306,29 +284,15 @@ def test_webhook_lag_null_when_ingest_at_missing(db):
 # that did not exist: the recovery branch would have raised NameError in        #
 # production, and no test touched it.                                          #
 # --------------------------------------------------------------------------- #
-def _watchdog_db():
-    """Watchdog needs the alert-state + settings + user tables too."""
-    from app.models.health_alert_state import HealthAlertState
-    from app.models.lookup import LookupBinding
-    from app.models.user import SystemSetting, User, UserRole, UserRoleAssignment
-
-    models = [ChatHistory, HealthAlertState, SystemSetting, User, UserRole,
-              UserRoleAssignment, LookupBinding]
-    _prep(*models)
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=[m.__table__ for m in models])
-    return sessionmaker(bind=engine)()
-
-
 @pytest.fixture
 def wdb():
-    session = _watchdog_db()
-    yield session
-    session.close()
+    """The watchdog also reads alert-state, settings and user tables.
+
+    Those were listed explicitly so a sqlite engine could create just them; the
+    blank schema carries every table, so the list is no longer needed.
+    """
+    with blank_session() as session:
+        yield session
 
 
 def test_watchdog_fires_then_recovers(wdb, monkeypatch):

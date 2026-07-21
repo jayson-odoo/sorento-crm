@@ -1,22 +1,23 @@
-"""Shared sqlite harness for the form-void test suite (not collected by pytest).
+"""Shared harness for the form-void test suite (not collected by pytest).
 
-Builds an in-memory sqlite session with just the tables the void flow touches,
-a TestClient wired to a dynamic actor, and grant-based permission stubbing.
-Mirrors the pattern in tests/test_form_handling_lock_routes.py (CLAUDE.md
-"sqlite pytest fixtures" gotcha: JSONB->JSON, drop pg-only partial indexes).
+Yields a blank Postgres session over the real schema, a TestClient wired to a
+dynamic actor, and grant-based permission stubbing.
+
+This used to build an in-memory sqlite session, which required rewriting
+JSONB/ARRAY columns to generic JSON and discarding Postgres-only partial
+indexes. Those rewrites mutated the shared model metadata **permanently and
+process-wide**: once any void test ran, every later test in the same pytest
+process bound JSON into columns Postgres types as ``varchar[]``, failing with
+"column is of type character varying[] but expression is of type json". The
+symptom appeared in unrelated files (SLA takeover, prompt registry) and only
+in full-suite runs, never in isolation. Nothing to shim now -- the real schema
+has the real types.
 """
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY, JSONB
-from sqlalchemy.types import JSON as GenericJSON
-
-from app.database import Base
 from app.models.user import User
 from app.models.procurement import (
     PurchaseRequestHeader,
@@ -32,6 +33,9 @@ from app.models.sla import (
     ConversationSLAEventLog,
 )
 from app.models.access import RespondContact, AccessAgent
+from sqlalchemy.orm import Session
+
+from tests._pg_fixture import blank_schema_engine
 
 
 _MODELS = [
@@ -54,28 +58,19 @@ _MODELS = [
 ACTOR_GRANTS: dict[str, set[str]] = {}
 
 
-def _sqlite_safe(model) -> None:
-    for col in list(model.__table__.columns):
-        if isinstance(col.type, (JSONB, PG_ARRAY)):
-            col.type = GenericJSON()
-            col.server_default = None
-    # Drop Postgres-only partial/expression indexes that sqlite can't compile.
-    for idx in list(model.__table__.indexes):
-        if idx.dialect_options.get("postgresql", {}).get("where") is not None:
-            model.__table__.indexes.discard(idx)
-
-
 def make_session():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    for m in _MODELS:
-        _sqlite_safe(m)
-    Base.metadata.create_all(engine, tables=[m.__table__ for m in _MODELS])
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    return SessionLocal()
+    """A session over the blank schema, with this harness's tables emptied.
+
+    Bound to the engine rather than to a held-open connection: these tests
+    commit, and pinning one connection per session exhausted the pool and hung
+    the run. Isolation instead comes from clearing the tables the void flow
+    touches, in reverse dependency order so foreign keys stay satisfied.
+    """
+    session = Session(bind=blank_schema_engine(), autoflush=False)
+    for model in reversed(_MODELS):
+        session.query(model).delete(synchronize_session=False)
+    session.commit()
+    return session
 
 
 def new_user(db, *, name="Actor", email=None) -> str:
