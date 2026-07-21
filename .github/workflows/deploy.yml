@@ -89,6 +89,29 @@ jobs:
             sorento-backend:ci \
             -m pytest --collect-only -q
 
+      # Executing gate (collect-only above never runs an assertion).
+      #
+      # Deliberately a NAMED SUBSET, not the whole suite. The full backend suite
+      # is not gateable yet: it has ~104 pre-existing failures and a family of
+      # order-dependent tests whose results change with execution order, so
+      # gating on it would block deploys at random. Widen this list as suites are
+      # made green + deterministic; do NOT swap it for a bare `pytest`.
+      #
+      # Everything listed here must run WITHOUT Postgres/Redis (pure functions or
+      # SQL-compilation assertions) so this job needs no service containers and
+      # stays a few seconds.
+      - name: Pytest regression guards (executing gate)
+        run: |
+          docker run --rm --entrypoint python \
+            -e DATABASE_URL=postgresql://x:x@localhost/x \
+            -e DIRECT_URL=postgresql://x:x@localhost/x \
+            -e JWT_SECRET=ci-dummy-secret \
+            -e JWT_ALGORITHM=HS256 \
+            -e REDIS_URL=redis://localhost:6379/0 \
+            sorento-backend:ci \
+            -m pytest -q -p no:cacheprovider \
+              tests/test_lessons_learnt_regressions.py
+
   validate-mcp:
     name: Validate MCP imports
     runs-on: ubuntu-latest
@@ -125,6 +148,21 @@ jobs:
             -e EXTERNAL_API_KEY=ci-dummy \
             sorento-mcp:ci \
             python -c "import sorento_crm_mcp; print('import ok')"
+
+      # Full MCP suite as an executing gate. Unlike the backend and frontend
+      # suites this one is green (131 passed) and deterministic, so gating on all
+      # of it is safe. Tests are mounted because the runtime image ships only the
+      # package; pytest is installed at run time from the `dev` extra (a few
+      # seconds — cheaper than a second image build).
+      - name: Run MCP test suite (executing gate)
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}/sorento_crm_mcp/tests:/app/tests:ro \
+            -e CRM_BASE_URL=http://localhost:8000 \
+            -e EXTERNAL_API_KEY=ci-dummy \
+            sorento-mcp:ci \
+            sh -c "pip install --no-cache-dir -q 'pytest>=8.0' 'pytest-asyncio>=0.24' && \
+                   python -m pytest /app/tests -q -p no:cacheprovider"
 
   build-and-deploy:
     needs: [validate-backend, validate-mcp]
