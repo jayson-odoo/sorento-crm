@@ -26,7 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useGRNs } from '../hooks/useGRN';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import type { GRN } from '../types/grn.types';
@@ -223,17 +223,18 @@ export default function GRNList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Status</Label>
-                    <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value)}>
-                      <SelectTrigger className="mt-1 w-full">
-                        <SelectValue placeholder="Status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All statuses</SelectItem>
-                        <SelectItem value="draft">Draft</SelectItem>
-                        <SelectItem value="approved">Approved</SelectItem>
-                        <SelectItem value="rejected">Rejected</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={statusFilter}
+                      onChange={(value) => setStatusFilter(value)}
+                      placeholder="Status"
+                      triggerClassName="mt-1 w-full"
+                      options={[
+                        { value: 'all', label: 'All statuses' },
+                        { value: 'draft', label: 'Draft' },
+                        { value: 'approved', label: 'Approved' },
+                        { value: 'rejected', label: 'Rejected' },
+                      ]}
+                    />
                   </div>
                   {statusFilter !== 'all' && (
                     <div className="flex justify-end">

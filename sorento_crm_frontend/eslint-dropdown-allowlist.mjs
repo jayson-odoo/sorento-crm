@@ -48,18 +48,14 @@ export const dropdownMigrationAllowlist = [
   'app/(protected)/order-management/order-statuses/components/OrderStatusesList.tsx',
   'app/(protected)/order-management/orders/components/OrderForm.tsx',
   'app/(protected)/order-management/orders/components/OrdersList.tsx',
-  'app/(protected)/procurement-management/grn/components/GRNForm.tsx',
-  'app/(protected)/procurement-management/grn/components/GRNList.tsx',
+  // DEFERRED (standard component lacks the capability, not a styling issue):
+  // both ProductCombobox files drive a parent-side server refetch via onSearch, which the
+  // standard's static mode never exposes; ProductComboboxSearchable is paginated
+  // (pageIndex/hasMore/load-more) and the standard's async mode fetches one page only.
+  // Migrating either as-is would silently drop catalog reach on a large product list.
   'app/(protected)/procurement-management/packing-lists/components/ProductCombobox.tsx',
   'app/(protected)/procurement-management/packing-lists/components/ProductComboboxSearchable.tsx',
-  'app/(protected)/procurement-management/packing-lists/components/SupplierCombobox.tsx',
-  'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDetail.tsx',
-  'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDocumentEditCard.tsx',
-  'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestForm.tsx',
-  'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestsList.tsx',
-  'app/(protected)/procurement-management/spo-allocations/components/PackingListCombobox.tsx',
   'app/(protected)/procurement-management/spo-allocations/components/ProductCombobox.tsx',
-  'app/(protected)/procurement-management/spo-allocations/components/WarehouseCombobox.tsx',
   'app/(protected)/resource-management/attachment-directories/components/AttachmentsInFolderPanel.tsx',
   'app/(protected)/resource-management/attachments/components/AttachmentBrowser.tsx',
   'app/(protected)/resource-management/attachments/components/AttachmentBulkImportDialog.tsx',
