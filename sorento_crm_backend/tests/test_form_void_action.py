@@ -177,10 +177,32 @@ def test_stock_inquiry_void_terminal_409(db, status):
 # =========================================================================== #
 # ACT-5 — irreversible: no un-void / reopen route for a voided form
 # =========================================================================== #
+def _all_paths(routes, prefix: str = "") -> set[str]:
+    """Every route path, descending into sub-applications.
+
+    Walking `app.routes` one level deep assumed the void routers are always
+    flattened onto the top-level app. That held locally but produced an empty
+    set in CI, where the same routes are demonstrably live (every other test in
+    this file exercises them successfully). Recursing makes the check
+    independent of how the routers happen to be mounted — and it also means a
+    stray un-void route hiding inside a Mount can no longer slip past.
+    """
+    found: set[str] = set()
+    for r in routes:
+        path = prefix + str(getattr(r, "path", "") or "")
+        if path:
+            found.add(path)
+        sub = getattr(getattr(r, "app", None), "routes", None)
+        if sub:
+            found |= _all_paths(sub, path)
+    return found
+
+
 def test_no_unvoid_route():
     from app.main import app
-    void_paths = {r.path for r in app.routes if getattr(r, "path", "").endswith("/void")}
-    assert void_paths, "void routes should exist"
-    bad = {r.path for r in app.routes if "unvoid" in getattr(r, "path", "").lower()
-           or "un-void" in getattr(r, "path", "").lower()}
+
+    paths = _all_paths(app.routes)
+    void_paths = {p for p in paths if p.endswith("/void")}
+    assert void_paths, f"void routes should exist; saw {len(paths)} route(s)"
+    bad = {p for p in paths if "unvoid" in p.lower() or "un-void" in p.lower()}
     assert not bad, f"unexpected un-void route(s): {bad}"
