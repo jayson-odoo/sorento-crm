@@ -333,7 +333,11 @@ class TestGroupByOrdering:
     def _seed(self, db):
         # Two contacts interleaved in time, so ordering by time and ordering by
         # contact produce visibly different sequences.
-        base = datetime(2026, 7, 20, 10, 0, 0)
+        # Anchored to NOW, not an independent literal: list_messages_page
+        # applies a 24-hour default window, so rows pinned to a fixed date
+        # silently fall outside it once real time moves past them and every
+        # assertion here starts returning an empty page.
+        base = NOW - timedelta(hours=1)
         rows = [
             ("+60111", "Ann", base + timedelta(minutes=0)),
             ("+60222", "Bob", base + timedelta(minutes=1)),
@@ -356,12 +360,12 @@ class TestGroupByOrdering:
 
     def test_default_is_time_ordered_and_interleaved(self, db):
         self._seed(db)
-        rows, _ = svc.list_messages_page(db, limit=10)
+        rows, _ = svc.list_messages_page(db, now=NOW, limit=10)
         assert [r.phone_number for r in rows] == ["+60222", "+60111", "+60222", "+60111"]
 
     def test_group_by_contact_makes_each_contact_contiguous(self, db):
         self._seed(db)
-        rows, _ = svc.list_messages_page(db, limit=10, group_by="contact")
+        rows, _ = svc.list_messages_page(db, now=NOW, limit=10, group_by="contact")
         phones = [r.phone_number for r in rows]
         # Every contact appears as one unbroken run — the property the frontend
         # relies on to draw a header once per group.
@@ -370,7 +374,7 @@ class TestGroupByOrdering:
 
     def test_group_by_contact_keeps_messages_newest_first_within_a_contact(self, db):
         self._seed(db)
-        rows, _ = svc.list_messages_page(db, limit=10, group_by="contact")
+        rows, _ = svc.list_messages_page(db, now=NOW, limit=10, group_by="contact")
         ann = [r for r in rows if r.phone_number == "+60111"]
         assert [r.sent_at for r in ann] == sorted([r.sent_at for r in ann], reverse=True)
 
@@ -378,28 +382,28 @@ class TestGroupByOrdering:
         """Dates are already contiguous under sent_at desc; re-ordering would
         only risk changing behaviour for no gain."""
         self._seed(db)
-        default, _ = svc.list_messages_page(db, limit=10)
-        by_date, _ = svc.list_messages_page(db, limit=10, group_by="date")
+        default, _ = svc.list_messages_page(db, now=NOW, limit=10)
+        by_date, _ = svc.list_messages_page(db, now=NOW, limit=10, group_by="date")
         assert [r.id for r in by_date] == [r.id for r in default]
 
     def test_contiguity_survives_pagination(self, db):
         """The real reason this is server-side: a group must not fragment across
         a page boundary."""
         self._seed(db)
-        page1, total = svc.list_messages_page(db, page=1, limit=2, group_by="contact")
-        page2, _ = svc.list_messages_page(db, page=2, limit=2, group_by="contact")
+        page1, total = svc.list_messages_page(db, now=NOW, page=1, limit=2, group_by="contact")
+        page2, _ = svc.list_messages_page(db, now=NOW, page=2, limit=2, group_by="contact")
         assert total == 4
         assert {r.phone_number for r in page1} == {"+60111"}
         assert {r.phone_number for r in page2} == {"+60222"}
 
     def test_unknown_group_by_falls_back_to_default(self, db):
         self._seed(db)
-        rows, _ = svc.list_messages_page(db, limit=10, group_by="nonsense")
+        rows, _ = svc.list_messages_page(db, now=NOW, limit=10, group_by="nonsense")
         assert [r.phone_number for r in rows] == ["+60222", "+60111", "+60222", "+60111"]
 
     def test_grouping_composes_with_filters(self, db):
         self._seed(db)
-        rows, total = svc.list_messages_page(db, limit=10, group_by="contact", search="Ann")
+        rows, total = svc.list_messages_page(db, now=NOW, limit=10, group_by="contact", search="Ann")
         assert total == 2
         assert {r.phone_number for r in rows} == {"+60111"}
 
@@ -408,6 +412,6 @@ class TestGroupByOrdering:
         contiguity as plain contact grouping — the date split is drawn inside
         each contact run by the frontend."""
         self._seed(db)
-        by_contact, _ = svc.list_messages_page(db, limit=10, group_by="contact")
-        by_both, _ = svc.list_messages_page(db, limit=10, group_by="contact_date")
+        by_contact, _ = svc.list_messages_page(db, now=NOW, limit=10, group_by="contact")
+        by_both, _ = svc.list_messages_page(db, now=NOW, limit=10, group_by="contact_date")
         assert [r.id for r in by_both] == [r.id for r in by_contact]
