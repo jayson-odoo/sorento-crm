@@ -14,8 +14,6 @@ from app.api.v1.system import (
     references,
     tool_capabilities,
     mcp_tools,
-    mcp_access,
-    mcp_routing,
     respond_workspaces,
     email_templates,
     automation,
@@ -41,8 +39,6 @@ router.include_router(ai_assistant.router, tags=["ai-assistant"])
 router.include_router(references.router, tags=["references"])
 router.include_router(tool_capabilities.router, tags=["tool-capabilities"])
 router.include_router(mcp_tools.router, tags=["mcp-tools"])
-router.include_router(mcp_access.router, tags=["mcp-access"])
-router.include_router(mcp_routing.router, tags=["mcp-routing"])
 router.include_router(respond_workspaces.router, tags=["respond-workspaces"])
 router.include_router(email_templates.router, tags=["email-templates"])
 router.include_router(automation.router, tags=["automation"])

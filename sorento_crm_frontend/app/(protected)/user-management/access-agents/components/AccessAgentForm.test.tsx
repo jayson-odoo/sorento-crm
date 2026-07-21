@@ -68,9 +68,6 @@ vi.mock('../hooks/useAccessAgents', () => ({
   useSetAgentMcpToolBindings: () => STABLE_SET_MCP,
 }));
 
-vi.mock('./McpToolBindingsEditor', () => ({
-  McpToolBindingsEditor: () => <div data-testid="mcp-editor" />,
-}));
 
 vi.mock('@/components/common/RecordNavigation', () => ({
   default: () => <div data-testid="record-nav" />,

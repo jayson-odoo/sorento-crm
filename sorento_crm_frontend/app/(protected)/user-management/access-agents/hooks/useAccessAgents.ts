@@ -6,7 +6,7 @@ import {
   type RecordNeighboursResult,
 } from '@/hooks/useRecordNeighbours';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
-import { ACCESS_AGENT_NEIGHBOURS_PATH, getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams, getAgentMcpTools, getMcpToolsForPicker, setAgentMcpTools, getAgentMcpToolBindings, setAgentMcpToolBindings, type McpToolBindingInput } from '../services/accessAgentService';
+import { ACCESS_AGENT_NEIGHBOURS_PATH, getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, deleteAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams } from '../services/accessAgentService';
 import type { AccessAgentFormData, ContactAgentAccessFormData } from '../types/accessAgent.types';
 
 /**
@@ -178,75 +178,3 @@ export function useTeams() {
   });
 }
 
-export function useAgentMcpTools(agentId: string | null) {
-  return useQuery({
-    queryKey: ['agent-mcp-tools', agentId],
-    queryFn: () => {
-      if (!agentId) throw new Error('Agent ID is required');
-      return getAgentMcpTools(agentId);
-    },
-    enabled: !!agentId,
-    retry: 1,
-  });
-}
-
-export function useMcpToolsForPicker() {
-  return useQuery({
-    queryKey: ['mcp-tools-picker'],
-    queryFn: () => getMcpToolsForPicker(),
-    staleTime: 1000 * 60 * 2,
-    retry: 1,
-  });
-}
-
-export function useSetAgentMcpTools() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ agentId, toolIds }: { agentId: string; toolIds: string[] }) =>
-      setAgentMcpTools(agentId, toolIds),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['agent-mcp-tools', variables.agentId] });
-      queryClient.invalidateQueries({ queryKey: ['mcp-tools-picker'] });
-      toast.success('MCP tools updated');
-    },
-    onError: (error: Error) =>
-      toast.error(error.message || 'Failed to set MCP tools'),
-  });
-}
-
-export function useAgentMcpToolBindings(agentId: string | null) {
-  return useQuery({
-    queryKey: ['agent-mcp-tool-bindings', agentId],
-    queryFn: () => {
-      if (!agentId) throw new Error('Agent ID is required');
-      return getAgentMcpToolBindings(agentId);
-    },
-    enabled: !!agentId,
-    retry: 1,
-  });
-}
-
-export function useSetAgentMcpToolBindings() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      agentId,
-      bindings,
-    }: {
-      agentId: string;
-      bindings: McpToolBindingInput[];
-    }) => setAgentMcpToolBindings(agentId, bindings),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({
-        queryKey: ['agent-mcp-tool-bindings', variables.agentId],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ['agent-mcp-tools', variables.agentId],
-      });
-      queryClient.invalidateQueries({ queryKey: ['mcp-tools-picker'] });
-      toast.success('MCP tool bindings updated');
-    },
-    onError: (error: Error) =>
-      toast.error(error.message || 'Failed to set MCP tool bindings'),
-  });
-}

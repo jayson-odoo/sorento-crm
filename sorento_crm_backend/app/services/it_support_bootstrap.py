@@ -3,13 +3,11 @@
 Runs after ``sync_catalog`` so the ``crm_it_support_ticket_create`` row exists
 in ``mcp_tools``. Idempotently:
 
-1. Links the new tool to the ``it_support`` AccessAgent via
-   ``agent_mcp_tools`` (so n8n agents tied to that agent can call it).
-2. Appends the tool name to ``AIAssistantConfig.enabled_tools`` so the
+1. Appends the tool name to ``AIAssistantConfig.enabled_tools`` so the
    in-app AI assistant RAG includes it in candidate selection. The in-app
    chat does not use AccessAgent ownership — see ``ai_assistant_service:
    _rag_select_tools``, which filters candidates by this list.
-3. Inserts a default ``form_sla_configs`` row for ``ticket`` /
+2. Inserts a default ``form_sla_configs`` row for ``ticket`` /
    ``it_support`` / ``it_admin`` using the first available SLA policy
    (preferring ``NORMAL`` by name) so the SLA timer starts the moment a
    ticket is created — no admin intervention required.
@@ -23,7 +21,7 @@ import logging
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.models.access import AccessAgent, McpTool, agent_mcp_tools
+from app.models.access import McpTool
 from app.models.ai_assistant import AIAssistantConfig
 from app.models.sla import FormSLAConfig, SLAPolicy
 
@@ -39,18 +37,9 @@ SOURCE_ENTITY_TYPE = "ticket"
 def run(db: Session) -> dict:
     """Execute all bootstrap steps. Returns a small summary dict for logging."""
     summary = {
-        "tool_linked_to_it_support_agent": False,
         "tool_added_to_ai_assistant_enabled_tools": False,
         "form_sla_config_seeded": False,
     }
-    try:
-        summary["tool_linked_to_it_support_agent"] = _link_tool_to_it_support_agent(db)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("IT support bootstrap: agent_mcp_tools link failed: %s", e)
-        try:
-            db.rollback()
-        except Exception:  # noqa: BLE001
-            pass
     try:
         summary["tool_added_to_ai_assistant_enabled_tools"] = _enable_tool_for_ai_assistant(db)
     except Exception as e:  # noqa: BLE001
@@ -69,37 +58,6 @@ def run(db: Session) -> dict:
             pass
     logger.info("IT support bootstrap finished: %s", summary)
     return summary
-
-
-def _link_tool_to_it_support_agent(db: Session) -> bool:
-    tool = db.query(McpTool).filter(McpTool.tool_name == TOOL_NAME).first()
-    if not tool:
-        logger.info(
-            "IT support bootstrap: %s not yet in mcp_tools; will retry next startup",
-            TOOL_NAME,
-        )
-        return False
-    agent = db.query(AccessAgent).filter(AccessAgent.code == AGENT_CODE).first()
-    if not agent:
-        logger.info(
-            "IT support bootstrap: AccessAgent %s missing; run migration 183",
-            AGENT_CODE,
-        )
-        return False
-    existing = db.execute(
-        text(
-            "SELECT 1 FROM agent_mcp_tools WHERE agent_id = :agent_id AND tool_id = :tool_id"
-        ),
-        {"agent_id": str(agent.id), "tool_id": str(tool.id)},
-    ).first()
-    if existing:
-        return False
-    db.execute(
-        agent_mcp_tools.insert().values(agent_id=str(agent.id), tool_id=str(tool.id))
-    )
-    db.commit()
-    logger.info("IT support bootstrap: linked %s to agent %s", TOOL_NAME, AGENT_CODE)
-    return True
 
 
 def _enable_tool_for_ai_assistant(db: Session) -> bool:

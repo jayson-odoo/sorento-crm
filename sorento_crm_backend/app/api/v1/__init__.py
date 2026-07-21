@@ -30,7 +30,6 @@ from app.api.v1 import (
 )
 from app.api.v1.system import modules_runtime
 from app.api.v1.assistant import record_context as assistant_record_context
-from app.api.v1.user_management.access_agent_mcp_tools import router as _agent_mcp_tools_router
 from app.modules.runtime.guards import require_module_enabled, require_module_enabled_with_api_key
 
 api_router = APIRouter()
@@ -120,14 +119,6 @@ api_router.include_router(
     prefix="/user-management",
     tags=["user-management"],
     dependencies=[Depends(require_module_enabled("base"))],
-)
-# Per-agent MCP tool ownership sub-routes — mounted separately with API-key guard
-# so automated callers (n8n, admin scripts) can use X-API-Key.
-api_router.include_router(
-    _agent_mcp_tools_router,
-    prefix="/user-management/access-agents",
-    tags=["access-agents"],
-    dependencies=[Depends(require_module_enabled_with_api_key("base"))],
 )
 api_router.include_router(
     integrations.logs.router,

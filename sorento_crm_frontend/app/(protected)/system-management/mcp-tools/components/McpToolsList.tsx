@@ -13,8 +13,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { StatusPill } from '@/components/common/StatusPill';
-import { RoutingPreviewCell } from './RoutingPreviewCell';
 
 export function McpToolsList() {
   const [includeInactive, setIncludeInactive] = React.useState(false);
@@ -25,8 +23,7 @@ export function McpToolsList() {
     const q = search.toLowerCase();
     return (
       r.tool_name.toLowerCase().includes(q) ||
-      r.module_key.toLowerCase().includes(q) ||
-      (r.current_agent_names ?? []).some((n) => n.toLowerCase().includes(q))
+      r.module_key.toLowerCase().includes(q)
     );
   });
 
@@ -54,22 +51,19 @@ export function McpToolsList() {
             <TableRow>
               <TableHead className="w-[280px]">Tool</TableHead>
               <TableHead className="w-[140px]">Module</TableHead>
-              <TableHead className="w-[260px]">Linked agents</TableHead>
-              <TableHead className="w-[160px]">Routing</TableHead>
-              <TableHead className="w-[100px]">Status</TableHead>
               <TableHead>Description</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={3} className="text-center text-muted-foreground">
                   Loading...
                 </TableCell>
               </TableRow>
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                <TableCell colSpan={3} className="text-center text-muted-foreground">
                   No tools match.
                 </TableCell>
               </TableRow>
@@ -78,22 +72,6 @@ export function McpToolsList() {
                 <TableRow key={r.id}>
                   <TableCell className="font-mono text-xs">{r.tool_name}</TableCell>
                   <TableCell>{r.module_key || '—'}</TableCell>
-                  <TableCell>
-                    {(r.current_agent_names ?? []).length > 0 ? (
-                      r.current_agent_names.join(', ')
-                    ) : (
-                      <span className="text-amber-700">Unassigned</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <RoutingPreviewCell toolName={r.tool_name} />
-                  </TableCell>
-                  <TableCell>
-                    <StatusPill
-                      label={(r.current_agent_ids ?? []).length > 0 ? 'Linked' : 'Orphan'}
-                      colorHex={(r.current_agent_ids ?? []).length > 0 ? '#16a34a' : '#d97706'}
-                    />
-                  </TableCell>
                   <TableCell className="truncate" title={r.description ?? ''}>
                     {r.description ?? '—'}
                   </TableCell>

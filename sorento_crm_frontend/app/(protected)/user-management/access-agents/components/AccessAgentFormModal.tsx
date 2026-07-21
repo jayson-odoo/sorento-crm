@@ -40,11 +40,8 @@ import {
   useAccessAgent,
   useAgentTeams,
   useTeams,
-  useAgentMcpToolBindings,
-  useSetAgentMcpToolBindings,
 } from '../hooks/useAccessAgents';
-import { setAgentTeams, type McpToolBindingInput } from '../services/accessAgentService';
-import { McpToolBindingsEditor } from './McpToolBindingsEditor';
+import { setAgentTeams } from '../services/accessAgentService';
 import { AccessAgentSchema, type AccessAgentSchemaType } from '../forms/access-agent-schema';
 import type { AccessAgentFormData } from '../types/accessAgent.types';
 
@@ -87,22 +84,7 @@ export default function AccessAgentFormModal({
   });
   const slaPolicies = slaPoliciesData?.data ?? [];
 
-  const { data: agentMcpBindingsData } = useAgentMcpToolBindings(isEditMode ? accessAgentId ?? null : null);
-  const setAgentMcpToolBindingsMutation = useSetAgentMcpToolBindings();
-  const [bindings, setBindings] = useState<McpToolBindingInput[]>([]);
-  const [initialBindings, setInitialBindings] = useState<McpToolBindingInput[]>([]);
 
-  useEffect(() => {
-    if (agentMcpBindingsData) {
-      const next: McpToolBindingInput[] = agentMcpBindingsData.map((b) => ({
-        tool_id: b.tool_id,
-        team_id: b.team_id,
-        tier: b.tier,
-      }));
-      setBindings(next);
-      setInitialBindings(next);
-    }
-  }, [agentMcpBindingsData]);
 
   const form = useForm<AccessAgentSchemaType>({
     resolver: zodResolver(AccessAgentSchema),
@@ -191,14 +173,6 @@ export default function AccessAgentFormModal({
           .filter((a) => a.code && a.team_id);
         await setAgentTeams(accessAgentId, validAssignments);
         queryClient.invalidateQueries({ queryKey: ['agent-teams', accessAgentId] });
-        const sanitized = bindings.filter((b) => b.tool_id);
-        if (JSON.stringify(sanitized) !== JSON.stringify(initialBindings)) {
-          await setAgentMcpToolBindingsMutation.mutateAsync({
-            agentId: accessAgentId,
-            bindings: sanitized,
-          });
-          setInitialBindings(sanitized);
-        }
         toast.success('Access agent updated successfully');
       } else {
         await createMutation.mutateAsync(formData);
@@ -215,8 +189,7 @@ export default function AccessAgentFormModal({
 
   const isLoading =
     createMutation.isPending ||
-    updateMutation.isPending ||
-    setAgentMcpToolBindingsMutation.isPending;
+    updateMutation.isPending;
   if (isEditMode && open && isLoadingAccessAgent) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -524,21 +497,6 @@ export default function AccessAgentFormModal({
                 </div>
               )}
 
-              {isEditMode && accessAgentId && (
-                <div className="space-y-3">
-                  <h4 className="font-medium">MCP Tool Bindings</h4>
-                  <p className="text-xs text-muted-foreground">
-                    Bind a tool to a specific team to route escalation for that tool only
-                    to that team. Leave team empty to fan out via this agent&apos;s team
-                    set above.
-                  </p>
-                  <McpToolBindingsEditor
-                    value={bindings}
-                    onChange={setBindings}
-                    disabled={isLoading}
-                  />
-                </div>
-              )}
             </form>
           </Form>
         </div>

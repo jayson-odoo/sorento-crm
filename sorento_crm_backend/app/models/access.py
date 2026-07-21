@@ -7,65 +7,6 @@ from app.database import Base
 import uuid
 
 
-# Join table — agent × tool × (optional team, tier). Surrogate `id` PK so the
-# same (agent, tool) can bind to multiple teams. `team_id` NULL = legacy
-# "agent owns tool, route via AgentTeam" semantics; team_id set = per-tool
-# routing wins (see app/services/mcp_routing_service.py).
-agent_mcp_tools = Table(
-    "agent_mcp_tools",
-    Base.metadata,
-    Column(
-        "id",
-        UUID(as_uuid=False),
-        primary_key=True,
-        default=lambda: str(uuid.uuid4()),
-    ),
-    Column(
-        "agent_id",
-        UUID(as_uuid=False),
-        ForeignKey("access_agents.id", ondelete="CASCADE"),
-        nullable=False,
-    ),
-    Column(
-        "tool_id",
-        UUID(as_uuid=False),
-        ForeignKey("mcp_tools.id", ondelete="CASCADE"),
-        nullable=False,
-    ),
-    Column(
-        "team_id",
-        UUID(as_uuid=False),
-        ForeignKey("teams.id", ondelete="CASCADE"),
-        nullable=True,
-    ),
-    Column("tier", Integer, nullable=True),
-    Column(
-        "created_at",
-        DateTime(timezone=False),
-        server_default=func.now(),
-        nullable=False,
-    ),
-    Index("ix_agent_mcp_tools_agent_id", "agent_id"),
-    Index("ix_agent_mcp_tools_tool_id", "tool_id"),
-    Index("ix_agent_mcp_tools_tool_team", "tool_id", "team_id"),
-    Index(
-        "uq_agent_mcp_tools_agent_tool_team_null",
-        "agent_id",
-        "tool_id",
-        unique=True,
-        postgresql_where=text("team_id IS NULL"),
-    ),
-    Index(
-        "uq_agent_mcp_tools_agent_tool_team_not_null",
-        "agent_id",
-        "tool_id",
-        "team_id",
-        unique=True,
-        postgresql_where=text("team_id IS NOT NULL"),
-    ),
-)
-
-
 class ContactAccessType(Base):
     """Configurable catalog for contact access types (e.g. end_user, dealer, sorento_dealer). Used for promotion/attachment visibility and contact classification."""
     __tablename__ = "contact_access_types"
@@ -308,11 +249,6 @@ class AccessAgent(Base):
 
     contact_accesses = relationship("ContactAgentAccess", back_populates="agent")
     agent_teams = relationship("AgentTeam", back_populates="agent", cascade="all, delete-orphan")
-    mcp_tools = relationship(
-        "McpTool",
-        secondary=agent_mcp_tools,
-        back_populates="agents",
-    )
 
     __table_args__ = (
         Index("ix_access_agents_is_active", "is_active"),
@@ -483,8 +419,9 @@ class McpTool(Base):
     """Persisted catalog row for one MCP tool. Synced from code catalog by
     `app.services.mcp_tool_registry_service.sync_catalog`.
 
-    Ownership is many-to-many via ``agent_mcp_tools``. Sync NEVER touches
-    ownership; only admins do.
+    Pure catalog: the tool→agent ownership model was removed once n8n took over
+    agent/team routing. Contact access is enforced per-agent only
+    (`contact_agent_access` + `mcp_access_service.evaluate_agent`).
     """
 
     __tablename__ = "mcp_tools"
@@ -501,35 +438,7 @@ class McpTool(Base):
         DateTime(timezone=False), server_default=func.now(), nullable=False
     )
 
-    agents = relationship(
-        "AccessAgent",
-        secondary=agent_mcp_tools,
-        back_populates="mcp_tools",
-    )
-
     __table_args__ = (
         Index("ix_mcp_tools_module_key", "module_key"),
         Index("ix_mcp_tools_is_active", "is_active"),
-    )
-
-
-class McpAccessLog(Base):
-    """One row per MCP access decision. Phase 1 defines the table; Phase 3's
-    access-check endpoint is the only writer.
-    """
-
-    __tablename__ = "mcp_access_log"
-
-    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    tool_name = Column(Text, nullable=False)
-    contact_external_id = Column(Text, nullable=True)
-    respond_contact_id = Column(Text, nullable=True)
-    respond_workspace_id = Column(UUID(as_uuid=False), nullable=True)
-    decision = Column(Text, nullable=False)
-    matched_agent_id = Column(UUID(as_uuid=False), nullable=True)
-    ts = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
-
-    __table_args__ = (
-        Index("ix_mcp_access_log_ts", "ts"),
-        Index("ix_mcp_access_log_tool_name", "tool_name"),
     )
