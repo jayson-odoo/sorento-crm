@@ -664,6 +664,8 @@ class StockInquiryResponse(StockInquiryBase):
     reopened_at: Optional[datetime] = None
     reopened_by: Optional[str] = None
     reopened_by_name: Optional[str] = None
+    assigned_to_id: Optional[str] = None  # latest unresolved form-SLA assignee (users.id)
+    assigned_to_name: Optional[str] = None  # resolved display name
     handled_by_name: Optional[str] = None  # form-handling-lock holder display name
     handled_by_wa_phone: Optional[str] = None  # holder's wa.me digits (banner link)
     # Void banner (BAN-1). voided_by is exposed as a resolved display name only (no UUID).

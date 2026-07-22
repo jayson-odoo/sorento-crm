@@ -205,6 +205,20 @@ export default function StockInquiriesList() {
         meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-16" /> },
       },
       {
+        accessorKey: 'assigned_to_name',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Assigned To" column={column} />
+        ),
+        size: 160,
+        enableSorting: false,
+        cell: ({ row }) => (
+          <span className="truncate" title={row.original.assigned_to_name ?? undefined}>
+            {row.original.assigned_to_name ?? '-'}
+          </span>
+        ),
+        meta: { headerTitle: 'Assigned To', skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
         accessorKey: 'handled_by_name',
         header: ({ column }) => (
           <DataGridColumnHeader title="Handled By" column={column} />
