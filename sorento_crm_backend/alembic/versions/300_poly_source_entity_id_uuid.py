@@ -14,13 +14,14 @@ raised `operator does not exist: character varying = uuid`. After this it is
 
 Every existing value was verified to be a valid uuid or NULL before the cast.
 
-Revision ID: 300_polymorphic_source_entity_id_uuid
-Revises: 299_notifications_dedup_key_split
+Revision ID: 300_poly_source_entity_id_uuid
+Revises: 299_notif_dedup_key_split
 """
 from alembic import op
 
-revision = "300_polymorphic_source_entity_id_uuid"
-down_revision = "299_notifications_dedup_key_split"
+# Kept <=32 chars: alembic_version.version_num is varchar(32).
+revision = "300_poly_source_entity_id_uuid"
+down_revision = "299_notif_dedup_key_split"
 branch_labels = None
 depends_on = None
 

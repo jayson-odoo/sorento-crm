@@ -14,12 +14,13 @@ and the app-level dedup lookup move from `source_entity_id` onto `dedup_key`,
 and `dedup_key` is backfilled from the old `source_entity_id` value — so every
 row keeps the exact key it de-duplicated on before.
 
-Revision ID: 299_notifications_dedup_key_split
+Revision ID: 299_notif_dedup_key_split
 Revises: 298_market_segments_uuid_id
 """
 from alembic import op
 
-revision = "299_notifications_dedup_key_split"
+# Kept <=32 chars: alembic_version.version_num is varchar(32).
+revision = "299_notif_dedup_key_split"
 down_revision = "298_market_segments_uuid_id"
 branch_labels = None
 depends_on = None
