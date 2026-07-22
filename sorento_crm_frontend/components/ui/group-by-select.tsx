@@ -1,12 +1,6 @@
 'use client';
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Layers } from 'lucide-react';
 
 export interface GroupByOption<T extends string = string> {
@@ -42,22 +36,22 @@ export function GroupBySelect<T extends string = string>({
   const normalizedValue = value === '' || value === 'none' ? '__none__' : value;
 
   return (
-    <Select
+    <SearchableSelect
       value={normalizedValue}
-      onValueChange={(v) => onValueChange((v === '__none__' ? 'none' : v) as T | 'none')}
-    >
-      <SelectTrigger size={size} className={className}>
-        <Layers className="size-3.5 text-muted-foreground me-1.5 shrink-0" />
-        <SelectValue placeholder={placeholder} />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="__none__">{allLabel}</SelectItem>
-        {options.map((opt) => (
-          <SelectItem key={opt.value} value={opt.value}>
-            {opt.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+      onChange={(v) => onValueChange((v === '__none__' ? 'none' : v) as T | 'none')}
+      options={[
+        { value: '__none__', label: allLabel },
+        ...options.map((opt) => ({ value: opt.value, label: opt.label })),
+      ]}
+      placeholder={placeholder}
+      size={size}
+      triggerClassName={className}
+      renderTriggerLabel={(opt) => (
+        <span className="flex items-center">
+          <Layers className="size-3.5 text-muted-foreground me-1.5 shrink-0" />
+          {opt.label}
+        </span>
+      )}
+    />
   );
 }

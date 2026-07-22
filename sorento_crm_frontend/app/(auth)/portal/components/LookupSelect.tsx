@@ -2,13 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { LookupSetOption, lookupSet } from '../lib/portal-client';
 
 export interface LookupSelectProps {
@@ -55,23 +49,16 @@ export function LookupSelect({
 
   return (
     <div className="relative">
-      <Select
+      <SearchableSelect
         key={value || 'empty'}
-        value={value || undefined}
-        onValueChange={(v) => onChange(v)}
+        id={id}
+        value={value || ''}
+        onChange={(v) => onChange(v)}
         disabled={disabled || loading}
-      >
-        <SelectTrigger id={id} className="w-full pr-12">
-          <SelectValue placeholder={placeholder ?? 'Select...'} />
-        </SelectTrigger>
-        <SelectContent>
-          {options.map((opt) => (
-            <SelectItem key={opt.value} value={opt.value}>
-              {opt.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+        options={options.map((opt) => ({ value: opt.value, label: opt.label }))}
+        placeholder={placeholder ?? 'Select...'}
+        triggerClassName="w-full pr-12"
+      />
       {value && !disabled && !loading && (
         <button
           type="button"

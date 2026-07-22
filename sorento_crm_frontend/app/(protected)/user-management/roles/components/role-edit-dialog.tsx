@@ -8,7 +8,6 @@ import { X } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
-import { cn } from '@/lib/utils';
 import {
   Alert,
   AlertDescription,
@@ -16,16 +15,7 @@ import {
   AlertTitle,
 } from '@/components/ui/alert';
 import { Badge, BadgeButton } from '@/components/ui/badge';
-import { Button, ButtonArrow } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -42,20 +32,10 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { LoaderCircleIcon } from 'lucide-react';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { Textarea } from '@/components/ui/textarea';
 import { UserPermission, UserRole, UserRolePermission } from '@/app/models/user';
 import { usePermissionSelectQuery } from '../../permissions/hooks/use-permission-select-query';
@@ -76,7 +56,6 @@ const RoleEditDialog = ({
   const [sourceRoleId, setSourceRoleId] = useState<string>('');
   const [isCopyingPermissions, setIsCopyingPermissions] = useState(false);
   const [selectedUserToAssign, setSelectedUserToAssign] = useState<string>('');
-  const [assignUserOpen, setAssignUserOpen] = useState(false);
   const [isAssigningUser, setIsAssigningUser] = useState(false);
   const [unassigningUserId, setUnassigningUserId] = useState<string | null>(null);
   const { data: permissionList } = usePermissionSelectQuery();
@@ -497,68 +476,22 @@ const RoleEditDialog = ({
                     </div>
                   </ScrollArea>
                   <div className="flex flex-wrap items-center gap-2 pt-1">
-                    <Popover open={assignUserOpen} onOpenChange={setAssignUserOpen}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          role="combobox"
-                          mode="input"
-                          aria-expanded={assignUserOpen}
-                          className="w-full sm:w-[22rem] justify-between"
-                          disabled={isAssigningUser}
-                        >
-                          <span
-                            className={cn(
-                              'truncate',
-                              !selectedUserToAssign && 'text-muted-foreground',
-                            )}
-                          >
-                            {selectedUserToAssign
-                              ? ((usersSelect ?? []).find(
-                                  (u: { id: string }) => u.id === selectedUserToAssign,
-                                ) as { name?: string | null; email?: string | null } | undefined)?.name ||
-                                ((usersSelect ?? []).find(
-                                  (u: { id: string }) => u.id === selectedUserToAssign,
-                                ) as { name?: string | null; email?: string | null } | undefined)?.email ||
-                                selectedUserToAssign
-                              : 'Select user to assign'}
-                          </span>
-                          <ButtonArrow />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent
-                        className="w-(--radix-popper-anchor-width) p-0"
-                        align="start"
-                      >
-                        <Command>
-                          <CommandInput placeholder="Search user by name or email..." />
-                          <CommandList>
-                            <CommandEmpty>No user found.</CommandEmpty>
-                            <CommandGroup>
-                              {(usersSelect ?? []).map(
-                                (user: {
-                                  id: string;
-                                  name?: string | null;
-                                  email?: string | null;
-                                }) => (
-                                  <CommandItem
-                                    key={user.id}
-                                    value={`${user.name ?? ''} ${user.email ?? ''}`.trim() || user.id}
-                                    onSelect={() => {
-                                      setSelectedUserToAssign(user.id);
-                                      setAssignUserOpen(false);
-                                    }}
-                                  >
-                                    {user.name || user.email || user.id}
-                                  </CommandItem>
-                                ),
-                              )}
-                            </CommandGroup>
-                          </CommandList>
-                        </Command>
-                      </PopoverContent>
-                    </Popover>
+                    <SearchableSelect
+                      value={selectedUserToAssign}
+                      onChange={setSelectedUserToAssign}
+                      disabled={isAssigningUser}
+                      placeholder="Select user to assign"
+                      emptyMessage="No user found."
+                      triggerClassName="w-full sm:w-[22rem]"
+                      options={(usersSelect ?? []).map(
+                        (user: { id: string; name?: string | null; email?: string | null }) => ({
+                          value: user.id,
+                          label: user.name || user.email || user.id,
+                          // Searchable by both, as the hand-rolled version was.
+                          searchText: `${user.name ?? ''} ${user.email ?? ''}`.trim() || user.id,
+                        }),
+                      )}
+                    />
                     <Button
                       type="button"
                       variant="outline"
@@ -573,22 +506,16 @@ const RoleEditDialog = ({
               )}
               <FormItem>
                 <FormLabel>Copy permissions from role</FormLabel>
-                <Select
+                <SearchableSelect
                   value={sourceRoleId}
-                  onValueChange={copyPermissionsFromRole}
+                  onChange={copyPermissionsFromRole}
                   disabled={isCopyingPermissions || !roleList?.length}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a role to copy from" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {roleList?.map((sourceRole: UserRole) => (
-                      <SelectItem key={sourceRole.id} value={sourceRole.id}>
-                        {sourceRole.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  placeholder="Select a role to copy from"
+                  options={(roleList ?? []).map((sourceRole: UserRole) => ({
+                    value: sourceRole.id,
+                    label: sourceRole.name,
+                  }))}
+                />
               </FormItem>
               <FormField
                 control={form.control}
@@ -625,71 +552,20 @@ const RoleEditDialog = ({
                     </ScrollArea>
                     <div className="flex flex-wrap items-center gap-2 pt-1">
                       <FormControl>
-                        <Popover>
-                          <PopoverTrigger asChild>
-                            <Button variant="outline" role="combobox">
-                              Add Permissions
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent
-                            className="w-full min-w-[20rem] max-w-[36rem] p-0 m-0"
-                            align="start"
-                            side="bottom"
-                          >
-                            <Command>
-                              <CommandInput placeholder="Search permissions..." />
-                              <CommandList>
-                                <CommandEmpty>No permissions found.</CommandEmpty>
-                                <CommandGroup>
-                                  <CommandItem
-                                    onSelect={selectAllPermissions}
-                                    className="font-medium"
-                                  >
-                                    Select all permissions
-                                  </CommandItem>
-                                  <div className="h-[200px] overflow-auto min-w-0">
-                                    <div className="min-w-max pr-2">
-                                      {permissionList?.map(
-                                        (permission: UserPermission) => (
-                                          <CommandItem
-                                            key={permission.id}
-                                            onSelect={() =>
-                                              togglePermissionSelection(
-                                                permission.id,
-                                              )
-                                            }
-                                            className="flex items-center gap-2 justify-start text-left px-2"
-                                          >
-                                            <div
-                                              className="shrink-0"
-                                              onClick={(e) => e.stopPropagation()}
-                                            >
-                                              <Checkbox
-                                                size="sm"
-                                                checked={selectedPermissions.includes(
-                                                  permission.id,
-                                                )}
-                                                onCheckedChange={() =>
-                                                  togglePermissionSelection(
-                                                    permission.id,
-                                                  )
-                                                }
-                                                aria-label={permission.slug}
-                                              />
-                                            </div>
-                                            <span className="truncate min-w-0 text-left">
-                                              {permission.slug}
-                                            </span>
-                                          </CommandItem>
-                                        ),
-                                      )}
-                                    </div>
-                                  </div>
-                                </CommandGroup>
-                              </CommandList>
-                            </Command>
-                          </PopoverContent>
-                        </Popover>
+                        <SearchableMultiSelect
+                          value={selectedPermissions}
+                          onChange={setSelectedPermissions}
+                          placeholder="Add Permissions"
+                          emptyMessage="No permissions found."
+                          className="min-w-[20rem] max-w-[36rem]"
+                          // The chips above are the real display of what's selected, so the
+                          // trigger stays a plain label instead of duplicating them.
+                          renderTriggerLabel={() => 'Add Permissions'}
+                          options={(permissionList ?? []).map((permission: UserPermission) => ({
+                            value: permission.id,
+                            label: permission.slug,
+                          }))}
+                        />
                       </FormControl>
                       <Button
                         type="button"

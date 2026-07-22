@@ -10,13 +10,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription, AlertIcon } from '@/components/ui/alert';
@@ -375,9 +369,10 @@ export default function AttachmentUploadDialog({
             <Label htmlFor="attachment-type">
               Attachment Type <span className="text-destructive">*</span>
             </Label>
-            <Select
+            <SearchableSelect
+              id="attachment-type"
               value={selectedTypeId}
-              onValueChange={(value) => {
+              onChange={(value) => {
                 setSelectedTypeId(value);
                 setSelectedFiles([]);
                 setValidationError('');
@@ -386,24 +381,14 @@ export default function AttachmentUploadDialog({
                 setTargetEntityType('');
                 setTargetFieldKeys([]);
               }}
+              options={attachmentTypes.map((type: AttachmentType) => ({
+                value: type.id,
+                label: type.type_name,
+                description: type.description || undefined,
+              }))}
+              placeholder="Select attachment type"
               disabled={isLoadingTypes}
-            >
-              <SelectTrigger id="attachment-type">
-                <SelectValue placeholder="Select attachment type" />
-              </SelectTrigger>
-              <SelectContent>
-                {attachmentTypes.map((type: AttachmentType) => (
-                  <SelectItem key={type.id} value={type.id}>
-                    <div className="flex flex-col">
-                      <span className="font-medium">{type.type_name}</span>
-                      {type.description && (
-                        <span className="text-xs text-muted-foreground">{type.description}</span>
-                      )}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            />
             {selectedType && (
               <p className="text-xs text-muted-foreground mt-1">
                 Allowed: {selectedType.allowed_extensions} • Max size: {selectedType.max_file_size_mb} MB
@@ -510,27 +495,25 @@ export default function AttachmentUploadDialog({
             <div className="space-y-3 rounded-md border bg-muted/30 p-3">
               <div className="space-y-2">
                 <Label htmlFor="link-to">Linked to</Label>
-                <Select
+                <SearchableSelect
+                  id="link-to"
                   value={targetEntityType || 'none'}
-                  onValueChange={(value) => {
+                  onChange={(value) => {
                     if (value === 'none') {
                       setTargetEntityType('');
                     } else {
                       setTargetEntityType(value as FieldLinkageEntityType);
                     }
                   }}
-                >
-                  <SelectTrigger id="link-to" data-testid="upload-link-to-trigger">
-                    <SelectValue placeholder="(Optional) pick the table this document describes" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Not linked</SelectItem>
-                    <SelectItem value="product">Product</SelectItem>
-                    <SelectItem value="promotion">Promotion</SelectItem>
-                    <SelectItem value="form">Form</SelectItem>
-                    <SelectItem value="packing_list">Packing List</SelectItem>
-                  </SelectContent>
-                </Select>
+                  options={[
+                    { value: 'none', label: 'Not linked' },
+                    { value: 'product', label: 'Product' },
+                    { value: 'promotion', label: 'Promotion' },
+                    { value: 'form', label: 'Form' },
+                    { value: 'packing_list', label: 'Packing List' },
+                  ]}
+                  placeholder="(Optional) pick the table this document describes"
+                />
                 <p className="text-xs text-muted-foreground">
                   Sets the table only. The actual row link is established later by n8n
                   (or manually from the attachment&apos;s Linkages tab).

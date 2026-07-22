@@ -25,13 +25,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useOrderStatuses } from '../hooks/useOrderStatuses';
 import type { OrderStatus } from '../types/orderStatus.types';
@@ -172,16 +166,17 @@ export default function OrderStatusesList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Final status</Label>
-                    <Select value={finalFilter} onValueChange={(v) => setFinalFilter(v as 'all' | 'yes' | 'no')}>
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="All" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All</SelectItem>
-                        <SelectItem value="yes">Final statuses</SelectItem>
-                        <SelectItem value="no">Non-final statuses</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={finalFilter}
+                      onChange={(v) => setFinalFilter(v as 'all' | 'yes' | 'no')}
+                      options={[
+                        { value: 'all', label: 'All' },
+                        { value: 'yes', label: 'Final statuses' },
+                        { value: 'no', label: 'Non-final statuses' },
+                      ]}
+                      placeholder="All"
+                      triggerClassName="mt-1"
+                    />
                   </div>
                   {finalFilter !== 'all' && (
                     <div className="flex justify-end">

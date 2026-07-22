@@ -8,13 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   Kanban,
   KanbanBoard,
@@ -124,9 +118,9 @@ function KanbanSectionsBody({
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs">Type</Label>
-                        <Select
+                        <SearchableSelect
                           value={f.type}
-                          onValueChange={(v) => {
+                          onChange={(v) => {
                             const t = v as WorkflowFieldType;
                             const patch: Partial<WorkflowHeaderField> = { type: t };
                             if (fieldUsesChoices(t)) {
@@ -138,18 +132,8 @@ function KanbanSectionsBody({
                             }
                             onPatchField(sectionId, f.id, patch);
                           }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {FIELD_TYPES.map((t) => (
-                              <SelectItem key={t} value={t}>
-                                {t}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          options={FIELD_TYPES.map((t) => ({ value: t, label: t }))}
+                        />
                       </div>
                       <div className="flex items-end gap-2 justify-between">
                         <div className="flex items-center gap-2">

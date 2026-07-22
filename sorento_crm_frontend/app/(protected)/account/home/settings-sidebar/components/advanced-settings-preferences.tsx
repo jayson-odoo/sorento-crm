@@ -1,19 +1,36 @@
 'use client';
 
-import { useId } from 'react';
+import { useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Switch } from '@/components/ui/switch';
+
+function DemoSelect({
+  defaultValue,
+  placeholder = 'Select',
+  options,
+  triggerClassName = 'w-full',
+}: {
+  defaultValue: string;
+  placeholder?: string;
+  options: { value: string; label: string }[];
+  triggerClassName?: string;
+}) {
+  const [value, setValue] = useState(defaultValue);
+  return (
+    <SearchableSelect
+      value={value}
+      onChange={setValue}
+      options={options}
+      placeholder={placeholder}
+      triggerClassName={triggerClassName}
+    />
+  );
+}
 
 const AdvancedSettingsPreferences = () => {
   const id1 = useId();
@@ -28,48 +45,46 @@ const AdvancedSettingsPreferences = () => {
         <div className="flex items-baseline flex-wrap lg:flex-nowrap gap-2.5">
           <Label className="flex w-full max-w-56">Language</Label>
           <div className="grow">
-            <Select defaultValue="1">
-              <SelectTrigger>
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1">American English</SelectItem>
-                <SelectItem value="2">Option 2</SelectItem>
-                <SelectItem value="3">Option 3</SelectItem>
-              </SelectContent>
-            </Select>
+            <DemoSelect
+              defaultValue="1"
+              placeholder="Select"
+              triggerClassName="w-full"
+              options={[
+                { value: '1', label: 'American English' },
+                { value: '2', label: 'Option 2' },
+                { value: '3', label: 'Option 3' },
+              ]}
+            />
           </div>
         </div>
         <div className="flex items-baseline flex-wrap lg:flex-nowrap gap-2.5">
           <Label className="flex w-full max-w-56">Time zone</Label>
           <div className="grow">
-            <Select defaultValue="4">
-              <SelectTrigger>
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="4">
-                  GMT -5:00 - Eastern Time(US & Canada)
-                </SelectItem>
-                <SelectItem value="5">Option 2</SelectItem>
-                <SelectItem value="6">Option 3</SelectItem>
-              </SelectContent>
-            </Select>
+            <DemoSelect
+              defaultValue="4"
+              placeholder="Select"
+              triggerClassName="w-full"
+              options={[
+                { value: '4', label: 'GMT -5:00 - Eastern Time(US & Canada)' },
+                { value: '5', label: 'Option 2' },
+                { value: '6', label: 'Option 3' },
+              ]}
+            />
           </div>
         </div>
         <div className="flex items-baseline flex-wrap lg:flex-nowrap gap-2.5 mb-2">
           <Label className="flex w-full max-w-56">Currency</Label>
           <div className="grow">
-            <Select defaultValue="7">
-              <SelectTrigger>
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="7">United States Dollar (USD)</SelectItem>
-                <SelectItem value="8">Option 2</SelectItem>
-                <SelectItem value="9">Option 3</SelectItem>
-              </SelectContent>
-            </Select>
+            <DemoSelect
+              defaultValue="7"
+              placeholder="Select"
+              triggerClassName="w-full"
+              options={[
+                { value: '7', label: 'United States Dollar (USD)' },
+                { value: '8', label: 'Option 2' },
+                { value: '9', label: 'Option 3' },
+              ]}
+            />
           </div>
         </div>
         <div className="flex items-center flex-wrap lg:flex-nowrap gap-2.5">

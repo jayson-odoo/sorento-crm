@@ -61,11 +61,11 @@ def ingest_chat_message(
         INSERT INTO chat_histories (
             channel, contact_id, phone_number, message, sent_at, first_name, last_name, type,
             message_id, result, reply_to_message_id, reply_to_message, turn_id, ingest_at,
-            respond_ts
+            respond_ts, state_trace
         ) VALUES (
             :channel, :contact_id, :phone_number, :message, :sent_at, :first_name, :last_name, :type,
             :message_id, :result, :reply_to_message_id, :reply_to_message, :turn_id, :ingest_at,
-            :respond_ts
+            :respond_ts, :state_trace
         )
         RETURNING id
         """
@@ -102,6 +102,12 @@ def ingest_chat_message(
                 "respond_ts": respond_ts_from_message_id(
                     payload.message_id, sent_at=sent_at
                 ),
+                # `is not None`, NOT truthiness: a `{}` trace (or `{"after": null}`)
+                # must round-trip, so the guard must not be what drops it. json.dumps
+                # of {"after": None} emits "after": null — the signal the view keys on.
+                "state_trace": json.dumps(payload.state_trace)
+                if payload.state_trace is not None
+                else None,
             },
         )
         message_id = result.scalar_one()
@@ -128,7 +134,10 @@ def ingest_chat_message(
                 endpoint=str(request.url.path),
                 http_method=request.method,
                 request_headers=json.dumps(request_headers),
-                request_payload=payload.model_dump_json(),
+                # Exclude state_trace: it is already persisted as jsonb on the row.
+                # integration_logs has no purge, so logging it here would store the
+                # whole trace a second time, as text, write-only, forever.
+                request_payload=payload.model_dump_json(exclude={"state_trace"}),
                 status_code=status_code,
                 status="success" if status_code < 400 else "failed",
                 error_message=error_message,

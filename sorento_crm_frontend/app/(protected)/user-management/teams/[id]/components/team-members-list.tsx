@@ -1,31 +1,18 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import { ChevronsUpDown, LoaderCircleIcon, Trash2, UserPlus, X } from 'lucide-react';
+import { LoaderCircleIcon, Trash2, UserPlus, X } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
@@ -61,7 +48,6 @@ export default function TeamMembersList({
 }) {
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
-  const [userSelectOpen, setUserSelectOpen] = useState(false);
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
   const [isAdding, setIsAdding] = useState(false);
 
@@ -103,7 +89,6 @@ export default function TeamMembersList({
         ids.length === 1 ? 'Member added' : `${ids.length} members added`,
       );
       setSelectedUserIds(new Set());
-      setUserSelectOpen(false);
       setAddOpen(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to add members');
@@ -206,49 +191,28 @@ export default function TeamMembersList({
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Popover open={userSelectOpen} onOpenChange={setUserSelectOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={userSelectOpen}
-                    className="w-full justify-between font-normal"
-                  >
-                    {selectedCount === 0
-                      ? 'Select users'
-                      : selectedCount === 1
-                        ? displayUser(
-                            users.find((u) => u.id === Array.from(selectedUserIds)[0]),
-                            Array.from(selectedUserIds)[0],
-                          )
-                        : `${selectedCount} users selected`}
-                    <ChevronsUpDown className="ms-2 size-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-              <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                <Command>
-                  <CommandInput placeholder="Search by name or email..." />
-                  <CommandList>
-                    <CommandEmpty>No user found.</CommandEmpty>
-                    <CommandGroup>
-                      {availableUsers.map((u) => (
-                        <CommandItem
-                          key={u.id}
-                          value={`${u.name ?? ''} ${u.email}`.trim()}
-                          onSelect={() => toggleUser(u.id)}
-                        >
-                          <Checkbox
-                            checked={selectedUserIds.has(u.id)}
-                            className="pointer-events-none me-2"
-                          />
-                          {displayUser(u, u.id)}
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+              <SearchableMultiSelect
+                value={Array.from(selectedUserIds)}
+                onChange={(next) => setSelectedUserIds(new Set(next))}
+                placeholder="Select users"
+                emptyMessage="No user found."
+                // Chips below already list the picks, so the trigger keeps its terse summary.
+                renderTriggerLabel={(sel) =>
+                  sel.length === 0
+                    ? 'Select users'
+                    : sel.length === 1
+                      ? displayUser(
+                          users.find((u) => u.id === sel[0].value),
+                          sel[0].value,
+                        )
+                      : `${sel.length} users selected`
+                }
+                options={availableUsers.map((u) => ({
+                  value: u.id,
+                  label: displayUser(u, u.id),
+                  searchText: `${u.name ?? ''} ${u.email}`.trim(),
+                }))}
+              />
             </div>
             {selectedCount > 0 && (
               <div className="flex flex-wrap gap-2 rounded-md border px-3 py-2">

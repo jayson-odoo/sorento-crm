@@ -4,13 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { extractApiError } from '@/lib/api-client';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 
 /**
@@ -134,25 +128,17 @@ export default function ContactCsRoutingTable({ contactId }: { contactId: string
               className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4"
             >
               <p className="text-sm font-medium w-full sm:w-48 shrink-0">{uc.label}</p>
-              <Select
+              <SearchableSelect
                 value={pinFor(uc.key)}
-                onValueChange={(userId) =>
-                  saveMutation.mutate({ useCase: uc.key, userId })
-                }
+                onChange={(userId) => saveMutation.mutate({ useCase: uc.key, userId })}
                 disabled={saveMutation.isPending}
-              >
-                <SelectTrigger className="w-full sm:max-w-sm">
-                  <SelectValue placeholder="Round-robin (default)" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={ROUND_ROBIN}>Round-robin (default)</SelectItem>
-                  {candidates.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                placeholder="Round-robin (default)"
+                triggerClassName="w-full sm:max-w-sm"
+                options={[
+                  { value: ROUND_ROBIN, label: 'Round-robin (default)' },
+                  ...candidates.map((c) => ({ value: c.id, label: c.name })),
+                ]}
+              />
             </div>
           ))}
         </div>

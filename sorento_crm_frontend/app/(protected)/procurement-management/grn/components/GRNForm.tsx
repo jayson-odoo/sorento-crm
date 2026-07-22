@@ -17,13 +17,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -347,27 +341,24 @@ export default function GRNForm({ grnId, onSuccess }: GRNFormProps) {
                     return (
                       <FormItem>
                         <FormLabel>Status</FormLabel>
-                        <Select
-                          value={resolvedStatus}
-                          onValueChange={(v) => {
-                            if (!VALID_PICKING_STATUSES.includes(v as PickingStatusForm)) {
-                              return;
-                            }
-                            field.onChange(v as PickingStatusForm);
-                          }}
-                          disabled={serverApproved}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Status" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="draft">Draft</SelectItem>
-                            <SelectItem value="approved">Approved</SelectItem>
-                            <SelectItem value="rejected">Rejected</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <FormControl>
+                          <SearchableSelect
+                            value={resolvedStatus}
+                            onChange={(v) => {
+                              if (!VALID_PICKING_STATUSES.includes(v as PickingStatusForm)) {
+                                return;
+                              }
+                              field.onChange(v as PickingStatusForm);
+                            }}
+                            disabled={serverApproved}
+                            placeholder="Status"
+                            options={[
+                              { value: 'draft', label: 'Draft' },
+                              { value: 'approved', label: 'Approved' },
+                              { value: 'rejected', label: 'Rejected' },
+                            ]}
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     );

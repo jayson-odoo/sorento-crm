@@ -42,13 +42,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { UserPermission, UserRole } from '@/app/models/user';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
@@ -365,23 +359,20 @@ const PermissionList = () => {
                 content: (
                   <div className="space-y-2">
                     <Label>Role</Label>
-                    <Select
+                    <SearchableSelect
                       disabled={isLoading}
-                      onValueChange={handleRoleSelection}
+                      onChange={handleRoleSelection}
                       value={selectedRole || 'all'}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Filter by role" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All roles</SelectItem>
-                        {roleList?.map((role: UserRole) => (
-                          <SelectItem key={role.id} value={role.id}>
-                            {role.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      placeholder="Filter by role"
+                      triggerClassName="w-full"
+                      options={[
+                        { value: 'all', label: 'All roles' },
+                        ...(roleList ?? []).map((role: UserRole) => ({
+                          value: role.id,
+                          label: role.name,
+                        })),
+                      ]}
+                    />
                     {selectedRole && selectedRole !== 'all' && (
                       <div className="flex justify-end">
                         <Button

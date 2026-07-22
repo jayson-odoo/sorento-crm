@@ -1,17 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Check, ChevronsUpDown, LoaderCircleIcon } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { LoaderCircleIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
 import {
   Dialog,
   DialogContent,
@@ -21,8 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { cn } from '@/lib/utils';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { getProductsForVariantSelect } from '../../services/productService';
 import type { ProductVariantRef } from '../../types/product.types';
 
@@ -58,29 +48,26 @@ export default function ProductVariantPickerDialog({
   submitting = false,
   onConfirm,
 }: ProductVariantPickerDialogProps) {
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<ProductVariantRef | null>(null);
 
   useEffect(() => {
-    if (!open) {
-      setSelected(null);
-      setSearch('');
-      setPickerOpen(false);
-    }
+    if (!open) setSelected(null);
   }, [open]);
 
-  const { data: products = [], isLoading } = useQuery({
-    queryKey: ['products-variant-select', search],
-    queryFn: () => getProductsForVariantSelect(search || undefined),
-    enabled: open,
-    staleTime: 1000 * 30,
-  });
-
   const excludeSet = useMemo(() => new Set(excludeIds), [excludeIds]);
-  const options = useMemo(
-    () => products.filter((p) => !excludeSet.has(p.id)),
-    [products, excludeSet],
+
+  // onChange hands back an id, but onConfirm needs the whole ref to render its label, so keep
+  // the last fetched page around to resolve it.
+  const lastFetchedRef = useRef<ProductVariantRef[]>([]);
+
+  const fetchOptions = useCallback(
+    async (query: string) => {
+      const products = await getProductsForVariantSelect(query || undefined);
+      const visible = products.filter((p) => !excludeSet.has(p.id));
+      lastFetchedRef.current = visible;
+      return visible.map((p) => ({ value: p.id, label: displayProduct(p) }));
+    },
+    [excludeSet],
   );
 
   return (
@@ -92,59 +79,20 @@ export default function ProductVariantPickerDialog({
         </DialogHeader>
         <div className="space-y-2 py-1">
           <Label>Product</Label>
-          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                variant="outline"
-                role="combobox"
-                aria-expanded={pickerOpen}
-                className="w-full justify-between font-normal"
-                disabled={submitting}
-              >
-                <span className="truncate">
-                  {selected ? displayProduct(selected) : 'Select a product'}
-                </span>
-                <ChevronsUpDown className="ms-2 size-4 shrink-0 opacity-50" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent
-              className="w-[--radix-popover-trigger-width] p-0"
-              align="start"
-            >
-              <Command shouldFilter={false}>
-                <CommandInput
-                  placeholder="Search by code or name..."
-                  value={search}
-                  onValueChange={setSearch}
-                />
-                <CommandList>
-                  <CommandEmpty>
-                    {isLoading ? 'Loading products…' : 'No products found.'}
-                  </CommandEmpty>
-                  <CommandGroup>
-                    {options.map((p) => (
-                      <CommandItem
-                        key={p.id}
-                        value={p.id}
-                        onSelect={() => {
-                          setSelected(p);
-                          setPickerOpen(false);
-                        }}
-                      >
-                        <Check
-                          className={cn(
-                            'me-2 size-4 shrink-0',
-                            selected?.id === p.id ? 'opacity-100' : 'opacity-0',
-                          )}
-                        />
-                        <span className="truncate">{displayProduct(p)}</span>
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                </CommandList>
-              </Command>
-            </PopoverContent>
-          </Popover>
+          <SearchableSelect
+            value={selected?.id ?? ''}
+            onChange={(id) =>
+              setSelected(lastFetchedRef.current.find((p) => p.id === id) ?? null)
+            }
+            fetchOptions={fetchOptions}
+            // Keeps the trigger label when the chosen product falls out of the current page.
+            selectedOption={
+              selected ? { value: selected.id, label: displayProduct(selected) } : undefined
+            }
+            disabled={submitting}
+            placeholder="Select a product"
+            emptyMessage="No products found."
+          />
         </div>
         <DialogFooter>
           <Button

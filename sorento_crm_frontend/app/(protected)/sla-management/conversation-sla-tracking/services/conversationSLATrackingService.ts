@@ -149,7 +149,10 @@ export interface MyPendingSLAItem {
   takeover?: TakeoverInfo | null;
 }
 
-export async function getMyPendingSLA(limit = 50): Promise<MyPendingSLAItem[]> {
+export async function getMyPendingSLA(limit = 1000): Promise<MyPendingSLAItem[]> {
+  // Fetch the user's FULL unresolved set so the widget's count is honest and its
+  // search/pagination operate over everything (browse and search see the same rows).
+  // The old 50-cap both under-counted the badge and hid search matches past the page.
   const response = await apiFetch(
     `/api/v1/sla-management/conversation-sla-tracking/my-pending?limit=${limit}`,
   );

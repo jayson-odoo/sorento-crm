@@ -25,13 +25,7 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -528,26 +522,22 @@ export default function ConversationSLATrackingList() {
               content: (
                 <div className="space-y-3">
                   <h4 className="font-medium text-sm">Filters</h4>
-                  <Select
+                  <SearchableSelect
                     value={assignedToFilter}
-                    onValueChange={(value) => {
+                    onChange={(value) => {
                       setAssignedToFilter(value);
                       setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                     }}
+                    options={[
+                      { value: '__all__', label: 'All assignees' },
+                      ...(respondUsers || []).map((user: { id: string; name?: string | null; respond_user_id?: string | null; email: string }) => ({
+                        value: user.respond_user_id || user.id,
+                        label: user.name || user.email,
+                      })),
+                    ]}
+                    placeholder="Assignee"
                     disabled={isLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Assignee" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__all__">All assignees</SelectItem>
-                      {(respondUsers || []).map((user: { id: string; name?: string | null; respond_user_id?: string | null; email: string }) => (
-                        <SelectItem key={user.id} value={user.respond_user_id || user.id}>
-                          {user.name || user.email}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  />
                   {hasActiveFilters && (
                     <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">
                       Clear Filters

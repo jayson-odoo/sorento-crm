@@ -1,16 +1,33 @@
 'use client';
 
-import { ReactNode } from 'react';
+import { ReactNode, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Switch } from '@/components/ui/switch';
+
+function DemoSelect({
+  defaultValue,
+  placeholder = 'Select',
+  options,
+  triggerClassName = 'w-full',
+}: {
+  defaultValue: string;
+  placeholder?: string;
+  options: { value: string; label: string }[];
+  triggerClassName?: string;
+}) {
+  const [value, setValue] = useState(defaultValue);
+  return (
+    <SearchableSelect
+      value={value}
+      onChange={setValue}
+      options={options}
+      placeholder={placeholder}
+      triggerClassName={triggerClassName}
+    />
+  );
+}
 
 interface IBackupSettingsItem {
   title: string;
@@ -30,17 +47,17 @@ const BackupSettings = () => {
       title: 'Backup Frequency',
       description: 'Select Preferred Backup',
       control: (
-        <Select defaultValue="1">
-          <SelectTrigger className="w-24" size="sm">
-            <SelectValue placeholder="Select" />
-          </SelectTrigger>
-          <SelectContent className="w-24">
-            <SelectItem value="1">Daily</SelectItem>
-            <SelectItem value="2">Weekly</SelectItem>
-            <SelectItem value="3">Monthly</SelectItem>
-            <SelectItem value="4">Yearly</SelectItem>
-          </SelectContent>
-        </Select>
+        <DemoSelect
+          defaultValue="1"
+          placeholder="Select"
+          triggerClassName="w-24"
+          options={[
+            { value: '1', label: 'Daily' },
+            { value: '2', label: 'Weekly' },
+            { value: '3', label: 'Monthly' },
+            { value: '4', label: 'Yearly' },
+          ]}
+        />
       ),
     },
     {

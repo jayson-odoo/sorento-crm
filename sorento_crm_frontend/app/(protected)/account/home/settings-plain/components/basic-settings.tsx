@@ -17,13 +17,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Switch } from '@/components/ui/switch';
 
 interface IGeneralSettingsProps {
@@ -37,6 +31,7 @@ const BasicSettings = ({ title }: IGeneralSettingsProps) => {
   const [addressInput, setAddressInput] = useState('Avinguda Imaginària, 789');
   const [cityInput, setCityInput] = useState('Barcelona');
   const [postcodeInput, setPostcodeInput] = useState('08012');
+  const [country, setCountry] = useState('1');
 
   // Docs: https://www.reui.io/docs/date-picker#date--time
   const today = new Date();
@@ -264,16 +259,17 @@ const BasicSettings = ({ title }: IGeneralSettingsProps) => {
         </div>
         <div className="flex items-baseline flex-wrap lg:flex-nowrap gap-2.5">
           <Label className="flex w-full max-w-56">Country</Label>
-          <Select defaultValue="1">
-            <SelectTrigger>
-              <SelectValue placeholder="Select" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="1">Spain</SelectItem>
-              <SelectItem value="2">Option 2</SelectItem>
-              <SelectItem value="3">Option 3</SelectItem>
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={country}
+            onChange={setCountry}
+            placeholder="Select"
+            triggerClassName="w-full"
+            options={[
+              { value: '1', label: 'Spain' },
+              { value: '2', label: 'Option 2' },
+              { value: '3', label: 'Option 3' },
+            ]}
+          />
         </div>
         <div className="flex items-baseline flex-wrap lg:flex-nowrap gap-2.5">
           <Label className="flex w-full max-w-56">State</Label>

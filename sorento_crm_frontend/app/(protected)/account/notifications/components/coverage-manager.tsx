@@ -5,7 +5,6 @@ import { useSession } from 'next-auth/react';
 import {
   ArrowRight,
   Check,
-  ChevronsUpDown,
   LoaderCircleIcon,
   Pencil,
   Trash2,
@@ -27,18 +26,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
-import { cn } from '@/lib/utils';
 import { useVisibleUsers } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import {
   useAssignCoverage,
@@ -96,46 +86,16 @@ interface PickerProps {
 }
 
 function Picker({ value, onChange, options, placeholder, disabled }: PickerProps) {
-  const [open, setOpen] = useState(false);
-  const selected = options.find((o) => o.id === value);
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          aria-expanded={open}
-          className="w-full justify-between font-normal"
-          disabled={disabled}
-        >
-          {selected ? selected.label : placeholder}
-          <ChevronsUpDown className="ms-2 size-4 shrink-0 opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-        <Command>
-          <CommandInput placeholder="Search by name or email..." />
-          <CommandList>
-            <CommandEmpty>No colleagues available.</CommandEmpty>
-            <CommandGroup>
-              {options.map((o) => (
-                <CommandItem
-                  key={o.id}
-                  value={o.label}
-                  onSelect={() => {
-                    onChange(o.id);
-                    setOpen(false);
-                  }}
-                >
-                  <Check className={cn('me-2 size-4', value === o.id ? 'opacity-100' : 'opacity-0')} />
-                  {o.label}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+    <SearchableSelect
+      value={value}
+      onChange={onChange}
+      options={options.map((o) => ({ value: o.id, label: o.label }))}
+      placeholder={placeholder}
+      emptyMessage="No colleagues available."
+      disabled={disabled}
+      triggerClassName="w-full"
+    />
   );
 }
 

@@ -32,6 +32,8 @@ export interface StockInquiry {
   reopened_at?: string | null;
   reopened_by?: string | null;
   reopened_by_name?: string | null;
+  assigned_to_id?: string | null;
+  assigned_to_name?: string | null;
   handled_by_name?: string | null;
   attachments?: StockInquiryAttachment[];
   created_at: Date;

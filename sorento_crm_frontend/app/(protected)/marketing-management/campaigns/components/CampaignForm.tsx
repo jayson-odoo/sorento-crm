@@ -18,13 +18,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   useCreateCampaign,
@@ -199,22 +193,14 @@ export default function CampaignForm({ campaignId, onSuccess }: CampaignFormProp
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Campaign Type *</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue
-                            placeholder={isLoadingTypes ? 'Loading…' : 'Select a type'}
-                          />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {campaignTypes.map((t) => (
-                          <SelectItem key={t.id} value={t.id}>
-                            {t.type_name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <SearchableSelect
+                        value={field.value}
+                        onChange={field.onChange}
+                        options={campaignTypes.map((t) => ({ value: t.id, label: t.type_name }))}
+                        placeholder={isLoadingTypes ? 'Loading…' : 'Select a type'}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -226,20 +212,14 @@ export default function CampaignForm({ campaignId, onSuccess }: CampaignFormProp
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Status *</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select status" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {CAMPAIGN_STATUSES.map((s) => (
-                          <SelectItem key={s.value} value={s.value}>
-                            {s.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <SearchableSelect
+                        value={field.value}
+                        onChange={field.onChange}
+                        options={CAMPAIGN_STATUSES.map((s) => ({ value: s.value, label: s.label }))}
+                        placeholder="Select status"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}

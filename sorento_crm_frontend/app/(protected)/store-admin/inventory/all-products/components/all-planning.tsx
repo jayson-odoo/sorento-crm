@@ -46,13 +46,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { StoreAdminCreateShippingLabelSheet } from '@/app/(protected)/store-admin/components/create-shipping-label-sheet/sheet';
 import { StoreAdminTrackShippingSheet } from '@/app/(protected)/store-admin/components/track-shipping-sheet';
 
@@ -494,6 +488,9 @@ export function AllPlanning() {
   ]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedStatuses] = useState<string[]>([]);
+  const [dateRange, setDateRange] = useState('');
+  const [category, setCategory] = useState('');
+  const [supplier, setSupplier] = useState('');
 
   const filteredData = useMemo(() => {
     return data.filter((item) => {
@@ -762,43 +759,42 @@ export function AllPlanning() {
               )}
             </div>
             <div className="flex gap-3">
-              <Select>
-                <SelectTrigger className="w-[200px]">
-                  <SelectValue placeholder="2 June - 9 June" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="outdoor">Outdoor</SelectItem>
-                  <SelectItem value="runners">Runners</SelectItem>
-                  <SelectItem value="sneakers">Sneakers</SelectItem>
-                  <SelectItem value="outdoor">Outdoor</SelectItem>
-                  <SelectItem value="runners">Runners</SelectItem>
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={dateRange}
+                onChange={setDateRange}
+                placeholder="2 June - 9 June"
+                triggerClassName="w-[200px]"
+                options={[
+                  { value: 'outdoor', label: 'Outdoor' },
+                  { value: 'runners', label: 'Runners' },
+                  { value: 'sneakers', label: 'Sneakers' },
+                ]}
+              />
 
-              <Select>
-                <SelectTrigger className="w-[200px]">
-                  <SelectValue placeholder="Category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="outdoor">Outdoor</SelectItem>
-                  <SelectItem value="runners">Runners</SelectItem>
-                  <SelectItem value="sneakers">Sneakers</SelectItem>
-                  <SelectItem value="outdoor">Outdoor</SelectItem>
-                  <SelectItem value="runners">Runners</SelectItem>
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={category}
+                onChange={setCategory}
+                placeholder="Category"
+                triggerClassName="w-[200px]"
+                options={[
+                  { value: 'outdoor', label: 'Outdoor' },
+                  { value: 'runners', label: 'Runners' },
+                  { value: 'sneakers', label: 'Sneakers' },
+                ]}
+              />
 
-              <Select>
-                <SelectTrigger className="w-[200px]">
-                  <SelectValue placeholder="Supplier" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="swift-stock">SwiftStock</SelectItem>
-                  <SelectItem value="core-mart">CoreMart</SelectItem>
-                  <SelectItem value="prime-stock">PrimeStock</SelectItem>
-                  <SelectItem value="stock-lab">StockLab</SelectItem>
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={supplier}
+                onChange={setSupplier}
+                placeholder="Supplier"
+                triggerClassName="w-[200px]"
+                options={[
+                  { value: 'swift-stock', label: 'SwiftStock' },
+                  { value: 'core-mart', label: 'CoreMart' },
+                  { value: 'prime-stock', label: 'PrimeStock' },
+                  { value: 'stock-lab', label: 'StockLab' },
+                ]}
+              />
             </div>
           </div>
 

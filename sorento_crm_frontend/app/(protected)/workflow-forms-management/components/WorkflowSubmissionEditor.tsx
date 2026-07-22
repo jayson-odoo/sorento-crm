@@ -8,13 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   Dialog,
   DialogContent,
@@ -205,18 +199,12 @@ export function NewWorkflowSubmission({
           ) : (
             <div className="space-y-1 max-w-md">
               <Label>Workflow form</Label>
-              <Select value={definitionId || undefined} onValueChange={setDefinitionId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select published form…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {defs.map((d) => (
-                    <SelectItem key={d.id} value={d.id}>
-                      {d.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={definitionId}
+                onChange={setDefinitionId}
+                options={defs.map((d) => ({ value: d.id, label: d.name }))}
+                placeholder="Select published form…"
+              />
               <p className="text-xs text-muted-foreground">Only forms with a published version can accept submissions.</p>
             </div>
           )}

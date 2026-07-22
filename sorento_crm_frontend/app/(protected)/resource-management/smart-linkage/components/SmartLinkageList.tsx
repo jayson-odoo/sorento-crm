@@ -25,7 +25,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useIntegrationLogs, useRetryIntegrationLog } from '@/app/(protected)/integration-management/integration-logs/hooks/useIntegrationLogs';
 import type { IntegrationLog } from '@/app/(protected)/integration-management/integration-logs/types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
@@ -219,30 +219,32 @@ export default function SmartLinkageList() {
                 <div className="space-y-3">
                   <div className="space-y-1.5">
                     <p className="text-xs font-medium">Status</p>
-                    <Select value={statusFilter} onValueChange={setStatusFilter}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Status</SelectItem>
-                        <SelectItem value="pending">Pending</SelectItem>
-                        <SelectItem value="processing">Processing</SelectItem>
-                        <SelectItem value="success">Success</SelectItem>
-                        <SelectItem value="failed">Failed</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={statusFilter}
+                      onChange={setStatusFilter}
+                      options={[
+                        { value: 'all', label: 'All Status' },
+                        { value: 'pending', label: 'Pending' },
+                        { value: 'processing', label: 'Processing' },
+                        { value: 'success', label: 'Success' },
+                        { value: 'failed', label: 'Failed' },
+                      ]}
+                      placeholder="Status"
+                      triggerClassName="w-full"
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <p className="text-xs font-medium">Channel</p>
-                    <Select value={channelFilter} onValueChange={setChannelFilter}>
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Channel" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Channels</SelectItem>
-                        <SelectItem value="n8n">n8n</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={channelFilter}
+                      onChange={setChannelFilter}
+                      options={[
+                        { value: 'all', label: 'All Channels' },
+                        { value: 'n8n', label: 'n8n' },
+                      ]}
+                      placeholder="Channel"
+                      triggerClassName="w-full"
+                    />
                   </div>
                 </div>
               ),

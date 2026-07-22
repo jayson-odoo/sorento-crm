@@ -981,16 +981,23 @@ class ConversationSLATrackingService:
             .first()
         )
 
-    def list_my_pending(self, user_id: str, limit: int = 50) -> list[dict]:
-        """Unresolved SLA trackers assigned to ``user_id``, soonest-due first.
+    def list_my_pending(self, user_id: str, limit: int = 1000) -> list[dict]:
+        """ALL unresolved SLA trackers assigned to ``user_id``, soonest-due first.
 
         Unlike ``list_tracking`` (the conversation list, which excludes form SLA
         types), this powers a per-user to-do widget and INCLUDES form trackers
         (stock_inquiry / complaint / purchase_request) since those are the items
         the assignee must action.
+
+        Returns the user's FULL pending set (safety-capped at ``limit``) so the widget
+        can show an honest total and search/paginate over everything client-side. It
+        used to fetch only the soonest-50, which both under-counted the badge and hid
+        any search match past that window (a user with 50+ overdue items could never
+        find a later-due one). Row-building is fully batched (O(1) queries regardless
+        of row count), so returning the whole set stays cheap.
         """
         from sqlalchemy.orm import joinedload
-        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.form_sla_service import FORM_SLA_TYPES  # noqa: F401 (used below)
 
         rows = (
             self.db.query(ConversationSLATracking)

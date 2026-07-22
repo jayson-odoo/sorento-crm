@@ -42,13 +42,7 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useProductFilters } from '../hooks/useProductFilters';
 import { useProductCategorySelectQuery } from '../../shared/hooks/use-product-category-select-query';
@@ -833,68 +827,54 @@ const ProductsList = () => {
               activeCount: simpleFiltersActiveCount,
               content: (
                 <div className="space-y-3">
-                  <Select
-                    onValueChange={handleCategorySelection}
+                  <SearchableSelect
                     value={selectedCategory || 'all'}
+                    onChange={handleCategorySelection}
                     disabled={isLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All categories</SelectItem>
-                      {(categories ?? []).map((cat) => (
-                        <SelectItem key={cat.id} value={cat.id}>
-                          {cat.category_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    onValueChange={handleBrandSelection}
+                    placeholder="Category"
+                    options={[
+                      { value: 'all', label: 'All categories' },
+                      ...(categories ?? []).map((cat) => ({
+                        value: cat.id,
+                        label: cat.category_name,
+                      })),
+                    ]}
+                  />
+                  <SearchableSelect
                     value={selectedBrand || 'all'}
+                    onChange={handleBrandSelection}
                     disabled={isLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Brand" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All brands</SelectItem>
-                      {(brands ?? []).map((brand) => (
-                        <SelectItem key={brand.id} value={brand.id}>
-                          {brand.brand_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    onValueChange={handleStatusSelection}
+                    placeholder="Brand"
+                    options={[
+                      { value: 'all', label: 'All brands' },
+                      ...(brands ?? []).map((brand) => ({
+                        value: brand.id,
+                        label: brand.brand_name,
+                      })),
+                    ]}
+                  />
+                  <SearchableSelect
                     value={selectedStatus || 'all'}
+                    onChange={handleStatusSelection}
                     disabled={isLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All status</SelectItem>
-                      <SelectItem value="active">Active</SelectItem>
-                      <SelectItem value="inactive">Inactive</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select
-                    onValueChange={handleVariantFilterSelection}
+                    placeholder="Status"
+                    options={[
+                      { value: 'all', label: 'All status' },
+                      { value: 'active', label: 'Active' },
+                      { value: 'inactive', label: 'Inactive' },
+                    ]}
+                  />
+                  <SearchableSelect
                     value={selectedVariantFilter}
+                    onChange={handleVariantFilterSelection}
                     disabled={isLoading}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Variant" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All products</SelectItem>
-                      <SelectItem value="base">Base only</SelectItem>
-                      <SelectItem value="variant">Variants only</SelectItem>
-                    </SelectContent>
-                  </Select>
+                    placeholder="Variant"
+                    options={[
+                      { value: 'all', label: 'All products' },
+                      { value: 'base', label: 'Base only' },
+                      { value: 'variant', label: 'Variants only' },
+                    ]}
+                  />
                   {(hasActiveFilters || simpleFiltersActiveCount > 0) && (
                     <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">
                       Clear Filters
