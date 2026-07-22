@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Edit, Trash2, Plus, ExternalLink, Search, X, Layers, ChevronDown } from 'lucide-react';
@@ -120,15 +120,28 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   const [addProductDealerDiscount, setAddProductDealerDiscount] = useState('');
   const [productCodeSearch, setProductCodeSearch] = useState('');
 
-  // Fetch all products for the add product dialog
+  // Server-search products for the add-product dialog. A pageSize:1000 static list
+  // silently capped the picker at the first 1000 SKUs — anything past that (e.g.
+  // SRTWC*) was unreachable, showing "No results" for a real product. Drive the
+  // catalog search server-side, debounced, like the attachment link picker.
+  const [productSearch, setProductSearch] = useState('');
+  const [debouncedProductSearch, setDebouncedProductSearch] = useState('');
+  const [pickedProductLabel, setPickedProductLabel] = useState<string | null>(null);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedProductSearch(productSearch.trim()), 250);
+    return () => clearTimeout(t);
+  }, [productSearch]);
+  useEffect(() => {
+    if (!selectedProductId) setPickedProductLabel(null);
+  }, [selectedProductId]);
   const productsParams: GetProductsParams = {
     pageIndex: 0,
-    pageSize: 1000,
+    pageSize: 25,
     sorting: [],
-    searchQuery: '',
+    searchQuery: debouncedProductSearch,
     status: 'all',
   };
-  const { data: productsData } = useProducts(productsParams);
+  const { data: productsData, isFetching: isProductsFetching } = useProducts(productsParams);
   const allProducts = productsData?.data || [];
   const sortedGroupsBase = useMemo(() => {
     const groups = [...(promotion?.promotion_groups ?? [])];
@@ -795,17 +808,37 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
               <Label>Product *</Label>
               <SearchableSelect
                 value={selectedProductId}
-                onChange={setSelectedProductId}
-                options={[
-                  ...availableProducts.map((product) => ({
+                onChange={(id) => {
+                  setSelectedProductId(id);
+                  const p = availableProducts.find((x) => x.id === id);
+                  if (p) setPickedProductLabel(`${p.product_code} - ${p.product_name}`);
+                }}
+                options={(() => {
+                  const opts = availableProducts.map((product) => ({
                     value: product.id,
                     label: `${product.product_code} - ${product.product_name}`,
-                  })),
-                  ...(availableProducts.length === 0
-                    ? [{ value: '__no_products__', label: 'No available products for this group', disabled: true }]
-                    : []),
-                ]}
+                    searchText: [product.product_code, product.product_name, product.id]
+                      .filter(Boolean)
+                      .join(' '),
+                  }));
+                  // Keep the chosen product's label on the trigger even after it
+                  // drops out of the current search page.
+                  if (
+                    selectedProductId &&
+                    pickedProductLabel &&
+                    !opts.some((o) => o.value === selectedProductId)
+                  ) {
+                    opts.unshift({
+                      value: selectedProductId,
+                      label: pickedProductLabel,
+                      searchText: pickedProductLabel,
+                    });
+                  }
+                  return opts;
+                })()}
+                onSearchChange={setProductSearch}
                 placeholder="Select a product"
+                emptyMessage={isProductsFetching ? 'Searching…' : 'No product found.'}
               />
             </div>
             <div className="space-y-2">
