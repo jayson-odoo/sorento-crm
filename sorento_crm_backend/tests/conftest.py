@@ -19,15 +19,45 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.compiler import compiles
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _drop_blank_schema_at_end():
-    """Drop the scratch schema ``blank_session()`` builds, however the run ends.
+def _sweep_orphan_scratch_schemas():
+    """Drop every ``zzt_*`` scratch schema left by a prior run.
 
-    Without this, every pytest process leaves a ``zzt_blank_*`` schema of ~199
-    tables behind in the shared database; 222 of them accumulated before this
-    was wired up. Session-scoped and autouse so an interrupted or failing run
-    still cleans up after itself.
+    The end-of-session drop below only fires if the process exits cleanly. A
+    killed run -- a timeout, an interrupted agent, a crash -- leaves its ~199
+    table schema behind, and those pile up (105 had accumulated across this
+    migration's many interrupted runs). Sweeping at session START, before any
+    test builds a new one, keeps the shared database from filling with them
+    regardless of how the previous run died.
     """
+    try:
+        from sqlalchemy import text
+        from app.database import engine
+
+        admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+        try:
+            names = [
+                r[0]
+                for r in admin.execute(
+                    text("SELECT nspname FROM pg_namespace WHERE nspname LIKE 'zzt_%'")
+                )
+            ]
+            for name in names:
+                admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
+        finally:
+            admin.close()
+    except Exception:
+        pass
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _blank_schema_lifecycle():
+    """Sweep stale scratch schemas before the run, drop this run's after it.
+
+    Two halves because the two failure modes differ: the sweep handles schemas
+    a *previous* killed run left behind; the drop handles *this* run's schema on
+    a clean exit.
+    """
+    _sweep_orphan_scratch_schemas()
     yield
     try:
         from tests._pg_fixture import drop_blank_schema

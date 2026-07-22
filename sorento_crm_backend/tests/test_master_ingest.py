@@ -90,7 +90,10 @@ class TestCreateAndUpdate:
 
     def test_links_the_source_reference(self, db, svc):
         svc.ingest("warehouses", [_wh(ref="DK-99")])
-        ref = db.query(IntegrationReference).one()
+        # Scope to this test's reference: the live table now holds real synced
+        # rows, so a bare .one() raised MultipleResultsFound once AutoCount data
+        # existed.
+        ref = db.query(IntegrationReference).filter_by(source_ref="DK-99").one()
         assert ref.entity_type == "warehouses"
         assert ref.source_ref == "DK-99"
 
