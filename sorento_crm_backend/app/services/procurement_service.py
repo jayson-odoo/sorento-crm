@@ -2632,9 +2632,12 @@ class StockInquiryService:
         }
 
     def _attach_sla_handlers(self, items) -> None:
-        """Set `handled_by_name` on each inquiry from the latest unresolved form-SLA
-        tracker. `handled_by_id` is the form-handling-lock holder (separate from the
-        assignee); it lives on the tracker, not the stock_inquiry row. Batched per page.
+        """Set `assigned_to_id` / `assigned_to_name` (the SLA assignee — who the
+        tracker is currently escalated/assigned to) and `handled_by_name` (the
+        form-handling-lock holder, set only when someone clicks Claim) on each inquiry
+        from the latest unresolved form-SLA tracker. Both live on the tracker, not the
+        stock_inquiry row, and are distinct: a task can be assigned to CK Lee yet
+        handled by nobody. Batched per page.
         """
         ids = [str(getattr(i, "id", "")) for i in items if getattr(i, "id", None)]
         if not ids:
@@ -2659,20 +2662,31 @@ class StockInquiryService:
         for r in rows:
             latest.setdefault(r.source_entity_id, r)  # first per id = latest (desc order)
         uids = {
-            getattr(r, "handled_by_id", None)
+            uid
             for r in latest.values()
-            if getattr(r, "handled_by_id", None)
+            for uid in (
+                getattr(r, "handled_by_id", None),
+                getattr(r, "assigned_to_id", None),
+            )
+            if uid
         }
         users = (
             {u.id: u for u in self.db.query(User).filter(User.id.in_(uids)).all()}
             if uids
             else {}
         )
+
+        def _name(uid):
+            u = users.get(uid) if uid else None
+            return (u.name or u.email) if u else None
+
         for it in items:
             tracker = latest.get(str(it.id))
             hid = getattr(tracker, "handled_by_id", None) if tracker else None
-            user = users.get(hid) if hid else None
-            setattr(it, "handled_by_name", (user.name or user.email) if user else None)
+            aid = getattr(tracker, "assigned_to_id", None) if tracker else None
+            setattr(it, "handled_by_name", _name(hid))
+            setattr(it, "assigned_to_id", str(aid) if aid else None)
+            setattr(it, "assigned_to_name", _name(aid))
 
     def get_inquiry(
         self,
