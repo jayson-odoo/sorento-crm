@@ -6,15 +6,32 @@ import Link from 'next/link';
 import { CardAuthor, CardAuthorRow } from '@/partials/cards';
 import { LayoutGrid, List, Search, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+
+function DemoSelect({
+  defaultValue,
+  placeholder = 'Select',
+  options,
+  triggerClassName = 'w-full',
+}: {
+  defaultValue: string;
+  placeholder?: string;
+  options: { value: string; label: string }[];
+  triggerClassName?: string;
+}) {
+  const [value, setValue] = useState(defaultValue);
+  return (
+    <SearchableSelect
+      value={value}
+      onChange={setValue}
+      options={options}
+      placeholder={placeholder}
+      triggerClassName={triggerClassName}
+    />
+  );
+}
 
 export interface IAuthorContentAvatar {
   className: string;
@@ -220,26 +237,24 @@ export function NetworkAuthorContent() {
         </h3>
         <div className="flex items-center flex-wrap gap-5">
           <div className="flex items-center gap-2.5">
-            <Select defaultValue="active">
-              <SelectTrigger className="w-28">
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent className="w-32">
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="disabled">Disabled</SelectItem>
-                <SelectItem value="pending">Pending</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select defaultValue="latest">
-              <SelectTrigger className="w-28">
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent className="w-32">
-                <SelectItem value="latest">Latest</SelectItem>
-                <SelectItem value="older">Older</SelectItem>
-                <SelectItem value="oldest">Oldest</SelectItem>
-              </SelectContent>
-            </Select>
+            <DemoSelect
+              defaultValue="active"
+              triggerClassName="w-28"
+              options={[
+                { value: 'active', label: 'Active' },
+                { value: 'disabled', label: 'Disabled' },
+                { value: 'pending', label: 'Pending' },
+              ]}
+            />
+            <DemoSelect
+              defaultValue="latest"
+              triggerClassName="w-28"
+              options={[
+                { value: 'latest', label: 'Latest' },
+                { value: 'older', label: 'Older' },
+                { value: 'oldest', label: 'Oldest' },
+              ]}
+            />
             <Button>
               <Settings2 size={16} /> Filters
             </Button>

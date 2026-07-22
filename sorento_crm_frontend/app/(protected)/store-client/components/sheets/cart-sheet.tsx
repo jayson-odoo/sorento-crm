@@ -1,16 +1,13 @@
+'use client';
+
+import { useState } from 'react';
 import { ShoppingCart, TrashIcon } from 'lucide-react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   Sheet,
   SheetBody,
@@ -20,6 +17,25 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { toAbsoluteUrl } from '@/lib/helpers';
+
+function QuantitySelect() {
+  const [value, setValue] = useState('high-to-low');
+  return (
+    <SearchableSelect
+      value={value}
+      onChange={setValue}
+      size="sm"
+      placeholder="1"
+      triggerClassName="w-[50px]"
+      options={[
+        { value: 'high-to-low', label: '1' },
+        { value: '0-50', label: '2' },
+        { value: '50-100', label: '3' },
+        { value: '100-200', label: '4' },
+      ]}
+    />
+  );
+}
 
 const items = [
   {
@@ -106,17 +122,7 @@ export function StoreClientCartSheet({
 
                   <div className="flex justify-center flex-col gap-3">
                     <div className="flex items-center sm:justify-end gap-2">
-                      <Select defaultValue="high-to-low">
-                        <SelectTrigger className="w-[50px]" size="sm">
-                          <SelectValue placeholder="1" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="high-to-low">1</SelectItem>
-                          <SelectItem value="0-50">2</SelectItem>
-                          <SelectItem value="50-100">3</SelectItem>
-                          <SelectItem value="100-200">4</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <QuantitySelect />
 
                       <Button size="sm" variant="outline" mode="icon">
                         <TrashIcon/>

@@ -1,7 +1,7 @@
 import { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { useDataGrid } from '@/components/ui/data-grid';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -137,10 +137,9 @@ function DataGridPagination(props: DataGridPaginationProps) {
         ) : (
           <>
             <div className="text-sm text-muted-foreground">Rows per page</div>
-            <Select
+            <SearchableSelect
               value={`${pageSize}`}
-              indicatorPosition="right"
-              onValueChange={(value) => {
+              onChange={(value) => {
                 const newPageSize = Number(value);
                 // Explicitly notify parent so controlled pagination state updates and data refetches.
                 // table.setPageSize() alone can fail to trigger parent state in some cases.
@@ -151,18 +150,14 @@ function DataGridPagination(props: DataGridPaginationProps) {
                 });
                 table.options.onPaginationChange?.(updater);
               }}
-            >
-              <SelectTrigger className="w-fit" size="sm">
-                <SelectValue placeholder={`${pageSize}`} />
-              </SelectTrigger>
-              <SelectContent side="top" className="min-w-[50px]">
-                {mergedProps?.sizes?.map((size: number) => (
-                  <SelectItem key={size} value={`${size}`}>
-                    {size}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={(mergedProps?.sizes ?? []).map((size: number) => ({
+                value: `${size}`,
+                label: `${size}`,
+              }))}
+              placeholder={`${pageSize}`}
+              triggerClassName="w-fit"
+              size="sm"
+            />
           </>
         )}
       </div>

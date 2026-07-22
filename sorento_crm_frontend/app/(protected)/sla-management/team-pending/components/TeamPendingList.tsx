@@ -20,13 +20,7 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -298,35 +292,35 @@ export default function TeamPendingList() {
                   <div className="space-y-3">
                     <div className="space-y-1.5">
                       <label className="text-xs text-muted-foreground">Assignee</label>
-                      <Select value={assigneeFilter} onValueChange={setAssigneeFilter} disabled={isLoading}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="All assignees" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={ALL}>All assignees</SelectItem>
-                          {visibleUsers.map((u) => (
-                            <SelectItem key={u.id} value={u.id}>
-                              {u.name || u.email}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <SearchableSelect
+                        value={assigneeFilter}
+                        onChange={setAssigneeFilter}
+                        disabled={isLoading}
+                        options={[
+                          { value: ALL, label: 'All assignees' },
+                          ...visibleUsers.map((u) => ({
+                            value: u.id,
+                            label: u.name || u.email,
+                          })),
+                        ]}
+                        placeholder="All assignees"
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs text-muted-foreground">Team</label>
-                      <Select value={teamFilter} onValueChange={setTeamFilter} disabled={isLoading}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="All teams" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={ALL}>All teams</SelectItem>
-                          {teamOptions.map((t) => (
-                            <SelectItem key={t.id} value={t.id}>
-                              {t.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <SearchableSelect
+                        value={teamFilter}
+                        onChange={setTeamFilter}
+                        disabled={isLoading}
+                        options={[
+                          { value: ALL, label: 'All teams' },
+                          ...teamOptions.map((t) => ({
+                            value: t.id,
+                            label: t.label,
+                          })),
+                        ]}
+                        placeholder="All teams"
+                      />
                     </div>
                     {hasActiveFilters && (
                       <Button

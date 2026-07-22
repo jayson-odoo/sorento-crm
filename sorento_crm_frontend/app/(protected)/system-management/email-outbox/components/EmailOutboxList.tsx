@@ -28,13 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -315,20 +309,20 @@ export default function EmailOutboxList() {
               activeCount: status !== '__all__' ? 1 : 0,
               content: (
                 <div className="space-y-3">
-                  <Select value={status} onValueChange={setStatus}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__all__">All statuses</SelectItem>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="sending">Sending</SelectItem>
-                      <SelectItem value="sent">Sent</SelectItem>
-                      <SelectItem value="failed">Failed</SelectItem>
-                      <SelectItem value="cancelled">Cancelled</SelectItem>
-                      <SelectItem value="deferred">Deferred</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <SearchableSelect
+                    value={status}
+                    onChange={setStatus}
+                    options={[
+                      { value: '__all__', label: 'All statuses' },
+                      { value: 'pending', label: 'Pending' },
+                      { value: 'sending', label: 'Sending' },
+                      { value: 'sent', label: 'Sent' },
+                      { value: 'failed', label: 'Failed' },
+                      { value: 'cancelled', label: 'Cancelled' },
+                      { value: 'deferred', label: 'Deferred' },
+                    ]}
+                    placeholder="Status"
+                  />
                   {status !== '__all__' && (
                     <Button
                       variant="ghost"

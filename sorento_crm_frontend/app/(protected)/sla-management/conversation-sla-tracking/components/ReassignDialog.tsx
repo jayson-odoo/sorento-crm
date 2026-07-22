@@ -1,16 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Check, ChevronsUpDown, LoaderCircleIcon } from 'lucide-react';
+import { LoaderCircleIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   Dialog,
   DialogContent,
@@ -19,9 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Label } from '@/components/ui/label';
-import { cn } from '@/lib/utils';
 import { useVisibleUsers } from '../hooks/useTeamPendingSLA';
 import type { VisibleUser } from '../services/conversationSLATrackingService';
 
@@ -51,17 +42,13 @@ export default function ReassignDialog({
   onConfirm,
 }: ReassignDialogProps) {
   const { data: users = [], isLoading, error } = useVisibleUsers(open);
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string>('');
 
   useEffect(() => {
     if (!open) {
       setSelectedId('');
-      setPickerOpen(false);
     }
   }, [open]);
-
-  const selected = users.find((u) => u.id === selectedId);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -74,48 +61,19 @@ export default function ReassignDialog({
         </DialogHeader>
         <div className="space-y-2 py-1">
           <Label>Assign to</Label>
-          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                variant="outline"
-                role="combobox"
-                aria-expanded={pickerOpen}
-                className="w-full justify-between font-normal"
-                disabled={isLoading || submitting}
-              >
-                {selected ? displayUser(selected) : isLoading ? 'Loading users…' : 'Select a colleague'}
-                <ChevronsUpDown className="ms-2 size-4 shrink-0 opacity-50" />
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-              <Command>
-                <CommandInput placeholder="Search by name or email..." />
-                <CommandList>
-                  <CommandEmpty>No colleagues available.</CommandEmpty>
-                  <CommandGroup>
-                    {users.map((u) => (
-                      <CommandItem
-                        key={u.id}
-                        value={`${u.name ?? ''} ${u.email}`.trim()}
-                        onSelect={() => {
-                          setSelectedId(u.id);
-                          setPickerOpen(false);
-                        }}
-                      >
-                        <Check
-                          className={cn(
-                            'me-2 size-4',
-                            selectedId === u.id ? 'opacity-100' : 'opacity-0',
-                          )}
-                        />
-                        {displayUser(u)}
-                      </CommandItem>
-                    ))}
-                  </CommandGroup>
-                </CommandList>
-              </Command>
-            </PopoverContent>
-          </Popover>
+          <SearchableSelect
+            value={selectedId}
+            onChange={setSelectedId}
+            options={users.map((u) => ({
+              value: u.id,
+              label: displayUser(u),
+              searchText: `${u.name ?? ''} ${u.email}`.trim(),
+            }))}
+            placeholder={isLoading ? 'Loading users…' : 'Select a colleague'}
+            emptyMessage="No colleagues available."
+            disabled={isLoading || submitting}
+            triggerClassName="w-full"
+          />
           {error ? (
             <p className="text-xs text-destructive">{(error as Error).message}</p>
           ) : null}

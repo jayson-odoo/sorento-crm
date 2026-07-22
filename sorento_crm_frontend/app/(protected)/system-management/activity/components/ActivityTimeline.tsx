@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Filter, Layers, RotateCcw, Search, X } from 'lucide-react';
+import { Layers, RotateCcw, Search, X } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,13 +15,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTime, getInitials, timeAgo } from '@/lib/helpers';
 import { useActivityFeed } from '../hooks/useActivityFeed';
 import type {
@@ -241,35 +235,30 @@ function FilterBar(props: FilterBarProps) {
           </Popover>
 
           {/* Action */}
-          <Select value={props.action} onValueChange={props.onActionChange}>
-            <SelectTrigger size="sm" className="w-[130px]">
-              <Filter className="size-4 text-muted-foreground" />
-              <SelectValue placeholder="Action" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ANY}>All actions</SelectItem>
-              {ACTION_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={props.action}
+            onChange={props.onActionChange}
+            options={[
+              { value: ANY, label: 'All actions' },
+              ...ACTION_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label })),
+            ]}
+            placeholder="Action"
+            triggerClassName="w-[130px]"
+            size="sm"
+          />
 
           {/* User */}
-          <Select value={props.userId} onValueChange={props.onUserChange}>
-            <SelectTrigger size="sm" className="w-[150px]">
-              <SelectValue placeholder="User" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ANY}>All users</SelectItem>
-              {props.actors.map((actor) => (
-                <SelectItem key={actor.id} value={actor.id}>
-                  {actor.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={props.userId}
+            onChange={props.onUserChange}
+            options={[
+              { value: ANY, label: 'All users' },
+              ...props.actors.map((actor) => ({ value: actor.id, label: actor.name })),
+            ]}
+            placeholder="User"
+            triggerClassName="w-[150px]"
+            size="sm"
+          />
 
           {/* Date range */}
           <div className="flex items-center gap-1.5">

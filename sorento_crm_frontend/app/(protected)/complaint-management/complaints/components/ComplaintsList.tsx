@@ -25,13 +25,7 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getUsersSelect } from '@/services/userSelectService';
@@ -361,36 +355,37 @@ export default function ComplaintsList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Assigned to</Label>
-                    <Select value={assignedToFilter} onValueChange={setAssignedToFilter}>
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="All assignees" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__all__">All assignees</SelectItem>
-                        <SelectItem value="__unassigned__">Unassigned</SelectItem>
-                        {assigneeOptions.map((u) => (
-                          <SelectItem key={u.id} value={u.respond_user_id!}>
-                            {u.name || u.email}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={assignedToFilter}
+                      onChange={setAssignedToFilter}
+                      options={[
+                        { value: '__all__', label: 'All assignees' },
+                        { value: '__unassigned__', label: 'Unassigned' },
+                        ...assigneeOptions.map((u) => ({
+                          value: u.respond_user_id!,
+                          label: u.name || u.email,
+                        })),
+                      ]}
+                      placeholder="All assignees"
+                      triggerClassName="mt-1"
+                    />
                   </div>
                   <div>
                     <Label>Status</Label>
-                    <Select value={statusFilter} onValueChange={setStatusFilter}>
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="All statuses" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__all__">All statuses</SelectItem>
-                        <SelectItem value="new">New</SelectItem>
-                        <SelectItem value="updated">Updated</SelectItem>
-                        <SelectItem value="responded">Responded</SelectItem>
-                        <SelectItem value="approved">Approved</SelectItem>
-                        <SelectItem value="rejected">Rejected</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={statusFilter}
+                      onChange={setStatusFilter}
+                      options={[
+                        { value: '__all__', label: 'All statuses' },
+                        { value: 'new', label: 'New' },
+                        { value: 'updated', label: 'Updated' },
+                        { value: 'responded', label: 'Responded' },
+                        { value: 'approved', label: 'Approved' },
+                        { value: 'rejected', label: 'Rejected' },
+                      ]}
+                      placeholder="All statuses"
+                      triggerClassName="mt-1"
+                    />
                   </div>
                   {filtersActiveCount > 0 && (
                     <div className="flex justify-end">

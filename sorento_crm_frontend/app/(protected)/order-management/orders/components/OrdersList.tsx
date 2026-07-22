@@ -39,13 +39,7 @@ import OrderBulkDeleteDialog from './OrderBulkDeleteDialog';
 import { useOrders } from '../hooks/useOrders';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
 import type { Order } from '../types/order.types';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
@@ -416,46 +410,43 @@ export default function OrdersList() {
               <Label htmlFor="orders-quick-status" className="text-xs text-muted-foreground">
                 Status
               </Label>
-              <Select
+              <SearchableSelect
                 value={statusFilter}
-                onValueChange={(v) => {
+                onChange={(v) => {
                   setStatusFilter(v);
                   setPagination((p) => ({ ...p, pageIndex: 0 }));
                 }}
-              >
-                <SelectTrigger id="orders-quick-status" className="h-8 w-48">
-                  <SelectValue placeholder="Status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
-                  {orderStatuses.map((status) => (
-                    <SelectItem key={status.id} value={status.id}>
-                      {status.status_name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                id="orders-quick-status"
+                triggerClassName="h-8 w-48"
+                options={[
+                  { value: 'all', label: 'All statuses' },
+                  ...orderStatuses.map((status) => ({
+                    value: status.id,
+                    label: status.status_name,
+                  })),
+                ]}
+                placeholder="Status"
+              />
             </div>
             <div className="flex items-center gap-2">
               <Label htmlFor="orders-quick-lines" className="text-xs text-muted-foreground">
                 Delivery order lines
               </Label>
-              <Select
+              <SearchableSelect
                 value={linesFilter}
-                onValueChange={(v) => {
+                onChange={(v) => {
                   setLinesFilter(v as 'all' | 'yes' | 'no');
                   setPagination((p) => ({ ...p, pageIndex: 0 }));
                 }}
-              >
-                <SelectTrigger id="orders-quick-lines" className="h-8 w-56">
-                  <SelectValue placeholder="Delivery order lines" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All delivery orders</SelectItem>
-                  <SelectItem value="yes">With delivery order lines</SelectItem>
-                  <SelectItem value="no">Without delivery order lines</SelectItem>
-                </SelectContent>
-              </Select>
+                id="orders-quick-lines"
+                triggerClassName="h-8 w-56"
+                options={[
+                  { value: 'all', label: 'All delivery orders' },
+                  { value: 'yes', label: 'With delivery order lines' },
+                  { value: 'no', label: 'Without delivery order lines' },
+                ]}
+                placeholder="Delivery order lines"
+              />
             </div>
             {quickFilterActive && (
               <Button

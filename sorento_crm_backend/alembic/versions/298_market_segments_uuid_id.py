@@ -16,12 +16,15 @@ own unique constraint, drop the FKs, swap the PK, then re-create the FKs against
 `code`'s unique constraint. Two rows, so the rewrite is trivial.
 
 Revision ID: 298_market_segments_uuid_id
-Revises: 297_audit_entity_id_text
+Revises: 298_merge_main_into_remove_mcp
 """
 from alembic import op
 
 revision = "298_market_segments_uuid_id"
-down_revision = "297_audit_entity_id_text"
+# Chains onto the merge head that #30 landed on main (which unified main's
+# chat-state-trace with the remove-mcp chain), not the raw 297, so this branch
+# keeps a single linear alembic head after main is merged in.
+down_revision = "298_merge_main_into_remove_mcp"
 branch_labels = None
 depends_on = None
 

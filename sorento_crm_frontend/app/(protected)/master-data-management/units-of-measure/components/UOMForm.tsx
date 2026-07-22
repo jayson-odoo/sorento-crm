@@ -18,13 +18,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCreateUOM, useUpdateUOM, useUOM } from '../hooks/useUOM';
 import { UOMSchema, type UOMSchemaType } from '../forms/uom-schema';
@@ -158,24 +152,22 @@ export default function UOMForm({ uomId, onSuccess }: UOMFormProps) {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Base UOM</FormLabel>
-                    <Select
-                      onValueChange={(value) => field.onChange(value === '__none__' ? null : value)}
-                      value={field.value || '__none__'}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select base UOM" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="__none__">None (Base UOM)</SelectItem>
-                        {baseUOMs?.map((baseUom) => (
-                          <SelectItem key={baseUom.id} value={baseUom.id}>
-                            {baseUom.uom_name} ({baseUom.uom_code})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <SearchableSelect
+                        value={field.value || '__none__'}
+                        onChange={(value) => field.onChange(value === '__none__' ? null : value)}
+                        placeholder="Select base UOM"
+                        options={[
+                          // Explicit "no base UOM" row rather than a clear button: Radix could not
+                          // hold an empty value either, and the wording carries meaning here.
+                          { value: '__none__', label: 'None (Base UOM)' },
+                          ...(baseUOMs ?? []).map((baseUom) => ({
+                            value: baseUom.id,
+                            label: `${baseUom.uom_name} (${baseUom.uom_code})`,
+                          })),
+                        ]}
+                      />
+                    </FormControl>
                     <FormDescription>
                       If this UOM is a conversion of another UOM, select the base UOM
                     </FormDescription>

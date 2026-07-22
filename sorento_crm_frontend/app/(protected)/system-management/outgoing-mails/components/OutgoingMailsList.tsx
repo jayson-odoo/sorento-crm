@@ -28,13 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Eye, Search, X } from 'lucide-react';
 import { useOutgoingMails } from '../hooks/useOutgoingMails';
@@ -241,17 +235,17 @@ export default function OutgoingMailsList() {
               activeCount: status !== '__all__' ? 1 : 0,
               content: (
                 <div className="space-y-3">
-                  <Select value={status} onValueChange={setStatus}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__all__">All statuses</SelectItem>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="sent">Sent</SelectItem>
-                      <SelectItem value="failed">Failed</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <SearchableSelect
+                    value={status}
+                    onChange={setStatus}
+                    options={[
+                      { value: '__all__', label: 'All statuses' },
+                      { value: 'pending', label: 'Pending' },
+                      { value: 'sent', label: 'Sent' },
+                      { value: 'failed', label: 'Failed' },
+                    ]}
+                    placeholder="Status"
+                  />
                   {status !== '__all__' && (
                     <Button
                       variant="ghost"

@@ -13,13 +13,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useEmailTemplates } from '../../email-templates/hooks/useEmailTemplates';
@@ -204,18 +198,12 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
 
           <div className="space-y-1">
             <Label>Trigger</Label>
-            <Select value={triggerType} onValueChange={setTriggerType}>
-              <SelectTrigger>
-                <SelectValue placeholder="Pick trigger" />
-              </SelectTrigger>
-              <SelectContent>
-                {triggerSpecs.map((s) => (
-                  <SelectItem key={s.type} value={s.type}>
-                    {s.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={triggerType}
+              onChange={setTriggerType}
+              options={triggerSpecs.map((s) => ({ value: s.type, label: s.label }))}
+              placeholder="Pick trigger"
+            />
             {triggerSpec && (
               <p className="text-xs text-muted-foreground">{triggerSpec.description}</p>
             )}
@@ -236,18 +224,15 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
 
           <div className="space-y-1 md:col-span-2">
             <Label>Email template</Label>
-            <Select value={emailTemplateId} onValueChange={setEmailTemplateId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Pick template" />
-              </SelectTrigger>
-              <SelectContent>
-                {(templates.data?.data ?? []).map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name} ({t.code})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={emailTemplateId}
+              onChange={setEmailTemplateId}
+              options={(templates.data?.data ?? []).map((t) => ({
+                value: t.id,
+                label: `${t.name} (${t.code})`,
+              }))}
+              placeholder="Pick template"
+            />
           </div>
 
           <div className="md:col-span-2">
@@ -303,18 +288,11 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
                 </div>
                 <div className="space-y-1">
                   <Label>Timezone</Label>
-                  <Select value={timezone} onValueChange={setTimezone}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {TIMEZONES.map((tz) => (
-                        <SelectItem key={tz} value={tz}>
-                          {tz}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <SearchableSelect
+                    value={timezone}
+                    onChange={setTimezone}
+                    options={TIMEZONES.map((tz) => ({ value: tz, label: tz }))}
+                  />
                 </div>
               </div>
             )}

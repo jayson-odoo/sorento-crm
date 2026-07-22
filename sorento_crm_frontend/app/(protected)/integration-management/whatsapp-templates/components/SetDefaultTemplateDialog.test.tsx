@@ -173,11 +173,12 @@ describe('SetDefaultTemplateDialog — chat message enforcement', () => {
     await screen.findByText('Message from {{1}}: {{2}}');
 
     // Slot {{2}} currently shows "Sender name"; remap it to "Full update message".
-    // Radix Select opens on pointerdown (not click) — dispatch it on that trigger.
+    // The slot picker is a SearchableSelect (Popover + cmdk) — it opens on click,
+    // then renders its options as role="option" in the popover content.
     const slot2 = screen
       .getAllByRole('combobox')
       .find((el) => el.textContent?.includes('Sender name'))!;
-    fireEvent.pointerDown(slot2, { button: 0, ctrlKey: false, pointerType: 'mouse' });
+    fireEvent.click(slot2);
     fireEvent.click(await screen.findByRole('option', { name: 'Full update message' }));
 
     await waitFor(() =>

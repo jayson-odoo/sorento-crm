@@ -27,6 +27,13 @@ class ChatMessageRowResponse(BaseModel):
     # Present on outgoing rows only: seconds from the incoming message of the same turn.
     latency_seconds: Optional[float] = None
     webhook_lag_seconds: Optional[float] = None
+    # Per-turn conversation state transition, populated on INCOMING rows only and only
+    # on the thread (transcript) path — the diagnosis surface. Opaque by design:
+    # {v, before, parser_raw, parser_applied, after}. NULL on the grid list and on
+    # every outgoing row. The FE derives the entities-lost/gained + cause-flags summary
+    # from this (mirroring the v_turn_state_transition view) and offers the raw document
+    # in a searchable JSON viewer.
+    state_trace: Optional[dict] = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -1,23 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Check } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { Button, ButtonArrow } from '@/components/ui/button';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { useEffect, useRef } from 'react';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 
 interface ProductOption {
   id: string;
@@ -33,12 +17,15 @@ interface ProductComboboxProps {
   placeholder?: string;
   disabled?: boolean;
   className?: string;
-  /** Server-side search callback (300ms debounced). Parent refetches from
-   *  /products?query=... so the full catalog is reachable, not just the first
-   *  page slice. */
+  /** Server-side search callback, debounced 300ms, so the parent can refetch from
+   *  `/products?query=...` rather than relying on the local slice. */
   onSearch?: (query: string) => void;
 }
 
+/**
+ * Thin domain wrapper over the standard SearchableSelect: owns the product label format,
+ * the saved-value fallback, and the debounce in front of the parent's server refetch.
+ */
 export function ProductCombobox({
   value,
   onChange,
@@ -49,77 +36,46 @@ export function ProductCombobox({
   className,
   onSearch,
 }: ProductComboboxProps) {
-  const [open, setOpen] = useState(false);
-  const [inputValue, setInputValue] = useState('');
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+  }, []);
 
-  useEffect(() => {
+  // 300ms balances responsiveness against backend hit rate while typing — the standard
+  // component reports every keystroke, so the debounce lives here.
+  const handleSearch = (query: string) => {
     if (!onSearch) return;
-    const id = setTimeout(() => {
-      onSearch(inputValue);
-    }, 300);
-    return () => clearTimeout(id);
-  }, [inputValue, onSearch]);
-  const selected = products.find((p) => p.id === value) ?? (value ? productFallback : null);
-  const displayLabel = selected
-    ? `${selected.product_code}${selected.product_name && selected.product_name !== selected.product_code ? ` - ${selected.product_name}` : ''}`
-    : '';
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => onSearch(query), 300);
+  };
 
-  const options: ProductOption[] = [
+  const options = [
     ...products,
-    ...(productFallback && value && !products.some((p) => p.id === productFallback.id) ? [productFallback] : []),
+    // Keep the saved product selectable even when it is absent from the current page.
+    ...(productFallback && value && !products.some((p) => p.id === productFallback.id)
+      ? [productFallback]
+      : []),
   ];
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          mode="input"
-          placeholder={!value}
-          aria-expanded={open}
-          disabled={disabled}
-          className={cn('w-full justify-between', className)}
-        >
-          <span className={cn('truncate', !displayLabel && 'text-muted-foreground')}>
-            {displayLabel || placeholder}
-          </span>
-          <ButtonArrow />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-(--radix-popper-anchor-width) p-0">
-        {/* shouldFilter=false when server-driven so cmdk doesn't drop rows
-            whose label lacks the typed substring verbatim. */}
-        <Command shouldFilter={!onSearch}>
-          <CommandInput
-            placeholder={placeholder}
-            value={inputValue}
-            onValueChange={setInputValue}
-          />
-          <CommandList>
-            <ScrollArea viewportClassName="max-h-[300px] [&>div]:block!">
-              <CommandEmpty>No product found.</CommandEmpty>
-              <CommandGroup>
-                {options.map((p) => (
-                  <CommandItem
-                    key={p.id}
-                    value={`${p.product_code} ${p.product_name ?? ''}`}
-                    onSelect={() => {
-                      onChange(value === p.id ? '' : p.id);
-                      setOpen(false);
-                    }}
-                  >
-                    <span className="truncate">
-                      {p.product_code} {p.product_name ? `- ${p.product_name}` : ''}
-                    </span>
-                    {value === p.id && <Check className="size-4 ms-auto" />}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </ScrollArea>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+    <SearchableSelect
+      value={value}
+      onChange={onChange}
+      disabled={disabled}
+      placeholder={placeholder}
+      emptyMessage="No product found."
+      triggerClassName={className}
+      onSearchChange={onSearch ? handleSearch : undefined}
+      options={options.map((p) => ({
+        value: p.id,
+        label: `${p.product_code}${p.product_name ? ` - ${p.product_name}` : ''}`,
+        searchText: `${p.product_code} ${p.product_name ?? ''}`,
+      }))}
+      renderTriggerLabel={(opt) => {
+        const p = options.find((o) => o.id === opt.value);
+        if (!p) return opt.label;
+        return `${p.product_code}${p.product_name && p.product_name !== p.product_code ? ` - ${p.product_name}` : ''}`;
+      }}
+    />
   );
 }

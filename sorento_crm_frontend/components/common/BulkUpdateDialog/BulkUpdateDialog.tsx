@@ -13,13 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -133,20 +127,15 @@ export function BulkUpdateDialog({
     // shows name/email, never the UUID). Options carry the display label so the UI
     // never surfaces a raw id.
     return (
-      <Select value={value} onValueChange={setValue}>
-        <SelectTrigger>
-          <SelectValue
-            placeholder={selectedField.type === 'user' ? 'Select a user…' : 'Select a value…'}
-          />
-        </SelectTrigger>
-        <SelectContent>
-          {(selectedField.options ?? []).map((opt) => (
-            <SelectItem key={opt.value} value={opt.value}>
-              {opt.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <SearchableSelect
+        value={value}
+        onChange={setValue}
+        options={(selectedField.options ?? []).map((opt) => ({
+          value: opt.value,
+          label: opt.label,
+        }))}
+        placeholder={selectedField.type === 'user' ? 'Select a user…' : 'Select a value…'}
+      />
     );
   };
 
@@ -176,24 +165,15 @@ export function BulkUpdateDialog({
                 <>
                   <div className="space-y-1.5">
                     <Label>Field to update</Label>
-                    <Select
+                    <SearchableSelect
                       value={fieldKey}
-                      onValueChange={(v) => {
+                      onChange={(v) => {
                         setFieldKey(v);
                         setValue('');
                       }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Choose a field…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {fields.map((f) => (
-                          <SelectItem key={f.key} value={f.key}>
-                            {f.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      options={fields.map((f) => ({ value: f.key, label: f.label }))}
+                      placeholder="Choose a field…"
+                    />
                     <p className="text-xs text-muted-foreground">
                       Only whitelisted fields can be bulk-edited.
                     </p>

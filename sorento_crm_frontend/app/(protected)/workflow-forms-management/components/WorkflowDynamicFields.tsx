@@ -5,13 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Plus, Trash2 } from 'lucide-react';
 import type { WorkflowFormSchema, WorkflowHeaderField } from '../types/workflowForms.types';
 
@@ -52,22 +46,13 @@ function renderField(
     case 'select':
     case 'radio':
       return (
-        <Select
+        <SearchableSelect
           disabled={disabled}
           value={typeof value === 'string' ? value : ''}
-          onValueChange={onChange}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Select…" />
-          </SelectTrigger>
-          <SelectContent>
-            {(f.options ?? []).map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          onChange={onChange}
+          options={(f.options ?? []).map((o) => ({ value: o.value, label: o.label }))}
+          placeholder="Select…"
+        />
       );
     case 'multi_select': {
       const arr = Array.isArray(value) ? (value as string[]) : [];

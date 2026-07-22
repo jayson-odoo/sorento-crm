@@ -24,7 +24,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStockBatches } from '../hooks/useStockBatches';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
@@ -198,19 +198,16 @@ export default function BatchesList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Status</Label>
-                    <Select value={statusFilter || 'all'} onValueChange={(v) => setStatusFilter(v === 'all' ? '' : v)}>
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="All statuses" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All statuses</SelectItem>
-                        {BATCH_STATUSES.map((s) => (
-                          <SelectItem key={s.value} value={s.value}>
-                            {s.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={statusFilter || 'all'}
+                      onChange={(v) => setStatusFilter(v === 'all' ? '' : v)}
+                      options={[
+                        { value: 'all', label: 'All statuses' },
+                        ...BATCH_STATUSES.map((s) => ({ value: s.value, label: s.label })),
+                      ]}
+                      placeholder="All statuses"
+                      triggerClassName="mt-1"
+                    />
                   </div>
                   {statusFilter && (
                     <div className="flex justify-end">

@@ -26,13 +26,7 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
@@ -453,52 +447,49 @@ export default function PurchaseRequestsList({
                   {!requestType && (
                     <div>
                       <Label>Type</Label>
-                      <Select
+                      <SearchableSelect
                         value={requestTypeFilter}
-                        onValueChange={setRequestTypeFilter}
-                      >
-                        <SelectTrigger className="mt-1 w-full">
-                          <SelectValue placeholder="Type" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All types</SelectItem>
-                          <SelectItem value="purchase_request">Purchase Request</SelectItem>
-                          <SelectItem value="sponsorship_form">Sponsorship Form</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        onChange={setRequestTypeFilter}
+                        placeholder="Type"
+                        triggerClassName="mt-1 w-full"
+                        options={[
+                          { value: 'all', label: 'All types' },
+                          { value: 'purchase_request', label: 'Purchase Request' },
+                          { value: 'sponsorship_form', label: 'Sponsorship Form' },
+                        ]}
+                      />
                     </div>
                   )}
                   <div>
                     <Label>Status</Label>
-                    <Select value={statusFilter} onValueChange={setStatusFilter}>
-                      <SelectTrigger className="mt-1 w-full">
-                        <SelectValue placeholder="Status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {STATUS_FILTER_OPTIONS.map((opt) => (
-                          <SelectItem key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={statusFilter}
+                      onChange={setStatusFilter}
+                      placeholder="Status"
+                      triggerClassName="mt-1 w-full"
+                      options={STATUS_FILTER_OPTIONS.map((opt) => ({
+                        value: opt.value,
+                        label: opt.label,
+                      }))}
+                    />
                   </div>
                   <div>
                     <Label>Assigned to</Label>
-                    <Select value={assignedToFilter} onValueChange={setAssignedToFilter}>
-                      <SelectTrigger className="mt-1 w-full">
-                        <SelectValue placeholder="Assigned to" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__all__">All assignees</SelectItem>
-                        <SelectItem value="__unassigned__">Unassigned</SelectItem>
-                        {assigneeOptions.map((u) => (
-                          <SelectItem key={u.id} value={u.id}>
-                            {u.name?.trim() || u.email}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={assignedToFilter}
+                      onChange={setAssignedToFilter}
+                      placeholder="Assigned to"
+                      triggerClassName="mt-1 w-full"
+                      options={[
+                        { value: '__all__', label: 'All assignees' },
+                        { value: '__unassigned__', label: 'Unassigned' },
+                        ...assigneeOptions.map((u) => ({
+                          value: u.id,
+                          label: u.name?.trim() || u.email,
+                          searchText: `${u.name ?? ''} ${u.email}`,
+                        })),
+                      ]}
+                    />
                   </div>
                   {filtersActiveCount > 0 && (
                     <div className="flex justify-end">

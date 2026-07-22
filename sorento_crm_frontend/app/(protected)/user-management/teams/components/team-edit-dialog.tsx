@@ -23,13 +23,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { LoaderCircleIcon } from 'lucide-react';
@@ -166,24 +160,17 @@ export default function TeamEditDialog({
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Parent team (optional)</FormLabel>
-                  <Select
-                    value={field.value ?? NO_PARENT}
-                    onValueChange={(v) => field.onChange(v === NO_PARENT ? null : v)}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="No parent team" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value={NO_PARENT}>No parent team</SelectItem>
-                      {parentOptions.map((t) => (
-                        <SelectItem key={t.id} value={t.id}>
-                          {t.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <FormControl>
+                    <SearchableSelect
+                      value={field.value ?? NO_PARENT}
+                      onChange={(v) => field.onChange(v === NO_PARENT ? null : v)}
+                      placeholder="No parent team"
+                      options={[
+                        { value: NO_PARENT, label: 'No parent team' },
+                        ...parentOptions.map((t) => ({ value: t.id, label: t.name })),
+                      ]}
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}

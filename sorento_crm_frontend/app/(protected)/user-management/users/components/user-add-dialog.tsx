@@ -26,22 +26,9 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import { Button, ButtonArrow } from '@/components/ui/button';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { Button } from '@/components/ui/button';
 import { LoaderCircleIcon } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { UserRole } from '@/app/models/user';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
 import { UserAddSchema, UserAddSchemaType } from '../forms/user-add-schema';
@@ -55,7 +42,6 @@ const UserAddDialog = ({
 }) => {
   const queryClient = useQueryClient();
   const [sendInvitationEmail, setSendInvitationEmail] = useState(true);
-  const [superiorOpen, setSuperiorOpen] = useState(false);
 
   // Fetch available roles
   const { data: roleList } = useRoleSelectQuery();
@@ -258,61 +244,29 @@ const UserAddDialog = ({
                 name="superior_id"
                 render={({ field }) => {
                   const value = field.value || '__none__';
-                  const selected = value === '__none__' ? null : (superiorUsers || []).find((u: { id: string }) => u.id === value);
-                  const displayLabel = selected ? (selected.name || selected.email) : 'None';
                   return (
                     <FormItem>
                       <FormLabel>Superior</FormLabel>
                       <FormControl>
-                        <Popover open={superiorOpen} onOpenChange={setSuperiorOpen}>
-                          <PopoverTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              role="combobox"
-                              mode="input"
-                              placeholder={!value || value === '__none__'}
-                              aria-expanded={superiorOpen}
-                              className="w-full justify-between"
-                            >
-                              <span className={cn('truncate', (!value || value === '__none__') && 'text-muted-foreground')}>
-                                {displayLabel}
-                              </span>
-                              <ButtonArrow />
-                            </Button>
-                          </PopoverTrigger>
-                          <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
-                            <Command>
-                              <CommandInput placeholder="Search by name or email..." />
-                              <CommandList>
-                                <CommandEmpty>No active user found.</CommandEmpty>
-                                <CommandGroup>
-                                  <CommandItem
-                                    value="__none__"
-                                    onSelect={() => {
-                                      field.onChange(null);
-                                      setSuperiorOpen(false);
-                                    }}
-                                  >
-                                    None
-                                  </CommandItem>
-                                  {(superiorUsers || []).map((superior: { id: string; name?: string | null; email: string }) => (
-                                    <CommandItem
-                                      key={superior.id}
-                                      value={`${superior.name ?? ''} ${superior.email}`.trim() || superior.id}
-                                      onSelect={() => {
-                                        field.onChange(superior.id);
-                                        setSuperiorOpen(false);
-                                      }}
-                                    >
-                                      {superior.name || superior.email}
-                                    </CommandItem>
-                                  ))}
-                                </CommandGroup>
-                              </CommandList>
-                            </Command>
-                          </PopoverContent>
-                        </Popover>
+                        <SearchableSelect
+                          value={value && value !== '__none__' ? value : '__none__'}
+                          onChange={(v) => field.onChange(v === '__none__' ? null : v)}
+                          placeholder="None"
+                          emptyMessage="No active user found."
+                          triggerClassName="w-full"
+                          options={[
+                            { value: '__none__', label: 'None' },
+                            ...(superiorUsers || []).map(
+                              (superior: { id: string; name?: string | null; email: string }) => ({
+                                value: superior.id,
+                                label: superior.name || superior.email,
+                                // Searchable by name AND email, as the hand-rolled picker was.
+                                searchText:
+                                  `${superior.name ?? ''} ${superior.email}`.trim() || superior.id,
+                              }),
+                            ),
+                          ]}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

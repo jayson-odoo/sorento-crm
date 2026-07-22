@@ -21,14 +21,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { LoaderCircleIcon } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
@@ -611,33 +604,29 @@ export default function Page() {
                 <FormItem>
                   <FormLabel>Language</FormLabel>
                   <FormControl>
-                    <Select
-                      onValueChange={field.onChange}
-                      defaultValue={field.value}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select language" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          {languages.map((language) => (
-                            <SelectItem
-                              key={language.code}
-                              value={language.code}
-                            >
-                              <span className="flex w-full items-center justify-between gap-2.5">
-                                <img
-                                  src={language.flag}
-                                  alt={`${language.name} flag`}
-                                  className="size-4 rounded-full"
-                                />
-                                <span className="grow">{language.name}</span>
-                              </span>
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      onChange={field.onChange}
+                      value={field.value}
+                      placeholder="Select language"
+                      options={languages.map((language) => ({
+                        value: language.code,
+                        label: language.name,
+                      }))}
+                      // Rows carry a flag image, which no option field can express.
+                      renderOption={(opt) => {
+                        const language = languages.find((l) => l.code === opt.value);
+                        return (
+                          <span className="flex w-full items-center justify-between gap-2.5">
+                            <img
+                              src={language?.flag}
+                              alt={`${opt.label} flag`}
+                              className="size-4 rounded-full"
+                            />
+                            <span className="grow">{opt.label}</span>
+                          </span>
+                        );
+                      }}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -715,30 +704,19 @@ export default function Page() {
                 <FormItem>
                   <FormLabel>Currency</FormLabel>
                   <FormControl>
-                    <Select
-                      onValueChange={field.onChange}
-                      defaultValue={field.value}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select currency" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="MYR">MYR - Malaysian Ringgit</SelectItem>
-                          <SelectItem value="USD">USD - US Dollar</SelectItem>
-                          <SelectItem value="EUR">EUR - Euro</SelectItem>
-                          <SelectItem value="GBP">
-                            GBP - British Pound
-                          </SelectItem>
-                          <SelectItem value="JPY">
-                            JPY - Japanese Yen
-                          </SelectItem>
-                          <SelectItem value="INR">
-                            INR - Indian Rupee
-                          </SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      onChange={field.onChange}
+                      value={field.value}
+                      placeholder="Select currency"
+                      options={[
+                        { value: 'MYR', label: 'MYR - Malaysian Ringgit' },
+                        { value: 'USD', label: 'USD - US Dollar' },
+                        { value: 'EUR', label: 'EUR - Euro' },
+                        { value: 'GBP', label: 'GBP - British Pound' },
+                        { value: 'JPY', label: 'JPY - Japanese Yen' },
+                        { value: 'INR', label: 'INR - Indian Rupee' },
+                      ]}
+                    />
                   </FormControl>
                   <FormDescription>
                     Select the currency used for transactions in your store.
@@ -756,37 +734,19 @@ export default function Page() {
                 <FormItem>
                   <FormLabel>Currency Format</FormLabel>
                   <FormControl>
-                    <Select
-                      onValueChange={field.onChange}
-                      defaultValue={field.value}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select currency format" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value="RM {value}">
-                            RM {`{value}`}
-                          </SelectItem>
-                          <SelectItem value="$ {value}">
-                            $ {`{value}`}
-                          </SelectItem>
-                          <SelectItem value="{value} €">
-                            {`{value}`} €
-                          </SelectItem>
-                          <SelectItem value="£ {value}">
-                            £ {`{value}`}
-                          </SelectItem>
-                          <SelectItem value="¥ {value}">
-                            ¥ {`{value}`}
-                          </SelectItem>
-                          <SelectItem value="₹ {value}">
-                            ₹ {`{value}`}
-                          </SelectItem>
-                          {/* Add more formats as needed */}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      onChange={field.onChange}
+                      value={field.value}
+                      placeholder="Select currency format"
+                      options={[
+                        { value: 'RM {value}', label: 'RM {value}' },
+                        { value: '$ {value}', label: '$ {value}' },
+                        { value: '{value} €', label: '{value} €' },
+                        { value: '£ {value}', label: '£ {value}' },
+                        { value: '¥ {value}', label: '¥ {value}' },
+                        { value: '₹ {value}', label: '₹ {value}' },
+                      ]}
+                    />
                   </FormControl>
                   <FormDescription>
                     Choose how the currency is displayed (e.g., symbol before or
@@ -804,27 +764,19 @@ export default function Page() {
                 <FormItem>
                   <FormLabel>Default supplier (new products)</FormLabel>
                   <FormControl>
-                    <Select
+                    <SearchableSelect
                       key={`def-sup-${field.value}-${suppliersForSelect.length}-${savedSupplierFallback?.id ?? ''}`}
-                      onValueChange={field.onChange}
+                      onChange={field.onChange}
                       value={field.value}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select supplier" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value={NO_DEFAULT_SUPPLIER_VALUE}>
-                            Automatic
-                          </SelectItem>
-                          {suppliersForSelect.map((s) => (
-                            <SelectItem key={s.id} value={s.id}>
-                              {s.supplier_code} — {s.supplier_name}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                      placeholder="Select supplier"
+                      options={[
+                        { value: NO_DEFAULT_SUPPLIER_VALUE, label: 'Automatic' },
+                        ...suppliersForSelect.map((s) => ({
+                          value: s.id,
+                          label: `${s.supplier_code} — ${s.supplier_name}`,
+                        })),
+                      ]}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -892,25 +844,19 @@ export default function Page() {
                 <FormItem>
                   <FormLabel>Default approver (purchase requests)</FormLabel>
                   <FormControl>
-                    <Select
+                    <SearchableSelect
                       key={`def-pr-appr-${field.value}-${approversForPurchaseRequest.length}`}
-                      onValueChange={field.onChange}
+                      onChange={field.onChange}
                       value={field.value}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="None" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value={NO_DEFAULT_APPROVER_VALUE}>None</SelectItem>
-                          {approversForPurchaseRequest.map((u) => (
-                            <SelectItem key={u.id} value={u.id}>
-                              {(u.name?.trim() || u.email) + ` (${u.email})`}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                      placeholder="None"
+                      options={[
+                        { value: NO_DEFAULT_APPROVER_VALUE, label: 'None' },
+                        ...approversForPurchaseRequest.map((u) => ({
+                          value: u.id,
+                          label: (u.name?.trim() || u.email) + ` (${u.email})`,
+                        })),
+                      ]}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -924,25 +870,19 @@ export default function Page() {
                 <FormItem>
                   <FormLabel>Default approver (sponsorship forms)</FormLabel>
                   <FormControl>
-                    <Select
+                    <SearchableSelect
                       key={`def-sf-appr-${field.value}-${approversForSponsorshipForm.length}`}
-                      onValueChange={field.onChange}
+                      onChange={field.onChange}
                       value={field.value}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="None" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectItem value={NO_DEFAULT_APPROVER_VALUE}>None</SelectItem>
-                          {approversForSponsorshipForm.map((u) => (
-                            <SelectItem key={u.id} value={u.id}>
-                              {(u.name?.trim() || u.email) + ` (${u.email})`}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                      placeholder="None"
+                      options={[
+                        { value: NO_DEFAULT_APPROVER_VALUE, label: 'None' },
+                        ...approversForSponsorshipForm.map((u) => ({
+                          value: u.id,
+                          label: (u.name?.trim() || u.email) + ` (${u.email})`,
+                        })),
+                      ]}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
