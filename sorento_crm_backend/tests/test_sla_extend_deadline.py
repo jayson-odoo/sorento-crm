@@ -21,11 +21,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.access import (
     AccessAgent,
     AgentTeam,
@@ -34,12 +30,10 @@ from app.models.access import (
     Team,
     TeamMember,
 )
-from app.models.calendar import PublicHoliday, WorkCalendarConfig
-from app.models.lookup import LookupBinding  # validator listener checks this table
+from app.models.calendar import PublicHoliday
 from app.models.notification import (
     Notification,
     NotificationDelivery,
-    PushSubscription,
 )
 from app.models.sla import (
     ConversationSLAEventLog,
@@ -51,6 +45,7 @@ from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.notification_service import NotificationService
 from app.services.sla_service import ConversationSLATrackingService
+from tests._pg_fixture import blank_session
 
 
 # ---------------------------------------------------------------------------
@@ -58,54 +53,8 @@ from app.services.sla_service import ConversationSLATrackingService
 # ---------------------------------------------------------------------------
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    # RespondContact.session_vars is JSONB w/ pg server_default; swap for sqlite.
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for table in (
-        RespondContact.__table__,
-        AccessAgent.__table__,
-        Notification.__table__,
-    ):
-        for col in list(table.columns):
-            if isinstance(col.type, JSONB):
-                col.type = GenericJSON()
-                col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            SLAPolicy.__table__,
-            SLAPolicyTier.__table__,
-            ConversationSLATracking.__table__,
-            ConversationSLAEventLog.__table__,
-            RespondContact.__table__,
-            AccessAgent.__table__,
-            Team.__table__,
-            TeamMember.__table__,
-            AgentTeam.__table__,
-            AgentTeamRoundRobinCursor.__table__,
-            User.__table__,
-            PublicHoliday.__table__,
-            WorkCalendarConfig.__table__,
-            Notification.__table__,
-            NotificationDelivery.__table__,
-            PushSubscription.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 ASSIGNEE_ID = "user-assignee"
@@ -932,6 +881,9 @@ def test_extend_does_not_advance_round_robin_cursor(db):
     db.add(TeamMember(id=str(uuid.uuid4()), team_id=team2_id, user_id="next-2", sort_order=2))
     # Agent team set 'cs' at tier 2 -> team2.
     db.add(AgentTeam(id=str(uuid.uuid4()), agent_id=agent_id, code="cs", team_id=team2_id, tier=2))
+    # Flush parents first -- Postgres enforces the cursor's team/agent FKs, and the
+    # ORM insert order is not guaranteed without relationships between these mappers.
+    db.flush()
     # Cursor currently points at next-1 (so next-in-line would be next-2).
     db.add(
         AgentTeamRoundRobinCursor(

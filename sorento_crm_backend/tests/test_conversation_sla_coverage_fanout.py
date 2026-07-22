@@ -27,13 +27,8 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.access import RespondContact
-from app.models.lookup import LookupBinding  # validator listener checks this table
 from app.models.notification import (
     Notification,
     NotificationDelivery,
@@ -48,6 +43,7 @@ from app.models.sla import (
 from app.models.user import User
 from app.schemas.sla import ConversationSLATrackingCreate
 from app.services.sla_service import ConversationSLATrackingService
+from tests._pg_fixture import blank_session
 
 PHONE = "+60123456789"
 COV_SOURCE = "coverage:conversation_sla_tracking"
@@ -55,40 +51,6 @@ COV_SOURCE = "coverage:conversation_sla_tracking"
 
 @pytest.fixture
 def db(monkeypatch):
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for table in (
-        RespondContact.__table__,
-        Notification.__table__,
-    ):
-        for col in list(table.columns):
-            if isinstance(col.type, JSONB):
-                col.type = GenericJSON()
-                col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            SLAPolicy.__table__,
-            SLAPolicyTier.__table__,
-            ConversationSLATracking.__table__,
-            ConversationSLAEventLog.__table__,
-            RespondContact.__table__,
-            User.__table__,
-            NotificationSubscription.__table__,
-            Notification.__table__,
-            NotificationDelivery.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-
     # The fan-out's last step enqueues an async delivery job. There is no Redis in the
     # unit harness; create_with_channel_preferences already swallows enqueue errors, but
     # stub it so the test never depends on a broker being up.
@@ -96,12 +58,8 @@ def db(monkeypatch):
 
     monkeypatch.setattr(queue_service, "enqueue_job", lambda *a, **k: None)
 
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 def _seed(db) -> dict:

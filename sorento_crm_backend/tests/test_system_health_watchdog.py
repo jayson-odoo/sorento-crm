@@ -16,16 +16,9 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.types import JSON
 
-from app.database import Base
 from app.models.health_alert_state import HealthAlertState
 from app.models.integration import IntegrationLog
-from app.models.lookup import LookupBinding
 from app.models.scheduled_task import ScheduledTask
 from app.models.user import (
     SystemSetting,
@@ -36,40 +29,13 @@ from app.models.user import (
 )
 from app.services import system_health_alert_service as svc
 from app.services.n8n_liveness_service import HEALTHCHECK_CHANNEL
-
-
-def _prep(*models):
-    for model in models:
-        for col in model.__table__.columns:
-            if isinstance(col.type, (JSONB, ARRAY)):
-                col.type = JSON()
-                col.server_default = None
-
-
-_MODELS = [
-    HealthAlertState,
-    IntegrationLog,
-    ScheduledTask,
-    SystemSetting,
-    User,
-    UserRole,
-    UserRoleAssignment,
-    LookupBinding,
-]
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    _prep(*_MODELS)
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=[m.__table__ for m in _MODELS])
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    with blank_session() as session:
+        yield session
 
 
 NOW = datetime(2026, 7, 1, 12, 0, 0)

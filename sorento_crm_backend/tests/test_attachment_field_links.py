@@ -15,11 +15,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.attachment_field_link import AttachmentFieldLink
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.services.field_linkage import (
@@ -29,6 +25,11 @@ from app.services.field_linkage import (
     get_field_specs,
     validate_field_keys,
 )
+from tests._pg_fixture import blank_session
+
+# Parent attachment the linkage tests point at. Postgres enforces the
+# attachment_field_links.attachment_id FK, so this row must exist.
+_ATTACHMENT_ID = "00000000-0000-0000-0000-000000000a01"
 
 
 # ---------------- Registry ------------------------------------------------
@@ -198,24 +199,26 @@ def test_product_response_field_attachments_defaults_to_none():
 
 @pytest.fixture
 def afl_session():
-    """In-memory SQLite session with only the ``attachment_field_links`` table.
+    """A blank Postgres schema with the one parent attachment seeded.
 
-    We deliberately do NOT enable PRAGMA foreign_keys=ON nor create the
-    ``attachments`` table — we want orphan inserts so the service can be
-    tested in isolation from the rest of the schema (which uses JSONB).
+    Was in-memory SQLite with FK enforcement disabled so orphan
+    ``attachment_field_links`` rows could be inserted. Postgres enforces the
+    attachment_id FK, so instead of dropping integrity we seed the real parent
+    ``attachments`` row the tests link to.
     """
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=[AttachmentFieldLink.__table__])
-    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = Session()
-    try:
+    from app.models.resources import Attachment
+
+    with blank_session() as s:
+        s.add(
+            Attachment(
+                id=_ATTACHMENT_ID,
+                original_filename="tech-spec.pdf",
+                stored_filename="tech-spec.pdf",
+                file_path="https://cdn/tech-spec.pdf",
+            )
+        )
+        s.commit()
         yield s
-    finally:
-        s.close()
 
 
 def test_set_links_inserts_only_known_keys(afl_session):

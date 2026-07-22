@@ -16,11 +16,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.access import RespondContact
 from app.models.sla import (
     SLAPolicy,
@@ -29,40 +25,13 @@ from app.models.sla import (
     ConversationSLAEventLog,
 )
 from app.models.user import User
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for col in list(RespondContact.__table__.columns):
-        if isinstance(col.type, JSONB):
-            col.type = GenericJSON()
-            col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            RespondContact.__table__,
-            User.__table__,
-            SLAPolicy.__table__,
-            SLAPolicyTier.__table__,
-            ConversationSLATracking.__table__,
-            ConversationSLAEventLog.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 def _user(db, name):
@@ -143,9 +112,15 @@ def test_form_escalate_snapshots_prior_owner(db):
     from app.services import coverage_subscription_service as cov_mod
     from app.services.form_sla_service import FormSLAOrchestrator
 
+    from app.models.access import AccessAgent
+
     prev = _user(db, "form_prev")
     nxt = _user(db, "form_next")
     pid = _policy_with_tiers(db)
+    # Postgres enforces the agent FK -- seed a real parent AccessAgent.
+    agent_id = str(uuid.uuid4())
+    db.add(AccessAgent(id=agent_id, code=f"zzt-{uuid.uuid4().hex[:8]}", name="Agent"))
+    db.commit()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     tid = str(uuid.uuid4())
     db.add(ConversationSLATracking(
@@ -156,7 +131,7 @@ def test_form_escalate_snapshots_prior_owner(db):
         due_at=now,
         source_entity_type="complaint",
         source_entity_id="complaint-1",
-        agent_id=str(uuid.uuid4()),
+        agent_id=agent_id,
         team_set_code=None,
     ))
     db.commit()

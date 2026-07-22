@@ -13,68 +13,26 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.audit import AuditLog
-from app.models.embeddings import EmbeddingQueue
-from app.models.lookup import LookupBinding, LookupOption, LookupSet
 from app.models.marketing import (
     Promotion,
     PromotionAttachment,
     PromotionGroup,
     PromotionProduct,
 )
-from app.models.product import Brand, Product, ProductCategory
-from app.models.resources import Attachment, AttachmentDirectory, AttachmentType
+from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.resources import Attachment
 from app.services.marketing_service import (
     PromotionAttachmentService,
     PromotionProductService,
 )
-
-
-@compiles(JSONB, "sqlite")
-def _jsonb_as_json_on_sqlite(_element, _compiler, **_kw):
-    return "JSON"
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            AttachmentDirectory.__table__,
-            AttachmentType.__table__,
-            Attachment.__table__,
-            ProductCategory.__table__,
-            Brand.__table__,
-            Product.__table__,
-            Promotion.__table__,
-            PromotionGroup.__table__,
-            PromotionProduct.__table__,
-            PromotionAttachment.__table__,
-            LookupSet.__table__,
-            LookupOption.__table__,
-            LookupBinding.__table__,
-            AuditLog.__table__,
-            EmbeddingQueue.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 def _seed_promotion(db, *, description: str, active: bool) -> str:
@@ -95,12 +53,20 @@ def _seed_promotion(db, *, description: str, active: bool) -> str:
 
 
 def _seed_product(db, code: str) -> str:
+    # category_id / base_uom_id are real NOT NULL FKs -- create the parents that
+    # sqlite let us skip.
+    category = ProductCategory(
+        id=str(uuid.uuid4()), category_code=f"CAT-{code}", category_name=f"Category {code}"
+    )
+    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=f"UOM-{code}", uom_name="Each")
+    db.add_all([category, uom])
+    db.flush()
     p = Product(
         id=str(uuid.uuid4()),
         product_code=code,
         product_name=code,
-        category_id=str(uuid.uuid4()),
-        base_uom_id=str(uuid.uuid4()),
+        category_id=category.id,
+        base_uom_id=uom.id,
         list_price=0,
         is_active=True,
     )
