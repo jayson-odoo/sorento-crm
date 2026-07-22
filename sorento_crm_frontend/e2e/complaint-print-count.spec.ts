@@ -69,7 +69,7 @@ test.describe('Complaint print count + downloads modal', () => {
     const firstRow = page.locator('table tbody tr').first();
     await expect(firstRow).toBeVisible({ timeout: 20_000 });
     await firstRow
-      .getByRole('button', { name: /view downloads for this complaint/i })
+      .locator('button[title="View downloads for this complaint"]')
       .click();
 
     await entityFeed;
@@ -102,7 +102,7 @@ test.describe('Complaint print count + downloads modal', () => {
 
     // Chip next to the button opens the per-complaint downloads modal.
     await page
-      .getByRole('button', { name: /view downloads for this complaint/i })
+      .locator('button[title="View downloads for this complaint"]')
       .click();
     const modal = page.getByRole('dialog');
     await expect(modal.getByText(/^Downloads/)).toBeVisible({ timeout: 10_000 });

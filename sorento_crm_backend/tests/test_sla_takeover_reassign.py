@@ -80,7 +80,7 @@ def _user(db, name, respond_user_id=None) -> str:
             id=uid,
             email=f"{name}@x.com",
             name=name,
-            status="active",
+            status="ACTIVE",
             respond_user_id=respond_user_id,
         )
     )

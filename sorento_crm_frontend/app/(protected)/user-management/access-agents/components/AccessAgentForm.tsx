@@ -23,10 +23,9 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent, useAccessAgents, useAgentTeams, useTeams, useAgentMcpToolBindings, useSetAgentMcpToolBindings } from '../hooks/useAccessAgents';
-import { setAgentTeams, type McpToolBindingInput } from '../services/accessAgentService';
+import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent, useAccessAgents, useAgentTeams, useTeams } from '../hooks/useAccessAgents';
+import { setAgentTeams } from '../services/accessAgentService';
 import { getSLAPolicies } from '@/app/(protected)/sla-management/sla-policies/services/slaPolicyService';
-import { McpToolBindingsEditor } from './McpToolBindingsEditor';
 import { AccessAgentSchema, type AccessAgentSchemaType } from '../forms/access-agent-schema';
 import type { AccessAgentFormData } from '../types/accessAgent.types';
 import RecordNavigation from '@/components/common/RecordNavigation';
@@ -79,22 +78,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
   });
   const slaPolicies = slaPoliciesData?.data ?? [];
 
-  const { data: agentMcpBindingsData } = useAgentMcpToolBindings(isEditMode ? accessAgentId ?? null : null);
-  const setAgentMcpToolBindingsMutation = useSetAgentMcpToolBindings();
-  const [bindings, setBindings] = useState<McpToolBindingInput[]>([]);
-  const [initialBindings, setInitialBindings] = useState<McpToolBindingInput[]>([]);
-
-  useEffect(() => {
-    if (agentMcpBindingsData) {
-      const next: McpToolBindingInput[] = agentMcpBindingsData.map((b) => ({
-        tool_id: b.tool_id,
-        team_id: b.team_id,
-        tier: b.tier,
-      }));
-      setBindings(next);
-      setInitialBindings(next);
-    }
-  }, [agentMcpBindingsData]);
 
   useEffect(() => {
     const fromServer = agentTeamsData?.assignments;
@@ -197,14 +180,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
           .filter((a) => a.code && a.team_id);
         await setAgentTeams(accessAgentId, validAssignments);
         queryClient.invalidateQueries({ queryKey: ['agent-teams', accessAgentId] });
-        const sanitized = bindings.filter((b) => b.tool_id);
-        if (JSON.stringify(sanitized) !== JSON.stringify(initialBindings)) {
-          await setAgentMcpToolBindingsMutation.mutateAsync({
-            agentId: accessAgentId,
-            bindings: sanitized,
-          });
-          setInitialBindings(sanitized);
-        }
         toast.success('Access agent updated successfully');
       } else {
         await createMutation.mutateAsync(formData);
@@ -232,8 +207,7 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
 
   const isLoading =
     createMutation.isPending ||
-    updateMutation.isPending ||
-    setAgentMcpToolBindingsMutation.isPending;
+    updateMutation.isPending;
 
   return (
     <Form {...form}>
@@ -552,25 +526,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
           </Card>
         )}
 
-        {isEditMode && accessAgentId && (
-          <Card>
-            <CardHeader>
-              <CardTitle>MCP Tool Bindings</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-xs text-muted-foreground">
-                Bind a tool to a specific team to route escalation for that tool only
-                to that team. Leave team empty (legacy) to fan out via this agent&apos;s
-                team set above.
-              </p>
-              <McpToolBindingsEditor
-                value={bindings}
-                onChange={setBindings}
-                disabled={isLoading}
-              />
-            </CardContent>
-          </Card>
-        )}
 
         <div className="flex justify-end gap-4 pt-4">
           <Button

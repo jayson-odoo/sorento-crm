@@ -466,8 +466,8 @@ def test_F4_folder_delete_cascade_and_restore(db):
 
     # Cascade soft-delete (mirrors the directories DELETE route).
     dir_ids = dir_svc.get_descendant_directory_ids(parent)
-    att_svc.archive_attachments_in_directories(dir_ids, archived_by="tester")
-    dir_svc.delete_directory(parent, deleted_by="tester")
+    att_svc.archive_attachments_in_directories(dir_ids, archived_by="40e836b9-b307-5b9d-b7b4-1dea8f2110b8")
+    dir_svc.delete_directory(parent, deleted_by="40e836b9-b307-5b9d-b7b4-1dea8f2110b8")
 
     # Subtree gone from a normal browse.
     res = _drive(db, directory_id=None)
@@ -499,8 +499,8 @@ def test_F4_trash_view_lists_deleted_folders(db):
     dir_svc = AttachmentDirectoryService(db)
     att_svc = AttachmentService(db)
     dir_ids = dir_svc.get_descendant_directory_ids(parent)
-    att_svc.archive_attachments_in_directories(dir_ids, archived_by="tester")
-    dir_svc.delete_directory(parent, deleted_by="tester")
+    att_svc.archive_attachments_in_directories(dir_ids, archived_by="40e836b9-b307-5b9d-b7b4-1dea8f2110b8")
+    dir_svc.delete_directory(parent, deleted_by="40e836b9-b307-5b9d-b7b4-1dea8f2110b8")
 
     # Root trash browse shows the deleted top-level folder.
     res = _drive(db, directory_id=None, is_deleted=True)

@@ -112,19 +112,19 @@ def _seed_status_audit_for(db: Session, entity_type: str, entity_id: str,
 
 
 def test_assemble_rejected_complaint_happy_path(db_session: Session):
-    _seed_user(db_session, "u-approver", "Jane Lim")
+    _seed_user(db_session, "5aaa3b4e-f11f-51a0-a954-63632c67ec99", "Jane Lim")
     rejected_at = datetime(2026, 6, 20, 8, 14, 0)
     c = _seed_complaint(
         db_session,
         status="rejected",
         rejection_reason="Out of warranty window",
-        rejected_by="u-approver",
+        rejected_by="5aaa3b4e-f11f-51a0-a954-63632c67ec99",
         rejected_at=rejected_at,
     )
     db_session.flush()
-    _seed_status_audit(db_session, c.id, "new", "submitted", "u-approver",
+    _seed_status_audit(db_session, c.id, "new", "submitted", "5aaa3b4e-f11f-51a0-a954-63632c67ec99",
                        datetime(2026, 6, 20, 1, 0, 0))
-    _seed_status_audit(db_session, c.id, "submitted", "rejected", "u-approver",
+    _seed_status_audit(db_session, c.id, "submitted", "rejected", "5aaa3b4e-f11f-51a0-a954-63632c67ec99",
                        rejected_at)
     db_session.commit()
 
@@ -160,7 +160,7 @@ def test_assemble_rejected_complaint_happy_path(db_session: Session):
 
 
 def test_assemble_with_form_sla_tracker(db_session: Session):
-    _seed_user(db_session, "u-agent", "Sam Tan")
+    _seed_user(db_session, "1a1fa7ab-0926-50b5-bf3c-668eb25d05a9", "Sam Tan")
     c = _seed_complaint(db_session, status="submitted")
     db_session.flush()
 
@@ -186,7 +186,7 @@ def test_assemble_with_form_sla_tracker(db_session: Session):
             current_tier=2,
             source_entity_type="complaint",
             source_entity_id=str(c.id),
-            assigned_to_id="u-agent",
+            assigned_to_id="1a1fa7ab-0926-50b5-bf3c-668eb25d05a9",
             initiated_at=initiated,
             current_tier_started_at=initiated,
             due_at=past_due,
@@ -256,18 +256,18 @@ def _seed_stock_inquiry(db: Session, **overrides) -> StockInquiry:
 
 
 def test_assemble_stock_inquiry_rejected(db_session: Session):
-    _seed_user(db_session, "u-si-rej", "Nora Aziz")
+    _seed_user(db_session, "c1b27089-bd7f-5e30-b5d6-1fb1ca38dfcb", "Nora Aziz")
     rejected_at = datetime(2026, 6, 21, 5, 30, 0)
     si = _seed_stock_inquiry(
         db_session,
         status="rejected",
         rejection_reason="Item discontinued — no stock available",
-        rejected_by="u-si-rej",
+        rejected_by="c1b27089-bd7f-5e30-b5d6-1fb1ca38dfcb",
         rejected_at=rejected_at,
     )
     db_session.flush()
     _seed_status_audit_for(db_session, "stock_inquiry", si.id, "new", "rejected",
-                           "u-si-rej", rejected_at)
+                           "c1b27089-bd7f-5e30-b5d6-1fb1ca38dfcb", rejected_at)
     db_session.commit()
 
     out = RecordContextService(db_session).assemble("stock_inquiry", si.id)
@@ -311,12 +311,12 @@ def test_assemble_stock_inquiry_pending_has_no_decision(db_session: Session):
 
 
 def test_assemble_stock_inquiry_responded_captures_responder(db_session: Session):
-    _seed_user(db_session, "u-resp-si", "Li Juan")
+    _seed_user(db_session, "5a100be9-6c93-5a7a-9c7a-1eb22334ba36", "Li Juan")
     responded_at = datetime(2026, 5, 22, 6, 47, 0)
     si = _seed_stock_inquiry(
         db_session,
         status="responded",
-        last_responded_by="u-resp-si",
+        last_responded_by="5a100be9-6c93-5a7a-9c7a-1eb22334ba36",
         last_responded_at=responded_at,
         purchasing_response="incoming eta 30.05.2026",
         created_at=datetime(2026, 5, 22, 0, 0, 0),
@@ -389,7 +389,7 @@ def _seed_request(db: Session, request_type: str, **overrides) -> PurchaseReques
 
 
 def test_assemble_purchase_request_approved(db_session: Session):
-    _seed_user(db_session, "u-approver-pr", "Daniel Ong")
+    _seed_user(db_session, "c8b2e855-44d9-5220-8451-e03dc33815bb", "Daniel Ong")
     approved_at = datetime(2026, 6, 22, 10, 0, 0)
     pr = _seed_request(
         db_session,
@@ -398,7 +398,7 @@ def test_assemble_purchase_request_approved(db_session: Session):
         approval_status="approved",
         approved_at=approved_at,
         approved_by="daniel.ong@example.com",
-        approver_user_id="u-approver-pr",
+        approver_user_id="c8b2e855-44d9-5220-8451-e03dc33815bb",
         approval_comments="Approved within budget",
     )
     db_session.commit()
@@ -455,7 +455,7 @@ def test_assemble_purchase_request_rejected_uses_approval_comments(db_session: S
 
 
 def test_assemble_sponsorship_form(db_session: Session):
-    _seed_user(db_session, "u-sf-appr", "Priya Nair")
+    _seed_user(db_session, "da194ca8-1d20-51ef-8b9a-f84eadbe4864", "Priya Nair")
     approved_at = datetime(2026, 6, 23, 4, 0, 0)
     sf = _seed_request(
         db_session,
@@ -466,7 +466,7 @@ def test_assemble_sponsorship_form(db_session: Session):
         status="approved",
         approval_status="approved",
         approved_at=approved_at,
-        approver_user_id="u-sf-appr",
+        approver_user_id="da194ca8-1d20-51ef-8b9a-f84eadbe4864",
         approval_comments="Good brand exposure",
         sponsor_subject="showroom",
         total_project_value_text="EST RM1.2MIL",
@@ -475,7 +475,7 @@ def test_assemble_sponsorship_form(db_session: Session):
     db_session.flush()
     # Sponsorship audits under "purchase_request" (shared with PR).
     _seed_status_audit_for(db_session, "purchase_request", sf.id, "pending",
-                           "approved", "u-sf-appr", approved_at)
+                           "approved", "da194ca8-1d20-51ef-8b9a-f84eadbe4864", approved_at)
 
     # SLA tracker keyed by "sponsorship_form" (distinct from purchase_request).
     policy = SLAPolicy(id=str(uuid.uuid4()), code="sf", name="Sponsorship SLA")
@@ -498,7 +498,7 @@ def test_assemble_sponsorship_form(db_session: Session):
             current_tier=1,
             source_entity_type="sponsorship_form",
             source_entity_id=str(sf.id),
-            assigned_to_id="u-sf-appr",
+            assigned_to_id="da194ca8-1d20-51ef-8b9a-f84eadbe4864",
             initiated_at=initiated,
             current_tier_started_at=initiated,
             due_at=datetime.utcnow() + timedelta(hours=6),

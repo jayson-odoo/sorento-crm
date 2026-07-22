@@ -1,5 +1,6 @@
 from __future__ import annotations
 import time
+import weakref
 from typing import Optional
 from sqlalchemy.orm import Session
 from fastapi import status
@@ -15,7 +16,7 @@ def _cache_clear() -> None:
     _cache.clear()
 
 
-_table_cache: dict[int, bool] = {}
+_table_cache: "weakref.WeakKeyDictionary[Any, bool]" = weakref.WeakKeyDictionary()
 
 
 def _lookup_tables_exist(bind) -> bool:
@@ -25,7 +26,13 @@ def _lookup_tables_exist(bind) -> bool:
     tests. Prod always has it (no-op there). Cached per-engine."""
     if bind is None:
         return False
-    key = id(bind.engine if hasattr(bind, "engine") else bind)
+    # Keyed by the engine OBJECT via a weak map, never by id(engine):
+    # CPython recycles id() once an object is collected, so a short-lived
+    # engine (every sqlite test file makes its own, each with a different
+    # subset schema) could land on a dead engine's address and inherit its
+    # cached answer. Measured: 60 engines produced only 23 distinct ids.
+    # A weak map drops the entry when the engine dies, so no reuse.
+    key = bind.engine if hasattr(bind, "engine") else bind
     cached = _table_cache.get(key)
     if cached is None:
         from sqlalchemy import inspect as _sa_inspect

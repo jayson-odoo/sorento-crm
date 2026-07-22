@@ -93,7 +93,6 @@ ALLOWLISTED = [
     ("forms/forms.py", "form_id"),
     ("user_management/teams.py", "team_id"),
     ("user_management/access_agents.py", "agent_id"),
-    ("user_management/access_agent_mcp_tools.py", "agent_id"),
     ("user_management/permissions.py", "permission_id"),
     ("user_management/roles.py", "role_id"),
     ("user_management/users.py", "user_id"),

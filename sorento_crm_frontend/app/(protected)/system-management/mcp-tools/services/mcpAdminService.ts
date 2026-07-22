@@ -6,19 +6,6 @@ export interface McpToolCatalogRow {
   tool_name: string;
   description: string | null;
   module_key: string;
-  current_agent_ids: string[];
-  current_agent_names: string[];
-}
-
-export interface McpAccessLogRow {
-  id: string;
-  tool_name: string;
-  contact_external_id: string | null;
-  respond_contact_id: string | null;
-  respond_workspace_id: string | null;
-  decision: string;
-  matched_agent_id: string | null;
-  ts: string;
 }
 
 export async function listMcpToolsCatalog(params: {
@@ -31,46 +18,6 @@ export async function listMcpToolsCatalog(params: {
   const response = await apiFetch(`/api/system/mcp-tools?${usp.toString()}`);
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to fetch MCP tools'));
-  }
-  return response.json();
-}
-
-export interface McpToolRoutingEntry {
-  team_code: string;
-  team_name: string;
-  agent_code: string;
-  agent_name: string;
-  tier: number | null;
-}
-
-export interface McpToolRoutingResult {
-  tool_name: string;
-  entries: McpToolRoutingEntry[];
-  primary: McpToolRoutingEntry | null;
-}
-
-export async function getMcpToolRouting(toolName: string): Promise<McpToolRoutingResult> {
-  const usp = new URLSearchParams();
-  usp.set('tool_name', toolName);
-  const response = await apiFetch(`/api/system/mcp-routing?${usp.toString()}`);
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to fetch MCP tool routing'));
-  }
-  return response.json();
-}
-
-export async function listMcpAccessLog(params: {
-  decision?: string;
-  tool_name?: string;
-  limit?: number;
-} = {}): Promise<McpAccessLogRow[]> {
-  const usp = new URLSearchParams();
-  if (params.decision) usp.set('decision', params.decision);
-  if (params.tool_name) usp.set('tool_name', params.tool_name);
-  usp.set('limit', String(params.limit ?? 200));
-  const response = await apiFetch(`/api/system/mcp-access/log?${usp.toString()}`);
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to fetch MCP access log'));
   }
   return response.json();
 }

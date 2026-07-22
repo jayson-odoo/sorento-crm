@@ -89,6 +89,25 @@ jobs:
             sorento-backend:ci \
             -m pytest --collect-only -q
 
+      # Fast in-image smoke gate. The real backend suite runs in `test-backend`
+      # against Postgres + Redis; this keeps a couple of seconds of signal inside
+      # the built image itself, which is what actually ships.
+      #
+      # Everything named here must run WITHOUT Postgres/Redis (pure functions or
+      # SQL-compilation assertions).
+      - name: Pytest regression guards (executing gate)
+        run: |
+          docker run --rm --entrypoint python \
+            -e DATABASE_URL=postgresql://x:x@localhost/x \
+            -e DIRECT_URL=postgresql://x:x@localhost/x \
+            -e JWT_SECRET=ci-dummy-secret \
+            -e JWT_ALGORITHM=HS256 \
+            -e REDIS_URL=redis://localhost:6379/0 \
+            sorento-backend:ci \
+            -m pytest -q -p no:cacheprovider \
+              tests/test_lessons_learnt_regressions.py \
+              tests/test_auth_login.py
+
   validate-mcp:
     name: Validate MCP imports
     runs-on: ubuntu-latest
@@ -126,8 +145,117 @@ jobs:
             sorento-mcp:ci \
             python -c "import sorento_crm_mcp; print('import ok')"
 
+      # Full MCP suite as an executing gate. Unlike the backend and frontend
+      # suites this one is green (131 passed) and deterministic, so gating on all
+      # of it is safe. Tests are mounted because the runtime image ships only the
+      # package; pytest is installed at run time from the `dev` extra (a few
+      # seconds — cheaper than a second image build).
+      - name: Run MCP test suite (executing gate)
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}/sorento_crm_mcp/tests:/app/tests:ro \
+            -e CRM_BASE_URL=http://localhost:8000 \
+            -e EXTERNAL_API_KEY=ci-dummy \
+            sorento-mcp:ci \
+            sh -c "pip install --no-cache-dir -q 'pytest>=8.0' 'pytest-asyncio>=0.24' && \
+                   python -m pytest /app/tests -q -p no:cacheprovider"
+
+  test-backend:
+    name: Backend test suite (Postgres)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # pgvector image, not plain postgres: the embedding tables need the
+        # `vector` extension, which bootstrap_env creates.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: sorento
+          POSTGRES_PASSWORD: sorento
+          POSTGRES_DB: sorento_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://sorento:sorento@localhost:5432/sorento_ci
+      DIRECT_URL: postgresql://sorento:sorento@localhost:5432/sorento_ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: ci-dummy-secret
+      JWT_ALGORITHM: HS256
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sorento_crm_backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: sorento_crm_backend
+        run: pip install -r requirements.txt
+
+      # `alembic upgrade head` CANNOT build this schema from zero — its first
+      # revision alters a table no migration creates (see bootstrap_env.py).
+      # bootstrap_env creates the schema from the ORM models, adds the scm views,
+      # seeds reference data (roles / order statuses / permissions), then stamps
+      # alembic at head.
+      - name: Bootstrap the database
+        working-directory: sorento_crm_backend
+        run: python -m scripts.bootstrap_env
+
+      # Everything except tests/ci_excluded.txt — see that file for why each entry
+      # is out (they assert against business data a fresh database has no reason
+      # to contain). ~1960 tests, verified deterministic over 13 consecutive runs.
+      - name: Run backend suite (executing gate)
+        working-directory: sorento_crm_backend
+        run: |
+          IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
+          echo "excluding $(echo "$IGNORES" | wc -w) path(s)"
+          python -m pytest -q -p no:cacheprovider $IGNORES tests/
+
+  validate-frontend:
+    name: Validate frontend (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # Match the frontend Dockerfile base (node:20-alpine).
+          node-version: 20
+          cache: npm
+          cache-dependency-path: sorento_crm_frontend/package-lock.json
+
+      # `--force` mirrors local install: React 19 peer-dep conflicts are expected
+      # and documented in CLAUDE.md.
+      - name: Install dependencies
+        working-directory: sorento_crm_frontend
+        run: npm ci --force
+
+      # The FULL vitest suite (198 files / 1168 tests) — green and verified
+      # deterministic across repeated runs, so gating on all of it is safe.
+      # Needs no database or service containers; api-client calls are mocked.
+      - name: Run vitest suite (executing gate)
+        working-directory: sorento_crm_frontend
+        run: npx vitest run
+
   build-and-deploy:
-    needs: [validate-backend, validate-mcp]
+    needs: [validate-backend, validate-mcp, validate-frontend, test-backend]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:

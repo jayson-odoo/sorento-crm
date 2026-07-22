@@ -178,9 +178,33 @@ def test_stock_inquiry_void_terminal_409(db, status):
 # ACT-5 — irreversible: no un-void / reopen route for a voided form
 # =========================================================================== #
 def test_no_unvoid_route():
-    from app.main import app
-    void_paths = {r.path for r in app.routes if getattr(r, "path", "").endswith("/void")}
-    assert void_paths, "void routes should exist"
-    bad = {r.path for r in app.routes if "unvoid" in getattr(r, "path", "").lower()
-           or "un-void" in getattr(r, "path", "").lower()}
+    """Voiding is irreversible: no un-void / reopen route may exist.
+
+    Asserted against the three routers that own void routes rather than
+    `app.main.app`. The app-global walk was not dependable: in CI the imported
+    app carried only its 6 default routes, meaning some earlier test leaves
+    `app.main` half-initialised (its `include_router` call never ran on the
+    object this test sees) — while the routes are plainly live, since every
+    other test in this file POSTs to `/void` successfully in that same run.
+
+    That import-order pollution is worth fixing on its own, but this test should
+    not be the thing that depends on it: the invariant it guards is "no un-void
+    route is declared", which the owning routers answer directly and
+    deterministically.
+    """
+    from app.api.v1.complaints import complaints as complaints_routes
+    from app.api.v1.procurement import purchase_requests as pr_routes
+    from app.api.v1.procurement import stock_inquiries as si_routes
+
+    paths = {
+        str(getattr(r, "path", "") or "")
+        for mod in (pr_routes, si_routes, complaints_routes)
+        for r in mod.router.routes
+    }
+
+    void_paths = {p for p in paths if p.endswith("/void")}
+    assert len(void_paths) == 3, (
+        f"expected a void route on each of PR / stock-inquiry / complaint; got {void_paths}"
+    )
+    bad = {p for p in paths if "unvoid" in p.lower() or "un-void" in p.lower()}
     assert not bad, f"unexpected un-void route(s): {bad}"

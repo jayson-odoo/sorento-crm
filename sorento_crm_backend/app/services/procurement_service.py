@@ -3848,16 +3848,6 @@ class StockInquiryService:
             "portal_url": self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id)),
             "view_url": (self._build_stock_inquiry_view_url(str(inquiry.id)) or "").strip(),
         }
-        self._send_stock_inquiry_contact_message(
-            inquiry,
-            message_text=(
-                f"Your stock inquiry {inquiry_number} has been rejected due to "
-                f"{reason_text} by project sales. Please view your submission here {view_url}"
-            ),
-            crm_sender_user_id=crm_sender_user_id or user_id,
-            respond_user_id_fallback=respond_user_id_fallback or user_id,
-            extra_context_vars=ps_reject_extra_vars,
-        )
         inquiry.status = "rejected"
         inquiry.rejected_from = "pending_project_sales"
         inquiry.rejection_reason = reason_text
@@ -3865,6 +3855,28 @@ class StockInquiryService:
         inquiry.rejected_by = user_id
         self.db.commit()
         self.db.refresh(inquiry)
+        # Notify AFTER the commit and best-effort, mirroring approve/submit. When
+        # this ran first, a contact with no reachable Respond.io inbox (no
+        # `respond_inbox_url`, e.g. a contact missing `respond_io_id`) raised here
+        # and aborted the whole rejection — the inquiry stayed pending and could
+        # never be rejected at all.
+        try:
+            self._send_stock_inquiry_contact_message(
+                inquiry,
+                message_text=(
+                    f"Your stock inquiry {inquiry_number} has been rejected due to "
+                    f"{reason_text} by project sales. Please view your submission here {view_url}"
+                ),
+                crm_sender_user_id=crm_sender_user_id or user_id,
+                respond_user_id_fallback=respond_user_id_fallback or user_id,
+                extra_context_vars=ps_reject_extra_vars,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to notify contact on project_sales_reject for stock_inquiry %s: %s",
+                inquiry_id,
+                e,
+            )
         try:
             from app.services.form_sla_service import emit_form_event
             emit_form_event(
@@ -3915,16 +3927,6 @@ class StockInquiryService:
             "portal_url": self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id)),
             "view_url": (self._build_stock_inquiry_view_url(str(inquiry.id)) or "").strip(),
         }
-        self._send_stock_inquiry_contact_message(
-            inquiry,
-            message_text=(
-                f"Your stock inquiry {inquiry_number} has been rejected due to "
-                f"{reason_text} by purchasing. Please view your submission here {view_url}"
-            ),
-            crm_sender_user_id=crm_sender_user_id or user_id,
-            respond_user_id_fallback=respond_user_id_fallback or user_id,
-            extra_context_vars=pur_reject_extra_vars,
-        )
         prior_status = inquiry.status
         inquiry.status = "rejected"
         inquiry.rejected_from = prior_status
@@ -3933,6 +3935,25 @@ class StockInquiryService:
         inquiry.rejected_by = user_id
         self.db.commit()
         self.db.refresh(inquiry)
+        # See project_sales_reject_inquiry: notify after the commit, best-effort,
+        # so an unreachable contact cannot block the rejection itself.
+        try:
+            self._send_stock_inquiry_contact_message(
+                inquiry,
+                message_text=(
+                    f"Your stock inquiry {inquiry_number} has been rejected due to "
+                    f"{reason_text} by purchasing. Please view your submission here {view_url}"
+                ),
+                crm_sender_user_id=crm_sender_user_id or user_id,
+                respond_user_id_fallback=respond_user_id_fallback or user_id,
+                extra_context_vars=pur_reject_extra_vars,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to notify contact on purchasing_reject for stock_inquiry %s: %s",
+                inquiry_id,
+                e,
+            )
         try:
             from app.services.form_sla_service import emit_form_event
             emit_form_event(

@@ -443,6 +443,10 @@ def _stock(rows: list[dict], b: _Builder) -> None:
             or wh.get("warehouse_name")
             or wh.get("location")
             or _as_str(s.get("warehouse"))
+            # Flat-key fallback. Its sibling `system_location` is already handled
+            # flat in the sysloc chain above; without this line a flat row renders
+            # System Location but leaves Warehouse as "—".
+            or _as_str(s.get("system_location_description"))
             or s.get("warehouse_name")
         )
         is_discontinued = (prod.get("is_discontinued") is True) or (s.get("is_discontinued") is True)

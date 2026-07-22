@@ -64,12 +64,12 @@ def seed(db):
         return t
 
     # T1: form complaint, responded on time, resolved on time
-    t1 = trk(source_entity_type="complaint", source_entity_id="c1", assigned_to_id=u1,
+    t1 = trk(source_entity_type="complaint", source_entity_id="a464017f-adb4-5685-b832-9c6e852318d4", assigned_to_id=u1,
              is_responded=True, responded_at=now - timedelta(hours=3), due_at=now - timedelta(hours=2),
              is_resolved=True, resolved_at=now - timedelta(hours=1), due_at_resolution=now + timedelta(hours=1),
              response_time=2.0, resolution_duration=5.0)
     # T2: form complaint, responded LATE, unresolved past resolution due (breach both clocks)
-    t2 = trk(source_entity_type="complaint", source_entity_id="c2", assigned_to_id=u1,
+    t2 = trk(source_entity_type="complaint", source_entity_id="e03881a9-2c26-59d7-be11-e6eb5aed6f56", assigned_to_id=u1,
              is_responded=True, responded_at=now, due_at=now - timedelta(hours=2),
              is_resolved=False, due_at_resolution=now - timedelta(hours=1),
              response_time=8.0)
@@ -212,7 +212,7 @@ def test_tasks_esc_window_future(db, seed):
     # Pending (unresponded) row escalating on the response clock 2h out.
     db.add(ConversationSLATracking(
         id=tid, policy_id=pid, current_tier=1,
-        source_entity_type="complaint", source_entity_id="c9",
+        source_entity_type="complaint", source_entity_id="d0c5a780-4d93-567c-ad8f-229fa604dcd6",
         initiated_at=now, current_tier_started_at=now,
         due_at=now + timedelta(hours=2), is_responded=False, is_resolved=False,
     ))

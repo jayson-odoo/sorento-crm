@@ -155,7 +155,7 @@ def test_form_escalate_snapshots_prior_owner(db):
         assigned_to_id=prev,
         due_at=now,
         source_entity_type="complaint",
-        source_entity_id="complaint-1",
+        source_entity_id="1378f157-23bd-5ed3-8dd5-51b64b8a108d",
         agent_id=str(uuid.uuid4()),
         team_set_code=None,
     ))

@@ -52,26 +52,26 @@ def test_resolver_no_pin_returns_none():
 
 
 def test_resolver_stale_pin_non_member_falls_back():
-    pin = SimpleNamespace(cs_pic_user_id="u1")
+    pin = SimpleNamespace(cs_pic_user_id="82dce68d-596c-5265-9263-07b67db11d44")
     orch = _orch({RespondContactCsRouting: pin, TeamMember: None})
     assert orch._resolve_pinned_assignee("purchase_request", "c1", "team1") is None
 
 
 def test_resolver_inactive_user_falls_back():
-    pin = SimpleNamespace(cs_pic_user_id="u1")
-    member = SimpleNamespace(user_id="u1", team_id="team1")
-    user = SimpleNamespace(id="u1", email="a@b.com", name="Aishah", status="INACTIVE", respond_user_id="r1")
+    pin = SimpleNamespace(cs_pic_user_id="82dce68d-596c-5265-9263-07b67db11d44")
+    member = SimpleNamespace(user_id="82dce68d-596c-5265-9263-07b67db11d44", team_id="team1")
+    user = SimpleNamespace(id="82dce68d-596c-5265-9263-07b67db11d44", email="a@b.com", name="Aishah", status="INACTIVE", respond_user_id="r1")
     orch = _orch({RespondContactCsRouting: pin, TeamMember: member, User: user})
     assert orch._resolve_pinned_assignee("purchase_request", "c1", "team1") is None
 
 
 def test_resolver_valid_pin_returns_assignee():
-    pin = SimpleNamespace(cs_pic_user_id="u1")
-    member = SimpleNamespace(user_id="u1", team_id="team1")
-    user = SimpleNamespace(id="u1", email="a@b.com", name="Aishah", status="ACTIVE", respond_user_id="r1")
+    pin = SimpleNamespace(cs_pic_user_id="82dce68d-596c-5265-9263-07b67db11d44")
+    member = SimpleNamespace(user_id="82dce68d-596c-5265-9263-07b67db11d44", team_id="team1")
+    user = SimpleNamespace(id="82dce68d-596c-5265-9263-07b67db11d44", email="a@b.com", name="Aishah", status="ACTIVE", respond_user_id="r1")
     orch = _orch({RespondContactCsRouting: pin, TeamMember: member, User: user})
     assert orch._resolve_pinned_assignee("sponsorship_form", "c1", "team1") == {
-        "id": "u1",
+        "id": "82dce68d-596c-5265-9263-07b67db11d44",
         "email": "a@b.com",
         "name": "Aishah",
         "respond_user_id": "r1",
@@ -89,14 +89,14 @@ def _routing_svc():
 def test_upsert_rejects_invalid_use_case():
     svc = _routing_svc()
     with pytest.raises(Exception):
-        svc.upsert("c1", "complaint", "u1")
+        svc.upsert("c1", "complaint", "82dce68d-596c-5265-9263-07b67db11d44")
 
 
 def test_upsert_rejects_non_team_member():
     svc = _routing_svc()
     svc.list_candidates = MagicMock(return_value=[{"id": "u2"}])
     with pytest.raises(Exception):
-        svc.upsert("c1", "purchase_request", "u1")
+        svc.upsert("c1", "purchase_request", "82dce68d-596c-5265-9263-07b67db11d44")
 
 
 # ---- procurement CS finalize ---------------------------------------------

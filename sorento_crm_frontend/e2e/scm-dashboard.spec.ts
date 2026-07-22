@@ -26,7 +26,7 @@ async function login(page: Page) {
   await expect(email).toBeVisible({ timeout: 20_000 });
   await email.fill(EMAIL!);
   await page.locator('input[type="password"], input[name="password"]').first().fill(PASSWORD!);
-  await page.getByRole('button', { name: /sign in|log in/i }).click();
+  await page.getByRole('button', { name: /sign in|log in|continue/i }).click();
   await page.waitForURL((url) => !/\/sign-?in/.test(url.toString()), { timeout: 30_000 });
 }
 

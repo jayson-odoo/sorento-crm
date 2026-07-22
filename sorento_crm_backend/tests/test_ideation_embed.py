@@ -35,7 +35,7 @@ from app.services.ideation_embed_service import (
 
 
 _SIGNING_SECRET = "test-embed-signing-secret-value"
-_CONNECTION_ID = "conn-ideation-1"
+_CONNECTION_ID = "e5407a68-13ff-59f6-a337-408b46ca369b"
 _SHARED_URL = "https://shared.test/be"       # backend base (POST /embed/session)
 _FE_URL = "https://shared.test"              # FE root (iframe_url) — distinct (AC-E-3)
 

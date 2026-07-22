@@ -93,7 +93,7 @@ def test_validate_negative_price_is_coerced_not_rejected(db, seeded, price):
 @pytest.mark.parametrize("price", ["-1", -1])
 def test_import_negative_price_persists_zero(db, seeded, price):
     service = ProductService(db)
-    result = service.bulk_import_products([_row(price)], user_id="user-1")
+    result = service.bulk_import_products([_row(price)], user_id="717677a2-1052-5fb1-9f10-981584261561")
 
     assert result["errors"] == []
     assert result["created"] == 1

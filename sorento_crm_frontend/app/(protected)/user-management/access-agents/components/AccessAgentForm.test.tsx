@@ -55,7 +55,6 @@ const STABLE_AGENT = {
 };
 const STABLE_EMPTY: never[] = [];
 const STABLE_NAV = { data: STABLE_EMPTY };
-const STABLE_SET_MCP = { mutateAsync: vi.fn(), isPending: false };
 
 vi.mock('../hooks/useAccessAgents', () => ({
   useAccessAgent: () => ({ data: STABLE_AGENT, isLoading: false }),
@@ -64,13 +63,8 @@ vi.mock('../hooks/useAccessAgents', () => ({
   useUpdateAccessAgent: () => ({ mutateAsync: updateMutateAsync, isPending: false }),
   useAgentTeams: () => ({ data: { assignments: agentTeamsAssignments } }),
   useTeams: () => ({ data: teamsList }),
-  useAgentMcpToolBindings: () => ({ data: STABLE_EMPTY }),
-  useSetAgentMcpToolBindings: () => STABLE_SET_MCP,
 }));
 
-vi.mock('./McpToolBindingsEditor', () => ({
-  McpToolBindingsEditor: () => <div data-testid="mcp-editor" />,
-}));
 
 vi.mock('@/components/common/RecordNavigation', () => ({
   default: () => <div data-testid="record-nav" />,
@@ -142,6 +136,22 @@ function renderForm() {
   );
 }
 
+// The form renders several native <select>s (team, tier, policy). The POLICY
+// select only mounts once getSLAPolicies resolves, so waiting on "any select
+// exists" races: `.find(...)` could return undefined (masked by `!`) or find the
+// select before its value is applied. Wait for the policy select specifically.
+async function findPolicySelect(): Promise<HTMLSelectElement> {
+  return await waitFor(() => {
+    const sel = screen
+      .getAllByTestId('native-select')
+      .find((s) =>
+        Array.from(s.querySelectorAll('option')).some((o) => o.textContent === '— No policy —'),
+      );
+    expect(sel).toBeTruthy();
+    return sel as HTMLSelectElement;
+  });
+}
+
 describe('AccessAgentForm group SLA policy picker', () => {
   beforeEach(() => {
     getSLAPolicies.mockReset();
@@ -179,12 +189,9 @@ describe('AccessAgentForm group SLA policy picker', () => {
     ];
     renderForm();
 
-    await waitFor(() => expect(screen.getAllByTestId('native-select').length).toBeGreaterThan(0));
     // The group's policy select reflects the bound policy.
-    const policySelect = screen
-      .getAllByTestId('native-select')
-      .find((s) => Array.from(s.querySelectorAll('option')).some((o) => o.textContent === '— No policy —'))!;
-    expect((policySelect as HTMLSelectElement).value).toBe('pol-fast');
+    const policySelect = await findPolicySelect();
+    await waitFor(() => expect(policySelect.value).toBe('pol-fast'));
   });
 
   it('a group with no policy shows "— No policy —" and save is NOT blocked', async () => {
@@ -216,12 +223,9 @@ describe('AccessAgentForm group SLA policy picker', () => {
     ];
     renderForm();
 
-    await waitFor(() => expect(screen.getAllByTestId('native-select').length).toBeGreaterThan(0));
-
     // Change the group policy to the WAREHOUSE_FAST profile.
-    const policySelect = screen
-      .getAllByTestId('native-select')
-      .find((s) => Array.from(s.querySelectorAll('option')).some((o) => o.textContent === '— No policy —'))!;
+    const policySelect = await findPolicySelect();
+    await waitFor(() => expect(policySelect.value).toBe('pol-std'));
     fireEvent.change(policySelect, { target: { value: 'pol-fast' } });
 
     fireEvent.click(screen.getByRole('button', { name: /Update Access Agent/i }));
