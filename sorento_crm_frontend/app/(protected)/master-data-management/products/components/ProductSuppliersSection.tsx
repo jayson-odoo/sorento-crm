@@ -4,13 +4,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, LoaderCircleIcon, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -253,23 +247,23 @@ export default function ProductSuppliersSection({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-2">
               <Label>Supplier *</Label>
-              <Select value={selectedSupplierId} onValueChange={setSelectedSupplierId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a supplier to add" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableSuppliers.map((supplier) => (
-                    <SelectItem key={supplier.id} value={supplier.id}>
-                      {supplier.supplier_code} - {supplier.supplier_name}
-                    </SelectItem>
-                  ))}
-                  {availableSuppliers.length === 0 && (
-                    <SelectItem value="__no_suppliers__" disabled>
-                      No available suppliers
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={selectedSupplierId}
+                onChange={setSelectedSupplierId}
+                placeholder="Select a supplier to add"
+                // Was a disabled "__no_suppliers__" option faking an empty state. Keep the two
+                // cases distinct: "none left to add" is not the same as "your search matched
+                // nothing", and showing the former for a failed search reads as a bug.
+                emptyMessage={
+                  availableSuppliers.length === 0
+                    ? 'No available suppliers'
+                    : 'No suppliers found.'
+                }
+                options={availableSuppliers.map((supplier) => ({
+                  value: supplier.id,
+                  label: `${supplier.supplier_code} - ${supplier.supplier_name}`,
+                }))}
+              />
             </div>
             <div className="space-y-2">
               <Label>Lead Time (Days) *</Label>

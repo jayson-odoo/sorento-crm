@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronsUpDown, Check, LoaderCircleIcon, Pencil, Trash2, UserRoundPlus, X } from 'lucide-react';
+import { Check, LoaderCircleIcon, Pencil, Trash2, UserRoundPlus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -17,18 +17,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
-import { cn } from '@/lib/utils';
 import { useVisibleUsers } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import {
   useMyCoverage,
@@ -66,7 +57,6 @@ export function CoverageSection() {
   const update = useUpdateCoverage();
   const unsubscribe = useUnsubscribeCoverage();
 
-  const [pickerOpen, setPickerOpen] = useState(false);
   const [selectedId, setSelectedId] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   // Default ON: auto-assign is the primary ask. Off = notify-only.
@@ -79,7 +69,6 @@ export function CoverageSection() {
   // Don't offer colleagues I'm already covering.
   const covered = new Set(coverage.map((c) => c.target_user_id));
   const selectable = visibleUsers.filter((u) => !covered.has(u.id));
-  const selected = visibleUsers.find((u) => u.id === selectedId);
 
   const handleAdd = () => {
     if (!selectedId) return;
@@ -142,45 +131,20 @@ export function CoverageSection() {
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
           <div className="flex-1 space-y-1.5">
             <Label>Cover for</Label>
-            <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={pickerOpen}
-                  className="w-full justify-between font-normal"
-                  disabled={usersLoading || subscribe.isPending}
-                >
-                  {selected ? selected.name || selected.email : 'Select a colleague'}
-                  <ChevronsUpDown className="ms-2 size-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                <Command>
-                  <CommandInput placeholder="Search by name or email..." />
-                  <CommandList>
-                    <CommandEmpty>No colleagues available.</CommandEmpty>
-                    <CommandGroup>
-                      {selectable.map((u) => (
-                        <CommandItem
-                          key={u.id}
-                          value={`${u.name ?? ''} ${u.email}`.trim()}
-                          onSelect={() => {
-                            setSelectedId(u.id);
-                            setPickerOpen(false);
-                          }}
-                        >
-                          <Check
-                            className={cn('me-2 size-4', selectedId === u.id ? 'opacity-100' : 'opacity-0')}
-                          />
-                          {u.name || u.email}
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+            <SearchableSelect
+              value={selectedId}
+              onChange={setSelectedId}
+              options={selectable.map((u) => ({
+                value: u.id,
+                label: u.name || u.email,
+                // Search both name and email — the old picker matched on both.
+                searchText: `${u.name ?? ''} ${u.email}`.trim(),
+              }))}
+              placeholder="Select a colleague"
+              emptyMessage="No colleagues available."
+              disabled={usersLoading || subscribe.isPending}
+              triggerClassName="w-full"
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="coverage-expires">Until (optional)</Label>

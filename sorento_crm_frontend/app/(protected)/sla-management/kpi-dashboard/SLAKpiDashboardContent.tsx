@@ -17,13 +17,7 @@ import { Card, CardContent, CardHeader, CardTable, CardTitle, CardFooter } from 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
@@ -396,16 +390,13 @@ function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter
             )}
           </div>
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <Select value={escWindow} onValueChange={(v) => setEscWindow(v as KpiEscWindow)}>
-              <SelectTrigger className="h-8 w-[190px]" size="sm">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {ESC_WINDOW_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={escWindow}
+              onChange={(v) => setEscWindow(v as KpiEscWindow)}
+              options={ESC_WINDOW_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+              triggerClassName="h-8 w-[190px]"
+              size="sm"
+            />
             {isFiltered ? (
               <Button variant="outline" size="sm" className="h-8" onClick={() => { setEscWindow('all'); onClear(); }}>
                 <X className="size-3.5" /> Clear filter
@@ -478,14 +469,16 @@ export function SLAKpiDashboardContent({ defaultWindowDays }: { defaultWindowDay
               <Badge variant="secondary" className="font-normal">Last {defaultWindowDays} days</Badge>
             ) : null}
           </div>
-          <Select value={scope} onValueChange={(v) => { setScope(v as KpiScope); clearFilter(); }}>
-            <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All SLA</SelectItem>
-              <SelectItem value="form">Form SLA</SelectItem>
-              <SelectItem value="conversation">Conversation SLA</SelectItem>
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={scope}
+            onChange={(v) => { setScope(v as KpiScope); clearFilter(); }}
+            options={[
+              { value: 'all', label: 'All SLA' },
+              { value: 'form', label: 'Form SLA' },
+              { value: 'conversation', label: 'Conversation SLA' },
+            ]}
+            triggerClassName="w-48"
+          />
         </div>
 
         {/* Stage breakdown — MECE partition of the total (sums to Opened) */}

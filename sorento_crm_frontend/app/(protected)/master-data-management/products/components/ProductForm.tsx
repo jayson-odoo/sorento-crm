@@ -17,15 +17,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { CategoryCombobox } from '../../shared/components/CategoryCombobox';
-import { BrandCombobox } from '../../shared/components/BrandCombobox';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -355,12 +347,31 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                       <FormItem>
                         <FormLabel>Category *</FormLabel>
                         <FormControl>
-                          <CategoryCombobox
+                          <SearchableSelect
                             value={field.value || ''}
                             onChange={field.onChange}
-                            categories={categories}
-                            productCategory={product?.category}
                             placeholder="Search category..."
+                            emptyMessage="No category found."
+                            options={[
+                              ...(categories ?? []).map((cat) => ({
+                                value: cat.id,
+                                label: cat.category_code,
+                                searchText: `${cat.category_code} ${cat.category_name ?? ''}`,
+                              })),
+                              // Keep the product's saved category selectable even when it is
+                              // missing from the list (inactive/filtered), so editing doesn't
+                              // silently blank a required field.
+                              ...(product?.category &&
+                              !categories?.some((c) => c.id === product.category?.id)
+                                ? [
+                                    {
+                                      value: product.category.id,
+                                      label: product.category.category_code,
+                                      searchText: `${product.category.category_code} ${product.category.category_name ?? ''}`,
+                                    },
+                                  ]
+                                : []),
+                            ]}
                           />
                         </FormControl>
                         <FormMessage />
@@ -375,12 +386,31 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                       <FormItem>
                         <FormLabel>Brand</FormLabel>
                         <FormControl>
-                          <BrandCombobox
-                            value={field.value}
-                            onChange={field.onChange}
-                            brands={brands}
-                            productBrand={product?.brand}
+                          <SearchableSelect
+                            // Brand is optional, so '__none__' stands in for null the same way
+                            // the other nullable selects in this form do.
+                            value={field.value || '__none__'}
+                            onChange={(v) => field.onChange(v === '__none__' ? null : v)}
                             placeholder="Search brand..."
+                            emptyMessage="No brand found."
+                            options={[
+                              { value: '__none__', label: 'None' },
+                              ...(brands ?? []).map((brand) => ({
+                                value: brand.id,
+                                label: brand.brand_code,
+                                searchText: `${brand.brand_code} ${brand.brand_name ?? ''}`,
+                              })),
+                              ...(product?.brand &&
+                              !brands?.some((b) => b.id === product.brand?.id)
+                                ? [
+                                    {
+                                      value: product.brand.id,
+                                      label: product.brand.brand_code,
+                                      searchText: `${product.brand.brand_code} ${product.brand.brand_name ?? ''}`,
+                                    },
+                                  ]
+                                : []),
+                            ]}
                           />
                         </FormControl>
                         <FormMessage />
@@ -396,23 +426,22 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Item Type</FormLabel>
-                        <Select
-                          onValueChange={(value) => field.onChange(value === '__none__' ? null : value)}
-                          value={field.value || '__none__'}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select item type" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="__none__">None</SelectItem>
-                            <SelectItem value="product">Product</SelectItem>
-                            <SelectItem value="bundle">Bundle</SelectItem>
-                            <SelectItem value="service">Service</SelectItem>
-                            <SelectItem value="other">Other</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <FormControl>
+                          <SearchableSelect
+                            value={field.value || '__none__'}
+                            onChange={(value) =>
+                              field.onChange(value === '__none__' ? null : value)
+                            }
+                            placeholder="Select item type"
+                            options={[
+                              { value: '__none__', label: 'None' },
+                              { value: 'product', label: 'Product' },
+                              { value: 'bundle', label: 'Bundle' },
+                              { value: 'service', label: 'Service' },
+                              { value: 'other', label: 'Other' },
+                            ]}
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -545,30 +574,29 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                     <FormItem>
                       <FormLabel>Base Unit of Measure *</FormLabel>
                       <FormControl>
-                        <Select
-                          onValueChange={field.onChange}
+                        <SearchableSelect
                           value={field.value || ''}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select base UOM" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {uoms?.map((uom) => (
-                              <SelectItem key={uom.id} value={uom.id}>
-                                {uom.uom_code}
-                              </SelectItem>
-                            ))}
-                            {product?.base_uom &&
-                              !uoms?.some((uom) => uom.id === product.base_uom?.id) && (
-                                <SelectItem
-                                  key={product.base_uom.id}
-                                  value={product.base_uom.id}
-                                >
-                                  {product.base_uom.uom_code}
-                                </SelectItem>
-                              )}
-                          </SelectContent>
-                        </Select>
+                          onChange={field.onChange}
+                          placeholder="Select base UOM"
+                          options={[
+                            ...(uoms ?? []).map((uom) => ({
+                              value: uom.id,
+                              label: uom.uom_code,
+                            })),
+                            // The product's saved UOM may be inactive and therefore absent from
+                            // the select list; keep it as an option so editing an existing
+                            // product doesn't silently blank its Base UOM.
+                            ...(product?.base_uom &&
+                            !uoms?.some((uom) => uom.id === product.base_uom?.id)
+                              ? [
+                                  {
+                                    value: product.base_uom.id,
+                                    label: product.base_uom.uom_code,
+                                  },
+                                ]
+                              : []),
+                          ]}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

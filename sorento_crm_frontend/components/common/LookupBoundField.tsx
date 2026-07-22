@@ -1,13 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef } from 'react';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useLookupOptionsByBinding } from '@/hooks/useLookupOptionsByBinding';
 
 export interface LookupBoundFieldProps {
@@ -66,24 +60,15 @@ export default function LookupBoundField({
   const showLegacy = !ciMatch && !!current;
 
   return (
-    <Select
+    <SearchableSelect
       key={displayValue || 'empty'}
-      value={displayValue || undefined}
-      onValueChange={onChange}
-    >
-      <SelectTrigger>
-        <SelectValue placeholder={placeholder ?? 'Select…'} />
-      </SelectTrigger>
-      <SelectContent>
-        {showLegacy ? (
-          <SelectItem value={current}>{current} (legacy)</SelectItem>
-        ) : null}
-        {options.map((o) => (
-          <SelectItem key={o.value} value={o.value}>
-            {o.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+      value={displayValue}
+      onChange={onChange}
+      options={[
+        ...(showLegacy ? [{ value: current, label: `${current} (legacy)` }] : []),
+        ...options.map((o) => ({ value: o.value, label: o.label })),
+      ]}
+      placeholder={placeholder ?? 'Select…'}
+    />
   );
 }

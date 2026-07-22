@@ -20,7 +20,6 @@ import { toast } from 'sonner';
 import type { PromotionAttachment } from '../../promotion-attachments/types/promotionAttachment.types';
 import { formatDate } from '@/lib/helpers';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import type { AttachmentDirectoryTreeNode } from '@/app/(protected)/resource-management/attachments/services/directoryService';
 import { cn } from '@/lib/utils';

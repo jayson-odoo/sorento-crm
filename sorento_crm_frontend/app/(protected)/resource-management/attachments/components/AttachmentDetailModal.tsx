@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { ChevronDown, Download, ExternalLink, Eye, Link2, LoaderCircleIcon, Plus, RefreshCw, SlidersHorizontal, Trash2, Unlink } from 'lucide-react';
+import { Download, ExternalLink, Eye, Link2, LoaderCircleIcon, Plus, RefreshCw, SlidersHorizontal, Trash2, Unlink } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -15,20 +15,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import {
-  Command,
-  CommandCheck,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -449,7 +436,6 @@ function LinkProductForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
-  const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
@@ -469,57 +455,32 @@ function LinkProductForm({
   const selectedLabel = selectedFromList
     ? (selectedFromList.product_name || selectedFromList.product_code || selectedFromList.id)
     : pickedLabel;
+  const options = products.map((p) => ({
+    value: p.id,
+    label: p.product_name || p.product_code || p.id,
+    searchText: [p.product_name, p.product_code, p.id].filter(Boolean).join(' '),
+  }));
+  if (selectedId && selectedLabel && !options.some((o) => o.value === selectedId)) {
+    options.unshift({ value: selectedId, label: selectedLabel, searchText: selectedLabel });
+  }
 
   return (
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Product</Label>
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
-            <Button
-              variant="outline"
-              role="combobox"
-              mode="input"
-              placeholder={!selectedLabel}
-              aria-expanded={open}
-              className="w-full justify-between"
-            >
-              {selectedLabel ?? 'Select a product...'}
-              <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
-            <Command shouldFilter={false}>
-              <CommandInput
-                placeholder="Search product..."
-                value={search}
-                onValueChange={setSearch}
-              />
-              <CommandList>
-                <CommandEmpty>{isFetching ? 'Searching…' : 'No product found.'}</CommandEmpty>
-                <CommandGroup>
-                  {products.map((p) => {
-                    const label = p.product_name || p.product_code || p.id;
-                    return (
-                      <CommandItem
-                        key={p.id}
-                        value={p.id}
-                        onSelect={() => {
-                          onSelect(p.id);
-                          setPickedLabel(label);
-                          setOpen(false);
-                        }}
-                      >
-                        {label}
-                        {selectedId === p.id && <CommandCheck />}
-                      </CommandItem>
-                    );
-                  })}
-                </CommandGroup>
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
+        <SearchableSelect
+          value={selectedId}
+          onChange={(id) => {
+            onSelect(id);
+            const p = products.find((x) => x.id === id);
+            if (p) setPickedLabel(p.product_name || p.product_code || p.id);
+          }}
+          options={options}
+          onSearchChange={setSearch}
+          placeholder="Select a product..."
+          emptyMessage={isFetching ? 'Searching…' : 'No product found.'}
+          triggerClassName="w-full"
+        />
       </div>
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onCancel}>
@@ -551,7 +512,6 @@ function LinkPromotionForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
-  const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
@@ -571,57 +531,31 @@ function LinkPromotionForm({
   const selectedLabel = selectedFromList
     ? (selectedFromList.description || selectedFromList.id)
     : pickedLabel;
+  const options = promotions.map((p) => ({
+    value: p.id,
+    label: p.description || p.id,
+  }));
+  if (selectedId && selectedLabel && !options.some((o) => o.value === selectedId)) {
+    options.unshift({ value: selectedId, label: selectedLabel });
+  }
 
   return (
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Promotion</Label>
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
-            <Button
-              variant="outline"
-              role="combobox"
-              mode="input"
-              placeholder={!selectedLabel}
-              aria-expanded={open}
-              className="w-full justify-between"
-            >
-              {selectedLabel ?? 'Select a promotion...'}
-              <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
-            <Command shouldFilter={false}>
-              <CommandInput
-                placeholder="Search promotion..."
-                value={search}
-                onValueChange={setSearch}
-              />
-              <CommandList>
-                <CommandEmpty>{isFetching ? 'Searching…' : 'No promotion found.'}</CommandEmpty>
-                <CommandGroup>
-                  {promotions.map((p) => {
-                    const label = p.description || p.id;
-                    return (
-                      <CommandItem
-                        key={p.id}
-                        value={p.id}
-                        onSelect={() => {
-                          onSelect(p.id);
-                          setPickedLabel(label);
-                          setOpen(false);
-                        }}
-                      >
-                        {label}
-                        {selectedId === p.id && <CommandCheck />}
-                      </CommandItem>
-                    );
-                  })}
-                </CommandGroup>
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
+        <SearchableSelect
+          value={selectedId}
+          onChange={(id) => {
+            onSelect(id);
+            const p = promotions.find((x) => x.id === id);
+            if (p) setPickedLabel(p.description || p.id);
+          }}
+          options={options}
+          onSearchChange={setSearch}
+          placeholder="Select a promotion..."
+          emptyMessage={isFetching ? 'Searching…' : 'No promotion found.'}
+          triggerClassName="w-full"
+        />
       </div>
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onCancel}>
@@ -651,7 +585,6 @@ function LinkFormForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
-  const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
@@ -668,57 +601,32 @@ function LinkFormForm({
   const selectedLabel = selectedFromList
     ? (selectedFromList.name || selectedFromList.code || selectedFromList.id)
     : pickedLabel;
+  const options = forms.map((f) => ({
+    value: f.id,
+    label: f.name || f.code || f.id,
+    searchText: [f.name, f.code, f.id].filter(Boolean).join(' '),
+  }));
+  if (selectedId && selectedLabel && !options.some((o) => o.value === selectedId)) {
+    options.unshift({ value: selectedId, label: selectedLabel, searchText: selectedLabel });
+  }
 
   return (
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Form</Label>
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
-            <Button
-              variant="outline"
-              role="combobox"
-              mode="input"
-              placeholder={!selectedLabel}
-              aria-expanded={open}
-              className="w-full justify-between"
-            >
-              {selectedLabel ?? 'Select a form...'}
-              <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
-            <Command shouldFilter={false}>
-              <CommandInput
-                placeholder="Search form..."
-                value={search}
-                onValueChange={setSearch}
-              />
-              <CommandList>
-                <CommandEmpty>{isFetching ? 'Searching…' : 'No form found.'}</CommandEmpty>
-                <CommandGroup>
-                  {forms.map((f) => {
-                    const label = f.name || f.code || f.id;
-                    return (
-                      <CommandItem
-                        key={f.id}
-                        value={f.id}
-                        onSelect={() => {
-                          onSelect(f.id);
-                          setPickedLabel(label);
-                          setOpen(false);
-                        }}
-                      >
-                        {label}
-                        {selectedId === f.id && <CommandCheck />}
-                      </CommandItem>
-                    );
-                  })}
-                </CommandGroup>
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
+        <SearchableSelect
+          value={selectedId}
+          onChange={(id) => {
+            onSelect(id);
+            const f = forms.find((x) => x.id === id);
+            if (f) setPickedLabel(f.name || f.code || f.id);
+          }}
+          options={options}
+          onSearchChange={setSearch}
+          placeholder="Select a form..."
+          emptyMessage={isFetching ? 'Searching…' : 'No form found.'}
+          triggerClassName="w-full"
+        />
       </div>
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onCancel}>
@@ -750,7 +658,6 @@ function LinkPackingListForm({
   onCancel: () => void;
   isPending: boolean;
 }) {
-  const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [pickedLabel, setPickedLabel] = useState<string | null>(null);
@@ -772,57 +679,34 @@ function LinkPackingListForm({
         selectedFromList.shipping_container_number ||
         selectedFromList.id)
     : pickedLabel;
+  const options = packingLists.map((p) => ({
+    value: p.id,
+    label: p.shipment_number || p.shipping_container_number || p.id,
+    searchText: [p.shipment_number, p.shipping_container_number, p.id]
+      .filter(Boolean)
+      .join(' '),
+  }));
+  if (selectedId && selectedLabel && !options.some((o) => o.value === selectedId)) {
+    options.unshift({ value: selectedId, label: selectedLabel, searchText: selectedLabel });
+  }
 
   return (
     <div className="space-y-4">
       <div className="space-y-2">
         <Label>Packing List</Label>
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>
-            <Button
-              variant="outline"
-              role="combobox"
-              mode="input"
-              placeholder={!selectedLabel}
-              aria-expanded={open}
-              className="w-full justify-between"
-            >
-              {selectedLabel ?? 'Select a packing list...'}
-              <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
-            <Command shouldFilter={false}>
-              <CommandInput
-                placeholder="Search packing list..."
-                value={search}
-                onValueChange={setSearch}
-              />
-              <CommandList>
-                <CommandEmpty>{isFetching ? 'Searching…' : 'No packing list found.'}</CommandEmpty>
-                <CommandGroup>
-                  {packingLists.map((p) => {
-                    const label = p.shipment_number || p.shipping_container_number || p.id;
-                    return (
-                      <CommandItem
-                        key={p.id}
-                        value={p.id}
-                        onSelect={() => {
-                          onSelect(p.id);
-                          setPickedLabel(label);
-                          setOpen(false);
-                        }}
-                      >
-                        {label}
-                        {selectedId === p.id && <CommandCheck />}
-                      </CommandItem>
-                    );
-                  })}
-                </CommandGroup>
-              </CommandList>
-            </Command>
-          </PopoverContent>
-        </Popover>
+        <SearchableSelect
+          value={selectedId}
+          onChange={(id) => {
+            onSelect(id);
+            const p = packingLists.find((x) => x.id === id);
+            if (p) setPickedLabel(p.shipment_number || p.shipping_container_number || p.id);
+          }}
+          options={options}
+          onSearchChange={setSearch}
+          placeholder="Select a packing list..."
+          emptyMessage={isFetching ? 'Searching…' : 'No packing list found.'}
+          triggerClassName="w-full"
+        />
       </div>
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={onCancel}>

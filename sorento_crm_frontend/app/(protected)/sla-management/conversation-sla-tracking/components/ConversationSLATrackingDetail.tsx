@@ -46,15 +46,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import { cn } from '@/lib/utils';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { getUsersSelect } from '@/services/userSelectService';
 import { toast } from 'sonner';
@@ -137,7 +129,6 @@ export default function ConversationSLATrackingDetail({
   const [escalateDialogOpen, setEscalateDialogOpen] = useState(false);
   const [escalateReason, setEscalateReason] = useState('');
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
-  const [assigneeComboOpen, setAssigneeComboOpen] = useState(false);
   const [selectedAssigneeId, setSelectedAssigneeId] = useState('');
   const [tierStartedLocal, setTierStartedLocal] = useState('');
   const [initiatedLocal, setInitiatedLocal] = useState('');
@@ -158,7 +149,6 @@ export default function ConversationSLATrackingDetail({
   useEffect(() => {
     if (assigneeDialogOpen && tracking) {
       setSelectedAssigneeId(tracking.assigned_to_id ?? '');
-      setAssigneeComboOpen(false);
     }
   }, [assigneeDialogOpen, tracking]);
 
@@ -468,57 +458,21 @@ export default function ConversationSLATrackingDetail({
           </DialogHeader>
           <div className="space-y-3 py-1">
             <Label>User</Label>
-            <Popover open={assigneeComboOpen} onOpenChange={setAssigneeComboOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  role="combobox"
-                  aria-expanded={assigneeComboOpen}
-                  className="w-full justify-between font-normal"
-                >
-                  <span className={cn('truncate', !selectedAssigneeId && 'text-muted-foreground')}>
-                    {selectedAssigneeId
-                      ? usersSelect.find((u) => u.id === selectedAssigneeId)?.name ||
-                        usersSelect.find((u) => u.id === selectedAssigneeId)?.email ||
-                        selectedAssigneeId
-                      : 'No assignee'}
-                  </span>
-                  <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
-                <Command>
-                  <CommandInput placeholder="Search by name or email…" />
-                  <CommandList>
-                    <CommandEmpty>No user found.</CommandEmpty>
-                    <CommandGroup>
-                      <CommandItem
-                        value="__no_assignee unassign"
-                        onSelect={() => {
-                          setSelectedAssigneeId('');
-                          setAssigneeComboOpen(false);
-                        }}
-                      >
-                        No assignee
-                      </CommandItem>
-                      {usersSelect.map((user) => (
-                        <CommandItem
-                          key={user.id}
-                          value={`${user.name ?? ''} ${user.email}`.trim()}
-                          onSelect={() => {
-                            setSelectedAssigneeId(user.id);
-                            setAssigneeComboOpen(false);
-                          }}
-                        >
-                          {user.name || user.email}
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+            <SearchableSelect
+              value={selectedAssigneeId}
+              onChange={setSelectedAssigneeId}
+              options={[
+                { value: '', label: 'No assignee' },
+                ...usersSelect.map((user) => ({
+                  value: user.id,
+                  label: user.name || user.email,
+                  searchText: `${user.name ?? ''} ${user.email}`.trim(),
+                })),
+              ]}
+              placeholder="No assignee"
+              emptyMessage="No user found."
+              triggerClassName="w-full"
+            />
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setAssigneeDialogOpen(false)}>

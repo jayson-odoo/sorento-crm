@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Copy, Check, ChevronDown, Clock, MessageSquare, FileDown, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
+import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -26,20 +26,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Command,
-  CommandCheck,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePurchaseRequest } from '../hooks/usePurchaseRequests';
@@ -174,7 +161,6 @@ export default function PurchaseRequestDetail({
   const [approvalAction, setApprovalAction] = useState<'create' | 'send' | null>(null);
   const [approvalError, setApprovalError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [approverComboboxOpen, setApproverComboboxOpen] = useState(false);
   // Change-to-pending action via the shared one-shot guard (ref-lock kills same-tick
   // double-click; awaiting the refetch inside keeps it disabled until status flips,
   // so it can't re-fire on a stale view). Backend idempotency middleware is the net.
@@ -672,64 +658,30 @@ export default function PurchaseRequestDetail({
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label>Choose approver (optional)</Label>
-                  <Popover open={approverComboboxOpen} onOpenChange={setApproverComboboxOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        className="w-full justify-between font-normal"
-                      >
-                        <span className="truncate">
-                          {approverUserId
-                            ? (() => {
-                                const u = usersForApprover.find((x) => x.id === approverUserId);
-                                return u ? `${u.name?.trim() || u.email} (${u.email})` : 'Select approver';
-                              })()
-                            : 'Select approver'}
-                        </span>
-                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-(--radix-popper-anchor-width) p-0" align="start">
-                      <Command>
-                        <CommandInput placeholder="Search approver..." />
-                        <CommandList>
-                          <CommandEmpty>No approver found.</CommandEmpty>
-                          <CommandGroup>
-                            <CommandItem
-                              value="Enter email only not in system"
-                              onSelect={() => {
-                                setApproverUserId('');
-                                setApproverComboboxOpen(false);
-                              }}
-                            >
-                              Enter email only (not in system)
-                              {!approverUserId && <CommandCheck />}
-                            </CommandItem>
-                            {usersForApprover.map((u) => {
-                              const label = `${u.name?.trim() || u.email} ${u.email}`.trim();
-                              return (
-                                <CommandItem
-                                  key={u.id}
-                                  value={label}
-                                  onSelect={() => {
-                                    setApproverUserId(u.id);
-                                    setApproverEmail(u.email ?? '');
-                                    setApproverComboboxOpen(false);
-                                  }}
-                                >
-                                  <span className="truncate">
-                                    {u.name?.trim() || u.email} ({u.email})
-                                  </span>
-                                  {approverUserId === u.id && <CommandCheck />}
-                                </CommandItem>
-                              );
-                            })}
-                          </CommandGroup>
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
+                  <SearchableSelect
+                    value={approverUserId || '__email_only__'}
+                    onChange={(v) => {
+                      if (v === '__email_only__') {
+                        setApproverUserId('');
+                        return;
+                      }
+                      const u = usersForApprover.find((x) => x.id === v);
+                      setApproverUserId(v);
+                      // Picking a known approver also fills the email field, as before.
+                      setApproverEmail(u?.email ?? '');
+                    }}
+                    placeholder="Select approver"
+                    emptyMessage="No approver found."
+                    triggerClassName="w-full"
+                    options={[
+                      { value: '__email_only__', label: 'Enter email only (not in system)' },
+                      ...usersForApprover.map((u) => ({
+                        value: u.id,
+                        label: `${u.name?.trim() || u.email} (${u.email})`,
+                        searchText: `${u.name?.trim() || u.email} ${u.email}`.trim(),
+                      })),
+                    ]}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="approver_email">Approver email</Label>

@@ -1,15 +1,11 @@
+'use client';
+
 import { useEffect, useState } from 'react';
 import { ApexOptions } from 'apexcharts';
 import ApexChart from 'react-apexcharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Switch } from '@/components/ui/switch';
 
 // Hardcoded dummy data for the earnings chart
@@ -19,6 +15,7 @@ const dummyChartData: number[] = [
 
 const EarningsChart = () => {
   const [chartData, setChartData] = useState<number[]>(dummyChartData);
+  const [period, setPeriod] = useState('1');
   const categories: string[] = [
     'Jan',
     'Feb',
@@ -191,17 +188,18 @@ const EarningsChart = () => {
             </Label>
             <Switch id="auto-update" defaultChecked size="sm" />
           </div>
-          <Select defaultValue="1">
-            <SelectTrigger className="w-28">
-              <SelectValue placeholder="Select" />
-            </SelectTrigger>
-            <SelectContent className="w-28">
-              <SelectItem value="1">1 month</SelectItem>
-              <SelectItem value="3">3 months</SelectItem>
-              <SelectItem value="6">6 months</SelectItem>
-              <SelectItem value="12">12 months</SelectItem>
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={period}
+            onChange={setPeriod}
+            placeholder="Select"
+            triggerClassName="w-28"
+            options={[
+              { value: '1', label: '1 month' },
+              { value: '3', label: '3 months' },
+              { value: '6', label: '6 months' },
+              { value: '12', label: '12 months' },
+            ]}
+          />
         </div>
       </CardHeader>
       <CardContent className="flex flex-col justify-end items-stretch grow px-3 py-1">

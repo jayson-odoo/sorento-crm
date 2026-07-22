@@ -45,13 +45,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { User, UserStatus } from '@/app/models/user';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
@@ -696,75 +690,57 @@ const UserList = () => {
                 <div className="space-y-2">
                   {draftConditions.map((cond) => (
                     <div key={cond.id} className="grid grid-cols-[1fr_1fr_auto] gap-2">
-                      <Select
+                      <SearchableSelect
                         value={cond.field}
-                        onValueChange={(v) =>
+                        onChange={(v) =>
                           updateCondition(cond.id, {
                             field: v as UserFilterField,
                             value: v === 'trashed' ? 'exclude' : 'all',
                           })
                         }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="role">Role</SelectItem>
-                          <SelectItem value="status">Status</SelectItem>
-                          <SelectItem value="trashed">Trashed</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        options={[
+                          { value: 'role', label: 'Role' },
+                          { value: 'status', label: 'Status' },
+                          { value: 'trashed', label: 'Trashed' },
+                        ]}
+                      />
                       {cond.field === 'role' ? (
-                        <Select
+                        <SearchableSelect
                           value={cond.value}
-                          onValueChange={(v) => updateCondition(cond.id, { value: v })}
+                          onChange={(v) => updateCondition(cond.id, { value: v })}
                           disabled={isLoading}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All roles</SelectItem>
-                            {roleList?.map((role: User) => (
-                              <SelectItem key={role.id} value={role.id}>
-                                {role.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          options={[
+                            { value: 'all', label: 'All roles' },
+                            ...(roleList ?? []).map((role: User) => ({
+                              value: role.id,
+                              label: role.name,
+                            })),
+                          ]}
+                        />
                       ) : cond.field === 'status' ? (
-                        <Select
+                        <SearchableSelect
                           value={cond.value}
-                          onValueChange={(v) => updateCondition(cond.id, { value: v })}
+                          onChange={(v) => updateCondition(cond.id, { value: v })}
                           disabled={isLoading}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All users</SelectItem>
-                            {Object.entries(UserStatusProps).map(([status, { label }]) => (
-                              <SelectItem key={status} value={status}>
-                                {label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          options={[
+                            { value: 'all', label: 'All users' },
+                            ...Object.entries(UserStatusProps).map(([status, { label }]) => ({
+                              value: status,
+                              label,
+                            })),
+                          ]}
+                        />
                       ) : (
-                        <Select
+                        <SearchableSelect
                           value={cond.value}
-                          onValueChange={(v) => updateCondition(cond.id, { value: v })}
+                          onChange={(v) => updateCondition(cond.id, { value: v })}
                           disabled={isLoading}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="exclude">Active only</SelectItem>
-                            <SelectItem value="only">Trashed only</SelectItem>
-                            <SelectItem value="all">All</SelectItem>
-                          </SelectContent>
-                        </Select>
+                          options={[
+                            { value: 'exclude', label: 'Active only' },
+                            { value: 'only', label: 'Trashed only' },
+                            { value: 'all', label: 'All' },
+                          ]}
+                        />
                       )}
                       <Button type="button" mode="icon" variant="ghost" onClick={() => removeCondition(cond.id)}>
                         <Trash2 className="size-4" />

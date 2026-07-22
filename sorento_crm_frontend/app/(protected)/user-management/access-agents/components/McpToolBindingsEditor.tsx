@@ -4,13 +4,7 @@ import * as React from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useMcpToolsForPicker, useTeams } from '../hooks/useAccessAgents';
 import type { McpToolBindingInput } from '../services/accessAgentService';
 
@@ -80,43 +74,33 @@ export function McpToolBindingsEditor({
           key={idx}
           className="grid grid-cols-[1fr_1fr_120px_44px] gap-2 items-center"
         >
-          <Select
-            value={row.tool_id || undefined}
-            onValueChange={(v) => updateRow(idx, { tool_id: v })}
+          <SearchableSelect
+            value={row.tool_id || ''}
+            onChange={(v) => updateRow(idx, { tool_id: v })}
             disabled={disabled}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Select tool..." />
-            </SelectTrigger>
-            <SelectContent>
-              {toolOptions.map((t) => (
-                <SelectItem key={t.id} value={t.id}>
-                  <span className="font-mono text-xs">{t.tool_name}</span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
+            placeholder="Select tool..."
+            options={toolOptions.map((t) => ({ value: t.id, label: t.tool_name }))}
+            // Tool names are identifiers; keep them monospaced as before.
+            renderOption={(opt) => <span className="font-mono text-xs">{opt.label}</span>}
+            renderTriggerLabel={(opt) => <span className="font-mono text-xs">{opt.label}</span>}
+          />
+          <SearchableSelect
             value={row.team_id ?? NO_TEAM}
-            onValueChange={(v) =>
-              updateRow(idx, { team_id: v === NO_TEAM ? null : v })
-            }
+            onChange={(v) => updateRow(idx, { team_id: v === NO_TEAM ? null : v })}
             disabled={disabled}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Select team..." />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={NO_TEAM}>
-                <span className="text-muted-foreground">— legacy (any team) —</span>
-              </SelectItem>
-              {teamOptions.map((t) => (
-                <SelectItem key={t.id} value={t.id}>
-                  {t.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            placeholder="Select team..."
+            options={[
+              { value: NO_TEAM, label: '— legacy (any team) —' },
+              ...teamOptions.map((t) => ({ value: t.id, label: t.name })),
+            ]}
+            renderOption={(opt) =>
+              opt.value === NO_TEAM ? (
+                <span className="text-muted-foreground">{opt.label}</span>
+              ) : (
+                <span>{opt.label}</span>
+              )
+            }
+          />
           <Input
             type="number"
             min={1}

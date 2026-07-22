@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -30,30 +30,9 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Button, ButtonArrow } from '@/components/ui/button';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { Button } from '@/components/ui/button';
 import { LoaderCircleIcon } from 'lucide-react';
-import { cn } from '@/lib/utils';
 import { User, UserRole } from '@/app/models/user';
 import { useRoleSelectQuery } from '../../../roles/hooks/use-role-select-query';
 import { UserStatusProps } from '../../constants/status';
@@ -72,7 +51,6 @@ const UserProfileEditDialog = ({
   user: User;
 }) => {
   const queryClient = useQueryClient();
-  const [superiorOpen, setSuperiorOpen] = useState(false);
 
   // Fetch available roles
   const { data: roleList } = useRoleSelectQuery();
@@ -114,8 +92,6 @@ const UserProfileEditDialog = ({
     },
     mode: 'onSubmit',
   });
-  const [contactOpen, setContactOpen] = useState(false);
-  const [contactSearch, setContactSearch] = useState('');
 
   const lastResetRef = useRef<{ userId: string } | null>(null);
   useEffect(() => {
@@ -180,21 +156,8 @@ const UserProfileEditDialog = ({
 
   const selectedContactId = form.watch('respond_contact_id');
 
-  // Searchable list of WhatsApp contacts for the picker (name + phone, never UUID).
-  const { data: contactSearchResults } = useQuery({
-    queryKey: ['respond-contacts-picker', contactSearch],
-    queryFn: async () => {
-      const params = new URLSearchParams({ limit: '20' });
-      if (contactSearch.trim()) params.set('query', contactSearch.trim());
-      const response = await apiFetch(`/api/user-management/contacts?${params.toString()}`);
-      if (!response.ok) return [] as Array<{ id: string; name?: string | null; phone_number?: string | null }>;
-      const json = await response.json();
-      return (json?.data ?? []) as Array<{ id: string; name?: string | null; phone_number?: string | null }>;
-    },
-    enabled: open && contactOpen,
-    staleTime: 1000 * 30,
-  });
-
+  // The contact picker fetches its own page through SearchableSelect's async mode, so the
+  // separate react-query list this component used to keep is gone.
   // Resolve the currently-linked contact so the trigger shows a human label, not the id.
   const { data: linkedContact } = useQuery({
     queryKey: ['respond-contact', selectedContactId],
@@ -473,25 +436,15 @@ const UserProfileEditDialog = ({
                 <FormItem>
                   <FormLabel>Status</FormLabel>
                   <FormControl>
-                    <Select
-                      onValueChange={(value) => field.onChange(value)}
+                    <SearchableSelect
+                      onChange={(value) => field.onChange(value)}
                       value={field.value || ''}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select a status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          {Object.entries(UserStatusProps).map(
-                            ([status, { label }]) => (
-                              <SelectItem key={status} value={status}>
-                                {label}
-                              </SelectItem>
-                            ),
-                          )}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                      placeholder="Select a status"
+                      options={Object.entries(UserStatusProps).map(([status, { label }]) => ({
+                        value: status,
+                        label,
+                      }))}
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -562,62 +515,29 @@ const UserProfileEditDialog = ({
               name="superior_id"
               render={({ field }) => {
                 const value = field.value || '__none__';
-                const selected = value === '__none__' ? null : (superiorUsers || []).find((u: { id: string }) => u.id === value);
-                const displayLabel = selected ? (selected.name || selected.email) : 'None';
                 const filteredSuperiors = (superiorUsers || []).filter((s: { id: string }) => s.id !== user.id);
                 return (
                   <FormItem>
                     <FormLabel>Superior</FormLabel>
                     <FormControl>
-                      <Popover open={superiorOpen} onOpenChange={setSuperiorOpen}>
-                        <PopoverTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            role="combobox"
-                            mode="input"
-                            placeholder={!value || value === '__none__'}
-                            aria-expanded={superiorOpen}
-                            className={cn('w-full justify-between font-normal')}
-                          >
-                            <span className={cn('truncate', (!value || value === '__none__') && 'text-muted-foreground')}>
-                              {displayLabel}
-                            </span>
-                            <ButtonArrow />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-(--radix-popper-anchor-width) max-h-[min(320px,80vh)] flex flex-col p-0" align="start">
-                          <Command className="max-h-full min-h-0 flex flex-col">
-                            <CommandInput placeholder="Search by name or email..." />
-                            <CommandList className="max-h-[240px] min-h-0 overflow-y-auto overflow-x-hidden">
-                              <CommandEmpty>No user found.</CommandEmpty>
-                              <CommandGroup>
-                                <CommandItem
-                                  value="__none__"
-                                  onSelect={() => {
-                                    field.onChange(null);
-                                    setSuperiorOpen(false);
-                                  }}
-                                >
-                                  None
-                                </CommandItem>
-                                {filteredSuperiors.map((superior: { id: string; name?: string | null; email: string }) => (
-                                  <CommandItem
-                                    key={superior.id}
-                                    value={`${superior.name ?? ''} ${superior.email}`.trim() || superior.id}
-                                    onSelect={() => {
-                                      field.onChange(superior.id);
-                                      setSuperiorOpen(false);
-                                    }}
-                                  >
-                                    {superior.name || superior.email}
-                                  </CommandItem>
-                                ))}
-                              </CommandGroup>
-                            </CommandList>
-                          </Command>
-                        </PopoverContent>
-                      </Popover>
+                      <SearchableSelect
+                        value={value && value !== '__none__' ? value : '__none__'}
+                        onChange={(v) => field.onChange(v === '__none__' ? null : v)}
+                        placeholder="None"
+                        emptyMessage="No user found."
+                        triggerClassName="w-full"
+                        options={[
+                          { value: '__none__', label: 'None' },
+                          ...filteredSuperiors.map(
+                            (superior: { id: string; name?: string | null; email: string }) => ({
+                              value: superior.id,
+                              label: superior.name || superior.email,
+                              searchText:
+                                `${superior.name ?? ''} ${superior.email}`.trim() || superior.id,
+                            }),
+                          ),
+                        ]}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -632,59 +552,40 @@ const UserProfileEditDialog = ({
                 <FormItem>
                   <FormLabel>WhatsApp Contact</FormLabel>
                   <FormControl>
-                    <Popover open={contactOpen} onOpenChange={setContactOpen}>
-                      <PopoverTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          role="combobox"
-                          mode="input"
-                          placeholder={!field.value}
-                          aria-expanded={contactOpen}
-                          className={cn('w-full justify-between font-normal')}
-                        >
-                          <span className={cn('truncate', !field.value && 'text-muted-foreground')}>
-                            {field.value ? contactLabel(linkedContact) : 'Link a WhatsApp contact (optional)'}
-                          </span>
-                          <ButtonArrow />
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-(--radix-popper-anchor-width) max-h-[min(320px,80vh)] flex flex-col p-0" align="start">
-                        <Command shouldFilter={false} className="max-h-full min-h-0 flex flex-col">
-                          <CommandInput
-                            placeholder="Search by name or phone..."
-                            value={contactSearch}
-                            onValueChange={setContactSearch}
-                          />
-                          <CommandList className="max-h-[240px] min-h-0 overflow-y-auto overflow-x-hidden">
-                            <CommandEmpty>No contact found.</CommandEmpty>
-                            <CommandGroup>
-                              <CommandItem
-                                value="__none__"
-                                onSelect={() => {
-                                  field.onChange(null);
-                                  setContactOpen(false);
-                                }}
-                              >
-                                No linked contact
-                              </CommandItem>
-                              {(contactSearchResults ?? []).map((c) => (
-                                <CommandItem
-                                  key={c.id}
-                                  value={c.id}
-                                  onSelect={() => {
-                                    field.onChange(c.id);
-                                    setContactOpen(false);
-                                  }}
-                                >
-                                  {contactLabel(c)}
-                                </CommandItem>
-                              ))}
-                            </CommandGroup>
-                          </CommandList>
-                        </Command>
-                      </PopoverContent>
-                    </Popover>
+                    <SearchableSelect
+                      value={field.value ?? '__none__'}
+                      onChange={(v) => field.onChange(v === '__none__' ? null : v)}
+                      // Server-searched (the old picker set shouldFilter={false}); async mode
+                      // owns the debounce and stale-response dropping. Typing drives the same
+                      // react-query fetch via contactSearch.
+                      fetchOptions={async (query) => {
+                        const params = new URLSearchParams({ limit: '20' });
+                        if (query.trim()) params.set('query', query.trim());
+                        const response = await apiFetch(
+                          `/api/user-management/contacts?${params.toString()}`,
+                        );
+                        const rows = response.ok
+                          ? ((await response.json())?.data ?? [])
+                          : [];
+                        return [
+                          { value: '__none__', label: 'No linked contact' },
+                          ...(rows as Array<{ id: string; name?: string | null; phone_number?: string | null }>).map((c) => ({
+                            value: c.id,
+                            label: contactLabel(c),
+                          })),
+                        ];
+                      }}
+                      // Without this the trigger blanks on load: the linked contact is not in
+                      // the first page of results.
+                      selectedOption={
+                        field.value && linkedContact
+                          ? { value: field.value, label: contactLabel(linkedContact) }
+                          : undefined
+                      }
+                      placeholder="Link a WhatsApp contact (optional)"
+                      emptyMessage="No contact found."
+                      triggerClassName="w-full"
+                    />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

@@ -28,13 +28,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Eye, Search, X } from 'lucide-react';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
@@ -233,24 +227,22 @@ export default function RespondOutboxList() {
                 content: (
                   <div className="space-y-1.5">
                     <Label>Status</Label>
-                    <Select
+                    <SearchableSelect
                       value={status}
-                      onValueChange={(v) => {
+                      onChange={(v) => {
                         setStatus(v);
                         setPagination((p) => ({ ...p, pageIndex: 0 }));
                       }}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Status" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__all__">All statuses</SelectItem>
-                        <SelectItem value="success">Success</SelectItem>
-                        <SelectItem value="failed">Failed</SelectItem>
-                        <SelectItem value="pending">Pending</SelectItem>
-                        <SelectItem value="processing">Processing</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      options={[
+                        { value: '__all__', label: 'All statuses' },
+                        { value: 'success', label: 'Success' },
+                        { value: 'failed', label: 'Failed' },
+                        { value: 'pending', label: 'Pending' },
+                        { value: 'processing', label: 'Processing' },
+                      ]}
+                      placeholder="Status"
+                      triggerClassName="w-full"
+                    />
                   </div>
                 ),
               }}

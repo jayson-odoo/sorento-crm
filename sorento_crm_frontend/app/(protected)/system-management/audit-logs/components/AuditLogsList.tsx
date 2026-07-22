@@ -22,13 +22,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   Dialog,
   DialogBody,
@@ -37,17 +31,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Command,
-  CommandCheck,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { ChevronsUpDown } from 'lucide-react';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getUsersSelect } from '@/services/userSelectService';
 import { useAuditLogs } from '../hooks/useAuditLogs';
@@ -118,8 +101,6 @@ export default function AuditLogsList() {
   const [dateFrom, setDateFrom] = useState(() => searchParams.get('changed_from') ?? '');
   const [dateTo, setDateTo] = useState(() => searchParams.get('changed_to') ?? '');
 
-  const [userPickerOpen, setUserPickerOpen] = useState(false);
-
   const { data, isLoading, isError, error, refetch, isFetching } = useAuditLogs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
@@ -138,12 +119,6 @@ export default function AuditLogsList() {
     queryFn: () => getUsersSelect(),
     staleTime: 5 * 60 * 1000,
   });
-  const selectedUserLabel = useMemo(() => {
-    if (!userId) return null;
-    const u = users?.find((x) => x.id === userId);
-    return u ? u.name || u.email : userId;
-  }, [userId, users]);
-
   const activeFilterCount =
     (entityType ? 1 : 0) +
     (action !== ACTION_ALL ? 1 : 0) +
@@ -363,83 +338,51 @@ export default function AuditLogsList() {
                   <div className="space-y-3">
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">Entity type</label>
-                      <Select
+                      <SearchableSelect
                         value={entityType || ENTITY_TYPE_ALL}
-                        onValueChange={(v) => setEntityType(v === ENTITY_TYPE_ALL ? '' : v)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="All entity types" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={ENTITY_TYPE_ALL}>All entity types</SelectItem>
-                          {ENTITY_TYPES.map((t) => (
-                            <SelectItem key={t} value={t}>
-                              {t}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        onChange={(v) => setEntityType(v === ENTITY_TYPE_ALL ? '' : v)}
+                        options={[
+                          { value: ENTITY_TYPE_ALL, label: 'All entity types' },
+                          ...ENTITY_TYPES.map((t) => ({ value: t, label: t })),
+                        ]}
+                        placeholder="All entity types"
+                        triggerClassName="w-full"
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">Action</label>
-                      <Select value={action} onValueChange={setAction}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Action" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={ACTION_ALL}>All actions</SelectItem>
-                          <SelectItem value="INSERT">Insert</SelectItem>
-                          <SelectItem value="CREATE">Create</SelectItem>
-                          <SelectItem value="UPDATE">Update</SelectItem>
-                          <SelectItem value="DELETE">Delete</SelectItem>
-                          <SelectItem value="IMPORT">Import</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <SearchableSelect
+                        value={action}
+                        onChange={setAction}
+                        options={[
+                          { value: ACTION_ALL, label: 'All actions' },
+                          { value: 'INSERT', label: 'Insert' },
+                          { value: 'CREATE', label: 'Create' },
+                          { value: 'UPDATE', label: 'Update' },
+                          { value: 'DELETE', label: 'Delete' },
+                          { value: 'IMPORT', label: 'Import' },
+                        ]}
+                        placeholder="Action"
+                        triggerClassName="w-full"
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">User</label>
-                      <Popover open={userPickerOpen} onOpenChange={setUserPickerOpen}>
-                        <PopoverTrigger asChild>
-                          <Button variant="outline" className="w-full justify-between font-normal">
-                            <span className="truncate">{selectedUserLabel ?? 'Any user'}</span>
-                            <ChevronsUpDown className="size-3.5 opacity-50" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-[240px] p-0" align="start">
-                          <Command>
-                            <CommandInput placeholder="Search users..." />
-                            <CommandList>
-                              <CommandEmpty>No users found.</CommandEmpty>
-                              <CommandGroup>
-                                {userId && (
-                                  <CommandItem
-                                    value="__clear__"
-                                    onSelect={() => {
-                                      setUserId('');
-                                      setUserPickerOpen(false);
-                                    }}
-                                  >
-                                    <span className="grow text-muted-foreground">Any user</span>
-                                  </CommandItem>
-                                )}
-                                {users?.map((u) => (
-                                  <CommandItem
-                                    key={u.id}
-                                    value={`${u.name ?? ''} ${u.email}`}
-                                    onSelect={() => {
-                                      setUserId(u.id);
-                                      setUserPickerOpen(false);
-                                    }}
-                                  >
-                                    <span className="grow truncate">{u.name || u.email}</span>
-                                    {userId === u.id && <CommandCheck />}
-                                  </CommandItem>
-                                ))}
-                              </CommandGroup>
-                            </CommandList>
-                          </Command>
-                        </PopoverContent>
-                      </Popover>
+                      <SearchableSelect
+                        value={userId}
+                        onChange={setUserId}
+                        options={[
+                          { value: '', label: 'Any user' },
+                          ...(users?.map((u) => ({
+                            value: u.id,
+                            label: u.name || u.email,
+                            searchText: `${u.name ?? ''} ${u.email}`.trim(),
+                          })) ?? []),
+                        ]}
+                        placeholder="Any user"
+                        emptyMessage="No users found."
+                        triggerClassName="w-full"
+                      />
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div className="space-y-1.5">

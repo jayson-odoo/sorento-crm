@@ -11,13 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
@@ -143,19 +137,17 @@ export default function BrandsList() {
                   <div className="space-y-4">
                     <div>
                       <Label>Status</Label>
-                      <Select
+                      <SearchableSelect
                         value={statusFilter}
-                        onValueChange={(v) => setStatusFilter(v as 'all' | 'active' | 'inactive')}
-                      >
-                        <SelectTrigger className="mt-1">
-                          <SelectValue placeholder="All statuses" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All statuses</SelectItem>
-                          <SelectItem value="active">Active</SelectItem>
-                          <SelectItem value="inactive">Inactive</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        onChange={(v) => setStatusFilter(v as 'all' | 'active' | 'inactive')}
+                        placeholder="All statuses"
+                        triggerClassName="mt-1"
+                        options={[
+                          { value: 'all', label: 'All statuses' },
+                          { value: 'active', label: 'Active' },
+                          { value: 'inactive', label: 'Inactive' },
+                        ]}
+                      />
                     </div>
                     {statusActive && (
                       <div className="flex justify-end">

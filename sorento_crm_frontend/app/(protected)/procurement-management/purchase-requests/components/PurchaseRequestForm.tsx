@@ -25,13 +25,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -336,24 +330,17 @@ export default function PurchaseRequestForm({
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Type</FormLabel>
-                        <Select
-                          onValueChange={field.onChange}
-                          value={field.value ?? ''}
-                        >
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select type" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="purchase_request">
-                              Purchase Request
-                            </SelectItem>
-                            <SelectItem value="sponsorship_form">
-                              Sponsorship Form
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <FormControl>
+                          <SearchableSelect
+                            onChange={field.onChange}
+                            value={field.value ?? ''}
+                            placeholder="Select type"
+                            options={[
+                              { value: 'purchase_request', label: 'Purchase Request' },
+                              { value: 'sponsorship_form', label: 'Sponsorship Form' },
+                            ]}
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -450,19 +437,16 @@ export default function PurchaseRequestForm({
                             onChange={field.onChange}
                             placeholder="Select sales type"
                             renderFallback={() => (
-                              <Select
+                              <SearchableSelect
                                 key={field.value || 'empty'}
-                                onValueChange={field.onChange}
-                                value={field.value || undefined}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select sales type" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="project">Project</SelectItem>
-                                  <SelectItem value="cash_sales">Cash Sales</SelectItem>
-                                </SelectContent>
-                              </Select>
+                                onChange={field.onChange}
+                                value={field.value || ''}
+                                placeholder="Select sales type"
+                                options={[
+                                  { value: 'project', label: 'Project' },
+                                  { value: 'cash_sales', label: 'Cash Sales' },
+                                ]}
+                              />
                             )}
                           />
                         </FormControl>
@@ -510,20 +494,17 @@ export default function PurchaseRequestForm({
                               onChange={field.onChange}
                               placeholder="Select sponsor subject"
                               renderFallback={() => (
-                                <Select
+                                <SearchableSelect
                                   key={field.value || 'empty'}
-                                  onValueChange={field.onChange}
-                                  value={field.value || undefined}
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select sponsor subject" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="showroom">Showroom</SelectItem>
-                                    <SelectItem value="mockup">Mockup</SelectItem>
-                                    <SelectItem value="others">Others</SelectItem>
-                                  </SelectContent>
-                                </Select>
+                                  onChange={field.onChange}
+                                  value={field.value || ''}
+                                  placeholder="Select sponsor subject"
+                                  options={[
+                                    { value: 'showroom', label: 'Showroom' },
+                                    { value: 'mockup', label: 'Mockup' },
+                                    { value: 'others', label: 'Others' },
+                                  ]}
+                                />
                               )}
                             />
                           </FormControl>

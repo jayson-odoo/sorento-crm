@@ -25,13 +25,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useCustomers } from '../hooks/useCustomers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -181,22 +175,20 @@ export default function CustomersList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Status</Label>
-                    <Select
+                    <SearchableSelect
                       value={statusFilter}
-                      onValueChange={(v) => {
+                      onChange={(v) => {
                         setStatusFilter(v);
                         setPagination((p) => ({ ...p, pageIndex: 0 }));
                       }}
-                    >
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="All statuses" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All statuses</SelectItem>
-                        <SelectItem value="active">Active</SelectItem>
-                        <SelectItem value="inactive">Inactive</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      options={[
+                        { value: 'all', label: 'All statuses' },
+                        { value: 'active', label: 'Active' },
+                        { value: 'inactive', label: 'Inactive' },
+                      ]}
+                      placeholder="All statuses"
+                      triggerClassName="mt-1"
+                    />
                   </div>
                   {statusFilter !== 'all' && (
                     <div className="flex justify-end">
