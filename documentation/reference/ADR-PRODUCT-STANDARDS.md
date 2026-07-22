@@ -121,7 +121,19 @@ Backend API
 
 ---
 
-## 5. Exceptions and Exemptions
+## 5. Data Model Standards
+
+### Every domain table has a uuid `id` primary key
+- New tables MUST declare `id = Column(UUID(as_uuid=False), primary_key=True, server_default=text("gen_random_uuid()"))`.
+- A natural business key (e.g. a `code` like `retail` / `MSEG-A`) is fine and encouraged — but it lives **alongside** the surrogate `id` as a `unique=True, nullable=False` column, not **as** the primary key. Foreign keys may reference either the uuid `id` or the unique business key.
+- **Why this is mandatory, not stylistic.** The polymorphic key columns — `audit_logs.entity_id`, `conversation_sla_tracking.source_entity_id`, `notifications.source_entity_id`, and similar — store a stringified id and can only be typed `uuid` (which makes Postgres reject a `uuid = text` mismatch at write time) if *every* id they might hold is genuinely a uuid. A single natural-key-PK table forces those columns back to `text`, which silently accepts the mismatch. One code-keyed table costs the whole system its type safety on the audit/SLA/notification trails.
+- **Enforcement.** `sorento_crm_backend/tests/test_schema_uuid_id_principle.py` walks the SQLAlchemy models and fails CI if any table lacks a uuid `id`. A new table must either comply or be consciously added to that file's `EXEMPTIONS` allowlist (junction / external / documented-legacy) in a reviewed diff. The allowlist may only shrink.
+- **Legitimate exceptions** (already in the allowlist): pure M2M junction tables (a composite natural PK is correct); schemas owned by another system (NextAuth, n8n, the Respond ingest); and grandfathered legacy auth/RBAC tables whose text ids hold uuid-shaped values (conversion is a tracked FK-heavy migration, not licence to add more).
+- Worked example: `alembic/versions/298_market_segments_uuid_id.py` moves `market_segments` from a `code` PK to a uuid `id` while keeping `code` as the unique FK target.
+
+---
+
+## 6. Exceptions and Exemptions
 - Exceptions must be documented in this ADR or a linked ADR.
 - Resource-heavy or file-centric flows (e.g. attachment bulk upload) may use dedicated pages instead of modals.
 - Read-only modules (e.g. logs) do not require create/edit modals.

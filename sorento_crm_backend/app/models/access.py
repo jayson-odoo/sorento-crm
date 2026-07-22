@@ -68,7 +68,11 @@ class MarketSegment(Base):
     """
     __tablename__ = "market_segments"
 
-    code = Column(String(50), primary_key=True)
+    # uuid surrogate PK (design principle: every domain table has a uuid `id`).
+    # `code` stays the human-facing business key — unique, and the FK target for
+    # customers / respond_contact_market_segments / team_member_market_segments.
+    id = Column(UUID(as_uuid=False), primary_key=True, server_default=text("gen_random_uuid()"))
+    code = Column(String(50), unique=True, nullable=False)
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)

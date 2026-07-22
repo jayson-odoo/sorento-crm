@@ -78,7 +78,13 @@ class SalesOrderService:
     def _market_segment_name(self, customer: Optional[Customer]) -> Optional[str]:
         if not customer or not customer.market_segment_code:
             return None
-        seg = self.db.query(MarketSegment).get(customer.market_segment_code)
+        # Look up by the business key, not `.get()`: the PK is now the uuid `id`,
+        # so `.get(code)` would query id == '<code>' and never match.
+        seg = (
+            self.db.query(MarketSegment)
+            .filter(MarketSegment.code == customer.market_segment_code)
+            .first()
+        )
         return seg.name if seg else customer.market_segment_code
 
     # -- serialization -------------------------------------------------------
