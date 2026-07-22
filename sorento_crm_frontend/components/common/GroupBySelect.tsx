@@ -1,12 +1,6 @@
 'use client';
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 
 export type GroupByOption = { value: string; label: string };
 
@@ -24,19 +18,16 @@ export function GroupBySelect({
   className?: string;
 }) {
   return (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className={className ?? 'w-[200px]'}>
-        <SelectValue placeholder={placeholder} />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="__none__">No grouping</SelectItem>
-        {options.map((o) => (
-          <SelectItem key={o.value} value={o.value}>
-            Group by {o.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <SearchableSelect
+      value={value}
+      onChange={onChange}
+      options={[
+        { value: '__none__', label: 'No grouping' },
+        ...options.map((o) => ({ value: o.value, label: `Group by ${o.label}` })),
+      ]}
+      placeholder={placeholder}
+      triggerClassName={className ?? 'w-[200px]'}
+    />
   );
 }
 

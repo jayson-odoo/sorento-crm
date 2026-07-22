@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { useRouter } from 'next/navigation';
-import { LoaderCircleIcon, Save, X } from 'lucide-react';
+import { LoaderCircleIcon, Save } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Form,
@@ -17,13 +17,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import LookupBoundField from '@/components/common/LookupBoundField';
@@ -241,21 +235,21 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
                         onChange={field.onChange}
                         placeholder="Select form type"
                         renderFallback={() => (
-                          <Select onValueChange={field.onChange} value={field.value || 'marketing'}>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select form type" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="marketing">Marketing</SelectItem>
-                              <SelectItem value="registration">Registration</SelectItem>
-                              <SelectItem value="application">Application</SelectItem>
-                              <SelectItem value="feedback">Feedback</SelectItem>
-                              <SelectItem value="survey">Survey</SelectItem>
-                              <SelectItem value="complaint">Complaint</SelectItem>
-                              <SelectItem value="internal">Internal</SelectItem>
-                              <SelectItem value="other">Other</SelectItem>
-                            </SelectContent>
-                          </Select>
+                          <SearchableSelect
+                            onChange={field.onChange}
+                            value={field.value || 'marketing'}
+                            options={[
+                              { value: 'marketing', label: 'Marketing' },
+                              { value: 'registration', label: 'Registration' },
+                              { value: 'application', label: 'Application' },
+                              { value: 'feedback', label: 'Feedback' },
+                              { value: 'survey', label: 'Survey' },
+                              { value: 'complaint', label: 'Complaint' },
+                              { value: 'internal', label: 'Internal' },
+                              { value: 'other', label: 'Other' },
+                            ]}
+                            placeholder="Select form type"
+                          />
                         )}
                       />
                     </FormControl>
@@ -307,25 +301,25 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Language *</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value || 'en'}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select language" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="en">English</SelectItem>
-                        <SelectItem value="es">Spanish</SelectItem>
-                        <SelectItem value="fr">French</SelectItem>
-                        <SelectItem value="de">German</SelectItem>
-                        <SelectItem value="it">Italian</SelectItem>
-                        <SelectItem value="pt">Portuguese</SelectItem>
-                        <SelectItem value="zh">Chinese</SelectItem>
-                        <SelectItem value="ja">Japanese</SelectItem>
-                        <SelectItem value="ko">Korean</SelectItem>
-                        <SelectItem value="ar">Arabic</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <SearchableSelect
+                        onChange={field.onChange}
+                        value={field.value || 'en'}
+                        options={[
+                          { value: 'en', label: 'English' },
+                          { value: 'es', label: 'Spanish' },
+                          { value: 'fr', label: 'French' },
+                          { value: 'de', label: 'German' },
+                          { value: 'it', label: 'Italian' },
+                          { value: 'pt', label: 'Portuguese' },
+                          { value: 'zh', label: 'Chinese' },
+                          { value: 'ja', label: 'Japanese' },
+                          { value: 'ko', label: 'Korean' },
+                          { value: 'ar', label: 'Arabic' },
+                        ]}
+                        placeholder="Select language"
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -361,40 +355,23 @@ export default function FormForm({ formId, onSuccess }: FormFormProps) {
                 <FormItem>
                   <FormLabel>Attachment</FormLabel>
                   <div className="space-y-3">
-                    <Select
-                      value={field.value || '__none__'}
-                      onValueChange={(value) => {
-                        field.onChange(value === '__clear__' || value === '__none__' ? null : value);
-                      }}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select an attachment or leave empty">
-                            {selectedAttachment
-                              ? selectedAttachment.original_filename
-                              : 'No attachment selected'}
-                          </SelectValue>
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="__none__">
-                          <span className="text-muted-foreground">No attachment</span>
-                        </SelectItem>
-                        {field.value && (
-                          <SelectItem value="__clear__">
-                            <span className="flex items-center gap-2">
-                              <X className="size-4" />
-                              Clear attachment
-                            </span>
-                          </SelectItem>
-                        )}
-                        {attachments.map((attachment) => (
-                          <SelectItem key={attachment.id} value={attachment.id}>
-                            {attachment.original_filename}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <FormControl>
+                      <SearchableSelect
+                        value={field.value || '__none__'}
+                        onChange={(value) => {
+                          field.onChange(value === '__clear__' || value === '__none__' ? null : value);
+                        }}
+                        options={[
+                          { value: '__none__', label: 'No attachment' },
+                          ...(field.value ? [{ value: '__clear__', label: 'Clear attachment' }] : []),
+                          ...attachments.map((attachment) => ({
+                            value: attachment.id,
+                            label: attachment.original_filename,
+                          })),
+                        ]}
+                        placeholder="Select an attachment or leave empty"
+                      />
+                    </FormControl>
                     {selectedAttachment && (
                       <div className="rounded-lg border p-3 bg-muted/50">
                         <div className="flex items-center justify-between">

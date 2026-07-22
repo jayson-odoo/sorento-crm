@@ -15,7 +15,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { Search, X, ChevronRight, Download, Eye, Trash2, Plus, RefreshCw, FolderOpen, RotateCcw, FileArchive, Pencil, Tag } from 'lucide-react';
+import { Search, X, ChevronRight, Download, Eye, Trash2, Plus, RefreshCw, RotateCcw, FileArchive, Pencil, Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -24,13 +24,7 @@ import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-gr
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable, DataGridTableRowSelect, DataGridTableRowSelectAll } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAttachments, useAttachmentTypesList, useDeleteAttachment, useDownloadAttachment, useRestoreAttachment, useBulkRestoreAttachments, useDirectoryTree, useUpdateAttachment } from '../hooks/useAttachments';
@@ -603,72 +597,58 @@ export default function AttachmentBrowser() {
                   <div className="space-y-3">
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Folder</p>
-                      <Select
+                      <SearchableSelect
                         value={directoryId ?? '__all__'}
-                        onValueChange={(v) =>
+                        onChange={(v) =>
                           setDirectoryId(v === '__all__' ? null : v === '__trash__' ? '__trash__' : v)
                         }
-                      >
-                        <SelectTrigger className="w-full">
-                          <FolderOpen className="size-4 opacity-70 mr-1" />
-                          <SelectValue placeholder="All folders" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__all__">All folders</SelectItem>
-                          {flattenDirectoryTree(directoryTree).map((d) => (
-                            <SelectItem key={d.id} value={d.id}>
-                              {d.label}
-                            </SelectItem>
-                          ))}
-                          <SelectItem value="__trash__">
-                            <span className="flex items-center gap-2">
-                              <Trash2 className="size-4" />
-                              Trash
-                            </span>
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
+                        options={[
+                          { value: '__all__', label: 'All folders' },
+                          ...flattenDirectoryTree(directoryTree).map((d) => ({
+                            value: d.id,
+                            label: d.label,
+                          })),
+                          { value: '__trash__', label: 'Trash' },
+                        ]}
+                        placeholder="All folders"
+                        triggerClassName="w-full"
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Attachment type</p>
-                      <Select
+                      <SearchableSelect
                         value={attachmentTypeId}
-                        onValueChange={(value) => {
+                        onChange={(value) => {
                           setAttachmentTypeId(value);
                           setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                         }}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Attachment type" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__all__">All attachment types</SelectItem>
-                          {attachmentTypes.map((type) => (
-                            <SelectItem key={type.id} value={type.id}>
-                              {type.type_name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        options={[
+                          { value: '__all__', label: 'All attachment types' },
+                          ...attachmentTypes.map((type) => ({
+                            value: type.id,
+                            label: type.type_name,
+                          })),
+                        ]}
+                        placeholder="Attachment type"
+                        triggerClassName="w-full"
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Link status</p>
-                      <Select
+                      <SearchableSelect
                         value={linkStatus}
-                        onValueChange={(value) => {
+                        onChange={(value) => {
                           setLinkStatus(value as '__all__' | 'linked' | 'unlinked');
                           setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                         }}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Link status" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__all__">All files</SelectItem>
-                          <SelectItem value="linked">Linked</SelectItem>
-                          <SelectItem value="unlinked">Not linked</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        options={[
+                          { value: '__all__', label: 'All files' },
+                          { value: 'linked', label: 'Linked' },
+                          { value: 'unlinked', label: 'Not linked' },
+                        ]}
+                        placeholder="Link status"
+                        triggerClassName="w-full"
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Uploaded by user id</p>

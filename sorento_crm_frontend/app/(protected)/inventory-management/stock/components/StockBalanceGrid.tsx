@@ -24,7 +24,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStockBalance } from '../hooks/useStock';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -298,34 +298,32 @@ export default function StockBalanceGrid() {
                 <div className="space-y-4">
                   <div>
                     <Label>Warehouse</Label>
-                    <Select value={warehouseId || 'all'} onValueChange={(v) => setWarehouseId(v === 'all' ? '' : v)}>
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="All warehouses" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All warehouses</SelectItem>
-                        {warehouses.map((w) => (
-                          <SelectItem key={w.id} value={w.id}>
-                            {w.warehouse_name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={warehouseId || 'all'}
+                      onChange={(v) => setWarehouseId(v === 'all' ? '' : v)}
+                      options={[
+                        { value: 'all', label: 'All warehouses' },
+                        ...warehouses.map((w) => ({ value: w.id, label: w.warehouse_name ?? '' })),
+                      ]}
+                      placeholder="All warehouses"
+                      triggerClassName="mt-1"
+                    />
                   </div>
                   <div>
                     <Label>Status</Label>
-                    <Select value={statusFilter || 'all'} onValueChange={(v) => setStatusFilter(v === 'all' ? '' : v)}>
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="All statuses" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All statuses</SelectItem>
-                        <SelectItem value="critical">Critical</SelectItem>
-                        <SelectItem value="low">Low</SelectItem>
-                        <SelectItem value="normal">Normal</SelectItem>
-                        <SelectItem value="overstock">Overstock</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={statusFilter || 'all'}
+                      onChange={(v) => setStatusFilter(v === 'all' ? '' : v)}
+                      options={[
+                        { value: 'all', label: 'All statuses' },
+                        { value: 'critical', label: 'Critical' },
+                        { value: 'low', label: 'Low' },
+                        { value: 'normal', label: 'Normal' },
+                        { value: 'overstock', label: 'Overstock' },
+                      ]}
+                      placeholder="All statuses"
+                      triggerClassName="mt-1"
+                    />
                   </div>
                   {(warehouseId || statusFilter) && (
                     <div className="flex justify-end">

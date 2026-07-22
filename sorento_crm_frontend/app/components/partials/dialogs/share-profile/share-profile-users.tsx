@@ -1,14 +1,27 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { toAbsoluteUrl } from '@/lib/helpers';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+
+function RoleSelect({ defaultRole }: { defaultRole: string }) {
+  const [role, setRole] = useState(defaultRole);
+  return (
+    <SearchableSelect
+      value={role}
+      onChange={setRole}
+      options={[
+        { value: 'owner', label: 'Owner' },
+        { value: 'editor', label: 'Editor' },
+        { value: 'viewer', label: 'Viewer' },
+      ]}
+      placeholder="Role"
+      size="sm"
+      triggerClassName="w-24"
+    />
+  );
+}
 
 export function ShareProfileUsers() {
   const items = [
@@ -58,16 +71,7 @@ export function ShareProfileUsers() {
             </div>
           </div>
 
-          <Select defaultValue={item.role}>
-            <SelectTrigger className="w-24" size="sm">
-              <SelectValue placeholder="Role" />
-            </SelectTrigger>
-            <SelectContent className="w-32">
-              <SelectItem value="owner">Owner</SelectItem>
-              <SelectItem value="editor">Editor</SelectItem>
-              <SelectItem value="viewer">Viewer</SelectItem>
-            </SelectContent>
-          </Select>
+          <RoleSelect defaultRole={item.role} />
         </div>
       ))}
     </div>

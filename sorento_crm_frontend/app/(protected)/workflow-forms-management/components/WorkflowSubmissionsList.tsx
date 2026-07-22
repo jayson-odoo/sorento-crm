@@ -26,13 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useTenantModules } from '@/hooks/useTenantModules';
@@ -247,22 +241,16 @@ export default function WorkflowSubmissionsList({
               searchSlot={
                 <div className="flex flex-wrap items-center gap-2">
                   {fixedDefinitionId ? null : (
-                    <Select
+                    <SearchableSelect
                       value={scopeDefinitionId || '__all'}
-                      onValueChange={(v) => setScopeDefinitionId(v === '__all' ? '__all' : v)}
-                    >
-                      <SelectTrigger className="w-[220px]">
-                        <SelectValue placeholder="All forms" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__all">All forms</SelectItem>
-                        {defOptions.map((d) => (
-                          <SelectItem key={d.id} value={d.id}>
-                            {d.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      onChange={(v) => setScopeDefinitionId(v === '__all' ? '__all' : v)}
+                      options={[
+                        { value: '__all', label: 'All forms' },
+                        ...defOptions.map((d) => ({ value: d.id, label: d.name })),
+                      ]}
+                      placeholder="All forms"
+                      triggerClassName="w-[220px]"
+                    />
                   )}
                   <div className="relative">
                     <Search className="size-4 text-muted-foreground absolute start-3 top-1/2 -translate-y-1/2" />

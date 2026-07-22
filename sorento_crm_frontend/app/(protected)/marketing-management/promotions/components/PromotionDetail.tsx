@@ -16,13 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -785,43 +779,34 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label>Promotion group *</Label>
-              <Select value={addProductGroupId} onValueChange={setAddProductGroupId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select group" />
-                </SelectTrigger>
-                <SelectContent>
-                  {sortedGroupsBase.map((g) => (
-                    <SelectItem key={g.id} value={g.id}>
-                      {g.group_name}
-                    </SelectItem>
-                  ))}
-                  {sortedGroupsBase.length === 0 && (
-                    <SelectItem value="__no_groups__" disabled>
-                      No groups — use Add group first
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={addProductGroupId}
+                onChange={setAddProductGroupId}
+                options={[
+                  ...sortedGroupsBase.map((g) => ({ value: g.id, label: g.group_name })),
+                  ...(sortedGroupsBase.length === 0
+                    ? [{ value: '__no_groups__', label: 'No groups — use Add group first', disabled: true }]
+                    : []),
+                ]}
+                placeholder="Select group"
+              />
             </div>
             <div className="space-y-2">
               <Label>Product *</Label>
-              <Select value={selectedProductId} onValueChange={setSelectedProductId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a product" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableProducts.map((product) => (
-                    <SelectItem key={product.id} value={product.id}>
-                      {product.product_code} - {product.product_name}
-                    </SelectItem>
-                  ))}
-                  {availableProducts.length === 0 && (
-                    <SelectItem value="__no_products__" disabled>
-                      No available products for this group
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={selectedProductId}
+                onChange={setSelectedProductId}
+                options={[
+                  ...availableProducts.map((product) => ({
+                    value: product.id,
+                    label: `${product.product_code} - ${product.product_name}`,
+                  })),
+                  ...(availableProducts.length === 0
+                    ? [{ value: '__no_products__', label: 'No available products for this group', disabled: true }]
+                    : []),
+                ]}
+                placeholder="Select a product"
+              />
             </div>
             <div className="space-y-2">
               <Label>Promotion price (optional)</Label>

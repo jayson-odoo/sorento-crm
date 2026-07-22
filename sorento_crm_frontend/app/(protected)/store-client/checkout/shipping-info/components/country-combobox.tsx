@@ -1,22 +1,6 @@
 "use client";
 
-import * as React from "react";
-import { Button, ButtonArrow } from "@/components/ui/button";
-import {
-  Command,
-  CommandCheck,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { SearchableSelect } from "@/components/common/SearchableSelect";
 
 const countryFlags = [
   { code: 'AF', name: 'Afghanistan', flag: '/media/flags/afghanistan.svg' },
@@ -250,68 +234,42 @@ type CountryComboboxProps = {
 };
 
 export default function CountryCombobox({ value, onChange }: CountryComboboxProps) {
-  const [open, setOpen] = React.useState(false);
-
-  const selectedCountry = countryFlags.find((country) => country.code === value);
+  const options = countryFlags.map((country) => ({
+    value: country.code,
+    label: country.name,
+    searchText: `${country.name} ${country.code}`,
+    flag: country.flag,
+  }));
 
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          role="combobox"
-          mode="input"
-          placeholder={!selectedCountry}
-          aria-expanded={open}
-          className="w-full"
-        >
-          {selectedCountry ? (
-            <span className="flex items-center gap-2">
-              <img
-                src={selectedCountry.flag}
-                alt={selectedCountry.code}
-                className="h-5 w-5 rounded-full"
-              />
-              <span className="truncate">{selectedCountry.name}</span>
-            </span>
-          ) : (
-            <span>Select a country...</span>
-          )}
-          <ButtonArrow />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-(--radix-popper-anchor-width) p-0">
-        <Command>
-          <CommandInput placeholder="Search country..." />
-          <CommandList>
-            <ScrollArea viewportClassName="max-h-[300px] [&>div]:block!">
-              <CommandEmpty>No country found.</CommandEmpty>
-              <CommandGroup>
-                {countryFlags.map((country) => (
-                  <CommandItem
-                    key={country.code}
-                    value={country.code}
-                    onSelect={(currentValue) => {
-                      onChange(currentValue === value ? "" : currentValue);
-                      setOpen(false);
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <img
-                        src={country.flag}
-                        alt={country.code}
-                        className="h-5 w-5 rounded-full"
-                      />
-                      <span className="truncate">{country.name}</span>
-                    </span>
-                    {value === country.code && <CommandCheck />}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </ScrollArea>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
+    <SearchableSelect
+      value={value}
+      onChange={onChange}
+      options={options}
+      placeholder="Select a country..."
+      emptyMessage="No country found."
+      triggerClassName="w-full"
+      clearable
+      renderTriggerLabel={(opt) => (
+        <span className="flex items-center gap-2">
+          <img
+            src={(opt as (typeof options)[number]).flag}
+            alt={opt.value}
+            className="h-5 w-5 rounded-full"
+          />
+          <span className="truncate">{opt.label}</span>
+        </span>
+      )}
+      renderOption={(opt) => (
+        <span className="flex flex-1 items-center gap-2">
+          <img
+            src={(opt as (typeof options)[number]).flag}
+            alt={opt.value}
+            className="h-5 w-5 rounded-full"
+          />
+          <span className="truncate">{opt.label}</span>
+        </span>
+      )}
+    />
   );
 }

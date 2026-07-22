@@ -1,6 +1,5 @@
 // eslint.config.mjs
 import { FlatCompat } from '@eslint/eslintrc';
-import { dropdownMigrationAllowlist } from './eslint-dropdown-allowlist.mjs';
 
 // Create a FlatCompat instance to support legacy "extends" syntax.
 const compat = new FlatCompat({
@@ -22,9 +21,9 @@ const eslintConfig = [
       '@next/next/no-img-element': 'off',
       // Searchable Dropdown Standard (PLAN-searchable-dropdown-standard). Doctrine:
       // every dropdown-select must be searchable and use the standard component
-      // (@/components/common/SearchableSelect | SearchableMultiSelect). 'error' so new
-      // violations fail CI; the ~133 pre-existing sites are grandfathered by the
-      // migration-allowlist override block below and burn down PR-by-PR to zero.
+      // (@/components/common/SearchableSelect | SearchableMultiSelect). 'error' so any
+      // violation fails CI. The migration is COMPLETE — the whole codebase is on the
+      // standard, the burn-down allowlist has been deleted, and ui/select.tsx is gone.
       'no-restricted-imports': [
         'error',
         {
@@ -89,18 +88,6 @@ const eslintConfig = [
       'components/ui/**',
       'app/components/partials/dialogs/search/search-dialog.tsx',
     ],
-    rules: { 'no-restricted-imports': 'off' },
-  },
-  {
-    // Shrinking migration allowlist — grandfathers files not yet moved onto the
-    // standard. Delete entries as you migrate; when empty, remove ui/select.tsx,
-    // this override, and eslint-dropdown-allowlist.mjs.
-    //
-    // Entries are LITERAL paths, but ESLint matches `files` as globs, where `[id]`
-    // is a character class (matches a single 'i' or 'd') — so every Next.js dynamic
-    // route segment would silently fail to match and stay un-grandfathered. Escape
-    // the brackets here so the allowlist file stays plain readable paths.
-    files: dropdownMigrationAllowlist.map((p) => p.replace(/[[\]]/g, '\\$&')),
     rules: { 'no-restricted-imports': 'off' },
   },
   {

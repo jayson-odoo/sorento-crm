@@ -25,7 +25,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useIntegrationLogs, useRetryIntegrationLog } from '../hooks/useIntegrationLogs';
 import type { IntegrationLog } from '../types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
@@ -340,45 +340,46 @@ export default function IntegrationLogsList() {
               activeCount: filtersActiveCount,
               content: (
                 <div className="space-y-3">
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Status</SelectItem>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="processing">Processing</SelectItem>
-                      <SelectItem value="success">Success</SelectItem>
-                      <SelectItem value="failed">Failed</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select value={channelFilter} onValueChange={setChannelFilter}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Channel" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Channels</SelectItem>
-                      <SelectItem value="n8n">n8n</SelectItem>
-                      <SelectItem value="sla_management">SLA Management</SelectItem>
-                      <SelectItem value="sla_tracking_creation">SLA Tracking (create)</SelectItem>
-                      <SelectItem value="sla_tracking_update">SLA Tracking (update)</SelectItem>
-                      <SelectItem value="sla_escalation">SLA Escalation</SelectItem>
-                      {extraChannel && (
-                        <SelectItem value={extraChannel}>{extraChannel}</SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
-                  <Select value={tableFilter} onValueChange={setTableFilter}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Table" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Tables</SelectItem>
-                      <SelectItem value="attachments">Attachments</SelectItem>
-                      <SelectItem value="conversation_sla_tracking">Conversation SLA Tracking</SelectItem>
-                      <SelectItem value="conversation_sla_event_log">Conversation SLA Event Log</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <SearchableSelect
+                    value={statusFilter}
+                    onChange={setStatusFilter}
+                    options={[
+                      { value: 'all', label: 'All Status' },
+                      { value: 'pending', label: 'Pending' },
+                      { value: 'processing', label: 'Processing' },
+                      { value: 'success', label: 'Success' },
+                      { value: 'failed', label: 'Failed' },
+                    ]}
+                    placeholder="Status"
+                    triggerClassName="w-full"
+                  />
+                  <SearchableSelect
+                    value={channelFilter}
+                    onChange={setChannelFilter}
+                    options={[
+                      { value: 'all', label: 'All Channels' },
+                      { value: 'n8n', label: 'n8n' },
+                      { value: 'sla_management', label: 'SLA Management' },
+                      { value: 'sla_tracking_creation', label: 'SLA Tracking (create)' },
+                      { value: 'sla_tracking_update', label: 'SLA Tracking (update)' },
+                      { value: 'sla_escalation', label: 'SLA Escalation' },
+                      ...(extraChannel ? [{ value: extraChannel, label: extraChannel }] : []),
+                    ]}
+                    placeholder="Channel"
+                    triggerClassName="w-full"
+                  />
+                  <SearchableSelect
+                    value={tableFilter}
+                    onChange={setTableFilter}
+                    options={[
+                      { value: 'all', label: 'All Tables' },
+                      { value: 'attachments', label: 'Attachments' },
+                      { value: 'conversation_sla_tracking', label: 'Conversation SLA Tracking' },
+                      { value: 'conversation_sla_event_log', label: 'Conversation SLA Event Log' },
+                    ]}
+                    placeholder="Table"
+                    triggerClassName="w-full"
+                  />
                   {(createdFrom || createdTo) && (
                     // A drill-down seeds a date window from the URL. The date
                     // inputs are day-granular, so a window like 09:05 renders as

@@ -25,13 +25,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   listTemplates,
@@ -218,20 +212,18 @@ export default function TemplatesGrid() {
               activeCount: statusFilter !== 'all' ? 1 : 0,
               content: (
                 <div className="space-y-3">
-                  <Select
+                  <SearchableSelect
                     value={statusFilter}
-                    onValueChange={(v) => setStatusFilter(v as TemplateStatus | 'all')}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Status</SelectItem>
-                      <SelectItem value="approved">Approved</SelectItem>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="rejected">Rejected</SelectItem>
-                    </SelectContent>
-                  </Select>
+                    onChange={(v) => setStatusFilter(v as TemplateStatus | 'all')}
+                    options={[
+                      { value: 'all', label: 'All Status' },
+                      { value: 'approved', label: 'Approved' },
+                      { value: 'pending', label: 'Pending' },
+                      { value: 'rejected', label: 'Rejected' },
+                    ]}
+                    placeholder="Status"
+                    triggerClassName="w-full"
+                  />
                   {statusFilter !== 'all' && (
                     <Button
                       variant="outline"
