@@ -1,22 +1,12 @@
-"""Global pytest fixtures / compatibility shims for the backend test suite.
+"""Global pytest fixtures for the backend test suite.
 
-The suite runs most unit tests against an in-memory **sqlite** engine, but the
-ORM models declare Postgres-specific column types. When the full suite runs,
-globally-registered SQLAlchemy metadata from many modules is emitted through a
-single `create_all`, and sqlite's DDL compiler has no `visit_JSONB` /
-`visit_ARRAY` — raising `AttributeError: 'SQLiteTypeCompiler' object has no
-attribute 'visit_JSONB'` and cascading ~300 failures that have nothing to do
-with the test under exercise.
-
-Teach the sqlite dialect to render the Postgres-only types as their nearest
-sqlite equivalent. This is DDL-only (type affinity); the values round-trip as
-JSON/text, which is all the sqlite-backed unit tests need. Postgres-backed
-tests (live DB) are unaffected — this compiler only fires for the sqlite
-dialect.
+Every test runs against Postgres -- either the live DB (rolled back) or an empty
+scratch schema built from the real DDL, both via tests/_pg_fixture.py. There is
+no sqlite anywhere in the suite. This file now holds only real cross-test
+hygiene: sweeping/dropping the scratch schema, restoring any in-place model
+metadata edits, and resetting leak-prone process globals between tests.
 """
 import pytest
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.ext.compiler import compiles
 
 
 def _sweep_orphan_scratch_schemas():
@@ -92,18 +82,23 @@ def _snapshot_column_types():
 def _restore_column_types():
     """Undo any test's in-place rewrite of the shared model metadata.
 
-    Several sqlite fixtures still do this in their setup:
+    A guard, now that no test does this. It used to matter a great deal: several
+    sqlite fixtures rewrote columns in their setup --
 
         if isinstance(col.type, (JSONB, ARRAY)):
             col.type = JSON()
 
-    ``Model.__table__`` is process-global and those rewrites were never undone.
-    While the whole suite ran on sqlite that was invisible. Now that converted
-    tests run on Postgres in the same process, one shimmed module leaves later
-    tests binding JSON into columns Postgres types as ``varchar[]``:
+    -- on ``Model.__table__``, which is process-global, and never undid it.
+    While the whole suite ran on sqlite that was invisible; once tests ran on
+    Postgres in the same process, one such module left later tests binding JSON
+    into columns Postgres types as ``varchar[]``:
 
         column "notify_stock_role_ids" is of type character varying[]
         but expression is of type json
+
+    All those fixtures are gone, so this restores nothing today. It is kept as a
+    cheap backstop -- one dict walk per test -- so a future in-place edit cannot
+    silently corrupt its neighbours again.
 
     The symptom lands in files that contain no sqlite at all and only in
     full-suite runs -- test_sla_takeover_cooldown and test_sla_kpi both failed
@@ -195,54 +190,7 @@ def _reset_global_state():
         pass
 
 
-def _prewarm_audit_table_cache_on_create():
-    """Pre-warm the audit-table-existence cache at ``create_all`` time.
-
-    ``audit_service._audit_table_exists`` lazily runs ``inspect(bind).has_table``
-    the first time an audited flush happens. In the test suite the bind is a
-    sqlite ``StaticPool`` engine that shares ONE dbapi connection between the
-    fixture session and the route thread. Running that ``has_table`` SELECT on the
-    shared connection *in the middle of a flush* corrupts the flush transaction —
-    a freshly-seeded ``user_roles`` row silently disappears (via the
-    ``UserRole.user_assignments`` delete-orphan cascade), which then makes the
-    superadmin bypass fall through and query the (subset-schema) ``user_permissions``
-    table → "no such table: user_permissions".
-
-    Production uses a real connection pool (distinct connections), so the mid-flush
-    ``has_table`` never touches the flush connection and this problem cannot occur.
-
-    Fix: populate the per-engine cache during ``create_all`` (which runs in its own
-    DDL transaction, before any ORM flush), so ``has_table`` never fires during a
-    flush. We derive existence from the list of tables actually created — no SQL —
-    so it is safe even on the shared connection. This is test-only (create_all on
-    the model metadata is not part of the production request path)."""
-    from sqlalchemy import event
-    from app.database import Base
-
-    @event.listens_for(Base.metadata, "after_create")
-    def _after_create(_target, connection, **kw):  # noqa: ANN001
-        try:
-            from app.services import audit_service
-
-            created = {t.name for t in kw.get("tables", []) or []}
-            engine = getattr(connection, "engine", connection)
-            key = id(engine)
-            has = audit_service._audit_table_cache.get(key, False) or ("audit_logs" in created)
-            audit_service._audit_table_cache[key] = has
-        except Exception:
-            pass
-
-
-_prewarm_audit_table_cache_on_create()
-
-
-@compiles(JSONB, "sqlite")
-def _compile_jsonb_sqlite(element, compiler, **kw):  # noqa: ANN001
-    return "JSON"
-
-
-@compiles(ARRAY, "sqlite")
-def _compile_array_sqlite(element, compiler, **kw):  # noqa: ANN001
-    # sqlite has no array type; store as JSON text (affinity only — the
-    # sqlite-backed tests that touch these columns treat them as opaque).
-    return "JSON"
+# The sqlite type-affinity shims (`@compiles(JSONB|ARRAY, "sqlite")`) and the
+# StaticPool audit-cache pre-warm that used to live here are gone: no test
+# builds a sqlite engine any more, so nothing would ever trigger them. Every
+# test runs on Postgres via tests/_pg_fixture.py.
