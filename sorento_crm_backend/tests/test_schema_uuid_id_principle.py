@@ -77,8 +77,30 @@ def _has_uuid_id(table) -> bool:
     return idc is not None and isinstance(idc.type, PGUUID)
 
 
+def _test_owned_table_names() -> set[str]:
+    """Tables mapped by throwaway models defined INSIDE the test suite
+    (e.g. ``demo_widgets``, ``fake_lookup_target``). They share the global
+    ``Base.metadata``, so once another test module is imported in a full-suite
+    run they show up here — but they are not application tables and the uuid-id
+    principle does not apply to them. Attribute each mapped table to its defining
+    module and drop the ones that live under ``tests``."""
+    names: set[str] = set()
+    for mapper in Base.registry.mappers:
+        module = (getattr(mapper.class_, "__module__", "") or "")
+        if module.startswith("tests.") or module == "tests" or module.startswith("test_"):
+            local = getattr(mapper, "local_table", None)
+            if local is not None:
+                names.add(local.name)
+    return names
+
+
 def _non_compliant_tables() -> list[str]:
-    return [t.name for t in Base.metadata.tables.values() if not _has_uuid_id(t)]
+    ignore = _test_owned_table_names()
+    return [
+        t.name
+        for t in Base.metadata.tables.values()
+        if t.name not in ignore and not _has_uuid_id(t)
+    ]
 
 
 def test_every_table_has_a_uuid_id_or_a_documented_exemption():
