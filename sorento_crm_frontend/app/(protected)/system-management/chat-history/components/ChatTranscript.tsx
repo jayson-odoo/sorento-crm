@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { ChatMessageRow } from '../types/chatHistory.types';
+import { StateTracePanel } from './StateTracePanel';
 
 interface ChatTranscriptProps {
   messages: ChatMessageRow[];
@@ -201,6 +202,8 @@ export function ChatTranscript({ messages, isLoading, anchorId, emptyText }: Cha
                   {m.delivery_status && (
                     <span className="text-[11px] text-muted-foreground">{m.delivery_status}</span>
                   )}
+                  {/* Diagnosis surface: incoming rows carry the per-turn state trace. */}
+                  {!outgoing && m.state_trace && <StateTracePanel trace={m.state_trace} />}
                 </div>
               </div>
             );
