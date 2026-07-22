@@ -10,13 +10,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription, AlertIcon } from '@/components/ui/alert';
@@ -213,45 +207,36 @@ export default function AttachmentBulkImportDialog({
             <Label>
               Attachment type <span className="text-destructive">*</span>
             </Label>
-            <Select
+            <SearchableSelect
               value={selectedTypeId}
-              onValueChange={(v) => {
+              onChange={(v) => {
                 setSelectedTypeId(v);
                 setValidationError('');
               }}
+              options={attachmentTypes.map((t: AttachmentType) => ({
+                value: t.id,
+                label: t.type_name,
+              }))}
+              placeholder="Select type"
               disabled={isLoadingTypes}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select type" />
-              </SelectTrigger>
-              <SelectContent>
-                {attachmentTypes.map((t: AttachmentType) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.type_name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            />
           </div>
 
           <div className="space-y-2">
             <Label>Import into folder</Label>
-            <Select
+            <SearchableSelect
               value={parentDirectoryId || 'root'}
-              onValueChange={(v) => setParentDirectoryId(v === 'root' ? '' : v)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Root" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="root">Root (no folder)</SelectItem>
-                {flatDirs.map((d) => (
-                  <SelectItem key={d.id} value={d.id}>
-                    <span className="inline-block" style={{ paddingLeft: d.depth * 12 }}>{d.name}</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              onChange={(v) => setParentDirectoryId(v === 'root' ? '' : v)}
+              options={[
+                { value: 'root', label: 'Root (no folder)' },
+                ...flatDirs.map((d) => ({
+                  value: d.id,
+                  label: `${'  '.repeat(d.depth)}${d.name}`,
+                  searchText: d.name,
+                })),
+              ]}
+              placeholder="Root"
+            />
           </div>
 
           <div className="space-y-2">

@@ -13,16 +13,11 @@ import {
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 
 const InvitePeople = () => {
   const [emailInput, setEmailInput] = useState('jason@studio.io');
+  const [role, setRole] = useState('1');
   return (
     <Card>
       <CardHeader>
@@ -40,17 +35,18 @@ const InvitePeople = () => {
         <div className="flex items-baseline flex-wrap gap-2.5">
           <Label className="flex w-full max-w-32">Role</Label>
           <div className="flex flex-col items-start grow gap-5">
-            <Select defaultValue="1">
-              <SelectTrigger>
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1">Member</SelectItem>
-                <SelectItem value="2">Editor</SelectItem>
-                <SelectItem value="3">Designer</SelectItem>
-                <SelectItem value="4">Admin</SelectItem>
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={role}
+              onChange={setRole}
+              placeholder="Select"
+              triggerClassName="w-full"
+              options={[
+                { value: '1', label: 'Member' },
+                { value: '2', label: 'Editor' },
+                { value: '3', label: 'Designer' },
+                { value: '4', label: 'Admin' },
+              ]}
+            />
             <Button variant="outline">
               <SquarePlus size={12} />
               Add more

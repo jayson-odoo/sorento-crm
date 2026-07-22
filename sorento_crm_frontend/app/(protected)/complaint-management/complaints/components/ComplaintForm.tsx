@@ -17,13 +17,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import LookupBoundField from '@/components/common/LookupBoundField';
@@ -472,22 +466,19 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                       onChange={field.onChange}
                       placeholder="Select customer type"
                       renderFallback={() => (
-                        <Select
+                        <SearchableSelect
                           key={field.value || 'empty'}
-                          onValueChange={field.onChange}
-                          value={field.value || undefined}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select customer type" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Individual">Individual</SelectItem>
-                            <SelectItem value="Dealer">Dealer</SelectItem>
-                            <SelectItem value="Corporate">Corporate</SelectItem>
-                            <SelectItem value="Government">Government</SelectItem>
-                            <SelectItem value="Other">Other</SelectItem>
-                          </SelectContent>
-                        </Select>
+                          onChange={field.onChange}
+                          value={field.value || ''}
+                          options={[
+                            { value: 'Individual', label: 'Individual' },
+                            { value: 'Dealer', label: 'Dealer' },
+                            { value: 'Corporate', label: 'Corporate' },
+                            { value: 'Government', label: 'Government' },
+                            { value: 'Other', label: 'Other' },
+                          ]}
+                          placeholder="Select customer type"
+                        />
                       )}
                     />
                   </FormControl>
@@ -652,20 +643,17 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
                       onChange={field.onChange}
                       placeholder="Select warranty status"
                       renderFallback={() => (
-                        <Select
+                        <SearchableSelect
                           key={field.value || 'empty'}
-                          onValueChange={field.onChange}
-                          value={field.value || undefined}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select warranty status" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Yes">Yes</SelectItem>
-                            <SelectItem value="No">No</SelectItem>
-                            <SelectItem value="Unknown">Unknown</SelectItem>
-                          </SelectContent>
-                        </Select>
+                          onChange={field.onChange}
+                          value={field.value || ''}
+                          options={[
+                            { value: 'Yes', label: 'Yes' },
+                            { value: 'No', label: 'No' },
+                            { value: 'Unknown', label: 'Unknown' },
+                          ]}
+                          placeholder="Select warranty status"
+                        />
                       )}
                     />
                   </FormControl>
@@ -834,25 +822,18 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Root Cause</FormLabel>
-                  <Select
-                    key={`root-${field.value ?? 'unset'}-${rootCauseOptions.length}`}
-                    value={field.value ?? '__unset__'}
-                    onValueChange={(v) => field.onChange(v === '__unset__' ? null : v)}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select root cause (optional)" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="__unset__">— None —</SelectItem>
-                      {rootCauseOptions.map((opt) => (
-                        <SelectItem key={opt.id} value={opt.id}>
-                          {opt.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <FormControl>
+                    <SearchableSelect
+                      key={`root-${field.value ?? 'unset'}-${rootCauseOptions.length}`}
+                      value={field.value ?? '__unset__'}
+                      onChange={(v) => field.onChange(v === '__unset__' ? null : v)}
+                      options={[
+                        { value: '__unset__', label: '— None —' },
+                        ...rootCauseOptions.map((opt) => ({ value: opt.id, label: opt.name })),
+                      ]}
+                      placeholder="Select root cause (optional)"
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
@@ -863,25 +844,18 @@ export default function ComplaintForm({ complaintId, onSuccess }: ComplaintFormP
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Resolution</FormLabel>
-                  <Select
-                    key={`res-${field.value ?? 'unset'}-${resolutionOptions.length}`}
-                    value={field.value ?? '__unset__'}
-                    onValueChange={(v) => field.onChange(v === '__unset__' ? null : v)}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select resolution (optional)" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="__unset__">— None —</SelectItem>
-                      {resolutionOptions.map((opt) => (
-                        <SelectItem key={opt.id} value={opt.id}>
-                          {opt.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <FormControl>
+                    <SearchableSelect
+                      key={`res-${field.value ?? 'unset'}-${resolutionOptions.length}`}
+                      value={field.value ?? '__unset__'}
+                      onChange={(v) => field.onChange(v === '__unset__' ? null : v)}
+                      options={[
+                        { value: '__unset__', label: '— None —' },
+                        ...resolutionOptions.map((opt) => ({ value: opt.id, label: opt.name })),
+                      ]}
+                      placeholder="Select resolution (optional)"
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}

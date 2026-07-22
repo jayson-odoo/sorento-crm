@@ -19,13 +19,7 @@ import {
 } from '@/components/ui/card';
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Container } from '@/components/common/container';
 import { Toolbar, ToolbarHeading, ToolbarTitle } from '@/components/common/toolbar';
 import {
@@ -201,18 +195,15 @@ export default function AIUsagePage() {
               </div>
             </PopoverContent>
           </Popover>
-          <Select value={featureFilter} onValueChange={setFeatureFilter}>
-            <SelectTrigger className="w-60" data-testid="ai-usage-feature-filter">
-              <SelectValue placeholder="All AI usage" />
-            </SelectTrigger>
-            <SelectContent>
-              {FEATURE_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div data-testid="ai-usage-feature-filter">
+            <SearchableSelect
+              value={featureFilter}
+              onChange={setFeatureFilter}
+              options={FEATURE_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
+              placeholder="All AI usage"
+              triggerClassName="w-60"
+            />
+          </div>
         </div>
 
         <div className="grid gap-3 md:grid-cols-4">

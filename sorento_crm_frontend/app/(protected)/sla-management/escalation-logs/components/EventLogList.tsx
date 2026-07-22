@@ -24,13 +24,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { apiFetch } from '@/lib/api';
 import { formatDateTime } from '@/lib/helpers';
 import { useEventLogs } from '../hooks/useEventLogs';
@@ -177,31 +171,32 @@ export default function EventLogList() {
               content: (
                 <div className="space-y-3">
                   <p className="text-sm font-medium">Advanced filters</p>
-                  <Select value={eventType} onValueChange={(value) => setEventType(value)}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Event type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__all__">All events</SelectItem>
-                      <SelectItem value="escalation">Escalation</SelectItem>
-                      <SelectItem value="reassignment">Reassignment</SelectItem>
-                      <SelectItem value="response">Response</SelectItem>
-                      <SelectItem value="resolution">Resolution</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select value={assignedTo} onValueChange={(value) => setAssignedTo(value)}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Assigned to" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__all__">All assignees</SelectItem>
-                      {(respondUsers || []).map((user: { id: string; name?: string | null; respond_user_id?: string | null; email: string }) => (
-                        <SelectItem key={user.id} value={user.respond_user_id || user.id}>
-                          {user.name || user.email}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <SearchableSelect
+                    value={eventType}
+                    onChange={(value) => setEventType(value)}
+                    options={[
+                      { value: '__all__', label: 'All events' },
+                      { value: 'escalation', label: 'Escalation' },
+                      { value: 'reassignment', label: 'Reassignment' },
+                      { value: 'response', label: 'Response' },
+                      { value: 'resolution', label: 'Resolution' },
+                    ]}
+                    placeholder="Event type"
+                    triggerClassName="w-full"
+                  />
+                  <SearchableSelect
+                    value={assignedTo}
+                    onChange={(value) => setAssignedTo(value)}
+                    options={[
+                      { value: '__all__', label: 'All assignees' },
+                      ...(respondUsers || []).map((user: { id: string; name?: string | null; respond_user_id?: string | null; email: string }) => ({
+                        value: user.respond_user_id || user.id,
+                        label: user.name || user.email,
+                      })),
+                    ]}
+                    placeholder="Assigned to"
+                    triggerClassName="w-full"
+                  />
                   <Button
                     variant="outline"
                     size="sm"

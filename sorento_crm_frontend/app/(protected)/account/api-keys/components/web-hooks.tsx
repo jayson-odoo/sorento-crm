@@ -5,17 +5,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Switch } from '@/components/ui/switch';
 
 const Webhooks = () => {
   const [webhooknameInput, setWebhookNameInput] = useState('CostaRicaHook');
+  const [eventType, setEventType] = useState('1');
 
   return (
     <Card className="pb-2.5">
@@ -46,17 +41,18 @@ const Webhooks = () => {
         <div className="flex items-center flex-wrap lg:flex-nowrap gap-2.5">
           <Label className="flex w-full max-w-56">Event Type</Label>
           <div className="grow">
-            <Select defaultValue="1">
-              <SelectTrigger>
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1">All Events</SelectItem>
-                <SelectItem value="2">Push Webhooks</SelectItem>
-                <SelectItem value="3">Pipe Webhook</SelectItem>
-                <SelectItem value="4">Plugin Webhooks</SelectItem>
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={eventType}
+              onChange={setEventType}
+              placeholder="Select"
+              triggerClassName="w-full"
+              options={[
+                { value: '1', label: 'All Events' },
+                { value: '2', label: 'Push Webhooks' },
+                { value: '3', label: 'Pipe Webhook' },
+                { value: '4', label: 'Plugin Webhooks' },
+              ]}
+            />
           </div>
         </div>
         <div className="flex items-center flex-wrap lg:flex-nowrap gap-2.5 mb-2.5">

@@ -16,7 +16,7 @@ up in the run-log UI alongside every other background job.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -32,8 +32,56 @@ MAX_RESOLVE_ATTEMPTS = 5
 _KNOWN_STATUSES = ("sent", "delivered", "read", "failed")
 
 
+# How far a derived `respond_ts` may sit from the ingest-supplied `sent_at` before
+# we conclude the id is not a timestamp at all. Generous: `sent_at` is n8n's own
+# clock and is known to drift by seconds, but a misparse (ms read as us -> 1970,
+# us read as ms -> year 58xxx) misses by decades, never by hours.
+_MESSAGE_ID_CLOCK_TOLERANCE = timedelta(days=1)
+
+
 class MessageNotFound(Exception):
     """Respond has no such message — distinct from a transient API failure."""
+
+
+def respond_ts_from_message_id(
+    message_id: Any, *, sent_at: Optional[datetime]
+) -> Optional[datetime]:
+    """Respond's authoritative clock, read straight out of its own message id.
+
+    Respond mints `messageId` as the message's epoch-MICROSECOND timestamp, so the
+    SLA clock arrives with the ingest payload and needs no `GET /message/{id}` call.
+    Inbound WhatsApp ids land on exact seconds (trailing zeros) — that granularity
+    is Respond's, not a rounding artefact of ours.
+
+    Deliberately NOT `_epoch_to_naive_utc`: that helper reads anything above 1e12 as
+    milliseconds, which turns a microsecond id into the year 58,000 — the exact trap
+    its own docstring warns about.
+
+    Returns None rather than a guess whenever the id is not a plausible timestamp;
+    a NULL `respond_ts` is honest and the row simply sits out of the SLA.
+    """
+    if message_id is None:
+        return None
+    try:
+        raw = int(str(message_id).strip())
+    except (TypeError, ValueError):
+        return None
+    if raw <= 0:
+        return None
+
+    try:
+        derived = datetime.utcfromtimestamp(raw / 1_000_000)
+    except (OverflowError, OSError, ValueError):
+        return None
+
+    # Cross-check against the only other clock we hold. Without this, any short
+    # numeric id (a test fixture, a sequence counter) would resolve to 1970 and
+    # quietly poison the latency distribution with a 56-year round trip.
+    if sent_at is None:
+        return None
+    if abs(derived - sent_at) > _MESSAGE_ID_CLOCK_TOLERANCE:
+        return None
+    return derived
 
 
 def _epoch_to_naive_utc(value: Any) -> Optional[datetime]:
@@ -58,11 +106,19 @@ def _epoch_to_naive_utc(value: Any) -> Optional[datetime]:
 
 
 def _pending_rows(db: Session, limit: int) -> list[ChatHistory]:
+    """Rows still missing something Respond owns.
+
+    `respond_ts` now normally arrives at ingest (derived from the message id), so the
+    common reason to call Respond is a missing `delivery_status` — which only Respond
+    can supply. Rows whose id wasn't a usable timestamp still come through the
+    `respond_ts IS NULL` arm.
+    """
     return (
         db.query(ChatHistory)
         .filter(
             ChatHistory.message_id.isnot(None),
-            ChatHistory.respond_ts.is_(None),
+            (ChatHistory.respond_ts.is_(None))
+            | (ChatHistory.delivery_status.is_(None)),
             # sqlite/Postgres both need the NULL arm spelled out: a row that has never
             # been attempted has NULL, not 0, unless the server_default applied.
             (ChatHistory.resolve_attempts.is_(None))
@@ -128,6 +184,14 @@ def resolve_pending(
                 raise
         except MessageNotFound:
             row.resolve_attempts = attempts + 1
+            # Logged, not silent: an unlogged 404 loop is indistinguishable from a
+            # resolver that never ran, which is how a wrong workspace key hides.
+            logger.warning(
+                "chat_message_resolver: 404 for chat_histories.id=%s message_id=%s "
+                "contact_id=%s (attempt %s/%s)",
+                row.id, row.message_id, row.contact_id,
+                row.resolve_attempts, MAX_RESOLVE_ATTEMPTS,
+            )
             if row.resolve_attempts >= MAX_RESOLVE_ATTEMPTS:
                 # Exhausted: Respond consistently has no record of it.
                 row.delivery_status = "not_sent"

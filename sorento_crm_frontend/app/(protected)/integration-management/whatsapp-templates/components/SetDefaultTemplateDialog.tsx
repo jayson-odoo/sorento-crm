@@ -13,13 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   BUTTON_LINK_VARIABLES,
   BUTTON_URL_KEY,
@@ -139,18 +133,16 @@ export default function SetDefaultTemplateDialog({
         <div className="space-y-4">
           <div className="space-y-2">
             <Label>Template</Label>
-            <Select value={templateId} onValueChange={setTemplateId} disabled={isLoading}>
-              <SelectTrigger>
-                <SelectValue placeholder={isLoading ? 'Loading…' : 'Select an approved template'} />
-              </SelectTrigger>
-              <SelectContent>
-                {(templates ?? []).map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name} ({t.language})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={templateId}
+              onChange={setTemplateId}
+              disabled={isLoading}
+              options={(templates ?? []).map((t) => ({
+                value: t.id,
+                label: `${t.name} (${t.language})`,
+              }))}
+              placeholder={isLoading ? 'Loading…' : 'Select an approved template'}
+            />
           </div>
 
           {selected && (
@@ -166,23 +158,15 @@ export default function SetDefaultTemplateDialog({
                 {paramKeys.map((key) => (
                   <div key={key} className="flex items-center gap-3">
                     <span className="font-mono text-sm w-12 shrink-0">{`{{${key}}}`}</span>
-                    <Select
+                    <SearchableSelect
                       value={mapping[key] ?? ''}
-                      onValueChange={(v) =>
+                      onChange={(v) =>
                         setMapping((prev) => ({ ...prev, [key]: v as ParamVariable }))
                       }
-                    >
-                      <SelectTrigger className="flex-1">
-                        <SelectValue placeholder="Select variable" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {PARAM_VARIABLES.map((v) => (
-                          <SelectItem key={v.key} value={v.key} title={v.description}>
-                            {v.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      options={PARAM_VARIABLES.map((v) => ({ value: v.key, label: v.label }))}
+                      placeholder="Select variable"
+                      triggerClassName="flex-1"
+                    />
                   </div>
                 ))}
               </div>
@@ -229,23 +213,17 @@ export default function SetDefaultTemplateDialog({
                 <span className="font-mono text-xs text-muted-foreground w-20 shrink-0 truncate" title={selected.button_text ?? 'URL button'}>
                   {selected.button_text ?? 'URL'} →
                 </span>
-                <Select
+                <SearchableSelect
                   value={mapping[BUTTON_URL_KEY] ?? ''}
-                  onValueChange={(v) =>
+                  onChange={(v) =>
                     setMapping((prev) => ({ ...prev, [BUTTON_URL_KEY]: v as ParamVariable }))
                   }
-                >
-                  <SelectTrigger className="flex-1">
-                    <SelectValue placeholder="Select link variable" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PARAM_VARIABLES.filter((v) => BUTTON_LINK_VARIABLES.includes(v.key)).map((v) => (
-                      <SelectItem key={v.key} value={v.key} title={v.description}>
-                        {v.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  options={PARAM_VARIABLES.filter((v) => BUTTON_LINK_VARIABLES.includes(v.key)).map(
+                    (v) => ({ value: v.key, label: v.label }),
+                  )}
+                  placeholder="Select link variable"
+                  triggerClassName="flex-1"
+                />
               </div>
               <p className="text-xs text-muted-foreground">
                 The button opens{' '}

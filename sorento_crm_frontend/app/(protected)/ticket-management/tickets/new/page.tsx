@@ -15,13 +15,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { Container } from '@/components/common/container';
 import {
@@ -194,35 +188,25 @@ export default function NewTicketPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="flex flex-col gap-2">
               <Label>Priority</Label>
-              <Select
+              <SearchableSelect
                 value={priority}
-                onValueChange={(v) => setPriority(v as TicketPriority)}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {TICKET_PRIORITIES.map((p) => (
-                    <SelectItem key={p} value={p}>
-                      {p.charAt(0).toUpperCase() + p.slice(1)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onChange={(v) => setPriority(v as TicketPriority)}
+                options={TICKET_PRIORITIES.map((p) => ({
+                  value: p,
+                  label: p.charAt(0).toUpperCase() + p.slice(1),
+                }))}
+              />
             </div>
             <div className="flex flex-col gap-2">
               <Label>Category</Label>
-              <Select
+              <SearchableSelect
                 value={category}
-                onValueChange={(v) => setCategory(v as TicketCategory)}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {TICKET_CATEGORIES.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c.charAt(0).toUpperCase() + c.slice(1)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onChange={(v) => setCategory(v as TicketCategory)}
+                options={TICKET_CATEGORIES.map((c) => ({
+                  value: c,
+                  label: c.charAt(0).toUpperCase() + c.slice(1),
+                }))}
+              />
             </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="due">Due date</Label>

@@ -12,16 +12,11 @@ import {
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 
 const InvitePeople = () => {
   const [invitepeopleInput, setInvitePeopleInput] = useState('jason@studio.io');
+  const [role, setRole] = useState('1');
   return (
     <Card>
       <CardHeader id="webhooks">
@@ -42,16 +37,17 @@ const InvitePeople = () => {
         <div className="flex items-baseline flex-wrap gap-2.5">
           <Label className="flex w-full max-w-32">Role</Label>
           <div className="grid gap-5 grow items-start">
-            <Select defaultValue="1">
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1">Member</SelectItem>
-                <SelectItem value="2">Option 2</SelectItem>
-                <SelectItem value="3">Option 3</SelectItem>
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={role}
+              onChange={setRole}
+              placeholder="Select"
+              triggerClassName="w-full"
+              options={[
+                { value: '1', label: 'Member' },
+                { value: '2', label: 'Option 2' },
+                { value: '3', label: 'Option 3' },
+              ]}
+            />
             <div>
               <Button variant="outline">
                 <SquarePlus size={16} /> Add more

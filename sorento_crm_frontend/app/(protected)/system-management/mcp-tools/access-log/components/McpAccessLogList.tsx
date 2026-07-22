@@ -4,13 +4,7 @@ import * as React from 'react';
 import { useMcpAccessLog } from '../../hooks/useMcpAdmin';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   Table,
   TableBody,
@@ -54,18 +48,12 @@ export function McpAccessLogList() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
-          <Select value={decision} onValueChange={setDecision}>
-            <SelectTrigger className="w-[220px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {DECISIONS.map((d) => (
-                <SelectItem key={d.value} value={d.value}>
-                  {d.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={decision}
+            onChange={setDecision}
+            options={DECISIONS.map((d) => ({ value: d.value, label: d.label }))}
+            triggerClassName="w-[220px]"
+          />
           <Input
             placeholder="Filter by exact tool_name..."
             value={toolName}

@@ -16,13 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
 import { Container } from '@/components/common/container';
@@ -323,37 +317,27 @@ export default function TicketDetailPage({ params }: PageProps) {
                     <div className="grid grid-cols-2 gap-3">
                       <div className="flex flex-col gap-1">
                         <Label>Priority</Label>
-                        <Select
+                        <SearchableSelect
                           value={priorityDraft}
-                          onValueChange={(v) => setPriorityDraft(v as TicketPriority)}
+                          onChange={(v) => setPriorityDraft(v as TicketPriority)}
                           disabled={busy}
-                        >
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {TICKET_PRIORITIES.map((p) => (
-                              <SelectItem key={p} value={p} className="capitalize">
-                                {p}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          options={TICKET_PRIORITIES.map((p) => ({
+                            value: p,
+                            label: p.charAt(0).toUpperCase() + p.slice(1),
+                          }))}
+                        />
                       </div>
                       <div className="flex flex-col gap-1">
                         <Label>Category</Label>
-                        <Select
+                        <SearchableSelect
                           value={categoryDraft}
-                          onValueChange={(v) => setCategoryDraft(v as TicketCategory)}
+                          onChange={(v) => setCategoryDraft(v as TicketCategory)}
                           disabled={busy}
-                        >
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {TICKET_CATEGORIES.map((c) => (
-                              <SelectItem key={c} value={c} className="capitalize">
-                                {c}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          options={TICKET_CATEGORIES.map((c) => ({
+                            value: c,
+                            label: c.charAt(0).toUpperCase() + c.slice(1),
+                          }))}
+                        />
                       </div>
                     </div>
                     <div className="flex flex-col gap-1">
@@ -543,22 +527,16 @@ export default function TicketDetailPage({ params }: PageProps) {
                 <div className="flex flex-col gap-3 text-sm">
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Status</span>
-                    <Select
+                    <SearchableSelect
                       value={ticket.status}
-                      onValueChange={(v) => changeStatus(v as TicketStatus)}
+                      onChange={(v) => changeStatus(v as TicketStatus)}
                       disabled={busy}
-                    >
-                      <SelectTrigger className="w-[140px] h-8">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {TICKET_STATUSES.map((s) => (
-                          <SelectItem key={s} value={s}>
-                            {s.charAt(0).toUpperCase() + s.slice(1)}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      options={TICKET_STATUSES.map((s) => ({
+                        value: s,
+                        label: s.charAt(0).toUpperCase() + s.slice(1),
+                      }))}
+                      triggerClassName="w-[140px] h-8"
+                    />
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="text-muted-foreground">Reporter</span>

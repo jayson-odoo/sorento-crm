@@ -25,13 +25,7 @@ import {
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { TENANT_MODULES_QUERY_KEY, useTenantModules } from '@/hooks/useTenantModules';
 import {
@@ -258,18 +252,15 @@ export default function AppStoreAdmin() {
           </CardHeader>
           <CardContent className="flex flex-wrap items-end gap-3">
             <div className="min-w-[220px] flex-1">
-              <Select value={bundleKey} onValueChange={setBundleKey}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Choose bundle" />
-                </SelectTrigger>
-                <SelectContent>
-                  {bundles.map((b) => (
-                    <SelectItem key={b.bundle_key} value={b.bundle_key}>
-                      {b.display_name} ({b.module_keys.length} modules)
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={bundleKey}
+                onChange={setBundleKey}
+                options={bundles.map((b) => ({
+                  value: b.bundle_key,
+                  label: `${b.display_name} (${b.module_keys.length} modules)`,
+                }))}
+                placeholder="Choose bundle"
+              />
             </div>
             <Button
               type="button"

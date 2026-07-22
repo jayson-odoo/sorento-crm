@@ -29,13 +29,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -363,51 +357,47 @@ export default function PromotionsList() {
                       <h4 className="font-medium">Filters</h4>
                       <div className="space-y-2">
                         <Label>Status</Label>
-                        <Select value={filterStatus} onValueChange={setFilterStatus}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="All" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All</SelectItem>
-                            <SelectItem value="active">Active</SelectItem>
-                            <SelectItem value="inactive">Inactive</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <SearchableSelect
+                          value={filterStatus}
+                          onChange={setFilterStatus}
+                          options={[
+                            { value: 'all', label: 'All' },
+                            { value: 'active', label: 'Active' },
+                            { value: 'inactive', label: 'Inactive' },
+                          ]}
+                          placeholder="All"
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label>Access level</Label>
-                        <Select value={filterAccessLevel} onValueChange={setFilterAccessLevel}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="All" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All</SelectItem>
-                            {accessTypeOptions.map((opt) => (
-                              <SelectItem key={opt.code} value={opt.code}>
-                                {opt.name || opt.code}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <SearchableSelect
+                          value={filterAccessLevel}
+                          onChange={setFilterAccessLevel}
+                          options={[
+                            { value: 'all', label: 'All' },
+                            ...accessTypeOptions.map((opt) => ({
+                              value: opt.code,
+                              label: opt.name || opt.code,
+                            })),
+                          ]}
+                          placeholder="All"
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label>Attachment state</Label>
-                        <Select
+                        <SearchableSelect
                           value={filterAttachmentState}
-                          onValueChange={(v) =>
+                          onChange={(v) =>
                             setFilterAttachmentState(v as 'all' | 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed')
                           }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="All" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All</SelectItem>
-                            <SelectItem value="unlinked">No attachments</SelectItem>
-                            <SelectItem value="linked_to_trashed">Linked to trashed</SelectItem>
-                            <SelectItem value="unlinked_or_trashed">No attachments or trashed</SelectItem>
-                          </SelectContent>
-                        </Select>
+                          options={[
+                            { value: 'all', label: 'All' },
+                            { value: 'unlinked', label: 'No attachments' },
+                            { value: 'linked_to_trashed', label: 'Linked to trashed' },
+                            { value: 'unlinked_or_trashed', label: 'No attachments or trashed' },
+                          ]}
+                          placeholder="All"
+                        />
                       </div>
                       {hasActiveQuickFilters && (
                         <Button

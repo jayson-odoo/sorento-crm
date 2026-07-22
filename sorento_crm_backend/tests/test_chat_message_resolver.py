@@ -84,12 +84,27 @@ def test_passes_contact_identifier_not_just_message_id(db):
     assert client.calls == [("999", "m1")]
 
 
-def test_skips_rows_already_resolved(db):
-    _row(db, message_id="m1", respond_ts=NOW)
+def test_skips_rows_already_fully_resolved(db):
+    """Both halves present — nothing left for Respond to tell us."""
+    row = _row(db, message_id="m1", respond_ts=NOW)
+    row.delivery_status = "delivered"
+    db.commit()
     client = FakeClient({"m1": {"timestamp": 1784519974000}})
     out = svc.resolve_pending(db, client=client, limit=10, now=NOW)
     assert client.calls == []
     assert out["resolved"] == 0
+
+
+def test_fetches_row_with_respond_ts_but_no_delivery_status(db):
+    """`respond_ts` now arrives at ingest, so delivery status is the reason to call.
+
+    Skipping on `respond_ts` alone would leave every ingested row's Delivery column
+    permanently blank.
+    """
+    _row(db, message_id="m1", respond_ts=NOW)
+    client = FakeClient({"m1": {"timestamp": 1784519974000, "status": "delivered"}})
+    svc.resolve_pending(db, client=client, limit=10, now=NOW)
+    assert client.calls == [("445239409", "m1")]
 
 
 def test_skips_rows_without_message_id(db):
@@ -202,3 +217,48 @@ def test_missing_timestamp_in_payload_is_not_resolved(db):
     db.refresh(row)
     assert row.respond_ts is None
     assert out["resolved"] == 0
+
+
+# --- respond_ts derived from the Respond message id -------------------------
+#
+# Respond's `messageId` IS the message's epoch-microsecond timestamp, so the
+# authoritative clock is already in the ingest payload and needs no HTTP call.
+# Covers UAC OBS-S4-26 .. OBS-S4-31.
+
+SENT_AT = datetime(2026, 7, 21, 2, 48, 45, 363000)
+
+
+def test_microsecond_message_id_yields_respond_ts():
+    assert svc.respond_ts_from_message_id(
+        "1784602125363985", sent_at=SENT_AT
+    ) == datetime(2026, 7, 21, 2, 48, 45, 363985)
+
+
+def test_whole_second_incoming_message_id_yields_respond_ts():
+    """Inbound WhatsApp ids land on exact seconds — that granularity is real."""
+    assert svc.respond_ts_from_message_id(
+        "1784602116000000", sent_at=datetime(2026, 7, 21, 2, 48, 36)
+    ) == datetime(2026, 7, 21, 2, 48, 36)
+
+
+def test_millisecond_epoch_is_rejected_not_read_as_microseconds():
+    """1784602125363 as microseconds is 1970 — implausible, so refuse it."""
+    assert svc.respond_ts_from_message_id("1784602125363", sent_at=SENT_AT) is None
+
+
+def test_non_timestamp_id_is_rejected():
+    """A short numeric id divided by 1e6 lands in 1970, nowhere near sent_at."""
+    assert svc.respond_ts_from_message_id("1234556", sent_at=SENT_AT) is None
+
+
+def test_non_numeric_and_absent_ids_are_rejected():
+    assert svc.respond_ts_from_message_id("abc", sent_at=SENT_AT) is None
+    assert svc.respond_ts_from_message_id(None, sent_at=SENT_AT) is None
+    assert svc.respond_ts_from_message_id("", sent_at=SENT_AT) is None
+
+
+def test_id_far_from_sent_at_is_rejected():
+    """Guard against ids that parse but describe a different message entirely."""
+    assert svc.respond_ts_from_message_id(
+        "1784602125363985", sent_at=datetime(2020, 1, 1)
+    ) is None

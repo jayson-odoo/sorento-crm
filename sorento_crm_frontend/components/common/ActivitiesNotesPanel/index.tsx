@@ -14,13 +14,7 @@ import {
   SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -415,21 +409,16 @@ function MessagesTab({
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="p-3 border-b">
-        <Select value={contactId} onValueChange={setContactId} disabled={contacts.length === 0}>
-          <SelectTrigger>
-            <SelectValue
-              placeholder={contacts.length === 0 ? 'No contacts linked' : 'Choose a contact'}
-            />
-          </SelectTrigger>
-          <SelectContent>
-            {contacts.map((c) => (
-              <SelectItem key={c.contact_id} value={c.contact_id}>
-                {c.name ?? c.phone ?? c.contact_id}
-                {c.is_primary ? ' (primary)' : ''}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <SearchableSelect
+          value={contactId}
+          onChange={setContactId}
+          disabled={contacts.length === 0}
+          options={contacts.map((c) => ({
+            value: c.contact_id,
+            label: `${c.name ?? c.phone ?? c.contact_id}${c.is_primary ? ' (primary)' : ''}`,
+          }))}
+          placeholder={contacts.length === 0 ? 'No contacts linked' : 'Choose a contact'}
+        />
       </div>
       <div className="flex-1 overflow-y-auto p-4 space-y-2">
         {!contactId ? (

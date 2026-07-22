@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Edit, Trash2, Plus, ExternalLink, Search, X, Layers, ChevronDown } from 'lucide-react';
@@ -16,13 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -126,15 +120,28 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
   const [addProductDealerDiscount, setAddProductDealerDiscount] = useState('');
   const [productCodeSearch, setProductCodeSearch] = useState('');
 
-  // Fetch all products for the add product dialog
+  // Server-search products for the add-product dialog. A pageSize:1000 static list
+  // silently capped the picker at the first 1000 SKUs — anything past that (e.g.
+  // SRTWC*) was unreachable, showing "No results" for a real product. Drive the
+  // catalog search server-side, debounced, like the attachment link picker.
+  const [productSearch, setProductSearch] = useState('');
+  const [debouncedProductSearch, setDebouncedProductSearch] = useState('');
+  const [pickedProductLabel, setPickedProductLabel] = useState<string | null>(null);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedProductSearch(productSearch.trim()), 250);
+    return () => clearTimeout(t);
+  }, [productSearch]);
+  useEffect(() => {
+    if (!selectedProductId) setPickedProductLabel(null);
+  }, [selectedProductId]);
   const productsParams: GetProductsParams = {
     pageIndex: 0,
-    pageSize: 1000,
+    pageSize: 25,
     sorting: [],
-    searchQuery: '',
+    searchQuery: debouncedProductSearch,
     status: 'all',
   };
-  const { data: productsData } = useProducts(productsParams);
+  const { data: productsData, isFetching: isProductsFetching } = useProducts(productsParams);
   const allProducts = productsData?.data || [];
   const sortedGroupsBase = useMemo(() => {
     const groups = [...(promotion?.promotion_groups ?? [])];
@@ -785,43 +792,54 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
           <div className="space-y-4 py-4">
             <div className="space-y-2">
               <Label>Promotion group *</Label>
-              <Select value={addProductGroupId} onValueChange={setAddProductGroupId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select group" />
-                </SelectTrigger>
-                <SelectContent>
-                  {sortedGroupsBase.map((g) => (
-                    <SelectItem key={g.id} value={g.id}>
-                      {g.group_name}
-                    </SelectItem>
-                  ))}
-                  {sortedGroupsBase.length === 0 && (
-                    <SelectItem value="__no_groups__" disabled>
-                      No groups — use Add group first
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={addProductGroupId}
+                onChange={setAddProductGroupId}
+                options={[
+                  ...sortedGroupsBase.map((g) => ({ value: g.id, label: g.group_name })),
+                  ...(sortedGroupsBase.length === 0
+                    ? [{ value: '__no_groups__', label: 'No groups — use Add group first', disabled: true }]
+                    : []),
+                ]}
+                placeholder="Select group"
+              />
             </div>
             <div className="space-y-2">
               <Label>Product *</Label>
-              <Select value={selectedProductId} onValueChange={setSelectedProductId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a product" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableProducts.map((product) => (
-                    <SelectItem key={product.id} value={product.id}>
-                      {product.product_code} - {product.product_name}
-                    </SelectItem>
-                  ))}
-                  {availableProducts.length === 0 && (
-                    <SelectItem value="__no_products__" disabled>
-                      No available products for this group
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={selectedProductId}
+                onChange={(id) => {
+                  setSelectedProductId(id);
+                  const p = availableProducts.find((x) => x.id === id);
+                  if (p) setPickedProductLabel(`${p.product_code} - ${p.product_name}`);
+                }}
+                options={(() => {
+                  const opts = availableProducts.map((product) => ({
+                    value: product.id,
+                    label: `${product.product_code} - ${product.product_name}`,
+                    searchText: [product.product_code, product.product_name, product.id]
+                      .filter(Boolean)
+                      .join(' '),
+                  }));
+                  // Keep the chosen product's label on the trigger even after it
+                  // drops out of the current search page.
+                  if (
+                    selectedProductId &&
+                    pickedProductLabel &&
+                    !opts.some((o) => o.value === selectedProductId)
+                  ) {
+                    opts.unshift({
+                      value: selectedProductId,
+                      label: pickedProductLabel,
+                      searchText: pickedProductLabel,
+                    });
+                  }
+                  return opts;
+                })()}
+                onSearchChange={setProductSearch}
+                placeholder="Select a product"
+                emptyMessage={isProductsFetching ? 'Searching…' : 'No product found.'}
+              />
             </div>
             <div className="space-y-2">
               <Label>Promotion price (optional)</Label>

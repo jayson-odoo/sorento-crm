@@ -5,13 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 
 export const Packaging = () => {
   const [packageName, setPackageName] = useState('Mike Anderson – Medium Box');
@@ -19,6 +13,8 @@ export const Packaging = () => {
   const [length, setLength] = useState('48');
   const [width, setWidth] = useState('36');
   const [height, setHeight] = useState('20');
+  const [packageType, setPackageType] = useState('1');
+  const [unit, setUnit] = useState('1');
 
   return (
     <Card className="overflow-hidden">
@@ -45,16 +41,17 @@ export const Packaging = () => {
                 Package Type
               </span>
 
-              <Select defaultValue="1">
-                <SelectTrigger>
-                  <SelectValue placeholder="" />
-                </SelectTrigger>
-                <SelectContent className="">
-                  <SelectItem value="1">Medium Box</SelectItem>
-                  <SelectItem value="2">Small Box</SelectItem>
-                  <SelectItem value="3">Large Box</SelectItem>
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={packageType}
+                onChange={setPackageType}
+                placeholder=""
+                triggerClassName="w-full"
+                options={[
+                  { value: '1', label: 'Medium Box' },
+                  { value: '2', label: 'Small Box' },
+                  { value: '3', label: 'Large Box' },
+                ]}
+              />
             </div>
 
             <div className="flex flex-col gap-2 w-full">
@@ -116,16 +113,17 @@ export const Packaging = () => {
             </div>
 
             <div className="w-auto min-w-[66px]">
-              <Select defaultValue="1">
-                <SelectTrigger>
-                  <SelectValue placeholder="" />
-                </SelectTrigger>
-                <SelectContent className="">
-                  <SelectItem value="1">sm</SelectItem>
-                  <SelectItem value="2">mm</SelectItem>
-                  <SelectItem value="3">dm</SelectItem>
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={unit}
+                onChange={setUnit}
+                placeholder=""
+                triggerClassName="w-full"
+                options={[
+                  { value: '1', label: 'sm' },
+                  { value: '2', label: 'mm' },
+                  { value: '3', label: 'dm' },
+                ]}
+              />
             </div>
           </div>
 

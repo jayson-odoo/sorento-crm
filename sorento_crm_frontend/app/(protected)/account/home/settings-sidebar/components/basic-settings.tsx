@@ -17,13 +17,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Switch } from '@/components/ui/switch';
 
 const BasicSettings = () => {
@@ -31,6 +25,7 @@ const BasicSettings = () => {
   const [nameInput, setNameInput] = useState('Jason Tatum');
   const [companyInput, setCompanyInput] = useState('KeenThemes');
   const [phoneInput, setPhoneInput] = useState('');
+  const [visibility, setVisibility] = useState('1');
 
   // Docs: https://www.reui.io/docs/date-picker#date--time
   const today = new Date();
@@ -262,16 +257,17 @@ const BasicSettings = () => {
         <div className="flex items-center flex-wrap gap-2.5">
           <Label className="flex w-full max-w-56">Visibility</Label>
           <div className="grow">
-            <Select defaultValue="1">
-              <SelectTrigger>
-                <SelectValue placeholder="Select" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1">Public</SelectItem>
-                <SelectItem value="2">Option 2</SelectItem>
-                <SelectItem value="3">Option 2</SelectItem>
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={visibility}
+              onChange={setVisibility}
+              placeholder="Select"
+              triggerClassName="w-full"
+              options={[
+                { value: '1', label: 'Public' },
+                { value: '2', label: 'Option 2' },
+                { value: '3', label: 'Option 2' },
+              ]}
+            />
           </div>
         </div>
         <div className="flex items-center flex-wrap gap-2.5">

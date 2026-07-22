@@ -49,6 +49,12 @@ class ChatHistory(Base):
     # Our clock at ingest. Diagnostic only: ingest_at - respond_ts is webhook lag,
     # which is the thing that silently degrades when Respond's webhook misbehaves.
     ingest_at = Column(DateTime(timezone=False), nullable=True)
+    # Per-turn conversation state transition (v1), populated by n8n on INCOMING rows
+    # only; NULL on outgoing. Opaque jsonb: {v, before, parser_raw, parser_applied,
+    # after}. `after: null` means the turn wrote no state (no-access refusal, LLM
+    # fallback) — a real signal, distinct from "field absent". Diagnostic column: read
+    # by the admin thread view, deliberately absent from the external read contract.
+    state_trace = Column(JSONB, nullable=True)
 
     __table_args__ = (
         Index("ix_chat_histories_channel_contact_sent_id", "channel", "contact_id", "sent_at", "id"),

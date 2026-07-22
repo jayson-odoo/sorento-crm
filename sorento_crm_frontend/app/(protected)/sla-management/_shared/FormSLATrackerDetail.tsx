@@ -39,22 +39,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { cn } from '@/lib/utils';
 import {
   formatDateTime,
   formatDuration,
@@ -132,7 +119,6 @@ export default function FormSLATrackerDetail({
   const [assigneeDialogOpen, setAssigneeDialogOpen] = useState(false);
   const [tierStartedDialogOpen, setTierStartedDialogOpen] = useState(false);
   const [initiatedDialogOpen, setInitiatedDialogOpen] = useState(false);
-  const [assigneeComboOpen, setAssigneeComboOpen] = useState(false);
   const [selectedAssigneeId, setSelectedAssigneeId] = useState('');
   const [tierStartedLocal, setTierStartedLocal] = useState('');
   const [initiatedLocal, setInitiatedLocal] = useState('');
@@ -707,66 +693,22 @@ export default function FormSLATrackerDetail({
           </DialogHeader>
           <div className="space-y-3 py-1">
             <Label>User</Label>
-            <Popover open={assigneeComboOpen} onOpenChange={setAssigneeComboOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full justify-between font-normal"
-                >
-                  <span
-                    className={cn(
-                      'truncate',
-                      !selectedAssigneeId && 'text-muted-foreground',
-                    )}
-                  >
-                    {selectedAssigneeId
-                      ? usersSelect.find((u) => u.id === selectedAssigneeId)?.name ||
-                        usersSelect.find((u) => u.id === selectedAssigneeId)?.email ||
-                        selectedAssigneeId
-                      : 'No assignee'}
-                  </span>
-                  <ChevronDown className="ms-2 size-4 shrink-0 opacity-50" />
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent
-                className="w-(--radix-popper-anchor-width) p-0"
-                align="start"
-              >
-                <Command>
-                  <CommandInput placeholder="Search by name or email…" />
-                  <CommandList>
-                    <CommandEmpty>No user found.</CommandEmpty>
-                    <CommandGroup>
-                      <CommandItem
-                        value="__no_assignee unassign"
-                        onSelect={() => {
-                          setSelectedAssigneeId('');
-                          setAssigneeComboOpen(false);
-                        }}
-                      >
-                        No assignee
-                      </CommandItem>
-                      {usersSelect.map((user) => (
-                        <CommandItem
-                          key={user.id}
-                          value={`${user.name ?? ''} ${user.email}`}
-                          onSelect={() => {
-                            setSelectedAssigneeId(user.id);
-                            setAssigneeComboOpen(false);
-                          }}
-                        >
-                          {user.name || user.email}
-                          <span className="ml-2 text-xs text-muted-foreground">
-                            {user.email}
-                          </span>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
+            <SearchableSelect
+              value={selectedAssigneeId}
+              onChange={setSelectedAssigneeId}
+              options={[
+                { value: '', label: 'No assignee' },
+                ...usersSelect.map((user) => ({
+                  value: user.id,
+                  label: user.name || user.email,
+                  searchText: `${user.name ?? ''} ${user.email}`.trim(),
+                  description: user.email,
+                })),
+              ]}
+              placeholder="No assignee"
+              emptyMessage="No user found."
+              triggerClassName="w-full"
+            />
           </div>
           <DialogFooter>
             <Button

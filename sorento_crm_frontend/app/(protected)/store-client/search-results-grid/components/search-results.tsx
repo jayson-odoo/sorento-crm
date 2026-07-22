@@ -5,13 +5,7 @@ import { Funnel, LayoutGrid, List, Search as SearchIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Card2 } from '@/app/(protected)/store-client/components/common/card2';
 import { Card3 } from '@/app/(protected)/store-client/components/common/card3';
@@ -35,6 +29,7 @@ type SearchResultsType = 'card' | 'list';
 export function SearchResults({ mode }: { mode: SearchResultsType }) {
   const [searchInput, setSearchInput] = useState('');
   const [activePeriod, setActivePeriod] = useState('Week');
+  const [priceSort, setPriceSort] = useState('high-to-low');
   const [activeTab, setActiveTab] = useState<SearchResultsType>(mode);
 
   const items: ISearchResultsGridContentItems = [
@@ -213,20 +208,21 @@ export function SearchResults({ mode }: { mode: SearchResultsType }) {
         </h3>
 
         <div className="flex items-center gap-2.5">
-          <Select defaultValue="high-to-low">
-            <SelectTrigger className="w-[175px]">
-              <SelectValue placeholder="Price Hight to Low" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="low-to-high">Price: Low to High</SelectItem>
-              <SelectItem value="high-to-low">Price: High to Low</SelectItem>
-              <SelectItem value="0-50">$0 - $50</SelectItem>
-              <SelectItem value="50-100">$50 - $100</SelectItem>
-              <SelectItem value="100-200">$100 - $200</SelectItem>
-              <SelectItem value="200-500">$200 - $500</SelectItem>
-              <SelectItem value="500+">$500+</SelectItem>
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={priceSort}
+            onChange={setPriceSort}
+            placeholder="Price Hight to Low"
+            triggerClassName="w-[175px]"
+            options={[
+              { value: 'low-to-high', label: 'Price: Low to High' },
+              { value: 'high-to-low', label: 'Price: High to Low' },
+              { value: '0-50', label: '$0 - $50' },
+              { value: '50-100', label: '$50 - $100' },
+              { value: '100-200', label: '$100 - $200' },
+              { value: '200-500', label: '$200 - $500' },
+              { value: '500+', label: '$500+' },
+            ]}
+          />
 
           <ToggleGroup
             type="single"

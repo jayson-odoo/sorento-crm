@@ -10,13 +10,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Slider, SliderThumb } from '@/components/ui/slider';
 import {
   useAIAssistantConfig,
@@ -139,18 +133,12 @@ export default function AIAssistantSettingsForm() {
       <div className="grid gap-3 md:grid-cols-3">
         <div className="space-y-2">
           <Label>Provider</Label>
-          <Select value={provider} onValueChange={handleProviderChange}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select provider" />
-            </SelectTrigger>
-            <SelectContent>
-              {PROVIDER_OPTIONS.map((opt) => (
-                <SelectItem key={opt.value} value={opt.value}>
-                  {opt.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SearchableSelect
+            value={provider}
+            onChange={handleProviderChange}
+            options={PROVIDER_OPTIONS.map((opt) => ({ value: opt.value, label: opt.label }))}
+            placeholder="Select provider"
+          />
         </div>
         <div className="space-y-2">
           <Label>Model</Label>
@@ -161,18 +149,12 @@ export default function AIAssistantSettingsForm() {
               placeholder="custom-model-name"
             />
           ) : (
-            <Select value={model} onValueChange={setModel}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select model" />
-              </SelectTrigger>
-              <SelectContent>
-                {modelOptions.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={model}
+              onChange={setModel}
+              options={modelOptions.map((opt) => ({ value: opt.value, label: opt.label }))}
+              placeholder="Select model"
+            />
           )}
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
             <Checkbox

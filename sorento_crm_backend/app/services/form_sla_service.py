@@ -679,19 +679,21 @@ class FormSLAOrchestrator:
     def _active_tracker(
         self, config: FormSLAConfig, source_entity_id: str
     ) -> Optional[ConversationSLATracking]:
-        # Stage identity is (source_entity_type, team_set_code) — NOT policy_id alone.
+        # Stage identity is (source_entity_type, team_set_code) — NOT policy_id.
         # Stages of one form intentionally share a policy_id, so keying solely on
         # policy_id makes one stage's lookup return another stage's tracker: the
         # submit stage's resolve grabs (and resolves) the approval tracker, then the
         # approval start re-creates it → duplicate assignment + duplicate notify.
-        # Always scope to the config's team_set_code (handling NULL explicitly, since
-        # SQL `NULL = NULL` is never true).
+        # team_set_code alone already separates stages, so scope to it (handling NULL
+        # explicitly, since SQL `NULL = NULL` is never true). Do NOT filter on
+        # policy_id: policy_id is a snapshot the tracker stored at create time, so
+        # editing a stage's policy afterward would orphan the live tracker — its
+        # resolve/respond events would no longer find it.
         q = (
             self.db.query(ConversationSLATracking)
             .filter(
                 ConversationSLATracking.source_entity_type == config.source_entity_type,
                 ConversationSLATracking.source_entity_id == str(source_entity_id),
-                ConversationSLATracking.policy_id == config.policy_id,
                 ConversationSLATracking.is_resolved.is_(False),
             )
         )

@@ -25,7 +25,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useCampaigns } from '../hooks/useCampaigns';
 import type { Campaign } from '../types/campaign.types';
@@ -193,19 +193,16 @@ export default function CampaignsList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Status</Label>
-                    <Select value={statusFilter} onValueChange={setStatusFilter}>
-                      <SelectTrigger className="mt-1">
-                        <SelectValue placeholder="All statuses" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All statuses</SelectItem>
-                        {CAMPAIGN_STATUSES.map((s) => (
-                          <SelectItem key={s.value} value={s.value}>
-                            {s.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={statusFilter}
+                      onChange={setStatusFilter}
+                      options={[
+                        { value: 'all', label: 'All statuses' },
+                        ...CAMPAIGN_STATUSES.map((s) => ({ value: s.value, label: s.label })),
+                      ]}
+                      placeholder="All statuses"
+                      triggerClassName="mt-1"
+                    />
                   </div>
                   {statusFilter !== 'all' && (
                     <div className="flex justify-end">

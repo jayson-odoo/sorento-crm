@@ -21,13 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
@@ -122,22 +116,16 @@ export default function EditAttachmentTypeDialog({
         </DialogHeader>
 
         <div className="py-2 space-y-2">
-          <Select
+          <SearchableSelect
             value={selectedTypeId}
-            onValueChange={setSelectedTypeId}
+            onChange={setSelectedTypeId}
+            options={attachmentTypes.map((type: AttachmentType) => ({
+              value: type.id,
+              label: type.type_name,
+            }))}
+            placeholder="Select attachment type"
             disabled={isLoading || saving}
-          >
-            <SelectTrigger data-testid="edit-attachment-type-trigger">
-              <SelectValue placeholder="Select attachment type" />
-            </SelectTrigger>
-            <SelectContent>
-              {attachmentTypes.map((type: AttachmentType) => (
-                <SelectItem key={type.id} value={type.id}>
-                  {type.type_name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          />
         </div>
 
         <DialogFooter>
