@@ -17,6 +17,24 @@ export interface ChatMessageRow {
   /** Outgoing rows only: seconds from the incoming message of the same turn. */
   latency_seconds: number | null;
   webhook_lag_seconds: number | null;
+  /**
+   * Per-turn conversation state transition (v1), on INCOMING rows only and only on
+   * the thread (transcript) endpoint. Opaque: {v, before, parser_raw, parser_applied,
+   * after}. `after: null` means the turn wrote no state — a real signal, not `{}`.
+   * The transcript derives an entities-lost/gained + cause-flags summary from this and
+   * offers the raw document in a searchable JSON viewer.
+   */
+  state_trace?: StateTrace | null;
+}
+
+/** Opaque per-turn state-transition document. Shape owned by the n8n producer. */
+export interface StateTrace {
+  v?: number | string;
+  before?: Record<string, unknown> | null;
+  parser_raw?: Record<string, unknown> | null;
+  parser_applied?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+  [key: string]: unknown;
 }
 
 export interface ChatMessageListResponse {

@@ -45,6 +45,11 @@ class ChatMessageRow:
     message_id: Optional[str]
     latency_seconds: Optional[float]
     webhook_lag_seconds: Optional[float]
+    # Per-turn conversation state transition (incoming rows only). Carried on the
+    # thread (transcript) path for diagnosis; left None on the grid list, where a
+    # 3 KB document per row would bloat every page for a scan/filter view that never
+    # reads it. See get_thread vs list_messages_page.
+    state_trace: Optional[dict] = None
 
 
 def _contact_display(row: ChatHistory) -> str:
@@ -109,7 +114,12 @@ def _turn_latencies(db: Session, rows: list[ChatHistory]) -> dict[str, float]:
     return _latencies_from_rows(related)
 
 
-def _to_row(row: ChatHistory, latencies: dict[str, float]) -> ChatMessageRow:
+def _to_row(
+    row: ChatHistory,
+    latencies: dict[str, float],
+    *,
+    include_state_trace: bool = False,
+) -> ChatMessageRow:
     key = str(row.turn_id) if row.turn_id else None
     # Latency belongs to the reply. Showing it on the inbound row would read as
     # "this message took 6s to arrive", which is a different claim entirely.
@@ -134,6 +144,9 @@ def _to_row(row: ChatHistory, latencies: dict[str, float]) -> ChatMessageRow:
         message_id=row.message_id,
         latency_seconds=latency,
         webhook_lag_seconds=lag,
+        # Only the incoming row of a turn carries a trace; outgoing is always NULL.
+        # Guarded by include_state_trace so the grid list path never fetches it.
+        state_trace=(row.state_trace if include_state_trace else None),
     )
 
 
@@ -394,4 +407,5 @@ def get_thread(
         rows = list(reversed(older)) + [anchor] + newer
 
     latencies = _turn_latencies(db, rows)
-    return [_to_row(row, latencies) for row in rows]
+    # Transcript is the diagnosis surface — carry the state trace here (and only here).
+    return [_to_row(row, latencies, include_state_trace=True) for row in rows]
