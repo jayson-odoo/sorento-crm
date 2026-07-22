@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 
 import { useHasPermission } from '@/hooks/usePermissions';
+import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -116,9 +117,10 @@ function respondId(item: AnyTask): string | null {
 
 function dueLabel(due: string | null): { text: string; overdue: boolean } {
   if (!due) return { text: 'No due date', overdue: false };
-  const d = new Date(due);
+  // Backend emits naive-UTC deadlines; parse as UTC and render in Malaysia wall-clock.
+  const d = parseDateTimeAsUTC(due);
   const overdue = d.getTime() < Date.now();
-  return { text: d.toLocaleString(), overdue };
+  return { text: formatDateTimeInMalaysia(due), overdue };
 }
 
 /** Free-text haystack for the search box: entity number (reference) for form rows,
