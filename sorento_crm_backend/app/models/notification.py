@@ -21,16 +21,22 @@ class Notification(Base):
     resolved_at = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
-    # Idempotency: one notification per (user, source, event)
     source_entity_type = Column(String(80), nullable=True, index=True)  # e.g. import_job
-    source_entity_id = Column(String(255), nullable=True, index=True)  # e.g. job_id
+    # The entity this notification is ABOUT — a real uuid, or NULL for
+    # entity-less notifications (e.g. system-health alerts).
+    source_entity_id = Column(UUID(as_uuid=False), nullable=True, index=True)
+    # Idempotency scope: one notification per (user, source_entity_type,
+    # dedup_key, event_type). For an entity notification this equals the entity
+    # id; for a batched/periodic one it is a synthetic key
+    # (`alert:integration_spike:<ts>`, `digest:<date>`, `{type}_{batch}`).
+    dedup_key = Column(String(255), nullable=True, index=True)
     event_type = Column(String(255), nullable=True, index=True)  # e.g. finished, failed; workflow ids can be long
 
     __table_args__ = (
         Index("ix_notifications_user_id_created_at", "user_id", "created_at"),
         UniqueConstraint(
-            "user_id", "source_entity_type", "source_entity_id", "event_type",
-            name="uq_notification_user_source_event",
+            "user_id", "source_entity_type", "dedup_key", "event_type",
+            name="uq_notification_user_dedup_event",
         ),
     )
 
