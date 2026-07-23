@@ -837,14 +837,16 @@ class PortalService:
             approval_rejected = (
                 (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
             )
-            row_status_rejected = (
-                (getattr(row, "status", None) or "").strip().lower() == "rejected"
-            )
-            if approval_rejected or row_status_rejected:
-                # A rejected submission can only progress via Submit; salesperson cannot
-                # park it back in draft.
+            row_status = (getattr(row, "status", None) or "").strip().lower()
+            row_status_rejected = row_status == "rejected"
+            # A `responded` stock inquiry that the salesperson reopens is submit-only,
+            # mirroring `rejected` — no parking it back in draft.
+            row_status_responded = row_status == "responded"
+            if approval_rejected or row_status_rejected or row_status_responded:
+                # A rejected/responded submission can only progress via Submit;
+                # salesperson cannot park it back in draft.
                 raise handle_validation_error(
-                    "This submission was rejected — use Submit to resend, draft saves are disabled."
+                    "This submission must be resent via Submit — draft saves are disabled."
                 )
             self._apply_payload(kind, row, payload)
             row.portal_draft_at = _utcnow()
@@ -876,7 +878,10 @@ class PortalService:
                 )
             row.status = "submitted"
         elif kind == "stock_inquiry":
-            if previous_status not in ("draft", "rejected"):
+            # `responded` is included so a salesperson can act on purchasing's
+            # clarifying reply (edit + resubmit) without waiting for a formal
+            # purchasing_reject. Resubmit re-runs project-sales vetting.
+            if previous_status not in ("draft", "rejected", "responded"):
                 raise handle_validation_error(
                     f"Cannot submit stock inquiry with status {previous_status!r}."
                 )
@@ -919,7 +924,7 @@ class PortalService:
         # Notifications — failures must not block the user-facing submit.
         try:
             self._post_submit_notify(
-                kind, row, is_resubmission=previous_status == "rejected"
+                kind, row, is_resubmission=previous_status in ("rejected", "responded")
             )
         except Exception as e:  # noqa: BLE001
             logger.warning("Post-submit notify failed for %s %s: %s", kind, row.id, e)
@@ -1126,7 +1131,15 @@ class PortalService:
         approval_rejected = (
             (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
         )
-        if not (row.portal_draft_at or row.status == "rejected" or approval_rejected):
+        # `responded` (stock_inquiry only) is editable so a salesperson can act on
+        # purchasing's clarifying reply — edit + resubmit without a formal reject.
+        responded_editable = kind == "stock_inquiry" and row.status == "responded"
+        if not (
+            row.portal_draft_at
+            or row.status == "rejected"
+            or approval_rejected
+            or responded_editable
+        ):
             raise handle_validation_error("This submission is not editable.")
         return row
 
@@ -1481,7 +1494,9 @@ class PortalService:
             "document_number": row.inquiry_number,
             "status": row.status,
             "rejection_reason": row.rejection_reason,
-            "is_editable": bool(row.portal_draft_at) or row.status == "rejected",
+            "is_editable": bool(row.portal_draft_at)
+            or row.status == "rejected"
+            or row.status == "responded",
             "is_draft": row.portal_draft_at is not None,
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "product_code": row.product_code,
