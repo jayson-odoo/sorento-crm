@@ -252,6 +252,7 @@ def handle_turn(
     submitter_name: str | None = None,
     media_selection: str | None = None,
     is_new_idea: bool | None = None,
+    session_vars_in: dict[str, Any] | None = None,
     media_clients: MediaClients | None = None,
     fetch_recent_messages: Any = None,
 ) -> dict[str, Any]:
@@ -262,10 +263,22 @@ def handle_turn(
     CRM's respond_contacts row has no name (WS-A). ``media_selection`` /
     ``is_new_idea`` drive multi-modal capture (Group F); ``media_clients`` and
     ``fetch_recent_messages`` are injectable seams (Respond/storage/vision) that
-    default to the real integrations — tests stub them."""
+    default to the real integrations — tests stub them.
+
+    The prior ideation pointer is read from the CALLER-supplied ``session_vars_in``
+    first (n8n owns/writes the column and is the last writer each turn), then falls
+    back to the contact's DB copy for legacy callers. This is what makes the draft
+    accumulate: without it, n8n's nested ``variables.ideation`` shape never matches
+    the endpoint's top-level DB read, so every turn minted a fresh ``draft_id``."""
     contact = _get_contact_row(db, respond_io_id)
     session_vars = contact.session_vars
-    ideation_state = session_vars.get("ideation") or {}
+    caller_sv = session_vars_in or {}
+    ideation_state = (
+        caller_sv.get("ideation")
+        or (caller_sv.get("variables") or {}).get("ideation")  # n8n nested shape
+        or session_vars.get("ideation")                        # legacy DB fallback
+        or {}
+    )
     draft_id = ideation_state.get("draft_id")
     prior_status = ideation_state.get("status")
     prior_missing = ideation_state.get("missing") or []

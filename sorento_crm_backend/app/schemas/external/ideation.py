@@ -33,6 +33,15 @@ class IdeationTurnRequest(BaseModel):
             "true and a draft is open, sorento starts a fresh draft and discards the old."
         ),
     )
+    session_vars: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Caller-supplied session state. The ideation pointer is read from "
+            "session_vars.ideation (or session_vars.variables.ideation). n8n owns/writes "
+            "session_vars, so the endpoint trusts this over its own (possibly stale) DB "
+            "copy — this is what makes the draft accumulate across turns."
+        ),
+    )
 
 
 class IdeationTurnResponse(BaseModel):
