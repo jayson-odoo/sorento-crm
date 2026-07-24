@@ -19,13 +19,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Button } from '@/components/ui/button';
 import { useCreateStorageZone, useUpdateStorageZone } from '../hooks/useStorageZones';
 import type { StorageZoneFormData } from '../types/storageZone.types';
@@ -113,20 +107,17 @@ export default function StorageZoneForm({ open, onOpenChange, zoneId }: StorageZ
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Warehouse *</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select warehouse" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {(warehousesData || []).map((warehouse: Warehouse) => (
-                        <SelectItem key={warehouse.id} value={warehouse.id}>
-                          {warehouse.warehouse_name} ({warehouse.warehouse_code})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <FormControl>
+                    <SearchableSelect
+                      value={field.value}
+                      onChange={field.onChange}
+                      options={(warehousesData || []).map((warehouse: Warehouse) => ({
+                        value: warehouse.id,
+                        label: `${warehouse.warehouse_name} (${warehouse.warehouse_code})`,
+                      }))}
+                      placeholder="Select warehouse"
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}
@@ -166,19 +157,18 @@ export default function StorageZoneForm({ open, onOpenChange, zoneId }: StorageZ
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>Zone Type *</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectItem value="shelf">Shelf</SelectItem>
-                      <SelectItem value="rack">Rack</SelectItem>
-                      <SelectItem value="bin">Bin</SelectItem>
-                      <SelectItem value="pallet">Pallet</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <FormControl>
+                    <SearchableSelect
+                      value={field.value}
+                      onChange={field.onChange}
+                      options={[
+                        { value: 'shelf', label: 'Shelf' },
+                        { value: 'rack', label: 'Rack' },
+                        { value: 'bin', label: 'Bin' },
+                        { value: 'pallet', label: 'Pallet' },
+                      ]}
+                    />
+                  </FormControl>
                   <FormMessage />
                 </FormItem>
               )}

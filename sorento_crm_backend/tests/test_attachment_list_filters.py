@@ -104,11 +104,11 @@ def test_filter_by_attachment_type_only_returns_matching_rows(db):
 
 
 def test_filter_by_uploaded_by(db):
-    keep_id = _seed_attachment(db, filename="alice.pdf", uploaded_by="user-alice")
-    _seed_attachment(db, filename="bob.pdf", uploaded_by="user-bob")
+    keep_id = _seed_attachment(db, filename="alice.pdf", uploaded_by="ad6d17ba-8feb-5d22-b749-f6c01bb2adab")
+    _seed_attachment(db, filename="bob.pdf", uploaded_by="bfe28624-e7e7-5dd8-b190-5abd49600587")
     db.commit()
 
-    result = AttachmentService(db).list_attachments(uploaded_by="user-alice")
+    result = AttachmentService(db).list_attachments(uploaded_by="ad6d17ba-8feb-5d22-b749-f6c01bb2adab")
     ids = [a.id for a in result["data"]]
     assert ids == [keep_id]
 

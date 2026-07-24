@@ -10,13 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
@@ -500,9 +494,9 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
                       </div>
                       <div className="space-y-1">
                         <Label className="text-xs">Type</Label>
-                        <Select
+                        <SearchableSelect
                           value={f.type}
-                          onValueChange={(v) => {
+                          onChange={(v) => {
                             const t = v as WorkflowFieldType;
                             const patch: Partial<WorkflowHeaderField> = { type: t };
                             if (fieldUsesChoices(t)) {
@@ -514,18 +508,8 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
                             }
                             updateLineField(gi, fi, patch);
                           }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {FIELD_TYPES.map((t) => (
-                              <SelectItem key={t} value={t}>
-                                {t}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          options={FIELD_TYPES.map((t) => ({ value: t, label: t }))}
+                        />
                       </div>
                       <div className="flex items-end justify-between gap-2">
                         <div className="flex items-center gap-2">
@@ -643,54 +627,30 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
                   </div>
                   <div className="md:col-span-2 space-y-1">
                     <Label className="text-xs">From state</Label>
-                    <Select
+                    <SearchableSelect
                       value={t.from_state_id}
-                      onValueChange={(v) => updateTransition(idx, { from_state_id: v })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {schema.states.map((s) => (
-                          <SelectItem key={s.id} value={s.id}>
-                            {s.name} ({s.code})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      onChange={(v) => updateTransition(idx, { from_state_id: v })}
+                      options={schema.states.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
+                    />
                   </div>
                   <div className="md:col-span-2 space-y-1">
                     <Label className="text-xs">To state</Label>
-                    <Select
+                    <SearchableSelect
                       value={t.to_state_id}
-                      onValueChange={(v) => updateTransition(idx, { to_state_id: v })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {schema.states.map((s) => (
-                          <SelectItem key={s.id} value={s.id}>
-                            {s.name} ({s.code})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      onChange={(v) => updateTransition(idx, { to_state_id: v })}
+                      options={schema.states.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
+                    />
                   </div>
                   <div className="md:col-span-2 space-y-1">
                     <Label className="text-xs">Direction</Label>
-                    <Select
+                    <SearchableSelect
                       value={t.direction}
-                      onValueChange={(v) => updateTransition(idx, { direction: v as 'forward' | 'back' })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="forward">forward</SelectItem>
-                        <SelectItem value="back">back</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      onChange={(v) => updateTransition(idx, { direction: v as 'forward' | 'back' })}
+                      options={[
+                        { value: 'forward', label: 'forward' },
+                        { value: 'back', label: 'back' },
+                      ]}
+                    />
                   </div>
                   <div className="md:col-span-12">
                     <RoleIdsPicker
@@ -725,21 +685,12 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
                   <div className="grid gap-2 md:grid-cols-2">
                     <div className="space-y-1">
                       <Label className="text-xs">When transition</Label>
-                      <Select
+                      <SearchableSelect
                         value={r.transition_id}
-                        onValueChange={(v) => updateNotificationRule(idx, { transition_id: v })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select transition" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {schema.transitions.map((t) => (
-                            <SelectItem key={t.id} value={t.id}>
-                              {t.label} ({t.id})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        onChange={(v) => updateNotificationRule(idx, { transition_id: v })}
+                        options={schema.transitions.map((t) => ({ value: t.id, label: `${t.label} (${t.id})` }))}
+                        placeholder="Select transition"
+                      />
                     </div>
                     <div className="flex flex-wrap gap-4 items-center">
                       <div className="flex items-center gap-2">

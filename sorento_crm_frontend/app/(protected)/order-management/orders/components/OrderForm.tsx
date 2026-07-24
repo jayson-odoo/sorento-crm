@@ -17,13 +17,7 @@ import {
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCreateOrder, useUpdateOrder, useOrder } from '../hooks/useOrders';
@@ -432,25 +426,22 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Delivery Order Status *</FormLabel>
-                        <Select onValueChange={field.onChange} value={field.value || ''}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select delivery order status" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            {orderStatuses?.map((status) => (
-                              <SelectItem key={status.id} value={status.id}>
-                                {status.status_code} - {status.status_name}
-                              </SelectItem>
-                            ))}
-                            {(!orderStatuses || orderStatuses.length === 0) && (
-                              <SelectItem value="__no_statuses__" disabled>
-                                No delivery order statuses available
-                              </SelectItem>
-                            )}
-                          </SelectContent>
-                        </Select>
+                        <FormControl>
+                          <SearchableSelect
+                            value={field.value || ''}
+                            onChange={field.onChange}
+                            options={[
+                              ...(orderStatuses?.map((status) => ({
+                                value: status.id,
+                                label: `${status.status_code} - ${status.status_name}`,
+                              })) ?? []),
+                              ...(!orderStatuses || orderStatuses.length === 0
+                                ? [{ value: '__no_statuses__', label: 'No delivery order statuses available', disabled: true }]
+                                : []),
+                            ]}
+                            placeholder="Select delivery order status"
+                          />
+                        </FormControl>
                         <FormMessage />
                       </FormItem>
                     )}
@@ -655,20 +646,17 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel>Cancelled</FormLabel>
-                          <Select
-                            value={field.value ? 'true' : 'false'}
-                            onValueChange={(value) => field.onChange(value === 'true')}
-                          >
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select" />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="false">No</SelectItem>
-                              <SelectItem value="true">Yes</SelectItem>
-                            </SelectContent>
-                          </Select>
+                          <FormControl>
+                            <SearchableSelect
+                              value={field.value ? 'true' : 'false'}
+                              onChange={(value) => field.onChange(value === 'true')}
+                              options={[
+                                { value: 'false', label: 'No' },
+                                { value: 'true', label: 'Yes' },
+                              ]}
+                              placeholder="Select"
+                            />
+                          </FormControl>
                           <FormMessage />
                         </FormItem>
                       )}

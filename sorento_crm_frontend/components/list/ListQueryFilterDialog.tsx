@@ -12,13 +12,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { toast } from 'sonner';
@@ -228,15 +222,15 @@ export function ListQueryFilterDialog({
             ) : null}
             <div className="flex items-center gap-2">
               <Label className="shrink-0">Match</Label>
-              <Select value={rootOp} onValueChange={(v) => setRootOp(v as 'and' | 'or')}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="and">All conditions (AND)</SelectItem>
-                  <SelectItem value="or">Any condition (OR)</SelectItem>
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={rootOp}
+                onChange={(v) => setRootOp(v as 'and' | 'or')}
+                options={[
+                  { value: 'and', label: 'All conditions (AND)' },
+                  { value: 'or', label: 'Any condition (OR)' },
+                ]}
+                triggerClassName="w-[180px]"
+              />
             </div>
 
             <ScrollArea className="max-h-[min(360px,50vh)] pr-3">
@@ -263,9 +257,9 @@ export function ListQueryFilterDialog({
                               }}
                             />
                           ) : (
-                            <Select
+                            <SearchableSelect
                               value={row.field_key}
-                              onValueChange={(v) => {
+                              onChange={(v) => {
                                 const nf = filterable.find((x) => x.field_key === v)!;
                                 updateRow(row.id, {
                                   field_key: v,
@@ -273,64 +267,41 @@ export function ListQueryFilterDialog({
                                   valueRaw: '',
                                 });
                               }}
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {filterable.map((fld) => (
-                                  <SelectItem key={fld.field_key} value={fld.field_key}>
-                                    {fld.label}
-                                    {fld.is_line_field ? null : ''}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                              options={filterable.map((fld) => ({
+                                value: fld.field_key,
+                                label: fld.label,
+                              }))}
+                            />
                           )}
                         </div>
                         <div className="space-y-1">
                           <Label className="text-xs">Operator</Label>
-                          <Select value={row.op} onValueChange={(v) => updateRow(row.id, { op: v })}>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {ops.map((op) => (
-                                <SelectItem key={op} value={op}>
-                                  {OP_LABELS[op] || op}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <SearchableSelect
+                            value={row.op}
+                            onChange={(v) => updateRow(row.id, { op: v })}
+                            options={ops.map((op) => ({ value: op, label: OP_LABELS[op] || op }))}
+                          />
                         </div>
                         <div className="space-y-1">
                           <Label className="text-xs">Value</Label>
                           {row.op === 'is_null' ? (
-                            <Select
+                            <SearchableSelect
                               value={row.valueRaw || 'true'}
-                              onValueChange={(v) => updateRow(row.id, { valueRaw: v })}
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="true">Is null</SelectItem>
-                                <SelectItem value="false">Is not null</SelectItem>
-                              </SelectContent>
-                            </Select>
+                              onChange={(v) => updateRow(row.id, { valueRaw: v })}
+                              options={[
+                                { value: 'true', label: 'Is null' },
+                                { value: 'false', label: 'Is not null' },
+                              ]}
+                            />
                           ) : f.data_type === 'boolean' && row.op === 'eq' ? (
-                            <Select
+                            <SearchableSelect
                               value={row.valueRaw || 'true'}
-                              onValueChange={(v) => updateRow(row.id, { valueRaw: v })}
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="true">True</SelectItem>
-                                <SelectItem value="false">False</SelectItem>
-                              </SelectContent>
-                            </Select>
+                              onChange={(v) => updateRow(row.id, { valueRaw: v })}
+                              options={[
+                                { value: 'true', label: 'True' },
+                                { value: 'false', label: 'False' },
+                              ]}
+                            />
                           ) : (
                             <Input
                               placeholder={row.op === 'in' ? 'a, b, c' : 'Value'}

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import weakref
 import uuid
 from contextlib import contextmanager
 from datetime import datetime
@@ -80,7 +81,7 @@ def bulk_enqueue_embedding_events(
     return len(rows)
 
 
-_eq_table_cache: dict[int, bool] = {}
+_eq_table_cache: "weakref.WeakKeyDictionary[Any, bool]" = weakref.WeakKeyDictionary()
 
 
 def _embedding_queue_exists(bind) -> bool:
@@ -89,7 +90,13 @@ def _embedding_queue_exists(bind) -> bool:
     and would raise "no such table" on unrelated tests. Prod always has it."""
     if bind is None:
         return False
-    key = id(bind.engine if hasattr(bind, "engine") else bind)
+    # Keyed by the engine OBJECT via a weak map, never by id(engine):
+    # CPython recycles id() once an object is collected, so a short-lived
+    # engine (every sqlite test file makes its own, each with a different
+    # subset schema) could land on a dead engine's address and inherit its
+    # cached answer. Measured: 60 engines produced only 23 distinct ids.
+    # A weak map drops the entry when the engine dies, so no reuse.
+    key = bind.engine if hasattr(bind, "engine") else bind
     cached = _eq_table_cache.get(key)
     if cached is None:
         from sqlalchemy import inspect as _sa_inspect

@@ -3,9 +3,7 @@ import { useMemo, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useEligibility, useAddBinding } from '../hooks/useLookupSets';
 
 export default function BindingAddDialog({
@@ -34,20 +32,21 @@ export default function BindingAddDialog({
         <DialogHeader><DialogTitle>Add binding</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div><Label>Table</Label>
-            <Select value={tableName} onValueChange={(v) => { setTableName(v); setColumnName(''); }}>
-              <SelectTrigger><SelectValue placeholder="Select table" /></SelectTrigger>
-              <SelectContent>
-                {tables.map((t) => <SelectItem key={t.table_name} value={t.table_name}>{t.table_label}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={tableName}
+              onChange={(v) => { setTableName(v); setColumnName(''); }}
+              placeholder="Select table"
+              options={tables.map((t) => ({ value: t.table_name, label: t.table_label }))}
+            />
           </div>
           <div><Label>Column</Label>
-            <Select value={columnName} onValueChange={setColumnName} disabled={!tableName}>
-              <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
-              <SelectContent>
-                {columns.map((c) => <SelectItem key={c.column_name} value={c.column_name}>{c.column_label}</SelectItem>)}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={columnName}
+              onChange={setColumnName}
+              disabled={!tableName}
+              placeholder="Select column"
+              options={columns.map((c) => ({ value: c.column_name, label: c.column_label }))}
+            />
           </div>
         </div>
         <DialogFooter>

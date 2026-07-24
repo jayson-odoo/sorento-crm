@@ -32,6 +32,7 @@ import { toast } from 'sonner';
 import ContactAccessAgentsTable from './components/ContactAccessAgentsTable';
 import ContactCsRoutingRules from './components/routing/ContactCsRoutingRules';
 import ContactMarketSegmentSection from './components/ContactMarketSegmentSection';
+import ContactChatHistorySection from './components/ContactChatHistorySection';
 import ContactEditDialog from './components/ContactEditDialog';
 import ContactDeleteDialog from '../components/ContactDeleteDialog';
 import PortalLinkButton from '@/components/contacts/PortalLinkButton';
@@ -315,6 +316,10 @@ export default function ContactDetailPage({ params }: { params: Promise<{ id: st
           </CardHeader>
           <ContactCsRoutingRules contactId={id} />
         </Card>
+      </Container>
+
+      <Container>
+        <ContactChatHistorySection respondIoId={contact.respond_io_id ?? null} />
       </Container>
 
       <ContactEditDialog

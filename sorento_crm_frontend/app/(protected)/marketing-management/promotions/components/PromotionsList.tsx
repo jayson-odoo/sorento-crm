@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
   ColumnDef,
@@ -13,7 +13,7 @@ import {
   getFilteredRowModel,
   getPaginationRowModel,
 } from '@tanstack/react-table';
-import { ChevronRight, Eye, Filter, Plus, Search, Trash2, Users, X } from 'lucide-react';
+import { ChevronRight, Eye, FileText, Filter, Plus, Search, Trash2, Users, X } from 'lucide-react';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -29,13 +29,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -43,6 +37,7 @@ import { useTenantModules } from '@/hooks/useTenantModules';
 import AttachmentDetailModal from '@/app/(protected)/resource-management/attachments/components/AttachmentDetailModal';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { getPromotions } from '../services/promotionService';
+import { useCompilePromotionsPdf } from '../hooks/usePromotions';
 import type { Promotion } from '../types/promotion.types';
 import { formatPromotionBoundaryInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { postListQuerySearch, type ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
@@ -52,6 +47,12 @@ import { useContactAccessTypes } from '@/app/(protected)/user-management/contact
 
 export default function PromotionsList() {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  // Deep link from an expiry-reminder email — restrict the list to exactly the
+  // promotions stamped in that batch.
+  const expiryNotifyBatchId = searchParams.get('expiry_notify_batch_id') || undefined;
+  const compilePdf = useCompilePromotionsPdf();
   const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
   const listQueryToolsEnabled =
     modulesLoading || enabledModuleKeys == null || enabledModuleKeys.has('marketing');
@@ -87,6 +88,7 @@ export default function PromotionsList() {
       filterAccessLevel,
       filterAttachmentState,
       advancedFilter,
+      expiryNotifyBatchId,
     ],
     queryFn: async () => {
       if (advancedFilter) {
@@ -112,6 +114,7 @@ export default function PromotionsList() {
         status: filterStatus,
         user_type: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
         attachment_state: filterAttachmentState === 'all' ? undefined : filterAttachmentState,
+        expiry_notify_batch_id: expiryNotifyBatchId,
       });
     },
     staleTime: Infinity,
@@ -122,7 +125,7 @@ export default function PromotionsList() {
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [advancedFilter, filterStatus, filterAccessLevel, filterAttachmentState]);
+  }, [advancedFilter, filterStatus, filterAccessLevel, filterAttachmentState, expiryNotifyBatchId]);
 
   const columns = useMemo<ColumnDef<Promotion>[]>(
     () => [
@@ -312,6 +315,17 @@ export default function PromotionsList() {
     manualFiltering: true,
   });
 
+  const handleCompilePdf = () => {
+    // Selected rows in the order they appear in the grid — the merged PDF
+    // preserves this ordering.
+    const ids = table
+      .getRowModel()
+      .rows.filter((r) => r.getIsSelected())
+      .map((r) => r.original.id);
+    if (ids.length === 0) return;
+    compilePdf.mutate(ids, { onSuccess: () => setRowSelection({}) });
+  };
+
   return (
     <DataGrid
       table={table}
@@ -323,6 +337,14 @@ export default function PromotionsList() {
     >
       <Card>
         <CardHeader className="block">
+          {expiryNotifyBatchId && (
+            <div className="mb-3 flex items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+              <span>Showing promotions from a recent expiry-reminder batch.</span>
+              <Button variant="ghost" size="sm" onClick={() => router.replace(pathname)}>
+                Clear
+              </Button>
+            </div>
+          )}
           <DataGridListToolbar
             table={table}
             searchSlot={
@@ -363,51 +385,47 @@ export default function PromotionsList() {
                       <h4 className="font-medium">Filters</h4>
                       <div className="space-y-2">
                         <Label>Status</Label>
-                        <Select value={filterStatus} onValueChange={setFilterStatus}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="All" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All</SelectItem>
-                            <SelectItem value="active">Active</SelectItem>
-                            <SelectItem value="inactive">Inactive</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <SearchableSelect
+                          value={filterStatus}
+                          onChange={setFilterStatus}
+                          options={[
+                            { value: 'all', label: 'All' },
+                            { value: 'active', label: 'Active' },
+                            { value: 'inactive', label: 'Inactive' },
+                          ]}
+                          placeholder="All"
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label>Access level</Label>
-                        <Select value={filterAccessLevel} onValueChange={setFilterAccessLevel}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="All" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All</SelectItem>
-                            {accessTypeOptions.map((opt) => (
-                              <SelectItem key={opt.code} value={opt.code}>
-                                {opt.name || opt.code}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <SearchableSelect
+                          value={filterAccessLevel}
+                          onChange={setFilterAccessLevel}
+                          options={[
+                            { value: 'all', label: 'All' },
+                            ...accessTypeOptions.map((opt) => ({
+                              value: opt.code,
+                              label: opt.name || opt.code,
+                            })),
+                          ]}
+                          placeholder="All"
+                        />
                       </div>
                       <div className="space-y-2">
                         <Label>Attachment state</Label>
-                        <Select
+                        <SearchableSelect
                           value={filterAttachmentState}
-                          onValueChange={(v) =>
+                          onChange={(v) =>
                             setFilterAttachmentState(v as 'all' | 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed')
                           }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="All" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">All</SelectItem>
-                            <SelectItem value="unlinked">No attachments</SelectItem>
-                            <SelectItem value="linked_to_trashed">Linked to trashed</SelectItem>
-                            <SelectItem value="unlinked_or_trashed">No attachments or trashed</SelectItem>
-                          </SelectContent>
-                        </Select>
+                          options={[
+                            { value: 'all', label: 'All' },
+                            { value: 'unlinked', label: 'No attachments' },
+                            { value: 'linked_to_trashed', label: 'Linked to trashed' },
+                            { value: 'unlinked_or_trashed', label: 'No attachments or trashed' },
+                          ]}
+                          placeholder="All"
+                        />
                       </div>
                       {hasActiveQuickFilters && (
                         <Button
@@ -470,6 +488,13 @@ export default function PromotionsList() {
               </Button>
             }
             bulkActions={[
+              {
+                key: 'compile-pdf',
+                label: 'Compile PDF',
+                icon: FileText,
+                onClick: handleCompilePdf,
+                disabled: compilePdf.isPending,
+              },
               {
                 key: 'access-levels',
                 label: 'Set Access Levels',

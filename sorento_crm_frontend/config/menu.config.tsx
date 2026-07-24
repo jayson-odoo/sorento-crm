@@ -354,34 +354,6 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
-    title: 'Commercial',
-    icon: TrendingUp,
-    moduleKey: 'commercial_core',
-    children: [
-      { title: 'Pipeline', path: '/commercial-management/pipeline', permission: 'commercial_core.pipeline.view' },
-      { title: 'Leads', path: '/commercial/leads', permission: 'commercial_core.leads.view' },
-      { title: 'Lead Stages', path: '/commercial/lead-stages', permission: 'commercial_core.leads.view' },
-      { title: 'Projects', path: '/commercial-management/projects', permission: 'commercial_core.projects.view' },
-      { title: 'Tenders', path: '/commercial-management/tenders', permission: 'commercial_core.tenders.view' },
-      { title: 'Quotations', path: '/commercial-management/quotations', permission: 'commercial_core.quotations.view' },
-      { title: 'Quotation Revisions', path: '/commercial-management/quotation-revisions', permission: 'commercial_core.quotations.view' },
-      { title: 'Quotation Email Templates', path: '/commercial-management/quotation-email-templates', permission: 'commercial_core.email_templates.view' },
-      { title: 'Sales Order Progression', path: '/commercial-management/sales-order-progression', permission: 'commercial_core.quotations.view' },
-      { title: 'Tender vs Quotation Compare', path: '/commercial-management/tender-quotation-compare', permission: 'commercial_core.tenders.view' },
-      { title: 'Process Configuration', path: '/commercial-core/process-configuration', permission: 'commercial_core.process_config.view' },
-    ],
-  },
-  {
-    title: 'Activity Plans',
-    icon: Briefcase,
-    moduleKey: 'commercial_activity',
-    children: [
-      { title: 'Activities', path: '/commercial-management/activities', permission: 'commercial_activity.plans.view' },
-      { title: 'Activity Tasks', path: '/commercial-management/activity-tasks', permission: 'commercial_activity.tasks.view' },
-      { title: 'Project Tasks', path: '/commercial-management/project-tasks', permission: 'commercial_activity.tasks.view' },
-    ],
-  },
-  {
     // Supply Chain (SCM) — net-position dashboard + sales orders.
     // Gated behind `moduleKey: 'scm'` and, per leaf, the `scm.dashboard.view`
     // read permission that actually protects all three read endpoints (the SO
@@ -760,6 +732,16 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Respond Outbox',
         path: '/system-management/respond-outbox',
         permission: 'system.respond_outbox.view',
+      },
+      {
+        title: 'Chat History',
+        path: '/system-management/chat-history',
+        permission: 'system.chat_history.view',
+      },
+      {
+        title: 'API Call Log',
+        path: '/system-management/api-call-logs',
+        permission: 'system_management.api_call_log.view',
       },
       {
         title: 'Email Event Configs',
@@ -1246,34 +1228,6 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     ],
   },
   {
-    title: 'Commercial',
-    icon: TrendingUp,
-    moduleKey: 'commercial_core',
-    children: [
-      { title: 'Pipeline', path: '/commercial-management/pipeline' },
-      { title: 'Leads', path: '/commercial/leads' },
-      { title: 'Lead Stages', path: '/commercial/lead-stages' },
-      { title: 'Projects', path: '/commercial-management/projects' },
-      { title: 'Tenders', path: '/commercial-management/tenders' },
-      { title: 'Quotations', path: '/commercial-management/quotations' },
-      { title: 'Quotation Revisions', path: '/commercial-management/quotation-revisions' },
-      { title: 'Quotation Email Templates', path: '/commercial-management/quotation-email-templates' },
-      { title: 'Sales Order Progression', path: '/commercial-management/sales-order-progression' },
-      { title: 'Tender vs Quotation Compare', path: '/commercial-management/tender-quotation-compare' },
-      { title: 'Process Configuration', path: '/commercial-core/process-configuration' },
-    ],
-  },
-  {
-    title: 'Activity Plans',
-    icon: Briefcase,
-    moduleKey: 'commercial_activity',
-    children: [
-      { title: 'Activities', path: '/commercial-management/activities' },
-      { title: 'Activity Tasks', path: '/commercial-management/activity-tasks' },
-      { title: 'Project Tasks', path: '/commercial-management/project-tasks' },
-    ],
-  },
-  {
     title: 'Delivery Order Management',
     icon: ShoppingCart,
     moduleKey: 'order',
@@ -1608,6 +1562,16 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Respond Outbox',
         path: '/system-management/respond-outbox',
         permission: 'system.respond_outbox.view',
+      },
+      {
+        title: 'Chat History',
+        path: '/system-management/chat-history',
+        permission: 'system.chat_history.view',
+      },
+      {
+        title: 'API Call Log',
+        path: '/system-management/api-call-logs',
+        permission: 'system_management.api_call_log.view',
       },
       {
         title: 'Email Event Configs',

@@ -67,4 +67,10 @@ describe('DownloadRow', () => {
     expect(screen.queryByRole('button')).toBeNull();
     expect(screen.getByText('boom')).toBeInTheDocument();
   });
+
+  it('labels a promotions_pdf download "Promotions PDF"', () => {
+    // No filename → the kind label is the visible title AND the subtext.
+    render(<DownloadRow row={row({ kind: 'promotions_pdf', filename: null })} />);
+    expect(screen.getAllByText('Promotions PDF').length).toBeGreaterThan(0);
+  });
 });

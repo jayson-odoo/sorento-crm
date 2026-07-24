@@ -18,8 +18,8 @@ from sqlalchemy.pool import StaticPool
 # MUST be first app import — resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 
-_NONADMIN_USER_ID = "test-nonadmin-user"
-_NONADMIN_ROLE_ID = "role-viewer-noperm"
+_NONADMIN_USER_ID = "65206cac-d387-535e-9c20-9ad852f750f8"
+_NONADMIN_ROLE_ID = "c7ff2740-4436-5b42-8823-27a576fc1fad"
 _SET_KEY = "forms_form_type"
 
 

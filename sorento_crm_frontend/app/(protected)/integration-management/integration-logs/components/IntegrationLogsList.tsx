@@ -25,7 +25,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useIntegrationLogs, useRetryIntegrationLog } from '../hooks/useIntegrationLogs';
 import type { IntegrationLog } from '../types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
@@ -55,6 +55,16 @@ export default function IntegrationLogsList() {
   const [createdTo, setCreatedTo] = useState<string>(
     () => searchParams.get('created_to') ?? '',
   );
+  // A failure-cause drill-down from System Health. These have no control in the
+  // filter panel — they are set by the link and cleared as a unit, so the banner
+  // below is the only place they are visible. Without it the list would look
+  // inexplicably short.
+  const [statusCode, setStatusCode] = useState<string>(
+    () => searchParams.get('status_code') ?? '',
+  );
+  const [errorContains, setErrorContains] = useState<string[]>(
+    () => searchParams.getAll('error_contains'),
+  );
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data, isLoading, refetch, isRefetching } = useIntegrationLogs({
@@ -67,6 +77,8 @@ export default function IntegrationLogsList() {
     business_table: tableFilter !== 'all' ? tableFilter : undefined,
     created_from: createdFrom || undefined,
     created_to: createdTo || undefined,
+    status_code: statusCode || undefined,
+    error_contains: errorContains.length ? errorContains : undefined,
   });
 
   // Day-granular date inputs; widen "to" to end-of-day so the chosen day is inclusive.
@@ -222,7 +234,13 @@ export default function IntegrationLogsList() {
     (statusFilter !== 'all' ? 1 : 0) +
     (channelFilter !== 'all' ? 1 : 0) +
     (tableFilter !== 'all' ? 1 : 0) +
-    (createdFrom || createdTo ? 1 : 0);
+    (createdFrom || createdTo ? 1 : 0) +
+    (statusCode || errorContains.length ? 1 : 0);
+
+  const clearCauseFilter = () => {
+    setStatusCode('');
+    setErrorContains([]);
+  };
 
   const handleClearFilters = () => {
     setStatusFilter('all');
@@ -230,6 +248,7 @@ export default function IntegrationLogsList() {
     setTableFilter('all');
     setCreatedFrom('');
     setCreatedTo('');
+    clearCauseFilter();
     setPagination((p) => ({ ...p, pageIndex: 0 }));
     router.replace(pathname);
   };
@@ -257,6 +276,40 @@ export default function IntegrationLogsList() {
       }}
     >
       <Card>
+        {(statusCode || errorContains.length > 0) && (
+          <div
+            data-testid="integration-logs-cause-filter"
+            className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-5 py-3 text-xs"
+          >
+            <span className="text-muted-foreground">Showing one failure cause:</span>
+            {statusCode && (
+              <Badge variant="secondary" appearance="light" size="sm">
+                HTTP {statusCode}
+              </Badge>
+            )}
+            {errorContains.map((term) => (
+              <code
+                key={term}
+                className="max-w-md truncate rounded bg-background px-1.5 py-0.5"
+                title={term}
+              >
+                {term}
+              </code>
+            ))}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-2"
+              data-testid="integration-logs-cause-filter-clear"
+              onClick={() => {
+                clearCauseFilter();
+                setPagination((p) => ({ ...p, pageIndex: 0 }));
+              }}
+            >
+              Show all failures
+            </Button>
+          </div>
+        )}
         <CardHeader className="block">
           <DataGridListToolbar
             table={table}
@@ -287,45 +340,60 @@ export default function IntegrationLogsList() {
               activeCount: filtersActiveCount,
               content: (
                 <div className="space-y-3">
-                  <Select value={statusFilter} onValueChange={setStatusFilter}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Status</SelectItem>
-                      <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="processing">Processing</SelectItem>
-                      <SelectItem value="success">Success</SelectItem>
-                      <SelectItem value="failed">Failed</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Select value={channelFilter} onValueChange={setChannelFilter}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Channel" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Channels</SelectItem>
-                      <SelectItem value="n8n">n8n</SelectItem>
-                      <SelectItem value="sla_management">SLA Management</SelectItem>
-                      <SelectItem value="sla_tracking_creation">SLA Tracking (create)</SelectItem>
-                      <SelectItem value="sla_tracking_update">SLA Tracking (update)</SelectItem>
-                      <SelectItem value="sla_escalation">SLA Escalation</SelectItem>
-                      {extraChannel && (
-                        <SelectItem value={extraChannel}>{extraChannel}</SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
-                  <Select value={tableFilter} onValueChange={setTableFilter}>
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Table" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Tables</SelectItem>
-                      <SelectItem value="attachments">Attachments</SelectItem>
-                      <SelectItem value="conversation_sla_tracking">Conversation SLA Tracking</SelectItem>
-                      <SelectItem value="conversation_sla_event_log">Conversation SLA Event Log</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <SearchableSelect
+                    value={statusFilter}
+                    onChange={setStatusFilter}
+                    options={[
+                      { value: 'all', label: 'All Status' },
+                      { value: 'pending', label: 'Pending' },
+                      { value: 'processing', label: 'Processing' },
+                      { value: 'success', label: 'Success' },
+                      { value: 'failed', label: 'Failed' },
+                    ]}
+                    placeholder="Status"
+                    triggerClassName="w-full"
+                  />
+                  <SearchableSelect
+                    value={channelFilter}
+                    onChange={setChannelFilter}
+                    options={[
+                      { value: 'all', label: 'All Channels' },
+                      { value: 'n8n', label: 'n8n' },
+                      { value: 'sla_management', label: 'SLA Management' },
+                      { value: 'sla_tracking_creation', label: 'SLA Tracking (create)' },
+                      { value: 'sla_tracking_update', label: 'SLA Tracking (update)' },
+                      { value: 'sla_escalation', label: 'SLA Escalation' },
+                      ...(extraChannel ? [{ value: extraChannel, label: extraChannel }] : []),
+                    ]}
+                    placeholder="Channel"
+                    triggerClassName="w-full"
+                  />
+                  <SearchableSelect
+                    value={tableFilter}
+                    onChange={setTableFilter}
+                    options={[
+                      { value: 'all', label: 'All Tables' },
+                      { value: 'attachments', label: 'Attachments' },
+                      { value: 'conversation_sla_tracking', label: 'Conversation SLA Tracking' },
+                      { value: 'conversation_sla_event_log', label: 'Conversation SLA Event Log' },
+                    ]}
+                    placeholder="Table"
+                    triggerClassName="w-full"
+                  />
+                  {(createdFrom || createdTo) && (
+                    // A drill-down seeds a date window from the URL. The date
+                    // inputs are day-granular, so a window like 09:05 renders as
+                    // a bare date and looks like the user set it — this says the
+                    // range is active and where it came from.
+                    <Badge
+                      variant="secondary"
+                      appearance="light"
+                      size="sm"
+                      data-testid="integration-created-from-active"
+                    >
+                      Date range active
+                    </Badge>
+                  )}
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">From date</label>

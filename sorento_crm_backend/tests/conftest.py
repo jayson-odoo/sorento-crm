@@ -116,9 +116,11 @@ def _prewarm_audit_table_cache_on_create():
 
             created = {t.name for t in kw.get("tables", []) or []}
             engine = getattr(connection, "engine", connection)
-            key = id(engine)
-            has = audit_service._audit_table_cache.get(key, False) or ("audit_logs" in created)
-            audit_service._audit_table_cache[key] = has
+            # Key by the engine OBJECT, matching audit_service's weak-keyed cache.
+            # It used to key by id(engine); CPython recycles those addresses, so a
+            # new engine could inherit a dead one's answer.
+            has = audit_service._audit_table_cache.get(engine, False) or ("audit_logs" in created)
+            audit_service._audit_table_cache[engine] = has
         except Exception:
             pass
 

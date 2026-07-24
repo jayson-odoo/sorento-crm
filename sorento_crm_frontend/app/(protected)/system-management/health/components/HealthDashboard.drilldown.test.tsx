@@ -29,7 +29,7 @@ function hookState(overrides: Record<string, unknown>) {
 
 const base: HealthSummary = {
   generated_at: '2026-06-30T12:00:00Z',
-  email_outbox: { pending: 0, sent: 0, failed: 0, cancelled: 0, failed_last_24h: 0 },
+  email_outbox: { pending: 0, sent: 0, failed: 0, cancelled: 0, failed_in_window: 0, failed_last_24h: 0 },
   imports: { total_last_24h: 0, finished_last_24h: 0, failed_last_24h: 0, success_rate: 100 },
   scheduled_tasks: { total: 5, overdue: 0, last_run_failed: 0 },
   integrations: { channels: [] },
@@ -84,8 +84,8 @@ describe('HealthDashboard drill-down: Integration failed counts', () => {
       ...base,
       integrations: {
         channels: [
-          { channel: 'respond_io', success: 8, failed: 3, total: 11 },
-          { channel: 'n8n', success: 5, failed: 0, total: 5 },
+          { channel: 'respond_io', success: 8, failed: 3, benign: 0, in_flight: 0, total: 11, top_failures: [] },
+          { channel: 'n8n', success: 5, failed: 0, benign: 0, in_flight: 0, total: 5, top_failures: [] },
         ],
       },
     });

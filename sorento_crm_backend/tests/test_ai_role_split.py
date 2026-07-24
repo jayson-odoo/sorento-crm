@@ -120,7 +120,7 @@ def _cfg() -> AIAssistantConfig:
 
 
 def _trace() -> TurnTrace:
-    return TurnTrace(user_id="u-1", conversation_id=None, session_id="s-1", env="test")
+    return TurnTrace(user_id="95709c37-0fb4-5c00-8686-536c019e6fb7", conversation_id=None, session_id="s-1", env="test")
 
 
 def _spans_named(trace: TurnTrace, name: str) -> list:

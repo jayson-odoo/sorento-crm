@@ -13,11 +13,11 @@ const mockedHook = vi.mocked(useHealthSummary);
 
 const fullSummary: HealthSummary = {
   generated_at: '2026-06-30T12:00:00Z',
-  email_outbox: { pending: 3, sent: 10, failed: 2, cancelled: 1, failed_last_24h: 2 },
+  email_outbox: { pending: 3, sent: 10, failed: 2, cancelled: 1, failed_in_window: 2, failed_last_24h: 2 },
   imports: { total_last_24h: 4, finished_last_24h: 3, failed_last_24h: 1, success_rate: 75 },
   scheduled_tasks: { total: 5, overdue: 1, last_run_failed: 0 },
   integrations: {
-    channels: [{ channel: 'respond_io', success: 8, failed: 1, total: 9 }],
+    channels: [{ channel: 'respond_io', success: 8, failed: 1, benign: 0, in_flight: 0, total: 9, top_failures: [] }],
   },
   audit_activity: {
     count_last_24h: 12,

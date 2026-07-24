@@ -25,7 +25,7 @@ class ProductCategory(Base):
     parent_category_id = Column(UUID(as_uuid=False), ForeignKey("product_categories.id", ondelete="SET NULL"), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     display_order = Column(Integer, default=0, nullable=True)
-    created_by = Column(String, nullable=True)
+    created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     
@@ -55,7 +55,7 @@ class Brand(Base):
     # brands the active contact can see. Default mirrors the Attachment +
     # Promotion default so existing brands stay broadly visible.
     access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
-    created_by = Column(String, nullable=True)
+    created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
 
@@ -138,8 +138,8 @@ class Product(Base):
     # Stable id of the batch this product was reported in. Deep-linked from the
     # notification to the product list filtered to exactly that batch.
     discontinued_notify_batch_id = Column(UUID(as_uuid=False), nullable=True)
-    created_by = Column(String, nullable=True)
-    updated_by = Column(String, nullable=True)
+    created_by = Column(UUID(as_uuid=False), nullable=True)
+    updated_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
 

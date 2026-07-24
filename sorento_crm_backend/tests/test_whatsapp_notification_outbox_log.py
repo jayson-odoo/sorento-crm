@@ -25,7 +25,7 @@ def _objs():
         title="Summary",
         body="body",
         source_entity_type="scheduled_task_user_sla_daily_summary",
-        source_entity_id="ck:2026-06-20:manual:1",  # composite, NOT a uuid
+        source_entity_id="342b58af-ede7-5f34-8ae7-cefb3c478111",  # composite, NOT a uuid
     )
     user = SimpleNamespace(id="u1")
     delivery = SimpleNamespace(status="pending", error_message=None, sent_at=None)

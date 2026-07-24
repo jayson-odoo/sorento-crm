@@ -6,13 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -158,76 +152,61 @@ export default function TicketsList() {
           className="max-w-sm"
         />
         {mode === 'list' && (
-          <Select
+          <SearchableSelect
             value={statusFilter}
-            onValueChange={(v) => setStatusFilter(v as TicketStatus | 'all')}
-          >
-            <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              {TICKET_STATUSES.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s.charAt(0).toUpperCase() + s.slice(1)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            onChange={(v) => setStatusFilter(v as TicketStatus | 'all')}
+            options={[
+              { value: 'all', label: 'All statuses' },
+              ...TICKET_STATUSES.map((s) => ({
+                value: s,
+                label: s.charAt(0).toUpperCase() + s.slice(1),
+              })),
+            ]}
+            placeholder="Status"
+            triggerClassName="w-[160px]"
+          />
         )}
-        <Select
+        <SearchableSelect
           value={priorityFilter}
-          onValueChange={(v) => setPriorityFilter(v as TicketPriority | 'all')}
-        >
-          <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="Priority" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All priorities</SelectItem>
-            {TICKET_PRIORITIES.map((p) => (
-              <SelectItem key={p} value={p}>
-                {p.charAt(0).toUpperCase() + p.slice(1)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
+          onChange={(v) => setPriorityFilter(v as TicketPriority | 'all')}
+          options={[
+            { value: 'all', label: 'All priorities' },
+            ...TICKET_PRIORITIES.map((p) => ({
+              value: p,
+              label: p.charAt(0).toUpperCase() + p.slice(1),
+            })),
+          ]}
+          placeholder="Priority"
+          triggerClassName="w-[160px]"
+        />
+        <SearchableSelect
           value={categoryFilter}
-          onValueChange={(v) => setCategoryFilter(v as TicketCategory | 'all')}
-        >
-          <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="Category" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All categories</SelectItem>
-            {TICKET_CATEGORIES.map((c) => (
-              <SelectItem key={c} value={c}>
-                {c.charAt(0).toUpperCase() + c.slice(1)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          onChange={(v) => setCategoryFilter(v as TicketCategory | 'all')}
+          options={[
+            { value: 'all', label: 'All categories' },
+            ...TICKET_CATEGORIES.map((c) => ({
+              value: c,
+              label: c.charAt(0).toUpperCase() + c.slice(1),
+            })),
+          ]}
+          placeholder="Category"
+          triggerClassName="w-[160px]"
+        />
         {mode === 'list' && (
-          <Select
+          <SearchableSelect
             value={sourceFilter}
-            onValueChange={(v) => setSourceFilter(v as TicketSourceChannel | 'all')}
-          >
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Source" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All sources</SelectItem>
-              {TICKET_SOURCE_CHANNELS.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s === 'manual'
-                    ? 'Manual'
-                    : s === 'ai_assistant'
-                    ? 'AI Assistant'
-                    : 'WhatsApp'}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            onChange={(v) => setSourceFilter(v as TicketSourceChannel | 'all')}
+            options={[
+              { value: 'all', label: 'All sources' },
+              ...TICKET_SOURCE_CHANNELS.map((s) => ({
+                value: s,
+                label:
+                  s === 'manual' ? 'Manual' : s === 'ai_assistant' ? 'AI Assistant' : 'WhatsApp',
+              })),
+            ]}
+            placeholder="Source"
+            triggerClassName="w-[180px]"
+          />
         )}
         <ListBoardViewToggle value={mode} onChange={setMode} />
         <div className="ms-auto flex items-center gap-2">

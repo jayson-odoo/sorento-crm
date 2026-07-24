@@ -265,7 +265,11 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const fieldDefs = FIELDS[kind];
   const showLines = HAS_LINES.includes(kind);
   const isEditable = useMemo(
-    () => !detail || detail.is_draft || detail.status === 'rejected',
+    () =>
+      !detail ||
+      detail.is_draft ||
+      detail.status === 'rejected' ||
+      detail.status === 'responded',
     [detail],
   );
 
@@ -1134,7 +1138,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         >
           Cancel
         </Button>
-        {detail?.status !== 'rejected' && (
+        {detail?.status !== 'rejected' && detail?.status !== 'responded' && (
           <Button
             variant="outline"
             onClick={handleSaveDraft}
@@ -1159,7 +1163,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
             </AlertDialogTitle>
             <AlertDialogDescription>
               Once submitted, your team will be notified. You can no longer edit unless it
-              is rejected.
+              is returned to you for changes.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

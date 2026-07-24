@@ -295,6 +295,7 @@ class PromotionService:
         promotion_ids: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
         attachment_state: Optional[str] = None,
+        expiry_notify_batch_id: Optional[str] = None,
     ):
         """Build the filtered + sorted promotions query shared by ``list_promotions``
         and ``neighbours`` so the two can never drift.
@@ -332,6 +333,7 @@ class PromotionService:
             or product_ids
             or entity_promotion_ids
             or attachment_state
+            or expiry_notify_batch_id
         )
 
         today = datetime.utcnow().date()
@@ -406,6 +408,8 @@ class PromotionService:
                     q = q.filter(Promotion.end_date >= period_from)
                 if period_to is not None:
                     q = q.filter(Promotion.start_date <= period_to)
+            if expiry_notify_batch_id:
+                q = q.filter(Promotion.expiry_notify_batch_id == expiry_notify_batch_id)
             if entity_promotion_ids:
                 q = q.filter(Promotion.id.in_(entity_promotion_ids))
             # promotion_ids + product_ids always combine via OR (n8n promo
@@ -513,6 +517,7 @@ class PromotionService:
         promotion_ids: Optional[list[str]] = None,
         product_ids: Optional[list[str]] = None,
         attachment_state: Optional[str] = None,
+        expiry_notify_batch_id: Optional[str] = None,
     ):
         """List promotions with active-first fallback semantics.
 
@@ -576,6 +581,7 @@ class PromotionService:
             promotion_ids=promotion_ids,
             product_ids=product_ids,
             attachment_state=attachment_state,
+            expiry_notify_batch_id=expiry_notify_batch_id,
         )
 
         today = datetime.utcnow().date()

@@ -62,7 +62,7 @@ def _seed_complaint(db: Session) -> Complaint:
 def test_download_lifecycle(db: Session) -> None:
     svc = DownloadService(db)
     uid = f"pdftest-{uuid.uuid4().hex[:6]}"
-    row = svc.create(user_id=uid, kind="complaint_pdf", source_entity_type="complaint", source_entity_id="x")
+    row = svc.create(user_id=uid, kind="complaint_pdf", source_entity_type="complaint", source_entity_id="f3e951bb-a80b-5e6c-a038-a56ee0caa25d")
     assert row.status == DownloadStatus.PENDING.value
 
     svc.mark_processing(row.id)

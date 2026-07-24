@@ -1,13 +1,14 @@
 """Embedding pipeline models for pgvector-backed RAG retrieval."""
 from sqlalchemy import (
-    Column,
-    String,
-    DateTime,
-    Text,
-    Integer,
     Boolean,
-    Index,
+    Column,
+    DateTime,
     ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
@@ -27,7 +28,7 @@ class EmbeddingQueue(Base):
     event_version = Column(Integer, nullable=False, default=1)
     source_updated_at = Column(DateTime(timezone=False), nullable=True)
     source_hash = Column(String(64), nullable=True)
-    payload = Column(JSONB, nullable=False, server_default="{}")
+    payload = Column(JSON, nullable=False, server_default="{}")
     status = Column(String(32), nullable=False, default="pending")
     retry_count = Column(Integer, nullable=False, default=0)
     available_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
@@ -53,7 +54,7 @@ class EmbeddingDocument(Base):
     source_key = Column(String(128), nullable=True)
     title = Column(String(255), nullable=True)
     body_text = Column(Text, nullable=False)
-    metadata_json = Column("metadata", JSONB, nullable=False, server_default="{}")
+    metadata_json = Column("metadata", JSON, nullable=False, server_default="{}")
     visibility_scope = Column(String(64), nullable=True)
     source_hash = Column(String(64), nullable=False)
     source_updated_at = Column(DateTime(timezone=False), nullable=True)
@@ -94,7 +95,7 @@ class EmbeddingChunk(Base):
     model_version = Column(String(64), nullable=False)
     embedding_provider = Column(String(64), nullable=False)
     source_hash = Column(String(64), nullable=False)
-    metadata_json = Column("metadata", JSONB, nullable=False, server_default="{}")
+    metadata_json = Column("metadata", JSON, nullable=False, server_default="{}")
     is_current = Column(Boolean, nullable=False, default=True)
     embedded_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
     superseded_at = Column(DateTime(timezone=False), nullable=True)

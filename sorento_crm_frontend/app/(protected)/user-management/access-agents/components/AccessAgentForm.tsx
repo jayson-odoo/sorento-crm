@@ -17,22 +17,15 @@ import {
   FormDescription,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent, useAccessAgents, useAgentTeams, useTeams, useAgentMcpToolBindings, useSetAgentMcpToolBindings } from '../hooks/useAccessAgents';
-import { setAgentTeams, type McpToolBindingInput } from '../services/accessAgentService';
+import { useCreateAccessAgent, useUpdateAccessAgent, useAccessAgent, useAccessAgents, useAgentTeams, useTeams } from '../hooks/useAccessAgents';
+import { setAgentTeams } from '../services/accessAgentService';
 import { getSLAPolicies } from '@/app/(protected)/sla-management/sla-policies/services/slaPolicyService';
-import { McpToolBindingsEditor } from './McpToolBindingsEditor';
 import { AccessAgentSchema, type AccessAgentSchemaType } from '../forms/access-agent-schema';
 import type { AccessAgentFormData } from '../types/accessAgent.types';
 import RecordNavigation from '@/components/common/RecordNavigation';
@@ -85,22 +78,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
   });
   const slaPolicies = slaPoliciesData?.data ?? [];
 
-  const { data: agentMcpBindingsData } = useAgentMcpToolBindings(isEditMode ? accessAgentId ?? null : null);
-  const setAgentMcpToolBindingsMutation = useSetAgentMcpToolBindings();
-  const [bindings, setBindings] = useState<McpToolBindingInput[]>([]);
-  const [initialBindings, setInitialBindings] = useState<McpToolBindingInput[]>([]);
-
-  useEffect(() => {
-    if (agentMcpBindingsData) {
-      const next: McpToolBindingInput[] = agentMcpBindingsData.map((b) => ({
-        tool_id: b.tool_id,
-        team_id: b.team_id,
-        tier: b.tier,
-      }));
-      setBindings(next);
-      setInitialBindings(next);
-    }
-  }, [agentMcpBindingsData]);
 
   useEffect(() => {
     const fromServer = agentTeamsData?.assignments;
@@ -203,14 +180,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
           .filter((a) => a.code && a.team_id);
         await setAgentTeams(accessAgentId, validAssignments);
         queryClient.invalidateQueries({ queryKey: ['agent-teams', accessAgentId] });
-        const sanitized = bindings.filter((b) => b.tool_id);
-        if (JSON.stringify(sanitized) !== JSON.stringify(initialBindings)) {
-          await setAgentMcpToolBindingsMutation.mutateAsync({
-            agentId: accessAgentId,
-            bindings: sanitized,
-          });
-          setInitialBindings(sanitized);
-        }
         toast.success('Access agent updated successfully');
       } else {
         await createMutation.mutateAsync(formData);
@@ -238,8 +207,7 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
 
   const isLoading =
     createMutation.isPending ||
-    updateMutation.isPending ||
-    setAgentMcpToolBindingsMutation.isPending;
+    updateMutation.isPending;
 
   return (
     <Form {...form}>
@@ -386,10 +354,10 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
                         </div>
                         <div className="flex-1 min-w-[200px]">
                           <label className="text-xs text-muted-foreground mb-1 block">SLA policy</label>
-                          <Select
+                          <SearchableSelect
                             value={group.policy_id ?? NO_POLICY}
                             disabled={isLoading}
-                            onValueChange={(v) => {
+                            onChange={(v) => {
                               const next = [...assignmentGroups];
                               next[groupIdx] = {
                                 ...next[groupIdx],
@@ -397,19 +365,15 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
                               };
                               setAssignmentGroups(next);
                             }}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select SLA policy" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={NO_POLICY}>— No policy —</SelectItem>
-                              {slaPolicies.map((policy) => (
-                                <SelectItem key={policy.id} value={policy.id}>
-                                  {policy.name} ({policy.code})
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            placeholder="Select SLA policy"
+                            options={[
+                              { value: NO_POLICY, label: '— No policy —' },
+                              ...slaPolicies.map((policy) => ({
+                                value: policy.id,
+                                label: `${policy.name} (${policy.code})`,
+                              })),
+                            ]}
+                          />
                         </div>
                         <Button
                           type="button"
@@ -433,10 +397,10 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
                           <div key={row.id} className="flex flex-wrap items-end gap-3 rounded-md border p-3">
                             <div className="w-[140px]">
                               <label className="text-xs text-muted-foreground mb-1 block">Tier</label>
-                              <Select
+                              <SearchableSelect
                                 value={row.tier != null ? String(row.tier) : '__none__'}
                                 disabled={isLoading}
-                                onValueChange={(v) => {
+                                onChange={(v) => {
                                   const next = [...assignmentGroups];
                                   next[groupIdx].rows[rowIdx] = {
                                     ...next[groupIdx].rows[rowIdx],
@@ -444,40 +408,33 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
                                   };
                                   setAssignmentGroups(next);
                                 }}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue placeholder="—" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="__none__">—</SelectItem>
-                                  <SelectItem value="1" disabled={usedTiers.has(1)}>1</SelectItem>
-                                  <SelectItem value="2" disabled={usedTiers.has(2)}>2</SelectItem>
-                                  <SelectItem value="3" disabled={usedTiers.has(3)}>3</SelectItem>
-                                </SelectContent>
-                              </Select>
+                                placeholder="—"
+                                options={[
+                                  { value: '__none__', label: '—' },
+                                  // A tier already claimed by another row stays visible but
+                                  // unpickable, same as before.
+                                  { value: '1', label: '1', disabled: usedTiers.has(1) },
+                                  { value: '2', label: '2', disabled: usedTiers.has(2) },
+                                  { value: '3', label: '3', disabled: usedTiers.has(3) },
+                                ]}
+                              />
                             </div>
                             <div className="flex-1 min-w-[180px]">
                               <label className="text-xs text-muted-foreground mb-1 block">Team</label>
-                              <Select
+                              <SearchableSelect
                                 value={row.team_id}
                                 disabled={isLoading}
-                                onValueChange={(teamId) => {
+                                onChange={(teamId) => {
                                   const next = [...assignmentGroups];
                                   next[groupIdx].rows[rowIdx] = { ...next[groupIdx].rows[rowIdx], team_id: teamId };
                                   setAssignmentGroups(next);
                                 }}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select team" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {teamsList.map((team: { id: string; name: string }) => (
-                                    <SelectItem key={team.id} value={team.id}>
-                                      {team.name}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                                placeholder="Select team"
+                                options={teamsList.map((team: { id: string; name: string }) => ({
+                                  value: team.id,
+                                  label: team.name,
+                                }))}
+                              />
                             </div>
                             {/* Notify-on-extension applies to escalation tiers (2/3):
                                 when a lower-tier deadline is extended, this tier's team
@@ -569,25 +526,6 @@ export default function AccessAgentForm({ accessAgentId, onSuccess }: AccessAgen
           </Card>
         )}
 
-        {isEditMode && accessAgentId && (
-          <Card>
-            <CardHeader>
-              <CardTitle>MCP Tool Bindings</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-xs text-muted-foreground">
-                Bind a tool to a specific team to route escalation for that tool only
-                to that team. Leave team empty (legacy) to fan out via this agent&apos;s
-                team set above.
-              </p>
-              <McpToolBindingsEditor
-                value={bindings}
-                onChange={setBindings}
-                disabled={isLoading}
-              />
-            </CardContent>
-          </Card>
-        )}
 
         <div className="flex justify-end gap-4 pt-4">
           <Button

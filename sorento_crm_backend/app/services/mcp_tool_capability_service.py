@@ -83,10 +83,6 @@ _EMBEDDING_SKIP_TOOLS: set[str] = {
     "crm_forms_purchase_requests_get",
     "crm_forms_complaints_list",
     "crm_forms_complaints_get",
-    "crm_commercial_projects_create_smart",
-    "crm_commercial_projects_edit",
-    "crm_commercial_projects_get",
-    "crm_commercial_projects_list",
     "crm_workflow_forms_submissions_list",
     "crm_workflow_forms_submissions_get",
     "crm_workflow_forms_submissions_allowed_transitions",
@@ -1480,75 +1476,6 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         aliases=("capability summary", "what can you do", "tool overview", "mcp capabilities"),
     ),
     # ==================================================================
-    # COMMERCIAL — projects, leads, tenders, quotations, customer fuzzy match
-    # ==================================================================
-    "crm_commercial_projects_list": ToolIntent(
-        category="commercial",
-        intent="List commercial projects with filters (developer/customer, status, free-text).",
-        description=(
-            "List commercial projects. Filters: customer_id (developer), status_id, query (free-text "
-            "over project title / brief / customer name / customer code). Default sort latest first."
-        ),
-        typical_user_questions=(
-            "Show all commercial projects.",
-            "List projects for developer ABC Construction.",
-            "What projects do we have in progress?",
-            "Find projects by name or developer.",
-        ),
-        aliases=("commercial projects list", "projects for developer", "list projects"),
-    ),
-    "crm_commercial_projects_get": ToolIntent(
-        category="commercial",
-        intent="Fetch full detail for one commercial project by id.",
-        description="Get one commercial project record by UUID with developer, owner, stages, customer contacts, address.",
-        typical_user_questions=(
-            "Show full detail for this project id.",
-            "Open this commercial project record.",
-        ),
-        aliases=("get project by id", "project detail"),
-    ),
-    "crm_commercial_projects_create_smart": ToolIntent(
-        category="commercial",
-        intent="Create a commercial project with smart developer (customer) resolution and fuzzy matching.",
-        description=(
-            "Create a project where the developer (Customer) is resolved by one of three modes: "
-            "(1) `developer_id` (existing customer UUID) — used directly; "
-            "(2) `developer_create` (full customer payload) — creates the customer + project in one call; "
-            "(3) `developer_query` (free-text name/code) — fuzzy-matches against existing customers. "
-            "WHEN fuzzy match returns multiple candidates OR a single low-confidence match, the endpoint "
-            "responds 409 with `{ near_matches: [...], needs_decision: true, missing_developer_fields: [...] }`. "
-            "The caller MUST then either re-call with `developer_id` set to one of the suggestions, OR re-call "
-            "with `force=true` + `developer_create` populated. "
-            "Use `crm_master_customers_list` first to cross-check what developers (clients) already exist before deciding "
-            "to create a new one — many developers differ by 1-2 characters, the fuzzy matcher catches close ones but "
-            "exact name confirmation should always come from the user."
-        ),
-        typical_user_questions=(
-            "Create a project for developer ABC Construction.",
-            "Add a new project — the developer is XYZ Holdings.",
-            "Set up a commercial project with this developer name.",
-            "Start a project for this client; check if they already exist first.",
-        ),
-        aliases=(
-            "create project",
-            "new commercial project",
-            "smart create project",
-            "add project with developer",
-        ),
-    ),
-    "crm_commercial_projects_edit": ToolIntent(
-        category="commercial",
-        intent="Update fields on an existing commercial project (title, brief, status, dates, address).",
-        description="PATCH /api/v1/commercial/projects/{id}. Supports partial updates of title, brief, notes, status, dates, project_stage_id, owner_user_id, address fields, and project customers.",
-        typical_user_questions=(
-            "Edit this project's title.",
-            "Update the project brief.",
-            "Change the project status / stage.",
-            "Set the start/end date on this project.",
-            "Update the project address.",
-        ),
-        aliases=("update project", "edit project", "patch project"),
-    ),
     "crm_master_customers_list": ToolIntent(
         category="commercial",
         intent="List or search distinct customers/debtors aggregated from the orders table.",
@@ -1564,7 +1491,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "and limit=N. "
             "`query` is a case-insensitive partial match on debtor_name OR debtor_code. "
             "Sort options: debtor_name, debtor_code, order_count. Use this BEFORE calling "
-            "`crm_commercial_projects_create_smart` to cross-check whether a customer already exists and prevent "
+            "this tool to cross-check whether a customer already exists and prevent "
             "1-2 char typo duplicates. External AI/MCP callers are HARD-CAPPED at limit=10 server-side."
         ),
         typical_user_questions=(

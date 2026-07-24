@@ -55,7 +55,6 @@ const STABLE_AGENT = {
 };
 const STABLE_EMPTY: never[] = [];
 const STABLE_NAV = { data: STABLE_EMPTY };
-const STABLE_SET_MCP = { mutateAsync: vi.fn(), isPending: false };
 
 vi.mock('../hooks/useAccessAgents', () => ({
   useAccessAgent: () => ({ data: STABLE_AGENT, isLoading: false }),
@@ -64,13 +63,8 @@ vi.mock('../hooks/useAccessAgents', () => ({
   useUpdateAccessAgent: () => ({ mutateAsync: updateMutateAsync, isPending: false }),
   useAgentTeams: () => ({ data: { assignments: agentTeamsAssignments } }),
   useTeams: () => ({ data: teamsList }),
-  useAgentMcpToolBindings: () => ({ data: STABLE_EMPTY }),
-  useSetAgentMcpToolBindings: () => STABLE_SET_MCP,
 }));
 
-vi.mock('./McpToolBindingsEditor', () => ({
-  McpToolBindingsEditor: () => <div data-testid="mcp-editor" />,
-}));
 
 vi.mock('@/components/common/RecordNavigation', () => ({
   default: () => <div data-testid="record-nav" />,
@@ -98,62 +92,35 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.f
 
 // --- Radix Select -> native <select> --------------------------------------
 // Collect SelectItem descendants into <option>s so value/onValueChange round-trip.
-vi.mock('@/components/ui/select', () => {
-  function collectItems(node: React.ReactNode, out: Array<{ value: string; label: React.ReactNode }>) {
-    React.Children.forEach(node, (child) => {
-      if (!React.isValidElement(child)) return;
-      const el = child as React.ReactElement<{ value?: string; children?: React.ReactNode }>;
-      if (el.props && typeof el.props.value === 'string' && el.type && (el.type as { __isSelectItem?: boolean }).__isSelectItem) {
-        out.push({ value: el.props.value, label: el.props.children });
-      } else if (el.props && el.props.children) {
-        collectItems(el.props.children, out);
-      }
-    });
-  }
-
-  const SelectItem = (props: { value: string; children?: React.ReactNode }) => <>{props.children}</>;
-  (SelectItem as unknown as { __isSelectItem: boolean }).__isSelectItem = true;
-
-  const Select = ({
+// The component now uses the standard SearchableSelect. Mock it as a native <select> so the
+// options are in the DOM without driving a popover — the assertions here are about labels and
+// the value that reaches the form, not about popover mechanics.
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: ({
     value,
-    onValueChange,
-    children,
+    onChange,
+    options = [],
+    placeholder,
   }: {
     value?: string;
-    onValueChange?: (v: string) => void;
-    children?: React.ReactNode;
-  }) => {
-    const items: Array<{ value: string; label: React.ReactNode }> = [];
-    collectItems(children, items);
-    return (
-      <select
-        data-testid="native-select"
-        value={value}
-        onChange={(e) => onValueChange?.(e.target.value)}
-      >
-        {items.map((it) => (
-          <option key={it.value} value={it.value}>
-            {it.label}
-          </option>
-        ))}
-      </select>
-    );
-  };
-
-  return {
-    Select,
-    SelectItem,
-    SelectContent: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
-    SelectTrigger: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
-    SelectValue: () => null,
-    SelectGroup: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
-    SelectLabel: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
-    SelectSeparator: () => null,
-    SelectIndicator: () => null,
-    SelectScrollUpButton: () => null,
-    SelectScrollDownButton: () => null,
-  };
-});
+    onChange?: (v: string) => void;
+    options?: Array<{ value: string; label: string; disabled?: boolean }>;
+    placeholder?: string;
+  }) => (
+    <select
+      data-testid="native-select"
+      aria-label={placeholder}
+      value={value}
+      onChange={(e) => onChange?.(e.target.value)}
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value} disabled={o.disabled}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
 
 const POLICIES = [
   { id: 'pol-std', code: 'STANDARD', name: 'Standard', is_active: true },
@@ -167,6 +134,22 @@ function renderForm() {
       <AccessAgentForm accessAgentId="agent-1" />
     </QueryClientProvider>,
   );
+}
+
+// The form renders several native <select>s (team, tier, policy). The POLICY
+// select only mounts once getSLAPolicies resolves, so waiting on "any select
+// exists" races: `.find(...)` could return undefined (masked by `!`) or find the
+// select before its value is applied. Wait for the policy select specifically.
+async function findPolicySelect(): Promise<HTMLSelectElement> {
+  return await waitFor(() => {
+    const sel = screen
+      .getAllByTestId('native-select')
+      .find((s) =>
+        Array.from(s.querySelectorAll('option')).some((o) => o.textContent === '— No policy —'),
+      );
+    expect(sel).toBeTruthy();
+    return sel as HTMLSelectElement;
+  });
 }
 
 describe('AccessAgentForm group SLA policy picker', () => {
@@ -206,12 +189,9 @@ describe('AccessAgentForm group SLA policy picker', () => {
     ];
     renderForm();
 
-    await waitFor(() => expect(screen.getAllByTestId('native-select').length).toBeGreaterThan(0));
     // The group's policy select reflects the bound policy.
-    const policySelect = screen
-      .getAllByTestId('native-select')
-      .find((s) => Array.from(s.querySelectorAll('option')).some((o) => o.textContent === '— No policy —'))!;
-    expect((policySelect as HTMLSelectElement).value).toBe('pol-fast');
+    const policySelect = await findPolicySelect();
+    await waitFor(() => expect(policySelect.value).toBe('pol-fast'));
   });
 
   it('a group with no policy shows "— No policy —" and save is NOT blocked', async () => {
@@ -243,12 +223,9 @@ describe('AccessAgentForm group SLA policy picker', () => {
     ];
     renderForm();
 
-    await waitFor(() => expect(screen.getAllByTestId('native-select').length).toBeGreaterThan(0));
-
     // Change the group policy to the WAREHOUSE_FAST profile.
-    const policySelect = screen
-      .getAllByTestId('native-select')
-      .find((s) => Array.from(s.querySelectorAll('option')).some((o) => o.textContent === '— No policy —'))!;
+    const policySelect = await findPolicySelect();
+    await waitFor(() => expect(policySelect.value).toBe('pol-std'));
     fireEvent.change(policySelect, { target: { value: 'pol-fast' } });
 
     fireEvent.click(screen.getByRole('button', { name: /Update Access Agent/i }));

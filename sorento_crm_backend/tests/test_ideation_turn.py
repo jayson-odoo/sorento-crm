@@ -45,9 +45,10 @@ from app.services.ideation_turn_service import IdeationServiceError, handle_turn
 
 
 class _FakeContact:
-    def __init__(self, phone_number: str, session_vars: dict):
+    def __init__(self, phone_number: str, session_vars: dict, display_name=None):
         self.phone_number = phone_number
         self.session_vars = session_vars
+        self.display_name = display_name
 
 
 @pytest.fixture
@@ -65,6 +66,7 @@ def wired(monkeypatch):
 
     state = {
         "phone": "+60123456789",
+        "display_name": None,
         "store": {},
         "extraction": IdeateExtraction(fields={}, remove=[], confirm=False),
         "create_idea_result": None,
@@ -74,7 +76,9 @@ def wired(monkeypatch):
     }
 
     def _fake_get_contact_row(_db, respond_io_id):  # noqa: ANN001
-        return _FakeContact(state["phone"], dict(state["store"]))
+        return _FakeContact(
+            state["phone"], dict(state["store"]), display_name=state["display_name"]
+        )
 
     def _fake_resolve_ideation_config(_db):  # noqa: ANN001
         # Base URL + intake key come from settings (so the settings-fallback
@@ -141,6 +145,9 @@ def wired(monkeypatch):
         def set_product_id(self, pid):
             state["product_id"] = pid
 
+        def set_display_name(self, name):
+            state["display_name"] = name
+
     harness = _Harness()
     monkeypatch.setattr(svc, "overwrite_for_contact", _overwrite_capture)
     return harness
@@ -194,11 +201,89 @@ def test_input_shape_and_extraction_passthrough(wired):
 
     p = wired.payloads[0]
     assert p["product_id"] == "prod-uuid-1"
-    assert p["submitter"] == "+60123456789"  # phone E.164, not a contact-row id
+    # WS-A: the shared-service CreateIdeaIn field is ``submitter_contact_id`` (accepts
+    # a phone E.164). The legacy ``submitter`` key was silently dropped → "Unknown".
+    assert p["submitter_contact_id"] == "+60123456789"
+    assert "submitter" not in p
     assert p["message_text"] == "module is procurement, forget who"
     assert p["fields"] == {"module": "procurement"}
     assert p["remove"] == ["who"]
     assert p["confirm"] is False
+
+
+# --------------------------------------------------------------------------- #
+# WS-A / AC-CAP-1..3 — submitter name from the CRM contact, n8n fallback       #
+# --------------------------------------------------------------------------- #
+def test_submitter_name_from_crm_contact(wired):
+    """respond_contacts name wins → passed as submitter_name."""
+    wired.set_session_vars({})
+    wired.set_display_name("Aisha Rahman")
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(submitter_name="WA Profile Name")  # n8n value present but DB wins
+    assert wired.payloads[0]["submitter_name"] == "Aisha Rahman"
+
+
+def test_submitter_name_falls_back_to_n8n(wired):
+    """No CRM name → the n8n Respond.io-profile name is used."""
+    wired.set_session_vars({})
+    wired.set_display_name(None)
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(submitter_name="WA Profile Name")
+    assert wired.payloads[0]["submitter_name"] == "WA Profile Name"
+
+
+def test_submitter_name_absent_when_both_blank(wired):
+    """Neither source → no submitter_name key (shared-service serializes 'Unknown')."""
+    wired.set_session_vars({})
+    wired.set_display_name(None)
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(submitter_name=None)
+    assert "submitter_name" not in wired.payloads[0]
+
+
+# --------------------------------------------------------------------------- #
+# WS-B / AC-CAP-5..7 — raw_transcript accumulates across turns                 #
+# --------------------------------------------------------------------------- #
+def test_raw_transcript_accumulates_over_turns(wired):
+    """Each turn appends to the transcript; the payload carries the WHOLE convo,
+    not just the finalizing message. The pointer persists the running list."""
+    # Turn 1 — collecting, transcript = [msg1]
+    wired.set_session_vars({})
+    wired.set_create_idea(
+        {"draft_id": "d-7", "status": "collecting", "captured": {}, "missing": ["impact"], "reply_text": "ok"}
+    )
+    out1 = _turn(message_text="I want AI to update contractors on delivery")
+    assert wired.payloads[-1]["raw_transcript"] == "I want AI to update contractors on delivery"
+    assert out1["session_vars"]["ideation"]["transcript"] == [
+        "I want AI to update contractors on delivery"
+    ]
+
+    # Turn 2 — continuation adds a substantive turn.
+    wired.set_create_idea(
+        {"draft_id": "d-7", "status": "review", "captured": {}, "missing": [], "reply_text": "confirm?"}
+    )
+    _turn(message_text="impact is high ROI")
+    assert wired.payloads[-1]["raw_transcript"] == (
+        "I want AI to update contractors on delivery\nimpact is high ROI"
+    )
+
+    # Turn 3 — the finalizing "confirm" turn: transcript still holds the prior turns.
+    wired.set_create_idea(
+        {"draft_id": "d-7", "status": "complete", "captured": {}, "missing": [], "reply_text": "done",
+         "link": "https://fe-sorento.foundryx.my/ideas/d-7"}
+    )
+    _turn(message_text="okay i confirm")
+    assert wired.payloads[-1]["raw_transcript"] == (
+        "I want AI to update contractors on delivery\n"
+        "impact is high ROI\n"
+        "okay i confirm"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -533,3 +618,154 @@ def test_endpoint_logs_on_failure(api_client):
     assert len(logs) == 1
     assert logs[0].status == "failed"
     assert logs[0].status_code == 500
+
+
+# --------------------------------------------------------------------------- #
+# Group F — multi-modal capture (DC-1..DC-10)                                  #
+# --------------------------------------------------------------------------- #
+from app.services.ideation_media_service import MediaClients  # noqa: E402
+
+
+def _stub_media_clients(caption="a sketch of an export button"):
+    return MediaClients(
+        fetch_bytes=lambda url: (b"rawbytes", "image/jpeg"),
+        store_bytes=lambda data, key, ct: f"https://durable.cdn/{key}",
+        caption_image=lambda data, ct: caption,
+    )
+
+
+def _respond_payload(*items):
+    return {"items": list(items)}
+
+
+def _media_item(mid, kind, url, *, ts=1_721_000_000_000, filename=None):
+    return {
+        "messageId": mid,
+        "traffic": "incoming",
+        "status": [{"timestamp": ts}],
+        "message": {"type": kind, kind: {"url": url, "filename": filename}},
+    }
+
+
+def test_first_turn_lookback_offers_menu_and_sets_pending(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea(
+        {"draft_id": "d1", "status": "collecting", "missing": ["impact"], "reply_text": "Got it. What's the impact?"}
+    )
+    out = _turn(
+        message_text="I have an idea about exporting orders",
+        fetch_recent_messages=lambda: _respond_payload(
+            _media_item("m1", "image", "https://respond/1.jpg", filename="mockup.jpg", ts=2000),
+            _media_item("m2", "video", "https://respond/2.mp4", ts=1000),
+        ),
+        media_clients=_stub_media_clients(),
+    )
+    # menu appended to the create_idea reply (DC-8)
+    assert "which relate to this idea" in out["reply_text"]
+    assert "mockup.jpg" in out["reply_text"]
+    pending = out["session_vars"]["ideation"]["pending_media"]
+    assert [p["source_msg_id"] for p in pending] == ["m1", "m2"]
+    # no attachments sent yet — the user hasn't picked
+    assert "attachments" not in wired.payloads[-1]
+
+
+def test_no_recent_media_no_menu(wired):
+    wired.set_session_vars({})
+    wired.set_create_idea({"draft_id": "d1", "status": "collecting", "missing": ["impact"], "reply_text": "ok"})
+    out = _turn(
+        message_text="idea: dark mode",
+        fetch_recent_messages=lambda: _respond_payload(),
+        media_clients=_stub_media_clients(),
+    )
+    assert "pending_media" not in out["session_vars"]["ideation"]
+    assert "which relate" not in out["reply_text"]
+
+
+def test_selection_snapshots_and_attaches(wired):
+    wired.set_session_vars(
+        {
+            "ideation": {
+                "draft_id": "d1",
+                "status": "collecting",
+                "missing": ["impact"],
+                "transcript": ["I have an idea about exporting orders"],
+                "pending_media": [
+                    {"source_msg_id": "m1", "kind": "image", "url": "https://respond/1.jpg", "filename": "mockup.jpg", "received_at": None},
+                    {"source_msg_id": "m2", "kind": "video", "url": "https://respond/2.mp4", "filename": None, "received_at": None},
+                ],
+            }
+        }
+    )
+    wired.set_create_idea({"draft_id": "d1", "status": "collecting", "missing": ["impact"], "reply_text": "attached."})
+    out = _turn(message_text="1", media_selection="1", media_clients=_stub_media_clients())
+    payload = wired.payloads[-1]
+    assert "attachments" in payload
+    atts = payload["attachments"]
+    assert [a["source_msg_id"] for a in atts] == ["m1"]
+    assert atts[0]["type"] == "image" and atts[0]["url"].startswith("https://durable.cdn/")
+    # caption folded into message_text (DC-6/9)
+    assert "(attached image: a sketch of an export button)" in payload["message_text"]
+    # pending cleared; both offered ids marked seen so they never re-nag
+    ideation = out["session_vars"]["ideation"]
+    assert "pending_media" not in ideation
+    assert set(ideation["seen_media_ids"]) == {"m1", "m2"}
+
+
+def test_selection_none_attaches_nothing(wired):
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "d1", "status": "collecting", "missing": [], "pending_media": [
+            {"source_msg_id": "m1", "kind": "image", "url": "u", "filename": None, "received_at": None}]}}
+    )
+    wired.set_create_idea({"draft_id": "d1", "status": "review", "missing": [], "reply_text": "ok"})
+    out = _turn(message_text="none", media_selection="none", media_clients=_stub_media_clients())
+    assert "attachments" not in wired.payloads[-1]
+    assert "pending_media" not in out["session_vars"]["ideation"]
+    assert out["session_vars"]["ideation"]["seen_media_ids"] == ["m1"]
+
+
+def test_non_selection_turn_dismisses_pending(wired):
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "d1", "status": "collecting", "missing": ["impact"], "pending_media": [
+            {"source_msg_id": "m1", "kind": "image", "url": "u", "filename": None, "received_at": None}]}}
+    )
+    wired.set_create_idea({"draft_id": "d1", "status": "collecting", "missing": [], "reply_text": "ok"})
+    # user answers the impact question, not the media menu (no media_selection)
+    out = _turn(message_text="it saves 30 minutes a day", media_clients=_stub_media_clients())
+    ideation = out["session_vars"]["ideation"]
+    assert "pending_media" not in ideation
+    assert ideation["seen_media_ids"] == ["m1"]
+    assert "attachments" not in wired.payloads[-1]
+
+
+def test_is_new_idea_discards_old_and_starts_fresh(wired):
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "old", "status": "collecting", "missing": ["impact"],
+                      "transcript": ["exporting orders idea"], "seen_media_ids": ["m9"]}}
+    )
+    wired.set_create_idea({"draft_id": "new", "status": "collecting", "missing": ["impact"], "reply_text": "new idea noted"})
+    out = _turn(
+        message_text="actually forget that — different idea about dark mode",
+        is_new_idea=True,
+        fetch_recent_messages=lambda: _respond_payload(),
+        media_clients=_stub_media_clients(),
+    )
+    payload = wired.payloads[-1]
+    assert payload["discard_draft_id"] == "old"
+    assert "draft_id" not in payload  # fresh draft
+    # transcript reset to just this turn
+    assert out["session_vars"]["ideation"]["transcript"] == ["actually forget that — different idea about dark mode"]
+    assert out["session_vars"]["ideation"]["draft_id"] == "new"
+
+
+def test_seen_media_not_reoffered(wired):
+    wired.set_session_vars(
+        {"ideation": {"draft_id": "d1", "status": "collecting", "missing": ["impact"], "seen_media_ids": ["m1"]}}
+    )
+    wired.set_create_idea({"draft_id": "d1", "status": "collecting", "missing": ["impact"], "reply_text": "ok"})
+    out = _turn(
+        message_text="continuing",
+        fetch_recent_messages=lambda: _respond_payload(_media_item("m1", "image", "https://respond/1.jpg")),
+        media_clients=_stub_media_clients(),
+    )
+    assert "pending_media" not in out["session_vars"]["ideation"]
+    assert "which relate" not in out["reply_text"]

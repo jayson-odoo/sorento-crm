@@ -21,6 +21,8 @@ TEMPLATE_VARIABLE_CATALOG: list[dict[str, Any]] = [
     {"key": "promotion.days_until_end", "label": "Days Until Promotion Ends", "sample": "7"},
     {"key": "promotions", "label": "All Expiring Promotions (loop with {% for p in promotions %})", "sample": "[ { name, start_date, end_date, link, days_until_end }, ... ]"},
     {"key": "promotions_count", "label": "Number Of Expiring Promotions", "sample": "5"},
+    {"key": "batch_link", "label": "Expiring Promotions Batch Link (View all)", "sample": "https://crm.example.com/marketing-management/promotions?expiry_notify_batch_id=00000000-0000-0000-0000-000000000000"},
+    {"key": "expiry_notify_batch_id", "label": "Expiry Notify Batch Id", "sample": "00000000-0000-0000-0000-000000000000"},
     {"key": "complaint.complaint_number", "label": "Complaint Number", "sample": "CMP-2026-0001"},
     {"key": "complaint.delivery_order_number", "label": "Complaint DO Number", "sample": "DO-12345"},
     {"key": "complaint.customer_name", "label": "Complaint Customer", "sample": "ACME Sdn Bhd"},
@@ -78,6 +80,8 @@ def sample_context() -> dict[str, Any]:
             },
         ],
         "promotions_count": 2,
+        "batch_link": "https://crm.example.com/marketing-management/promotions?expiry_notify_batch_id=00000000-0000-0000-0000-000000000000",
+        "expiry_notify_batch_id": "00000000-0000-0000-0000-000000000000",
         "complaint": {
             "id": "sample",
             "complaint_number": "CMP-2026-0001",

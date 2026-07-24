@@ -413,87 +413,12 @@ class ContactAccessTypeResponse(ContactAccessTypeBase):
 # ---------------------------------------------------------------------------
 
 class McpToolOut(BaseModel):
-    """Picker row. ``current_agent_ids/names`` list every agent the tool is
-    linked to (many-to-many). UI shows the list so the admin sees what other
-    agents already share this tool."""
+    """One row of the MCP tool catalog. Pure catalog — tools carry no agent
+    ownership; contact access is enforced per-agent (see
+    ``app.services.mcp_access_service``)."""
     id: str
     tool_name: str
     description: str | None = None
     module_key: str = ""
-    current_agent_ids: list[str] = []
-    current_agent_names: list[str] = []
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class McpToolForAgentOut(BaseModel):
-    """A row in `GET /access-agents/{id}/mcp-tools` (tools owned by THIS agent)."""
-    id: str
-    tool_name: str
-    description: str | None = None
-    module_key: str = ""
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-class AccessAgentMcpToolsUpdate(BaseModel):
-    """PUT /access-agents/{id}/mcp-tools body."""
-    tool_ids: list[str]
-
-
-class McpToolBindingIn(BaseModel):
-    """One row in PUT /access-agents/{id}/mcp-tool-bindings body.
-
-    ``team_id`` None = legacy ownership (route via AgentTeam fan-out). Set it
-    to bind this tool to one specific team for routing.
-    """
-    tool_id: str
-    team_id: str | None = None
-    tier: int | None = None
-
-
-class AccessAgentMcpToolBindingsUpdate(BaseModel):
-    bindings: list[McpToolBindingIn]
-
-
-class McpToolBindingOut(BaseModel):
-    id: str
-    tool_id: str
-    tool_name: str
-    module_key: str = ""
-    description: str | None = None
-    team_id: str | None = None
-    team_name: str | None = None
-    tier: int | None = None
-
-    model_config = ConfigDict(from_attributes=True)
-
-
-# ---------------------------------------------------------------------------
-# MCP guard (Phase 3)
-# ---------------------------------------------------------------------------
-
-class McpAccessCheckIn(BaseModel):
-    tool_name: str
-    contact_id: str        # respond_io_id (Respond.io external contact id)
-    space_id: str          # Respond.io external workspace id (matches respond_workspaces.space_id)
-
-
-class McpAccessCheckOut(BaseModel):
-    allowed: bool
-    decision: str          # "allow" | "deny_no_access" | "deny_tool_unlinked"
-                           # | "deny_unknown_tool" | "deny_unknown_contact"
-    agent_name: str | None = None
-
-
-class McpAccessLogOut(BaseModel):
-    id: str
-    tool_name: str
-    contact_external_id: str | None = None
-    respond_contact_id: str | None = None
-    respond_workspace_id: str | None = None
-    decision: str
-    matched_agent_id: str | None = None
-    ts: datetime
 
     model_config = ConfigDict(from_attributes=True)

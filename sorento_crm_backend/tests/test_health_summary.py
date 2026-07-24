@@ -39,14 +39,14 @@ def _stub_all_blocks(monkeypatch):
     monkeypatch.setattr(
         mod,
         "_email_outbox_health",
-        lambda db, cutoff: mod.EmailOutboxHealth(
-            pending=3, sent=10, failed=2, cancelled=1, failed_last_24h=2
+        lambda db, cutoff, window_end: mod.EmailOutboxHealth(
+            pending=3, sent=10, failed=2, cancelled=1, failed_in_window=2, failed_last_24h=2
         ),
     )
     monkeypatch.setattr(
         mod,
         "_imports_health",
-        lambda db, cutoff: mod.ImportsHealth(
+        lambda db, cutoff, window_end: mod.ImportsHealth(
             total_last_24h=4, finished_last_24h=3, failed_last_24h=1, success_rate=75.0
         ),
     )
@@ -58,10 +58,21 @@ def _stub_all_blocks(monkeypatch):
     monkeypatch.setattr(
         mod,
         "_integrations_health",
-        lambda db, cutoff: mod.IntegrationsHealth(
+        lambda db, cutoff, window_end: mod.IntegrationsHealth(
             channels=[
                 mod.IntegrationChannelHealth(
-                    channel="respond_io", success=8, failed=1, total=9
+                    channel="respond_io",
+                    success=8,
+                    failed=1,
+                    total=9,
+                    top_failures=[
+                        mod.FailureSignatureOut(
+                            signature="unauthorized",
+                            sample_message="Unauthorized",
+                            status_code=401,
+                            count=1,
+                        )
+                    ],
                 )
             ]
         ),
@@ -95,18 +106,25 @@ def test_health_summary_returns_all_blocks(client, monkeypatch):
         "sent": 10,
         "failed": 2,
         "cancelled": 1,
+        # Windowed failure count, rendered as the headline so an all-time total
+        # can no longer read as a live incident.
+        "failed_in_window": 2,
         "failed_last_24h": 2,
     }
     assert body["imports"]["success_rate"] == 75.0
     assert body["scheduled_tasks"]["overdue"] == 1
     assert body["integrations"]["channels"][0]["channel"] == "respond_io"
+    # The failure count is only actionable if the cause travels with it.
+    fault = body["integrations"]["channels"][0]["top_failures"][0]
+    assert fault["status_code"] == 401
+    assert fault["sample_message"] == "Unauthorized"
     assert body["audit_activity"]["count_last_24h"] == 12
 
 
 def test_health_summary_omits_missing_block(client, monkeypatch):
     """A block whose builder returns None (missing/legacy model) is null, not 500."""
     _stub_all_blocks(monkeypatch)
-    monkeypatch.setattr(mod, "_integrations_health", lambda db, cutoff: None)
+    monkeypatch.setattr(mod, "_integrations_health", lambda db, cutoff, window_end: None)
     r = client.get("/api/v1/system/health/summary")
     assert r.status_code == 200
     assert r.json()["integrations"] is None

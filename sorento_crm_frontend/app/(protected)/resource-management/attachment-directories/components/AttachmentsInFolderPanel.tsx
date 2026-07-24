@@ -72,7 +72,7 @@ import {
   useDeleteDirectory,
 } from '../../attachments/hooks/useAttachments';
 import { useAttachmentTypes } from '../../attachment-types/hooks/useAttachmentTypes';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Calendar } from '@/components/ui/calendar';
 import { getUsersSelect, type UserSelectItem } from '@/services/userSelectService';
 import { useQuery } from '@tanstack/react-query';
@@ -1035,86 +1035,76 @@ export default function AttachmentsInFolderPanel({
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Attachment type</p>
-                      <Select
+                      <SearchableSelect
                         value={attachmentTypeId}
-                        onValueChange={(v) => {
+                        onChange={(v) => {
                           setAttachmentTypeId(v);
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="All attachment types" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__all__">All attachment types</SelectItem>
-                          {attachmentTypes.map((t) => (
-                            <SelectItem key={t.id} value={t.id}>
-                              {t.type_name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        options={[
+                          { value: '__all__', label: 'All attachment types' },
+                          ...attachmentTypes.map((t) => ({
+                            value: t.id,
+                            label: t.type_name,
+                          })),
+                        ]}
+                        placeholder="All attachment types"
+                        triggerClassName="w-full"
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Link status</p>
-                      <Select
+                      <SearchableSelect
                         value={linkStatus}
-                        onValueChange={(v) => {
+                        onChange={(v) => {
                           setLinkStatus(v as '__all__' | 'linked' | 'unlinked');
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="All files" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__all__">All files</SelectItem>
-                          <SelectItem value="linked">Linked</SelectItem>
-                          <SelectItem value="unlinked">Not linked</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        options={[
+                          { value: '__all__', label: 'All files' },
+                          { value: 'linked', label: 'Linked' },
+                          { value: 'unlinked', label: 'Not linked' },
+                        ]}
+                        placeholder="All files"
+                        triggerClassName="w-full"
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Storage status</p>
-                      <Select
+                      <SearchableSelect
                         value={storageStatus}
-                        onValueChange={(v) => {
+                        onChange={(v) => {
                           setStorageStatus(v as '__all__' | 'accessible' | 'missing' | 'unchecked');
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="All files" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__all__">All files</SelectItem>
-                          <SelectItem value="accessible">Accessible</SelectItem>
-                          <SelectItem value="missing">Missing (broken)</SelectItem>
-                          <SelectItem value="unchecked">Unchecked</SelectItem>
-                        </SelectContent>
-                      </Select>
+                        options={[
+                          { value: '__all__', label: 'All files' },
+                          { value: 'accessible', label: 'Accessible' },
+                          { value: 'missing', label: 'Missing (broken)' },
+                          { value: 'unchecked', label: 'Unchecked' },
+                        ]}
+                        placeholder="All files"
+                        triggerClassName="w-full"
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Uploaded by</p>
-                      <Select
+                      <SearchableSelect
                         value={uploadedBy}
-                        onValueChange={(v) => {
+                        onChange={(v) => {
                           setUploadedBy(v);
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="All users" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__all__">All users</SelectItem>
-                          {usersSelect.map((u) => (
-                            <SelectItem key={u.id} value={u.id}>
-                              {u.name?.trim() || u.email}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        options={[
+                          { value: '__all__', label: 'All users' },
+                          ...usersSelect.map((u) => ({
+                            value: u.id,
+                            label: u.name?.trim() || u.email,
+                          })),
+                        ]}
+                        placeholder="All users"
+                        triggerClassName="w-full"
+                      />
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Uploaded date range</p>

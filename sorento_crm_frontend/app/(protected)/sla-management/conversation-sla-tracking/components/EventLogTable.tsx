@@ -31,13 +31,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
@@ -349,24 +343,19 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
                     <h4 className="text-sm font-medium">Advanced filters</h4>
                     <div className="space-y-2">
                       <Label className="text-xs">Event Type</Label>
-                      <Select
+                      <SearchableSelect
                         value={eventTypeFilter}
-                        onValueChange={(v) => {
+                        onChange={(v) => {
                           setEventTypeFilter(v);
                           setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                         }}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="All" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {EVENT_TYPE_OPTIONS.map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        options={EVENT_TYPE_OPTIONS.map((opt) => ({
+                          value: opt.value,
+                          label: opt.label,
+                        }))}
+                        placeholder="All"
+                        triggerClassName="w-full"
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label className="text-xs">Date range (Event At)</Label>
@@ -397,25 +386,22 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
                     </div>
                     <div className="space-y-2">
                       <Label className="text-xs">Assigned To</Label>
-                      <Select
+                      <SearchableSelect
                         value={assignedToFilter}
-                        onValueChange={(v) => {
+                        onChange={(v) => {
                           setAssignedToFilter(v);
                           setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                         }}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="All" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__all__">All</SelectItem>
-                          {users.map((u: { id: string; name?: string; email?: string }) => (
-                            <SelectItem key={u.id} value={u.id}>
-                              {u.name || u.email || u.id}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        options={[
+                          { value: '__all__', label: 'All' },
+                          ...users.map((u: { id: string; name?: string; email?: string }) => ({
+                            value: u.id,
+                            label: u.name || u.email || u.id,
+                          })),
+                        ]}
+                        placeholder="All"
+                        triggerClassName="w-full"
+                      />
                     </div>
                     {hasActiveFilters && (
                       <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">

@@ -1968,6 +1968,7 @@ class ProductAttachmentService:
         product_ids: Optional[list[str]] = None,
         attachment_ids: Optional[list[str]] = None,
         attachment_type_ids: Optional[list[str]] = None,
+        query: Optional[str] = None,
     ):
         """List product attachments with filtering and pagination.
 
@@ -2056,6 +2057,30 @@ class ProductAttachmentService:
                         )
                     )
                 )
+
+        # Free-text search box (DataGrid `query`): match product code / name,
+        # attachment filename (original or display), or attachment type name.
+        if query and query.strip():
+            like = f"%{query.strip()}%"
+            q = q.filter(
+                or_(
+                    ProductAttachment.product.has(
+                        or_(
+                            Product.product_code.ilike(like),
+                            Product.product_name.ilike(like),
+                        )
+                    ),
+                    ProductAttachment.attachment.has(
+                        or_(
+                            Attachment.original_filename.ilike(like),
+                            Attachment.stored_filename.ilike(like),
+                            Attachment.attachment_type.has(
+                                AttachmentType.type_name.ilike(like)
+                            ),
+                        )
+                    ),
+                )
+            )
 
         sort_map = {
             "created_at": ProductAttachment.created_at,

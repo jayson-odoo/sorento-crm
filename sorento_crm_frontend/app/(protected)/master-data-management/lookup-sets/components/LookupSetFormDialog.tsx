@@ -6,9 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useCreateLookupSet, useUpdateLookupSet, useLookupSet, useEligibility } from '../hooks/useLookupSets';
 
 const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
@@ -87,26 +85,23 @@ export default function LookupSetFormDialog({
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Table</Label>
-                  <Select value={tableName} onValueChange={(v) => { setTableName(v); setColumnName(''); }}
-                          disabled={skipBinding}>
-                    <SelectTrigger><SelectValue placeholder="Select table" /></SelectTrigger>
-                    <SelectContent>
-                      {tables.map((t) => (
-                        <SelectItem key={t.table_name} value={t.table_name}>{t.table_label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <SearchableSelect
+                    value={tableName}
+                    onChange={(v) => { setTableName(v); setColumnName(''); }}
+                    disabled={skipBinding}
+                    placeholder="Select table"
+                    options={tables.map((t) => ({ value: t.table_name, label: t.table_label }))}
+                  />
                 </div>
                 <div>
                   <Label>Column</Label>
-                  <Select value={columnName} onValueChange={setColumnName} disabled={skipBinding || !tableName}>
-                    <SelectTrigger><SelectValue placeholder="Select column" /></SelectTrigger>
-                    <SelectContent>
-                      {columns.map((c) => (
-                        <SelectItem key={c.column_name} value={c.column_name}>{c.column_label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <SearchableSelect
+                    value={columnName}
+                    onChange={setColumnName}
+                    disabled={skipBinding || !tableName}
+                    placeholder="Select column"
+                    options={columns.map((c) => ({ value: c.column_name, label: c.column_label }))}
+                  />
                 </div>
               </div>
               <div className="flex items-center gap-2">

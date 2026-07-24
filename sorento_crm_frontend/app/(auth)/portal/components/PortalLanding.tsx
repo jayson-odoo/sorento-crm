@@ -30,13 +30,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import {
@@ -403,36 +397,47 @@ export function PortalLanding({ slug }: { slug?: string }) {
       </div>
 
       <div className="flex items-stretch gap-2">
-        <Select
+        <SearchableSelect
           value={activeTab}
-          onValueChange={(v) => handleTabChange(v as PortalSubmissionKind)}
-        >
-          <SelectTrigger
-            size="lg"
-            className="flex-1 h-12 text-base"
-            aria-label="Submission type"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {TYPES.map((t) => (
-              <SelectItem key={t} value={t}>
-                <span className="flex items-center gap-2">
-                  {SUBMISSION_LABELS[t]}
-                  <Badge variant="secondary" className="px-1.5 py-0 text-xs">
-                    {totals[t]}
-                  </Badge>
-                  {savedDefaultTab === t && (
-                    <Star
-                      className="h-3.5 w-3.5 fill-yellow-400 text-yellow-500 shrink-0"
-                      aria-label="default"
-                    />
-                  )}
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          onChange={(v) => handleTabChange(v as PortalSubmissionKind)}
+          options={TYPES.map((t) => ({ value: t, label: SUBMISSION_LABELS[t] }))}
+          size="lg"
+          triggerClassName="flex-1 h-12 text-base"
+          renderTriggerLabel={(opt) => {
+            const t = opt.value as PortalSubmissionKind;
+            return (
+              <span className="flex items-center gap-2">
+                {SUBMISSION_LABELS[t]}
+                <Badge variant="secondary" className="px-1.5 py-0 text-xs">
+                  {totals[t]}
+                </Badge>
+                {savedDefaultTab === t && (
+                  <Star
+                    className="h-3.5 w-3.5 fill-yellow-400 text-yellow-500 shrink-0"
+                    aria-label="default"
+                  />
+                )}
+              </span>
+            );
+          }}
+          renderOption={(opt) => {
+            const t = opt.value as PortalSubmissionKind;
+            return (
+              <span className="flex items-center gap-2">
+                {SUBMISSION_LABELS[t]}
+                <Badge variant="secondary" className="px-1.5 py-0 text-xs">
+                  {totals[t]}
+                </Badge>
+                {savedDefaultTab === t && (
+                  <Star
+                    className="h-3.5 w-3.5 fill-yellow-400 text-yellow-500 shrink-0"
+                    aria-label="default"
+                  />
+                )}
+              </span>
+            );
+          }}
+        />
         <Button
           type="button"
           variant="outline"

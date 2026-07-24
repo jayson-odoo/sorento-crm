@@ -234,6 +234,10 @@ PERMISSION_REGISTRY.extend([
     {"slug": "system.email_outbox.view", "name": "View Email Outbox", "description": "View pending and historical outbox rows for the email guardrail."},
     {"slug": "system.email_outbox.manage", "name": "Manage Email Outbox", "description": "Retry, cancel, and otherwise manage outbox rows."},
     {"slug": "system.respond_outbox.view", "name": "View Respond Outbox", "description": "View outgoing Respond.io / WhatsApp messages and templates (read-only over integration logs)."},
+    # Chat history holds raw customer message content — PII. Gated separately from the
+    # outbox view, and export is its own slug because a CSV leaves the system entirely.
+    {"slug": "system.chat_history.view", "name": "View Chat History", "description": "View stored WhatsApp/chat messages and round-trip latency. Message content is customer PII."},
+    {"slug": "system.chat_history.export", "name": "Export Chat History", "description": "Export chat messages to CSV via My Downloads."},
     {"slug": "system.email_event_configs.view", "name": "View Email Event Configs", "description": "View per-event email kill switches and rate overrides."},
     {"slug": "system.email_event_configs.manage", "name": "Manage Email Event Configs", "description": "Toggle per-event email kill switches and adjust rate overrides."},
 ])
@@ -291,44 +295,7 @@ PERMISSION_REGISTRY.append({
     "description": "Permission to access and view the dashboard.",
 })
 
-# Commercial core
-for _slug, _name in [
-    ("commercial_core.leads.view", "View commercial leads"),
-    ("commercial_core.leads.add", "Add commercial leads"),
-    ("commercial_core.leads.edit", "Edit commercial leads"),
-    ("commercial_core.leads.delete", "Delete commercial leads"),
-    ("commercial_core.projects.view", "View commercial projects"),
-    ("commercial_core.projects.add", "Add commercial projects"),
-    ("commercial_core.projects.edit", "Edit commercial projects"),
-    ("commercial_core.projects.delete", "Delete commercial projects"),
-    ("commercial_core.tenders.view", "View commercial tenders"),
-    ("commercial_core.tenders.add", "Add commercial tenders"),
-    ("commercial_core.tenders.edit", "Edit commercial tenders"),
-    ("commercial_core.tenders.delete", "Delete commercial tenders"),
-    ("commercial_core.quotations.view", "View commercial quotations"),
-    ("commercial_core.quotations.add", "Add commercial quotations"),
-    ("commercial_core.quotations.edit", "Edit commercial quotations"),
-    ("commercial_core.quotations.delete", "Delete commercial quotations"),
-    ("commercial_core.pipeline.view", "View commercial pipeline"),
-    ("commercial_core.process_config.view", "View commercial process config"),
-    ("commercial_core.process_config.edit", "Edit commercial process config"),
-    ("commercial_core.email_templates.view", "View quotation email templates"),
-    ("commercial_core.email_templates.edit", "Edit quotation email templates"),
-]:
-    PERMISSION_REGISTRY.append({"slug": _slug, "name": _name, "description": _name})
 
-# Commercial activity
-for _slug, _name in [
-    ("commercial_activity.plans.view", "View activity plans"),
-    ("commercial_activity.plans.add", "Add activity plans"),
-    ("commercial_activity.plans.edit", "Edit activity plans"),
-    ("commercial_activity.plans.delete", "Delete activity plans"),
-    ("commercial_activity.tasks.view", "View activity tasks"),
-    ("commercial_activity.tasks.edit", "Edit activity tasks"),
-    ("commercial_activity.templates.view", "View activity templates"),
-    ("commercial_activity.templates.edit", "Edit activity templates"),
-]:
-    PERMISSION_REGISTRY.append({"slug": _slug, "name": _name, "description": _name})
 
 # Tickets — Jira-style internal ticketing.
 # Activities/notes for a ticket reuse `tickets.tickets.view` (anyone who can see

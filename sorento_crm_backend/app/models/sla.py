@@ -86,7 +86,8 @@ class ConversationSLATracking(Base):
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     respond_contact_id = Column(Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)  # FK to respond_contacts
     source_entity_type = Column(String(50), nullable=True)  # stock_inquiry | complaint
-    source_entity_id = Column(String(100), nullable=True)
+    # Polymorphic (no FK) but always a uuid — see migration 300.
+    source_entity_id = Column(UUID(as_uuid=False), nullable=True)
     agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="SET NULL"), nullable=True)  # FK to access_agents
     team_set_code = Column(String(100), nullable=True)  # Team assignment set code for escalation; cleared on resolve
     message_id = Column(BigInteger, nullable=True)  # External message id (e.g. n8n); cleared on resolve

@@ -1,6 +1,6 @@
 """Marketing management models."""
 import enum
-from sqlalchemy import Column, String, Boolean, Date, DateTime, ForeignKey, Text, Numeric, Integer, Index
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -32,7 +32,13 @@ class Promotion(Base):
     end_date = Column(Date, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     access_levels = Column(JSONB, nullable=False, server_default='["dealer","end_user"]')
-    created_by = Column(String, nullable=True)
+    # Promotion-expiry reminder batch stamp (set by the automation run that emailed
+    # this promo as expiring). The reminder email deep-links to
+    # ?expiry_notify_batch_id=<id>; the promotions list filters on it. A re-run
+    # re-stamps a fresh batch (failure-recovery resend).
+    expiry_notified_at = Column(DateTime(timezone=False), nullable=True)
+    expiry_notify_batch_id = Column(UUID(as_uuid=False), nullable=True, index=True)
+    created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     
@@ -162,12 +168,12 @@ class MarketingCampaign(Base):
     campaign_name = Column(String(255), nullable=False)
     campaign_type_id = Column(UUID(as_uuid=False), ForeignKey("campaign_types.id"), nullable=False)
     description = Column(Text, nullable=True)
-    start_date = Column(DateTime(timezone=False), nullable=False)
-    end_date = Column(DateTime(timezone=False), nullable=True)
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date, nullable=True)
     budget = Column(Numeric(15, 2), nullable=True)
-    target_audience = Column(Text, nullable=True)
+    target_audience = Column(String, nullable=True)
     status = Column(String, default=CampaignStatus.PLANNING.value, nullable=False)
-    created_by = Column(String, nullable=True)
+    created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     

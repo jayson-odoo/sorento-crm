@@ -1,6 +1,6 @@
 """Inventory management models."""
 import enum
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index, Computed
+from sqlalchemy import Boolean, Column, Computed, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -29,7 +29,7 @@ class Warehouse(Base):
     warehouse_code = Column(String(50), unique=True, nullable=False)
     warehouse_name = Column(String(150), nullable=True)
     location = Column(String(255), nullable=True)
-    manager_id = Column(String, nullable=True)
+    manager_id = Column(UUID(as_uuid=False), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
@@ -74,14 +74,14 @@ class Stock(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="CASCADE"), nullable=False)
-    zone_id = Column(String, nullable=True)
+    zone_id = Column(UUID(as_uuid=False), nullable=True)
     quantity_on_hand = Column(Integer, default=0, nullable=False)
     quantity_reserved = Column(Integer, default=0, nullable=False)
     # DB-generated column: GENERATED ALWAYS AS (quantity_on_hand - quantity_reserved) STORED
     quantity_available = Column(Integer, Computed("(quantity_on_hand - quantity_reserved)"), nullable=False)
     quantity_damaged = Column(Integer, default=0, nullable=False)
     reorder_point = Column(Integer, nullable=True)
-    last_count_date = Column(DateTime(timezone=False), nullable=True)
+    last_count_date = Column(Date, nullable=True)
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -146,9 +146,9 @@ class StockBatch(Base):
     warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="CASCADE"), nullable=False)
     batch_code = Column(String(100), unique=True, nullable=False)
     quantity = Column(Integer, default=0, nullable=False)
-    manufactured_date = Column(DateTime(timezone=False), nullable=True)
-    expiry_date = Column(DateTime(timezone=False), nullable=True)
-    received_date = Column(DateTime(timezone=False), nullable=False)
+    manufactured_date = Column(Date, nullable=True)
+    expiry_date = Column(Date, nullable=True)
+    received_date = Column(Date, nullable=False)
     status = Column(String, default=BatchStatus.AVAILABLE.value, nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     

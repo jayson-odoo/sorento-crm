@@ -61,7 +61,7 @@ def db():
 
 def _user(db, name, **kw) -> str:
     uid = str(uuid.uuid4())
-    db.add(User(id=uid, email=f"{name}@x.com", name=name, status="active", **kw))
+    db.add(User(id=uid, email=f"{name}@x.com", name=name, status="ACTIVE", **kw))
     db.commit()
     return uid
 
@@ -178,7 +178,7 @@ def _fanout(db, target, actor=None):
         body="X assigned",
         data={},
         source_entity_type="form_sla_tracking",
-        source_entity_id="tr-1",
+        source_entity_id="023d880b-b86f-5a4d-8a45-4ad0a947f7e2",
         event_type="assigned",
         email_pref_attr="notify_email_on_assignment",
         whatsapp_pref_attr="notify_whatsapp_on_assignment",

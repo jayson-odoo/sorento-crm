@@ -285,6 +285,81 @@ class CalendarService:
         ``business_days_between`` for the extend-deadline date-mode derivation."""
         return self.business_days_between(start_value, end_value, working_weekdays, holidays)
 
+    def next_working_window_open(
+        self,
+        start_value: datetime,
+        *,
+        tz: ZoneInfo = DEFAULT_WORKING_TZ,
+    ) -> Optional[datetime]:
+        """Roll an SLA clock start forward to the next working-window open.
+
+        Nobody is working at 22:48 on a non-working Monday, so starting the clock
+        there hands the responder a deadline they never had the full window for.
+        Returns ``start_value`` unchanged when it already falls inside a working
+        window (business weekday, not a public holiday, and within
+        ``[work_day_start_time, work_day_end_time)`` in ``tz`` — the interval is
+        half-open, so exactly the close time rolls to the next day). Otherwise
+        returns the next business day's open, or the same day's open when the
+        start is merely before it.
+
+        Input may be naive (interpreted as UTC, matching the SLA columns) or
+        aware; output is naive UTC. Idempotent. A degenerate work calendar (no
+        working weekday, or a non-positive window) returns the input unchanged
+        and warns, so the SLA path degrades instead of raising or hanging.
+        """
+        if start_value is None:
+            return None
+        if start_value.tzinfo is None:
+            start_utc = start_value.replace(tzinfo=timezone.utc)
+        else:
+            start_utc = start_value.astimezone(timezone.utc)
+
+        def _to_naive_utc(dt: datetime) -> datetime:
+            return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+        working_weekdays = self.get_working_weekdays()
+        start_t, end_t = self.get_working_hours()
+        window_seconds = (
+            datetime.combine(date.min, end_t) - datetime.combine(date.min, start_t)
+        ).total_seconds()
+        if not working_weekdays or window_seconds <= 0:
+            logger.warning(
+                "next_working_window_open: degenerate work calendar (weekdays=%s, "
+                "window=%ss); leaving the clock start unchanged.",
+                working_weekdays,
+                window_seconds,
+            )
+            return _to_naive_utc(start_utc)
+
+        local = start_utc.astimezone(tz)
+        local_date = local.date()
+        # Prefetch generously so a long holiday run never needs a second query.
+        holidays = self.get_public_holidays_between(
+            local_date, local_date + timedelta(days=60)
+        )
+
+        on_business_day = self._is_business_day(local_date, working_weekdays, holidays)
+        local_time = local.time().replace(tzinfo=None)
+        if on_business_day and start_t <= local_time < end_t:
+            return _to_naive_utc(start_utc)  # already inside a window
+
+        # Before open on a working day -> today's open; otherwise the next day's.
+        cursor = local_date if (on_business_day and local_time < start_t) else local_date + timedelta(days=1)
+
+        guard = 60  # matches the prefetched holiday span
+        while guard > 0:
+            guard -= 1
+            if self._is_business_day(cursor, working_weekdays, holidays):
+                return _to_naive_utc(datetime.combine(cursor, start_t, tzinfo=tz))
+            cursor = cursor + timedelta(days=1)
+
+        logger.warning(
+            "next_working_window_open: no working day found within 60 days of %s; "
+            "leaving the clock start unchanged.",
+            local_date,
+        )
+        return _to_naive_utc(start_utc)
+
     def add_working_days_from_hours(
         self,
         start_value: datetime,
@@ -300,6 +375,11 @@ class CalendarService:
         calendar. Input may be naive (interpreted as UTC, matching SLA columns)
         or aware; output is naive UTC. Falls back to plain calendar hours if the
         work calendar is misconfigured.
+
+        The clock start is first normalized to the next working-window open
+        (:meth:`next_working_window_open`), so an off-hours submission is not
+        charged for time nobody was working: Sat 09:01 + 24h starts Mon at the
+        window open and lands Tue at the window open, not Mon 09:01.
         """
         if start_value is None:
             return None
@@ -311,13 +391,20 @@ class CalendarService:
         if hours is None or hours <= 0:
             return start_utc.astimezone(timezone.utc).replace(tzinfo=None)
 
+        # Off-hours starts (weekend, holiday, before open, after close) roll forward
+        # to the next window open before any duration is added. Idempotent, and a
+        # no-op for a start already inside a window.
+        normalized = self.next_working_window_open(start_utc, tz=tz)
+        if normalized is not None:
+            start_utc = normalized.replace(tzinfo=timezone.utc)
+
         # Sub-day SLAs (e.g. 3h response) advance on the *working-hours* clock:
         # the working-days model (24h = one business day) rounds anything under ~12h
         # to zero days and loses the deadline entirely. Below one day, count only
         # hours inside the configured work window (skipping nights/weekends/holidays)
         # so a 3h SLA opened at 17:42 spills into the next morning, not to 20:42.
         if float(hours) < 24.0:
-            return self.add_working_hours(start_value, hours, tz=tz)
+            return self.add_working_hours(start_utc, hours, tz=tz)
 
         days = int(round(float(hours) / 24.0))
         local = start_utc.astimezone(tz)

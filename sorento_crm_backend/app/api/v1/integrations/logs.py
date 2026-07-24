@@ -1,7 +1,7 @@
 """Integration logs API routes."""
 from fastapi import APIRouter, Depends, Query, HTTPException, status, Request
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import List, Optional
 import logging
 import traceback
 from datetime import datetime
@@ -27,6 +27,8 @@ async def get_integration_logs(
     business_id: Optional[str] = Query(None),
     created_from: Optional[datetime] = Query(None, description="Filter created_at >= (ISO); e.g. 24h drill-down"),
     created_to: Optional[datetime] = Query(None, description="Filter created_at <= (ISO)"),
+    status_code: Optional[int] = Query(None, description="Filter by HTTP status code; health-dashboard failure drill-down"),
+    error_contains: Optional[List[str]] = Query(None, description="Filter error_message LIKE %term%; repeatable, AND-ed. Health-dashboard failure drill-down"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -43,6 +45,8 @@ async def get_integration_logs(
             business_id=business_id,
             created_from=created_from,
             created_to=created_to,
+            status_code=status_code,
+            error_contains=error_contains,
         )
         logger.info(f"Successfully retrieved {len(result.get('data', []))} integration logs")
         return result

@@ -23,13 +23,7 @@ import {
   FormDescription,
 } from '@/components/ui/form';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -40,11 +34,8 @@ import {
   useAccessAgent,
   useAgentTeams,
   useTeams,
-  useAgentMcpToolBindings,
-  useSetAgentMcpToolBindings,
 } from '../hooks/useAccessAgents';
-import { setAgentTeams, type McpToolBindingInput } from '../services/accessAgentService';
-import { McpToolBindingsEditor } from './McpToolBindingsEditor';
+import { setAgentTeams } from '../services/accessAgentService';
 import { AccessAgentSchema, type AccessAgentSchemaType } from '../forms/access-agent-schema';
 import type { AccessAgentFormData } from '../types/accessAgent.types';
 
@@ -87,22 +78,7 @@ export default function AccessAgentFormModal({
   });
   const slaPolicies = slaPoliciesData?.data ?? [];
 
-  const { data: agentMcpBindingsData } = useAgentMcpToolBindings(isEditMode ? accessAgentId ?? null : null);
-  const setAgentMcpToolBindingsMutation = useSetAgentMcpToolBindings();
-  const [bindings, setBindings] = useState<McpToolBindingInput[]>([]);
-  const [initialBindings, setInitialBindings] = useState<McpToolBindingInput[]>([]);
 
-  useEffect(() => {
-    if (agentMcpBindingsData) {
-      const next: McpToolBindingInput[] = agentMcpBindingsData.map((b) => ({
-        tool_id: b.tool_id,
-        team_id: b.team_id,
-        tier: b.tier,
-      }));
-      setBindings(next);
-      setInitialBindings(next);
-    }
-  }, [agentMcpBindingsData]);
 
   const form = useForm<AccessAgentSchemaType>({
     resolver: zodResolver(AccessAgentSchema),
@@ -191,14 +167,6 @@ export default function AccessAgentFormModal({
           .filter((a) => a.code && a.team_id);
         await setAgentTeams(accessAgentId, validAssignments);
         queryClient.invalidateQueries({ queryKey: ['agent-teams', accessAgentId] });
-        const sanitized = bindings.filter((b) => b.tool_id);
-        if (JSON.stringify(sanitized) !== JSON.stringify(initialBindings)) {
-          await setAgentMcpToolBindingsMutation.mutateAsync({
-            agentId: accessAgentId,
-            bindings: sanitized,
-          });
-          setInitialBindings(sanitized);
-        }
         toast.success('Access agent updated successfully');
       } else {
         await createMutation.mutateAsync(formData);
@@ -215,8 +183,7 @@ export default function AccessAgentFormModal({
 
   const isLoading =
     createMutation.isPending ||
-    updateMutation.isPending ||
-    setAgentMcpToolBindingsMutation.isPending;
+    updateMutation.isPending;
   if (isEditMode && open && isLoadingAccessAgent) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -339,10 +306,10 @@ export default function AccessAgentFormModal({
                                 </div>
                                 <div className="flex-1 min-w-[180px]">
                                   <label className="text-xs text-muted-foreground mb-1 block">SLA policy</label>
-                                  <Select
+                                  <SearchableSelect
                                     value={group.policy_id ?? NO_POLICY}
                                     disabled={isLoading}
-                                    onValueChange={(v) => {
+                                    onChange={(v) => {
                                       const next = [...assignmentGroups];
                                       next[groupIdx] = {
                                         ...next[groupIdx],
@@ -350,19 +317,15 @@ export default function AccessAgentFormModal({
                                       };
                                       setAssignmentGroups(next);
                                     }}
-                                  >
-                                    <SelectTrigger>
-                                      <SelectValue placeholder="Select SLA policy" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value={NO_POLICY}>— No policy —</SelectItem>
-                                      {slaPolicies.map((policy) => (
-                                        <SelectItem key={policy.id} value={policy.id}>
-                                          {policy.name} ({policy.code})
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
+                                    placeholder="Select SLA policy"
+                                    options={[
+                                      { value: NO_POLICY, label: '— No policy —' },
+                                      ...slaPolicies.map((policy) => ({
+                                        value: policy.id,
+                                        label: `${policy.name} (${policy.code})`,
+                                      })),
+                                    ]}
+                                  />
                                 </div>
                                 <Button
                                   type="button"
@@ -386,10 +349,10 @@ export default function AccessAgentFormModal({
                                   <div key={row.id} className="flex flex-wrap items-end gap-3 rounded-md border p-3">
                                     <div className="w-[100px]">
                                       <label className="text-xs text-muted-foreground mb-1 block">Tier</label>
-                                      <Select
+                                      <SearchableSelect
                                         value={row.tier != null ? String(row.tier) : '__none__'}
                                         disabled={isLoading}
-                                        onValueChange={(v) => {
+                                        onChange={(v) => {
                                           const next = [...assignmentGroups];
                                           next[groupIdx].rows[rowIdx] = {
                                             ...next[groupIdx].rows[rowIdx],
@@ -397,24 +360,21 @@ export default function AccessAgentFormModal({
                                           };
                                           setAssignmentGroups(next);
                                         }}
-                                      >
-                                        <SelectTrigger>
-                                          <SelectValue placeholder="—" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="__none__">—</SelectItem>
-                                          <SelectItem value="1" disabled={usedTiers.has(1)}>1</SelectItem>
-                                          <SelectItem value="2" disabled={usedTiers.has(2)}>2</SelectItem>
-                                          <SelectItem value="3" disabled={usedTiers.has(3)}>3</SelectItem>
-                                        </SelectContent>
-                                      </Select>
+                                        placeholder="—"
+                                        options={[
+                                          { value: '__none__', label: '—' },
+                                          { value: '1', label: '1', disabled: usedTiers.has(1) },
+                                          { value: '2', label: '2', disabled: usedTiers.has(2) },
+                                          { value: '3', label: '3', disabled: usedTiers.has(3) },
+                                        ]}
+                                      />
                                     </div>
                                     <div className="flex-1 min-w-[160px]">
                                       <label className="text-xs text-muted-foreground mb-1 block">Team</label>
-                                      <Select
+                                      <SearchableSelect
                                         value={row.team_id}
                                         disabled={isLoading}
-                                        onValueChange={(teamId) => {
+                                        onChange={(teamId) => {
                                           const next = [...assignmentGroups];
                                           next[groupIdx].rows[rowIdx] = {
                                             ...next[groupIdx].rows[rowIdx],
@@ -422,18 +382,12 @@ export default function AccessAgentFormModal({
                                           };
                                           setAssignmentGroups(next);
                                         }}
-                                      >
-                                        <SelectTrigger>
-                                          <SelectValue placeholder="Select team" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          {teamsList.map((t: { id: string; name: string }) => (
-                                            <SelectItem key={t.id} value={t.id}>
-                                              {t.name}
-                                            </SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
+                                        placeholder="Select team"
+                                        options={teamsList.map((t: { id: string; name: string }) => ({
+                                          value: t.id,
+                                          label: t.name,
+                                        }))}
+                                      />
                                     </div>
                                     {/* Escalation tiers (2/3) only: notify this tier's
                                         team when a lower-tier deadline is extended. */}
@@ -524,21 +478,6 @@ export default function AccessAgentFormModal({
                 </div>
               )}
 
-              {isEditMode && accessAgentId && (
-                <div className="space-y-3">
-                  <h4 className="font-medium">MCP Tool Bindings</h4>
-                  <p className="text-xs text-muted-foreground">
-                    Bind a tool to a specific team to route escalation for that tool only
-                    to that team. Leave team empty to fan out via this agent&apos;s team
-                    set above.
-                  </p>
-                  <McpToolBindingsEditor
-                    value={bindings}
-                    onChange={setBindings}
-                    disabled={isLoading}
-                  />
-                </div>
-              )}
             </form>
           </Form>
         </div>

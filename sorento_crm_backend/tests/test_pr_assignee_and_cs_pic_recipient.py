@@ -31,12 +31,12 @@ def _query_returning(rows_by_model):
 
 def test_attach_assignees_uses_latest_unresolved_tracker():
     tracker = SimpleNamespace(
-        source_entity_id="pr1", assigned_to_id="u1", initiated_at=2
+        source_entity_id="ed46d5e7-d871-5921-b065-69e87db348fd", assigned_to_id="u1", initiated_at=2
     )
     user = SimpleNamespace(id="u1", name="Project Sales Exec", email="ps@x.com")
     db = _query_returning({ConversationSLATracking: [tracker], User: [user]})
     svc = PurchaseRequestService(db)
-    item = SimpleNamespace(id="pr1")
+    item = SimpleNamespace(id="ed46d5e7-d871-5921-b065-69e87db348fd")
     svc._attach_sla_assignees([item])
     assert item.assigned_to_id == "u1"
     assert item.assigned_to_name == "Project Sales Exec"
@@ -45,7 +45,7 @@ def test_attach_assignees_uses_latest_unresolved_tracker():
 def test_attach_assignees_none_when_no_tracker():
     db = _query_returning({ConversationSLATracking: [], User: []})
     svc = PurchaseRequestService(db)
-    item = SimpleNamespace(id="pr1")
+    item = SimpleNamespace(id="ed46d5e7-d871-5921-b065-69e87db348fd")
     svc._attach_sla_assignees([item])
     assert item.assigned_to_id is None
     assert item.assigned_to_name is None
@@ -53,7 +53,7 @@ def test_attach_assignees_none_when_no_tracker():
 
 def test_cs_pic_recipient_resolves_active_cs_tracker_assignee():
     tracker = SimpleNamespace(
-        source_entity_id="pr1",
+        source_entity_id="ed46d5e7-d871-5921-b065-69e87db348fd",
         team_set_code="customer_service",
         is_resolved=False,
         assigned_to_id="agnes",
@@ -62,7 +62,7 @@ def test_cs_pic_recipient_resolves_active_cs_tracker_assignee():
     pic = SimpleNamespace(id="agnes", name="Agnes", email="cust-care2@sorento.com.my", is_trashed=False)
     db = _query_returning({ConversationSLATracking: [tracker], User: [pic]})
     recips = automation_recipients.resolve_recipients(
-        db, {"include_assigned_cs_pic": True}, source_id="pr1"
+        db, {"include_assigned_cs_pic": True}, source_id="ed46d5e7-d871-5921-b065-69e87db348fd"
     )
     assert recips == [
         {"email": "cust-care2@sorento.com.my", "name": "Agnes", "user_id": "agnes"}
@@ -76,4 +76,4 @@ def test_cs_pic_recipient_noop_without_source_id():
 
 def test_cs_pic_recipient_noop_when_flag_off():
     db = MagicMock()
-    assert automation_recipients.resolve_recipients(db, {}, source_id="pr1") == []
+    assert automation_recipients.resolve_recipients(db, {}, source_id="ed46d5e7-d871-5921-b065-69e87db348fd") == []

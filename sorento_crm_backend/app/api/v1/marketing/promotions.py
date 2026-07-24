@@ -32,6 +32,10 @@ class BulkDeletePromotionsRequest(BaseModel):
     ids: list[str]
 
 
+class CompilePromotionsPdfRequest(BaseModel):
+    promotion_ids: list[str]
+
+
 class BulkUpdateAccessLevelsRequest(BaseModel):
     ids: list[str]
     access_levels: list[str]
@@ -108,6 +112,13 @@ async def get_promotions(
             "attachment. `unlinked_or_trashed`: either — the delete-candidate set."
         ),
     ),
+    expiry_notify_batch_id: Optional[str] = Query(
+        None,
+        description=(
+            "Filter to promotions stamped with this expiry-reminder batch id "
+            "(deep-linked from the reminder email). Counts as a narrowing filter."
+        ),
+    ),
     sort: Optional[str] = Query(None, description="Sort field e.g. created_at, name, products_count"),
     dir: Optional[str] = Query("desc", description="asc or desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -142,6 +153,7 @@ async def get_promotions(
             or (query and query.strip())
             or norm_entities
             or attachment_state
+            or (expiry_notify_batch_id and expiry_notify_batch_id.strip())
         )
         # API-key / MCP callers without a narrowing filter are answering open
         # questions like "what is sorento's latest promo" — return a bounded
@@ -171,6 +183,7 @@ async def get_promotions(
             promotion_ids=parsed_promotion_ids,
             product_ids=parsed_product_ids,
             attachment_state=attachment_state,
+            expiry_notify_batch_id=(expiry_notify_batch_id or None),
         )
         # Data-miss path (§3.3): when the service attached `alternatives` /
         # `relaxed_axis` (empty result only), bypass the strict `ListResponse`
@@ -350,6 +363,69 @@ async def update_promotion(
         service = PromotionService(db)
         promotion = service.update_promotion(promotion_id, promotion_data)
         return promotion
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/export/pdf", status_code=status.HTTP_202_ACCEPTED)
+async def export_promotions_pdf(
+    body: CompilePromotionsPdfRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Queue an async job compiling the selected promotions' attachment flyers
+    into one PDF (order preserved = FE grid order).
+
+    Creates a UserDownload row and enqueues generation; the result appears in the
+    My Downloads drawer. Validates at least one id and that all exist.
+    """
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_promotions_pdf
+    from app.models.marketing import Promotion
+
+    try:
+        promotion_ids = [str(pid) for pid in (body.promotion_ids or []) if str(pid).strip()]
+        if not promotion_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one promotion_id is required.",
+            )
+        found = {
+            str(pid)
+            for (pid,) in db.query(Promotion.id).filter(Promotion.id.in_(promotion_ids)).all()
+        }
+        missing = [pid for pid in promotion_ids if pid not in found]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Promotion(s) not found: {', '.join(missing)}",
+            )
+
+        download = DownloadService(db).create(
+            user_id=str(current_user["id"]),
+            kind="promotions_pdf",
+            filename="promotions.pdf",
+            source_entity_type="promotion_batch",
+            source_entity_id=None,
+        )
+        try:
+            enqueue_job(
+                generate_promotions_pdf,
+                str(download.id),
+                promotion_ids,
+                str(current_user["id"]),
+                queue_name="imports",
+                job_timeout=600,
+            )
+        except Exception as e:
+            # Enqueue failed (e.g. Redis down): mark the row failed so the drawer shows it.
+            DownloadService(db).mark_failed(str(download.id), f"Could not queue PDF generation: {e}")
+            raise handle_internal_error("Could not queue PDF generation. Please try again.")
+
+        return {"download_id": str(download.id)}
     except HTTPException:
         raise
     except Exception as e:

@@ -345,6 +345,30 @@ def _to_aware_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
+def _working_clock_start(db, start_dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalize an SLA clock start to the next working-window open.
+
+    A clock that would start when nobody is working (weekend, public holiday,
+    before open, after close) starts at the next window open instead, so the
+    responder gets the whole window the policy promises. Returns aware UTC (naive
+    ``start_dt`` treated as UTC), matching the rest of this module. Falls back to
+    ``start_dt`` if the work calendar is unavailable/misconfigured."""
+    if start_dt is None:
+        return None
+    try:
+        from app.services.calendar_service import CalendarService
+
+        out = CalendarService(db).next_working_window_open(start_dt)
+        if out is not None:
+            return _to_aware_utc(out)
+    except Exception:  # pragma: no cover - defensive; never break SLA create/escalate
+        import logging
+        logging.getLogger(__name__).warning(
+            "working clock-start normalization failed; using the raw start.", exc_info=True
+        )
+    return _to_aware_utc(start_dt)
+
+
 def _working_due(db, start_dt: Optional[datetime], hours: float) -> Optional[datetime]:
     """Forward SLA due date in *working days*: convert the policy hours to days
     (÷24) and add that many working days (skipping weekends + KL public holidays),
@@ -957,16 +981,23 @@ class ConversationSLATrackingService:
             .first()
         )
 
-    def list_my_pending(self, user_id: str, limit: int = 50) -> list[dict]:
-        """Unresolved SLA trackers assigned to ``user_id``, soonest-due first.
+    def list_my_pending(self, user_id: str, limit: int = 1000) -> list[dict]:
+        """ALL unresolved SLA trackers assigned to ``user_id``, soonest-due first.
 
         Unlike ``list_tracking`` (the conversation list, which excludes form SLA
         types), this powers a per-user to-do widget and INCLUDES form trackers
         (stock_inquiry / complaint / purchase_request) since those are the items
         the assignee must action.
+
+        Returns the user's FULL pending set (safety-capped at ``limit``) so the widget
+        can show an honest total and search/paginate over everything client-side. It
+        used to fetch only the soonest-50, which both under-counted the badge and hid
+        any search match past that window (a user with 50+ overdue items could never
+        find a later-due one). Row-building is fully batched (O(1) queries regardless
+        of row count), so returning the whole set stays cheap.
         """
         from sqlalchemy.orm import joinedload
-        from app.services.form_sla_service import FORM_SLA_TYPES
+        from app.services.form_sla_service import FORM_SLA_TYPES  # noqa: F401 (used below)
 
         rows = (
             self.db.query(ConversationSLATracking)
@@ -2157,13 +2188,16 @@ class ConversationSLATrackingService:
             f"Auto-escalation: tier {from_tier} response due time breached"
         )
 
+        # The tier clock starts when work can actually begin (next working-window
+        # open); escalated_at keeps the true escalation instant for audit.
+        clock_start = _working_clock_start(self.db, now_utc)
         setattr(tracking, "current_tier", current_tier)
-        setattr(tracking, "current_tier_started_at", now_utc)
+        setattr(tracking, "current_tier_started_at", clock_start)
         setattr(tracking, "escalated_at", now_utc)
         setattr(tracking, "escalation_reason", reason)
-        setattr(tracking, "due_at", _working_due(self.db, now_utc, response_hours))
-        # On escalation, due_at_resolution = escalation time (now) + resolution_hours (working hours)
-        setattr(tracking, "due_at_resolution", _working_due(self.db, now_utc, resolution_hours))
+        setattr(tracking, "due_at", _working_due(self.db, clock_start, response_hours))
+        # On escalation, due_at_resolution = clock start + resolution_hours (working hours)
+        setattr(tracking, "due_at_resolution", _working_due(self.db, clock_start, resolution_hours))
         # Snapshot the escalated-FROM owner BEFORE the assignee is overwritten so the
         # escalation event log records who missed at the prior tier (banner link).
         prev_assigned_to_id = getattr(tracking, "assigned_to_id", None)
@@ -3378,8 +3412,11 @@ class ConversationSLATrackingService:
             tracking_dict["initiated_at"] = _to_aware_utc(tracking_dict["initiated_at"])
 
         if not tracking_dict.get("current_tier_started_at"):
-            tracking_dict["current_tier_started_at"] = now_utc
+            # Automatic start: the clock begins when work can actually begin.
+            # initiated_at above keeps the true event instant for audit.
+            tracking_dict["current_tier_started_at"] = _working_clock_start(self.db, now_utc)
         else:
+            # Caller-supplied start is authoritative — stored verbatim, not normalized.
             tracking_dict["current_tier_started_at"] = _to_aware_utc(tracking_dict["current_tier_started_at"])
 
         # Reset escalation and resolution fields
@@ -4691,12 +4728,34 @@ class ConversationSLATrackingService:
             resolve_assignee_respond_user_id_from_tracking,
         )
 
+        from app.services.integration_service import log_respond_send
+
         client = RespondClient()
+        request_payload = {"message": {"type": "text", "text": text}}
         try:
             response = client.send_message(ident, text)
-        except Exception:
+        except Exception as e:
             logger.exception("Respond send failed for SLA tracking %s", tracking_id)
+            # Record the failure in the Respond outbox before re-raising. This
+            # path used to log to stderr only, so a failed conversation reply was
+            # invisible in integration_logs.
+            log_respond_send(
+                self.db,
+                business_table="conversation_sla_tracking",
+                business_id=str(tracking_id),
+                identifier=ident,
+                request_payload=request_payload,
+                exc=e,
+            )
             raise
+        log_respond_send(
+            self.db,
+            business_table="conversation_sla_tracking",
+            business_id=str(tracking_id),
+            identifier=ident,
+            request_payload=request_payload,
+            response=response,
+        )
         enqueue_crm_chat_outbound_webhook(
             self.db,
             business_table="conversation_sla_tracking",

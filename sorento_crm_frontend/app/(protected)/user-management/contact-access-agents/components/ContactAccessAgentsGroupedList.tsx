@@ -24,13 +24,7 @@ import type { ContactAccessAgent } from '../types/contactAccessAgent.types';
 import { formatDate } from '@/lib/helpers';
 import ContactAgentAccessDialog from '../../access-agents/components/ContactAgentAccessDialog';
 import React, { useEffect } from 'react';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   Dialog,
   DialogContent,
@@ -396,20 +390,17 @@ export default function ContactAccessAgentsGroupedList() {
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
-            <Select value={selectedAgentId} onValueChange={setSelectedAgentId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select access agent" />
-              </SelectTrigger>
-              <SelectContent>
-                {(accessAgentsData?.data || [])
-                  .filter((agent) => agent.is_active)
-                  .map((agent) => (
-                    <SelectItem key={agent.id} value={agent.id}>
-                      {agent.name} ({agent.code})
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+            <SearchableSelect
+              value={selectedAgentId}
+              onChange={setSelectedAgentId}
+              placeholder="Select access agent"
+              options={(accessAgentsData?.data || [])
+                .filter((agent) => agent.is_active)
+                .map((agent) => ({
+                  value: agent.id,
+                  label: `${agent.name} (${agent.code})`,
+                }))}
+            />
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAgentSelectDialogOpen(false)}>
