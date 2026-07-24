@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Optional
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
@@ -23,6 +23,9 @@ class TriggerSpec:
     label: str
     description: str
     config_schema: dict[str, Any]
+    # Rule-engine fact sources this trigger exposes. Empty = no rule filtering
+    # (conditions_json is ignored). days_before_promotion_end → ("promotion",).
+    fact_sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,10 @@ class TriggerMatch:
     context: dict[str, Any]
     source_kind: str
     source_id: str
+    # ORM objects keyed by fact-source name (e.g. {"promotion": <Promotion>}),
+    # fed to rule_engine.resolve_facts for conditions_json filtering. None when
+    # the trigger exposes no fact sources.
+    fact_sources: Optional[dict] = None
 
 
 TriggerFn = Callable[[Session, dict[str, Any], str], Iterable[TriggerMatch]]
@@ -125,6 +132,9 @@ def _trigger_days_before_promotion_end(
             context=ctx,
             source_kind="promotion",
             source_id=str(getattr(promo, "id")),
+            # The ORM object itself feeds rule_engine.resolve_facts so the
+            # automation's conditions_json can filter on access levels / name / dates.
+            fact_sources={"promotion": promo},
         )
 
 
@@ -145,9 +155,16 @@ register(
             },
             "required": ["days_before"],
         },
+        fact_sources=("promotion",),
     ),
     _trigger_days_before_promotion_end,
 )
+
+
+def fact_sources_for(trigger_type: str) -> tuple[str, ...]:
+    """Fact sources a trigger exposes for rule filtering (empty if unknown)."""
+    pair = _REGISTRY.get(trigger_type)
+    return pair[0].fact_sources if pair else ()
 
 
 def _trigger_complaint_approved(

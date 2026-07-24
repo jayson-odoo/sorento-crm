@@ -16,12 +16,16 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { AlertTriangle } from 'lucide-react';
+import { RuleBuilder } from '@/components/rule-builder/RuleBuilder';
+import type { RuleGroup } from '@/components/rule-builder/types';
 import { useEmailTemplates } from '../../email-templates/hooks/useEmailTemplates';
 import {
   useCreateAutomation,
   useTriggerCatalog,
   useUpdateAutomation,
 } from '../hooks/useAutomations';
+import { AutomationRuleValidationError } from '../services/automationService';
 import type {
   Automation,
   RecipientConfig,
@@ -64,6 +68,8 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
   const [scheduleType, setScheduleType] = useState<'manual' | 'daily'>('manual');
   const [runTime, setRunTime] = useState<string>('09:00');
   const [timezone, setTimezone] = useState<string>('Asia/Kuala_Lumpur');
+  const [conditionsJson, setConditionsJson] = useState<RuleGroup | null>(null);
+  const [ruleProblems, setRuleProblems] = useState<string[]>([]);
 
   const triggers = useTriggerCatalog();
   const templates = useEmailTemplates({ limit: 100 });
@@ -93,6 +99,8 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       setScheduleType(automation.schedule_type);
       setRunTime(automation.run_time ? automation.run_time.slice(0, 5) : '09:00');
       setTimezone(automation.timezone || 'Asia/Kuala_Lumpur');
+      setConditionsJson(automation.conditions_json ?? null);
+      setRuleProblems([]);
     } else {
       setName('');
       setDescription('');
@@ -105,6 +113,8 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       setScheduleType('manual');
       setRunTime('09:00');
       setTimezone('Asia/Kuala_Lumpur');
+      setConditionsJson(null);
+      setRuleProblems([]);
     }
   }, [open, automation, triggerSpecs.length]);
 
@@ -112,6 +122,17 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
     () => triggerSpecs.find((s) => s.type === triggerType),
     [triggerSpecs, triggerType],
   );
+
+  // Degrade gracefully if the triggers API hasn't started returning fact_sources.
+  const factSources = triggerSpec?.fact_sources ?? [];
+
+  // Changing the trigger switches which facts are valid, so any existing
+  // condition tree no longer applies — reset it.
+  const handleTriggerChange = (t: string) => {
+    setTriggerType(t);
+    setConditionsJson(null);
+    setRuleProblems([]);
+  };
 
   async function onSubmit() {
     if (!name.trim()) {
@@ -150,10 +171,13 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       email_template_id: emailTemplateId,
       recipient_config: recipientConfig,
       group_matches: triggerType === 'days_before_promotion_end' ? groupMatches : true,
+      // Only send a condition tree for triggers that expose facts; null = match all.
+      conditions_json: factSources.length > 0 ? conditionsJson : null,
       schedule_type: scheduleType,
       run_time: scheduleType === 'daily' ? `${runTime}:00` : null,
       timezone,
     };
+    setRuleProblems([]);
     try {
       if (isEdit && automation) {
         await updateMut.mutateAsync(body);
@@ -165,6 +189,11 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
       onSaved?.();
       onOpenChange(false);
     } catch (err) {
+      if (err instanceof AutomationRuleValidationError) {
+        setRuleProblems(err.problems);
+        toast.error('Fix the highlighted rule conditions before saving');
+        return;
+      }
       toast.error((err as Error).message || 'Save failed');
     }
   }
@@ -200,7 +229,7 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
             <Label>Trigger</Label>
             <SearchableSelect
               value={triggerType}
-              onChange={setTriggerType}
+              onChange={handleTriggerChange}
               options={triggerSpecs.map((s) => ({ value: s.type, label: s.label }))}
               placeholder="Pick trigger"
             />
@@ -256,6 +285,32 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
                   </p>
                 </div>
               </div>
+            </div>
+          )}
+
+          {factSources.length > 0 && (
+            <div className="space-y-2 md:col-span-2">
+              <Label>Conditions (optional)</Label>
+              <p className="text-xs text-muted-foreground">
+                Only act on matches that meet these conditions. Leave empty to act on every
+                match.
+              </p>
+              {ruleProblems.length > 0 && (
+                <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-2.5 text-xs text-destructive">
+                  <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                  <ul className="list-disc space-y-0.5 ps-4">
+                    {ruleProblems.map((p, i) => (
+                      <li key={i}>{p}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <RuleBuilder
+                key={triggerType}
+                sources={factSources}
+                value={conditionsJson}
+                onChange={setConditionsJson}
+              />
             </div>
           )}
 

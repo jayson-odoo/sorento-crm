@@ -28,13 +28,43 @@ export async function getAutomation(id: string): Promise<Automation> {
   return r.json();
 }
 
+/**
+ * Rule-condition save failure. The backend's `validate_tree` returns a
+ * top-level `{ detail: string[] }` (NOT the pydantic `{loc,msg,type}` shape),
+ * so callers can surface every problem instead of just the first line.
+ */
+export class AutomationRuleValidationError extends Error {
+  problems: string[];
+  constructor(problems: string[]) {
+    super(problems.join('\n'));
+    this.name = 'AutomationRuleValidationError';
+    this.problems = problems;
+  }
+}
+
+/** Throw the right error for a failed automation save — a rule-validation
+ * problems array when present, otherwise the standard extracted message. */
+async function throwAutomationSaveError(r: Response, fallback: string): Promise<never> {
+  if (r.status === 422) {
+    const body = await r
+      .clone()
+      .json()
+      .catch(() => null);
+    const detail = body?.detail;
+    if (Array.isArray(detail) && detail.length > 0 && detail.every((d) => typeof d === 'string')) {
+      throw new AutomationRuleValidationError(detail as string[]);
+    }
+  }
+  throw new Error(await extractApiError(r, fallback));
+}
+
 export async function createAutomation(body: AutomationCreateBody): Promise<Automation> {
   const r = await apiFetch('/api/v1/system/automation/automations', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to create automation'));
+  if (!r.ok) await throwAutomationSaveError(r, 'Failed to create automation');
   return r.json();
 }
 
@@ -44,7 +74,7 @@ export async function updateAutomation(id: string, body: AutomationUpdateBody): 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to update automation'));
+  if (!r.ok) await throwAutomationSaveError(r, 'Failed to update automation');
   return r.json();
 }
 

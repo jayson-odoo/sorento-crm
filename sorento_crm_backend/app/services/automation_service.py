@@ -6,6 +6,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.automation import Automation, AutomationRun
@@ -119,6 +120,9 @@ class AutomationService:
             email_template_id=payload["email_template_id"],
             recipient_config=self._normalize_recipient_config(payload.get("recipient_config")),
             group_matches=payload.get("group_matches", True),
+            conditions_json=self._validated_conditions(
+                payload.get("conditions_json"), payload["trigger_type"]
+            ),
             schedule_type=payload.get("schedule_type") or "manual",
             run_time=payload.get("run_time"),
             timezone=payload.get("timezone") or "Asia/Kuala_Lumpur",
@@ -136,6 +140,14 @@ class AutomationService:
             raise AppException(status_code=404, message="Automation not found")
         if "recipient_config" in payload and payload["recipient_config"] is not None:
             payload["recipient_config"] = self._normalize_recipient_config(payload["recipient_config"])
+        # conditions_json is set explicitly (not via the None-skipping loop below) so
+        # an explicit null clears the filter (match all). Validate against the
+        # incoming trigger_type when supplied, else the row's existing one.
+        if "conditions_json" in payload:
+            trigger_type = payload.get("trigger_type") or str(row.trigger_type)
+            row.conditions_json = self._validated_conditions(
+                payload["conditions_json"], trigger_type
+            )
         for field in (
             "name",
             "description",
@@ -296,6 +308,28 @@ class AutomationService:
             raise AppException(status_code=400, message="run_time required when schedule_type='daily'")
 
     @staticmethod
+    def _validated_conditions(
+        tree: Any, trigger_type: str
+    ) -> Optional[dict[str, Any]]:
+        """Validate a rule condition tree against the trigger's fact sources.
+
+        Empty / None → None (match all, backward compatible). A non-empty tree
+        with problems raises a 422 whose body is the raw problems ARRAY
+        (``{"detail": [...]}``) — matching FoundryX so the FE reads the list
+        directly (not the AppException string envelope).
+        """
+        if not tree:
+            return None
+        if not isinstance(tree, dict):
+            raise HTTPException(status_code=422, detail=["Conditions must be a group."])
+        from app.rule_engine.schemas import validate_tree
+
+        problems = validate_tree(tree, automation_triggers.fact_sources_for(trigger_type))
+        if problems:
+            raise HTTPException(status_code=422, detail=problems)
+        return tree
+
+    @staticmethod
     def _normalize_recipient_config(config: Any) -> dict[str, Any]:
         if not config:
             return {
@@ -358,6 +392,19 @@ class AutomationService:
                     str(automation.timezone or "Asia/Kuala_Lumpur"),
                 )
 
+            # Rule filter: keep only matches that pass the automation's
+            # conditions_json. Empty tree, or a match with no fact_sources, keeps
+            # everything (backward compatible).
+            matches = self._filter_matches_by_conditions(automation, matches)
+
+            # Batch stamp (promotion-expiry only): mint one batch id, stamp every
+            # kept promo (stamp-first, before send), and build the deep link the
+            # reminder email points at.
+            batch_id: Optional[str] = None
+            batch_link: Optional[str] = None
+            if str(automation.trigger_type) == "days_before_promotion_end":
+                batch_id, batch_link = self._stamp_expiry_batch(matches)
+
             template_service = EmailTemplateService(self.db)
 
             # Group only the promotion-expiry trigger: it is the sole multi-match
@@ -370,7 +417,8 @@ class AutomationService:
 
             if do_group:
                 attempted, summary = self._send_grouped(
-                    automation, run, matches, template, template_service, owner_user_id
+                    automation, run, matches, template, template_service, owner_user_id,
+                    batch_id=batch_id, batch_link=batch_link,
                 )
             else:
                 attempted, summary = self._send_per_match(
@@ -419,6 +467,70 @@ class AutomationService:
             self.db.commit()
             logger.exception("Automation %s execution failed", automation.id)
             raise
+
+    def _filter_matches_by_conditions(
+        self,
+        automation: Automation,
+        matches: list["automation_triggers.TriggerMatch"],
+    ) -> list["automation_triggers.TriggerMatch"]:
+        """Keep matches passing the automation's rule tree (conditions_json).
+
+        Empty tree → keep all. A match carrying no ``fact_sources`` (trigger
+        exposes no facts) → keep it. Otherwise resolve only the facts the tree
+        reads and evaluate fail-closed.
+        """
+        tree = automation.conditions_json
+        if not tree:
+            return matches
+        from app.rule_engine.evaluator import collect_fact_keys, evaluate
+        from app.rule_engine.registry import resolve_facts
+
+        keys = collect_fact_keys(tree)
+        kept: list["automation_triggers.TriggerMatch"] = []
+        for m in matches:
+            fact_sources = getattr(m, "fact_sources", None)
+            if not fact_sources:
+                kept.append(m)
+                continue
+            facts = resolve_facts(self.db, fact_sources, only_keys=keys)
+            if evaluate(tree, facts):
+                kept.append(m)
+        return kept
+
+    def _stamp_expiry_batch(
+        self, matches: list["automation_triggers.TriggerMatch"]
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Mint a batch id, stamp every kept promo, commit (stamp-first), and
+        return ``(batch_id, batch_link)``. No matches → ``(None, None)``."""
+        if not matches:
+            return None, None
+        from uuid import uuid4
+
+        from app.config import settings
+        from app.models.marketing import Promotion
+
+        batch_id = str(uuid4())
+        now = datetime.utcnow()
+        for m in matches:
+            promo = None
+            fact_sources = getattr(m, "fact_sources", None)
+            if fact_sources and isinstance(fact_sources.get("promotion"), Promotion):
+                promo = fact_sources["promotion"]
+            if promo is None:
+                promo = (
+                    self.db.query(Promotion)
+                    .filter(Promotion.id == m.source_id)
+                    .first()
+                )
+            if promo is not None:
+                promo.expiry_notified_at = now
+                promo.expiry_notify_batch_id = batch_id
+        self.db.commit()
+
+        base = (settings.frontend_base_url or "").rstrip("/")
+        path = f"/marketing-management/promotions?expiry_notify_batch_id={batch_id}"
+        batch_link = f"{base}{path}" if base else path
+        return batch_id, batch_link
 
     def _send_per_match(
         self,
@@ -489,6 +601,8 @@ class AutomationService:
         template: EmailTemplate,
         template_service: EmailTemplateService,
         owner_user_id: Optional[str],
+        batch_id: Optional[str] = None,
+        batch_link: Optional[str] = None,
     ) -> tuple[int, dict[str, Any]]:
         """One combined email per recipient listing every promotion they match.
 
@@ -530,6 +644,8 @@ class AutomationService:
                     "name": recipient.get("name") or recipient["email"],
                     "email": recipient["email"],
                 },
+                "batch_link": batch_link,
+                "expiry_notify_batch_id": batch_id,
             }
             rendered = template_service.render(template, ctx)
             self._enqueue_email(

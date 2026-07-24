@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import { promotionFormDateToApiYyyyMmDd } from '@/lib/helpers';
 import type {
   Promotion,
@@ -16,6 +17,8 @@ export type PromotionsListParams = DataGridApiFetchParams & {
   date_to?: string;
   user_type?: string;
   attachment_state?: 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed';
+  /** Deep-link filter: restrict to promos stamped by one expiry-reminder batch. */
+  expiry_notify_batch_id?: string;
 };
 
 /**
@@ -39,7 +42,7 @@ export const PROMOTION_NEIGHBOURS_PATH =
 export async function getPromotions(
   params: PromotionsListParams,
 ): Promise<DataGridApiResponse<Promotion>> {
-  const { pageIndex, pageSize, sorting, searchQuery, status, date_from, date_to, user_type, attachment_state } = params;
+  const { pageIndex, pageSize, sorting, searchQuery, status, date_from, date_to, user_type, attachment_state, expiry_notify_batch_id } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -52,6 +55,7 @@ export async function getPromotions(
     ...(date_to ? { date_to } : {}),
     ...(user_type ? { user_type } : {}),
     ...(attachment_state ? { attachment_state } : {}),
+    ...(expiry_notify_batch_id ? { expiry_notify_batch_id } : {}),
   });
   const response = await apiFetch(`/api/v1/marketing/promotions?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch promotions');
@@ -228,6 +232,29 @@ export async function addPromotionProduct(
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Failed to add product to promotion' }));
     throw new Error(error.message);
+  }
+  return response.json();
+}
+
+/**
+ * Compile the linked flyer attachments of the given promotions into one merged
+ * PDF, async via the My Downloads loop.
+ *
+ * Contract:
+ *   POST /api/v1/marketing/promotions/export/pdf
+ *   body: { promotion_ids: string[] }  (order preserved = grid display order)
+ *   202:  { download_id: string }
+ */
+export async function compilePromotionsPdf(
+  promotionIds: string[],
+): Promise<{ download_id: string }> {
+  const response = await apiFetch('/api/v1/marketing/promotions/export/pdf', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ promotion_ids: promotionIds }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to start PDF export'));
   }
   return response.json();
 }

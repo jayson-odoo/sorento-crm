@@ -28,7 +28,7 @@ from app.api.v1 import (
     downloads,
     scm,
 )
-from app.api.v1.system import modules_runtime
+from app.api.v1.system import modules_runtime, rule_facts
 from app.api.v1.assistant import record_context as assistant_record_context
 from app.modules.runtime.guards import require_module_enabled, require_module_enabled_with_api_key
 
@@ -148,6 +148,9 @@ api_router.include_router(
     dependencies=[Depends(require_module_enabled_with_api_key("base"))],
 )
 api_router.include_router(system.router, prefix="/system", tags=["system"])
+# Rule-facts catalog for the RuleBuilder (nested AND/OR condition builder in the
+# Automation edit form). JWT + automation.view permission; never X-API-Key.
+api_router.include_router(rule_facts.router, prefix="/rule-facts", tags=["rule-facts"])
 # Bubble record-context assembler (JWT+RBAC only; never exposed to EXTERNAL_API_KEY).
 api_router.include_router(
     assistant_record_context.router,

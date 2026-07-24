@@ -39,6 +39,12 @@ class Automation(Base):
 
     recipient_config = Column(JSONB, nullable=False, default=dict)
 
+    # Optional condition tree (rule engine) filtering which trigger matches are
+    # acted on. NULL / empty = match all (backward compatible). Only triggers
+    # whose TriggerSpec.fact_sources is non-empty (today: days_before_promotion_end)
+    # can be filtered; validated at save time via rule_engine.validate_tree.
+    conditions_json = Column(JSONB, nullable=True)
+
     # When true (default), a multi-match scheduled run (only the
     # days_before_promotion_end trigger today) sends ONE combined email per
     # recipient listing every matched promotion, instead of one email per match.
