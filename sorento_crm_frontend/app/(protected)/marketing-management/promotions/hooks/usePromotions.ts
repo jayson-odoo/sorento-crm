@@ -21,6 +21,7 @@ import {
   createPromotionGroup,
   updatePromotionGroup,
   deletePromotionGroup,
+  compilePromotionsPdf,
   PROMOTION_NEIGHBOURS_PATH,
   type PromotionsListParams,
 } from '../services/promotionService';
@@ -77,6 +78,18 @@ export function usePromotionProducts(promotionId: string | null) {
     },
     enabled: !!promotionId,
     retry: 1,
+  });
+}
+
+export function useCompilePromotionsPdf() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (promotionIds: string[]) => compilePromotionsPdf(promotionIds),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
+      toast.success('Preparing PDF… it will appear in My Downloads.');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to start PDF export'),
   });
 }
 

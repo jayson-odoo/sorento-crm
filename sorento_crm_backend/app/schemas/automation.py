@@ -25,6 +25,8 @@ class AutomationBase(BaseModel):
     email_template_id: str
     recipient_config: RecipientConfig = Field(default_factory=RecipientConfig)
     group_matches: bool = True
+    # Rule-engine condition tree filtering trigger matches. None / empty = match all.
+    conditions_json: Optional[dict[str, Any]] = None
     schedule_type: str = Field(default="manual")  # manual | daily
     run_time: Optional[time] = None
     timezone: str = Field(default="Asia/Kuala_Lumpur", max_length=80)
@@ -44,6 +46,7 @@ class AutomationUpdate(BaseModel):
     email_template_id: Optional[str] = None
     recipient_config: Optional[RecipientConfig] = None
     group_matches: Optional[bool] = None
+    conditions_json: Optional[dict[str, Any]] = None
     schedule_type: Optional[str] = None
     run_time: Optional[time] = None
     timezone: Optional[str] = None
@@ -61,6 +64,7 @@ class AutomationResponse(BaseModel):
     email_template_name: Optional[str] = None
     recipient_config: dict[str, Any]
     group_matches: bool = True
+    conditions_json: Optional[dict[str, Any]] = None
     schedule_type: str
     run_time: Optional[time]
     timezone: str
@@ -109,6 +113,9 @@ class TriggerSpec(BaseModel):
     label: str
     description: str
     config_schema: dict[str, Any]
+    # Fact sources this trigger exposes for rule filtering. Non-empty = the FE
+    # renders the RuleBuilder and fetches these facts from /rule-facts.
+    fact_sources: list[str] = Field(default_factory=list)
 
 
 class TriggerCatalog(BaseModel):

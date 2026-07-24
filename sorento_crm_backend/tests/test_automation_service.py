@@ -24,12 +24,18 @@ from app.models.notification import Notification, NotificationDelivery
 from app.models.user import User, UserRole, UserRoleAssignment
 
 
-@pytest.fixture(autouse=True)
-def _clean_automation_state():
-    """Nuke prior-test rows so each test starts from a clean slate.
+def _svctest_wipe():
+    """Delete ONLY this file's own rows.
 
     AutomationService commits inside its own transaction, so the per-test
     Session rollback is not enough — we delete rows directly via the engine.
+
+    SCOPED to this file's own rows only. This DB is the local prod-copy dev DB
+    (per CLAUDE.md) — an unscoped ``DELETE FROM automations`` / ``DELETE FROM
+    email_templates WHERE code LIKE 'tpl-%'`` here destroys the developer's real
+    automations and every email template. Test rows carry the ``[svctest]``
+    automation-name / ``tpl-svctest-`` template-code markers; runs + notifications
+    are scoped by joining back to them.
     """
     from sqlalchemy import text
 
@@ -40,18 +46,49 @@ def _clean_automation_state():
             text(
                 """
                 DELETE FROM notification_deliveries WHERE notification_id IN (
-                    SELECT id FROM notifications WHERE source_entity_type = 'automation_run'
+                    SELECT id FROM notifications
+                    WHERE source_entity_type = 'automation_run'
+                      AND source_entity_id IN (
+                          SELECT id FROM automation_runs WHERE automation_id IN (
+                              SELECT id FROM automations WHERE name LIKE '[svctest]%'
+                          )
+                      )
                 )
                 """
             )
         )
-        conn.execute(text("DELETE FROM notifications WHERE source_entity_type = 'automation_run'"))
-        conn.execute(text("DELETE FROM automation_runs"))
-        conn.execute(text("DELETE FROM automations"))
-        conn.execute(text("DELETE FROM email_templates WHERE code LIKE 'tpl-%'"))
+        conn.execute(
+            text(
+                """
+                DELETE FROM notifications
+                WHERE source_entity_type = 'automation_run'
+                  AND source_entity_id IN (
+                      SELECT id FROM automation_runs WHERE automation_id IN (
+                          SELECT id FROM automations WHERE name LIKE '[svctest]%'
+                      )
+                  )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "DELETE FROM automation_runs WHERE automation_id IN "
+                "(SELECT id FROM automations WHERE name LIKE '[svctest]%')"
+            )
+        )
+        conn.execute(text("DELETE FROM automations WHERE name LIKE '[svctest]%'"))
+        conn.execute(text("DELETE FROM email_templates WHERE code LIKE 'tpl-svctest-%'"))
         conn.execute(text("DELETE FROM promotions WHERE description LIKE 'Test Promo%'"))
         conn.commit()
+
+
+@pytest.fixture(autouse=True)
+def _clean_automation_state():
+    """Clean this file's rows before AND after each test (symmetric — no
+    ``[svctest]`` / ``tpl-svctest-`` leftovers linger in the shared dev DB)."""
+    _svctest_wipe()
     yield
+    _svctest_wipe()
 
 
 @pytest.fixture
@@ -91,7 +128,7 @@ def _mk_role(db: Session, *, slug: str | None = None) -> UserRole:
 def _mk_template(db: Session) -> EmailTemplate:
     t = EmailTemplate(
         id=str(uuid.uuid4()),
-        code=f"tpl-{uuid.uuid4().hex[:8]}",
+        code=f"tpl-svctest-{uuid.uuid4().hex[:8]}",
         name="Promotion expiry reminder",
         subject="Promo {{ promotion.name }} expiring on {{ promotion.end_date }}",
         body_html=(
@@ -111,13 +148,21 @@ def _mk_template(db: Session) -> EmailTemplate:
     return t
 
 
+# The promotion-expiry trigger matches EVERY active promo whose end_date is
+# exactly ``days_before`` out — including real promos on the shared prod-copy dev
+# DB. Offset this file's test promos AND the automation target ~10 years out (the
+# relative day-difference is preserved, so match/no-match logic is unchanged) so
+# no real promo can collide with the assertions on match count.
+_UNIQUE_OFFSET = 3650
+
+
 def _mk_promotion(db: Session, *, days_until_end: int) -> Promotion:
     today = date.today()
     p = Promotion(
         id=str(uuid.uuid4()),
         description=f"Test Promo {uuid.uuid4().hex[:6].upper()}",
         start_date=today - timedelta(days=2),
-        end_date=today + timedelta(days=days_until_end),
+        end_date=today + timedelta(days=_UNIQUE_OFFSET + days_until_end),
         is_active=True,
     )
     db.add(p)
@@ -139,10 +184,10 @@ def _mk_automation(
 ) -> Automation:
     a = Automation(
         id=str(uuid.uuid4()),
-        name="Promo expiry reminder",
+        name="[svctest] Promo expiry reminder",
         enabled=True,
         trigger_type="days_before_promotion_end",
-        trigger_config={"days_before": days_before},
+        trigger_config={"days_before": _UNIQUE_OFFSET + days_before},
         action_type="send_email",
         email_template_id=str(template.id),
         recipient_config={
