@@ -168,13 +168,26 @@ def handle_turn(
     respond_io_id: str,
     message_text: str,
     audio_attachment_ref: str | None = None,
+    session_vars_in: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Handle one `ideate` turn. Returns ``{ status, reply_text, link?, session_vars }``.
 
-    ``session_vars`` in the return is always the FULL, updated blob (AC-10)."""
+    ``session_vars`` in the return is always the FULL, updated blob (AC-10).
+
+    The prior ideation pointer is read from the CALLER-supplied ``session_vars_in``
+    first (n8n owns/writes the column and is the last writer each turn), then falls
+    back to the contact's DB copy for legacy callers. This is what makes the draft
+    accumulate: without it, n8n's nested ``variables.ideation`` shape never matches
+    the endpoint's top-level DB read, so every turn minted a fresh ``draft_id``."""
     contact = _get_contact_row(db, respond_io_id)
     session_vars = contact.session_vars
-    ideation_state = session_vars.get("ideation") or {}
+    caller_sv = session_vars_in or {}
+    ideation_state = (
+        caller_sv.get("ideation")
+        or (caller_sv.get("variables") or {}).get("ideation")  # n8n nested shape
+        or session_vars.get("ideation")                        # legacy DB fallback
+        or {}
+    )
     draft_id = ideation_state.get("draft_id")
     prior_status = ideation_state.get("status")
     prior_missing = ideation_state.get("missing") or []

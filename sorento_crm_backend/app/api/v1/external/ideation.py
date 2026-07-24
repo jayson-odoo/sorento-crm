@@ -47,6 +47,7 @@ def ideation_turn(
             respond_io_id=payload.respond_io_id,
             message_text=payload.message_text,
             audio_attachment_ref=payload.audio_attachment_ref,
+            session_vars_in=payload.session_vars,
         )
         response_payload = IdeationTurnResponse(**result)
     except HTTPException as http_exc:
