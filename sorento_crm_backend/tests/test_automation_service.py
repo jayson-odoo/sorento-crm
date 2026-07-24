@@ -148,13 +148,21 @@ def _mk_template(db: Session) -> EmailTemplate:
     return t
 
 
+# The promotion-expiry trigger matches EVERY active promo whose end_date is
+# exactly ``days_before`` out — including real promos on the shared prod-copy dev
+# DB. Offset this file's test promos AND the automation target ~10 years out (the
+# relative day-difference is preserved, so match/no-match logic is unchanged) so
+# no real promo can collide with the assertions on match count.
+_UNIQUE_OFFSET = 3650
+
+
 def _mk_promotion(db: Session, *, days_until_end: int) -> Promotion:
     today = date.today()
     p = Promotion(
         id=str(uuid.uuid4()),
         description=f"Test Promo {uuid.uuid4().hex[:6].upper()}",
         start_date=today - timedelta(days=2),
-        end_date=today + timedelta(days=days_until_end),
+        end_date=today + timedelta(days=_UNIQUE_OFFSET + days_until_end),
         is_active=True,
     )
     db.add(p)
@@ -179,7 +187,7 @@ def _mk_automation(
         name="[svctest] Promo expiry reminder",
         enabled=True,
         trigger_type="days_before_promotion_end",
-        trigger_config={"days_before": days_before},
+        trigger_config={"days_before": _UNIQUE_OFFSET + days_before},
         action_type="send_email",
         email_template_id=str(template.id),
         recipient_config={

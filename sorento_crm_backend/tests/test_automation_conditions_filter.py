@@ -29,6 +29,7 @@ from app.models.automation import Automation
 from app.models.email_template import EmailTemplate
 from app.models.marketing import Promotion
 from app.models.notification import Notification, NotificationDelivery
+from app.models.user import User
 from app.services.sla_service import MALAYSIA_TZ
 
 
@@ -94,6 +95,8 @@ def _wipe():
                 "OR description LIKE 'Test Promo%'"
             )
         )
+        # Marked test users last (after their automations + notifications above).
+        conn.execute(text("DELETE FROM users WHERE email LIKE 'condtest-%@test.local'"))
         conn.commit()
 
 
@@ -112,6 +115,13 @@ def db() -> Iterator[Session]:
     finally:
         s.rollback()
         s.close()
+
+
+# The promotion-expiry trigger matches EVERY active promo whose end_date is
+# exactly ``days_before`` out — including real promos on the shared prod-copy dev
+# DB. Push this file's test promos ~10 years out (and the automation's target to
+# match) so no real promo can ever collide with the assertions on match count.
+_UNIQUE_OFFSET = 3650
 
 
 def _malaysia_today():
@@ -143,7 +153,7 @@ def _mk_promo(db: Session, *, name: str, access_levels: list[str], days_until_en
         id=str(uuid.uuid4()),
         description=name,
         start_date=today - timedelta(days=3),
-        end_date=today + timedelta(days=days_until_end),
+        end_date=today + timedelta(days=_UNIQUE_OFFSET + days_until_end),
         is_active=True,
         access_levels=access_levels,
     )
@@ -152,15 +162,34 @@ def _mk_promo(db: Session, *, name: str, access_levels: list[str], days_until_en
     return p
 
 
+def _mk_user(db: Session) -> User:
+    """A marked test user so the executor has a system user to author the
+    outgoing Notification rows. CI's Postgres starts empty (no seed users), so
+    ``_resolve_owner_user_id`` would otherwise return None and ``_enqueue_email``
+    would raise ``No system user available``. Email carries the ``condtest-``
+    marker so ``_wipe`` can scope its cleanup."""
+    u = User(
+        id=str(uuid.uuid4()),
+        email=f"condtest-{uuid.uuid4().hex[:8]}@test.local",
+        name="Cond Test User",
+        status="ACTIVE",
+        is_trashed=False,
+    )
+    db.add(u)
+    db.flush()
+    return u
+
+
 def _mk_automation(
     db: Session, *, template: EmailTemplate, conditions_json: dict | None, days_before: int = 7
 ) -> Automation:
+    creator = _mk_user(db)
     a = Automation(
         id=str(uuid.uuid4()),
         name="Promo expiry (cond)",
         enabled=True,
         trigger_type="days_before_promotion_end",
-        trigger_config={"days_before": days_before},
+        trigger_config={"days_before": _UNIQUE_OFFSET + days_before},
         action_type="send_email",
         email_template_id=str(template.id),
         recipient_config={
@@ -174,6 +203,7 @@ def _mk_automation(
         schedule_type="manual",
         run_time=time(9, 0),
         timezone="Asia/Kuala_Lumpur",
+        created_by_user_id=str(creator.id),
     )
     db.add(a)
     db.flush()
