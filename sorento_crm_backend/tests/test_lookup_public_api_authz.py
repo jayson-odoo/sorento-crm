@@ -18,8 +18,8 @@ from app.main import app  # noqa: E402
 
 from tests._pg_fixture import blank_session
 
-_NONADMIN_USER_ID = "test-nonadmin-user"
-_NONADMIN_ROLE_ID = "role-viewer-noperm"
+_NONADMIN_USER_ID = "65206cac-d387-535e-9c20-9ad852f750f8"
+_NONADMIN_ROLE_ID = "c7ff2740-4436-5b42-8823-27a576fc1fad"
 _SET_KEY = "forms_form_type"
 
 
@@ -57,12 +57,6 @@ def _seed_nonadmin_and_data(db: Session) -> None:
 
 @pytest.fixture
 def nonadmin_client():
-    """TestClient over an empty Postgres schema carrying the full real DDL.
-
-    Empty because the whole point is a user with ZERO permission grants: run
-    against the live database, the seeded role would collide on slug and the
-    real grant rows would undermine the 403 pin in B-4.
-    """
     from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
 
     with blank_session() as db:
@@ -78,11 +72,10 @@ def nonadmin_client():
         app.dependency_overrides[get_current_user] = _override_current_user
         app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
 
-        try:
-            with TestClient(app) as c:
-                yield c
-        finally:
-            app.dependency_overrides.clear()
+        with TestClient(app) as c:
+            yield c
+
+        app.dependency_overrides.clear()
 
 
 # ---- B-1 / B-2 / B-3 : non-admin can READ lookup options ----

@@ -25,35 +25,27 @@ from tests._pg_fixture import blank_session
 
 @pytest.fixture
 def db() -> Session:
-    """A blank Postgres schema, rolled back after the test.
-
-    Was an in-memory sqlite engine over a hand-listed subset of tables with
-    JSONB/ARRAY compiled to TEXT. The blank schema carries all of them.
-    """
     with blank_session() as session:
         yield session
 
 
 # UUID-typed columns reject slug ids — use valid UUIDs. User.id is a String PK.
-_CONV_ID = "aaaaaaaa-0000-0000-0000-000000000001"
-_MSG_ID = "aaaaaaaa-0000-0000-0000-000000000002"
-_TRACE_ID = "aaaaaaaa-0000-0000-0000-000000000003"
-_ROOT_SPAN_ID = "aaaaaaaa-0000-0000-0000-000000000004"
-_LLM_SPAN_ID = "aaaaaaaa-0000-0000-0000-000000000005"
-_NT_CONV_ID = "bbbbbbbb-0000-0000-0000-000000000001"
-_NT_MSG_ID = "bbbbbbbb-0000-0000-0000-000000000002"
-
-
+_CONV_ID = "118892da-f08f-562f-8553-a8aa6727138b"
+_MSG_ID = "c1f2f463-4922-56c3-9239-49e868288ad7"
+_TRACE_ID = "b830fd9f-e2d2-5680-98b6-039665eed77d"
+_ROOT_SPAN_ID = "fd72df69-a027-5828-9471-44c0f827eae7"
+_LLM_SPAN_ID = "9c915f41-6cbe-5da6-bc3b-5309192a3c7e"
+_NT_CONV_ID = "adce5cde-aa52-5f95-9636-8f4857d93eca"
+_NT_MSG_ID = "390ec245-4b1b-5c97-b44e-e837e291dd56"
 @pytest.fixture
 def traced_message(db: Session) -> str:
     """Seed a message with a trace + two spans; return the message id."""
-    # User flushed before the conversation: the FK to users has no ORM
-    # relationship behind it, so the unit of work orders the mappers by table
-    # name (conversations first). sqlite did not enforce the FK; Postgres does.
-    user = User(id="u-ep", email="ep@test.com", name="EP", status="ACTIVE")
+    # Parents must land before their FK children -- these models declare no ORM
+    # relationships, so nothing orders the inserts within a single flush.
+    user = User(id="f84ec219-709b-5290-a890-e907ed4f7740", email="ep@test.com", name="EP", status="ACTIVE")
     db.add(user)
     db.flush()
-    conv = AIAssistantConversation(id=_CONV_ID, user_id="u-ep", title="T")
+    conv = AIAssistantConversation(id=_CONV_ID, user_id="f84ec219-709b-5290-a890-e907ed4f7740", title="T")
     db.add(conv)
     db.flush()
     msg = AIAssistantMessage(id=_MSG_ID, conversation_id=_CONV_ID, role="assistant", content="a")
@@ -63,7 +55,7 @@ def traced_message(db: Session) -> str:
         id=_TRACE_ID,
         message_id=_MSG_ID,
         conversation_id=_CONV_ID,
-        user_id="u-ep",
+        user_id="f84ec219-709b-5290-a890-e907ed4f7740",
         status="ok",
         total_tokens_in=10,
         total_tokens_out=5,
@@ -71,23 +63,23 @@ def traced_message(db: Session) -> str:
         span_count=2,
     )
     db.add(trace)
-    # Flush the trace before pointing the message at it: messages sort before
-    # traces by table name, so the UPDATE would otherwise hit the FK first.
     db.flush()
-    db.add_all(
-        [
-            AIAssistantSpan(
-                id=_ROOT_SPAN_ID, trace_id=_TRACE_ID, parent_id=None,
-                dotted_order="000001", span_kind="AGENT", name="assistant turn",
-            ),
-            AIAssistantSpan(
-                id=_LLM_SPAN_ID, trace_id=_TRACE_ID, parent_id=_ROOT_SPAN_ID,
-                dotted_order="000002", span_kind="LLM", name="chat gpt-4o",
-                request_model="gpt-4o", tokens_in=10, tokens_out=5,
-                prompt_name="agent_system", prompt_version=1,
-            ),
-        ]
+    db.add(
+        AIAssistantSpan(
+            id=_ROOT_SPAN_ID, trace_id=_TRACE_ID, parent_id=None,
+            dotted_order="000001", span_kind="AGENT", name="assistant turn",
+        )
     )
+    db.flush()
+    db.add(
+        AIAssistantSpan(
+            id=_LLM_SPAN_ID, trace_id=_TRACE_ID, parent_id=_ROOT_SPAN_ID,
+            dotted_order="000002", span_kind="LLM", name="chat gpt-4o",
+            request_model="gpt-4o", tokens_in=10, tokens_out=5,
+            prompt_name="agent_system", prompt_version=1,
+        )
+    )
+    db.flush()
     msg.trace_id = _TRACE_ID
     db.commit()
     return _MSG_ID
@@ -96,10 +88,10 @@ def traced_message(db: Session) -> str:
 @pytest.fixture
 def notrace_message(db: Session) -> str:
     """A message with no trace at all."""
-    user = User(id="u-nt", email="nt@test.com", name="NT", status="ACTIVE")
+    user = User(id="51af1c08-cd3a-5bbb-aa48-14c0bd8207bf", email="nt@test.com", name="NT", status="ACTIVE")
     db.add(user)
-    db.flush()
-    conv = AIAssistantConversation(id=_NT_CONV_ID, user_id="u-nt", title="T")
+    db.flush()  # parent must land before the FK child (no ORM relationship to order it)
+    conv = AIAssistantConversation(id=_NT_CONV_ID, user_id="51af1c08-cd3a-5bbb-aa48-14c0bd8207bf", title="T")
     db.add(conv)
     db.flush()
     db.add(AIAssistantMessage(id=_NT_MSG_ID, conversation_id=_NT_CONV_ID, role="assistant", content="a"))
@@ -109,7 +101,7 @@ def notrace_message(db: Session) -> str:
 
 @pytest.fixture
 def api(db: Session, monkeypatch):
-    """TestClient wired to the sqlite session with a controllable permission gate."""
+    """TestClient wired to the blank Postgres session with a controllable permission gate."""
     from fastapi.testclient import TestClient
 
     import app.dependencies as deps

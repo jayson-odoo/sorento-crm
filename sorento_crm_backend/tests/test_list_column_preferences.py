@@ -2,15 +2,14 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from app.main import app  # import first: fully initialises app before app.dependencies
 from app.dependencies import get_current_user, get_db
+from app.main import app
 from app.models.user import (
     User,
     UserPermission,
     UserRole,
     UserRoleAssignment,
     UserRolePermission,
-    UserListColumnConfig,
 )
 from tests._pg_fixture import blank_session
 
@@ -75,7 +74,7 @@ def _seed_rbac_and_user(db: Session, *, user_id: str, permission_slug: str, role
 @pytest.fixture
 def api_client():
     with blank_session() as db:
-        current_user = {'id': 'u1'}
+        current_user = {'id': '82dce68d-596c-5265-9263-07b67db11d44'}
 
         def _override_current_user():
             return {'id': current_user['id']}
@@ -86,18 +85,17 @@ def api_client():
         app.dependency_overrides[get_current_user] = _override_current_user
         app.dependency_overrides[get_db] = _override_get_db
 
-        try:
-            with TestClient(app) as client:
-                yield client, current_user, db
-        finally:
-            app.dependency_overrides.clear()
+        with TestClient(app) as client:
+            yield client, current_user, db
+
+        app.dependency_overrides.clear()
 
 
 def test_list_column_config_upsert_and_reset(api_client):
     client, current_user, db = api_client
 
     perm_slug = 'test.orders.view'
-    _seed_rbac_and_user(db, user_id='u1', permission_slug=perm_slug, role_id='r1')
+    _seed_rbac_and_user(db, user_id='82dce68d-596c-5265-9263-07b67db11d44', permission_slug=perm_slug, role_id='r1')
 
     listing_key = f'{perm_slug}::orders-list'
 
@@ -132,7 +130,7 @@ def test_list_column_config_denied_without_permission(api_client):
     client, _, db = api_client
 
     # User has perm A, tries perm B (permission B exists but is not granted).
-    _seed_rbac_and_user(db, user_id='u1', permission_slug='test.a.view', role_id='r1')
+    _seed_rbac_and_user(db, user_id='82dce68d-596c-5265-9263-07b67db11d44', permission_slug='test.a.view', role_id='r1')
     db.add(UserPermission(id='perm_test.b.view', slug='test.b.view', name='Test perm', description=''))
     db.commit()
 
@@ -145,8 +143,8 @@ def test_list_column_config_per_user_isolation(api_client):
     client, current_user, db = api_client
 
     perm_slug = 'test.products.view'
-    _seed_rbac_and_user(db, user_id='u1', permission_slug=perm_slug, role_id='r1')
-    _seed_rbac_and_user(db, user_id='u2', permission_slug=perm_slug, role_id='r2')
+    _seed_rbac_and_user(db, user_id='82dce68d-596c-5265-9263-07b67db11d44', permission_slug=perm_slug, role_id='r1')
+    _seed_rbac_and_user(db, user_id='ebdb3d1e-acb7-529d-a515-1c38f77c73fa', permission_slug=perm_slug, role_id='r2')
 
     listing_key = f'{perm_slug}::products-list'
 
@@ -156,11 +154,11 @@ def test_list_column_config_per_user_isolation(api_client):
         'columnVisibility': { 'code': True },
     }
 
-    current_user['id'] = 'u1'
+    current_user['id'] = '82dce68d-596c-5265-9263-07b67db11d44'
     r1 = client.put(f'/api/v1/list-query/column-config/{listing_key}', json=payload)
     assert r1.status_code == 200
 
-    current_user['id'] = 'u2'
+    current_user['id'] = 'ebdb3d1e-acb7-529d-a515-1c38f77c73fa'
     r2 = client.get(f'/api/v1/list-query/column-config/{listing_key}')
     assert r2.status_code == 200
     assert r2.json()['config'] is None
@@ -170,11 +168,11 @@ def test_list_column_config_allows_when_permission_slug_unknown(api_client):
     client, current_user, db = api_client
 
     # Ensure we have a user row; the permission slug won't exist in RBAC catalog.
-    user = User(id='u1', email='u1@test.com', status='ACTIVE', name='User')
+    user = User(id='82dce68d-596c-5265-9263-07b67db11d44', email='u1@test.com', status='ACTIVE', name='User')
     db.add(user)
     db.commit()
 
-    current_user['id'] = 'u1'
+    current_user['id'] = '82dce68d-596c-5265-9263-07b67db11d44'
     listing_key = 'nonexistent.permission.slug::x'
 
     r = client.get(f'/api/v1/list-query/column-config/{listing_key}')

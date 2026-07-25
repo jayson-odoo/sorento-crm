@@ -6,9 +6,7 @@ Covers ``app/services/ai_trace.py``:
 - flush being best-effort (never raising on a broken session),
 - ``sweep_expired_traces`` retention buckets (ok vs error/flagged TTLs).
 
-Everything runs against a blank copy of the real Postgres schema, so the column
-types, NOT NULLs and foreign keys are production's rather than sqlite's
-approximations of them.
+Everything runs against a blank Postgres schema, rolled back at teardown.
 """
 from __future__ import annotations
 
@@ -39,12 +37,6 @@ from tests._pg_fixture import blank_session
 
 @pytest.fixture
 def db() -> Session:
-    """A blank Postgres schema, rolled back after the test.
-
-    Was an in-memory sqlite engine over a hand-listed subset of tables, with
-    JSONB/ARRAY compiled down to TEXT. The blank schema carries every table, so
-    the defensive listener-table list is no longer needed either.
-    """
     with blank_session() as session:
         yield session
 
@@ -52,6 +44,8 @@ def db() -> Session:
 # UUID-typed columns (conversation/message/trace/span ids) reject non-UUID
 # strings on read-back — use valid UUIDs. User.id is a String PK, so a plain
 # slug is fine there.
+# Must contain hex letters — SQLite's NUMERIC affinity coerces all-digit
+# hyphenated strings to floats on read-back.
 _CONV_ID = "0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d"
 _MSG_ID = "1b2c3d4e-5f6a-7b8c-9d0e-1f2a3b4c5d6e"
 
@@ -59,14 +53,10 @@ _MSG_ID = "1b2c3d4e-5f6a-7b8c-9d0e-1f2a3b4c5d6e"
 @pytest.fixture
 def message(db: Session) -> AIAssistantMessage:
     """A committed assistant message the trace can FK onto."""
-    # Flushed in two stages: AIAssistantConversation declares an FK to users but
-    # no ORM relationship, so the unit of work has no dependency edge and orders
-    # the mappers by table name -- conversations before users. sqlite did not
-    # enforce the FK, so a single add_all() worked there; Postgres rejects it.
-    user = User(id="u-trace", email="trace@test.com", name="Trace User", status="ACTIVE")
+    user = User(id="7c795c3a-ade7-5a82-bf9a-aacee7e6a5b8", email="trace@test.com", name="Trace User", status="ACTIVE")
     db.add(user)
-    db.flush()
-    conv = AIAssistantConversation(id=_CONV_ID, user_id="u-trace", title="T")
+    db.flush()  # parent must land before the FK child (no ORM relationship to order it)
+    conv = AIAssistantConversation(id=_CONV_ID, user_id="7c795c3a-ade7-5a82-bf9a-aacee7e6a5b8", title="T")
     db.add(conv)
     db.flush()
     msg = AIAssistantMessage(
@@ -150,7 +140,7 @@ def test_truncate_payload_non_serializable_falls_back_to_envelope():
 
 
 def _build_trace() -> TurnTrace:
-    tt = TurnTrace(user_id="u-trace", conversation_id=_CONV_ID, session_id="s-1", env="test")
+    tt = TurnTrace(user_id="7c795c3a-ade7-5a82-bf9a-aacee7e6a5b8", conversation_id=_CONV_ID, session_id="s-1", env="test")
     tt.add_llm_span(
         name="chat gpt-4o",
         model="gpt-4o",

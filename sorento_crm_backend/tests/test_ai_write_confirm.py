@@ -3,7 +3,7 @@
 Covers PLAN-ai-assistant-evals-guardrails §11 U7: a write tool NEVER executes
 without an explicit Confirm. These test the deterministic gate mechanism
 (summarize / serve-prompt / load / resolve), NOT the LLM that decides to call a
-write tool. Offline, CI-safe.
+write tool. Offline + blank Postgres schema, CI-safe.
 """
 from __future__ import annotations
 
@@ -26,13 +26,10 @@ def db_session() -> Session:
 
 @pytest.fixture
 def conv(db_session: Session):
-    user = User(id="u-1", email="u1@test.com", name="U", status="ACTIVE")
+    user = User(id="95709c37-0fb4-5c00-8686-536c019e6fb7", email="u1@test.com", name="U", status="ACTIVE")
     db_session.add(user)
-    # Flush the user before the conversation references it. There is no ORM
-    # relationship between the two, so the unit of work will not order these
-    # inserts for us, and Postgres enforces the FK that sqlite ignored.
-    db_session.flush()
-    c = AIAssistantConversation(user_id="u-1", title="t")
+    db_session.flush()  # parent must land before the FK child (no ORM relationship to order it)
+    c = AIAssistantConversation(user_id="95709c37-0fb4-5c00-8686-536c019e6fb7", title="t")
     db_session.add(c)
     db_session.commit()
     return c
@@ -53,7 +50,7 @@ _TICKET_ARGS = {
     "space_id": "",
     "contact_id": "",
     "payload_json": '{"title": "Broken printer L3", "priority": "high", '
-    '"actor_user_id": "u-1", "source_conversation_id": "c1"}',
+    '"actor_user_id": "95709c37-0fb4-5c00-8686-536c019e6fb7", "source_conversation_id": "c1"}',
 }
 
 
@@ -147,7 +144,7 @@ def test_confirm_executes_and_reports(svc, conv, monkeypatch):
     _serve(svc, conv)
     pending = svc._load_pending_confirmation(conv.id)
     _c, msg = svc._resolve_pending_confirmation(
-        conv=conv, user_id="u-1", config=_CFG,
+        conv=conv, user_id="95709c37-0fb4-5c00-8686-536c019e6fb7", config=_CFG,
         pending=pending, action="confirm", request_started=0.0,
     )
     # The stored write actually ran, exactly once, with the stored args.
@@ -168,7 +165,7 @@ def test_cancel_does_not_execute(svc, conv, monkeypatch):
     _serve(svc, conv)
     pending = svc._load_pending_confirmation(conv.id)
     _c, msg = svc._resolve_pending_confirmation(
-        conv=conv, user_id="u-1", config=_CFG,
+        conv=conv, user_id="95709c37-0fb4-5c00-8686-536c019e6fb7", config=_CFG,
         pending=pending, action="cancel", request_started=0.0,
     )
     assert fake.calls == []  # NO write on cancel
@@ -185,7 +182,7 @@ def test_double_confirm_is_idempotent(svc, conv, monkeypatch):
     _serve(svc, conv)
     pending = svc._load_pending_confirmation(conv.id)
     svc._resolve_pending_confirmation(
-        conv=conv, user_id="u-1", config=_CFG,
+        conv=conv, user_id="95709c37-0fb4-5c00-8686-536c019e6fb7", config=_CFG,
         pending=pending, action="confirm", request_started=0.0,
     )
     # A second Confirm click finds nothing pending → cannot double-write.
@@ -212,7 +209,7 @@ def test_confirm_denied_when_user_lacks_permission(svc, conv, monkeypatch):
     svc._serve_pending_confirmation(conv=conv, config=_CFG, pending=pending, request_started=0.0)
     loaded = svc._load_pending_confirmation(conv.id)
     _c, msg = svc._resolve_pending_confirmation(
-        conv=conv, user_id="u-1", config=_CFG,
+        conv=conv, user_id="95709c37-0fb4-5c00-8686-536c019e6fb7", config=_CFG,
         pending=loaded, action="confirm", request_started=0.0,
     )
     assert fake.calls == []  # NO write when unauthorized
@@ -236,7 +233,7 @@ def test_confirm_allowed_when_user_has_permission(svc, conv, monkeypatch):
     svc._serve_pending_confirmation(conv=conv, config=_CFG, pending=pending, request_started=0.0)
     loaded = svc._load_pending_confirmation(conv.id)
     _c, msg = svc._resolve_pending_confirmation(
-        conv=conv, user_id="u-1", config=_CFG,
+        conv=conv, user_id="95709c37-0fb4-5c00-8686-536c019e6fb7", config=_CFG,
         pending=loaded, action="confirm", request_started=0.0,
     )
     assert fake.calls == [("crm_complaint_close", {"complaint_id": "cmp-1"})]
@@ -255,7 +252,7 @@ def test_confirm_reports_failure_without_crashing(svc, conv, monkeypatch):
     _serve(svc, conv)
     pending = svc._load_pending_confirmation(conv.id)
     _c, msg = svc._resolve_pending_confirmation(
-        conv=conv, user_id="u-1", config=_CFG,
+        conv=conv, user_id="95709c37-0fb4-5c00-8686-536c019e6fb7", config=_CFG,
         pending=pending, action="confirm", request_started=0.0,
     )
     assert msg.metadata_json["pending_confirmation"]["status"] == "failed"

@@ -23,14 +23,12 @@ import uuid
 import bcrypt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import MetaData, create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-from app.database import Base, get_db
+from app.database import get_db
 from app.main import app
 from app.models.user import User
-from tests._sqlite_compat import create_all_sqlite_safe
+from tests._pg_fixture import blank_session
 
 PASSWORD = "correct-horse-battery-staple"
 
@@ -41,33 +39,27 @@ def _hash(pw: str) -> str:
 
 @pytest.fixture()
 def client():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    # Login resolves the user's roles too, so more than `users` has to exist.
-    # Skip the `scm.*` tables — sqlite has no schemas and would raise
-    # "unknown database scm"; nothing on the login path touches them.
-    public_only = MetaData()
-    for table in Base.metadata.sorted_tables:
-        if table.schema is None:
-            table.to_metadata(public_only)
-    create_all_sqlite_safe(public_only, engine)
-    TestingSession = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+    # A blank copy of the full Postgres schema, rolled back at teardown. Login
+    # resolves the user's roles too, so more than `users` has to exist -- the
+    # blank schema has every table, so nothing needs listing by hand.
+    with blank_session() as db:
+        bind = db.get_bind()
 
-    def _override():
-        db = TestingSession()
-        try:
+        # Helper writes go through their own Session on the SAME connection, so
+        # they share the outer transaction (and its search_path) and the route --
+        # which reads via the get_db override below -- sees them. create_savepoint
+        # keeps their commits scoped to the discarded outer transaction.
+        def _session_factory() -> Session:
+            return Session(bind=bind, join_transaction_mode="create_savepoint")
+
+        def _override():
             yield db
-        finally:
-            db.close()
 
-    app.dependency_overrides[get_db] = _override
-    with TestClient(app) as c:
-        c._session_factory = TestingSession  # type: ignore[attr-defined]
-        yield c
-    app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides[get_db] = _override
+        with TestClient(app) as c:
+            c._session_factory = _session_factory  # type: ignore[attr-defined]
+            yield c
+        app.dependency_overrides.pop(get_db, None)
 
 
 def _make_user(client, *, email: str, password: str = PASSWORD, status: str = "ACTIVE"):

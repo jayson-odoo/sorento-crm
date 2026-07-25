@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.models.access import RespondContact
+from app.models.access import AccessAgent, RespondContact
 from app.models.sla import (
     SLAPolicy,
     SLAPolicyTier,
@@ -112,14 +112,12 @@ def test_form_escalate_snapshots_prior_owner(db):
     from app.services import coverage_subscription_service as cov_mod
     from app.services.form_sla_service import FormSLAOrchestrator
 
-    from app.models.access import AccessAgent
-
     prev = _user(db, "form_prev")
     nxt = _user(db, "form_next")
     pid = _policy_with_tiers(db)
-    # Postgres enforces the agent FK -- seed a real parent AccessAgent.
+    # agent_id FKs to access_agents -- Postgres enforces it, so seed the parent.
     agent_id = str(uuid.uuid4())
-    db.add(AccessAgent(id=agent_id, code=f"zzt-{uuid.uuid4().hex[:8]}", name="Agent"))
+    db.add(AccessAgent(id=agent_id, code=f"AG-{agent_id[:6]}", name="Agent"))
     db.commit()
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     tid = str(uuid.uuid4())
@@ -130,7 +128,7 @@ def test_form_escalate_snapshots_prior_owner(db):
         assigned_to_id=prev,
         due_at=now,
         source_entity_type="complaint",
-        source_entity_id="complaint-1",
+        source_entity_id="1378f157-23bd-5ed3-8dd5-51b64b8a108d",
         agent_id=agent_id,
         team_set_code=None,
     ))

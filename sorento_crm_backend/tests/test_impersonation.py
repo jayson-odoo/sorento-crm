@@ -50,12 +50,12 @@ def api():
         member_role = _seed_role(db, role_id="r_member", slug="member")
         db.commit()
 
-        admin = _seed_user(db, user_id="admin1", email="admin1@test.com", role_id=admin_role.id)
-        target = _seed_user(db, user_id="user1", email="user1@test.com", role_id=member_role.id)
-        other_admin = _seed_user(db, user_id="admin2", email="admin2@test.com", role_id=admin_role.id)
+        admin = _seed_user(db, user_id="22f43cd5-cfe1-5bd1-9197-ed029698989d", email="admin1@test.com", role_id=admin_role.id)
+        target = _seed_user(db, user_id="a1cb11f1-0c6e-5ec2-99aa-48ca3cc1a35e", email="user1@test.com", role_id=member_role.id)
+        other_admin = _seed_user(db, user_id="5f796e60-982f-5377-92ea-6a1e43e1f82f", email="admin2@test.com", role_id=admin_role.id)
         inactive = _seed_user(
             db,
-            user_id="user2",
+            user_id="234ff7d4-064f-5cda-90d5-48148bfc6954",
             email="user2@test.com",
             role_id=member_role.id,
             status="INACTIVE",
@@ -89,19 +89,18 @@ def api():
         app.dependency_overrides[get_current_user] = _override_real_user
         app.dependency_overrides[get_db] = _override_get_db
 
-        try:
-            with TestClient(app) as client:
-                yield {
-                    "client": client,
-                    "db": db,
-                    "admin": admin,
-                    "target": target,
-                    "other_admin": other_admin,
-                    "inactive": inactive,
-                    "state": state,
-                }
-        finally:
-            app.dependency_overrides.clear()
+        with TestClient(app) as client:
+            yield {
+                "client": client,
+                "db": db,
+                "admin": admin,
+                "target": target,
+                "other_admin": other_admin,
+                "inactive": inactive,
+                "state": state,
+            }
+
+        app.dependency_overrides.clear()
 
 
 def test_start_requires_admin(api):
