@@ -102,9 +102,16 @@ class TestIntegrationRecord:
             db.flush()
 
     def test_collides_with_the_seeded_integrations_too(self, db):
-        # Worth stating on Postgres: the uniqueness that matters in practice is
-        # against the rows migration 297 already created, not against a name the
-        # test invented. On sqlite the table was empty and this was unprovable.
+        # The uniqueness that matters in practice is against the "n8n" row
+        # migration 297 seeds, not a name the test invented. Seed it here if the
+        # data seed has not run: a schema built from the ORM models (CI, fresh
+        # installs) stamps alembic at head WITHOUT running the migration bodies,
+        # so "n8n" may be absent. On sqlite the table was empty and this was
+        # unprovable either way.
+        if db.query(Integration).filter_by(name="n8n").first() is None:
+            _integration(db, name="n8n")
+            db.flush()
+
         with pytest.raises(Exception):
             _integration(db, name="n8n")
             db.flush()

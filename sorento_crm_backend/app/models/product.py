@@ -23,7 +23,7 @@ class ProductCategory(Base):
     category_name = Column(String(150), nullable=False)
     description = Column(Text, nullable=True)
     parent_category_id = Column(UUID(as_uuid=False), ForeignKey("product_categories.id", ondelete="SET NULL"), nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     display_order = Column(Integer, default=0, nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
@@ -49,7 +49,7 @@ class Brand(Base):
     website = Column(String(255), nullable=True)
     description = Column(Text, nullable=True)
     logo_url = Column(String(255), nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     # Visibility codes overlapping `contact_access_types.code`. Used by the
     # resolver's promotion-domain product fallback to scope product search to
     # brands the active contact can see. Default mirrors the Attachment +
@@ -76,7 +76,7 @@ class UnitOfMeasure(Base):
     base_uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True)
     conversion_factor = Column(Numeric(10, 4), nullable=True)
     description = Column(Text, nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     
@@ -124,11 +124,11 @@ class Product(Base):
     dimensions_width = Column(Numeric(10, 2), nullable=True)
     dimensions_height = Column(Numeric(10, 2), nullable=True)
     warranty_months = Column(Integer, nullable=True)
-    has_serial_tracking = Column(Boolean, default=False, nullable=False)
-    has_batch_tracking = Column(Boolean, default=False, nullable=False)
+    has_serial_tracking = Column(Boolean, default=False, server_default=text("false"), nullable=False)
+    has_batch_tracking = Column(Boolean, default=False, server_default=text("false"), nullable=False)
     reorder_level = Column(Integer, nullable=True)
     reorder_quantity = Column(Integer, nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False)
+    is_active = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     is_discontinued = Column(Boolean, default=False, nullable=False, server_default="false")
     # Discontinued-notification watermark. NULL = not yet reported by the batch cron
     # (cron-eligible while is_discontinued is True). Stamped with the run time when a

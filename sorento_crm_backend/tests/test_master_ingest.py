@@ -119,10 +119,13 @@ class TestCreateAndUpdate:
     def test_adopts_an_existing_record_matched_by_business_code(self, db, svc):
         # First sync against a record that already exists locally. Creating a
         # duplicate under a new id would be far worse than adopting it.
+        # is_active set explicitly: warehouses.is_active has a Python-side
+        # default only, so this raw INSERT would leave it NULL on a schema built
+        # from the ORM models (bootstrap_env -- CI and fresh installs).
         db.execute(
             text(
-                "INSERT INTO warehouses (id, warehouse_code, warehouse_name) "
-                "VALUES (:i, 'ZZT-WH-01', 'Existing')"
+                "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active) "
+                "VALUES (:i, 'ZZT-WH-01', 'Existing', true)"
             ),
             {"i": str(uuid.uuid4())},
         )

@@ -260,10 +260,13 @@ class TestDryRun:
         happens, exactly which hand-entered values are about to be replaced.
         """
         code = unique_code("WH")
+        # is_active set explicitly: it has a Python-side default only, so a raw
+        # INSERT leaves it NULL on a schema built from the ORM models
+        # (bootstrap_env -- CI and fresh installs).
         db.execute(
             text(
-                "INSERT INTO warehouses (id, warehouse_code, warehouse_name, location) "
-                "VALUES (:i, :c, 'Hand Entered', 'Level 3')"
+                "INSERT INTO warehouses (id, warehouse_code, warehouse_name, location, is_active) "
+                "VALUES (:i, :c, 'Hand Entered', 'Level 3', true)"
             ),
             {"i": str(uuid.uuid4()), "c": code},
         )

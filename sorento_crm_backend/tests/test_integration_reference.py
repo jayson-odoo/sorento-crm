@@ -59,24 +59,35 @@ def _refs(db):
 
 
 def _product(db, pid=None):
-    """A real product row, with the two NOT NULL parents it requires."""
+    """A real product row, with the two NOT NULL parents it requires.
+
+    is_active is set explicitly: the model declares a Python-side default only,
+    not a server_default, so a raw INSERT (as opposed to an ORM add) leaves it
+    NULL. The local prod-copy DB happens to carry a migration-added default and
+    forgave that; a schema built straight from the ORM models (bootstrap_env, so
+    CI and any fresh install) does not.
+    """
     pid = pid or uuid.uuid4()
     cat_id, uom_id = uuid.uuid4(), uuid.uuid4()
     db.execute(
         text(
-            "INSERT INTO product_categories (id, category_code, category_name) "
-            "VALUES (:i, :c, 'Test Category')"
+            "INSERT INTO product_categories (id, category_code, category_name, is_active) "
+            "VALUES (:i, :c, 'Test Category', true)"
         ),
         {"i": cat_id, "c": unique_code("CAT")},
     )
     db.execute(
-        text("INSERT INTO units_of_measure (id, uom_code, uom_name) VALUES (:i, :c, 'Each')"),
+        text(
+            "INSERT INTO units_of_measure (id, uom_code, uom_name, is_active) "
+            "VALUES (:i, :c, 'Each', true)"
+        ),
         {"i": uom_id, "c": unique_code("UOM")},
     )
     db.execute(
         text(
-            "INSERT INTO products (id, product_code, product_name, category_id, base_uom_id, list_price) "
-            "VALUES (:i, :c, 'Test Product', :cat, :uom, 0)"
+            "INSERT INTO products (id, product_code, product_name, category_id, base_uom_id, "
+            "list_price, is_active) "
+            "VALUES (:i, :c, 'Test Product', :cat, :uom, 0, true)"
         ),
         {"i": pid, "c": unique_code("PRD"), "cat": cat_id, "uom": uom_id},
     )
@@ -95,13 +106,17 @@ def _integration(db):
 
 
 def _order(db):
-    oid = uuid.uuid4()
-    db.execute(
-        text("INSERT INTO orders (id, order_number) VALUES (:i, :n)"),
-        {"i": oid, "n": unique_code("ORD")},
-    )
+    # Insert via the ORM, not raw SQL: orders carries a dozen NOT NULL columns
+    # whose defaults are Python-side only (is_cancelled, kpi_warning, the amount
+    # totals, ...). A raw INSERT skips them and fails on a schema built straight
+    # from the ORM models (bootstrap_env -- CI and fresh installs); the ORM
+    # applies every default.
+    from app.models.order import Order
+
+    oid = str(uuid.uuid4())
+    db.add(Order(id=oid, order_number=unique_code("ORD")))
     db.flush()
-    return str(oid)
+    return oid
 
 
 class TestEntityTypeAllowlist:
