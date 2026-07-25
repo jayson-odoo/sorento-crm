@@ -80,6 +80,21 @@ def blank_schema_engine():
         )
         with scoped.connect() as connection:
             Base.metadata.create_all(connection, checkfirst=False)
+            # Multi-company: the blank schema is built from create_all (schema only,
+            # no data migrations), so ``companies`` is empty. But conftest defaults an
+            # absent scope to the Sorento company, so every owned insert auto-stamps
+            # ``company_id = Sorento`` and would violate the companies FK. Seed the
+            # fixed Sorento row (mirrors migration 302's seed) so owned inserts resolve.
+            from app.models.company import Company
+
+            connection.execute(
+                Company.__table__.insert().values(
+                    id="00000000-0000-0000-0000-000000000001",
+                    name="Sorento",
+                    code="SRT",
+                    is_active=True,
+                )
+            )
             connection.commit()
 
         _BLANK["engine"] = scoped
