@@ -223,57 +223,10 @@ def test_escalate_tracking_without_assignee_keeps_existing():
 
 @pytest.fixture
 def sqlite_db():
-    import uuid as _uuid
+    from tests._pg_fixture import blank_session
 
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
-
-    from app.database import Base
-    from app.models.access import RespondContact
-    from app.models.lookup import LookupBinding  # validator listener checks this table
-    from app.models.sla import (
-        ConversationSLAEventLog,
-        ConversationSLATracking,
-        SLAPolicy,
-        SLAPolicyTier,
-    )
-    from app.models.user import User
-
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    # RespondContact.session_vars is JSONB with a pg-specific server_default;
-    # swap both out so SQLite can render the DDL.
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for col in list(RespondContact.__table__.columns):
-        if isinstance(col.type, JSONB):
-            col.type = GenericJSON()
-            col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            SLAPolicy.__table__,
-            SLAPolicyTier.__table__,
-            ConversationSLATracking.__table__,
-            ConversationSLAEventLog.__table__,
-            RespondContact.__table__,
-            User.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 def _insert_row(

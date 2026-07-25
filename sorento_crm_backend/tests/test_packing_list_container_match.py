@@ -12,67 +12,47 @@ import uuid
 from datetime import date
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.procurement import (
-    InboundShipment,
-    InboundShipmentLine,
-    SPOAllocation,
-    PickingHeader,
-    PickingLine,
-)
-from app.models.product import Product
+from app.models.procurement import InboundShipment
+from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.resources import Attachment
 from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCreate
 from app.services.procurement_service import InboundShipmentService
-
-
-@compiles(JSONB, "sqlite")
-def _jsonb_as_json_on_sqlite(_element, _compiler, **_kw):
-    return "JSON"
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            Product.__table__,
-            Attachment.__table__,
-            InboundShipment.__table__,
-            InboundShipmentLine.__table__,
-            SPOAllocation.__table__,
-            PickingHeader.__table__,
-            PickingLine.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    """A blank Postgres schema, rolled back after the test.
+
+    Was in-memory sqlite with a JSONB->JSON compile shim and a hand-listed subset
+    of tables. The real schema needs neither.
+    """
+    with blank_session() as session:
+        yield session
 
 
 def _product(db, code: str) -> str:
+    """A product plus the category/UOM rows its NOT NULL FKs require.
+
+    On sqlite these two FKs were satisfied with throwaway random UUIDs, since
+    sqlite did not enforce them. Postgres does, so the parents are real rows.
+    """
     pid = str(uuid.uuid4())
+    category_id = str(uuid.uuid4())
+    uom_id = str(uuid.uuid4())
+    db.add(
+        ProductCategory(id=category_id, category_code=f"CAT-{code}", category_name=f"Cat {code}")
+    )
+    db.add(UnitOfMeasure(id=uom_id, uom_code=f"UOM-{code}", uom_name=f"Uom {code}"))
+    db.flush()
     db.add(
         Product(
             id=pid,
             product_code=code,
             product_name=code,
-            category_id=str(uuid.uuid4()),
-            base_uom_id=str(uuid.uuid4()),
+            category_id=category_id,
+            base_uom_id=uom_id,
             list_price=0,
             is_active=True,
         )

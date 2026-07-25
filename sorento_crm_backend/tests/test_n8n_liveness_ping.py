@@ -1,22 +1,15 @@
 """n8n liveness probe — run_n8n_liveness_ping (System Health WS1d).
 
-Service-level unit test over a sqlite fixture. The outbound webhook send is
-mocked (IntegrationLogService.send_webhook_for_log) so no real HTTP fires; we
+Service-level unit test over an empty Postgres schema. The outbound webhook send
+is mocked (IntegrationLogService.send_webhook_for_log) so no real HTTP fires; we
 assert the probe seeds a healthcheck integration_log carrying its own id and
 returns the small run-log dict.
 """
 import json
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.types import JSON
 
-from app.database import Base
 from app.models.integration import IntegrationLog
-from app.models.lookup import LookupBinding
 from app.services import n8n_liveness_service as mod
 from app.services.integration_service import IntegrationLogService
 from app.services.n8n_liveness_service import (
@@ -24,30 +17,21 @@ from app.services.n8n_liveness_service import (
     HEALTHCHECK_CHANNEL,
     run_n8n_liveness_ping,
 )
-
-
-def _prep(*models):
-    for model in models:
-        for col in model.__table__.columns:
-            if isinstance(col.type, (JSONB, ARRAY)):
-                col.type = JSON()
-                col.server_default = None
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    _prep(IntegrationLog, LookupBinding)
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine, tables=[IntegrationLog.__table__, LookupBinding.__table__]
-    )
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    """Empty Postgres schema over the full real DDL.
+
+    The sqlite version had to rewrite every JSONB/ARRAY column to JSON and null
+    its server_default first. That edit was to the shared model metadata, so it
+    persisted process-wide and silently changed those columns for whatever ran
+    afterwards. On Postgres the real types compile, so it is gone -- along with
+    the leak. Blank rather than live because both tests count all rows.
+    """
+    with blank_session() as session:
+        yield session
 
 
 def test_ping_seeds_healthcheck_log_and_returns_sent(db, monkeypatch):

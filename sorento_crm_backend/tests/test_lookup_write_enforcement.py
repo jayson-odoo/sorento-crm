@@ -1,7 +1,6 @@
 import uuid
 import pytest
-from sqlalchemy import Column, String, create_engine, event
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import Column, String
 
 from app.database import Base
 from app.schemas.lookup import LookupSetCreate, LookupOptionCreate, LookupBindingCreate
@@ -12,6 +11,7 @@ from app.services.lookup_eligibility import _REGISTRY, register_lookup_eligible
 from app.services.lookup_write_listener import register_lookup_write_listeners
 from app.services.lookup_validator import _cache_clear
 from app.services.error_handler import AppException
+from tests._pg_fixture import blank_session
 
 
 class FakeLookupTarget(Base):
@@ -23,29 +23,17 @@ class FakeLookupTarget(Base):
 
 @pytest.fixture
 def db_session():
-    from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
-    engine = create_engine("sqlite:///:memory:")
+    """Empty Postgres schema over the full real DDL.
 
-    @event.listens_for(engine, "connect")
-    def _enable_fk(dbapi_connection, connection_record):
-        cur = dbapi_connection.cursor()
-        cur.execute("PRAGMA foreign_keys=ON")
-        cur.close()
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            LookupSet.__table__, LookupOption.__table__,
-            LookupOptionKeyword.__table__, LookupBinding.__table__,
-            FakeLookupTarget.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    FakeLookupTarget is declared in this module, so whether the shared blank
+    schema already carries it depends on import ordering. Creating it here with
+    checkfirst is order-independent: a no-op when collection registered it in
+    time, and the DDL otherwise. It is transactional either way, so the outer
+    rollback discards it.
+    """
+    with blank_session() as session:
+        FakeLookupTarget.__table__.create(session.get_bind(), checkfirst=True)
         yield session
-    finally:
-        session.close()
 
 
 @pytest.fixture(autouse=True)
@@ -83,18 +71,19 @@ def test_listener_allows_known(db_session):
 def test_update_of_unrelated_column_does_not_revalidate_legacy_value(db_session):
     """Regression: updating an unrelated column must NOT re-validate an unchanged
     lookup column that holds a legacy value predating its binding."""
-    from sqlalchemy import text
-
     s = LookupSetService(db_session).create(LookupSetCreate(set_key="fs", name="F"))
     LookupOptionService(db_session).create(s.id, LookupOptionCreate(value="open", label="Open"))
     LookupBindingService(db_session).create(s.id, LookupBindingCreate(
         table_name="fake_lookup_target", column_name="status"))
 
-    # Seed a row with an invalid (legacy) status via raw SQL, bypassing the listener.
+    # Seed a row with an invalid (legacy) status, bypassing the listener --
+    # which is a mapper-level ORM hook, so a Core insert sidesteps it just as
+    # the raw SQL string this replaced did. Expressed as a Table insert rather
+    # than text() because the blank schema is reached via schema_translate_map,
+    # and that rewrites Table constructs only, never a literal SQL string.
     rid = str(uuid.uuid4())
     db_session.execute(
-        text("INSERT INTO fake_lookup_target (id, status, note) VALUES (:id, 'legacy_bad', NULL)"),
-        {"id": rid},
+        FakeLookupTarget.__table__.insert().values(id=rid, status="legacy_bad", note=None)
     )
     db_session.commit()
 

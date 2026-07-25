@@ -1,6 +1,8 @@
 # AutoCount Integration (Sorento side) — User Acceptance Criteria
 
-> **Status:** DRAFT — contract for `documentation/plans/autocount/PLAN-autocount-integration.md`
+> **Status:** Group A **BUILT** (2026-07-21). Group D **BUILT** via a reference table rather
+> than per-table columns — see AC-AC-21/23 below. Remaining groups DRAFT.
+> Contract for `documentation/plans/autocount/PLAN-autocount-integration.md`
 > **Counterpart repo:** `foundryx-shared-service` → `documentation/plans/sprint-4/13-autocount-esb-acceptance-criteria.md`
 > **Read that first if you need the full picture.** This file is self-contained for the Sorento work.
 
@@ -67,19 +69,46 @@ companies' code spaces.
 **And** no code path uses `==`/`!=` on a secret.
 > `app/dependencies.py:546-582` currently does. Fix it.
 
-### AC-AC-05 `[BE]` Keys carry scopes and are permission-checked
-**Given** an integration scoped to `procurement:write` only
+### AC-AC-05 `[BE]` Every external endpoint enforces the caller's RBAC permissions
+**Given** an integration whose role lacks `master_data.products.edit`
 **When** it calls a masters-write endpoint
 **Then** the request is rejected `403`
-**And** every external endpoint enforces the caller's scopes.
-> `get_external_api_user` currently applies no permission check at all.
+**And** **all 17** `/external/*` endpoints enforce permissions against the integration's
+`act_as_user_id` via `require_permission_with_api_key`.
+> Revised 2026-07-21 (decisions A1/A3/A8). There is **no separate scope vocabulary** — RBAC slugs
+> are the single authorization source. `get_external_api_user` applies no permission check at all
+> today; that dependency is retired.
+
+### AC-AC-05a `[BE]` An integration acts as a real user
+**Given** any integration
+**When** it writes a record
+**Then** `created_by`/`updated_by` and the audit trail resolve to a real `users` row named for that
+integration
+**And** no code path passes the string `"system"` as a user id.
+> `get_external_api_user` currently returns a hardcoded fake `{"id": "system"}` matching no row.
+
+### AC-AC-05b `[BE]` Integration users cannot log in interactively
+**Given** an integration's user row
+**When** anyone attempts an interactive login as it
+**Then** the attempt fails
+**And** the row is flagged `is_integration`, distinct from `is_protected`.
+> `is_protected` already selects notification recipients (`automation_service.py:34`); overloading
+> it would silently enrol the ESB into automation emails.
 
 ### AC-AC-06 `[BE]` Rotation without downtime
 **Given** an active integration
 **When** its key is rotated
-**Then** a grace window accepts both old and new
-**And** the old key stops working when the window closes
+**Then** a grace window (**default 7 days**) accepts both old and new
+**And** the old key stops working when `expires_at` lapses, **evaluated at request time — no cron**
+**And** an admin can revoke the old key immediately rather than waiting out the window
 **And** both events are audit-logged.
+> The scheduler is opt-in and defaults off, so a cron-driven expiry would fail **open**.
+
+### AC-AC-06a `[BE]` Expiry is diagnosable
+**Given** a key whose grace window has lapsed
+**When** it is used
+**Then** the response carries a distinct `key_expired` code, not a generic invalid-key error
+**And** the old key's `last_used_at` is visible **before** expiry so migration can be confirmed.
 
 ### AC-AC-07 `[BE]` Credentials encrypted at rest
 **Given** any stored secret on an integration
@@ -95,20 +124,42 @@ companies' code spaces.
 **And** secret fields are masked with a reveal toggle
 **And** last-used timestamp and last error are visible.
 
-### AC-AC-09 `[BE]` Migration off the env key
-**Given** the existing `EXTERNAL_API_KEY` and its n8n callers
+### AC-AC-09 `[BE]` Migration off the env key — seeded once, no runtime fallback
+**Given** the existing `EXTERNAL_API_KEY`, shared by **n8n and the MCP server**
 **When** this group ships
-**Then** an integration record is seeded carrying the current key so n8n keeps working
-**And** the env var is marked deprecated with a removal date
-**And** no endpoint reads it directly once migration completes.
-> Existing n8n traffic must not break. This is a live system.
+**Then** a migration reads the env var **once, at migration time** and seeds a `legacy-shared-key`
+integration carrying its hash, so both callers keep working with **zero changes**
+**And** **no runtime code path ever reads the env var** — no dual-accept fallback is written
+**And** if the env var is absent the migration seeds nothing and logs loudly, never an empty hash.
+> Existing n8n traffic must not break. This is a live system. Revised 2026-07-21 (decision A6):
+> seeding the *hash of the same value* satisfies both "n8n keeps working" and "nothing reads env at
+> runtime", so AC-AC-01 and AC-AC-09 no longer conflict.
+
+### AC-AC-09a `[BE]` The MCP server gets its own integration
+**Given** `sorento_crm_mcp` authenticates with the same shared `EXTERNAL_API_KEY`
+**When** per-caller identity is established
+**Then** the MCP server has its **own** integration and key, distinct from n8n's
+**And** the read-only tool surface it fronts remains reachable.
+> n8n reaches MCP tools transitively via `sub-get-results`. Omitting this breaks that path.
+
+### AC-AC-09b `[BE]` The leaked production key is rotated
+**Given** the current key is a plaintext literal in ~40 n8n nodes (not an n8n credential)
+**When** per-caller keys are issued
+**Then** the shared key is rotated and the legacy integration revoked once its `last_used_at`
+goes quiet.
+> The 7-day grace window (AC-AC-06) exists because ~40 nodes must be edited.
 
 ### AC-AC-10 `[BE]` Rate limiting on external endpoints
 **Given** an integration exceeding its configured rate
 **When** it calls
 **Then** `429` with `Retry-After` is returned
-**And** the limit is per integration, not global.
-> `/external` has no rate limiting today.
+**And** the limit is per integration, not global
+**And** when the limiter backend is unavailable the request is **allowed** (fail-open) and an alert
+is raised.
+> `/external` has no rate limiting today. Fail-open matches `app/services/rate_limit.py`'s existing,
+> deliberate semantics (decision A7): rate limiting here is abuse control, not authorization — a
+> dead limiter grants no access, since authentication is DB-backed and still enforced. Fail-closed
+> would turn a Redis blip into a simultaneous ESB-sync and n8n outage.
 
 ---
 
@@ -184,13 +235,17 @@ Delivery Order (+lines), Goods Received Note (+lines).
 
 ## Group D — `source_system` / `source_ref`
 
-### AC-AC-21 `[BE]` Consumed tables carry source columns
-**Given** every table the ESB writes
-**When** the migration runs
-**Then** each has `source_system` (`manual`/`seed`/`autocount`) and `source_ref`
-**And** existing rows backfill to `manual`
-**And** a unique index supports lookup by `(source_system, source_ref)`.
-> Pattern already designed in `SCM_Module_Build_Plan.md`; extend beyond the SCM branch.
+### AC-AC-21 `[BE]` Consumed records carry a source system and reference
+**Given** every entity the ESB writes
+**When** a record is ingested
+**Then** an `integration_references` row maps `(entity_type, entity_id)` to
+`(source_system, source_ref)`
+**And** a unique index on `(source_system, entity_type, source_ref)` makes ingest idempotent
+**And** a unique index on `(entity_type, entity_id)` gives each record exactly one origin.
+> **Revised 2026-07-21 (built).** A mapping table, not columns on nine tables: those hold ~110k
+> rows, and columns would need nine migrations plus a backfill of rows carrying no information.
+> Entities: products, stock, warehouses, suppliers, customers, picking_headers, picking_lines,
+> orders, order_lines.
 
 ### AC-AC-22 `[BE]` `source_ref` holds AutoCount's stable key
 **Given** an AutoCount document with `DocKey` and `DocNo`
@@ -198,11 +253,14 @@ Delivery Order (+lines), Goods Received Note (+lines).
 **Then** `source_ref` holds the stable surrogate (`DocKey`), not the mutable `DocNo`
 **And** a renumbered document still resolves to the same Sorento row.
 
-### AC-AC-23 `[BE]` Backfill is a real migration, not seed-if-absent
+### AC-AC-23 `[BE]` No record is left ambiguous about its origin
 **Given** existing production rows
 **When** this ships
-**Then** a migration populates the new columns for rows that already exist
+**Then** absence of an `integration_references` row means the record was created locally
 **And** no row is left in a state that breaks a later sync.
+> **Revised 2026-07-21 (built).** The original wording required a backfill populating columns. With
+> a mapping table that would mean ~110k rows asserting "not from AutoCount", plus an invariant every
+> future manual create must maintain or silently break. Absence carries the same meaning at no cost.
 
 ---
 

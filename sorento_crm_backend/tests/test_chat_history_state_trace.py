@@ -21,19 +21,14 @@ from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Integer, create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.types import JSON as GenericJSON
 
 from app.main import app  # noqa: F401  (import first: app.dependencies alone is circular)
-from app.database import Base
 from app.dependencies import get_current_user_or_api_key, get_db, get_external_api_user
 from app.models.chat_history import ChatHistory
 from app.models.integration import IntegrationLog
-from app.models.lookup import LookupBinding
 from app.services import chat_history_query as svc
+from tests._external_auth import external_permissions_granted
+from tests._pg_fixture import blank_session
 
 RESPOND_IO_ID = "437264483"
 
@@ -53,27 +48,8 @@ TRACE = {
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    for table in (ChatHistory.__table__, IntegrationLog.__table__):
-        for col in table.columns:
-            if isinstance(col.type, JSONB):
-                col.type = GenericJSON()
-                col.server_default = None
-    ChatHistory.__table__.c.id.type = Integer()
-    Base.metadata.create_all(
-        engine,
-        tables=[ChatHistory.__table__, IntegrationLog.__table__, LookupBinding.__table__],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 @pytest.fixture
@@ -87,7 +63,11 @@ def client(db):
     app.dependency_overrides[get_external_api_user] = _user
     app.dependency_overrides[get_current_user_or_api_key] = _user
     app.dependency_overrides[get_db] = _db
-    yield TestClient(app)
+    # /external now enforces per-endpoint permissions (added on this branch), and
+    # this suite mocks the principal, so grant them explicitly. Enforcement
+    # itself is covered by test_external_permission_guard.
+    with external_permissions_granted():
+        yield TestClient(app)
     app.dependency_overrides.clear()
 
 

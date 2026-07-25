@@ -88,7 +88,7 @@ class ImportJobRow(Base):
     import that rolls back, and so a 4k-row file costs a handful of round trips.
 
     Job-tracking infrastructure like ``ImportJob``: deliberately NOT a
-    ``CompanyScopedMixin`` — it is never auto-filtered.
+    ``CompanyScopedMixin`` — it is never auto-filtered / business-partitioned.
     """
 
     __tablename__ = "import_job_rows"

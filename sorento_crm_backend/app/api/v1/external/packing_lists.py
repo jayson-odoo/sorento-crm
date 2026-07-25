@@ -153,8 +153,8 @@ def create_packing_list(
         ],
     )
 
-    # External API user has id "system" which is not a valid UUID; pass None for created_by when so
-    created_by = current_user["id"] if current_user.get("id") != "system" else None
+    # The integration's principal is a real users row, so attribution is recorded.
+    created_by = current_user["id"]
     service = InboundShipmentService(db)
     try:
         created = service.create_shipment(shipment, created_by=created_by)

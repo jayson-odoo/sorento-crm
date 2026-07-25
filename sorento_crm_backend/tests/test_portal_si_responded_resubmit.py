@@ -14,15 +14,12 @@ from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.portal import PortalToken
 from app.models.procurement import StockInquiry
 from app.services.error_handler import AppException
 from app.services.portal_service import PortalService
+from tests._pg_fixture import blank_session
 
 CONTACT_ID = "contact-abc"
 SPACE_ID = "space-1"
@@ -30,21 +27,8 @@ SPACE_ID = "space-1"
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[StockInquiry.__table__, PortalToken.__table__],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 def _token() -> PortalToken:

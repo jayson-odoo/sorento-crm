@@ -13,51 +13,19 @@ import uuid
 from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.types import JSON as GenericJSON
 
-from app.database import Base
 from app.models.access import RespondContact
-from app.models.lookup import LookupBinding
 from app.models.notification import Notification, NotificationDelivery
-from app.models.sla import ConversationSLATracking, ConversationSLAEventLog
+from app.models.sla import ConversationSLATracking, ConversationSLAEventLog, SLAPolicy
 from app.models.user import User, UserStatus
 from app.services.user_sla_daily_summary_service import run_user_sla_daily_summary
-
-
-def _sqlite_safe(*tables):
-    for t in tables:
-        for col in list(t.columns):
-            if isinstance(col.type, JSONB):
-                col.type = GenericJSON()
-                col.server_default = None
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    _sqlite_safe(
-        RespondContact.__table__, Notification.__table__, NotificationDelivery.__table__,
-        ConversationSLATracking.__table__, ConversationSLAEventLog.__table__,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            RespondContact.__table__, Notification.__table__, NotificationDelivery.__table__,
-            ConversationSLATracking.__table__, ConversationSLAEventLog.__table__,
-            User.__table__, LookupBinding.__table__,
-        ],
-    )
-    s = sessionmaker(bind=engine)()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 def _user(db, *, email_sub, wa_sub, with_contact):
@@ -78,9 +46,13 @@ def _user(db, *, email_sub, wa_sub, with_contact):
 def _add_outstanding(db, uid):
     """Give the user one unresolved conversation SLA tracker so the summary sends
     (the digest is skipped entirely when outstanding == 0)."""
+    # Postgres enforces the policy FK -- seed a real parent SLAPolicy first.
+    policy_id = str(uuid.uuid4())
+    db.add(SLAPolicy(id=policy_id, code=f"ZZT-{uuid.uuid4().hex[:8]}", name="Test"))
+    db.flush()
     db.add(ConversationSLATracking(
         id=str(uuid.uuid4()),
-        policy_id=str(uuid.uuid4()),
+        policy_id=policy_id,
         respond_contact_id=None,
         assigned_to_id=uid,
         current_tier=1,

@@ -325,6 +325,46 @@ def test_continuation_passes_draft_id(wired):
 
 
 # --------------------------------------------------------------------------- #
+# Continuity — caller-supplied session_vars is trusted over the DB copy        #
+# (the accumulation bug: n8n's last-writer PUT nests ideation under            #
+# `variables`, so the endpoint's top-level DB read missed it and minted a new  #
+# draft every turn). The fix: read the pointer from session_vars_in first.     #
+# --------------------------------------------------------------------------- #
+def test_caller_session_vars_continues_draft_when_db_copy_empty(wired):
+    # DB copy has NO ideation (n8n overwrote the column with its nested shape).
+    wired.set_session_vars({})
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    # n8n hands the prior pointer back on the request — top-level shape.
+    _turn(
+        message_text="department is general",
+        session_vars_in={
+            "ideation": {"draft_id": "d-1", "status": "collecting", "missing": ["department"]}
+        },
+    )
+    # core assertion: the existing draft continues (no fresh draft minted).
+    assert wired.payloads[0]["draft_id"] == "d-1"
+
+
+def test_caller_session_vars_nested_under_variables(wired):
+    # n8n's real persisted shape nests everything under `variables`.
+    wired.set_session_vars({})
+    wired.set_create_idea(
+        {"draft_id": "d-1", "status": "collecting", "captured": {}, "missing": [], "reply_text": "ok"}
+    )
+    _turn(
+        message_text="department is general",
+        session_vars_in={
+            "variables": {
+                "ideation": {"draft_id": "d-1", "status": "collecting", "missing": ["department"]}
+            }
+        },
+    )
+    assert wired.payloads[0]["draft_id"] == "d-1"
+
+
+# --------------------------------------------------------------------------- #
 # AC-13b — revise loop survives ≥3 turns keeping review                        #
 # --------------------------------------------------------------------------- #
 def test_revise_loop_survives_three_turns(wired):
@@ -542,7 +582,10 @@ def api_client(monkeypatch):
     app.dependency_overrides[get_db] = lambda: None
     app.dependency_overrides[get_external_api_user] = lambda: {"id": "system"}
     try:
-        yield TestClient(app), logs, monkeypatch
+        # Authorization is out of scope here (get_db is stubbed to None);
+        # enforcement is covered by test_external_permission_guard/_coverage.
+        with external_permissions_granted():
+            yield TestClient(app), logs, monkeypatch
     finally:
         app.dependency_overrides.clear()
 
@@ -584,6 +627,7 @@ def test_endpoint_logs_on_failure(api_client):
 # Group F — multi-modal capture (DC-1..DC-10)                                  #
 # --------------------------------------------------------------------------- #
 from app.services.ideation_media_service import MediaClients  # noqa: E402
+from tests._external_auth import external_permissions_granted
 
 
 def _stub_media_clients(caption="a sketch of an export button"):

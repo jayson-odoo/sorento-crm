@@ -3,37 +3,27 @@
 `import_excel_tracking` populates `customer_id` / `transporter_id` by routing each
 mapped row through `_sync_order_master_refs`, exactly like `create_order` /
 `update_order`. These tests pin that helper's find-or-create + idempotency +
-pair-match + FK re-point behavior against a real sqlite session.
+pair-match + FK re-point behavior against a real Postgres session.
 """
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
 
-from app.database import Base
 from app.models.order import Customer, Transporter
 from app.services.order_service import OrderService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture()
 def db():
-    engine = create_engine("sqlite:///:memory:")
+    """A blank Postgres schema, rolled back after the test.
 
-    # The upsert helpers key on `func.btrim(...)` (a Postgres builtin sqlite lacks).
-    @event.listens_for(engine, "connect")
-    def _register_btrim(dbapi_conn, _rec):
-        dbapi_conn.create_function(
-            "btrim", 1, lambda s: s.strip() if s is not None else None, deterministic=True
-        )
-
-    # Only the two master tables the helpers touch.
-    Base.metadata.create_all(engine, tables=[Customer.__table__, Transporter.__table__])
-    session = sessionmaker(bind=engine)()
-    try:
+    Was in-memory sqlite with a hand-registered `btrim` shim, because the upsert
+    helpers key on `func.btrim(...)` -- a Postgres builtin sqlite lacks. On the
+    real engine that is just the real function.
+    """
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 def _svc(db):

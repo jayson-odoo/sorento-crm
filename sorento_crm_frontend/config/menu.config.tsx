@@ -719,6 +719,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         superadminOnly: true,
       },
       {
+        title: 'Integrations',
+        path: '/integration-management/integrations',
+      },
+      {
         title: 'Integration Logs',
         path: '/integration-management/integration-logs',
         superadminOnly: true,
@@ -1563,6 +1567,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Activity Timeline',
         path: '/system-management/activity',
         superadminOnly: true,
+      },
+      {
+        title: 'Integrations',
+        path: '/integration-management/integrations',
       },
       {
         title: 'Integration Logs',

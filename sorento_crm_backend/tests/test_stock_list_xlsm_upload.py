@@ -15,12 +15,11 @@ import zipfile
 import pytest
 from fastapi.testclient import TestClient
 from openpyxl import Workbook, load_workbook
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 # MUST be first app import — resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
+from tests._pg_fixture import blank_session
 
 
 _USER_ID = "130c548f-048f-53b2-97a6-3a54676bea77"
@@ -79,84 +78,50 @@ class _FakeStorageBackend:
 @pytest.fixture
 def client(monkeypatch):
     from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
-    from app.models.user import User, UserRole, UserRoleAssignment
-    from app.models.resources import Attachment, AttachmentType
-    from app.models.lookup import LookupBinding  # validator listener checks this table
-    from app.models.embeddings import EmbeddingQueue  # change-listener inserts on Attachment create
-
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    # Swap JSONB columns to generic JSON so SQLite create_all works.
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for model in (Attachment, AttachmentType, EmbeddingQueue):
-        for col in list(model.__table__.columns):
-            if isinstance(col.type, JSONB):
-                col.type = GenericJSON()
-
-    from app.database import Base
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            User.__table__,
-            UserRole.__table__,
-            UserRoleAssignment.__table__,
-            AttachmentType.__table__,
-            Attachment.__table__,
-            LookupBinding.__table__,
-            EmbeddingQueue.__table__,
-        ],
-    )
-
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = SessionLocal()
-    _seed_user(db)
-    _seed_stock_list_type(db)
 
     # Storage + side-channel stubs: capture uploads, skip webhook + access-level lookups.
-    fake_backend = _FakeStorageBackend()
     import app.services.storage_router as storage_router
     import app.api.v1.resources.attachments as attachments_module
     from app.services.contact_access_type_service import ContactAccessTypeService
 
-    monkeypatch.setattr(storage_router, "default_provider", lambda: "s3")
-    monkeypatch.setattr(storage_router, "get_backend", lambda provider: fake_backend)
-    monkeypatch.setattr(
-        storage_router, "cdn_base_url", lambda provider, key: f"https://cdn.test/{key}"
-    )
-    monkeypatch.setattr(
-        attachments_module, "_create_and_send_webhook", lambda *a, **k: None
-    )
-    monkeypatch.setattr(
-        ContactAccessTypeService, "get_default_access_levels", lambda self: ["dealer"]
-    )
-    monkeypatch.setattr(
-        ContactAccessTypeService,
-        "validate_access_levels",
-        lambda self, levels, field_name="access_levels": list(levels),
-    )
+    with blank_session() as db:
+        _seed_user(db)
+        _seed_stock_list_type(db)
 
-    def _override_get_db():
-        yield db
+        fake_backend = _FakeStorageBackend()
 
-    def _override_current_user():
-        return {"id": _USER_ID, "email": "u1@test.com"}
+        monkeypatch.setattr(storage_router, "default_provider", lambda: "s3")
+        monkeypatch.setattr(storage_router, "get_backend", lambda provider: fake_backend)
+        monkeypatch.setattr(
+            storage_router, "cdn_base_url", lambda provider, key: f"https://cdn.test/{key}"
+        )
+        monkeypatch.setattr(
+            attachments_module, "_create_and_send_webhook", lambda *a, **k: None
+        )
+        monkeypatch.setattr(
+            ContactAccessTypeService, "get_default_access_levels", lambda self: ["dealer"]
+        )
+        monkeypatch.setattr(
+            ContactAccessTypeService,
+            "validate_access_levels",
+            lambda self, levels, field_name="access_levels": list(levels),
+        )
 
-    app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user] = _override_current_user
-    app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
+        def _override_get_db():
+            yield db
 
-    with TestClient(app) as c:
-        yield c, db, fake_backend
+        def _override_current_user():
+            return {"id": _USER_ID, "email": "u1@test.com"}
 
-    app.dependency_overrides.clear()
-    db.close()
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[get_current_user] = _override_current_user
+        app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
+
+        try:
+            with TestClient(app) as c:
+                yield c, db, fake_backend
+        finally:
+            app.dependency_overrides.clear()
 
 
 def _xlsm_bytes(*, with_template: bool = True) -> bytes:

@@ -7,55 +7,30 @@ Asserts the general-settings PUT impl applies, and the GET serializer's
 
 The full ``get_settings`` route is an async endpoint behind auth deps, so we
 exercise the plain ``_update_general_settings_impl(settings_data, db)`` callable
-against in-memory SQLite and read the persisted row back the same way the GET
-serializer does (``getattr`` with defaults).
+against a blank Postgres schema and read the persisted row back the same way the
+GET serializer does (``getattr`` with defaults).
+
+Postgres rather than SQLite because the round-trip is the whole point: the
+columns are real integer/boolean types here, so a value that only survived as
+sqlite text affinity would now fail.
 """
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 from app.api.v1.user_management.settings import (
     SystemSettingUpdate,
     _update_general_settings_impl,
 )
-from app.database import Base
-from app.models.audit import AuditLog
-from app.models.lookup import LookupBinding
 from app.models.user import SystemSetting
-
-
-@compiles(JSONB, "sqlite")  # type: ignore[misc]
-def _jsonb_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
-
-
-@compiles(ARRAY, "sqlite")  # type: ignore[misc]
-def _array_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db() -> Session:
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[SystemSetting.__table__, LookupBinding.__table__, AuditLog.__table__],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 def test_general_settings_put_round_trips_ai_trace_columns(db: Session):

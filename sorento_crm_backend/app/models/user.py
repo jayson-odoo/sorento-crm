@@ -44,6 +44,12 @@ class User(Base):
     avatar_storage_provider = Column(String(16), nullable=False, server_default="s3")
     invited_by_user_id = Column(String, nullable=True)
     is_protected = Column(Boolean, default=False, nullable=False)
+    # Marks a machine principal that an integration acts as (AC-AC-05b).
+    # Deliberately NOT is_protected: that flag already selects notification
+    # recipients in automation_service.py, so reusing it would silently enrol
+    # every integration into automation email. Interactive login is separately
+    # impossible for these rows -- they carry no password.
+    is_integration = Column(Boolean, default=False, nullable=False, server_default="false")
     respond_user_id = Column(String, nullable=True)
     respond_synced = Column(String, default="pending", nullable=False)
     superior_id = Column(String, ForeignKey("users.id"), nullable=True)

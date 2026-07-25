@@ -12,47 +12,22 @@ from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.types import JSON
 
 from app.main import app  # noqa: E402 (import first to settle app wiring)
 import app.database as app_database
-from app.database import Base
 from app.audit_context import set_actor_contact_id
 from app.dependencies import get_current_user_or_api_key
 from app.models.access import RespondContact
 from app.models.audit import AuditLog
-from app.models.lookup import LookupBinding
 from app.models.user import User, UserStatus
 from app.services import audit_service
-
-
-def _prep(*models):
-    for model in models:
-        for col in model.__table__.columns:
-            if isinstance(col.type, (JSONB, ARRAY)):
-                col.type = JSON()
-                col.server_default = None
-
-
-_MODELS = [AuditLog, User, RespondContact, LookupBinding]
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    _prep(*_MODELS)
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=[m.__table__ for m in _MODELS])
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    with blank_session() as session:
+        yield session
 
 
 # --------------------------------------------------------------------------- #

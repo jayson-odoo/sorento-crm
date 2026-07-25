@@ -5,50 +5,25 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import text
 
-from app.database import Base
 from app.models.access import Team, TeamMember, RespondContact
-from app.models.lookup import LookupBinding  # listener-table workaround
 from app.models.sla import ConversationSLATracking, SLAPolicy
 from app.models.user import User
 from app.services.sla_service import ConversationSLATrackingService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    # Swap JSONB -> JSON on RespondContact for sqlite DDL.
-    from sqlalchemy import JSON
-
-    for col in RespondContact.__table__.columns:
-        if col.name == "session_vars":
-            col.type = JSON()
-            col.server_default = None
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            User.__table__,
-            Team.__table__,
-            TeamMember.__table__,
-            SLAPolicy.__table__,
-            ConversationSLATracking.__table__,
-            RespondContact.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        # descendant_team_ids() runs a recursive CTE as raw text() SQL over an
+        # unqualified `teams`, which schema_translate_map does not rewrite -- see
+        # the note in test_coverage_hod_assign. Align search_path with the blank
+        # schema so it reads this test's teams and not the real ones.
+        schema = session.get_bind()._execution_options["schema_translate_map"][None]
+        session.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+        yield session
 
 
 def _user(db, name) -> str:

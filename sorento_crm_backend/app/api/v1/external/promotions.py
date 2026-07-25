@@ -187,7 +187,8 @@ def create_promotion(
         else:
             is_active = True
 
-    created_by = None if current_user.get("id") == "system" else current_user["id"]
+    # The integration's principal is a real users row, so attribution is recorded.
+    created_by = current_user["id"]
     promotion_kw: dict = {
         "description": payload.promotions.description,
         "start_date": start_date,

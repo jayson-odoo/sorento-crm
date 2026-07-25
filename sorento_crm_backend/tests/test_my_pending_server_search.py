@@ -15,62 +15,24 @@ import uuid
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.access import AccessAgent, RespondContact
-from app.models.sla import (
-    ConversationSLAEventLog,
-    ConversationSLATracking,
-    SLAPolicy,
-    SLAPolicyTier,
-)
+from app.models.sla import ConversationSLATracking, SLAPolicy
 from app.models.user import User
 from app.services.form_sla_service import _utc_naive_now
 from app.services.sla_service import ConversationSLATrackingService
+from tests._pg_fixture import blank_session
 
 USER_ID = str(uuid.uuid4())
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for col in list(RespondContact.__table__.columns):
-        if isinstance(col.type, JSONB):
-            col.type = GenericJSON()
-            col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            SLAPolicy.__table__,
-            SLAPolicyTier.__table__,
-            ConversationSLATracking.__table__,
-            ConversationSLAEventLog.__table__,
-            User.__table__,
-            RespondContact.__table__,
-            AccessAgent.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    pid = str(uuid.uuid4())
-    s.add(SLAPolicy(id=pid, code="NORMAL", name="Normal"))
-    s.add(User(id=USER_ID, email="ck@test.com", name="CK Lee"))
-    s.commit()
-    try:
+    with blank_session() as s:
+        pid = str(uuid.uuid4())
+        s.add(SLAPolicy(id=pid, code="NORMAL", name="Normal"))
+        s.add(User(id=USER_ID, email="ck@test.com", name="CK Lee"))
+        s.commit()
         yield s, pid
-    finally:
-        s.close()
 
 
 def _add_tracker(db, pid, *, due_days: int, source_type="complaint"):

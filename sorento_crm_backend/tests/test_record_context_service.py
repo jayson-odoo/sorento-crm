@@ -1,8 +1,11 @@
 """Tests for the deterministic record-context assembler (complaint tracer).
 
-In-memory SQLite mirroring the test_ai_assistant_usage.py fixture style: JSONB
-columns compile to TEXT, only the tables the assembler touches are created, and
-rows are seeded directly. No LLM, no network.
+A blank copy of the real Postgres schema: every table is present with its
+production DDL, and rows are seeded directly. No LLM, no network. Writes are
+discarded at teardown.
+
+Postgres rather than SQLite because the assembler reads real JSONB audit values
+and SLA timestamps, which the old harness only approximated as TEXT.
 """
 from __future__ import annotations
 
@@ -10,51 +13,22 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from app.database import Base
 from app.models.audit import AuditLog
 from app.models.complaints import Complaint
-from app.models.lookup import LookupBinding
 from app.models.procurement import PurchaseRequestHeader, StockInquiry
 from app.models.sla import ConversationSLATracking, SLAPolicy, SLAPolicyTier
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.record_context_service import RecordContextService
-
-
-# Compile JSONB to TEXT for SQLite (audit_logs old/new values).
-@compiles(JSONB, "sqlite")  # type: ignore[misc]
-def _jsonb_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db_session() -> Session:
-    engine = create_engine("sqlite:///:memory:")
-    tables = [
-        User.__table__,
-        Complaint.__table__,
-        StockInquiry.__table__,
-        PurchaseRequestHeader.__table__,
-        AuditLog.__table__,
-        ConversationSLATracking.__table__,
-        SLAPolicy.__table__,
-        SLAPolicyTier.__table__,
-        # Globally-registered lookup validator listener queries this table on
-        # any insert when the full suite runs (see CLAUDE.md sqlite gotcha).
-        LookupBinding.__table__,
-    ]
-    Base.metadata.create_all(engine, tables=tables)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 def _seed_user(db: Session, uid: str, name: str) -> None:

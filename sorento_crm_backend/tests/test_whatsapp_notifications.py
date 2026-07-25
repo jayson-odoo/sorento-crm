@@ -11,57 +11,19 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.types import JSON as GenericJSON
 
-from app.database import Base
 from app.models.access import RespondContact
-from app.models.lookup import LookupBinding
 from app.models.notification import Notification, NotificationDelivery
 from app.models.integration import IntegrationLog
 from app.models.user import User
 from app.services.notification_service import NotificationService
-
-
-def _sqlite_safe(*tables):
-    for t in tables:
-        for col in list(t.columns):
-            if isinstance(col.type, JSONB):
-                col.type = GenericJSON()
-                col.server_default = None
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    _sqlite_safe(
-        RespondContact.__table__, Notification.__table__, NotificationDelivery.__table__,
-        IntegrationLog.__table__,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            RespondContact.__table__,
-            Notification.__table__,
-            NotificationDelivery.__table__,
-            User.__table__,
-            LookupBinding.__table__,
-            IntegrationLog.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        yield session
 
 
 def _user(db, *, notify_whatsapp, with_contact):

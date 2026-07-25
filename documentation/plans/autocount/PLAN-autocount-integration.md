@@ -2,7 +2,10 @@
 
 > **UAC:** `documentation/plans/autocount/autocount-integration-acceptance-criteria.md` — the contract.
 > **Counterpart repo:** `foundryx-shared-service` → `documentation/plans/sprint-4/13-autocount-esb.md`
-> **Status:** DRAFT
+> **Status:** Group A **BUILT** (AC-01–10, 38, 39; 13 commits). UAC Group D **BUILT** as
+> sequencing Phase B (`integration_references`). Remaining groups DRAFT.
+> **Caution:** sequencing letters (§11 Phase A–H) and UAC letters (Group A–I) are different
+> schemes and only A coincides.
 > **Self-contained** — you can start from this file without the originating design conversation.
 
 ## 1. What is being built and why
@@ -66,41 +69,112 @@ single-tenant shape:
 | Blank-means-keep on secret PATCH | `app/services/integration_service.py:291-296` |
 | Status model (`ACTIVE`/`UNVERIFIED`/`ERROR`), `last_tested_at`, `last_error` | `app/models/connection.py` |
 
+### Decisions (grilled 2026-07-21 — settled, do not re-litigate)
+
+| # | Decision |
+|---|---|
+| A1 | An integration **acts as a real `users` row** via `act_as_user_id`. Each integration gets its **own** user and its **own** role. Authorization is plain RBAC. |
+| A2 | Integration users carry a new **`users.is_integration`** flag. Do **not** overload `is_protected` — that already selects notification recipients (`automation_service.py:34`). |
+| A3 | **Full sweep.** All 17 `/external` endpoints enforce permissions in Group A. No audit-mode, no deferral. |
+| A4 | `integrations` is a **bidirectional counterparty** object: inbound keys *and* outbound destination + credentials. Only the ESB is migrated in Group A. |
+| A5 | Rotation grace closes by **passive `expires_at`** evaluated at request time, plus manual immediate-revoke. Default grace **7 days**. No cron. |
+| A6 | Env key seeded **once, in a migration**. **No runtime env fallback ever ships.** |
+| A7 | Rate limiting **fails open** and alerts when the limiter is unavailable. |
+| A8 | **No `scopes_json`.** RBAC permission slugs are the single authorization vocabulary. |
+
+Rationale for A1/A8: Sorento already has 230 permission slugs, `require_permission_with_api_key`,
+the act-as mechanism and a module guard. A separate scope vocabulary would be a second
+authorization system beside a working one — and when the two disagree, the bug is invisible
+(the endpoint checks slugs, the reviewer reads scopes, everyone concludes it's fine).
+Key-level narrowing below an integration's role can be added later as a nullable column with
+null = "no narrowing"; nothing shipped has to change.
+
+Rationale for A5: the scheduler is **opt-in and defaults off** (`ENABLE_SCHEDULER != true`), so a
+cron-dependent expiry would leave the old key valid forever wherever that var is unset. A security
+control must not fail **open** because an unrelated env var is missing.
+
 ### Schema
 
 ```
 integrations
   id, name, type, status(ACTIVE|UNVERIFIED|ERROR),
-  config_json,                    -- non-secret, displayable
-  credentials_json,               -- Fernet ciphertext, write-only over API
+  act_as_user_id,                 -- FK users.id — principal writes are attributed to (A1)
+  config_json,                    -- non-secret, displayable (ESB base URL, autocount company code)
+  credentials_json,               -- Fernet ciphertext, write-only over API; the outbound key for
+                                  --   calling the ESB (Group F). Empty for inbound-only rows. (A4)
   is_active, last_used_at, last_error, created_at, updated_at
 
 integration_api_keys
   id, integration_id, key_hash,   -- hash only; plaintext shown once at creation
   key_prefix,                     -- short display fragment for identification
-  scopes_json,                    -- e.g. ["masters:write","procurement:read"]
   expires_at, revoked_at, rotated_from_id, last_used_at, created_at
+                                  -- NO scopes_json (A8)
 ```
 
 **Rules:**
 
 - Plaintext key shown **once**, at creation. Only the hash persists. Never retrievable.
 - Verification uses `hmac.compare_digest` — no `==`/`!=` on a secret anywhere.
-- Every external endpoint enforces the caller's **scopes**.
-- Rotation supports a grace window accepting old and new; both events audit-logged.
+- Every external endpoint enforces the caller's **RBAC permissions**, through the existing
+  `require_permission_with_api_key` path against `act_as_user_id` (A1/A3/A8).
+- Rotation: `expires_at` on the old key, evaluated at request time (A5). An expired key returns a
+  distinct `key_expired` code, never a generic invalid-key error — otherwise the operator has no
+  way to know rotation caused the 3am 401. This leaks nothing: an attacker would need a valid
+  (if expired) key to observe it.
+- The old key's `last_used_at` must be visible so an admin can confirm the caller actually migrated
+  **before** the window closes. Without it, rotation is a coin flip.
 - Credentials Fernet-encrypted (reuse `app/utils/field_encryption.py`); blank on update = keep.
-- Per-integration rate limiting with `429` + `Retry-After`.
+- Per-integration rate limiting with `429` + `Retry-After`; fail-open + alert (A7). Rate limiting
+  here is **abuse control, not authorization** — a dead limiter grants no access, since auth is
+  DB-backed and still enforced.
+
+### Three keys — do not conflate them
+
+| # | Key | Direction | Issued by | Stored | Rotated by AC-AC-06? |
+|---|---|---|---|---|---|
+| 1 | n8n / MCP inbound key | caller → Sorento | Sorento | hash in `integration_api_keys` | **Yes** |
+| 2 | ESB inbound key | ESB → Sorento | Sorento | hash in `integration_api_keys` | **Yes** |
+| 3 | Sorento→ESB outbound key | Sorento → ESB | the shared service | Fernet in `integrations.credentials_json` | **No** — the ESB owns its own rotation |
 
 ### Migration off the env key (AC-AC-09) — do not skip
 
-n8n is live on `EXTERNAL_API_KEY`. Sequence:
+`EXTERNAL_API_KEY` is live and shared by **two** callers: n8n *and* the MCP server
+(`sorento_crm_mcp` authenticates with it, and it is how n8n reaches read-only tools via
+`sub-get-results`). Missing the MCP server breaks that path.
 
-1. Ship the tables and the new dependency, accepting **both** new keys and the legacy env key.
-2. Seed an integration record carrying the existing key so n8n continues working unchanged.
-3. Migrate n8n to its own key.
-4. Mark the env var deprecated with a removal date; remove the fallback.
+Sequence:
 
-Breaking n8n mid-migration is the main risk in this group. Steps 1–2 must land together.
+1. A migration reads `EXTERNAL_API_KEY` **once, at migration time** and seeds a single
+   `legacy-shared-key` integration carrying its hash. n8n and the MCP server keep working with
+   **zero changes**. If the env var is absent: seed nothing and log loudly — never an empty hash.
+2. Issue separate keys for the `n8n` and `sorento-mcp` integrations; migrate each caller on its own
+   schedule. **This step is also the leak remediation** (below).
+3. When `legacy-shared-key.last_used_at` goes quiet, revoke it — self-evidencing.
+
+No dual-accept fallback is ever written, so there is no deprecation debt to chase (A6).
+
+### Known security findings to remediate here (found 2026-07-21)
+
+1. **The production API key is a hardcoded plaintext literal in ~40 n8n nodes**, not an n8n
+   credential reference — so it lives in workflow JSON, every export, and the n8n database.
+   Step 2 above rotates it. The 7-day grace exists precisely because ~40 nodes need editing.
+2. **`sorento-consume-main TEST` is ACTIVE** against the production host, calling the same 10
+   endpoints as the live workflow. Confirm intent — likely duplicate production traffic.
+3. Node `integration-log-update3` in `system-upload-attachments` sends `x-api-key: test` and has
+   been failing silently.
+
+### What n8n actually calls (scanned 2026-07-21, 66 workflows, 100% coverage)
+
+**25 distinct Sorento paths**, all via `X-API-Key`:
+
+- **17 under `/external/*`** → `get_external_api_user` → **no RBAC today**. This is the A3 sweep.
+- **8 non-`/external`** (`master-data/products`, 5× `sla-management/conversation-sla-tracking/*`,
+  `system/references/resolve`, `integration-management/integration-logs/:id/status`) → already run
+  through `get_current_user_or_api_key`, so they **already enforce slugs** against the act-as user.
+
+Therefore n8n's role is **derivable, not guessable**:
+`(current act-as user's permissions) ∪ (slugs assigned to the 17 /external paths)`.
+The first half already exists in the database. Do not hand-guess this set.
 
 ## 3. Group B — ingest endpoints
 
@@ -146,19 +220,64 @@ current values to do that.
 - Batched (never per-record round-trips), canonical shape, scope-enforced.
 - Paginated with a documented cap; exceeding it errors rather than silently truncating.
 
-## 5. Group D — `source_system` / `source_ref`
+## 5. Group D — source tracking via a reference table
 
-Every consumed table gains:
+> **Naming:** the sequencing table in §11 uses letters (**Phase A–H**) that do **not** match the UAC
+> group letters (**Group A–I**). Only A coincides. This section is **UAC Group D**, delivered as
+> **sequencing Phase B**. Read the two schemes as separate vocabularies.
 
-- `source_system` — `manual` | `seed` | `autocount`
-- `source_ref` — AutoCount's **stable surrogate key** (`DocKey`), **not** `DocNo`
+> **Revised 2026-07-21 (built).** The original design put `source_system` / `source_ref` columns on
+> every consumed table. That is superseded by a single mapping table, `integration_references`.
 
-`DocNo` is mutable — AutoCount exposes a `NewDocNo` field. Correlating on it breaks when a document
-is renumbered. Store `DocNo` for display if useful; correlate on `DocKey`.
+Consumed entities: `products`, `stock`, `warehouses`, `suppliers`, `customers`,
+`picking_headers`, `picking_lines`, `orders`, `order_lines`.
 
-**A real backfill migration is required** (AC-AC-23), not seed-if-absent. Existing production rows
-backfill to `source_system='manual'`. Add a unique index supporting `(source_system, source_ref)`
-lookup. Leaving old rows unpopulated breaks the first sync in a way that is hard to diagnose later.
+```
+integration_references
+  id, entity_type, entity_id,        -- which business table, which row
+  source_system,                     -- 'autocount'
+  source_ref,                        -- AutoCount DocKey (stable)
+  source_doc_no,                     -- display only, expected to change
+  integration_id,                    -- which integration wrote it
+  first_seen_at, last_synced_at, created_at, updated_at
+
+  UNIQUE (source_system, entity_type, source_ref)   -- one document -> one record
+  UNIQUE (entity_type, entity_id)                   -- one record  -> one origin
+  INDEX  (entity_type, entity_id), (source_ref), (integration_id), (last_synced_at)
+```
+
+**Why a table rather than columns.** The nine tables hold ~110k rows (`order_lines` 68k, `orders`
+25k, `products` 11k). Columns would mean nine migrations plus a backfill writing `manual` into every
+existing row — 110k rows carrying no information, and an invariant every future manual create would
+have to maintain or quietly break. The table also makes "what came from AutoCount?" one query
+instead of nine, and lets a tenth entity type arrive with no DDL.
+
+**No backfill (revises AC-AC-23).** Absence of a reference means the record was created locally.
+That delivers what AC-AC-23 protects against — no row left in a state that breaks a later sync —
+without materialising rows that say nothing.
+
+**`source_ref` is `DocKey`, never `DocNo`** (AC-AC-22). `DocNo` is mutable — AutoCount exposes
+`NewDocNo` — so correlating on it would create a duplicate the first time a document is renumbered.
+`DocNo` is kept in `source_doc_no` for display.
+
+**The cost of polymorphism, and how it is paid.** `entity_id` addresses nine tables, so it cannot
+carry a foreign key. Two guarantees a FK would have given are enforced in
+`IntegrationReferenceService` instead:
+
+- **`entity_type` is an allowlist.** It resolves to a table name and arrives from an ingest payload;
+  an unchecked value is an injection surface. Unknown types raise before reaching SQL.
+- **A reference whose target was deleted does not resolve**, and is cleared when read. Nothing
+  cascades, so a stale row would otherwise make ingest "update" a record that is gone. Deliberately
+  not a scheduled sweep — `ENABLE_SCHEDULER` is opt-in and defaults off, and a correctness guarantee
+  must not depend on an env var somebody forgot.
+- **A second claimant on a `source_ref` raises** rather than silently returning the existing
+  mapping, which would leave the caller believing it linked a record it did not.
+
+**Identifier typing trap.** The consumed tables key on Postgres `uuid`, but `entity_id` is varchar
+because the nine keys are not all the same type. `resolve()` therefore returns `str`, and
+`UUID(x) == str(x)` is **False** — comparing with `==` would make ingest treat every existing record
+as new and create exactly the duplicates this table prevents. Compare as strings, or pass the value
+into a query filter and let SQLAlchemy cast it.
 
 ## 6. Group E — per-field ownership
 
@@ -250,8 +369,8 @@ a separate plan decided on its own merits.
 
 | Phase | Scope | Depends on |
 |---|---|---|
-| **A** | Integration object + per-integration keys + scopes + rotation + rate limit + n8n migration | — |
-| **B** | `source_system`/`source_ref` columns + backfill migration | A |
+| **A** | Integration object + per-integration keys + RBAC enforcement + rotation + rate limit + n8n cutover (UAC Group A). **BUILT** | — |
+| **B** | Source tracking — `integration_references` table (UAC Group D). **BUILT** — no backfill; absence means locally created | A |
 | **C** | Ingest for masters (Product, Supplier, Customer, Warehouse) + read endpoints for diffing | B |
 | **D** | New masters (Tax, Payment Terms) | B |
 | **E** | Ingest for transactions (GRN, DO) | C |
@@ -315,3 +434,69 @@ and see it in the UI; approve a document and observe `PENDING → SYNCED`; attem
 AutoCount-owned field and be blocked.
 
 A test report keyed to AC ids (PASS / FAIL / DEFERRED) is required before merge.
+
+### 15.1 Postgres, not sqlite
+
+Every test in this feature runs against Postgres. The helpers live in `tests/_pg_fixture.py`:
+
+- `pg_session()` — the live database inside a transaction that is rolled back. Use for anything
+  reading or writing real tables. **Scope assertions to test-created rows** (`unique_code()` yields
+  a `ZZT-` prefixed value); those tables hold production data, so a bare `count()` or `.one()` is
+  answering a different question than the one asked.
+- `pg_empty_schema(tables)` — the same model DDL emitted into a throwaway Postgres schema via
+  `schema_translate_map`. Use where a blank slate is the point (seeding, fixed-name fixtures). FK
+  dependencies and the tables the global flush listeners query are pulled in automatically.
+
+**Why this is not a style preference.** Converting these nine files surfaced three defects the
+sqlite versions could not have caught, because sqlite was not merely a different database but a
+substantially weaker one:
+
+| What sqlite did | What it hid |
+|---|---|
+| Every id is VARCHAR | `integration_references.integration_id` is `uuid` with an FK to `integrations`. A test passed the string `"int-9"` and was green. |
+| Foreign keys unenforced (no `PRAGMA foreign_keys`) | `act_as_user_id` is `ON DELETE RESTRICT`. A test deleted an in-use principal and asserted the resolver coped — rehearsing a state the database forbids, while the real guarantee went untested. |
+| A fresh empty engine per test | `integrations.name` and `users.email` are unique against rows migration 297 already created. Uniqueness held trivially against an empty table. |
+| No SAVEPOINT semantics | Per-record ingest isolation — what stops one bad row costing a 10,000-row batch — was unprovable, and broke outright once `app.main` registered its global flush listeners. |
+
+### 15.2 The whole suite moves off sqlite
+
+**Decision: no sqlite anywhere in the backend test suite.** Not converted opportunistically -- all
+121 remaining files, in one sweep.
+
+The enabling helper is `blank_session()`, which replaces the suite's dominant fixture shape:
+
+```python
+# before
+engine = create_engine("sqlite:///:memory:")
+Base.metadata.create_all(engine)
+session = sessionmaker(bind=engine)()
+
+# after
+with blank_session() as session:
+    ...
+```
+
+It yields a session over an empty copy of the **entire** real schema -- all 199 tables including
+the `scm.*` models sqlite could not create at all -- built once per session in about 0.6s, with
+every write discarded at teardown. `join_transaction_mode="create_savepoint"` means tests that call
+`commit()` still work and are still rolled back, so the conversion does not force fixtures to be
+rewritten around a different transaction model.
+
+Three fixture shapes now cover everything:
+
+| Helper | Use for |
+|---|---|
+| `blank_session()` | the default. An empty full schema. Replaces every in-memory sqlite fixture. |
+| `pg_session()` | tests that must read real data. Scope assertions to `ZZT-` rows. |
+| `pg_empty_schema(tables)` | a subset schema in isolation, where the full one is unhelpful. |
+
+**Why a sweep and not attrition.** The sqlite failures were not inert. `test_rbac.py`'s four tests
+failed at baseline with `OperationalError`, which reads as sqlite schema flakiness and had been
+carried as such; on Postgres the real cause appeared immediately -- the fixture passes `role_id=`
+to `User`, a column that no longer exists. That defect was legible only after the substrate was
+right, and the same masking is presumed elsewhere. Leaving 121 files on sqlite means leaving an
+unknown number of real defects behind a misleading error message.
+
+The DoD for the sweep: no `create_engine("sqlite` anywhere under `tests/`, `_sqlite_compat.py`
+deleted, the sqlite type-compiler shims removed from `conftest.py`, and the failing-test set no
+larger than the 128-name baseline captured before the work began.

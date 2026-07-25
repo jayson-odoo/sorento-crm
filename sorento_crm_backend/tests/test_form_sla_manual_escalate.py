@@ -14,13 +14,8 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.access import RespondContact
-from app.models.lookup import LookupBinding
+from app.models.access import AccessAgent, RespondContact
 from app.models.sla import (
     ConversationSLAEventLog,
     ConversationSLATracking,
@@ -30,41 +25,13 @@ from app.models.sla import (
 from app.models.user import User
 import app.services.form_sla_service as fss
 from app.services.form_sla_service import FormSLAOrchestrator, FormEscalationBlocked
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for col in list(RespondContact.__table__.columns):
-        if isinstance(col.type, JSONB):
-            col.type = GenericJSON()
-            col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            SLAPolicy.__table__,
-            SLAPolicyTier.__table__,
-            ConversationSLATracking.__table__,
-            ConversationSLAEventLog.__table__,
-            RespondContact.__table__,
-            User.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 @pytest.fixture
@@ -76,12 +43,16 @@ def seed(db):
             id=str(uuid.uuid4()), policy_id=policy_id, tier_level=lvl,
             tier_name=f"Tier {lvl}", response_hours=4, resolution_hours=24,
         ))
+    # agent_id on the tracker is a real FK to access_agents; Postgres enforces it,
+    # so the parent row has to exist (sqlite let a loose UUID through).
+    agent_id = str(uuid.uuid4())
+    db.add(AccessAgent(id=agent_id, code="complaint", name="Complaint"))
     user_id = str(uuid.uuid4())
     db.add(User(id=user_id, email="lead@test.com", name="Lead", respond_user_id="rid-1"))
     actor_id = str(uuid.uuid4())
     db.add(User(id=actor_id, email="actor@test.com", name="Actor"))
     db.commit()
-    return {"policy_id": policy_id, "user_id": user_id, "actor_id": actor_id}
+    return {"policy_id": policy_id, "user_id": user_id, "actor_id": actor_id, "agent_id": agent_id}
 
 
 @pytest.fixture(autouse=True)
@@ -111,7 +82,7 @@ def _tracker(db, seed, *, tier, overdue, resolved=False, entity="complaint"):
         is_resolved=resolved,
         source_entity_type=entity,
         source_entity_id=str(uuid.uuid4()),
-        agent_id=str(uuid.uuid4()),
+        agent_id=seed["agent_id"],
     )
     db.add(t)
     db.commit()

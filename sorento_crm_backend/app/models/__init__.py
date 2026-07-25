@@ -32,7 +32,8 @@ from app.models.respond_template import (
 )
 from app.models.workflow_stage import WorkflowStage
 from app.models.entity_conversation import EntityConversationMessage
-from app.models.integration import IntegrationLog
+from app.models.integration import Integration, IntegrationApiKey, IntegrationLog
+from app.models.integration_reference import IntegrationReference
 from app.models.import_log import ImportLog
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
 from app.models.job import ImportJob, ImportJobRow

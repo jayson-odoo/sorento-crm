@@ -12,8 +12,9 @@ the locked acceptance criteria for the prev/next pager:
   unfiltered count.
 - the /neighbours endpoint enforces auth -> 401/403 with no principal.
 
-Uses the same in-memory sqlite fixture pattern the other promotion service tests
-use (test_promotion_date_mode_filter.py) so it runs without the live Postgres DB.
+Uses the same blank-Postgres-schema fixture the other promotion service tests
+use (test_promotion_date_mode_filter.py): an empty copy of the real schema, so
+no live data interferes and every write is rolled back.
 """
 from __future__ import annotations
 
@@ -22,64 +23,22 @@ from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.main import app
-from app.models.audit import AuditLog
-from app.models.embeddings import EmbeddingQueue
-from app.models.lookup import LookupBinding, LookupOption, LookupSet
-from app.models.marketing import (
-    Promotion,
-    PromotionAttachment,
-    PromotionGroup,
-    PromotionProduct,
-)
-from app.models.product import Product
-from app.models.resources import Attachment, AttachmentDirectory, AttachmentType
+from app.models.marketing import Promotion
 from app.services.marketing_service import PromotionService
-
-
-@compiles(JSONB, "sqlite")
-def _jsonb_as_json_on_sqlite(_element, _compiler, **_kw):
-    return "JSON"
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            AttachmentDirectory.__table__,
-            AttachmentType.__table__,
-            Attachment.__table__,
-            Product.__table__,
-            Promotion.__table__,
-            PromotionGroup.__table__,
-            PromotionProduct.__table__,
-            PromotionAttachment.__table__,
-            LookupSet.__table__,
-            LookupOption.__table__,
-            LookupBinding.__table__,
-            AuditLog.__table__,
-            EmbeddingQueue.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    """A blank Postgres schema, rolled back after the test.
+
+    Was in-memory sqlite with a JSONB->JSON compile shim and a hand-listed
+    subset of tables. The real schema has all 199 and the real column types.
+    """
+    with blank_session() as session:
+        yield session
 
 
 TODAY = datetime.utcnow().date()

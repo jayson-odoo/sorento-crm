@@ -24,11 +24,8 @@ from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import text
 
-from app.database import Base
 from app.models.access import (
     AccessAgent,
     AgentTeam,
@@ -37,7 +34,6 @@ from app.models.access import (
     Team,
     TeamMember,
 )
-from app.models.lookup import LookupBinding  # validator listener checks this table
 from app.models.sla import (
     ConversationSLAEventLog,
     ConversationSLATracking,
@@ -49,66 +45,21 @@ from app.schemas.sla import ConversationSLATrackingCreate
 from app.services.error_handler import AppException
 from app.services.sla_service import ConversationSLATrackingService
 from app.services.user_service import AccessAgentService
+from tests._pg_fixture import blank_session
 
 PHONE = "+60123456789"
 
 
+# AgentTeam's two PARTIAL unique indexes (postgresql_where) now keep their WHERE
+# clause, so multi-tier rows of the same (agent, code) no longer falsely collide
+# and no index-stripping shim is needed. That was the reason this file's set_agent_teams
+# cases could not be trusted on sqlite.
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    # RespondContact.session_vars is JSONB with a pg-specific server_default;
-    # swap both out so SQLite can render the DDL.
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for col in list(RespondContact.__table__.columns):
-        if isinstance(col.type, JSONB):
-            col.type = GenericJSON()
-            col.server_default = None
-
-    # AgentTeam declares two PARTIAL unique indexes (postgresql_where). SQLite drops
-    # the WHERE clause and renders them as plain UNIQUE(agent_id, code) /
-    # UNIQUE(agent_id, code, tier), which falsely collides multi-tier rows of the
-    # same (agent, code). Strip them for the in-memory fixture; their pg behaviour
-    # is exercised by the live API-level UAC checks instead.
-    AgentTeam.__table__.indexes = {
-        ix
-        for ix in AgentTeam.__table__.indexes
-        if ix.name
-        not in {
-            "uq_agent_teams_agent_code_tier_null",
-            "uq_agent_teams_agent_code_tier_not_null",
-        }
-    }
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            SLAPolicy.__table__,
-            SLAPolicyTier.__table__,
-            ConversationSLATracking.__table__,
-            ConversationSLAEventLog.__table__,
-            RespondContact.__table__,
-            User.__table__,
-            AccessAgent.__table__,
-            AgentTeam.__table__,
-            AgentTeamRoundRobinCursor.__table__,
-            Team.__table__,
-            TeamMember.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        schema = session.get_bind()._execution_options["schema_translate_map"][None]
+        session.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+        yield session
 
 
 # ---------------------------------------------------------------------------

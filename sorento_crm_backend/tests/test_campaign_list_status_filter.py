@@ -8,37 +8,33 @@ import uuid
 from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.marketing import MarketingCampaign
-from app.models.lookup import LookupBinding
+from app.models.marketing import CampaignType, MarketingCampaign
 from app.services.marketing_service import MarketingCampaignService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+    with blank_session() as session:
+        yield from _seeded(session)
+
+
+def _seeded(session):
+    # A real campaign type: campaign_type_id is a FK, which Postgres enforces
+    # and sqlite did not, so a made-up uuid per row is no longer acceptable.
+    camp_type = CampaignType(
+        id=str(uuid.uuid4()), type_code="ZZT-PROMO", type_name="ZZT Promo"
     )
-    # LookupBinding table required even though unused here: a globally-registered
-    # SQLAlchemy write-listener (lookup_write_listener) fires on inserts when the
-    # full suite runs and queries lookup_bindings. (See CLAUDE.md sqlite gotcha.)
-    Base.metadata.create_all(
-        engine, tables=[MarketingCampaign.__table__, LookupBinding.__table__]
-    )
-    session = sessionmaker(bind=engine)()
+    session.add(camp_type)
+    session.flush()
 
     def _camp(code, status):
         return MarketingCampaign(
             id=str(uuid.uuid4()),
             campaign_code=code,
             campaign_name=code,
-            campaign_type_id=str(uuid.uuid4()),
+            campaign_type_id=camp_type.id,
             start_date=datetime(2026, 1, 1),
             status=status,
         )
@@ -46,7 +42,6 @@ def db():
     session.add_all([_camp("A", "planning"), _camp("B", "active"), _camp("C", "planning")])
     session.commit()
     yield session
-    session.close()
 
 
 def test_no_status_returns_all(db):

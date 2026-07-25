@@ -13,13 +13,7 @@ from datetime import date
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.procurement import (
     InboundShipment,
     InboundShipmentLine,
@@ -27,56 +21,42 @@ from app.models.procurement import (
     PickingHeader,
     PickingLine,
 )
-from app.models.product import Product
+from app.models.inventory import Warehouse
+from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.resources import Attachment
 from app.schemas.procurement import SPOAllocationCreate
 from app.services.procurement_service import (
     SPOAllocationService,
     AllocationReceivedGuardError,
 )
-
-
-@compiles(JSONB, "sqlite")
-def _jsonb_as_json_on_sqlite(_element, _compiler, **_kw):
-    return "JSON"
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            Product.__table__,
-            Attachment.__table__,
-            InboundShipment.__table__,
-            InboundShipmentLine.__table__,
-            SPOAllocation.__table__,
-            PickingHeader.__table__,
-            PickingLine.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        yield session
 
 
 def _product(db, code: str = "SKU-A") -> str:
+    # category_id and base_uom_id are real foreign keys, so the parent rows have
+    # to exist. The sqlite fixture invented loose UUIDs for both and got away
+    # with it because sqlite did not enforce the constraint.
+    category = ProductCategory(
+        id=str(uuid.uuid4()), category_code=f"CAT-{code}", category_name=f"Category {code}"
+    )
+    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=f"UOM-{code}", uom_name="Each")
+    db.add_all([category, uom])
+    db.flush()
+
     pid = str(uuid.uuid4())
     db.add(
         Product(
             id=pid,
             product_code=code,
             product_name=code,
-            category_id=str(uuid.uuid4()),
-            base_uom_id=str(uuid.uuid4()),
+            category_id=category.id,
+            base_uom_id=uom.id,
             list_price=0,
             is_active=True,
         )
@@ -100,9 +80,14 @@ def _shipment(db, container: str = "CONT-1") -> str:
     return sid
 
 
-def _warehouse_id() -> str:
-    # No FK enforcement on sqlite by default; a bare UUID is enough for the key.
-    return str(uuid.uuid4())
+def _warehouse_id(db) -> str:
+    # spo_allocations.warehouse_id is a real FK. This used to return a bare UUID
+    # on the explicit grounds that sqlite did not enforce foreign keys; Postgres
+    # does, so the warehouse has to exist.
+    wid = str(uuid.uuid4())
+    db.add(Warehouse(id=wid, warehouse_code=f"WH-{wid[:8]}", warehouse_name="Test Warehouse"))
+    db.flush()
+    return wid
 
 
 def _payload(spo, product_id, warehouse_id, shipment_id, qty) -> SPOAllocationCreate:
@@ -131,7 +116,7 @@ def stub_refresh():
 def _seed_existing(db, **overrides) -> SPOAllocation:
     spo = overrides.pop("spo_number", "SPO-A")
     product_id = overrides.pop("product_id", None) or _product(db)
-    warehouse_id = overrides.pop("warehouse_id", None) or _warehouse_id()
+    warehouse_id = overrides.pop("warehouse_id", None) or _warehouse_id(db)
     shipment_id = overrides.pop("inbound_shipment_id", None) or _shipment(db)
     alloc = SPOAllocation(
         id=str(uuid.uuid4()),
@@ -154,7 +139,7 @@ def _seed_existing(db, **overrides) -> SPOAllocation:
 # AC-SPO-1
 def test_new_allocation_created(db, stub_refresh):
     product_id = _product(db)
-    warehouse_id = _warehouse_id()
+    warehouse_id = _warehouse_id(db)
     shipment_id = _shipment(db)
     db.commit()
 
@@ -271,7 +256,7 @@ def test_mixed_file_counters(db, stub_refresh):
     from app.tasks import import_tasks as it
 
     spo = "SPO-MIX"
-    wh = _warehouse_id()
+    wh = _warehouse_id(db)
     ship = _shipment(db, "CONT-MIX")
     p_upd = _product(db, "P-UPD")
     p_unc = _product(db, "P-UNC")
