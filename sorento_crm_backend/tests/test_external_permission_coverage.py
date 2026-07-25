@@ -8,6 +8,7 @@ These tests inspect the mounted application itself, so a route added tomorrow is
 covered by construction.
 """
 import pytest
+from fastapi import FastAPI
 
 from app.api.v1.external import router as external_router
 from app.api.v1.external.permissions import EXTERNAL_ENDPOINT_PERMISSIONS
@@ -18,17 +19,26 @@ from app.rbac.permission_registry import PERMISSION_REGISTRY
 # explicit allowlist so adding one is a deliberate act, not an oversight.
 PATH_RESOLVED_PREFIXES = {"ingest", "read"}
 
+# Mount the external router onto a throwaway app to get the SAME flattened
+# APIRoute objects app.main would, without depending on app.main being fully
+# initialised. Two failure modes this dodges, both seen on CI:
+#   * app.main.app.routes intermittently carried only its ~6 default routes --
+#     an earlier test leaves app.main half-initialised so its bottom-of-module
+#     include_router() had not run on the object the test saw (same note in
+#     test_form_void_action::test_no_unvoid_route);
+#   * external_router.routes on a newer FastAPI holds lazy _IncludedRouter
+#     wrappers (no .path) rather than flattened APIRoutes -- include_router()
+#     onto a real app forces the flatten deterministically across versions.
+_PROBE_APP = FastAPI()
+_PROBE_APP.include_router(external_router, prefix="/api/v1/external")
+
 
 def _external_routes():
-    # Walk the external router directly, NOT app.main.app.routes. In CI the
-    # imported app intermittently carried only its ~6 default routes -- an
-    # earlier test leaves `app.main` half-initialised, so its bottom-of-module
-    # include_router() has not run on the object this test sees (see the same
-    # note in test_form_void_action::test_no_unvoid_route). The external router
-    # is fully assembled at its own import, so its route set is deterministic.
-    # Its paths are sub-prefixed ("/packing-lists", "/ingest/{entity}") -- the
-    # "/api/v1/external" mount prefix is applied only when app.main includes it.
-    return list(external_router.routes)
+    return [
+        r
+        for r in _PROBE_APP.routes
+        if getattr(r, "path", "").startswith("/api/v1/external/")
+    ]
 
 
 class TestCoverage:
@@ -51,7 +61,7 @@ class TestCoverage:
         # failure names the gap instead of a traceback.
         mounted = set()
         for route in _external_routes():
-            tail = getattr(route, "path", "").lstrip("/")
+            tail = route.path[len("/api/v1/external/") :]
             if tail:
                 mounted.add(tail.split("/")[0])
 
