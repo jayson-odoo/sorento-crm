@@ -98,7 +98,11 @@ class Product(Base, CompanyScopedMixin):
     __audit_entity_type__ = "product"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    product_code = Column(String(100), unique=True, nullable=False)
+    # Unique PER COMPANY, not globally (migration 305): the composite unique index
+    # lives in __table_args__. A bare unique=True here would make create_all build
+    # the old global products_product_code_key and reject the same code in a second
+    # company.
+    product_code = Column(String(100), nullable=False)
     product_name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     category_id = Column(UUID(as_uuid=False), ForeignKey("product_categories.id"), nullable=False)
@@ -175,6 +179,7 @@ class Product(Base, CompanyScopedMixin):
     )
     
     __table_args__ = (
+        Index("uq_products_company_product_code", "company_id", "product_code", unique=True),
         Index("ix_products_category_id", "category_id"),
         Index("ix_products_brand_id", "brand_id"),
         Index("ix_products_base_uom_id", "base_uom_id"),

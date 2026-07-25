@@ -160,7 +160,11 @@ class Order(Base, CompanyScopedMixin):
     __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    order_number = Column(String(100), unique=True, nullable=False)
+    # Unique PER COMPANY, not globally (migration 305): composite unique index in
+    # __table_args__ below. A bare unique=True would rebuild the old global
+    # orders_order_number_key under create_all and reject the same number in a
+    # second company.
+    order_number = Column(String(100), nullable=False)
     order_date = Column(Date, nullable=True)
     estimated_delivery_date = Column(Date, nullable=True)
     actual_delivery_date = Column(Date, nullable=True)
@@ -212,6 +216,7 @@ class Order(Base, CompanyScopedMixin):
     )
 
     __table_args__ = (
+        Index("uq_orders_company_order_number", "company_id", "order_number", unique=True),
         Index("ix_orders_customer_id", "customer_id"),
         Index("ix_orders_order_status_id", "order_status_id"),
         Index("ix_orders_order_date", "order_date"),

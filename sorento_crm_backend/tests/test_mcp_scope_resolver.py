@@ -34,7 +34,15 @@ pytestmark = pytest.mark.skipif(
     reason="SKIP_LIVE_DB_TESTS=1",
 )
 
-_API_KEY = settings.external_api_key
+# Pin a known key: CI does not set EXTERNAL_API_KEY, so settings.external_api_key
+# would be empty and the resolver's constant-time compare would reject every key
+# (returning UNSET instead of the None / frozenset this suite asserts).
+_API_KEY = "zzt-mcp-scope-test-key"
+
+
+@pytest.fixture(autouse=True)
+def _pin_api_key(monkeypatch):
+    monkeypatch.setattr(settings, "external_api_key", _API_KEY)
 
 
 def _request(*, api_key: str | None, query: str = "") -> Request:
