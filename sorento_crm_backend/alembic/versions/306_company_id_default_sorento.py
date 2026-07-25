@@ -32,6 +32,7 @@ Revision ID: 306_company_id_default
 Revises: 305_company_composite_unique
 """
 from alembic import op
+from sqlalchemy import inspect as sa_inspect
 
 
 revision = "306_company_id_default"
@@ -81,7 +82,17 @@ _OWNED_NOT_NULL_TABLES = (
 
 
 def upgrade() -> None:
+    # Guard on the live schema: some owned tables exist only via ``create_all`` and
+    # may be absent (or lack company_id) on a given production database. Skip those
+    # rather than crash the deploy (mirrors the guard in migration 305).
+    bind = op.get_bind()
+    insp = sa_inspect(bind)
+    tables = set(insp.get_table_names())
     for table in _OWNED_NOT_NULL_TABLES:
+        if table not in tables:
+            continue
+        if "company_id" not in {c["name"] for c in insp.get_columns(table)}:
+            continue
         op.execute(
             f"ALTER TABLE {table} "
             f"ALTER COLUMN company_id SET DEFAULT '{SORENTO_COMPANY_ID}'"
@@ -89,5 +100,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    insp = sa_inspect(bind)
+    tables = set(insp.get_table_names())
     for table in _OWNED_NOT_NULL_TABLES:
+        if table not in tables:
+            continue
+        if "company_id" not in {c["name"] for c in insp.get_columns(table)}:
+            continue
         op.execute(f"ALTER TABLE {table} ALTER COLUMN company_id DROP DEFAULT")

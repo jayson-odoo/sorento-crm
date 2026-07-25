@@ -41,6 +41,7 @@ Revision ID: 305_company_composite_unique
 Revises: 304_embedding_company
 """
 from alembic import op
+from sqlalchemy import inspect as sa_inspect
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "305_company_composite_unique"
@@ -102,8 +103,28 @@ def _drop_unique(table: str, name: str) -> None:
 
 
 def upgrade():
+    # Some owned tables exist only via ``create_all`` (the legacy commercial ones,
+    # e.g. campaign_types / marketing_campaigns), so a given production database may
+    # be MISSING a table entirely OR a natural-key column the model has since added
+    # (prod campaign_types predates ``type_code``). Guard every operation on the
+    # LIVE schema via the inspector so this migration is a no-op for anything absent
+    # rather than crashing the whole deploy on a single stale table.
+    bind = op.get_bind()
+    insp = sa_inspect(bind)
+    _tables = set(insp.get_table_names())
+
+    def _columns(table: str) -> set:
+        if table not in _tables:
+            return set()
+        return {c["name"] for c in insp.get_columns(table)}
+
     # --- 1. Swap single-column natural-key uniques -> (company_id, key) -----------
     for table, old_name, new_name, key_expr, where in _SINGLE_KEY_UNIQUES:
+        cols = _columns(table)
+        # key_expr is a bare column name here; skip if the table or column is absent
+        # on this database, or if company_id was never added to it.
+        if "company_id" not in cols or key_expr not in cols:
+            continue
         _drop_unique(table, old_name)
         where_clause = f" WHERE {where}" if where else ""
         op.execute(
@@ -112,14 +133,18 @@ def upgrade():
         )
 
     # customers: expression natural key -> (company_id, lower(code), lower(name))
-    _drop_unique("customers", _CUSTOMERS_OLD)
-    op.execute(
-        f'CREATE UNIQUE INDEX IF NOT EXISTS "{_CUSTOMERS_NEW}" '
-        f"ON customers (company_id, {_CUSTOMERS_KEY_EXPR})"
-    )
+    _cust_cols = _columns("customers")
+    if {"company_id", "customer_code", "customer_name"} <= _cust_cols:
+        _drop_unique("customers", _CUSTOMERS_OLD)
+        op.execute(
+            f'CREATE UNIQUE INDEX IF NOT EXISTS "{_CUSTOMERS_NEW}" '
+            f"ON customers (company_id, {_CUSTOMERS_KEY_EXPR})"
+        )
 
     # --- 2. Backfill any stragglers + flip company_id NOT NULL (PG only) ----------
     for table in _NOT_NULL_TABLES:
+        if "company_id" not in _columns(table):
+            continue
         op.execute(
             f"UPDATE {table} SET company_id = '{SORENTO_COMPANY_ID}' "
             f"WHERE company_id IS NULL"
