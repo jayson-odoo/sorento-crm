@@ -23,14 +23,12 @@ assert a clean SINGLE exact result, therefore run with
 that expansion. AC-D2 runs on the DEFAULT path, where the multi-row guard turns
 a genuine dash-collision into `ambiguous=True`.
 """
-import os
-
 import pytest
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
 from app.services import entity_resolver as er
 from app.services.entity_resolver import _strip_all_ws, _ws_insensitive_lower
+from tests._pg_fixture import pg_session
 
 
 # --------------------------------------------------------------------------- #
@@ -76,35 +74,25 @@ def test_ws_insensitive_lower_sql_strips_dash_and_ws():
 # --------------------------------------------------------------------------- #
 # Live-DB fixture (pg_trgm). Skips cleanly when unreachable.
 # --------------------------------------------------------------------------- #
-def _database_url():
-    url = os.environ.get("DATABASE_URL")
-    if url:
-        return url
-    try:
-        from dotenv import dotenv_values
-
-        return dotenv_values(".env").get("DATABASE_URL")
-    except Exception:
-        return None
-
-
 @pytest.fixture(scope="module")
 def db():
-    url = _database_url()
-    if not url:
-        pytest.skip("DATABASE_URL not configured")
+    """A rolled-back session over the REAL database.
+
+    Deliberately not the blank-schema fixture: these cases assert against real
+    product codes (see `_require_codes`), so an empty schema would skip them all
+    and prove nothing. The work here is read-only; the rollback is belt-and-braces.
+    """
+    ctx = pg_session()
     try:
-        engine = create_engine(url)
-        conn = engine.connect()
-        conn.execute(text("SELECT 1"))
+        session = ctx.__enter__()
+        session.execute(text("SELECT 1"))
     except Exception as exc:  # pragma: no cover - env dependent
         pytest.skip(f"Postgres unreachable: {exc}")
-    conn.close()
-    session = sessionmaker(bind=engine)()
+    # Outside the except on purpose: a failing test must not be swallowed as a skip.
     try:
         yield session
     finally:
-        session.close()
+        ctx.__exit__(None, None, None)
 
 
 def _require_codes(db, *codes):

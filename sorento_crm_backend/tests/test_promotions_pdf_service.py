@@ -13,15 +13,12 @@ import uuid
 
 import fitz  # PyMuPDF
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.marketing import Promotion, PromotionAttachment
 from app.models.resources import Attachment, AttachmentDirectory, AttachmentType
 from app.services import promotions_pdf_service as pdf_mod
 from app.services.promotions_pdf_service import PromotionsPdfService
+from tests._pg_fixture import blank_session
 
 _FIXDIR = os.path.join(os.path.dirname(__file__), "fixtures")
 PDF_BYTES = open(os.path.join(_FIXDIR, "sample_flyer.pdf"), "rb").read()
@@ -46,33 +43,12 @@ class _FakeBackend:
 
 @pytest.fixture
 def db(monkeypatch):
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    # Attachment.access_levels is JSONB; conftest compiles JSONB->JSON for sqlite.
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            AttachmentDirectory.__table__,
-            AttachmentType.__table__,
-            Attachment.__table__,
-            Promotion.__table__,
-            PromotionAttachment.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-
-    # Inject the fixture bytes via a fake storage backend keyed by file_path.
-    store: dict[str, bytes] = {}
-    monkeypatch.setattr(pdf_mod, "get_backend", lambda provider: _FakeBackend(store))
-    s._fixture_store = store  # type: ignore[attr-defined]
-    try:
+    with blank_session() as s:
+        # Inject the fixture bytes via a fake storage backend keyed by file_path.
+        store: dict[str, bytes] = {}
+        monkeypatch.setattr(pdf_mod, "get_backend", lambda provider: _FakeBackend(store))
+        s._fixture_store = store  # type: ignore[attr-defined]
         yield s
-    finally:
-        s.close()
 
 
 def _mk_promo(db) -> Promotion:

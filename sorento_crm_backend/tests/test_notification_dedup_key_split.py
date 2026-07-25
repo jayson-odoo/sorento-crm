@@ -20,16 +20,13 @@ import uuid
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.notification import Notification, NotificationDelivery
 from app.services.notification_service import (
     NotificationService,
     _split_entity_and_dedup,
 )
+from tests._pg_fixture import blank_session
 
 
 # --------------------------------------------------------------------------- #
@@ -73,20 +70,8 @@ def test_split_none_is_none():
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine, tables=[Notification.__table__, NotificationDelivery.__table__]
-    )
-    Session = sessionmaker(bind=engine, autocommit=False, autoflush=False)
-    s = Session()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 @pytest.fixture(autouse=True)

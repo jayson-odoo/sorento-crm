@@ -11,52 +11,17 @@ import uuid
 from datetime import datetime
 
 import pytest
-from sqlalchemy import JSON, create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.audit import AuditLog
 from app.models.inventory import Stock, StockLedger, Warehouse
-from app.models.lookup import LookupBinding, LookupOption, LookupSet
-from app.models.product import Product
+from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.inventory_service import StockService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    # sqlite can't DDL JSONB (audit_logs.old_values/new_values) — swap to JSON.
-    for col in AuditLog.__table__.columns:
-        if isinstance(col.type, JSONB):
-            col.type = JSON()
-            col.server_default = None
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            Warehouse.__table__,
-            Product.__table__,
-            Stock.__table__,
-            StockLedger.__table__,
-            LookupSet.__table__,
-            LookupOption.__table__,
-            LookupBinding.__table__,
-            # Global audit listeners (registered by other test modules) fire on
-            # our inserts when the full suite runs — give them their table.
-            AuditLog.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 def _warehouse(db, active=True):
@@ -68,13 +33,20 @@ def _warehouse(db, active=True):
 
 def _stock(db, wh_id, code, qty):
     prod_id = str(uuid.uuid4())
+    # category_id / base_uom_id are real, NOT NULL foreign keys -- Postgres
+    # enforces them, so the parent rows must exist (sqlite did not care).
+    cat_id = str(uuid.uuid4())
+    uom_id = str(uuid.uuid4())
+    db.add(ProductCategory(id=cat_id, category_code=f"C{uuid.uuid4().hex[:8]}", category_name=code))
+    db.add(UnitOfMeasure(id=uom_id, uom_code=f"U{uuid.uuid4().hex[:8]}", uom_name="Each"))
+    db.flush()
     db.add(
         Product(
             id=prod_id,
             product_code=code,
             product_name=code,
-            category_id=str(uuid.uuid4()),
-            base_uom_id=str(uuid.uuid4()),
+            category_id=cat_id,
+            base_uom_id=uom_id,
             list_price=0,
         )
     )

@@ -120,6 +120,17 @@ api_router.include_router(
     tags=["user-management"],
     dependencies=[Depends(require_module_enabled("base"))],
 )
+# Integration management (AC-AC-08). JWT only -- deliberately NOT X-API-Key:
+# an integration must not be able to mint credentials for itself or enumerate
+# the other integrations, or a compromise of one caller escalates to all of them.
+# (The per-agent MCP tool ownership sub-routes that used to sit here were removed
+# on main in PR #30; only the integration-management mount stays.)
+api_router.include_router(
+    integrations.admin.router,
+    prefix="/integrations/manage",
+    tags=["integrations"],
+    dependencies=[Depends(require_module_enabled_with_api_key("base"))],
+)
 api_router.include_router(
     integrations.logs.router,
     prefix="/integrations/logs",

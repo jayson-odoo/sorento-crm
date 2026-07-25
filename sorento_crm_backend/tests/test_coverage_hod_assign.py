@@ -9,51 +9,36 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import JSON, create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import text
 
-from app.database import Base
 from app.models.access import Team, TeamMember
 from app.models.notification import (
     Notification,
     NotificationDelivery,
     NotificationSubscription,
 )
-from app.models.lookup import LookupBinding  # listener-table workaround
 from app.models.user import User
 from app.services.coverage_subscription_service import CoverageSubscriptionService
 from app.services.error_handler import AppException
+from tests._pg_fixture import blank_session
 
 
+# The whole schema is present, so the listener tables (LookupBinding etc.) and
+# Notification.data's real JSONB type come for free -- no per-table list, no
+# JSONB->JSON swap.
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    for col in Notification.__table__.columns:
-        if col.name == "data":
-            col.type = JSON()
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            User.__table__,
-            Team.__table__,
-            TeamMember.__table__,
-            NotificationSubscription.__table__,
-            Notification.__table__,
-            NotificationDelivery.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        # Scope-B resolution goes through descendant_team_ids, which on Postgres
+        # runs a raw-SQL recursive CTE against an unqualified `teams`.
+        # schema_translate_map only rewrites ORM/Core constructs, so that raw
+        # statement would read the real public.teams and see none of the rows
+        # this fixture creates. Point search_path at the blank schema so raw SQL
+        # and ORM queries resolve to the same tables. SET LOCAL is scoped to the
+        # outer transaction, so it unwinds with the rollback.
+        schema = session.get_bind()._execution_options["schema_translate_map"][None]
+        session.execute(text(f'SET LOCAL search_path TO "{schema}"'))
+        yield session
 
 
 def _user(db, name, **kw) -> str:

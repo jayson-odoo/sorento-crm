@@ -9,39 +9,27 @@ import uuid
 from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.marketing import MarketingCampaign, CampaignType
-from app.models.lookup import LookupBinding
 from app.services.marketing_service import (
     MarketingCampaignService,
     CampaignTypeService,
 )
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    # LookupBinding required: a globally-registered write-listener queries it on
-    # inserts when the full suite runs (CLAUDE.md sqlite gotcha).
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            MarketingCampaign.__table__,
-            CampaignType.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    """Empty Postgres schema over the full real DDL.
+
+    The old fixture had to name LookupBinding explicitly because a globally
+    registered write-listener queries it on every insert; the blank schema
+    carries every table, so that class of missing-table failure is gone. It
+    also gives the real NOT NULL campaign_type_id FK, which is precisely the
+    constraint the 409 guard exists to protect.
+    """
+    with blank_session() as session:
+        yield session
 
 
 def _type(db, code="EMAIL"):

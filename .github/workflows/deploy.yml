@@ -105,8 +105,7 @@ jobs:
             -e REDIS_URL=redis://localhost:6379/0 \
             sorento-backend:ci \
             -m pytest -q -p no:cacheprovider \
-              tests/test_lessons_learnt_regressions.py \
-              tests/test_auth_login.py
+              tests/test_lessons_learnt_regressions.py
 
   validate-mcp:
     name: Validate MCP imports

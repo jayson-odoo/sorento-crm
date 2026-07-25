@@ -1,8 +1,8 @@
 import pytest
-from sqlalchemy import Column, String, create_engine, event
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import Column, String
 
 from app.database import Base
+from tests._pg_fixture import blank_session
 from app.schemas.lookup import LookupSetCreate, LookupOptionCreate, LookupBindingCreate
 from app.services.lookup_set_service import LookupSetService
 from app.services.lookup_option_service import LookupOptionService
@@ -30,29 +30,15 @@ class _DemoWidget(Base):
 
 @pytest.fixture
 def db_session():
-    from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
-    engine = create_engine("sqlite:///:memory:")
+    """A blank Postgres schema, rolled back after the test.
 
-    @event.listens_for(engine, "connect")
-    def _enable_fk(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            LookupSet.__table__, LookupOption.__table__,
-            LookupOptionKeyword.__table__, LookupBinding.__table__,
-            _DemoWidget.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    Was in-memory sqlite with a PRAGMA to switch foreign keys on -- Postgres
+    enforces them natively, and ``_DemoWidget`` rides along because it is
+    declared on ``Base`` at import time, so the blank schema's create_all
+    picks it up with everything else.
+    """
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 def setup_function(_):

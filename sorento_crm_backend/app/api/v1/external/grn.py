@@ -174,6 +174,7 @@ def create_grn(
         picking_lines=picking_lines_payload,
     )
 
-    created_by = None if current_user.get("id") == "system" else current_user["id"]
+    # The integration's principal is a real users row, so attribution is recorded.
+    created_by = current_user["id"]
     service = PickingHeaderService(db)
     return service.create_grn(grn, created_by=created_by)

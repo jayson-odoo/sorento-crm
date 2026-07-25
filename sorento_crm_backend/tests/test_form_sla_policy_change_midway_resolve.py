@@ -19,11 +19,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.access import AccessAgent, RespondContact
 from app.models.sla import (
     ConversationSLAEventLog,
@@ -34,6 +30,7 @@ from app.models.sla import (
 )
 from app.models.user import User
 from app.services.form_sla_service import FormSLAOrchestrator, _utc_naive_now
+from tests._pg_fixture import blank_session
 
 SOURCE_TYPE = "stock_inquiry"
 STAGE = "project_sales"
@@ -42,41 +39,8 @@ RESOLVE_EVENT = "project_sales_approve"
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    # RespondContact.session_vars is JSONB with a pg-specific server_default; swap it
-    # out so SQLite can render the DDL (mirrors test_conversation_sla_idempotent_create).
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for col in list(RespondContact.__table__.columns):
-        if isinstance(col.type, JSONB):
-            col.type = GenericJSON()
-            col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            SLAPolicy.__table__,
-            SLAPolicyTier.__table__,
-            ConversationSLATracking.__table__,
-            ConversationSLAEventLog.__table__,
-            FormSLAConfig.__table__,
-            User.__table__,
-            RespondContact.__table__,
-            AccessAgent.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 def _policy(db, code: str) -> str:

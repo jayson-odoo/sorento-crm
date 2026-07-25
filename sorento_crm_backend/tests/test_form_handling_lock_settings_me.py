@@ -23,47 +23,15 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.lookup import LookupBinding
-from app.models.user import SystemSetting, User, UserRole, UserRoleAssignment
+from app.models.user import SystemSetting, User
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY, JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for model in (SystemSetting, User, UserRole):
-        for col in list(model.__table__.columns):
-            if isinstance(col.type, (JSONB, PG_ARRAY)):
-                col.type = GenericJSON()
-                col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            SystemSetting.__table__,
-            User.__table__,
-            UserRole.__table__,
-            UserRoleAssignment.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 _ACTOR: dict = {"id": None}

@@ -6,65 +6,27 @@
 - 403 for a principal lacking ``system.ai_assistant_settings.view``.
 
 Mirrors the TestClient + controllable-permission fixture used by
-``test_ai_prompt_registry.py``. In-memory SQLite, no network.
+``test_ai_prompt_registry.py``. Blank Postgres schema, no network.
 """
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-from app.database import Base
 from app.models.ai_assistant import (
     AIAssistantConversation,
     AIAssistantMessage,
     AIAssistantSpan,
     AIAssistantTrace,
 )
-from app.models.audit import AuditLog
-from app.models.lookup import LookupBinding
-from app.models.user import SystemSetting, User
-
-
-@compiles(JSONB, "sqlite")  # type: ignore[misc]
-def _jsonb_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
-
-
-@compiles(ARRAY, "sqlite")  # type: ignore[misc]
-def _array_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
-
-
-_TABLES = [
-    User.__table__,
-    SystemSetting.__table__,
-    AIAssistantConversation.__table__,
-    AIAssistantMessage.__table__,
-    AIAssistantTrace.__table__,
-    AIAssistantSpan.__table__,
-    LookupBinding.__table__,
-    AuditLog.__table__,
-]
+from app.models.user import User
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db() -> Session:
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=_TABLES)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 # UUID-typed columns reject slug ids — use valid UUIDs. User.id is a String PK.
@@ -78,9 +40,13 @@ _NT_MSG_ID = "390ec245-4b1b-5c97-b44e-e837e291dd56"
 @pytest.fixture
 def traced_message(db: Session) -> str:
     """Seed a message with a trace + two spans; return the message id."""
+    # Parents must land before their FK children -- these models declare no ORM
+    # relationships, so nothing orders the inserts within a single flush.
     user = User(id="f84ec219-709b-5290-a890-e907ed4f7740", email="ep@test.com", name="EP", status="ACTIVE")
+    db.add(user)
+    db.flush()
     conv = AIAssistantConversation(id=_CONV_ID, user_id="f84ec219-709b-5290-a890-e907ed4f7740", title="T")
-    db.add_all([user, conv])
+    db.add(conv)
     db.flush()
     msg = AIAssistantMessage(id=_MSG_ID, conversation_id=_CONV_ID, role="assistant", content="a")
     db.add(msg)
@@ -97,20 +63,23 @@ def traced_message(db: Session) -> str:
         span_count=2,
     )
     db.add(trace)
-    db.add_all(
-        [
-            AIAssistantSpan(
-                id=_ROOT_SPAN_ID, trace_id=_TRACE_ID, parent_id=None,
-                dotted_order="000001", span_kind="AGENT", name="assistant turn",
-            ),
-            AIAssistantSpan(
-                id=_LLM_SPAN_ID, trace_id=_TRACE_ID, parent_id=_ROOT_SPAN_ID,
-                dotted_order="000002", span_kind="LLM", name="chat gpt-4o",
-                request_model="gpt-4o", tokens_in=10, tokens_out=5,
-                prompt_name="agent_system", prompt_version=1,
-            ),
-        ]
+    db.flush()
+    db.add(
+        AIAssistantSpan(
+            id=_ROOT_SPAN_ID, trace_id=_TRACE_ID, parent_id=None,
+            dotted_order="000001", span_kind="AGENT", name="assistant turn",
+        )
     )
+    db.flush()
+    db.add(
+        AIAssistantSpan(
+            id=_LLM_SPAN_ID, trace_id=_TRACE_ID, parent_id=_ROOT_SPAN_ID,
+            dotted_order="000002", span_kind="LLM", name="chat gpt-4o",
+            request_model="gpt-4o", tokens_in=10, tokens_out=5,
+            prompt_name="agent_system", prompt_version=1,
+        )
+    )
+    db.flush()
     msg.trace_id = _TRACE_ID
     db.commit()
     return _MSG_ID
@@ -120,8 +89,10 @@ def traced_message(db: Session) -> str:
 def notrace_message(db: Session) -> str:
     """A message with no trace at all."""
     user = User(id="51af1c08-cd3a-5bbb-aa48-14c0bd8207bf", email="nt@test.com", name="NT", status="ACTIVE")
+    db.add(user)
+    db.flush()  # parent must land before the FK child (no ORM relationship to order it)
     conv = AIAssistantConversation(id=_NT_CONV_ID, user_id="51af1c08-cd3a-5bbb-aa48-14c0bd8207bf", title="T")
-    db.add_all([user, conv])
+    db.add(conv)
     db.flush()
     db.add(AIAssistantMessage(id=_NT_MSG_ID, conversation_id=_NT_CONV_ID, role="assistant", content="a"))
     db.commit()
@@ -130,7 +101,7 @@ def notrace_message(db: Session) -> str:
 
 @pytest.fixture
 def api(db: Session, monkeypatch):
-    """TestClient wired to the sqlite session with a controllable permission gate."""
+    """TestClient wired to the blank Postgres session with a controllable permission gate."""
     from fastapi.testclient import TestClient
 
     import app.dependencies as deps

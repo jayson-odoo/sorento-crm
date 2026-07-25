@@ -12,42 +12,18 @@ import uuid
 from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.access import RespondContact
 from app.models.complaints import Complaint
 from app.models.user import User
 from app.services.complaints_service import ComplaintService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for col in list(RespondContact.__table__.columns):
-        if isinstance(col.type, JSONB):
-            col.type = GenericJSON()
-            col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[RespondContact.__table__, User.__table__, Complaint.__table__],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        yield session
 
 
 def _serialize(svc, complaint):

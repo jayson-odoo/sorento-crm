@@ -1,38 +1,23 @@
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
 
 from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db_session():
-    """In-memory SQLite session scoped to the lookup tables only.
+    """Empty Postgres session over the full real schema.
 
-    We deliberately avoid importing the full models registry because other
-    models use JSONB/PostgreSQL-specific types that SQLite cannot compile.
-    The lookup models only use standard ANSI types, so SQLite works fine.
+    Previously an in-memory SQLite database carrying only the four lookup
+    tables, because the wider registry uses PostgreSQL-only types. The blank
+    schema removes that constraint -- every table is present, with the real
+    DDL -- so the relationships here are exercised against production types
+    and real foreign keys rather than SQLite's approximations.
     """
-    from app.database import Base
-
-    # Importing the lookup models above already registered their mappers;
-    # we only create their tables so SQLite doesn't choke on PG-specific types.
-    tables = [
-        LookupSet.__table__,
-        LookupOption.__table__,
-        LookupOptionKeyword.__table__,
-        LookupBinding.__table__,
-    ]
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine, tables=tables)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 def test_models_construct(db_session):

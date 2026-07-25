@@ -20,51 +20,18 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.access import AccessAgent, RespondContact
-from app.models.lookup import LookupBinding
 from app.models.sla import ConversationSLATracking, ConversationSLAEventLog, SLAPolicy
 from app.models.user import User
 from app.services.sla_service import ConversationSLATrackingService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for model in (RespondContact, AccessAgent):
-        for col in list(model.__table__.columns):
-            if isinstance(col.type, JSONB):
-                col.type = GenericJSON()
-                col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            SLAPolicy.__table__,
-            ConversationSLATracking.__table__,
-            ConversationSLAEventLog.__table__,
-            RespondContact.__table__,
-            AccessAgent.__table__,
-            User.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    s = sessionmaker(bind=engine)()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        yield session
 
 
 def _as_naive_utc(dt: datetime) -> datetime:

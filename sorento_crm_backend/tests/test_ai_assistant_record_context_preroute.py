@@ -20,12 +20,8 @@ Mirrors the stub wiring in ``test_ai_assistant_usage.py``.
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from app.database import Base
 from app.models.ai_assistant import (
     AIAssistantConfig,
     AIAssistantConversation,
@@ -49,6 +45,7 @@ from app.schemas.ai_semantic_parser import (
 )
 from app.services.ai_assistant_service import AIAssistantChatService
 from app.services.entity_resolver import ResolutionResult
+from tests._pg_fixture import blank_session
 
 
 def _parse(
@@ -74,32 +71,10 @@ def _parse(
     )
 
 
-@compiles(JSONB, "sqlite")  # type: ignore[misc]
-def _jsonb_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
-
-
 @pytest.fixture
 def db_session() -> Session:
-    engine = create_engine("sqlite:///:memory:")
-    tables = [
-        User.__table__,
-        AIAssistantConfig.__table__,
-        AIAssistantConversation.__table__,
-        AIAssistantMessage.__table__,
-        AIAssistantGovernanceEvent.__table__,
-        AIAssistantUsageLog.__table__,
-        AIAssistantWishlistCluster.__table__,
-        AIAssistantUnansweredQuery.__table__,
-        LookupBinding.__table__,  # global lookup-write listener queries this on insert
-    ]
-    Base.metadata.create_all(engine, tables=tables)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 @pytest.fixture
@@ -108,14 +83,6 @@ def seeded_user(db_session: Session) -> str:
     db_session.add(user)
     db_session.commit()
     return user.id
-
-
-@pytest.fixture(autouse=True)
-def _stub_rate_limit_clause(monkeypatch):
-    import app.services.ai_assistant_service as svc_module
-    from sqlalchemy import literal
-
-    monkeypatch.setattr(svc_module, "text", lambda _expr: literal(0))
 
 
 class _Spy:

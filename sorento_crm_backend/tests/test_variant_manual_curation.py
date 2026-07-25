@@ -15,99 +15,57 @@ Service (D1 — "manual wins, sticky"):
   - backfill main()/derive_parents skips manual rows (0 changes on re-run) while
     still letting them be candidate parents.
 
-Runs entirely against an in-memory sqlite bind (CLAUDE.md "sqlite pytest fixtures"
-gotcha): pg ``UUID(as_uuid=False)`` columns work as-is; the ``variant_link_manual``
-column is created because the reconcile / adopt / backfill SQL references it; and
-the pg-only string functions ``regexp_replace`` / ``left`` used by the derivation
-SQL are registered as python shims on the connection. Listener-dependent tables
-(``lookup_bindings``) are created so a globally-registered lookup validator can't
-fault on our inserts during a full-suite run. ``audit_logs`` is deliberately NOT
-created, so the audit listener's table-existence cache reports absent and audit
-writes no-op (audit itself is covered elsewhere).
+Runs against a blank copy of the real Postgres schema, rolled back per test. The
+pg-only string functions ``regexp_replace`` / ``left`` used by the derivation SQL
+are native here (they were python shims under the old sqlite bind). The backfill
+session binds to the SAME connection as ``db`` (create_savepoint) so its committed
+UPDATEs are visible to the test's assertions within the single rolled-back
+transaction.
 """
 from __future__ import annotations
 
 import uuid
 
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import event
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
 
-from app.database import Base
-from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
-from app.models.resources import Attachment
-from app.models.attachment_field_link import AttachmentFieldLink
-from app.models.lookup import LookupBinding
+from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.product_service import ProductService
 from app.services.variant_link_service import (
     reconcile_variant_links,
     _adopt_orphans,
 )
-
-
-# --------------------------------------------------------------------------- #
-# sqlite shims for the pg string functions the derivation SQL uses.
-# --------------------------------------------------------------------------- #
-import re as _re
-
-_STRIP = _re.compile(r"[-\s]")
-
-
-def _sqlite_regexp_replace(value, pattern, replacement, _flags):
-    if value is None:
-        return None
-    return _re.sub(pattern, replacement, value)
-
-
-def _sqlite_left(value, n):
-    if value is None:
-        return None
-    return value[: int(n)]
-
-
-_TABLES = [
-    Product.__table__,
-    ProductCategory.__table__,
-    Brand.__table__,
-    UnitOfMeasure.__table__,
-    Attachment.__table__,
-    AttachmentFieldLink.__table__,
-    LookupBinding.__table__,
-]
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture()
-def engine():
-    eng = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+def db():
+    """A blank Postgres schema, rolled back after the test.
 
-    @event.listens_for(eng, "connect")
-    def _register_fns(dbapi_conn, _rec):  # noqa: ANN001
-        dbapi_conn.create_function(
-            "regexp_replace", 4, _sqlite_regexp_replace, deterministic=True
+    Was an in-memory sqlite bind with python shims for regexp_replace / left --
+    both are native on Postgres, so the derivation SQL runs against the real
+    dialect here. category_id / base_uom_id are NOT NULL foreign keys, so the
+    shared parent rows are seeded up front (Postgres enforces what sqlite did not).
+    """
+    with blank_session() as session:
+        session.add(
+            ProductCategory(id=_CAT, category_code="ZZT-VMC-CAT", category_name="ZZT")
         )
-        dbapi_conn.create_function("left", 2, _sqlite_left, deterministic=True)
-
-    # Strip pg-cast server defaults (``::jsonb`` etc.) for the DDL emit only.
-    from tests._sqlite_compat import _neutralized_pg_defaults
-
-    with _neutralized_pg_defaults(Base.metadata):
-        Base.metadata.create_all(eng, tables=_TABLES)
-    return eng
+        session.add(UnitOfMeasure(id=_UOM, uom_code="ZZT-VMC-UOM", uom_name="Each"))
+        session.flush()
+        yield session
 
 
 @pytest.fixture()
-def db(engine):
-    session = sessionmaker(bind=engine)()
-    try:
-        yield session
-    finally:
-        session.close()
+def engine(db):
+    """The Connection the session is bound to.
+
+    Tests attach a statement-count listener to it and bind a second (backfill)
+    session to it, so both sessions observe the same rolled-back transaction.
+    """
+    return db.get_bind()
 
 
 # --------------------------------------------------------------------------- #
@@ -451,7 +409,9 @@ def test_backfill_skips_manual_rows(db, engine, monkeypatch, capsys):
     assert derived[manual_child] == base  # candidate-parent derivation ignores manual
 
     # main() must skip the manual row (not overwrite) but fix the auto orphan.
-    factory = sessionmaker(bind=engine)
+    # Bind to the same connection with create_savepoint so the backfill's commit
+    # lands on a savepoint the test session (on that connection) can then read.
+    factory = sessionmaker(bind=engine, join_transaction_mode="create_savepoint")
     monkeypatch.setattr(bf, "SessionLocal", factory)
     monkeypatch.setattr("sys.argv", ["backfill_variant_links.py"])
     assert bf.main() == 0

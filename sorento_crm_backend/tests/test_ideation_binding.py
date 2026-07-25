@@ -12,17 +12,18 @@ Keys back to ``documentation/plans/ideation/ideation-ideate-intent-acceptance-cr
   ``ideation_embed_connection_id``) exist, default blank (feature dormant), and
   there is NO ``ideation_mcp_url`` (create_idea is HTTP, not MCP).
 
-All deterministic / offline (sqlite + static file inspection); no live DB or LLM.
+All deterministic (a rolled-back Postgres session + static file inspection); no
+LLM. The database work runs on a blank copy of the real schema, so the column
+types and constraints under test are the production ones.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import inspect
 
-from app.database import Base
 from app.models.respond_workspace import RespondWorkspace
+from tests._pg_fixture import blank_session
 
 
 _MIGRATIONS = Path(__file__).resolve().parent.parent / "alembic" / "versions"
@@ -40,11 +41,7 @@ def test_workspace_model_has_nullable_ideation_product_id():
 def test_workspace_without_binding_is_detectable_fail_closed():
     """AC-31: a workspace with no binding reads back None so the endpoint can
     fail-closed without a create_idea call."""
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine, tables=[RespondWorkspace.__table__])
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    try:
+    with blank_session() as session:
         ws = RespondWorkspace(
             space_id="space-1",
             name="Default",
@@ -57,8 +54,6 @@ def test_workspace_without_binding_is_detectable_fail_closed():
         got = inspect(ws)
         assert ws.ideation_product_id is None, "unbound workspace must read None"
         assert got is not None
-    finally:
-        session.close()
 
 
 # ===========================================================================

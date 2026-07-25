@@ -1,4 +1,11 @@
-fastapi>=0.104.1
+# Pinned: `>=0.104.1` let CI + the prod Docker build resolve a newer FastAPI
+# than local dev, which defers router flattening (router.routes holds lazy
+# _IncludedRouter wrappers with no .path until app build) and broke
+# test_external_permission_coverage on CI while passing locally. Pin to the
+# version the app is actually developed and tested against so local == CI ==
+# prod. Bump deliberately, re-running the suite, not by silent transitive drift.
+fastapi==0.128.0
+starlette==0.50.0
 uvicorn[standard]>=0.24.0
 gunicorn>=21.2.0
 sqlalchemy>=2.0.23

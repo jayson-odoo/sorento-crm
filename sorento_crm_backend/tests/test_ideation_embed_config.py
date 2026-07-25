@@ -12,18 +12,17 @@ Keys back to ``documentation/plans/ideation/ideation-embed-sso-acceptance-criter
 - **AC-E-4** — any blank required field => not ready (dormant).
 - **AC-E-12** — the signing secret is never returned plaintext (masked only).
 
-All deterministic / offline (sqlite + static file inspection); no live DB or LLM.
+All deterministic (a rolled-back Postgres session + static file inspection); no
+LLM. The database work runs on a blank copy of the real schema, so the column
+types and constraints under test are the production ones.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 import app.services.ideation_embed_service as embed_svc
-from app.database import Base
 from app.models.respond_workspace import RespondWorkspace
 from app.schemas.respond_workspace import (
     RespondWorkspaceCreate,
@@ -31,6 +30,7 @@ from app.schemas.respond_workspace import (
 )
 from app.services.respond_workspace_service import RespondWorkspaceService
 from app.utils.field_encryption import decrypt_secret
+from tests._pg_fixture import blank_session
 
 
 _MIGRATIONS = Path(__file__).resolve().parent.parent / "alembic" / "versions"
@@ -38,14 +38,8 @@ _MIGRATIONS = Path(__file__).resolve().parent.parent / "alembic" / "versions"
 
 @pytest.fixture
 def session():
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine, tables=[RespondWorkspace.__table__])
-    Session = sessionmaker(bind=engine)
-    s = Session()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 # ===========================================================================

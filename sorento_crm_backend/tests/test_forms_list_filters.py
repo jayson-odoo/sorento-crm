@@ -1,12 +1,14 @@
 """FormService.list_forms filter/search behavior.
 
-Postgres-only filters (``?|`` against JSONB ``access_levels``) are exercised
-elsewhere — here we cover SQL paths that translate cleanly to SQLite:
+Covers:
 
   * ``form_type`` exact match (lowercased)
   * search query matches form code/name AND linked attachment filename
   * ``contact_access_codes=[]`` short-circuits to no results (the
     ``text("false")`` branch — no JSONB op invoked)
+
+Runs on Postgres, so ``access_levels`` is real JSONB rather than the sqlite
+stand-in the file used to register a global ``@compiles`` hook for.
 """
 from __future__ import annotations
 
@@ -14,55 +16,17 @@ import uuid
 from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.audit import AuditLog
 from app.models.forms import Form
-from app.models.lookup import LookupBinding, LookupOption, LookupSet
-from app.models.resources import (
-    Attachment,
-    AttachmentDirectory,
-    AttachmentType,
-)
+from app.models.resources import Attachment
 from app.services.forms_service import FormService
-
-
-@compiles(JSONB, "sqlite")
-def _jsonb_as_json_on_sqlite(_element, _compiler, **_kw):
-    return "JSON"
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            AttachmentDirectory.__table__,
-            AttachmentType.__table__,
-            Attachment.__table__,
-            Form.__table__,
-            LookupSet.__table__,
-            LookupOption.__table__,
-            LookupBinding.__table__,
-            AuditLog.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 def _seed_attachment(db, filename: str) -> str:

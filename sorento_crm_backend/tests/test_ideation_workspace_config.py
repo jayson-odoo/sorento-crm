@@ -11,18 +11,16 @@ the respond.io encrypted-key pattern:
   per-field ONLY when the workspace field is blank, and reports fail-closed when
   a piece is missing.
 
-All deterministic / offline (sqlite + static file inspection); no live DB or LLM.
+All deterministic / offline (rolled-back Postgres + static file inspection); no
+live data or LLM.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, inspect
-from sqlalchemy.orm import sessionmaker
 
 import app.services.ideation_turn_service as turn_svc
-from app.database import Base
 from app.models.respond_workspace import RespondWorkspace
 from app.schemas.respond_workspace import (
     RespondWorkspaceCreate,
@@ -30,6 +28,7 @@ from app.schemas.respond_workspace import (
 )
 from app.services.respond_workspace_service import RespondWorkspaceService
 from app.utils.field_encryption import decrypt_secret
+from tests._pg_fixture import blank_session
 
 
 _MIGRATIONS = Path(__file__).resolve().parent.parent / "alembic" / "versions"
@@ -37,14 +36,15 @@ _MIGRATIONS = Path(__file__).resolve().parent.parent / "alembic" / "versions"
 
 @pytest.fixture
 def session():
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine, tables=[RespondWorkspace.__table__])
-    Session = sessionmaker(bind=engine)
-    s = Session()
-    try:
+    """A blank Postgres schema, rolled back after the test.
+
+    Was in-memory sqlite. Matters here because respond_workspaces carries a
+    PARTIAL unique index (``WHERE is_default IS TRUE``) that sqlite renders as
+    a plain unique index -- so the default-workspace behaviour these tests lean
+    on was being checked against the wrong constraint.
+    """
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 # ===========================================================================

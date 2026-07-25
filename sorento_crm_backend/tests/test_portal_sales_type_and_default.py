@@ -10,41 +10,29 @@ PORTAL-2  sales_type is an editable portal field for PR/SF (kind != complaint /
           editable sets.
 
 The endpoint handler is a plain function, so we call it directly with a seeded
-in-memory session instead of standing up the portal-token HTTP dependency.
+blank-schema session instead of standing up the portal-token HTTP dependency.
 """
 import uuid
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 # MUST be first app import — resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: F401,E402
 from app.api.v1.public.portal import lookup_set_options
-from app.database import Base
 from app.models.lookup import LookupBinding, LookupOption, LookupSet
 from app.services.portal_service import PortalService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[LookupSet.__table__, LookupOption.__table__, LookupBinding.__table__],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    """A blank Postgres schema, rolled back after the test.
+
+    Was in-memory sqlite over a hand-listed subset of the lookup tables.
+    """
+    with blank_session() as session:
+        yield session
 
 
 def _seed_sales_type(db, *, default_value: str | None) -> None:

@@ -211,7 +211,8 @@ def create_spo_allocations(
         else:
             groups_to_create[(spo_number, product_id, warehouse_id)] = items
 
-    created_by = None if current_user.get("id") == "system" else current_user["id"]
+    # The integration's principal is a real users row, so attribution is recorded.
+    created_by = current_user["id"]
     code_by_product_id = {}
     allocations = []
     for (spo_number, product_id, warehouse_id), items in groups_to_create.items():

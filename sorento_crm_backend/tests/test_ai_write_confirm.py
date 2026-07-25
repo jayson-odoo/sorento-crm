@@ -3,65 +3,32 @@
 Covers PLAN-ai-assistant-evals-guardrails §11 U7: a write tool NEVER executes
 without an explicit Confirm. These test the deterministic gate mechanism
 (summarize / serve-prompt / load / resolve), NOT the LLM that decides to call a
-write tool. Offline + sqlite, CI-safe.
+write tool. Offline + blank Postgres schema, CI-safe.
 """
 from __future__ import annotations
 
 import types
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from app.database import Base
-from app.models.ai_assistant import (
-    AIAssistantConfig,
-    AIAssistantConversation,
-    AIAssistantGovernanceEvent,
-    AIAssistantMessage,
-    AIAssistantUnansweredQuery,
-    AIAssistantUsageLog,
-    AIAssistantWishlistCluster,
-)
-from app.models.lookup import LookupBinding
+from app.models.ai_assistant import AIAssistantConversation
 from app.models.user import User
 from app.services.ai_assistant_service import AIAssistantChatService
-
-
-@compiles(JSONB, "sqlite")  # type: ignore[misc]
-def _jsonb_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db_session() -> Session:
-    engine = create_engine("sqlite:///:memory:")
-    tables = [
-        User.__table__,
-        AIAssistantConfig.__table__,
-        AIAssistantConversation.__table__,
-        AIAssistantMessage.__table__,
-        AIAssistantGovernanceEvent.__table__,
-        AIAssistantUsageLog.__table__,
-        AIAssistantWishlistCluster.__table__,
-        AIAssistantUnansweredQuery.__table__,
-        LookupBinding.__table__,
-    ]
-    Base.metadata.create_all(engine, tables=tables)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 @pytest.fixture
 def conv(db_session: Session):
     user = User(id="95709c37-0fb4-5c00-8686-536c019e6fb7", email="u1@test.com", name="U", status="ACTIVE")
     db_session.add(user)
+    db_session.flush()  # parent must land before the FK child (no ORM relationship to order it)
     c = AIAssistantConversation(user_id="95709c37-0fb4-5c00-8686-536c019e6fb7", title="t")
     db_session.add(c)
     db_session.commit()

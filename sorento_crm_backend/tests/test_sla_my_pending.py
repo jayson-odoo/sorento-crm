@@ -5,31 +5,17 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.sla import ConversationSLATracking, SLAPolicy
+from app.models.user import User
 from app.services.sla_service import ConversationSLATrackingService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine, tables=[SLAPolicy.__table__, ConversationSLATracking.__table__]
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        yield session
 
 
 def _policy(db) -> str:
@@ -37,6 +23,15 @@ def _policy(db) -> str:
     db.add(SLAPolicy(id=pid, code="lead_time", name="Lead time"))
     db.commit()
     return pid
+
+
+def _user(db, name) -> str:
+    """A real users row -- assigned_to_id is a FK, so the old string
+    placeholders ("me"/"other") only worked because sqlite ignored it."""
+    uid = str(uuid.uuid4())
+    db.add(User(id=uid, email=f"{name}@t.com", name=name))
+    db.commit()
+    return uid
 
 
 def _tracking(db, policy_id, *, assigned_to_id, is_resolved, due_in_h, src="stock_inquiry"):
@@ -57,12 +52,13 @@ def _tracking(db, policy_id, *, assigned_to_id, is_resolved, due_in_h, src="stoc
 
 def test_returns_only_my_unresolved_sorted_by_due(db):
     pid = _policy(db)
-    _tracking(db, pid, assigned_to_id="me", is_resolved=False, due_in_h=10)
-    _tracking(db, pid, assigned_to_id="me", is_resolved=False, due_in_h=2)
-    _tracking(db, pid, assigned_to_id="me", is_resolved=True, due_in_h=1)   # resolved -> excluded
-    _tracking(db, pid, assigned_to_id="other", is_resolved=False, due_in_h=1)  # not mine
+    me, other = _user(db, "me"), _user(db, "other")
+    _tracking(db, pid, assigned_to_id=me, is_resolved=False, due_in_h=10)
+    _tracking(db, pid, assigned_to_id=me, is_resolved=False, due_in_h=2)
+    _tracking(db, pid, assigned_to_id=me, is_resolved=True, due_in_h=1)   # resolved -> excluded
+    _tracking(db, pid, assigned_to_id=other, is_resolved=False, due_in_h=1)  # not mine
 
-    out = ConversationSLATrackingService(db).list_my_pending("me")
+    out = ConversationSLATrackingService(db).list_my_pending(me)
 
     assert [r["due_at"] for r in out] == [
         "2026-05-25T02:00:00",
@@ -75,8 +71,9 @@ def test_returns_only_my_unresolved_sorted_by_due(db):
 def test_includes_form_sla_types(db):
     """Form trackers (excluded from the conversation list) must appear here."""
     pid = _policy(db)
-    _tracking(db, pid, assigned_to_id="me", is_resolved=False, due_in_h=1, src="complaint")
-    out = ConversationSLATrackingService(db).list_my_pending("me")
+    me = _user(db, "me")
+    _tracking(db, pid, assigned_to_id=me, is_resolved=False, due_in_h=1, src="complaint")
+    out = ConversationSLATrackingService(db).list_my_pending(me)
     assert len(out) == 1
     assert out[0]["source_entity_type"] == "complaint"
 

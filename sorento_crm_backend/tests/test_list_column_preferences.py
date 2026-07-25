@@ -1,9 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session
 
-from app.database import Base
 from app.dependencies import get_current_user, get_db
 from app.main import app
 from app.models.user import (
@@ -12,8 +10,8 @@ from app.models.user import (
     UserRole,
     UserRoleAssignment,
     UserRolePermission,
-    UserListColumnConfig,
 )
+from tests._pg_fixture import blank_session
 
 
 def _seed_rbac_and_user(db: Session, *, user_id: str, permission_slug: str, role_id: str = 'r1') -> None:
@@ -75,27 +73,22 @@ def _seed_rbac_and_user(db: Session, *, user_id: str, permission_slug: str, role
 
 @pytest.fixture
 def api_client():
-    engine = create_engine('sqlite:///:memory:')
-    Base.metadata.create_all(engine)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = SessionLocal()
+    with blank_session() as db:
+        current_user = {'id': '82dce68d-596c-5265-9263-07b67db11d44'}
 
-    current_user = {'id': '82dce68d-596c-5265-9263-07b67db11d44'}
+        def _override_current_user():
+            return {'id': current_user['id']}
 
-    def _override_current_user():
-        return {'id': current_user['id']}
+        def _override_get_db():
+            yield db
 
-    def _override_get_db():
-        yield db
+        app.dependency_overrides[get_current_user] = _override_current_user
+        app.dependency_overrides[get_db] = _override_get_db
 
-    app.dependency_overrides[get_current_user] = _override_current_user
-    app.dependency_overrides[get_db] = _override_get_db
+        with TestClient(app) as client:
+            yield client, current_user, db
 
-    with TestClient(app) as client:
-        yield client, current_user, db
-
-    app.dependency_overrides.clear()
-    db.close()
+        app.dependency_overrides.clear()
 
 
 def test_list_column_config_upsert_and_reset(api_client):

@@ -15,14 +15,10 @@ import sys
 from datetime import datetime
 
 import pytest
-from sqlalchemy import BigInteger, Integer, create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.types import JSON
 
-from app.database import Base
 from app.models.chat_history import ChatHistory
+from tests._pg_fixture import blank_schema_engine
 
 SCRIPT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -39,19 +35,24 @@ def _load_script():
 
 @pytest.fixture
 def engine():
-    for col in ChatHistory.__table__.columns:
-        if isinstance(col.type, (JSONB, ARRAY)):
-            col.type = JSON()
-            col.server_default = None
-        if col.primary_key and isinstance(col.type, BigInteger):
-            col.type = Integer()
-    eng = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(eng, tables=[ChatHistory.__table__])
-    return eng
+    # The blank Postgres schema, not sqlite: this test exercises keyset paging
+    # over a real server-side cursor, and the bug it guards (a commit killing a
+    # yield_per named cursor) only exists on Postgres. The script commits
+    # through its own SessionLocal, so those writes are not rolled back -- clear
+    # the table at both ends to keep the shared schema clean.
+    eng = blank_schema_engine()
+
+    def _clear():
+        s = sessionmaker(bind=eng)()
+        s.query(ChatHistory).delete(synchronize_session=False)
+        s.commit()
+        s.close()
+
+    _clear()
+    try:
+        yield eng
+    finally:
+        _clear()
 
 
 @pytest.fixture
