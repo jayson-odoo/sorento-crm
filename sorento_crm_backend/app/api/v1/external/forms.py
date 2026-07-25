@@ -9,6 +9,7 @@ from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.models.forms import Form
 from app.models.resources import Attachment
+from app.api.v1.external.utils import scope_to_attachment_company
 from app.schemas.external.forms import FormCreateRequest, FormCreateResponse
 from app.schemas.forms import FormCreate, FormResponse
 from app.services.forms_service import FormService
@@ -44,6 +45,12 @@ def create_form(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Attachment not found: {attachment_id}",
             )
+        # Multi-company isolation (Group G): pin the scope to the attachment's
+        # company so any company-scoped rows created downstream auto-stamp it.
+        # Form itself is a shared (cross-company) entity — matched by unique code,
+        # never company-scoped — so a NULL-company (shared form) attachment leaves
+        # the scope untouched (AC-G3) and this is a defensive no-op for the Form.
+        scope_to_attachment_company(db, att)
     # Default external-created forms to active so they show up in the FE list
     # and MCP surfaces without a separate activation step. Caller can pass
     # ``is_active: false`` explicitly to opt out.

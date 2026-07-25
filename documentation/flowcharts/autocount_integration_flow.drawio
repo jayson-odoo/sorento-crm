@@ -1,0 +1,64 @@
+<mxfile host="65bd71144e">
+    <diagram id="autocount-integration" name="AutoCount Integration">
+        <mxGraphModel dx="1522" dy="578" grid="0" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1320" pageHeight="960" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="t1" value="Sorento × Foundryx — AutoCount Integration Architecture" style="text;html=1;align=left;verticalAlign=middle;fontStyle=1;fontSize=20;fontColor=#1a1a2e;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="24" width="1000" height="30" as="geometry"/>
+                </mxCell>
+                <mxCell id="t2" value="AutoCount is the system of record · the platform holds a read model (copy) · all writes go through the AutoCount SDK / API — never direct SQL" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fontColor=#5a6069;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="56" width="1180" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="zA" value="FOUNDRYX AI PLATFORM" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontStyle=1;fontSize=14;spacingTop=8;arcSize=6;fillColor=#f0f6fb;strokeColor=#cdd8e3;fontColor=#1d6fb8;" parent="1" vertex="1">
+                    <mxGeometry x="390" y="270" width="150" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="zC" value="AUTOCOUNT" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontStyle=1;fontSize=14;spacingTop=8;arcSize=6;fillColor=#f2f7f3;strokeColor=#cbd6cb;fontColor=#2f7d4f;" parent="1" vertex="1">
+                    <mxGeometry x="900" y="120" width="270" height="420" as="geometry"/>
+                </mxCell>
+                <mxCell id="readent" value="&lt;b&gt;READ entities Masters:&amp;nbsp;&lt;/b&gt;&lt;div&gt;Company&lt;/div&gt;&lt;div&gt;Transaction Type&lt;/div&gt;&lt;div&gt;Product&amp;nbsp;&amp;nbsp;&lt;/div&gt;&lt;div&gt;Stock(+ledger)&lt;/div&gt;&lt;div&gt;Warehouse(+locations)&amp;nbsp;&lt;/div&gt;&lt;div&gt;Creditor/Supplier (+lead time/MOQ)&amp;nbsp;&lt;/div&gt;&lt;div&gt;Debtor/Customer&amp;nbsp;&lt;/div&gt;&lt;div&gt;Payment Terms&lt;/div&gt;&lt;div&gt;Tax&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#eaf3fb;strokeColor=#1d6fb8;fontColor=#12496f;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;" parent="1" vertex="1">
+                    <mxGeometry x="930" y="186" width="210" height="162" as="geometry"/>
+                </mxCell>
+                <mxCell id="writeent" value="&lt;b&gt;WRITE entities Transactions:&amp;nbsp;&lt;/b&gt;&lt;div&gt;Purchase Order(+lines)&lt;/div&gt;&lt;div&gt;Sales Quotation&lt;span style=&quot;color: rgb(63, 63, 63); background-color: transparent;&quot;&gt;(+lines)&lt;/span&gt;&lt;/div&gt;&lt;div&gt;Purchase Request / RFQ&lt;span style=&quot;color: rgb(63, 63, 63); background-color: transparent;&quot;&gt;(+lines)&lt;/span&gt;&lt;/div&gt;&lt;div&gt;Sales Order&lt;span style=&quot;color: rgb(63, 63, 63); background-color: transparent;&quot;&gt;(+lines)&lt;/span&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#fbf1e6;strokeColor=#c9761a;fontColor=#8a5a12;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;" parent="1" vertex="1">
+                    <mxGeometry x="930" y="441" width="210" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="e_read1" value="read" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#1d6fb8;strokeWidth=2.4;fontColor=#1d6fb8;fontStyle=1;endArrow=block;endFill=1;entryX=0.997;entryY=0.42;entryDx=0;entryDy=0;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryPerimeter=0;" parent="1" source="readent" target="zA" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="810" y="235" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="e_write2" value="write" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#c9761a;strokeWidth=2.4;fontColor=#c9761a;fontStyle=1;endArrow=block;endFill=1;exitX=1;exitY=0.75;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" parent="1" source="zA" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="260" y="332.5" as="sourcePoint"/>
+                        <mxPoint x="930" y="480" as="targetPoint"/>
+                        <Array as="points">
+                            <mxPoint x="620" y="323"/>
+                            <mxPoint x="620" y="480"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="leg" value="" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fafbfc;strokeColor=#e2e8ee;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="850" width="1220" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="legr" value="① READ — read-only sync into the platform (Phase 1 baseline, expanded in Phase 2)" style="text;html=1;align=left;fontSize=12;fontColor=#1d6fb8;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="862" width="540" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="legw" value="② WRITE — via AutoCount SDK/API only, returns doc no. (Phase 2 — scope decision needed)" style="text;html=1;align=left;fontSize=12;fontColor=#c9761a;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="620" y="862" width="620" height="24" as="geometry"/>
+                </mxCell>
+                <mxCell id="legd" value="Doctrine: single source of truth (AutoCount) · deterministic sync &amp;amp; validation in code · LLM never writes to AutoCount directly." style="text;html=1;align=left;fontSize=11;fontColor=#8a8f98;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="890" width="1180" height="22" as="geometry"/>
+                </mxCell>
+                <mxCell id="2" value="&lt;b&gt;READ entities&amp;nbsp;&lt;span style=&quot;color: rgb(63, 63, 63); background-color: transparent;&quot;&gt;Transactions:&amp;nbsp;&lt;/span&gt;&lt;/b&gt;&lt;div&gt;&lt;span style=&quot;color: rgb(63, 63, 63); background-color: transparent;&quot;&gt;DO(+lines)&lt;/span&gt;&lt;/div&gt;&lt;div&gt;&lt;span style=&quot;color: rgb(63, 63, 63); background-color: transparent;&quot;&gt;GRN&lt;/span&gt;&lt;span style=&quot;color: rgb(63, 63, 63); background-color: transparent;&quot;&gt;(+lines)&lt;/span&gt;&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fontSize=12;fillColor=#eaf3fb;strokeColor=#1d6fb8;fontColor=#12496f;align=left;spacingLeft=8;verticalAlign=top;spacingTop=6;" vertex="1" parent="1">
+                    <mxGeometry x="928" y="362" width="210" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="3" value="read" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;strokeColor=#1d6fb8;strokeWidth=2.4;fontColor=#1d6fb8;fontStyle=1;endArrow=block;endFill=1;entryX=1.003;entryY=0.423;entryDx=0;entryDy=0;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryPerimeter=0;" edge="1" parent="1" source="2" target="zA">
+                    <mxGeometry relative="1" as="geometry">
+                        <mxPoint x="940" y="255" as="sourcePoint"/>
+                        <mxPoint x="370" y="255" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

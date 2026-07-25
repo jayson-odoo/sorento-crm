@@ -15,6 +15,7 @@ export const UserAddSchema = z.object({
   }),
   agent_ids: z.array(z.string()).optional(),
   superior_id: z.string().optional().nullable(),
+  companyIds: z.array(z.string()).default([]),
 });
 
 export type UserAddSchemaType = z.infer<typeof UserAddSchema>;

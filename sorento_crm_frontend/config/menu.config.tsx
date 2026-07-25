@@ -8,6 +8,7 @@ import {
   Book,
   Briefcase,
   Building,
+  Building2,
   CalendarCheck,
   Captions,
   CheckCircle,
@@ -677,6 +678,12 @@ export const MENU_SIDEBAR: MenuConfig = [
     moduleKey: 'base',
     children: [
       {
+        title: 'Companies',
+        path: '/system-management/companies',
+        icon: Building2,
+        superadminOnly: true,
+      },
+      {
         title: 'App Store',
         path: '/system-management/app-store',
         permission: 'system.modules.manage',
@@ -689,34 +696,42 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Import Jobs',
         path: '/system-management/import-jobs',
+        superadminOnly: true,
       },
       {
         title: 'Import Logs',
         path: '/system-management/import-logs',
+        superadminOnly: true,
       },
       {
         title: 'Audit Logs',
         path: '/system-management/audit-logs',
+        superadminOnly: true,
       },
       {
         title: 'System Health',
         path: '/system-management/health',
+        superadminOnly: true,
       },
       {
         title: 'Activity Timeline',
         path: '/system-management/activity',
+        superadminOnly: true,
       },
       {
         title: 'Integration Logs',
         path: '/integration-management/integration-logs',
+        superadminOnly: true,
       },
       {
         title: 'WhatsApp Templates',
         path: '/integration-management/whatsapp-templates',
+        permission: 'integration.respond_templates.view',
       },
       {
         title: 'Scheduled Tasks',
         path: '/system-management/scheduled-tasks',
+        superadminOnly: true,
       },
       {
         title: 'Outgoing Mails',
@@ -761,10 +776,12 @@ export const MENU_SIDEBAR: MenuConfig = [
       {
         title: 'Work Calendar',
         path: '/system-management/work-calendar',
+        superadminOnly: true,
       },
       {
         title: 'Running Numbers',
         path: '/system-management/numbering-rules',
+        permission: 'system.numbering_rules.view',
       },
       {
         title: 'Lookup Sets',
@@ -1507,6 +1524,12 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     moduleKey: 'base',
     children: [
       {
+        title: 'Companies',
+        path: '/system-management/companies',
+        icon: Building2,
+        superadminOnly: true,
+      },
+      {
         title: 'App Store',
         path: '/system-management/app-store',
         permission: 'system.modules.manage',
@@ -1519,34 +1542,42 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Import Jobs',
         path: '/system-management/import-jobs',
+        superadminOnly: true,
       },
       {
         title: 'Import Logs',
         path: '/system-management/import-logs',
+        superadminOnly: true,
       },
       {
         title: 'Audit Logs',
         path: '/system-management/audit-logs',
+        superadminOnly: true,
       },
       {
         title: 'System Health',
         path: '/system-management/health',
+        superadminOnly: true,
       },
       {
         title: 'Activity Timeline',
         path: '/system-management/activity',
+        superadminOnly: true,
       },
       {
         title: 'Integration Logs',
         path: '/integration-management/integration-logs',
+        superadminOnly: true,
       },
       {
         title: 'WhatsApp Templates',
         path: '/integration-management/whatsapp-templates',
+        permission: 'integration.respond_templates.view',
       },
       {
         title: 'Scheduled Tasks',
         path: '/system-management/scheduled-tasks',
+        superadminOnly: true,
       },
       {
         title: 'Outgoing Mails',
@@ -1591,10 +1622,12 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Work Calendar',
         path: '/system-management/work-calendar',
+        superadminOnly: true,
       },
       {
         title: 'Running Numbers',
         path: '/system-management/numbering-rules',
+        permission: 'system.numbering_rules.view',
       },
       {
         title: 'Lookup Sets',

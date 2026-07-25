@@ -1975,12 +1975,20 @@ class OrderService:
             "errors": errors
         }
 
-    def import_excel_tracking(self, file_data: bytes, user_id: str, validate_only: bool = False):
+    def import_excel_tracking(self, file_data: bytes, user_id: str, validate_only: bool = False, outcome=None):
         """Import orders from Excel file with Master and Overall Tracking sheets. If validate_only=True, run validation and return errors/warnings without persisting (rollback)."""
         from io import BytesIO
         from datetime import datetime, date, time as dt_time, timedelta
         import openpyxl
         from decimal import Decimal
+
+        from app.services import import_outcome_codes as _oc
+        from app.services.import_outcome import ImportOutcome as _ImportOutcome
+
+        # Per-row attribution for the job detail page. Row numbers repeat across the
+        # two sheets, so identity carries the sheet name to disambiguate.
+        if outcome is None:
+            outcome = _ImportOutcome(None, persist=False)
 
         created = 0
         updated = 0
@@ -2221,6 +2229,11 @@ class OrderService:
                 order_number = (mapped.get("order_number") or "").strip()
                 if not order_number:
                     errors.append({"row": row_idx, "error": "Doc. No. is required", "data": row_data})
+                    outcome.skip(
+                        row=row_idx, code=_oc.MISSING_DOC_NO,
+                        message="Doc. No. is required",
+                        identity={"sheet": "Master"},
+                    )
                     continue
                 mapped["order_number"] = order_number
                 order_date_value = mapped.get("order_date")
@@ -2291,6 +2304,14 @@ class OrderService:
                         existing_order.order_status_id = new_status_id
                     existing_order.updated_by = user_id
                     updated += 1
+                    outcome.updated(
+                        row=row_idx,
+                        message=f"Order updated: {order_number}",
+                        value=order_number,
+                        identity={"sheet": "Master", "doc_no": order_number},
+                        entity_type="order",
+                        entity_id=getattr(existing_order, "id", None),
+                    )
                     touched_orders.append(existing_order)
                 else:
                     # Brand-new order: pre-change state is empty (no prior remarks /
@@ -2309,10 +2330,21 @@ class OrderService:
                     order = Order(**mapped)
                     self.db.add(order)
                     created += 1
+                    outcome.success(
+                        row=row_idx,
+                        message=f"Order created: {order_number}",
+                        value=order_number,
+                        identity={"sheet": "Master", "doc_no": order_number},
+                        entity_type="order",
+                    )
                     existing_orders[order_number.lower()] = order
                     touched_orders.append(order)
             except Exception as exc:
                 errors.append({"row": row_idx, "error": str(exc), "data": row_data})
+                outcome.fail(
+                    row=row_idx, code=_oc.ROW_ERROR, message=str(exc),
+                    identity={"sheet": "Master"},
+                )
 
         tracking_updates = []
         min_tracking_date = None
@@ -2340,11 +2372,22 @@ class OrderService:
                 order_number = (mapped.get("order_number") or "").strip()
                 if not order_number:
                     errors.append({"row": row_idx, "error": "Doc Number is required", "data": row_data})
+                    outcome.skip(
+                        row=row_idx, code=_oc.MISSING_DOC_NO,
+                        message="Doc Number is required",
+                        identity={"sheet": "Overall Tracking"},
+                    )
                     continue
 
                 order = existing_orders.get(order_number.lower())
                 if not order:
                     warnings.append({"row": row_idx, "warning": f"Order '{order_number}' not found in Master sheet", "data": row_data})
+                    outcome.skip(
+                        row=row_idx, code=_oc.ORDER_NOT_IN_MASTER,
+                        message=f"Order '{order_number}' not found in Master sheet",
+                        value=order_number,
+                        identity={"sheet": "Overall Tracking", "doc_no": order_number},
+                    )
                     continue
 
                 # Snapshot pre-tracking state for tracking-only orders (Master-touched
@@ -2388,9 +2431,21 @@ class OrderService:
 
                 order.updated_by = user_id
                 updated += 1
+                outcome.updated(
+                    row=row_idx,
+                    message=f"Delivery tracking applied: {order_number}",
+                    value=order_number,
+                    identity={"sheet": "Overall Tracking", "doc_no": order_number},
+                    entity_type="order",
+                    entity_id=getattr(order, "id", None),
+                )
                 touched_orders.append(order)
             except Exception as exc:
                 errors.append({"row": row_idx, "error": str(exc), "data": row_data})
+                outcome.fail(
+                    row=row_idx, code=_oc.ROW_ERROR, message=str(exc),
+                    identity={"sheet": "Overall Tracking"},
+                )
 
         holidays_tracking = set()
         if min_tracking_date and max_tracking_date:

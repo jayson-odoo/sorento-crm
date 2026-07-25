@@ -13,6 +13,7 @@ import {
 } from '@/components/upload-activity';
 import { MyDownloadsProvider } from '@/components/my-downloads/MyDownloadsContext';
 import { MyDownloadsDrawer } from '@/components/my-downloads/MyDownloadsDrawer';
+import { CompanyProvider } from '@/app/providers/CompanyProvider';
 
 export default function ProtectedLayout({
   children,
@@ -56,13 +57,15 @@ export default function ProtectedLayout({
   }
 
   return (
-    <UploadManagerProvider>
-      <MyDownloadsProvider>
-        <GuideTargetSpotlight />
-        <Demo1Layout>{children}</Demo1Layout>
-        <UploadActivityDrawer />
-        <MyDownloadsDrawer />
-      </MyDownloadsProvider>
-    </UploadManagerProvider>
+    <CompanyProvider>
+      <UploadManagerProvider>
+        <MyDownloadsProvider>
+          <GuideTargetSpotlight />
+          <Demo1Layout>{children}</Demo1Layout>
+          <UploadActivityDrawer />
+          <MyDownloadsDrawer />
+        </MyDownloadsProvider>
+      </UploadManagerProvider>
+    </CompanyProvider>
   );
 }

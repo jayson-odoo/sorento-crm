@@ -8,6 +8,7 @@ export const ContactEditSchema = z.object({
   name: z.string().optional().nullable(),
   workspace_id: z.string().optional().nullable(),
   access_type_codes: z.array(z.string()),
+  company_ids: z.array(z.string()).default([]),
 });
 
 export type ContactEditSchemaType = z.infer<typeof ContactEditSchema>;

@@ -23,6 +23,12 @@ export interface MenuItem {
    * When tenant modules are loaded, this branch is hidden if the module is disabled.
    */
   moduleKey?: string;
+  /**
+   * Superadmin/admin-only entry (no dedicated permission slug exists yet).
+   * Hidden for everyone else. TODO(AC-A1/A4): replace with a `system.companies.manage`
+   * permission slug once the backend defines one — see PLAN-multi-company-isolation.md.
+   */
+  superadminOnly?: boolean;
 }
 
 export type MenuConfig = MenuItem[];

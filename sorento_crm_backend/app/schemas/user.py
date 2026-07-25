@@ -181,6 +181,7 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     role_ids: Optional[list[str]] = None  # If omitted, default role is assigned
+    company_ids: Optional[list[str]] = None  # Superadmin-only: user_companies grants
 
 
 class UserUpdate(BaseModel):

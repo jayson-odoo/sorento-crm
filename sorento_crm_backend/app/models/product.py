@@ -4,6 +4,7 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.base import CompanyScopedMixin
 import uuid
 
 # Forward references for relationships
@@ -15,7 +16,7 @@ if TYPE_CHECKING:
     from app.models.resources import Attachment
 
 
-class ProductCategory(Base):
+class ProductCategory(Base, CompanyScopedMixin):
     __tablename__ = "product_categories"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -39,7 +40,7 @@ class ProductCategory(Base):
     )
 
 
-class Brand(Base):
+class Brand(Base, CompanyScopedMixin):
     __tablename__ = "brands"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -67,7 +68,7 @@ class Brand(Base):
     )
 
 
-class UnitOfMeasure(Base):
+class UnitOfMeasure(Base, CompanyScopedMixin):
     __tablename__ = "units_of_measure"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -90,7 +91,7 @@ class UnitOfMeasure(Base):
     )
 
 
-class Product(Base):
+class Product(Base, CompanyScopedMixin):
     """Product model. Set __audit_track__ = True for automatic audit logging of changes."""
     __tablename__ = "products"
     __audit_track__ = True
@@ -190,7 +191,7 @@ class Product(Base):
     )
 
 
-class ProductAttachment(Base):
+class ProductAttachment(Base, CompanyScopedMixin):
     __tablename__ = "product_attachments"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))

@@ -363,9 +363,26 @@ class UserService:
             )
 
     def _user_create_data(self, user_data: UserCreate) -> dict:
-        """Build User model dict from UserCreate, excluding role_ids."""
-        d = user_data.model_dump(exclude={"role_ids"})
+        """Build User model dict from UserCreate, excluding role_ids/company_ids."""
+        d = user_data.model_dump(exclude={"role_ids", "company_ids"})
         return d
+
+    def _grant_companies(self, user, company_ids: Optional[list[str]]) -> None:
+        """Grant the user access to the given companies (skipping unknown ids).
+
+        A single company becomes the user's landing default (last_active_company_id).
+        Caller commits.
+        """
+        from app.models.company import Company, UserCompany
+        cids = [
+            c
+            for c in (company_ids or [])
+            if self.db.query(Company).filter(Company.id == c).first()
+        ]
+        for cid in cids:
+            self.db.add(UserCompany(company_id=cid, user_id=user.id))
+        if len(cids) == 1:
+            user.last_active_company_id = cids[0]
 
     def create_user(self, user_data: UserCreate):
         """Create a new user and assign roles via user_role_assignments."""
@@ -391,6 +408,7 @@ class UserService:
             role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
             if role:
                 self.db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
+        self._grant_companies(user, user_data.company_ids)
         self.db.commit()
         self.db.refresh(user)
         return user
@@ -416,6 +434,7 @@ class UserService:
             role = self.db.query(UserRole).filter(UserRole.id == role_id).first()
             if role:
                 self.db.add(UserRoleAssignment(user_id=user.id, role_id=role_id))
+        self._grant_companies(user, user_data.company_ids)
         self.db.commit()
         self.db.refresh(user)
         return user
@@ -668,6 +687,43 @@ class UserService:
                 self.db.add(UserRoleAssignment(user_id=user_id, role_id=role_id))
         self.db.commit()
         return {"message": "User roles updated successfully"}
+
+    def list_user_companies(self, user_id: str) -> list[dict]:
+        """Return the companies granted to a user as ``[{id,name,code}]``."""
+        from app.models.company import Company, UserCompany
+        self.get_user(user_id)
+        rows = (
+            self.db.query(Company)
+            .join(UserCompany, UserCompany.company_id == Company.id)
+            .filter(UserCompany.user_id == user_id)
+            .order_by(Company.name.asc())
+            .all()
+        )
+        return [{"id": str(c.id), "name": c.name, "code": c.code} for c in rows]
+
+    def set_user_companies(self, user_id: str, company_ids: list[str]) -> dict:
+        """Replace a user's company grants with the given ids (unknown ids skipped).
+
+        If the user's ``last_active_company_id`` is no longer in the resulting set,
+        repoint it to the first remaining grant (deterministic) or null it.
+        """
+        from app.models.company import Company, UserCompany
+        user = self.get_user(user_id)
+        self.db.query(UserCompany).filter(UserCompany.user_id == user_id).delete(
+            synchronize_session=False
+        )
+        self.db.flush()
+        granted: list[str] = []
+        for cid in company_ids or []:
+            if cid in granted:
+                continue
+            if self.db.query(Company).filter(Company.id == cid).first():
+                self.db.add(UserCompany(company_id=cid, user_id=user_id))
+                granted.append(cid)
+        if str(user.last_active_company_id or "") not in granted:
+            user.last_active_company_id = granted[0] if granted else None
+        self.db.commit()
+        return {"message": "User companies updated successfully"}
 
 
 class UserRoleService:

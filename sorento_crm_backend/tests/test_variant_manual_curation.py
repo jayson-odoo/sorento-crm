@@ -157,10 +157,16 @@ def client(db):
     from app.main import app
     from app.database import get_db
     from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.services.company_scope_resolver import apply_company_scope
 
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: _USER
     app.dependency_overrides[get_current_user_or_api_key] = lambda: _USER
+    # No auth header on the test request -> the router-level scope resolver would
+    # compute UNSET (fail-closed) and 404 the seeded products. No-op it so the
+    # session keeps the conftest ``after_begin`` Sorento default the seeded rows
+    # are auto-stamped to.
+    app.dependency_overrides[apply_company_scope] = lambda: None
     try:
         yield TestClient(app)
     finally:

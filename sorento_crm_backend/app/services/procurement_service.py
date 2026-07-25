@@ -121,6 +121,97 @@ def _spo_match_key(spo_number: Optional[str]) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", str(spo_number).strip()).upper()
 
 
+# Separators seen in extracted container numbers (ISO 6346 is 4 letters + 7
+# digits, but the PDF/LLM round-trip introduces spaces, dashes and slashes).
+# The Python and SQL normalizers below MUST strip exactly the same set or a
+# candidate found in SQL would fail the Python-side triple comparison.
+_CONTAINER_STRIP_CHARS = (" ", "-", "/", ".", "_")
+
+
+def _container_match_key(value: Optional[str]) -> str:
+    """Normalized container key so 'temu 1234567' matches 'TEMU-1234567'."""
+    if not value or not str(value).strip():
+        return ""
+    key = str(value).strip()
+    for ch in _CONTAINER_STRIP_CHARS:
+        key = key.replace(ch, "")
+    return key.upper()
+
+
+def _container_key_sql(column):
+    """SQL twin of ``_container_match_key``.
+
+    Uses only UPPER/REPLACE — Postgres-only ``regexp_replace`` would break the
+    sqlite-backed unit tests (tests/conftest.py).
+    """
+    expr = column
+    for ch in _CONTAINER_STRIP_CHARS:
+        expr = func.replace(expr, ch, "")
+    return func.upper(expr)
+
+
+class DuplicatePackingListError(Exception):
+    """The same packing list was uploaded twice after its GRN completed.
+
+    Raised instead of creating a second inbound shipment when an already
+    received shipment on the same container carries an identical
+    (container, ETA, shipment_date) triple. Carries the machine code the
+    upload-activity drawer keys its friendly copy on.
+    """
+
+    error_code = "DUPLICATE_PACKING_LIST"
+
+    def __init__(self, message: str, existing: "InboundShipment"):
+        super().__init__(message)
+        self.message = message
+        self.existing = existing
+
+
+def _is_received_status(value: Optional[str]) -> bool:
+    return (value or "").strip().lower() in ("fully_received", "completed")
+
+
+def _packing_list_triple_matches(existing: "InboundShipment", shipment_data) -> bool:
+    """NULL-safe (``IS NOT DISTINCT FROM``) equality on the identity triple.
+
+    Python's ``==`` already gives NULL==NULL -> True and NULL vs value -> False,
+    which is exactly the required semantics.
+    """
+    return (
+        _container_match_key(existing.shipping_container_number)
+        == _container_match_key(shipment_data.shipping_container_number)
+        and existing.estimated_arrival_date == shipment_data.estimated_arrival_date
+        and existing.shipment_date == shipment_data.shipment_date
+    )
+
+
+def _format_duplicate_packing_list_message(existing: "InboundShipment", shipment_data) -> str:
+    """User-facing rejection copy.
+
+    Identifies the colliding shipment by container + dates (+ shipment number
+    when it has one). Never by id — packing lists usually have no shipment
+    number, and UUIDs must not surface in user-facing text.
+    """
+    container = (shipment_data.shipping_container_number or "").strip()
+    eta = shipment_data.estimated_arrival_date
+    eta_text = eta.isoformat() if eta else "not stated"
+    sail_text = (
+        shipment_data.shipment_date.isoformat() if shipment_data.shipment_date else "not stated"
+    )
+    number = (getattr(existing, "shipment_number", None) or "").strip()
+    as_number = f" as {number}" if number else ""
+    recorded_on = ""
+    created_at = getattr(existing, "created_at", None)
+    if created_at:
+        recorded_on = f" on {created_at.date().isoformat()}"
+    return (
+        f"Container {container} (shipment date {sail_text}, ETA {eta_text}) was already "
+        f"recorded{as_number}{recorded_on} and is fully received. This looks like the same "
+        "packing list uploaded twice. If this container is carrying a new shipment, its "
+        "shipment date or ETA must be different from the previous one."
+    )
+
+
 def compute_inbound_shipment_line_status(
     quantity_shipped: int,
     allocated_quantity: int,
@@ -660,29 +751,48 @@ class InboundShipmentService:
         the caller knows the update path is unavailable.
         """
         # Match an existing shipment by business key (shipment_number) first, then
-        # by the secondary identifier (shipping_container_number) among shipments that
-        # are not yet fully received, then fall back to the linked attachment_id so a
-        # re-upload/replace of the same packing-list document updates in place instead
-        # of creating a duplicate. Container matching is scoped to not-fully-received
-        # shipments because a container only carries one open (not fully received)
-        # inbound shipment at a time — once received it can be reused for a new one.
+        # by the secondary identifier (shipping_container_number), then fall back to
+        # the linked attachment_id so a re-upload/replace of the same packing-list
+        # document updates in place instead of creating a duplicate.
         existing = None
         if shipment_data.shipment_number:
             existing = self.db.query(InboundShipment).filter(
                 InboundShipment.shipment_number == shipment_data.shipment_number
             ).first()
-        if existing is None and shipment_data.shipping_container_number:
-            existing = (
-                self.db.query(InboundShipment)
-                .filter(
-                    InboundShipment.shipping_container_number
-                    == shipment_data.shipping_container_number,
-                    func.lower(func.coalesce(InboundShipment.shipment_status, "")).notin_(
-                        ("fully_received", "completed")
-                    ),
+
+        # Container lookup. A container carries one OPEN shipment at a time but is
+        # reusable once received, so the status of the match decides the outcome:
+        #   not received yet -> update in place (re-uploaded / corrected document)
+        #   received + identical (container, ETA, shipment_date) triple
+        #                    -> the same packing list uploaded twice; reject
+        #   received + any date differs -> container genuinely reused; create new
+        # Gated on a non-null container: without one the identity key would
+        # collapse to shipment_date alone and would falsely match two different
+        # suppliers shipping on the same day.
+        # See documentation/plans/PLAN-packing-list-duplicate-detection.md
+        if existing is None:
+            container_key = _container_match_key(shipment_data.shipping_container_number)
+            if container_key:
+                candidates = (
+                    self.db.query(InboundShipment)
+                    .filter(
+                        InboundShipment.shipping_container_number.isnot(None),
+                        _container_key_sql(InboundShipment.shipping_container_number)
+                        == container_key,
+                    )
+                    .order_by(InboundShipment.created_at.desc())
+                    .all()
                 )
-                .first()
-            )
+                for candidate in candidates:
+                    if not _is_received_status(candidate.shipment_status):
+                        existing = candidate
+                        break
+                    if _packing_list_triple_matches(candidate, shipment_data):
+                        raise DuplicatePackingListError(
+                            _format_duplicate_packing_list_message(candidate, shipment_data),
+                            candidate,
+                        )
+
         if existing is None and shipment_data.attachment_id:
             existing = self.db.query(InboundShipment).filter(
                 InboundShipment.attachment_id == shipment_data.attachment_id

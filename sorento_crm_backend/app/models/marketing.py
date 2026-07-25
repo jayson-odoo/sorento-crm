@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.base import CompanyScopedMixin
 import uuid
 
 # Forward references for relationships
@@ -22,7 +23,7 @@ class CampaignStatus(str, enum.Enum):
     CANCELLED = "cancelled"
 
 
-class Promotion(Base):
+class Promotion(Base, CompanyScopedMixin):
     __tablename__ = "promotions"
     __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
 
@@ -66,7 +67,7 @@ class Promotion(Base):
     )
 
 
-class PromotionGroup(Base):
+class PromotionGroup(Base, CompanyScopedMixin):
     """Bundle / FOC group: optional multiple buy-N-get-M free tier combinations (foc_tiers)."""
 
     __tablename__ = "promotion_groups"
@@ -91,7 +92,7 @@ class PromotionGroup(Base):
     )
 
 
-class PromotionProduct(Base):
+class PromotionProduct(Base, CompanyScopedMixin):
     __tablename__ = "promotion_products"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -123,7 +124,7 @@ class PromotionProduct(Base):
     )
 
 
-class PromotionAttachment(Base):
+class PromotionAttachment(Base, CompanyScopedMixin):
     __tablename__ = "promotion_attachments"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -147,7 +148,7 @@ class PromotionAttachment(Base):
     )
 
 
-class CampaignType(Base):
+class CampaignType(Base, CompanyScopedMixin):
     __tablename__ = "campaign_types"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -160,7 +161,7 @@ class CampaignType(Base):
     campaigns = relationship("MarketingCampaign", back_populates="campaign_type")
 
 
-class MarketingCampaign(Base):
+class MarketingCampaign(Base, CompanyScopedMixin):
     __tablename__ = "marketing_campaigns"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))

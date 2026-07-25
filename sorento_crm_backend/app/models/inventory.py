@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.base import CompanyScopedMixin
 import uuid
 
 # Forward references for relationships
@@ -22,7 +23,7 @@ class BatchStatus(str, enum.Enum):
     RETURNED = "RETURNED"
 
 
-class Warehouse(Base):
+class Warehouse(Base, CompanyScopedMixin):
     __tablename__ = "warehouses"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -47,7 +48,7 @@ class Warehouse(Base):
     )
 
 
-class StorageZone(Base):
+class StorageZone(Base, CompanyScopedMixin):
     __tablename__ = "storage_zones"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -68,7 +69,7 @@ class StorageZone(Base):
     )
 
 
-class Stock(Base):
+class Stock(Base, CompanyScopedMixin):
     __tablename__ = "stock"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -111,7 +112,7 @@ class Stock(Base):
     )
 
 
-class StockLedger(Base):
+class StockLedger(Base, CompanyScopedMixin):
     __tablename__ = "stock_ledger"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -138,7 +139,7 @@ class StockLedger(Base):
     )
 
 
-class StockBatch(Base):
+class StockBatch(Base, CompanyScopedMixin):
     __tablename__ = "stock_batches"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))

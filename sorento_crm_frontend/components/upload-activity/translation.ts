@@ -26,6 +26,8 @@ export const ERROR_CODE_FRIENDLY: Record<string, string> = {
   S3_DOWNLOAD_FAILED: "Couldn't read uploaded file from storage",
   VIRUS_DETECTED: 'File rejected by virus scan',
   FILE_TOO_LARGE: 'File exceeds size limit',
+  DUPLICATE_PACKING_LIST:
+    'Duplicate packing list — this container was already received',
 };
 
 function pluralise(word: string, count: number): string {

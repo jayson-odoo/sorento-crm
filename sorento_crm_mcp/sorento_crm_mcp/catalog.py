@@ -54,7 +54,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "code, never $. Rows may include `field_attachments` (map of product field → linked docs). "
             "ATTACHMENTS: pass `attachment_type_ids` (canonical AttachmentType UUIDs, csv / JSON / repeated) "
             "to nest each product's files of those types under `attachments[]` (e.g. Product Photos, "
-            "Technical Specifications). Omit it for a plain price/spec listing with NO attachments."
+            "Technical Specifications). Omit it for a plain price/spec listing with NO attachments.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/master-data/products",
         (),
@@ -65,6 +67,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "height_min", "height_max", "any_dimension_min", "any_dimension_max",
             "attachment_type_ids",
             "sort", "dir",
+            "contact_id", "space_id",
         ),
         domain="products",
         related_tools=("crm_master_product_attachments_list", "crm_inventory_stock_balance_list"),
@@ -74,33 +77,39 @@ CATALOG: tuple[ToolSpec, ...] = (
         "crm_master_brands_list",
         (
             "List brands with pagination. FILTER BY UUID: `brand_ids` (canonical brand UUIDs) and / or "
-            "`product_ids` (returns the brands of those products). Both accept csv / JSON list / repeated."
+            "`product_ids` (returns the brands of those products). Both accept csv / JSON list / repeated.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/master-data/brands",
         (),
-        ("page", "limit", "brand_ids", "product_ids"),
+        ("page", "limit", "brand_ids", "product_ids", "contact_id", "space_id"),
         domain="products",
     ),
     ToolSpec(
         "crm_master_product_categories_list",
         (
             "List product categories with pagination. FILTER BY UUID: `category_ids` (canonical category "
-            "UUIDs) and / or `product_ids` (returns the categories of those products). csv / JSON / repeated."
+            "UUIDs) and / or `product_ids` (returns the categories of those products). csv / JSON / repeated.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/master-data/product-categories",
         (),
-        ("page", "limit", "category_ids", "product_ids"),
+        ("page", "limit", "category_ids", "product_ids", "contact_id", "space_id"),
         domain="products",
     ),
     ToolSpec(
         "crm_master_units_of_measure_list",
         (
             "List units of measure with pagination. FILTER BY UUID: `uom_ids` (canonical UOM UUIDs) and / or "
-            "`product_ids` (returns the base UOMs of those products). csv / JSON / repeated."
+            "`product_ids` (returns the base UOMs of those products). csv / JSON / repeated.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/master-data/units-of-measure",
         (),
-        ("page", "limit", "uom_ids", "product_ids"),
+        ("page", "limit", "uom_ids", "product_ids", "contact_id", "space_id"),
         domain="products",
     ),
     ToolSpec(
@@ -110,11 +119,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "INSTALLATION GUIDE / CERTIFICATE for a specific product). FILTER BY UUID: `product_ids` "
             "(canonical product UUIDs), `attachment_ids` (canonical attachment UUIDs), and / or "
             "`attachment_type_ids` (canonical AttachmentType UUIDs — narrows to a doc class such as "
-            "brochure or spec sheet). All three accept csv / JSON list / repeated query params."
+            "brochure or spec sheet). All three accept csv / JSON list / repeated query params.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/master-data/product-attachments",
         (),
-        ("page", "limit", "sort", "dir", "product_ids", "attachment_ids", "attachment_type_ids"),
+        ("page", "limit", "sort", "dir", "product_ids", "attachment_ids", "attachment_type_ids", "contact_id", "space_id"),
         domain="products",
         related_tools=("crm_master_products_list",),
         escalation_team="sales",
@@ -126,11 +137,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Resolve a raw user keyword into the canonical option value for a CRM dropdown set. "
             "Body: {set_key, raw, locale?}. Returns {value,label,matched_keyword,match_type,score} or 404. "
             "Use whenever a user gives a free-text value for a CRM dropdown field — translate first, then "
-            "send the canonical value to the matching write API."
+            "send the canonical value to the matching write API.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/lookup/resolve",
         method="POST",
-        body_params=("set_key", "raw", "locale"),
+        body_params=("set_key", "raw", "locale", "contact_id", "space_id"),
         module="master_data",
     ),
     # --- marketing ---
@@ -160,11 +173,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "\"what is sorento's latest promo\" return a bounded page instead of the full catalog.\n\n"
             "ACCESS LEVELS: `access_levels` filters promotions whose `access_levels` JSONB overlaps the "
             "supplied names (case-insensitive). Phrases like `sorento dealer`, `mocha office`, `end user` "
-            "are `access_levels` ONLY — never `*_ids` values."
+            "are `access_levels` ONLY — never `*_ids` values.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/marketing/promotions",
         (),
-        ("page", "limit", "promotion_ids", "product_ids", "active", "period_from", "period_to", "date_mode", "sort", "dir", "access_levels"),
+        ("page", "limit", "promotion_ids", "product_ids", "active", "period_from", "period_to", "date_mode", "sort", "dir", "access_levels", "contact_id", "space_id"),
         domain="promotions",
         related_tools=("crm_marketing_promotion_products_list", "crm_marketing_promotion_attachments_list"),
         escalation_team="sales",
@@ -188,7 +203,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "promotion is currently active, falling back to inactive-promotion lines (fallback_used=true) "
             "when a narrowing filter yields zero active matches — same active-first behavior as "
             "crm_marketing_promotions_list. Pass active=false for inactive / expired / historical "
-            "promotion lines only."
+            "promotion lines only.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/marketing/promotion-products",
         (),
@@ -202,6 +219,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "height_min", "height_max",
             "any_dimension_min", "any_dimension_max",
             "access_levels",
+            "contact_id", "space_id",
         ),
         domain="promotions",
         related_tools=("crm_marketing_promotions_list",),
@@ -223,11 +241,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "PARENT-PROMOTION ACTIVITY (`active`): default returns attachments whose promotion is currently "
             "active, falling back to inactive-promotion attachments (fallback_used=true) when a narrowing "
             "filter yields zero active matches — same active-first behavior as crm_marketing_promotions_list. "
-            "Pass active=false for inactive / expired / historical promotion attachments only."
+            "Pass active=false for inactive / expired / historical promotion attachments only.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/marketing/promotion-attachments",
         (),
-        ("page", "limit", "sort", "dir", "promotion_ids", "attachment_ids", "access_levels", "active"),
+        ("page", "limit", "sort", "dir", "promotion_ids", "attachment_ids", "access_levels", "active", "contact_id", "space_id"),
         domain="promotions",
         related_tools=("crm_marketing_promotions_list",),
         escalation_team="sales",
@@ -242,7 +262,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "crm_resource_attachments_current_stock_list.\n\n"
             "FILTER BY UUID: `attachment_ids` (canonical attachment UUIDs csv / JSON / repeated), "
             "`directory_id`, `attachment_type_id`, `uploaded_by` (all canonical UUIDs). "
-            "Set resolve_signed_urls=true to include signed preview/download URLs in the response."
+            "Set resolve_signed_urls=true to include signed preview/download URLs in the response.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/resource-management/attachments",
         (),
@@ -250,6 +272,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "page", "limit", "attachment_ids", "sort", "dir",
             "directory_id", "attachment_type_id", "uploaded_by",
             "uploaded_at_from", "uploaded_at_to", "is_deleted", "resolve_signed_urls",
+            "contact_id", "space_id",
         ),
         domain="resources",
         related_tools=("crm_resource_attachments_current_stock_list",),
@@ -270,13 +293,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Set resolve_signed_urls=true to include signed preview/download "
             "URLs in the response. Backend hard-filters by "
             "attachment_type_code=catalogue server-side, so non-catalogue UUIDs "
-            "passed in `attachment_ids` are excluded automatically."
+            "passed in `attachment_ids` are excluded automatically.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/resource-management/attachments",
         (),
         (
             "page", "limit", "attachment_ids", "sort", "dir",
             "uploaded_at_from", "uploaded_at_to", "resolve_signed_urls",
+            "contact_id", "space_id",
         ),
         domain="resources",
         related_tools=("crm_resource_attachments_list",),
@@ -284,10 +310,14 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         "crm_resource_attachments_current_stock_list",
-        "Latest Stock List attachment row (singleton) if configured, with a signed download URL.",
+        (
+            "Latest Stock List attachment row (singleton) if configured, with a signed download URL. "
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
         "/api/v1/resource-management/attachments/current-stock-list",
         (),
-        (),
+        ("contact_id", "space_id"),
         domain="resources",
     ),
     # --- inventory ---
@@ -302,11 +332,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`warehouse_ids` (canonical warehouse UUIDs csv / JSON / repeated). "
             "quantity_operator / quantity_value filter on-hand; status = critical|low|normal|overstock.\n"
             "Rows whose on-hand is 0 ONLY because the latest stock movement was a SYSTEM_ADJUSTMENT "
-            "(e.g. 'missing from full stock take') are always hidden; a genuine 0 is still returned."
+            "(e.g. 'missing from full stock take') are always hidden; a genuine 0 is still returned.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/inventory/stock/balance",
         (),
-        ("page", "limit", "product_ids", "sort", "dir", "warehouse_ids", "quantity_operator", "quantity_value", "status"),
+        ("page", "limit", "product_ids", "sort", "dir", "warehouse_ids", "quantity_operator", "quantity_value", "status", "contact_id", "space_id"),
         domain="inventory",
         related_tools=("crm_inventory_warehouses_list",),
         escalation_team="warehouse",
@@ -317,11 +349,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "List warehouses. Response uses Sage-aligned vocabulary: `system_location` (was warehouse_code), "
             "`system_location_description` (was warehouse_name), `warehouse` (was location). "
             "FILTER BY UUID: `warehouse_ids` (canonical warehouse UUIDs csv / JSON / repeated). "
-            "is_active=true for active-only."
+            "is_active=true for active-only.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/inventory/warehouses",
         (),
-        ("page", "limit", "warehouse_ids", "is_active"),
+        ("page", "limit", "warehouse_ids", "is_active", "contact_id", "space_id"),
         domain="inventory",
         escalation_team="warehouse",
     ),
@@ -343,13 +377,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "'outstanding' = NOT yet delivered (New Order, Processing, In Transit, Cancelled, or a "
             "delivery date under a non-delivered status); 'delivered' = status delivered/completed AND "
             "actual_delivery_date set. Use for 'outstanding/pending/undelivered orders', 'belum hantar', "
-            "'not delivered yet'. AND'd with the other filters."
+            "'not delivered yet'. AND'd with the other filters.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/order-management/orders",
         (),
         (
             "page", "limit", "order_ids", "customer_ids", "product_ids", "transporter_ids",
             "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "sort", "dir",
+            "contact_id", "space_id",
         ),
         domain="orders",
         related_tools=("crm_order_management_orders_by_product_list",),
@@ -365,13 +402,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "and paginate via `page` when more results are needed.\n\n"
             "OPTIONAL UUID FILTERS: `customer_ids`, `transporter_ids` (canonical UUIDs). "
             "Date window: actual_delivery_date_from / actual_delivery_date_to (YYYY-MM-DD). "
-            "For 'any incoming for product X' use crm_incoming_stock_by_product instead."
+            "For 'any incoming for product X' use crm_incoming_stock_by_product instead.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/order-management/orders/by-product",
         (),
         (
             "page", "limit", "product_ids", "customer_ids", "transporter_ids",
             "actual_delivery_date_from", "actual_delivery_date_to", "sort", "dir",
+            "contact_id", "space_id",
         ),
         domain="orders",
         related_tools=("crm_order_management_orders_list", "crm_incoming_stock_by_product"),
@@ -394,13 +434,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "it is resolved to a UUID upstream), `product_ids` (canonical product UUIDs), or `product_code` "
             "(partial). `date_from` / `date_to` scope by order_date (e.g. a year '2026', 'YYYY-MM', or "
             "YYYY-MM-DD). Returns ranked `groups` [{group_key, group_label, metric, value}] plus an overall "
-            "`total`. Exposes ONLY computed aggregates — never per-order cost/invoice pricing."
+            "`total`. Exposes ONLY computed aggregates — never per-order cost/invoice pricing.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/order-management/orders/analytics",
         (),
         (
             "metric", "group_by", "customer_ids", "product_ids", "product_code",
             "date_from", "date_to", "limit",
+            "contact_id", "space_id",
         ),
         domain="orders",
         related_tools=("crm_order_management_orders_list", "crm_master_customers_list"),
@@ -418,11 +461,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "quantities, SPO numbers, or internal IDs. FILTER BY UUID: `product_ids` (canonical product UUIDs).\n\n"
             "OPTIONAL ETA WINDOW: `eta_from` / `eta_to` (YYYY-MM-DD, inclusive) narrow to shipments arriving "
             "within the window — e.g. 'is SKU X arriving before month end?'. Applied on top of the product "
-            "filter (a product hint is still required); never a standalone filter."
+            "filter (a product hint is still required); never a standalone filter.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/incoming-stock/by-product",
         (),
-        ("product_ids", "eta_from", "eta_to", "limit"),
+        ("product_ids", "eta_from", "eta_to", "limit", "contact_id", "space_id"),
         domain="incoming_stock",
         escalation_team="warehouse",
     ),
@@ -438,11 +483,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • `supplier_ids` (canonical supplier UUIDs)\n"
             "  • `eta_from` / `eta_to` (ETA window, YYYY-MM-DD)\n\n"
             "For 'incoming for product X' use crm_incoming_stock_by_product instead — do NOT call this tool "
-            "without a narrower just to enumerate every open shipment."
+            "without a narrower just to enumerate every open shipment.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/incoming-stock/shipments",
         (),
-        ("shipment_ids", "supplier_ids", "eta_from", "eta_to", "page", "limit"),
+        ("shipment_ids", "supplier_ids", "eta_from", "eta_to", "page", "limit", "contact_id", "space_id"),
         domain="incoming_stock",
         related_tools=("crm_incoming_stock_by_product",),
         escalation_team="warehouse",
@@ -461,13 +508,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "those products. NO aggregate totals are returned — sum the line quantities yourself for "
             "a product total or per-warehouse summary. Never exposes received/rejected quantities, "
             "SPO numbers, or internal IDs. REQUIRED: at least ONE narrowing filter (product_ids / "
-            "shipment_ids / supplier_ids / eta_from / eta_to) or the tool returns an empty page."
+            "shipment_ids / supplier_ids / eta_from / eta_to) or the tool returns an empty page.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/incoming-stock/list",
         (),
         (
             "product_ids", "shipment_ids", "supplier_ids",
             "eta_from", "eta_to", "page", "limit",
+            "contact_id", "space_id",
         ),
         domain="incoming_stock",
         related_tools=("crm_incoming_stock_by_product", "crm_incoming_stock_shipments"),
@@ -568,11 +618,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "developer') sort by debtor_name.\n\n"
             "FILTER BY UUID: `customer_ids` (canonical customer UUIDs, csv / JSON / repeated) filters the "
             "source orders by Order.customer_id before aggregation. External AI/MCP callers are HARD-CAPPED "
-            "at limit=20 server-side. Sort: debtor_name | debtor_code | order_count."
+            "at limit=20 server-side. Sort: debtor_name | debtor_code | order_count.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/order-management/orders/debtors",
         (),
-        ("page", "limit", "customer_ids", "sort", "dir"),
+        ("page", "limit", "customer_ids", "sort", "dir", "contact_id", "space_id"),
     ),
     # --- complaints ---
     ToolSpec(

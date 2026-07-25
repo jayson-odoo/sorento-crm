@@ -15,6 +15,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import RequireAccess from '@/app/components/common/RequireAccess';
 import AuditLogsList from './components/AuditLogsList';
 
 export const metadata: Metadata = {
@@ -24,7 +25,7 @@ export const metadata: Metadata = {
 
 export default function AuditLogsPage() {
   return (
-    <>
+    <RequireAccess superadmin>
       <Container>
         <Toolbar>
           <ToolbarHeading>
@@ -50,6 +51,6 @@ export default function AuditLogsPage() {
           <AuditLogsList />
         </Suspense>
       </Container>
-    </>
+    </RequireAccess>
   );
 }

@@ -15,8 +15,36 @@ tests (live DB) are unaffected — this compiler only fires for the sqlite
 dialect.
 """
 import pytest
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.ext.compiler import compiles
+
+# ---------------------------------------------------------------------------
+# Company-scope test default (multi-company isolation).
+#
+# Production defaults an absent ``db.info['company_scope']`` to UNSET
+# (fail-closed -> 0 rows) so a request path that never runs the resolver cannot
+# leak. Legacy tests, however, seed and query owned tables WITHOUT setting any
+# scope. Under the fail-closed default they return 0 rows; and because
+# migration 305 makes owned ``company_id`` NOT NULL on the live Postgres test
+# DB, a null-company insert is rejected outright. So for the test process we
+# default an absent scope to the **Sorento** company (all backfilled live data
+# is Sorento): owned inserts auto-stamp Sorento (satisfying NOT NULL) and reads
+# filter to Sorento (where the data is). The ``after_begin`` listener only fills
+# the key when unset, so ``company_scope(db, ...)`` / ``set_company_scope`` still
+# win — the dedicated ``tests/test_company_scope.py`` overrides per-test to
+# assert the real four-state / fail-closed semantics.
+# ---------------------------------------------------------------------------
+import app.services.company_scope as _company_scope  # noqa: E402  (ensures module loaded)
+from sqlalchemy.orm import Session as _SAScopeSession  # noqa: E402
+from sqlalchemy import event as _sa_scope_event  # noqa: E402
+
+_SORENTO_TEST_SCOPE = frozenset({"00000000-0000-0000-0000-000000000001"})
+
+
+@_sa_scope_event.listens_for(_SAScopeSession, "after_begin")
+def _default_company_scope_for_tests(session, transaction, connection):  # noqa: ANN001
+    if getattr(_company_scope, "_ENFORCE", True):
+        session.info.setdefault("company_scope", _SORENTO_TEST_SCOPE)
 
 
 _IDEMP_REDIS = []  # process-wide cache: [client] or [None]
@@ -138,3 +166,20 @@ def _compile_array_sqlite(element, compiler, **kw):  # noqa: ANN001
     # sqlite has no array type; store as JSON text (affinity only — the
     # sqlite-backed tests that touch these columns treat them as opaque).
     return "JSON"
+
+
+@compiles(UUID, "sqlite")
+def _compile_uuid_sqlite(element, compiler, **kw):  # noqa: ANN001
+    # The pg ``UUID`` type renders its DDL as the literal ``UUID`` on sqlite,
+    # which matches none of sqlite's affinity substrings and therefore falls to
+    # **NUMERIC** affinity. The pg UUID bind-processor strips dashes to a 32-char
+    # hex string; for an all-numeric UUID (e.g. the Sorento test company id
+    # ``00000000-0000-0000-0000-000000000001`` -> ``00000000000000000000000000000001``)
+    # NUMERIC affinity coerces that pure-digit string to the integer ``1`` on
+    # store. On read, the UUID result-processor then calls ``uuid.UUID(1)`` and
+    # raises ``'int' object has no attribute 'replace'``. Real UUIDs carry hex
+    # letters and dodge coercion, so only the multi-company auto-stamped
+    # ``company_id`` triggered it. Render as ``CHAR(32)`` (TEXT affinity) so the
+    # hex string is stored verbatim and round-trips unchanged. sqlite-only; the
+    # live Postgres tests use the native uuid type.
+    return "CHAR(32)"

@@ -18,6 +18,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.base import CompanyScopedMixin
 import uuid
 
 
@@ -44,7 +45,7 @@ class OrderStatus(Base):
     )
 
 
-class Customer(Base):
+class Customer(Base, CompanyScopedMixin):
     __tablename__ = "customers"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -103,7 +104,7 @@ class Customer(Base):
     )
 
 
-class CustomerContact(Base):
+class CustomerContact(Base, CompanyScopedMixin):
     """Main or stakeholder person linked to a business customer profile."""
 
     __tablename__ = "customer_contacts"
@@ -138,7 +139,7 @@ class CustomerContact(Base):
     )
 
 
-class Transporter(Base):
+class Transporter(Base, CompanyScopedMixin):
     """Lookup table for distinct transporter names referenced by orders.transporter.
 
     Seeded by migration 200_transporters_table from existing orders. `orders.transporter`
@@ -154,7 +155,7 @@ class Transporter(Base):
     updated_at = Column(DateTime(timezone=False), nullable=True)
 
 
-class Order(Base):
+class Order(Base, CompanyScopedMixin):
     __tablename__ = "orders"
     __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
 
@@ -223,7 +224,7 @@ class Order(Base):
     )
 
 
-class OrderLine(Base):
+class OrderLine(Base, CompanyScopedMixin):
     """Delivery order detail line: product + warehouse + qty + pricing."""
     __tablename__ = "order_lines"
 
@@ -273,7 +274,7 @@ class OrderLine(Base):
     )
 
 
-class SalesOrder(Base):
+class SalesOrder(Base, CompanyScopedMixin):
     """SCM sales order (demand / committed source). Public core record — survives
     module uninstall. Sits with Order/DO in the order domain."""
     __tablename__ = "sales_orders"
@@ -307,7 +308,7 @@ class SalesOrder(Base):
     )
 
 
-class SalesOrderLine(Base):
+class SalesOrderLine(Base, CompanyScopedMixin):
     """Open SO line — feeds committed / net-position views by product×warehouse."""
     __tablename__ = "sales_order_lines"
 

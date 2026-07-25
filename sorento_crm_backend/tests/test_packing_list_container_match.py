@@ -148,6 +148,13 @@ def test_container_match_updates_not_fully_received_in_place(db):
 
 
 def test_fully_received_container_does_not_match_creates_new(db):
+    """A received container is free to carry a NEW shipment.
+
+    The new shipment must differ on the identity triple (container, ETA,
+    shipment_date) — an identical triple means the same packing list was
+    uploaded twice and is rejected instead. See
+    tests/test_packing_list_duplicate_detection.py.
+    """
     p = _product(db, "SKU-A")
     att1 = _attachment(db)
     att2 = _attachment(db)
@@ -157,6 +164,7 @@ def test_fully_received_container_does_not_match_creates_new(db):
         db,
         p,
         shipping_container_number="CONT-9",
+        shipment_date=date(2026, 1, 1),
         attachment_id=att1,
         lines=[(p, 5)],
     )
@@ -165,10 +173,12 @@ def test_fully_received_container_does_not_match_creates_new(db):
     first.shipment_status = "fully_received"
     db.commit()
 
+    # Genuine reuse: same container, later voyage.
     second = _create(
         db,
         p,
         shipping_container_number="CONT-9",
+        shipment_date=date(2026, 5, 20),
         attachment_id=att2,
         lines=[(p, 3)],
     )

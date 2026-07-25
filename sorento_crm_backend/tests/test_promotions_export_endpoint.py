@@ -31,6 +31,7 @@ def ctx(monkeypatch):
         get_current_user_or_api_key,
         get_db,
     )
+    from app.services.company_scope_resolver import apply_company_scope
     from app.database import Base
     from app.models.audit import AuditLog
     from app.models.download import UserDownload
@@ -63,6 +64,10 @@ def ctx(monkeypatch):
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_current_user] = _override_user
     app.dependency_overrides[get_current_user_or_api_key] = _override_user
+    # No auth header on the test request -> the router-level scope resolver would
+    # compute UNSET (fail-closed) and hide the seeded Sorento promotions. No-op it
+    # so the session keeps the conftest ``after_begin`` Sorento default.
+    app.dependency_overrides[apply_company_scope] = lambda: None
 
     # Capture enqueue calls; never touch Redis.
     calls: list = []

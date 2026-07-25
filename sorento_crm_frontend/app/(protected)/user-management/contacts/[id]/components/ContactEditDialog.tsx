@@ -1,12 +1,16 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, type Resolver } from 'react-hook-form';
+import { useSession } from 'next-auth/react';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
+import { isSuperadminUser } from '@/lib/is-superadmin';
+import { getCompaniesSelect } from '@/app/(protected)/system-management/companies/services/companyService';
 import {
   Alert,
   AlertIcon,
@@ -33,6 +37,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { LoaderCircleIcon } from 'lucide-react';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { listRespondWorkspaceSelect } from '@/app/(protected)/system-management/respond-workspaces/services/respondWorkspaceService';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import type { RespondContact } from '../../types/contact.types';
@@ -53,19 +58,41 @@ export default function ContactEditDialog({
   contact,
 }: ContactEditDialogProps) {
   const queryClient = useQueryClient();
+  const { data: session } = useSession();
+  const isSuperadmin = isSuperadminUser(session?.user);
   const { data: accessTypes = [] } = useContactAccessTypes();
 
+  const { data: companyOptions = [] } = useQuery({
+    queryKey: ['companies-select'],
+    queryFn: getCompaniesSelect,
+    enabled: open && isSuperadmin,
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const { data: contactCompanies = [], isFetched: companiesFetched } = useQuery({
+    queryKey: ['contact-companies', contact?.id],
+    queryFn: async () => {
+      const response = await apiFetch(`/api/user-management/contacts/${contact!.id}/companies`);
+      if (!response.ok) throw new Error('Failed to fetch contact companies');
+      return response.json() as Promise<{ id: string; name: string; code: string }[]>;
+    },
+    enabled: open && !!contact?.id && isSuperadmin,
+    staleTime: 1000 * 60,
+  });
+
   const form = useForm<ContactEditSchemaType>({
-    resolver: zodResolver(ContactEditSchema),
+    resolver: zodResolver(ContactEditSchema) as Resolver<ContactEditSchemaType>,
     defaultValues: {
       phone_number: contact?.phone_number || '',
       name: contact?.name || '',
       workspace_id: contact?.workspace_id || '',
       access_type_codes: contact?.access_type_codes ?? [],
+      company_ids: [],
     },
     mode: 'onSubmit',
   });
 
+  const companiesResetRef = useRef<string | null>(null);
   useEffect(() => {
     if (open && contact) {
       form.reset({
@@ -73,9 +100,23 @@ export default function ContactEditDialog({
         name: contact.name || '',
         workspace_id: contact.workspace_id || '',
         access_type_codes: contact.access_type_codes ?? [],
+        company_ids: [],
       });
     }
+    if (!open) {
+      companiesResetRef.current = null;
+    }
   }, [open, contact, form]);
+
+  // Companies aren't carried on the `contact` prop, so apply them once the grant
+  // fetch resolves. Guarded per contact-open so a background refetch can't clobber edits.
+  useEffect(() => {
+    if (!open || !isSuperadmin || !contact?.id || !companiesFetched) return;
+    if (companiesResetRef.current === contact.id) return;
+    companiesResetRef.current = contact.id;
+    form.setValue('company_ids', contactCompanies.map((c) => c.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; guard prevents loops
+  }, [open, isSuperadmin, contact?.id, companiesFetched, contactCompanies]);
 
   const { data: workspaces = [] } = useQuery({
     queryKey: ['respond-workspace-select'],
@@ -115,7 +156,21 @@ export default function ContactEditDialog({
         throw new Error(error.detail?.message || error.message || 'Failed to update contact');
       }
 
-      return response.json();
+      const updated = await response.json();
+
+      // Superadmin-only: sync company grants (delete-all-then-reinsert server-side).
+      if (isSuperadmin) {
+        const companiesResponse = await apiFetch(`/api/user-management/contacts/${contact.id}/companies`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ company_ids: values.company_ids ?? [] }),
+        });
+        if (!companiesResponse.ok) {
+          throw new Error(await extractApiError(companiesResponse, 'Failed to update companies'));
+        }
+      }
+
+      return updated;
     },
     onSuccess: () => {
       const message = 'Contact updated successfully.';
@@ -136,6 +191,7 @@ export default function ContactEditDialog({
       // Invalidate queries to refresh the data
       queryClient.invalidateQueries({ queryKey: ['respond-contact', contact.id] });
       queryClient.invalidateQueries({ queryKey: ['respond-contacts'] });
+      queryClient.invalidateQueries({ queryKey: ['contact-companies', contact.id] });
 
       closeDialog();
     },
@@ -266,6 +322,36 @@ export default function ContactEditDialog({
                 );
               }}
             />
+
+            {isSuperadmin && (
+              <FormField
+                control={form.control}
+                name="company_ids"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Companies</FormLabel>
+                    <FormControl>
+                      <SearchableMultiSelect
+                        value={field.value ?? []}
+                        onChange={(v) => field.onChange(v)}
+                        options={(companyOptions || []).map((c) => ({
+                          value: c.id,
+                          label: c.name,
+                          searchText: `${c.name} ${c.code}`,
+                        }))}
+                        placeholder="Select companies"
+                        emptyMessage="No company found."
+                        triggerClassName="w-full"
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      Which companies this contact belongs to (scopes their n8n/WhatsApp data access).
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
 
             <FormField
               control={form.control}

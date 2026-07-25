@@ -47,6 +47,9 @@ class User(Base):
     respond_user_id = Column(String, nullable=True)
     respond_synced = Column(String, default="pending", nullable=False)
     superior_id = Column(String, ForeignKey("users.id"), nullable=True)
+    # Multi-company: the company the user was last active in. Restored on login so
+    # logout->login returns to the same company. Nullable (backfilled to Sorento).
+    last_active_company_id = Column(PG_UUID(as_uuid=False), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)
     tier = Column(Integer, nullable=True)  # Conversation SLA policy tier (1, 2, ...)
     daily_sla_summary_subscribed = Column(Boolean, default=True, nullable=False)  # email summary opt-in
     # Link to the WhatsApp contact this user is reachable on (resolves respond_io_id).
@@ -283,6 +286,10 @@ class SystemSetting(Base):
     # the shortest-lived value, the metadata row stays useful much longer.
     api_call_log_payload_retention_days = Column(Integer, nullable=False, server_default="30", default=30)
     api_call_log_row_retention_days = Column(Integer, nullable=False, server_default="180", default=180)
+    # Per-row import outcome detail (import_job_rows). Counts and the aggregated
+    # breakdown live on import_jobs.result and are never pruned - only the
+    # drill-down rows age out.
+    import_job_rows_retention_days = Column(Integer, nullable=False, server_default="90", default=90)
 
     # New products / import: default product_supplier (standard lead time + supplier)
     default_product_supplier_id = Column(

@@ -222,6 +222,21 @@ def _handler_api_call_log_prune(db, task):
     )
 
 
+def _handler_import_job_rows_prune(db, task):
+    """Retention for per-row import outcome detail.
+
+    Only the drill-down rows age out; the job's counts and aggregated breakdown
+    live on import_jobs.result and survive forever, so an old job still says what
+    it did - you just can no longer page through its individual rows.
+    """
+    from app.models.user import SystemSetting
+    from app.services.import_outcome import prune_import_job_rows
+
+    settings = db.query(SystemSetting).first()
+    days = int(getattr(settings, "import_job_rows_retention_days", 90) or 90) if settings else 90
+    return prune_import_job_rows(db, retention_days=days)
+
+
 def _handler_automation_runner(db, task):
     """Heartbeat for automations: dispatch every enabled automation whose next_run_at is due."""
     return AutomationService(db).evaluate_due()
@@ -416,6 +431,7 @@ def register_task_handlers():
     register_handler("chat_message_resolver", _handler_chat_message_resolver)
     register_handler("user_downloads_purge", _handler_user_downloads_purge)
     register_handler("api_call_log_prune", _handler_api_call_log_prune)
+    register_handler("import_job_rows_prune", _handler_import_job_rows_prune)
     register_handler("chat_latency_watchdog", _handler_chat_latency_watchdog)
     register_handler("scm_analytics", _handler_scm_analytics)
     register_handler("scm_reorder_run", _handler_scm_reorder_run)

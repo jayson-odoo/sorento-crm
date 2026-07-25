@@ -4,6 +4,7 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.base import CompanyScopedMixin
 import uuid
 
 # Forward references for relationships
@@ -14,7 +15,7 @@ if TYPE_CHECKING:
     from app.models.resources import Attachment
 
 
-class Supplier(Base):
+class Supplier(Base, CompanyScopedMixin):
     __tablename__ = "suppliers"
     __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
 
@@ -48,7 +49,7 @@ class Supplier(Base):
     )
 
 
-class ProductSupplier(Base):
+class ProductSupplier(Base, CompanyScopedMixin):
     __tablename__ = "product_suppliers"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -74,7 +75,7 @@ class ProductSupplier(Base):
     )
 
 
-class InboundShipment(Base):
+class InboundShipment(Base, CompanyScopedMixin):
     __tablename__ = "inbound_shipments"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -138,7 +139,7 @@ class InboundShipment(Base):
     )
 
 
-class InboundShipmentLine(Base):
+class InboundShipmentLine(Base, CompanyScopedMixin):
     __tablename__ = "inbound_shipment_lines"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -171,7 +172,7 @@ class InboundShipmentLine(Base):
     )
 
 
-class SPOAllocation(Base):
+class SPOAllocation(Base, CompanyScopedMixin):
     __tablename__ = "spo_allocations"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -208,7 +209,7 @@ class SPOAllocation(Base):
     )
 
 
-class PickingHeader(Base):
+class PickingHeader(Base, CompanyScopedMixin):
     __tablename__ = "picking_headers"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -241,7 +242,7 @@ class PickingHeader(Base):
     )
 
 
-class PickingLine(Base):
+class PickingLine(Base, CompanyScopedMixin):
     __tablename__ = "picking_lines"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -285,7 +286,7 @@ class PickingLine(Base):
     )
 
 
-class PurchaseOrder(Base):
+class PurchaseOrder(Base, CompanyScopedMixin):
     """SCM purchase order (supply / on-order source). Public core record — survives
     module uninstall. Sits with suppliers / PR in the procurement domain."""
     __tablename__ = "purchase_orders"
@@ -316,7 +317,7 @@ class PurchaseOrder(Base):
     )
 
 
-class PurchaseOrderLine(Base):
+class PurchaseOrderLine(Base, CompanyScopedMixin):
     """Open PO line — feeds on-order / net-position views by product×warehouse."""
     __tablename__ = "purchase_order_lines"
 

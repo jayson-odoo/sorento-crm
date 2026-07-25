@@ -3,6 +3,8 @@
 import { JSX, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useSession } from 'next-auth/react';
+import { isSuperadminUser } from '@/lib/is-superadmin';
 import { MENU_SIDEBAR } from '@/config/menu.config';
 import { injectPublishedWorkflowForms } from '@/config/workflow-forms-dynamic-menu';
 import { MenuConfig, MenuItem } from '@/config/types';
@@ -47,6 +49,25 @@ function filterMenuByPermission(items: MenuConfig, permissionSet: Set<string>): 
   });
 }
 
+/** Hide superadmin-only entries from non-superadmins. `isSuperadmin` null = still loading — show all (avoids flicker for real superadmins). */
+function filterMenuBySuperadmin(items: MenuConfig, isSuperadmin: boolean | null): MenuConfig {
+  if (isSuperadmin === null || isSuperadmin) return items;
+  return items
+    .filter((item: MenuItem) => {
+      if (item.heading) return true;
+      if (item.superadminOnly) return false;
+      if (item.children?.length) {
+        return filterMenuBySuperadmin(item.children, isSuperadmin).length > 0;
+      }
+      return true;
+    })
+    .map((item: MenuItem) =>
+      item.children?.length
+        ? { ...item, children: filterMenuBySuperadmin(item.children, isSuperadmin) }
+        : item,
+    );
+}
+
 /** Hide menu branches tied to disabled tenant modules (null = still loading / error — show all). */
 function filterMenuByModule(items: MenuConfig, enabledModuleKeys: Set<string> | null): MenuConfig {
   if (!enabledModuleKeys) return items;
@@ -70,6 +91,8 @@ function filterMenuByModule(items: MenuConfig, enabledModuleKeys: Set<string> | 
 
 export function SidebarMenu() {
   const pathname = usePathname();
+  const { data: session, status } = useSession();
+  const isSuperadmin = status === 'loading' ? null : isSuperadminUser(session?.user);
   const { permissionSet, isLoading } = usePermissions();
   const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
   const wfModuleEnabled = enabledModuleKeys?.has('workflow_forms') ?? false;
@@ -87,8 +110,9 @@ export function SidebarMenu() {
   );
 
   const effectiveMenu = useMemo(() => {
-    if (isLoading) return menuWithPublishedForms;
-    const byPerm = filterMenuByPermission(menuWithPublishedForms, permissionSet);
+    const bySuper = filterMenuBySuperadmin(menuWithPublishedForms, isSuperadmin);
+    if (isLoading) return bySuper;
+    const byPerm = filterMenuByPermission(bySuper, permissionSet);
     if (modulesLoading) return byPerm;
     return filterMenuByModule(byPerm, enabledModuleKeys);
   }, [
@@ -97,6 +121,7 @@ export function SidebarMenu() {
     enabledModuleKeys,
     modulesLoading,
     menuWithPublishedForms,
+    isSuperadmin,
   ]);
 
   // Memoize matchPath to prevent unnecessary re-renders

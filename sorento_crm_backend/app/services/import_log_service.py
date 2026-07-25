@@ -4,7 +4,16 @@ from sqlalchemy.orm import Session
 from app.models.import_log import ImportLog
 from app.schemas.common import ListResponse
 from app.schemas.import_log import ImportLogResponse
+from app.services.company_scope import admin_listing_company_filter, get_company_scope
 from app.services.error_handler import handle_not_found
+
+
+def _single_company_from_scope(db) -> Optional[str]:
+    """Return the id of a single-company scope, else None (all / multi / UNSET)."""
+    scope = get_company_scope(db)
+    if isinstance(scope, frozenset) and len(scope) == 1:
+        return next(iter(scope))
+    return None
 
 
 class ImportLogService:
@@ -18,6 +27,12 @@ class ImportLogService:
         q = self.db.query(ImportLog)
         if entity_type:
             q = q.filter(ImportLog.entity_type == entity_type)
+
+        # Multi-company: staff import-logs listing shows only the active company's
+        # logs (+ legacy-null). ImportLog is not an owned mixin; filter by hand.
+        scope_filter = admin_listing_company_filter(self.db, ImportLog.company_id)
+        if scope_filter is not None:
+            q = q.filter(scope_filter)
 
         total = q.count()
         offset = (page - 1) * limit
@@ -73,6 +88,7 @@ class ImportLogService:
             summary=summary,
             imported_by=imported_by,
             duration_ms=duration_ms,
+            company_id=_single_company_from_scope(self.db),
         )
         self.db.add(log)
         self.db.commit()

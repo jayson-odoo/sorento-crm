@@ -411,12 +411,21 @@ async def export_promotions_pdf(
             source_entity_type="promotion_batch",
             source_entity_id=None,
         )
+        # Snapshot the enqueuer's active company so the worker (which runs at the
+        # fail-closed UNSET default) can re-establish scope and actually read the
+        # owned Promotion/PromotionAttachment rows. Single-company scope -> that id;
+        # otherwise None (system/all).
+        from app.services.company_scope import get_company_scope
+
+        _scope = get_company_scope(db)
+        _company_id = next(iter(_scope)) if isinstance(_scope, frozenset) and len(_scope) == 1 else None
         try:
             enqueue_job(
                 generate_promotions_pdf,
                 str(download.id),
                 promotion_ids,
                 str(current_user["id"]),
+                company_id=_company_id,
                 queue_name="imports",
                 job_timeout=600,
             )

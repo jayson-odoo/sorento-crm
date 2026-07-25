@@ -10,10 +10,19 @@ from app.database import get_db
 from app.dependencies import get_external_api_user
 from app.schemas.external.procurement import PackingListRequest, PackingListCreateResponse
 from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCreate, InboundShipmentResponse
-from app.services.procurement_service import InboundShipmentService
+from app.services.procurement_service import (
+    DuplicatePackingListError,
+    InboundShipmentService,
+)
+from app.models.integration import IntegrationLog
 from app.models.procurement import Supplier, InboundShipment
 from app.models.resources import Attachment
-from app.api.v1.external.utils import parse_date_value, get_products_by_code, normalize_code
+from app.api.v1.external.utils import (
+    parse_date_value,
+    get_products_by_code,
+    normalize_code,
+    scope_to_attachment_company,
+)
 from app.services.attachment_notification_helper import (
     build_packing_list_detail_url,
     notify_after_external_attachment_entity,
@@ -21,6 +30,39 @@ from app.services.attachment_notification_helper import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def stamp_duplicate_integration_log(
+    db: Session, attachment_id: str, error_code: str, error_message: str
+) -> None:
+    """Write the rejection reason onto the attachment's latest integration_log.
+
+    Every user-facing surface (upload-activity drawer, attachment integration
+    panel) reads the ``error_code`` / ``error_message`` COLUMNS. n8n's error
+    branch only posts ``{status, response_payload}``, leaving both NULL — so the
+    drawer would show a bare "Integration failed" while the real reason sat
+    unread inside response_payload. Stamping the columns here puts the
+    explanation where the UI already looks.
+
+    Safe against n8n's follow-up callback: IntegrationLogService updates with
+    ``model_dump(exclude_unset=True)``, so the status POST cannot clobber these.
+    Deliberately does NOT set ``status`` — that stays n8n's to report.
+    """
+    log = (
+        db.query(IntegrationLog)
+        .filter(
+            IntegrationLog.business_table == "attachments",
+            IntegrationLog.business_id == str(attachment_id),
+        )
+        .order_by(IntegrationLog.created_at.desc())
+        .first()
+    )
+    if log is None:
+        # Direct API call with no n8n leg — nothing to stamp.
+        return
+    log.error_code = error_code
+    log.error_message = error_message
+    db.commit()
 
 
 @router.post("/", response_model=PackingListCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -45,6 +87,12 @@ def create_packing_list(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid attachment_id",
         )
+
+    # Multi-company isolation (Group G): match products + create the shipment /
+    # lines only within the attachment's company. NULL company (shared) leaves
+    # the scope as-is. No product matches in-company -> the "invalid product code"
+    # fall-through below fails rather than binding another company's product.
+    scope_to_attachment_company(db, attachment)
 
     product_codes = [item.product_code for item in payload.packing_list_products]
     products_map = get_products_by_code(db, product_codes)
@@ -108,7 +156,32 @@ def create_packing_list(
     # External API user has id "system" which is not a valid UUID; pass None for created_by when so
     created_by = current_user["id"] if current_user.get("id") != "system" else None
     service = InboundShipmentService(db)
-    created = service.create_shipment(shipment, created_by=created_by)
+    try:
+        created = service.create_shipment(shipment, created_by=created_by)
+    except DuplicatePackingListError as exc:
+        # Stamp the log BEFORE raising and commit it, so the 409 propagating
+        # through the global AppException handler can't roll the stamp back.
+        # Best-effort: a stamping failure must never mask the real rejection nor
+        # turn it into a 500.
+        try:
+            stamp_duplicate_integration_log(
+                db, payload.packing_list.attachment_id, exc.error_code, exc.message
+            )
+        except Exception as stamp_error:  # noqa: BLE001
+            logger.warning(
+                "Failed to stamp duplicate packing-list reason on integration_log "
+                "for attachment %s: %s",
+                payload.packing_list.attachment_id,
+                stamp_error,
+                exc_info=True,
+            )
+        logger.info(
+            "Rejected duplicate packing list for container %s (attachment %s): %s",
+            payload.packing_list.shipping_container_number,
+            payload.packing_list.attachment_id,
+            exc.message,
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.message)
 
     try:
         sn = (payload.packing_list.shipment_number or "").strip() or "—"
