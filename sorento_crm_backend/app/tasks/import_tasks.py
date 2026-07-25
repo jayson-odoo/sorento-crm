@@ -41,6 +41,8 @@ from app.api.v1.external.utils import (
     parse_date_value,
 )
 from app.models.job import JobStatus
+from app.services import import_outcome_codes as oc
+from app.services.import_outcome import ImportOutcome
 from app.models.procurement import SPOAllocation
 from app.models.order import Order, OrderLine
 from app.schemas.resources import AttachmentCreate
@@ -142,29 +144,30 @@ def process_stock_import(db_job_id: str, stock_data: list, user_id: str):
         return
 
     job_id_str: str = str(job.job_id)
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
     try:
         # Mark job as started
         job_service.start_job(job_id_str)
         
         # Process import
         stock_service = StockService(db)
-        result = stock_service.bulk_import_stock(stock_data, user_id)
+        result = stock_service.bulk_import_stock(stock_data, user_id, outcome=outcome)
         
         # Mark job as completed
         job_service.complete_job(
             job_id=job_id_str,
-            result={
-                'created': result['created'],
-                'updated': result['updated'],
-                'skipped': result['skipped'],
-                'errors': result['errors'],
-                'warnings': result['warnings'],
-                'import_session_id': result['import_session_id'],
-            },
-            successful_rows=result['created'] + result['updated'],
-            failed_rows=len(result['errors']),
-            skipped_rows=result['skipped'],
-            processed_rows=len(stock_data)
+            result=outcome.finalize(
+                "Stock import completed",
+                total_rows=len(stock_data),
+                # legacy keys, kept one release
+                created=result['created'],
+                updated=result['updated'],
+                skipped=result['skipped'],
+                errors=result['errors'],
+                warnings=result['warnings'],
+                import_session_id=result['import_session_id'],
+            ),
+            **outcome.completion_counts(total_rows=len(stock_data)),
         )
 
         logger.info(f"Stock import job {job.job_id} completed successfully")
@@ -180,6 +183,9 @@ def process_stock_import(db_job_id: str, stock_data: list, user_id: str):
 
     except Exception as e:
         logger.error(f"Stock import job {job.job_id} failed: {str(e)}", exc_info=True)
+        # A crashed import still owes the operator the rows it did classify. The
+        # recorder writes on its own session, so flushing here survives the rollback.
+        outcome.flush()
         job_service.fail_job(job_id_str, str(e))
         _write_import_audit(
             db,
@@ -214,26 +220,29 @@ def process_warehouse_import(db_job_id: str, warehouses_data: list, user_id: str
         return
 
     job_id_str: str = str(job.job_id)
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
     try:
         job_service.start_job(job_id_str)
 
         warehouse_service = WarehouseService(db)
-        result = warehouse_service.bulk_import_warehouses(warehouses_data, user_id)
+        result = warehouse_service.bulk_import_warehouses(
+            warehouses_data, user_id, outcome=outcome
+        )
 
         job_service.complete_job(
             job_id=job_id_str,
-            result={
-                "created": result["created"],
-                "updated": result["updated"],
-                "skipped": result["skipped"],
-                "errors": result["errors"],
-                "warnings": result["warnings"],
-                "import_session_id": result["import_session_id"],
-            },
-            successful_rows=result["created"] + result["updated"],
-            failed_rows=len(result["errors"]),
-            skipped_rows=result["skipped"],
-            processed_rows=len(warehouses_data),
+            result=outcome.finalize(
+                "Warehouse import completed",
+                total_rows=len(warehouses_data),
+                # legacy keys, kept one release
+                created=result["created"],
+                updated=result["updated"],
+                skipped=result["skipped"],
+                errors=result["errors"],
+                warnings=result["warnings"],
+                import_session_id=result["import_session_id"],
+            ),
+            **outcome.completion_counts(total_rows=len(warehouses_data)),
         )
 
         logger.info(f"Warehouse import job {job.job_id} completed successfully")
@@ -249,6 +258,9 @@ def process_warehouse_import(db_job_id: str, warehouses_data: list, user_id: str
 
     except Exception as e:
         logger.error(f"Warehouse import job {job.job_id} failed: {str(e)}", exc_info=True)
+        # A crashed import still owes the operator the rows it did classify. The
+        # recorder writes on its own session, so flushing here survives the rollback.
+        outcome.flush()
         job_service.fail_job(job_id_str, str(e))
         _write_import_audit(
             db,
@@ -283,33 +295,32 @@ def process_product_import(db_job_id: str, products_data: list, user_id: str):
         return
 
     job_id_str: str = str(job.job_id)
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
     try:
         job_service.start_job(job_id_str)
         job_service.update_job_progress(job_id_str, total_rows=len(products_data))
 
         def on_progress(processed: int, successful: int, failed: int, skipped: int) -> None:
-            job_service.update_job_progress(
-                job_id_str,
-                processed_rows=processed,
-                successful_rows=successful,
-                failed_rows=failed,
-                skipped_rows=skipped,
-            )
+            counts = outcome.completion_counts()
+            counts["processed_rows"] = processed
+            job_service.update_job_progress(job_id_str, **counts)
 
         product_service = ProductService(db)
-        result = product_service.bulk_import_products(products_data, user_id, on_progress=on_progress)
+        result = product_service.bulk_import_products(
+            products_data, user_id, on_progress=on_progress, outcome=outcome
+        )
 
         job_service.complete_job(
             job_id=job_id_str,
-            result={
-                'created': result['created'],
-                'updated': result['updated'],
-                'errors': result['errors'][:200],  # Cap for storage
-            },
-            successful_rows=result['created'] + result['updated'],
-            failed_rows=len(result['errors']),
-            skipped_rows=0,
-            processed_rows=len(products_data),
+            result=outcome.finalize(
+                "Product import completed",
+                total_rows=len(products_data),
+                # legacy keys, kept one release
+                created=result['created'],
+                updated=result['updated'],
+                errors=result['errors'][:200],
+            ),
+            **outcome.completion_counts(total_rows=len(products_data)),
         )
 
         logger.info(
@@ -327,6 +338,9 @@ def process_product_import(db_job_id: str, products_data: list, user_id: str):
         )
     except Exception as e:
         logger.error("Product import job %s failed: %s", job.job_id, str(e), exc_info=True)
+        # A crashed import still owes the operator the rows it did classify. The
+        # recorder writes on its own session, so flushing here survives the rollback.
+        outcome.flush()
         job_service.fail_job(job_id_str, str(e))
         _write_import_audit(
             db,
@@ -363,13 +377,14 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
         return
     
     job_id_str: str = str(job.job_id)
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
     try:
         # Mark job as started
         job_service.start_job(job_id_str)
         
         # Process import
         order_service = OrderService(db)
-        result = order_service.import_excel_tracking(file_data, user_id)
+        result = order_service.import_excel_tracking(file_data, user_id, outcome=outcome)
 
         created = result.get('created', 0)
         updated = result.get('updated', 0)
@@ -385,22 +400,21 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
         # Mark job as completed with correct counts
         job_service.complete_job(
             job_id=job_id_str,
-            result={
-                'created': created,
-                'updated': updated,
-                'failed': failed_count,
-                'master_rows': master_rows,
-                'tracking_rows': tracking_rows,
-                'kpi_warnings': result.get('kpi_warnings', []),
-                'import_session_id': result.get('import_session_id'),
-                'errors': _json_safe(errors[:50]),  # First 50 errors for UI/log
-                'warnings': _json_safe(warnings[:50]),
-            },
-            successful_rows=successful_rows,
-            failed_rows=failed_count,
-            skipped_rows=len(warnings),
-            processed_rows=processed_rows,
-            total_rows=total_rows,
+            result=outcome.finalize(
+                "Order tracking import completed",
+                total_rows=total_rows,
+                # legacy keys, kept one release
+                created=created,
+                updated=updated,
+                failed=failed_count,
+                master_rows=master_rows,
+                tracking_rows=tracking_rows,
+                kpi_warnings=result.get('kpi_warnings', []),
+                import_session_id=result.get('import_session_id'),
+                errors=_json_safe(errors[:50]),
+                warnings=_json_safe(warnings[:50]),
+            ),
+            **outcome.completion_counts(total_rows=total_rows),
         )
 
         logger.info(
@@ -427,6 +441,9 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
     except Exception as e:
         logger.error("Order tracking import job %s failed: %s", job_id_str, str(e), exc_info=True)
         db.rollback()
+        # A crashed import still owes the operator the rows it did classify. The
+        # recorder writes on its own session, so flushing here survives the rollback.
+        outcome.flush()
         job_service.fail_job(job_id_str, str(e))
         try:
             import_log_service = ImportLogService(db)
@@ -532,6 +549,7 @@ def process_attachment_bulk_import(
         return
 
     job_id_str: str = str(job.job_id)
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
     # Attachment is __audit_track__; suppress the per-row ORM audit for this bulk
     # job (no request actor here → would log N rows as "System"). One coarse,
     # correctly-attributed job row is written at completion instead.
@@ -649,15 +667,26 @@ def process_attachment_bulk_import(
                 return True
             return False
 
+        # Zip entries have no spreadsheet row, so the entry's 1-based position in the
+        # archive is what the operator can match against.
+        file_row_index = {path: idx for idx, path in enumerate(file_paths, start=1)}
+
         for i in range(0, len(file_paths), ATTACHMENT_BULK_IMPORT_BATCH_SIZE):
             batch = file_paths[i : i + ATTACHMENT_BULK_IMPORT_BATCH_SIZE]
             for file_path in batch:
+                entry_row = file_row_index.get(file_path)
+                entry_identity = {"file": file_path}
                 try:
                     zip_buffer.seek(0)
                     with zipfile.ZipFile(zip_buffer, "r") as zf:
                         raw_name = next((n for n in zf.namelist() if _normalize_zip_path(n) == file_path), None)
                     if not raw_name:
                         errors.append(f"Not found in zip: {file_path}")
+                        outcome.fail(
+                            row=entry_row, code=oc.NOT_FOUND_IN_ZIP,
+                            message=f"Not found in zip: {file_path}",
+                            value=file_path, identity=entry_identity,
+                        )
                         failed += 1
                         processed += 1
                         continue
@@ -670,11 +699,24 @@ def process_attachment_bulk_import(
                     ext = (original_filename.split(".")[-1] or "").lower()
                     if allowed_extensions and ext not in allowed_extensions:
                         errors.append(f"Skipped (extension .{ext} not allowed): {file_path}")
+                        outcome.skip(
+                            row=entry_row, code=oc.EXTENSION_NOT_ALLOWED,
+                            message=f"Extension .{ext} is not allowed for this attachment type",
+                            value=f".{ext}", identity=entry_identity,
+                        )
                         skipped += 1
                         processed += 1
                         continue
                     if len(file_content) > max_bytes:
                         errors.append(f"Skipped (file too large): {file_path}")
+                        outcome.skip(
+                            row=entry_row, code=oc.FILE_TOO_LARGE,
+                            message=(
+                                f"File is {len(file_content)} bytes, over the "
+                                f"{max_bytes} byte limit for this attachment type"
+                            ),
+                            value=file_path, identity=entry_identity,
+                        )
                         skipped += 1
                         processed += 1
                         continue
@@ -698,6 +740,11 @@ def process_attachment_bulk_import(
                         if on_conflict == "skip":
                             errors.append(
                                 f"Skipped (filename already exists in target folder): {file_path}"
+                            )
+                            outcome.skip(
+                                row=entry_row, code=oc.FILENAME_COLLISION,
+                                message="A file with this name already exists in the target folder",
+                                value=original_filename, identity=entry_identity,
                             )
                             collisions_skipped += 1
                             skipped += 1
@@ -791,6 +838,12 @@ def process_attachment_bulk_import(
                             )
                         collisions_replaced += 1
                         created_attachments.append({"id": attachment.id, "path": file_path, "replaced": True})
+                        outcome.updated(
+                            row=entry_row, code=oc.REPLACED,
+                            message=f"Replaced existing attachment: {stored_filename}",
+                            value=stored_filename, identity=entry_identity,
+                            entity_type="attachment", entity_id=attachment.id,
+                        )
                         successful += 1
                         seen_in_run.add((directory_id, original_filename.lower()))
                         processed += 1
@@ -825,11 +878,23 @@ def process_attachment_bulk_import(
                         except Exception as e:
                             logger.warning("Webhook creation failed for %s: %s", attachment.id, e)
                         created_attachments.append({"id": attachment.id, "path": file_path})
+                    outcome.success(
+                        row=entry_row,
+                        code=oc.RENAMED_COPY if original_filename != file_path.split("/")[-1] else oc.CREATED,
+                        message=f"Uploaded: {original_filename}",
+                        value=original_filename, identity=entry_identity,
+                        entity_type="attachment",
+                        entity_id=getattr(attachment, "id", None) if attachment is not None else None,
+                    )
                     successful += 1
                     seen_in_run.add((directory_id, original_filename.lower()))
                 except Exception as e:
                     errors.append(f"{file_path}: {e}")
                     logger.exception("Bulk import file failed: %s", file_path)
+                    outcome.fail(
+                        row=entry_row, code=oc.ROW_ERROR, message=str(e),
+                        value=file_path, identity=entry_identity,
+                    )
                     failed += 1
                 processed += 1
 
@@ -853,25 +918,23 @@ def process_attachment_bulk_import(
             if i + len(batch) < len(file_paths):
                 time.sleep(ATTACHMENT_BULK_IMPORT_BATCH_DELAY_SECONDS)
 
-        result = {
-            "message": "Bulk import completed",
-            "directories_created": len(dir_paths),
-            "attachments_created": len(created_attachments),
-            "attachments": created_attachments,
-            "errors": errors,
-            "on_conflict": on_conflict,
-            "collisions_skipped": collisions_skipped,
-            "collisions_renamed_copy": collisions_renamed_copy,
-            "collisions_replaced": collisions_replaced,
-        }
+        outcome_result = outcome.finalize(
+            "Bulk import completed",
+            total_rows=total_files,
+            # legacy keys, kept one release
+            directories_created=len(dir_paths),
+            attachments_created=len(created_attachments),
+            attachments=created_attachments,
+            errors=errors,
+            on_conflict=on_conflict,
+            collisions_skipped=collisions_skipped,
+            collisions_renamed_copy=collisions_renamed_copy,
+            collisions_replaced=collisions_replaced,
+        )
         job_service.complete_job(
             job_id=job_id_str,
-            result=result,
-            successful_rows=successful,
-            failed_rows=failed,
-            skipped_rows=skipped,
-            processed_rows=processed,
-            total_rows=total_files,
+            result=outcome_result,
+            **outcome.completion_counts(total_rows=total_files),
         )
         # Coarse job-level audit: one correctly-attributed row for the whole ZIP
         # (per-row attachment audit is suppressed above for this bulk job).
@@ -888,9 +951,12 @@ def process_attachment_bulk_import(
             "Attachment bulk import job %s completed: %s files, %s created, %s failed, %s skipped",
             job_id_str, processed, successful, failed, skipped,
         )
-        return result
+        return outcome_result
     except Exception as e:
         logger.exception("Attachment bulk import job %s failed", job_id_str)
+        # A crashed import still owes the operator the rows it did classify. The
+        # recorder writes on its own session, so flushing here survives the rollback.
+        outcome.flush()
         job_service.fail_job(job_id_str, str(e))
     finally:
         db.close()
@@ -983,6 +1049,7 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
         return
 
     job_id_str: str = str(job.job_id)
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
 
     try:
         job_service.start_job(job_id_str)
@@ -1050,12 +1117,8 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
         if not total_data_rows:
             job_service.complete_job(
                 job_id=job_id_str,
-                result={"message": "No valid data rows found"},
-                successful_rows=0,
-                failed_rows=0,
-                skipped_rows=0,
-                processed_rows=0,
-                total_rows=0,
+                result=outcome.finalize("No valid data rows found", total_rows=0),
+                **outcome.completion_counts(total_rows=0),
             )
             db.close()
             return
@@ -1064,7 +1127,11 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
         warehouses_map = get_warehouses_by_code_or_name(db, all_locations)
 
         resolved_rows: List[tuple[str, str, str, int, int]] = []  # product_id, warehouse_id, shipment_id, qty, row_idx
-        skipped_rows_detail: List[dict] = []  # [{"row": int, "reason": str}, ...]
+        skipped_rows_detail: List[dict] = []  # legacy key, kept one release
+        # Allocations are upserted per (product, warehouse) group, but the operator
+        # asked which spreadsheet ROW landed - keep the mapping to fan the verdict back.
+        spo_group_rows: Dict[tuple[str, str], List[int]] = defaultdict(list)
+        spo_row_identity: Dict[tuple[str, str], Dict[str, Any]] = {}
 
         for row_idx, row_data in data_rows:
             item_code_raw = _spo_import_find_column(
@@ -1087,18 +1154,35 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
             except (TypeError, ValueError):
                 qty = 0
 
+            container = _spo_import_extract_container(loading_date_raw)
+            spo_identity = {
+                "spo_number": spo_number,
+                "item_code": item_code,
+                "location": location,
+                "qty": qty,
+                "container": container,
+            }
+
+            def _spo_skip(code: str, reason: str, value=None) -> None:
+                outcome.skip(
+                    row=row_idx, code=code, message=reason, value=value, identity=spo_identity
+                )
+                skipped_rows_detail.append({"row": row_idx, "reason": reason})
+
             if not item_code:
-                skipped_rows_detail.append({"row": row_idx, "reason": "Missing Item Code / Product Code"})
+                _spo_skip(oc.MISSING_ITEM_CODE, "Missing Item Code / Product Code")
                 continue
             if not location:
-                skipped_rows_detail.append({"row": row_idx, "reason": "Missing Location / Warehouse"})
+                _spo_skip(oc.MISSING_LOCATION, "Missing Location / Warehouse")
                 continue
             if qty <= 0:
-                skipped_rows_detail.append({"row": row_idx, "reason": "Invalid or zero Qty"})
+                _spo_skip(oc.INVALID_QUANTITY, "Invalid or zero Qty")
                 continue
-            container = _spo_import_extract_container(loading_date_raw)
             if not container:
-                skipped_rows_detail.append({"row": row_idx, "reason": "Missing or invalid Loading Date (no container number)"})
+                _spo_skip(
+                    oc.MISSING_CONTAINER,
+                    "Missing or invalid Loading Date (no container number)",
+                )
                 continue
 
             product = products_by_code.get(item_code)
@@ -1106,15 +1190,21 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
             shipment = get_inbound_shipment_by_container_number(db, container)
 
             if not product:
-                skipped_rows_detail.append({"row": row_idx, "reason": f"Product not found: {item_code}"})
+                _spo_skip(oc.PRODUCT_NOT_FOUND, f"Product not found: {item_code}", item_code)
                 continue
             if not warehouse:
-                skipped_rows_detail.append({"row": row_idx, "reason": f"Warehouse not found: {location}"})
+                _spo_skip(oc.WAREHOUSE_NOT_FOUND, f"Warehouse not found: {location}", location)
                 continue
             if not shipment:
-                skipped_rows_detail.append({"row": row_idx, "reason": f"Packing list not found for container: {container}"})
+                _spo_skip(
+                    oc.PACKING_LIST_NOT_FOUND,
+                    f"Packing list not found for container: {container}",
+                    container,
+                )
                 continue
             resolved_rows.append((str(product.id), str(warehouse.id), str(shipment.id), qty, row_idx))
+            spo_row_identity[(str(product.id), str(warehouse.id))] = spo_identity
+            spo_group_rows[(str(product.id), str(warehouse.id))].append(row_idx)
 
         # Group by (product_id, warehouse_id): sum qty, keep first shipment_id
         groups: Dict[tuple[str, str], tuple[int, str]] = defaultdict(lambda: (0, ""))
@@ -1152,49 +1242,80 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
                     quantity_rejected=0,
                 )
                 action, _allocation = proc_service.upsert_allocation(allocation_data, user_id)
+                group_key = (product_id, warehouse_id)
+                identity = spo_row_identity.get(group_key) or {}
                 if action == "created":
                     successful += 1
                 elif action == "updated":
                     updated += 1
                 else:  # "unchanged"
                     unchanged += 1
+                code = {"created": oc.CREATED, "updated": oc.UPDATED}.get(action, oc.UNCHANGED)
+                row_outcome = {
+                    "created": oc.OUTCOME_CREATED,
+                    "updated": oc.OUTCOME_UPDATED,
+                }.get(action, oc.OUTCOME_UNCHANGED)
+                for source_row in spo_group_rows.get(group_key, []):
+                    outcome.success(
+                        row=source_row,
+                        outcome=row_outcome,
+                        code=code,
+                        message=f"Allocation {action}: {spo_number}",
+                        value=spo_number,
+                        identity=identity,
+                        entity_type="spo_allocation",
+                    )
             except AllocationReceivedGuardError as e:
                 guarded_skipped += 1
                 errors.append(str(e))
+                group_key = (product_id, warehouse_id)
+                for source_row in spo_group_rows.get(group_key, []):
+                    outcome.skip(
+                        row=source_row,
+                        code=oc.ALREADY_RECEIVED_GUARD,
+                        message=str(e),
+                        value=spo_number,
+                        identity=spo_row_identity.get(group_key),
+                    )
             except Exception as e:
                 failed += 1
                 errors.append(f"Upsert allocation: {e}")
+                group_key = (product_id, warehouse_id)
+                for source_row in spo_group_rows.get(group_key, []):
+                    outcome.fail(
+                        row=source_row,
+                        code=oc.UPSERT_ERROR,
+                        message=f"Upsert allocation: {e}",
+                        value=spo_number,
+                        identity=spo_row_identity.get(group_key),
+                    )
 
-            total_skipped = row_level_skipped + guarded_skipped
+            progress = outcome.completion_counts()
+            progress["processed_rows"] = processed
             job_service.update_job_progress(
                 job_id_str,
-                processed_rows=processed,
-                successful_rows=successful,
-                failed_rows=failed,
-                skipped_rows=total_skipped,
                 result={"errors": errors[-50:], "skipped_rows_detail": skipped_rows_detail[-200:]},
+                **progress,
             )
 
         total_skipped = row_level_skipped + guarded_skipped
         _skip_errors, skip_warnings = partition_spo_skip_reasons(skipped_rows_detail)
         job_service.complete_job(
             job_id=job_id_str,
-            result={
-                "message": "SPO import completed",
-                "data_rows": total_data_rows,
-                "allocations_created": successful,
-                "allocations_updated": updated,
-                "allocations_unchanged": unchanged,
-                "skipped_rows_detail": _json_safe(skipped_rows_detail[-200:]),
-                "skipped_rows_count": total_skipped,
-                "warnings": _json_safe(skip_warnings[-100:]),
-                "errors": _json_safe(errors[-100:]),
-            },
-            successful_rows=successful,
-            failed_rows=failed,
-            skipped_rows=total_skipped,
-            processed_rows=total_data_rows,
-            total_rows=total_data_rows,
+            result=outcome.finalize(
+                "SPO import completed",
+                total_rows=total_data_rows,
+                # legacy keys, kept one release
+                data_rows=total_data_rows,
+                allocations_created=successful,
+                allocations_updated=updated,
+                allocations_unchanged=unchanged,
+                skipped_rows_detail=_json_safe(skipped_rows_detail[-200:]),
+                skipped_rows_count=total_skipped,
+                warnings=_json_safe(skip_warnings[-100:]),
+                errors=_json_safe(errors[-100:]),
+            ),
+            **outcome.completion_counts(total_rows=total_data_rows),
         )
         logger.info(
             "SPO import job %s completed: %s data rows, %s ok, %s failed, %s skipped",
@@ -1211,6 +1332,9 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
         )
     except Exception as e:
         logger.exception("SPO import job %s failed", job_id_str)
+        # A crashed import still owes the operator the rows it did classify. The
+        # recorder writes on its own session, so flushing here survives the rollback.
+        outcome.flush()
         job_service.fail_job(job_id_str, str(e))
         _write_import_audit(
             db,
@@ -1364,9 +1488,17 @@ def _run_grn_listing_import_core(
     file_data: bytes,
     job_service: Optional[JobService] = None,
     job_id_str: Optional[str] = None,
+    outcome: Optional[ImportOutcome] = None,
 ) -> Dict[str, Any]:
-    """Parse GRN listing Excel and run upsert loop. Returns counts and errors. Caller must commit or rollback."""
+    """Parse GRN listing Excel and run upsert loop. Returns counts and errors. Caller must commit or rollback.
+
+    ``outcome`` records per-row attribution. The validation preview passes a
+    non-persisting recorder so preview and import speak the same reason codes.
+    """
     import openpyxl
+
+    if outcome is None:
+        outcome = ImportOutcome(None, persist=False)
 
     try:
         workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
@@ -1400,23 +1532,27 @@ def _run_grn_listing_import_core(
         job_service.update_job_progress(job_id_str, total_rows=total_data_rows)
 
     proc = PickingHeaderService(db)
-    successful = 0
-    failed = 0
-    skipped = 0
     errors: List[str] = []
-    skipped_rows_detail: List[dict] = []
+    skipped_rows_detail: List[dict] = []  # legacy key, kept one release
+
+    def _progress(row_idx: int) -> None:
+        if job_service and job_id_str:
+            counts = outcome.completion_counts()
+            counts["processed_rows"] = row_idx - 1
+            job_service.update_job_progress(job_id_str, **counts)
 
     for row_idx, row in enumerate(data_rows, start=2):
         doc_num = _find(row, "doc number", "doc. no.", "doc. number", "doc number ", "grn number")
         grn_number = (doc_num and str(doc_num).strip()) or None
-        if not grn_number:
-            skipped += 1
-            skipped_rows_detail.append({"row": row_idx, "reason": "Missing doc number / GRN number"})
-            if job_service and job_id_str:
-                job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, successful_rows=successful, failed_rows=failed, skipped_rows=skipped)
-            continue
         transfer_from = _find(row, *_GRN_SPO_COLUMN_CANDIDATES)
         spo_number = (transfer_from and str(transfer_from).strip()) or None
+        identity = {"grn_number": grn_number, "spo_number": spo_number}
+        if not grn_number:
+            reason = "Missing doc number / GRN number"
+            outcome.skip(row=row_idx, code=oc.MISSING_DOC_NO, message=reason, identity=identity)
+            skipped_rows_detail.append({"row": row_idx, "reason": reason})
+            _progress(row_idx)
+            continue
         date_val = _find(row, "date", "picking date", "picking date ")
         try:
             _pd = parse_date_value(date_val) if date_val is not None else date.today()
@@ -1425,20 +1561,33 @@ def _run_grn_listing_import_core(
             picking_date = date.today()
         try:
             proc.upsert_grn_header_for_import(grn_number, spo_number, picking_date)
-            successful += 1
+            outcome.success(
+                row=row_idx,
+                code=oc.CREATED,
+                message=f"GRN header saved: {grn_number}",
+                value=grn_number,
+                identity=identity,
+                entity_type="picking_header",
+            )
         except Exception as e:
-            failed += 1
+            outcome.fail(
+                row=row_idx,
+                code=oc.UPSERT_ERROR,
+                message=f"{grn_number}: {e}",
+                value=grn_number,
+                identity=identity,
+            )
             errors.append(f"{grn_number}: {e}")
-        if job_service and job_id_str:
-            job_service.update_job_progress(job_id_str, processed_rows=row_idx - 1, successful_rows=successful, failed_rows=failed, skipped_rows=skipped)
+        _progress(row_idx)
 
     return {
-        "successful": successful,
-        "failed": failed,
-        "skipped": skipped,
+        "successful": outcome.successful,
+        "failed": outcome.failed,
+        "skipped": outcome.skipped,
         "errors": errors,
         "skipped_rows_detail": skipped_rows_detail,
         "total_data_rows": total_data_rows,
+        "outcome": outcome,
     }
 
 
@@ -1596,9 +1745,12 @@ def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, 
         return
 
     job_id_str: str = str(job.job_id)
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
     try:
         job_service.start_job(job_id_str)
-        result = _run_grn_listing_import_core(db, file_data, job_service=job_service, job_id_str=job_id_str)
+        result = _run_grn_listing_import_core(
+            db, file_data, job_service=job_service, job_id_str=job_id_str, outcome=outcome
+        )
         if "error" in result:
             job_service.fail_job(job_id_str, result["error"])
             db.close()
@@ -1606,16 +1758,14 @@ def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, 
         db.commit()
         job_service.complete_job(
             job_id=job_id_str,
-            result={
-                "message": "GRN listing import completed",
-                "errors": result["errors"][-100:],
-                "skipped_rows_detail": _json_safe(result["skipped_rows_detail"][-500:]),
-            },
-            successful_rows=result["successful"],
-            failed_rows=result["failed"],
-            skipped_rows=result["skipped"],
-            processed_rows=result["total_data_rows"],
-            total_rows=result["total_data_rows"],
+            result=outcome.finalize(
+                "GRN listing import completed",
+                total_rows=result["total_data_rows"],
+                # legacy keys, kept one release
+                errors=result["errors"][-100:],
+                skipped_rows_detail=_json_safe(result["skipped_rows_detail"][-500:]),
+            ),
+            **outcome.completion_counts(total_rows=result["total_data_rows"]),
         )
         logger.info(
             "GRN listing import job %s completed: %s ok, %s failed, %s skipped",
@@ -1632,6 +1782,9 @@ def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, 
         )
     except Exception as e:
         logger.exception("GRN listing import job %s failed", job_id_str)
+        # A crashed import still owes the operator the rows it did classify. The
+        # recorder writes on its own session, so flushing here survives the rollback.
+        outcome.flush()
         job_service.fail_job(job_id_str, str(e))
         _write_import_audit(
             db,
@@ -1668,6 +1821,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
         return
 
     job_id_str: str = str(job.job_id)
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
     try:
         job_service.start_job(job_id_str)
         try:
@@ -1729,12 +1883,8 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
         if not data_rows:
             job_service.complete_job(
                 job_id=job_id_str,
-                result={"message": "No valid data rows"},
-                successful_rows=0,
-                failed_rows=0,
-                skipped_rows=0,
-                processed_rows=0,
-                total_rows=total_data_rows,
+                result=outcome.finalize("No valid data rows", total_rows=total_data_rows),
+                **outcome.completion_counts(total_rows=total_data_rows),
             )
             db.close()
             return
@@ -1759,29 +1909,52 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
 
         # Group by (doc_no, product_id, warehouse_id) and sum quantity; track skipped with Excel row number
         groups: Dict[tuple[str, str, str, Optional[str]], Dict[str, Any]] = {}
-        skipped_detail: List[dict] = []  # [{"row": int, "reason": str}, ...]
+        skipped_detail: List[dict] = []  # legacy key, kept one release
+        # Rows that made it into a group, so a group-level failure can be attributed
+        # back to the source rows that fed it.
+        group_source_rows: Dict[tuple[str, str, str, Optional[str]], List[int]] = defaultdict(list)
+        group_row_identity: Dict[tuple[str, str, str, Optional[str]], Dict[str, Any]] = {}
+
+        def _line_identity(doc_no, item_code, location, qty, spo=None) -> Dict[str, Any]:
+            return {
+                "doc_no": doc_no,
+                "item_code": item_code,
+                "location": location,
+                "qty": qty,
+                "spo_number": spo,
+            }
+
+        def _grn_skip(row_idx: int, code: str, reason: str, identity: Dict[str, Any], value=None) -> None:
+            outcome.skip(row=row_idx, code=code, message=reason, value=value, identity=identity)
+            skipped_detail.append({"row": row_idx, "reason": reason})
+            counts = outcome.completion_counts()
+            counts["processed_rows"] = row_idx - 1
+            job_service.update_job_progress(job_id_str, total_rows=total_data_rows, **counts)
+
         for row_idx, row_tuple in enumerate(data_rows, start=2):  # Excel row 2 = first data row
             doc_no, item_code, location, qty, line_spo = row_tuple
+            identity = _line_identity(doc_no, item_code, location, qty, line_spo)
             if not doc_no:
-                skipped_detail.append({"row": row_idx, "reason": "Missing doc no"})
-                job_service.update_job_progress(job_id_str, total_rows=total_data_rows, processed_rows=row_idx - 1, skipped_rows=len(skipped_detail))
+                _grn_skip(row_idx, oc.MISSING_DOC_NO, "Missing doc no", identity)
                 continue
             if not item_code:
-                skipped_detail.append({"row": row_idx, "reason": "Missing item code"})
-                job_service.update_job_progress(job_id_str, total_rows=total_data_rows, processed_rows=row_idx - 1, skipped_rows=len(skipped_detail))
+                _grn_skip(row_idx, oc.MISSING_ITEM_CODE, "Missing item code", identity)
                 continue
             if not location:
-                skipped_detail.append({"row": row_idx, "reason": "Missing location"})
-                job_service.update_job_progress(job_id_str, total_rows=total_data_rows, processed_rows=row_idx - 1, skipped_rows=len(skipped_detail))
+                _grn_skip(row_idx, oc.MISSING_LOCATION, "Missing location", identity)
                 continue
             if qty <= 0:
-                skipped_detail.append({"row": row_idx, "reason": "Invalid quantity"})
-                job_service.update_job_progress(job_id_str, total_rows=total_data_rows, processed_rows=row_idx - 1, skipped_rows=len(skipped_detail))
+                _grn_skip(row_idx, oc.INVALID_QUANTITY, "Invalid quantity", identity)
                 continue
             header = headers_by_number.get(doc_no)
             if not header:
-                skipped_detail.append({"row": row_idx, "reason": f"GRN header not found: {doc_no}"})
-                job_service.update_job_progress(job_id_str, total_rows=total_data_rows, processed_rows=row_idx - 1, skipped_rows=len(skipped_detail))
+                _grn_skip(
+                    row_idx,
+                    oc.GRN_HEADER_NOT_FOUND,
+                    f"GRN header not found: {doc_no}",
+                    identity,
+                    doc_no,
+                )
                 continue
             _hdr_spo = getattr(header, "spo_number", None)
             hdr_spo = str(_hdr_spo).strip() if (_hdr_spo is not None and str(_hdr_spo).strip()) else None
@@ -1789,19 +1962,33 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             product = products_by_code.get((item_code or "").strip())
             warehouse = warehouses_map.get(normalize_code(location)) if location else None
             if not product:
-                skipped_detail.append({"row": row_idx, "reason": f"Product not found: {item_code}"})
-                job_service.update_job_progress(job_id_str, total_rows=total_data_rows, processed_rows=row_idx - 1, skipped_rows=len(skipped_detail))
+                _grn_skip(
+                    row_idx,
+                    oc.PRODUCT_NOT_FOUND,
+                    f"Product not found: {item_code}",
+                    identity,
+                    item_code,
+                )
                 continue
             if not warehouse:
-                skipped_detail.append({"row": row_idx, "reason": f"Warehouse not found: {location}"})
-                job_service.update_job_progress(job_id_str, total_rows=total_data_rows, processed_rows=row_idx - 1, skipped_rows=len(skipped_detail))
+                _grn_skip(
+                    row_idx,
+                    oc.WAREHOUSE_NOT_FOUND,
+                    f"Warehouse not found: {location}",
+                    identity,
+                    location,
+                )
                 continue
             # Group by (doc_no, product_id, warehouse_id, effective_spo) so line-level SPO (e.g. From Doc. No.) is not merged across SPOs.
             key = (doc_no, str(product.id), str(warehouse.id), effective_spo)
             if key not in groups:
                 groups[key] = {"qty": 0, "warehouse_id": str(warehouse.id)}
             groups[key]["qty"] += qty
-            job_service.update_job_progress(job_id_str, total_rows=total_data_rows, processed_rows=row_idx - 1, skipped_rows=len(skipped_detail))
+            group_source_rows[key].append(row_idx)
+            group_row_identity[key] = _line_identity(doc_no, item_code, location, groups[key]["qty"], effective_spo)
+            counts = outcome.completion_counts()
+            counts["processed_rows"] = row_idx - 1
+            job_service.update_job_progress(job_id_str, total_rows=total_data_rows, **counts)
 
         # After grouping phase: all data rows are "processed"; skipped count is final for this phase
         job_service.update_job_progress(
@@ -1815,11 +2002,18 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
 
         # FIFO matching: match SPO allocations by spo_number + product (ignore warehouse)
         # Process GR lines grouped by (doc_no, product_id) to share SPO pool FIFO
+        #
+        # NOTE: `successful` / `failed` below count PICKING LINES, not source rows -
+        # FIFO splits one grouped quantity across several allocations. Per-source-row
+        # attribution is done once at the end from `group_line_failed`, so the outcome
+        # counters stay reconcilable against the number of rows in the file.
         successful = 0
         failed = 0
         errors: List[str] = []
         successful_detail: List[Dict[str, Any]] = []
         first_line_error: Optional[str] = None
+        group_line_failed: set = set()
+        group_line_error: Dict[tuple, str] = {}
 
         def _record_success(grn_number: str, product_id: str, warehouse_id: str, qty: int) -> None:
             successful_detail.append({
@@ -1836,6 +2030,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             source_warehouse_id: str,
             quantity: int,
             spo_allocation_id: Optional[str],
+            group_key: Optional[tuple] = None,
         ) -> bool:
             """Upsert one GRN line inside a SAVEPOINT.
 
@@ -1866,6 +2061,9 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                         exc_info=True,
                     )
                 errors.append(str(e))
+                if group_key is not None:
+                    group_line_failed.add(group_key)
+                    group_line_error[group_key] = str(e)
                 return False
 
         # Group GR lines by (doc_no, product_id, effective_spo) for FIFO SPO matching
@@ -1874,7 +2072,14 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
         for (doc_no, product_id, warehouse_id, effective_spo), group_data in groups.items():
             header = headers_by_number.get(doc_no)
             if not header:
+                # Defensive: the per-row loop already skips rows with no header, so
+                # this is unreachable in practice - but it used to bump `failed`
+                # silently, which is exactly the class of bug this work removes.
                 failed += 1
+                group_line_failed.add((doc_no, product_id, warehouse_id, effective_spo))
+                group_line_error[(doc_no, product_id, warehouse_id, effective_spo)] = (
+                    f"GRN header not found: {doc_no}"
+                )
                 continue
             gr_lines_by_product[(doc_no, product_id, effective_spo)].append((warehouse_id, group_data["qty"], header))
 
@@ -1883,6 +2088,10 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
             header = headers_by_number.get(doc_no)
             if not header:
                 failed += 1
+                for _wh_id, _qty, _hdr in gr_line_list:
+                    gk = (doc_no, product_id, _wh_id, effective_spo)
+                    group_line_failed.add(gk)
+                    group_line_error[gk] = f"GRN header not found: {doc_no}"
                 continue
 
             spo_number: Optional[str] = effective_spo
@@ -1895,6 +2104,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                         source_warehouse_id=warehouse_id,
                         quantity=qty,
                         spo_allocation_id=None,
+                        group_key=(doc_no, product_id, warehouse_id, effective_spo),
                     ):
                         successful += 1
                         _record_success(doc_no, product_id, warehouse_id, qty)
@@ -1942,6 +2152,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                         source_warehouse_id=warehouse_id,
                         quantity=take_qty,
                         spo_allocation_id=alloc_id,
+                        group_key=(doc_no, product_id, warehouse_id, effective_spo),
                     ):
                         successful += 1
                         _record_success(doc_no, product_id, warehouse_id, take_qty)
@@ -1962,6 +2173,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                         source_warehouse_id=warehouse_id,
                         quantity=take_qty,
                         spo_allocation_id=alloc_id,
+                        group_key=(doc_no, product_id, warehouse_id, effective_spo),
                     ):
                         successful += 1
                         _record_success(doc_no, product_id, warehouse_id, take_qty)
@@ -1977,6 +2189,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                         source_warehouse_id=warehouse_id,
                         quantity=remaining_qty,
                         spo_allocation_id=None,
+                        group_key=(doc_no, product_id, warehouse_id, effective_spo),
                     ):
                         successful += 1
                         _record_success(doc_no, product_id, warehouse_id, remaining_qty)
@@ -1994,6 +2207,32 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
 
         db.commit()
 
+        # Per-SOURCE-ROW attribution. The loops above counted picking lines (FIFO
+        # splits one grouped quantity across allocations); the operator asked which
+        # spreadsheet ROW succeeded, so fan the group verdict back onto its rows.
+        for group_key, source_rows in group_source_rows.items():
+            identity = group_row_identity.get(group_key) or {}
+            if group_key in group_line_failed:
+                message = group_line_error.get(group_key, "GRN line could not be written")
+                for source_row in source_rows:
+                    outcome.fail(
+                        row=source_row,
+                        code=oc.UPSERT_ERROR,
+                        message=message,
+                        value=identity.get("doc_no"),
+                        identity=identity,
+                    )
+            else:
+                for source_row in source_rows:
+                    outcome.success(
+                        row=source_row,
+                        code=oc.CREATED,
+                        message=f"GRN line saved: {identity.get('doc_no') or ''}".strip(),
+                        value=identity.get("doc_no"),
+                        identity=identity,
+                        entity_type="picking_line",
+                    )
+
         # After GRN lines import: reflect received quantities to SPO allocations (confirmed GRN)
         for header in headers_by_number.values():
             try:
@@ -2003,18 +2242,18 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
 
         job_service.complete_job(
             job_id=job_id_str,
-            result={
-                "message": "GRN lines import completed",
-                "first_line_error": first_line_error,
-                "errors": _json_safe(errors[-100:]),
-                "skipped_rows_detail": _json_safe(skipped_detail[-500:]),
-                "successful_rows_detail": _json_safe(successful_detail[-500:]),
-            },
-            successful_rows=successful,
-            failed_rows=failed,
-            skipped_rows=len(skipped_detail),
-            processed_rows=total_data_rows,
-            total_rows=total_data_rows,
+            result=outcome.finalize(
+                "GRN lines import completed",
+                total_rows=total_data_rows,
+                # legacy keys, kept one release
+                first_line_error=first_line_error,
+                errors=_json_safe(errors[-100:]),
+                skipped_rows_detail=_json_safe(skipped_detail[-500:]),
+                successful_rows_detail=_json_safe(successful_detail[-500:]),
+                picking_lines_written=successful,
+                picking_lines_failed=failed,
+            ),
+            **outcome.completion_counts(total_rows=total_data_rows),
         )
         logger.info("GRN lines import job %s completed: %s ok, %s failed", job_id_str, successful, failed)
         _write_import_audit(
@@ -2028,6 +2267,9 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
         )
     except Exception as e:
         logger.exception("GRN lines import job %s failed", job_id_str)
+        # A crashed import still owes the operator the rows it did classify. The
+        # recorder writes on its own session, so flushing here survives the rollback.
+        outcome.flush()
         job_service.fail_job(job_id_str, str(e))
         _write_import_audit(
             db,
@@ -2116,6 +2358,10 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
         return
 
     job_id_str = str(job.job_id)
+    # Bind the recorder to THIS module's SessionLocal (not app.database's) so it
+    # follows the same engine the task is using - keeps tests hermetic and keeps
+    # row capture on its own session.
+    outcome = ImportOutcome(getattr(job, "id", None), session_factory=SessionLocal)
     try:
         job_service.start_job(job_id_str)
         try:
@@ -2193,12 +2439,8 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
         if not data_rows:
             job_service.complete_job(
                 job_id=job_id_str,
-                result={"message": "No valid data rows"},
-                successful_rows=0,
-                failed_rows=0,
-                skipped_rows=0,
-                processed_rows=0,
-                total_rows=total_data_rows,
+                result=outcome.finalize("No valid data rows", total_rows=total_data_rows),
+                **outcome.completion_counts(total_rows=total_data_rows),
             )
             db.close()
             return
@@ -2259,11 +2501,24 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
         # so two source rows with same product/warehouse but different price/discount produce two
         # separate order lines, matching the source spreadsheet.
         resolved_rows: List[Dict[str, Any]] = []
-        successful = 0
-        failed = 0
-        skipped = 0
         errors: List[Dict[str, Any]] = []
         progress_every = max(100, min(500, total_data_rows // 50 or 100))
+
+        def _identity(row_d: Dict[str, Any]) -> Dict[str, Any]:
+            """The row's mapped business columns — what the operator needs to find it."""
+            return {
+                "doc_no": row_d.get("doc_no"),
+                "item_code": row_d.get("item_code"),
+                "location": row_d.get("location"),
+                "qty": row_d.get("quantity"),
+                "unit_price": row_d.get("unit_price"),
+            }
+
+        def _skip(row_idx: int, code: str, message: str, row_d: Dict[str, Any], value=None) -> None:
+            outcome.skip(
+                row=row_idx, code=code, message=message, value=value, identity=_identity(row_d)
+            )
+            errors.append({"row": row_idx, "error": message})  # legacy key, one release
 
         for row_idx, row_data in enumerate(data_rows, start=2):
             try:
@@ -2271,32 +2526,38 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                 item_code = row_data.get("item_code")
                 location = row_data.get("location")
                 if not doc_no:
-                    skipped += 1
-                    errors.append({"row": row_idx, "error": "Missing doc no"})
+                    _skip(row_idx, oc.MISSING_DOC_NO, "Missing doc no", row_data)
                     continue
                 if not item_code:
-                    skipped += 1
-                    errors.append({"row": row_idx, "error": "Missing item code"})
+                    _skip(row_idx, oc.MISSING_ITEM_CODE, "Missing item code", row_data)
                     continue
                 if not location:
-                    skipped += 1
-                    errors.append({"row": row_idx, "error": "Missing location"})
+                    _skip(row_idx, oc.MISSING_LOCATION, "Missing location", row_data)
                     continue
 
                 order = orders_by_number.get(doc_no)
                 product = products_by_code.get((item_code or "").strip())
                 warehouse = warehouses_map.get(normalize_code(location)) if location else None
                 if not order:
-                    skipped += 1
-                    errors.append({"row": row_idx, "error": f"Order not found: {doc_no}"})
+                    _skip(row_idx, oc.ORDER_NOT_FOUND, f"Order not found: {doc_no}", row_data, doc_no)
                     continue
                 if not product:
-                    skipped += 1
-                    errors.append({"row": row_idx, "error": f"Product not found: {item_code}"})
+                    _skip(
+                        row_idx,
+                        oc.PRODUCT_NOT_FOUND,
+                        f"Product not found: {item_code}",
+                        row_data,
+                        item_code,
+                    )
                     continue
                 if not warehouse:
-                    skipped += 1
-                    errors.append({"row": row_idx, "error": f"Warehouse not found: {location}"})
+                    _skip(
+                        row_idx,
+                        oc.WAREHOUSE_NOT_FOUND,
+                        f"Warehouse not found: {location}",
+                        row_data,
+                        location,
+                    )
                     continue
 
                 resolved_rows.append({
@@ -2304,6 +2565,7 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                     "order_id": str(order.id),
                     "product_id": str(product.id),
                     "warehouse_id": str(warehouse.id),
+                    "identity": _identity(row_data),
                     "quantity": row_data.get("quantity"),
                     "unit_price": row_data.get("unit_price"),
                     "discount": row_data.get("discount"),
@@ -2315,13 +2577,9 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
             finally:
                 cur = row_idx - 1
                 if cur % progress_every == 0 or cur == total_data_rows:
-                    job_service.update_job_progress(
-                        job_id_str,
-                        processed_rows=cur,
-                        successful_rows=successful,
-                        failed_rows=failed,
-                        skipped_rows=skipped,
-                    )
+                    progress = outcome.completion_counts()
+                    progress["processed_rows"] = cur  # rows read, not rows decided
+                    job_service.update_job_progress(job_id_str, **progress)
 
         # Load existing lines for the involved orders and count multiplicity per composite key.
         # Re-uploading an incremental file should NOT create duplicates: for each incoming row,
@@ -2350,6 +2608,22 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                 )
                 existing_remaining[ex_key] = existing_remaining.get(ex_key, 0) + 1
 
+        def _build_line(entry: Dict[str, Any], sequence: int) -> OrderLine:
+            return OrderLine(
+                order_id=entry["order_id"],
+                product_id=entry["product_id"],
+                warehouse_id=entry["warehouse_id"],
+                line_sequence=sequence,
+                quantity=entry.get("quantity") or Decimal("0"),
+                unit_price=entry.get("unit_price"),
+                discount=entry.get("discount"),
+                total=entry.get("total"),
+                tax=entry.get("tax"),
+                total_excluding_tax=entry.get("total_excluding_tax"),
+                total_including_tax=entry.get("total_including_tax"),
+            )
+
+        pending: List[Dict[str, Any]] = []  # entries actually queued for insert
         for entry in resolved_rows:
             try:
                 key = _line_key(
@@ -2362,42 +2636,92 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
                     entry["total"],
                 )
                 if existing_remaining.get(key, 0) > 0:
+                    # An identical line is already on this order, so this row is a
+                    # re-upload of something already imported. This used to bump the
+                    # counter silently, which is how 4,018 rows vanished from a green
+                    # job; it is now a named, drillable outcome.
                     existing_remaining[key] -= 1
-                    skipped += 1
+                    outcome.skip(
+                        row=entry.get("row_idx"),
+                        code=oc.DUPLICATE_LINE,
+                        message=(
+                            "Identical line already exists on this order "
+                            "(same product, warehouse, qty, unit price, discount, total)"
+                        ),
+                        value=(entry.get("identity") or {}).get("doc_no"),
+                        identity=entry.get("identity"),
+                    )
                     continue
 
                 seq_next[entry["order_id"]] += 1
-                new_line = OrderLine(
-                    order_id=entry["order_id"],
-                    product_id=entry["product_id"],
-                    warehouse_id=entry["warehouse_id"],
-                    line_sequence=seq_next[entry["order_id"]],
-                    quantity=entry.get("quantity") or Decimal("0"),
-                    unit_price=entry.get("unit_price"),
-                    discount=entry.get("discount"),
-                    total=entry.get("total"),
-                    tax=entry.get("tax"),
-                    total_excluding_tax=entry.get("total_excluding_tax"),
-                    total_including_tax=entry.get("total_including_tax"),
-                )
-                db.add(new_line)
-                successful += 1
+                entry["_sequence"] = seq_next[entry["order_id"]]
+                db.add(_build_line(entry, entry["_sequence"]))
+                pending.append(entry)
             except Exception as e:
-                failed += 1
+                outcome.fail(
+                    row=entry.get("row_idx"),
+                    code=oc.ROW_ERROR,
+                    message=str(e),
+                    identity=entry.get("identity"),
+                )
                 errors.append({"row": entry.get("row_idx"), "error": str(e)})
 
-        db.commit()
+        # Single bulk commit on the happy path. If it blows up we still owe the
+        # operator the row that caused it, so replay row-by-row inside savepoints
+        # purely to attribute the failure (AC-A10). Costs nothing unless it fails.
+        try:
+            db.commit()
+            for entry in pending:
+                outcome.success(
+                    row=entry.get("row_idx"),
+                    code=oc.CREATED,
+                    message="Order line created",
+                    value=(entry.get("identity") or {}).get("doc_no"),
+                    identity=entry.get("identity"),
+                    entity_type="order_line",
+                )
+        except Exception as commit_error:
+            db.rollback()
+            logger.warning(
+                "Delivery order detail import job %s: bulk commit failed (%s); "
+                "replaying row-by-row to attribute the failure",
+                job_id_str,
+                commit_error,
+            )
+            for entry in pending:
+                try:
+                    with db.begin_nested():
+                        db.add(_build_line(entry, entry["_sequence"]))
+                    outcome.success(
+                        row=entry.get("row_idx"),
+                        code=oc.CREATED,
+                        message="Order line created",
+                        value=(entry.get("identity") or {}).get("doc_no"),
+                        identity=entry.get("identity"),
+                        entity_type="order_line",
+                    )
+                except Exception as row_error:
+                    outcome.fail(
+                        row=entry.get("row_idx"),
+                        code=oc.ROW_ERROR,
+                        message=str(row_error),
+                        value=(entry.get("identity") or {}).get("doc_no"),
+                        identity=entry.get("identity"),
+                    )
+                    errors.append({"row": entry.get("row_idx"), "error": str(row_error)})
+            db.commit()
+
+        successful = outcome.successful
+        failed = outcome.failed
+        skipped = outcome.skipped
         job_service.complete_job(
             job_id=job_id_str,
-            result={
-                "message": "Delivery order detail import completed",
-                "errors": _json_safe(errors[:100]),
-            },
-            successful_rows=successful,
-            failed_rows=failed,
-            skipped_rows=skipped,
-            processed_rows=total_data_rows,
-            total_rows=total_data_rows,
+            result=outcome.finalize(
+                "Delivery order detail import completed",
+                total_rows=total_data_rows,
+                errors=_json_safe(errors[:100]),  # legacy key, kept one release
+            ),
+            **outcome.completion_counts(total_rows=total_data_rows),
         )
         logger.info("Delivery order detail import job %s completed: %s ok, %s failed, %s skipped", job_id_str, successful, failed, skipped)
         _write_import_audit(
@@ -2411,6 +2735,9 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
         )
     except Exception as e:
         logger.exception("Delivery order detail import job %s failed", job_id_str)
+        # A crashed import still owes the operator the rows it did classify. The
+        # recorder writes on its own session, so flushing here survives the rollback.
+        outcome.flush()
         job_service.fail_job(job_id_str, str(e))
         _write_import_audit(
             db,

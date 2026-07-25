@@ -35,7 +35,7 @@ from app.models.integration import Integration, IntegrationApiKey, IntegrationLo
 from app.models.integration_reference import IntegrationReference
 from app.models.import_log import ImportLog
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
-from app.models.job import ImportJob
+from app.models.job import ImportJob, ImportJobRow
 from app.models.download import UserDownload, DownloadStatus
 from app.models.audit import AuditLog
 from app.models.notification import Notification, NotificationDelivery, PushSubscription
@@ -167,6 +167,7 @@ __all__ = [
     "IntegrationLog",
     "ImportLog",
     "ImportJob",
+    "ImportJobRow",
     "UserDownload",
     "DownloadStatus",
     "VerificationToken",

@@ -111,8 +111,13 @@ export function UploadSessionRow({
         >
           <FileSpreadsheet className="size-4 mt-0.5 shrink-0 text-muted-foreground" />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-sm truncate" title={session.title}>
+            {/* See the sibling branch below: the title needs flex-1 + min-w-0 or a
+                long filename renders wider than the drawer instead of wrapping. */}
+            <div className="flex items-start gap-2 min-w-0">
+              <span
+                className="font-medium text-sm flex-1 min-w-0 break-words"
+                title={session.title}
+              >
                 {session.title}
               </span>
               <StatusBadge session={session} />
@@ -153,8 +158,15 @@ export function UploadSessionRow({
           <FolderArchive className="size-4 mt-0.5 shrink-0 text-muted-foreground" />
         )}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-medium text-sm truncate" title={session.title}>
+          {/* min-w-0 + flex-1 on the title: a flex item defaults to min-width:auto,
+              so without it the name renders wider than the drawer and spills outside
+              it instead of wrapping (truncate alone cannot constrain it). Long import
+              filenames wrap to as many lines as they need rather than being cut off. */}
+          <div className="flex items-start gap-2 min-w-0">
+            <span
+              className="font-medium text-sm flex-1 min-w-0 break-words"
+              title={session.title}
+            >
               {session.title}
             </span>
             <StatusBadge session={session} />

@@ -1,6 +1,25 @@
 import { apiFetch } from '@/lib/api';
-import type { ImportJob } from '../types/importJob.types';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import type { ImportJob, ImportJobRow, ImportJobRowsQuery } from '../types/importJob.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
+
+/**
+ * ── Row-outcome API contract (frozen in Phase 1, implemented in Phase 2) ──────────
+ *
+ * GET /api/v1/system/jobs/{job_id}/rows
+ *   query: page, limit, sort, dir, query, outcome, code
+ *   200:   { data: ImportJobRow[], pagination: { total, page, limit }, empty: boolean }
+ *   404:   unknown job. A job with no captured rows returns an empty list, not an error.
+ *
+ * GET /api/v1/system/jobs/{job_id}/rows/export
+ *   query: same filters as above (no paging — streams the whole filtered set)
+ *   200:   text/csv, Content-Disposition: attachment; filename="import-job-{id}-rows.csv"
+ *   columns: row, outcome, code, reason, detail, value, identity, entity_id
+ *
+ * The per-job aggregate breakdown is NOT a separate call — it rides on
+ * GET /jobs/{job_id} in `result.breakdown` (see ImportJobResultEnvelope).
+ * ─────────────────────────────────────────────────────────────────────────────────
+ */
 
 export async function getImportJobs(
   params: DataGridApiFetchParams & { job_type?: string; status?: string },
@@ -48,6 +67,52 @@ export async function getImportJobSourceUrl(
   const response = await apiFetch(`/api/v1/system/jobs/${jobId}/source`);
   if (!response.ok) throw new Error('Failed to fetch source file link');
   return response.json();
+}
+
+export async function getImportJobRows(
+  jobId: string,
+  params: ImportJobRowsQuery,
+): Promise<DataGridApiResponse<ImportJobRow>> {
+  const search = buildDataGridParams(
+    {
+      pageIndex: params.pageIndex,
+      pageSize: params.pageSize,
+      searchQuery: params.query,
+    },
+    { outcome: params.outcome, code: params.code },
+  );
+  const response = await apiFetch(`/api/v1/system/jobs/${jobId}/rows?${search.toString()}`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to fetch import job rows'));
+  }
+  return response.json();
+}
+
+/** URL for the CSV export of the currently filtered rows. */
+export function buildImportJobRowsExportPath(
+  jobId: string,
+  params: Omit<ImportJobRowsQuery, 'pageIndex' | 'pageSize'>,
+): string {
+  const search = buildDataGridParams(
+    { pageIndex: 0, pageSize: 0, searchQuery: params.query },
+    { outcome: params.outcome, code: params.code },
+  );
+  // Paging is meaningless for the export - it streams the whole filtered set.
+  search.delete('page');
+  search.delete('limit');
+  const qs = search.toString();
+  return `/api/v1/system/jobs/${jobId}/rows/export${qs ? `?${qs}` : ''}`;
+}
+
+export async function downloadImportJobRowsCsv(
+  jobId: string,
+  params: Omit<ImportJobRowsQuery, 'pageIndex' | 'pageSize'>,
+): Promise<Blob> {
+  const response = await apiFetch(buildImportJobRowsExportPath(jobId, params));
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to export import job rows'));
+  }
+  return response.blob();
 }
 
 export async function cancelImportJob(jobId: string): Promise<{ message: string }> {

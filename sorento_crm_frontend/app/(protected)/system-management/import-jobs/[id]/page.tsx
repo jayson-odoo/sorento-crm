@@ -1,6 +1,6 @@
 'use client';
 
-import { use } from 'react';
+import { use, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { MoveLeft, ChevronLeft, ChevronRight, Download } from 'lucide-react';
@@ -24,12 +24,12 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import {
   getImportJob,
-  getImportJobStatus,
   getImportJobs,
   getImportJobSourceUrl,
 } from '../services/importJobService';
 import { useCancelImportJob, useImportJobStatus } from '../hooks/useImportJobs';
-import type { ImportJob } from '../types/importJob.types';
+import { OutcomeBreakdownCard } from '../components/OutcomeBreakdownCard';
+import { ImportJobRowsCard } from '../components/ImportJobRowsCard';
 import { toast } from 'sonner';
 
 const JOB_TYPE_LABELS: Record<string, string> = {
@@ -59,6 +59,9 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   const pageSizeParam = searchParams.get('pageSize');
   const pageIndex = pageParam ? Math.max(0, parseInt(pageParam, 10) - 1) : null;
   const pageSize = pageSizeParam ? Math.max(1, parseInt(pageSizeParam, 10)) : 50;
+  // Row-grid filters live here so clicking a reason in the breakdown can drive the grid.
+  const [rowsCodeFilter, setRowsCodeFilter] = useState('');
+  const [rowsOutcomeFilter, setRowsOutcomeFilter] = useState('');
 
   const { data: job, isLoading } = useQuery({
     queryKey: ['import-job', id],
@@ -402,6 +405,28 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
               </div>
             </CardContent>
           </Card>
+
+          {/* Outcome breakdown - every reason, exact counts, never truncated */}
+          <OutcomeBreakdownCard
+            result={job.result}
+            activeCode={rowsCodeFilter}
+            onSelectCode={(code, group) => {
+              setRowsCodeFilter(code === rowsCodeFilter ? '' : code);
+              const outcomeForGroup =
+                group === 'successful' ? '' : group === 'skipped' ? 'skipped' : 'failed';
+              setRowsOutcomeFilter(code === rowsCodeFilter ? '' : outcomeForGroup);
+            }}
+          />
+
+          {/* Per-row drill-down */}
+          <ImportJobRowsCard
+            jobId={id}
+            result={job.result}
+            codeFilter={rowsCodeFilter}
+            outcomeFilter={rowsOutcomeFilter}
+            onChangeCode={setRowsCodeFilter}
+            onChangeOutcome={setRowsOutcomeFilter}
+          />
 
           {/* Error Card */}
           {job.error && (

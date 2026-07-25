@@ -1181,6 +1181,7 @@ class ProductService:
         products_data: List[dict],
         user_id: str,
         on_progress: Optional[Callable[[int, int, int, int], None]] = None,
+        outcome=None,
     ) -> dict:
         """
         Bulk import products from Excel-style rows.
@@ -1190,7 +1191,23 @@ class ProductService:
         On update, if the product has no product_suppliers row with standard_lead_time_days set, applies the same default supplier/lead time as new products.
         Optimized: pre-loads categories, brands, and existing products to avoid per-row queries.
         on_progress: optional callback(processed, successful, failed, skipped) called at chunk boundaries for real-time UI.
+        outcome: optional ImportOutcome recorder, so every row's fate (created /
+            updated / skipped-with-a-reason) is captured for the job detail page.
+            None for non-job callers.
         """
+        from app.services import import_outcome_codes as _oc
+        from app.services.import_outcome import ImportOutcome as _ImportOutcome
+
+        if outcome is None:
+            outcome = _ImportOutcome(None, persist=False)
+
+        def _row_identity(_row: dict, _code: str) -> dict:
+            return {
+                "product_code": _code,
+                "item_group": (_row.get("item_group") or _row.get("Item Group") or None),
+                "item_brand": (_row.get("item_brand") or _row.get("Item Brand") or None),
+            }
+
         created = 0
         updated = 0
         errors = []
@@ -1253,7 +1270,9 @@ class ProductService:
             try:
                 product_code = (row.get("product_code") or row.get("Product Code") or row.get("Item Code") or "").strip()
                 if not product_code:
-                    errors.append(f"Row {idx}: product_code / Item Code is required")
+                    msg = "product_code / Item Code is required"
+                    errors.append(f"Row {idx}: {msg}")
+                    outcome.skip(row=idx, code=_oc.MISSING_ITEM_CODE, message=msg)
                     continue
                 product_name = (row.get("product_name") or row.get("Product Name") or row.get("Item Code") or product_code).strip() or product_code
                 description = row.get("description") or row.get("Description") or ""
@@ -1273,8 +1292,14 @@ class ProductService:
                     if list_price < 0:
                         list_price = Decimal("0")
                 except Exception:
-                    errors.append(
-                        f"Row {idx} ({product_code}): Price must be a valid number, got '{raw_price}'"
+                    msg = f"Price must be a valid number, got '{raw_price}'"
+                    errors.append(f"Row {idx} ({product_code}): {msg}")
+                    outcome.skip(
+                        row=idx,
+                        code=_oc.INVALID_QUANTITY,
+                        message=msg,
+                        value=product_code,
+                        identity=_row_identity(row, product_code),
                     )
                     continue
                 raw_active = row.get("is_active") or row.get("Is Active") or row.get("Is active")
@@ -1286,17 +1311,41 @@ class ProductService:
                 if item_group:
                     category_id = category_map.get(str(item_group).strip().lower())
                 if item_group and not category_id:
-                    errors.append(f"Row {idx} ({product_code}): no category found for item_group '{item_group}'")
+                    msg = f"no category found for item_group '{item_group}'"
+                    errors.append(f"Row {idx} ({product_code}): {msg}")
+                    outcome.skip(
+                        row=idx,
+                        code=_oc.MISSING_REQUIRED_FIELD,
+                        message=msg,
+                        value=str(item_group),
+                        identity=_row_identity(row, product_code),
+                    )
                     continue
                 if not category_id:
-                    errors.append(f"Row {idx} ({product_code}): item_group is required and must match a category")
+                    msg = "item_group is required and must match a category"
+                    errors.append(f"Row {idx} ({product_code}): {msg}")
+                    outcome.skip(
+                        row=idx,
+                        code=_oc.MISSING_REQUIRED_FIELD,
+                        message=msg,
+                        value=product_code,
+                        identity=_row_identity(row, product_code),
+                    )
                     continue
 
                 brand_id = None
                 if item_brand:
                     brand_id = brand_map.get(str(item_brand).strip().lower())
                 if item_brand and not brand_id:
-                    errors.append(f"Row {idx} ({product_code}): no brand found for item_brand '{item_brand}'")
+                    msg = f"no brand found for item_brand '{item_brand}'"
+                    errors.append(f"Row {idx} ({product_code}): {msg}")
+                    outcome.skip(
+                        row=idx,
+                        code=_oc.MISSING_REQUIRED_FIELD,
+                        message=msg,
+                        value=str(item_brand),
+                        identity=_row_identity(row, product_code),
+                    )
                     continue
 
                 parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(description)
@@ -1328,6 +1377,14 @@ class ProductService:
                         link_default_supplier(existing.id)
                         products_with_lead_time.add(existing.id)
                     updated += 1
+                    outcome.updated(
+                        row=idx,
+                        message=f"Product updated: {product_code}",
+                        value=product_code,
+                        identity=_row_identity(row, product_code),
+                        entity_type="product",
+                        entity_id=existing.id,
+                    )
                 else:
                     # Generate UUID Python-side so we can link ProductSupplier without per-row flush().
                     product = Product(
@@ -1351,6 +1408,14 @@ class ProductService:
                     products_with_lead_time.add(product.id)
                     existing_by_code[product_code] = product  # avoid duplicate add if same code again
                     created += 1
+                    outcome.success(
+                        row=idx,
+                        message=f"Product created: {product_code}",
+                        value=product_code,
+                        identity=_row_identity(row, product_code),
+                        entity_type="product",
+                        entity_id=product.id,
+                    )
 
                 if idx % chunk_size == 0:
                     self.db.commit()
@@ -1359,6 +1424,12 @@ class ProductService:
             except Exception as e:
                 self.db.rollback()
                 errors.append(f"Row {idx} ({row.get('product_code', '')}): {str(e)}")
+                outcome.fail(
+                    row=idx,
+                    code=_oc.ROW_ERROR,
+                    message=str(e),
+                    value=str(row.get("product_code") or row.get("Product Code") or "") or None,
+                )
                 if idx % chunk_size == 0:
                     self.db.commit()
                     if on_progress:

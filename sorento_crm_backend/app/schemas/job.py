@@ -45,6 +45,26 @@ class ImportJobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ImportJobRowResponse(BaseModel):
+    """One captured source row of an import job.
+
+    ``identity`` carries the row's mapped business columns (doc no, item code,
+    location...) — never raw UUIDs, since the UI prints it verbatim.
+    """
+    id: str
+    row_number: Optional[int] = None
+    outcome: str
+    code: str
+    label: Optional[str] = None
+    message: Optional[str] = None
+    value: Optional[str] = None
+    identity: Optional[Dict[str, Any]] = None
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class JobStatusResponse(BaseModel):
     """Schema for job status response."""
     job_id: str
