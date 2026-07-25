@@ -32,6 +32,13 @@ def get_db() -> Generator[Session, None, None]:
     Yields a database session and ensures it's closed after use.
     """
     db = SessionLocal()
+    # Multi-company isolation: default the session to the fail-closed UNSET scope.
+    # A later slice wires the real resolver (JWT active_company_id / X-API-Key
+    # contact) at request entry; until then owned-table reads are fail-closed and
+    # owned-table writes are rejected (no company to stamp). See
+    # app/services/company_scope.py + PLAN-multi-company-isolation.md.
+    from app.models.base import UNSET, set_company_scope
+    set_company_scope(db, UNSET)
     try:
         yield db
     finally:

@@ -107,6 +107,34 @@ def create_views() -> None:
     log.info("scm views created (%d)", len(ordered))
 
 
+def _seed_default_company() -> None:
+    """Idempotently insert the fixed Sorento company row (mirrors migration 302).
+
+    Needed because bootstrap builds the schema from the models and only *stamps*
+    alembic at head — migration 302's data seed is never executed. Without this
+    row the ``*_company_id_fkey`` constraints reject every owned insert once the
+    scope layer auto-stamps the incumbent company.
+    """
+    from sqlalchemy import text
+
+    from app.database import engine
+
+    conn = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+    try:
+        conn.execute(
+            text(
+                "INSERT INTO companies (id, name, code, is_active) "
+                "VALUES ('00000000-0000-0000-0000-000000000001', 'Sorento', 'SRT', true) "
+                "ON CONFLICT (id) DO NOTHING"
+            )
+        )
+        log.info("seeded default company (Sorento)")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("default-company seed failed (continuing): %s", exc)
+    finally:
+        conn.close()
+
+
 def seed_reference_data() -> None:
     """Run the app's own startup seeders.
 
@@ -115,6 +143,13 @@ def seed_reference_data() -> None:
     idempotent and independently guarded: one failing must not abort the rest.
     """
     from app.database import SessionLocal
+
+    # Multi-company: the schema comes from create_all + `alembic stamp head`, so
+    # migration 302's Sorento seed never runs here. Every owned table has a NOT
+    # NULL company_id FK -> companies, and the test suite / seeders auto-stamp the
+    # incumbent Sorento company, so that row MUST exist first or every owned insert
+    # violates the FK. Seed it idempotently (fixed id, mirrors migration 302).
+    _seed_default_company()
 
     steps = [
         # Roles + order statuses first: later seeders and RBAC grants depend on them.

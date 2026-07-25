@@ -1,6 +1,10 @@
 'use client';
 
 import { useState } from 'react';
+import { useSession } from 'next-auth/react';
+import { useQuery } from '@tanstack/react-query';
+import { apiFetch } from '@/lib/api';
+import { isSuperadminUser } from '@/lib/is-superadmin';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot, BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -109,6 +113,19 @@ const UserProfile = ({
     </Card>
   );
 
+  const { data: session } = useSession();
+  const isSuperadmin = isSuperadminUser(session?.user);
+  const { data: userCompanies = [] } = useQuery({
+    queryKey: ['user-companies', user?.id],
+    queryFn: async () => {
+      const response = await apiFetch(`/api/user-management/users/${user!.id}/companies`);
+      if (!response.ok) throw new Error('Failed to fetch user companies');
+      return (await response.json()) as { id: string; name: string; code: string }[];
+    },
+    enabled: !!user?.id && isSuperadmin,
+    staleTime: 1000 * 60,
+  });
+
   const Content = () => {
     const statusPros = getUserStatusProps(user.status as UserStatus);
     const statusVariant = statusPros.variant as keyof BadgeProps['variant'];
@@ -150,6 +167,22 @@ const UserProfile = ({
                 </span>
               </dd>
             </div>
+            {isSuperadmin && (
+              <div className="grid grid-cols-subgrid col-span-2 items-baseline">
+                <dt>Companies:</dt>
+                <dd>
+                  <span className="inline-flex flex-wrap items-center gap-1.5">
+                    {userCompanies.length
+                      ? userCompanies.map((c) => (
+                          <Badge key={c.id} variant="secondary" appearance="light">
+                            {c.name}
+                          </Badge>
+                        ))
+                      : <span className="text-muted-foreground">No companies assigned</span>}
+                  </span>
+                </dd>
+              </div>
+            )}
             <div className="grid grid-cols-subgrid col-span-2 items-baseline">
               <dt>Status:</dt>
               <dd>

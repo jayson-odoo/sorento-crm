@@ -55,6 +55,7 @@ def _seed_user(db: Session) -> None:
 @pytest.fixture
 def client():
     from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
+    from app.services.company_scope_resolver import apply_company_scope
 
     with blank_session() as db:
         _seed_user(db)
@@ -68,6 +69,12 @@ def client():
         app.dependency_overrides[get_db] = _override_get_db
         app.dependency_overrides[get_current_user] = _override_current_user
         app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
+        # The real request carries no auth header, so the router-level scope resolver
+        # would compute UNSET (fail-closed, 0 rows) and hide the seeded owned rows
+        # (directory_path enrichment then reads no AttachmentDirectory). Override it to
+        # a no-op so the session keeps the conftest ``after_begin`` Sorento default,
+        # matching the company the seeded rows are auto-stamped to.
+        app.dependency_overrides[apply_company_scope] = lambda: None
 
         with TestClient(app) as c:
             yield c, db

@@ -26,7 +26,14 @@ class Form(Base):
     # created_by = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
-    
+    # Multi-company: stamped from the request scope when a staff user creates a
+    # form. DELIBERATELY NOT a CompanyScopedMixin — portal / public / workflow /
+    # embedding reads of forms MUST keep working under any scope, so the global
+    # ``do_orm_execute`` filter must never touch this table. Only the staff
+    # forms-management listing filters it via ``admin_listing_company_filter``.
+    # NULL => legacy/system form.
+    company_id = Column(UUID(as_uuid=False), nullable=True, index=True)
+
     sections = relationship("FormSection", back_populates="form")
     versions = relationship("FormVersion", back_populates="form")
     attachment = relationship("Attachment", foreign_keys=[attachment_id])

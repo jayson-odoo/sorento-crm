@@ -12,6 +12,7 @@ from app.schemas.inventory import (
     StockCreate, StockUpdate, StockBatchCreate, StockBatchUpdate
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error, AppException
+from app.services.company_scope import get_company_scope
 from app.services.import_log_service import ImportLogService
 from app.services.identifier_resolver import resolve_identifier
 
@@ -1740,6 +1741,20 @@ class StockService:
         commit_successful = False
         try:
             if ledger_entries:
+                # bulk_insert_mappings BYPASSES the before_insert auto-stamp, so the
+                # rows would fall to migration 306's DB DEFAULT (Sorento) and leak a
+                # scoped import into the wrong company. Resolve the single active
+                # company and stamp every entry explicitly (AC company-scope C1).
+                scope = get_company_scope(self.db)
+                if not (isinstance(scope, frozenset) and len(scope) == 1):
+                    raise AppException(
+                        status_code=400,
+                        message="Stock ledger write requires a single active company",
+                        code="company_scope_required",
+                    )
+                cid = next(iter(scope))
+                for entry in ledger_entries:
+                    entry.setdefault("company_id", cid)
                 self.db.bulk_insert_mappings(StockLedger, ledger_entries)
             # Flush to ensure all changes are sent to database
             self.db.flush()

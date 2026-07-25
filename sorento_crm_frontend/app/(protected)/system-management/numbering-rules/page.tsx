@@ -13,6 +13,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import RequireAccess from '@/app/components/common/RequireAccess';
 import NumberingRulesList from './components/NumberingRulesList';
 
 export const metadata: Metadata = {
@@ -22,7 +23,7 @@ export const metadata: Metadata = {
 
 export default function NumberingRulesPage() {
   return (
-    <>
+    <RequireAccess permission="system.numbering_rules.view">
       <Container>
         <Toolbar>
           <ToolbarHeading>
@@ -49,6 +50,6 @@ export default function NumberingRulesPage() {
       <Container className="space-y-6">
         <NumberingRulesList />
       </Container>
-    </>
+    </RequireAccess>
   );
 }

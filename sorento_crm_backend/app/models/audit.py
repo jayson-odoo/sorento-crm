@@ -31,6 +31,13 @@ class AuditLog(Base):
     # Per-request correlation id (Sub-plan D Tier-2): all rows written during one
     # HTTP request share this, so a multi-row change is traceable as one action.
     trace_id = Column(String(64), nullable=True, index=True)
+    # Multi-company: copied from the CHANGED entity's own company_id by the flush
+    # listener (see audit_service._session_before_flush). DELIBERATELY NOT a
+    # CompanyScopedMixin — it is written by the global audit listener and must not
+    # be auto-stamped/auto-filtered. NULL => the audited entity has no company_id
+    # (or a historical row from before this column existed). Filtered ONLY by the
+    # admin audit listing via ``admin_listing_company_filter``.
+    company_id = Column(UUID(as_uuid=False), nullable=True, index=True)
 
     __table_args__ = (
         Index("ix_audit_logs_entity_type_entity_id", "entity_type", "entity_id"),

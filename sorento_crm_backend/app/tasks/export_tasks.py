@@ -9,6 +9,7 @@ per-user rows while any are in flight.
 import logging
 
 from app.database import SessionLocal
+from app.services.company_scope import set_company_scope
 from app.services.download_service import DownloadService
 from app.services.storage_router import default_provider, get_backend
 
@@ -22,6 +23,10 @@ def generate_complaint_pdf(download_id: str, complaint_id: str, user_id: str) ->
     a readable message rather than raising into RQ's failed registry.
     """
     db = SessionLocal()
+    # Worker sessions default to the fail-closed UNSET scope; complaints are a
+    # global (non-owned) entity and their attachments are shared, so run this
+    # export system-wide (all companies).
+    set_company_scope(db, None)
     svc = DownloadService(db)
     try:
         svc.mark_processing(download_id)
@@ -58,7 +63,9 @@ def generate_complaint_pdf(download_id: str, complaint_id: str, user_id: str) ->
         db.close()
 
 
-def generate_promotions_pdf(download_id: str, promotion_ids: list, user_id: str) -> dict:
+def generate_promotions_pdf(
+    download_id: str, promotion_ids: list, user_id: str, company_id: str = None
+) -> dict:
     """Compile the selected promotions' attachment flyers into one PDF, store it,
     and update the download row.
 
@@ -66,6 +73,11 @@ def generate_promotions_pdf(download_id: str, promotion_ids: list, user_id: str)
     a readable message rather than raising into RQ's failed registry.
     """
     db = SessionLocal()
+    # Worker sessions default to the fail-closed UNSET scope, which would hide the
+    # owned Promotion/PromotionAttachment rows. Re-establish the enqueuer's active
+    # company (snapshotted at enqueue) so the export actually sees them; None =
+    # system-wide (e.g. a system principal that enqueued without a single company).
+    set_company_scope(db, frozenset({company_id}) if company_id else None)
     svc = DownloadService(db)
     try:
         svc.mark_processing(download_id)

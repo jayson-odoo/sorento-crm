@@ -1,12 +1,16 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm, type Resolver } from 'react-hook-form';
+import { useSession } from 'next-auth/react';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
+import { isSuperadminUser } from '@/lib/is-superadmin';
+import { getCompaniesSelect } from '@/app/(protected)/system-management/companies/services/companyService';
 import {
   Alert,
   AlertDescription,
@@ -31,6 +35,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { Button } from '@/components/ui/button';
 import { LoaderCircleIcon } from 'lucide-react';
 import { User, UserRole } from '@/app/models/user';
@@ -51,6 +56,9 @@ const UserProfileEditDialog = ({
   user: User;
 }) => {
   const queryClient = useQueryClient();
+  const { data: session } = useSession();
+  const isSuperadmin = isSuperadminUser(session?.user);
+  const [copyRolesBusy, setCopyRolesBusy] = useState(false);
 
   // Fetch available roles
   const { data: roleList } = useRoleSelectQuery();
@@ -65,12 +73,31 @@ const UserProfileEditDialog = ({
     enabled: open && !!user?.id,
   });
 
+  const { data: userCompanies = [], isFetched: companiesFetched } = useQuery({
+    queryKey: ['user-companies', user?.id],
+    queryFn: async () => {
+      const response = await apiFetch(`/api/user-management/users/${user!.id}/companies`);
+      if (!response.ok) throw new Error('Failed to fetch user companies');
+      return response.json() as Promise<{ id: string; name: string; code: string }[]>;
+    },
+    enabled: open && !!user?.id && isSuperadmin,
+    staleTime: 1000 * 60,
+  });
+
+  const { data: companyOptions = [] } = useQuery({
+    queryKey: ['companies-select'],
+    queryFn: getCompaniesSelect,
+    enabled: open && isSuperadmin,
+    staleTime: 1000 * 60 * 5,
+  });
+
   const form = useForm<UserProfileSchemaType>({
     resolver: zodResolver(UserProfileSchema) as Resolver<UserProfileSchemaType>,
     defaultValues: {
       name: user?.name || '',
       email: user?.email || '',
       roleIds: user?.roles?.length ? user.roles.map((r) => r.id) : (user?.roleId ? [user.roleId] : []),
+      companyIds: [],
       status: user?.status || '',
       respond_user_id: user?.respondUserId || '',
       contact_number: user?.contactNumber || '',
@@ -94,9 +121,11 @@ const UserProfileEditDialog = ({
   });
 
   const lastResetRef = useRef<{ userId: string } | null>(null);
+  const companiesResetRef = useRef<string | null>(null);
   useEffect(() => {
     if (!open) {
       lastResetRef.current = null;
+      companiesResetRef.current = null;
       return;
     }
     if (!user?.id) return;
@@ -107,6 +136,7 @@ const UserProfileEditDialog = ({
       name: user.name || '',
       email: user.email || '',
       roleIds,
+      companyIds: [],
       status: user.status || '',
       respond_user_id: user.respondUserId || '',
       contact_number: user.contactNumber || '',
@@ -128,6 +158,16 @@ const UserProfileEditDialog = ({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; omit to avoid reset loop
   }, [open, user?.id, user?.name, user?.email, user?.status, user?.roles, user?.respondUserId, user?.tier, user?.superiorId, userRoles.length]);
+
+  // Companies aren't carried on the `user` prop, so apply them once the grant fetch
+  // resolves. Guarded per user-open so a background refetch can't clobber edits.
+  useEffect(() => {
+    if (!open || !isSuperadmin || !user?.id || !companiesFetched) return;
+    if (companiesResetRef.current === user.id) return;
+    companiesResetRef.current = user.id;
+    form.setValue('companyIds', userCompanies.map((c) => c.id));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- form is stable; guard prevents loops
+  }, [open, isSuperadmin, user?.id, companiesFetched, userCompanies]);
 
   const { data: superiorUsers } = useQuery({
     queryKey: ['users-select'],
@@ -173,6 +213,36 @@ const UserProfileEditDialog = ({
 
   const contactLabel = (c?: { name?: string | null; phone_number?: string | null } | null) =>
     c ? [c.name, c.phone_number].filter(Boolean).join(' · ') || 'Linked contact' : 'No linked contact';
+
+  // One-shot prefill: copy another user's roles into the checkbox list, which stays
+  // fully editable afterwards. The picker resets to empty after each pick.
+  const handleCopyRoles = async (pickedId: string) => {
+    if (!pickedId) return;
+    setCopyRolesBusy(true);
+    try {
+      const response = await apiFetch(`/api/user-management/users/${pickedId}/roles`);
+      if (!response.ok) throw new Error('Failed to load roles for that user.');
+      const roles = (await response.json()) as { id: string; name: string }[];
+      form.setValue('roleIds', roles.map((r) => r.id), {
+        shouldValidate: true,
+        shouldDirty: true,
+      });
+    } catch (error) {
+      toast.custom(
+        () => (
+          <Alert variant="mono" icon="destructive">
+            <AlertIcon>
+              <RiErrorWarningFill />
+            </AlertIcon>
+            <AlertTitle>{(error as Error).message}</AlertTitle>
+          </Alert>
+        ),
+        { position: 'top-center' },
+      );
+    } finally {
+      setCopyRolesBusy(false);
+    }
+  };
 
   const mutation = useMutation({
     mutationFn: async (values: UserProfileSchemaType) => {
@@ -224,6 +294,19 @@ const UserProfileEditDialog = ({
       }
 
       const updatedUser = await response.json();
+
+      // Superadmin-only: sync company grants (delete-all-then-reinsert server-side).
+      if (isSuperadmin) {
+        const companiesResponse = await apiFetch(`/api/user-management/users/${user.id}/companies`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ company_ids: values.companyIds ?? [] }),
+        });
+        if (!companiesResponse.ok) {
+          throw new Error(await extractApiError(companiesResponse, 'Failed to update companies'));
+        }
+      }
+
       return { success: true, user: updatedUser };
     },
     onSuccess: () => {
@@ -247,6 +330,7 @@ const UserProfileEditDialog = ({
       queryClient.invalidateQueries({ queryKey: ['user-users'] });
       queryClient.invalidateQueries({ queryKey: ['user-user', user.id] });
       queryClient.invalidateQueries({ queryKey: ['user-roles', user.id] });
+      queryClient.invalidateQueries({ queryKey: ['user-companies', user.id] });
       queryClient.refetchQueries({ queryKey: ['user-user', user.id] });
       closeDialog();
     },
@@ -392,6 +476,26 @@ const UserProfileEditDialog = ({
                 </FormItem>
               )}
             />
+            <FormItem>
+              <FormLabel>Copy roles from another user (optional)</FormLabel>
+              <FormControl>
+                <SearchableSelect
+                  value=""
+                  onChange={(v) => handleCopyRoles(v)}
+                  disabled={copyRolesBusy}
+                  placeholder="Copy roles from another user (optional)"
+                  emptyMessage="No user found."
+                  triggerClassName="w-full"
+                  options={(superiorUsers || [])
+                    .filter((u: { id: string }) => u.id !== user?.id)
+                    .map((u: { id: string; name?: string | null; email: string }) => ({
+                      value: u.id,
+                      label: u.name || u.email,
+                      searchText: `${u.name ?? ''} ${u.email}`.trim() || u.id,
+                    }))}
+                />
+              </FormControl>
+            </FormItem>
             <FormField
               control={form.control}
               name="roleIds"
@@ -429,6 +533,35 @@ const UserProfileEditDialog = ({
                 </FormItem>
               )}
             />
+            {isSuperadmin && (
+              <FormField
+                control={form.control}
+                name="companyIds"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Companies</FormLabel>
+                    <FormControl>
+                      <SearchableMultiSelect
+                        value={field.value ?? []}
+                        onChange={(v) => field.onChange(v)}
+                        options={(companyOptions || []).map((c) => ({
+                          value: c.id,
+                          label: c.name,
+                          searchText: `${c.name} ${c.code}`,
+                        }))}
+                        placeholder="Select companies"
+                        emptyMessage="No company found."
+                        triggerClassName="w-full"
+                      />
+                    </FormControl>
+                    <p className="text-xs text-muted-foreground">
+                      Which companies this user can access &amp; switch between.
+                    </p>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
             <FormField
               control={form.control}
               name="status"

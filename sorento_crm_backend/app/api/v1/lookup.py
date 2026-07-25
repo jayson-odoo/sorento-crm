@@ -5,7 +5,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
+from app.models.base import set_company_scope
 from app.schemas.lookup import LookupResolveRequest, LookupResolveResponse
+from app.services.contact_access_type_service import ContactAccessTypeService
 from app.services.lookup_resolver import LookupResolverService
 from app.services.lookup_set_service import LookupSetService
 from app.models.lookup import LookupBinding, LookupOption, LookupOptionKeyword, LookupSet
@@ -86,4 +88,23 @@ async def resolve(
     current_user=Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
+    # AC-I3: the MCP forwards contact_id + space_id in the BODY (POST param-order
+    # constraint), so the query-param scope resolver never scoped this call.
+    # Re-derive the contact's company scope from the body here so a scoped
+    # contact's raw value resolves to THEIR company's row, not another company's
+    # same-coded row. No contact identity in the body -> leave the resolver scope
+    # as-is. An unresolved/orphan contact -> empty scope (0 rows, fail-closed).
+    #
+    # L3: apply the body-derived override ONLY for the X-API-Key/MCP principal.
+    # A logged-in JWT user keeps their own resolver-set active-company scope — a
+    # forged contact_id/space_id in the body must never let them re-scope their
+    # session into another company's data.
+    is_api_key = (current_user or {}).get("auth_method") == "api_key"
+    contact_id = (body.contact_id or "").strip()
+    space_id = (body.space_id or "").strip()
+    if is_api_key and contact_id and space_id:
+        company_ids = ContactAccessTypeService(db).resolve_contact_company_ids(
+            contact_id, space_id
+        )
+        set_company_scope(db, frozenset(company_ids))
     return LookupResolverService(db).resolve(body.set_key, body.raw, body.locale)

@@ -4,9 +4,12 @@ import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useForm } from 'react-hook-form';
+import { useForm, type Resolver } from 'react-hook-form';
+import { useSession } from 'next-auth/react';
 import { toast } from 'sonner';
 import { apiFetch } from '@/lib/api';
+import { isSuperadminUser } from '@/lib/is-superadmin';
+import { getCompaniesSelect } from '@/app/(protected)/system-management/companies/services/companyService';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import {
   Dialog,
@@ -27,6 +30,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { Button } from '@/components/ui/button';
 import { LoaderCircleIcon } from 'lucide-react';
 import { UserRole } from '@/app/models/user';
@@ -41,19 +45,23 @@ const UserAddDialog = ({
   closeDialog: () => void;
 }) => {
   const queryClient = useQueryClient();
+  const { data: session } = useSession();
+  const isSuperadmin = isSuperadminUser(session?.user);
   const [sendInvitationEmail, setSendInvitationEmail] = useState(true);
+  const [copyRolesBusy, setCopyRolesBusy] = useState(false);
 
   // Fetch available roles
   const { data: roleList } = useRoleSelectQuery();
 
   const form = useForm<UserAddSchemaType>({
-    resolver: zodResolver(UserAddSchema),
+    resolver: zodResolver(UserAddSchema) as Resolver<UserAddSchemaType>,
     defaultValues: {
       name: '',
       email: '',
       contact_number: '',
       roleIds: [],
       superior_id: null,
+      companyIds: [],
     },
     mode: 'onSubmit',
   });
@@ -78,15 +86,53 @@ const UserAddDialog = ({
     staleTime: 1000 * 60 * 5,
   });
 
+  const { data: companyOptions } = useQuery({
+    queryKey: ['companies-select'],
+    queryFn: getCompaniesSelect,
+    enabled: open && isSuperadmin,
+    staleTime: 1000 * 60 * 5,
+  });
+
+  // One-shot prefill: copy another user's roles into the checkbox list, which stays
+  // fully editable afterwards. The picker resets to empty after each pick.
+  const handleCopyRoles = async (pickedId: string) => {
+    if (!pickedId) return;
+    setCopyRolesBusy(true);
+    try {
+      const response = await apiFetch(`/api/user-management/users/${pickedId}/roles`);
+      if (!response.ok) throw new Error('Failed to load roles for that user.');
+      const roles = (await response.json()) as { id: string; name: string }[];
+      form.setValue('roleIds', roles.map((r) => r.id), {
+        shouldValidate: true,
+        shouldDirty: true,
+      });
+    } catch (error) {
+      toast.custom(
+        () => (
+          <Alert variant="mono" icon="destructive" close={false}>
+            <AlertIcon>
+              <RiErrorWarningFill />
+            </AlertIcon>
+            <AlertTitle>{(error as Error).message}</AlertTitle>
+          </Alert>
+        ),
+        { position: 'top-center' },
+      );
+    } finally {
+      setCopyRolesBusy(false);
+    }
+  };
+
   const mutation = useMutation({
     mutationFn: async (values: UserAddSchemaType) => {
-      const { roleIds, superior_id, ...rest } = values;
+      const { roleIds, superior_id, companyIds, ...rest } = values;
       const contactNumber = typeof rest.contact_number === 'string' ? rest.contact_number.trim() : null;
       const payload = {
         ...rest,
         contact_number: contactNumber || null,
         role_ids: roleIds,
         superior_id: superior_id === '__none__' || superior_id === '' ? null : superior_id,
+        company_ids: isSuperadmin ? (companyIds ?? []) : [],
       };
       const inviteUrl = '/api/user-management/users/invite';
       const createUrl = '/api/user-management/users';
@@ -202,6 +248,26 @@ const UserAddDialog = ({
                   </FormItem>
                 )}
               />
+              <FormItem>
+                <FormLabel>Copy roles from another user (optional)</FormLabel>
+                <FormControl>
+                  <SearchableSelect
+                    value=""
+                    onChange={(v) => handleCopyRoles(v)}
+                    disabled={copyRolesBusy}
+                    placeholder="Copy roles from another user (optional)"
+                    emptyMessage="No active user found."
+                    triggerClassName="w-full"
+                    options={(superiorUsers || []).map(
+                      (u: { id: string; name?: string | null; email: string }) => ({
+                        value: u.id,
+                        label: u.name || u.email,
+                        searchText: `${u.name ?? ''} ${u.email}`.trim() || u.id,
+                      }),
+                    )}
+                  />
+                </FormControl>
+              </FormItem>
               <FormField
                 control={form.control}
                 name="roleIds"
@@ -239,6 +305,35 @@ const UserAddDialog = ({
                   </FormItem>
                 )}
               />
+              {isSuperadmin && (
+                <FormField
+                  control={form.control}
+                  name="companyIds"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Companies</FormLabel>
+                      <FormControl>
+                        <SearchableMultiSelect
+                          value={field.value ?? []}
+                          onChange={(v) => field.onChange(v)}
+                          options={(companyOptions || []).map((c) => ({
+                            value: c.id,
+                            label: c.name,
+                            searchText: `${c.name} ${c.code}`,
+                          }))}
+                          placeholder="Select companies"
+                          emptyMessage="No company found."
+                          triggerClassName="w-full"
+                        />
+                      </FormControl>
+                      <p className="text-xs text-muted-foreground">
+                        Which companies this user can access &amp; switch between.
+                      </p>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
               <FormField
                 control={form.control}
                 name="superior_id"

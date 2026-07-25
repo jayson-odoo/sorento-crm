@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { SearchDialog } from '@/partials/dialogs/search/search-dialog';
 import { AppsDropdownMenu } from '@/partials/topbar/apps-dropdown-menu';
+import { CompanySwitcher } from '@/partials/topbar/company-switcher';
 import { NotificationsSheet } from '@/partials/topbar/notifications-sheet';
 import { UserDropdownMenu } from '@/partials/topbar/user-dropdown-menu';
 import { SessionUserAvatar } from '@/partials/topbar/session-user-avatar';
@@ -138,6 +139,7 @@ export function Header() {
                   header — they're still reachable from the sidebar / menus. */}
               {!mobileMode && <UploadActivityIcon />}
               {!mobileMode && <MyDownloadsIcon />}
+              <CompanySwitcher />
               <NotificationsSheet
                 trigger={
                   <Button

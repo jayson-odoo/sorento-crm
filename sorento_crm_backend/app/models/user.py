@@ -53,6 +53,9 @@ class User(Base):
     respond_user_id = Column(String, nullable=True)
     respond_synced = Column(String, default="pending", nullable=False)
     superior_id = Column(String, ForeignKey("users.id"), nullable=True)
+    # Multi-company: the company the user was last active in. Restored on login so
+    # logout->login returns to the same company. Nullable (backfilled to Sorento).
+    last_active_company_id = Column(PG_UUID(as_uuid=False), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)
     tier = Column(Integer, nullable=True)  # Conversation SLA policy tier (1, 2, ...)
     daily_sla_summary_subscribed = Column(Boolean, default=True, nullable=False)  # email summary opt-in
     # Link to the WhatsApp contact this user is reachable on (resolves respond_io_id).

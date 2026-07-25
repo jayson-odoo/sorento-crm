@@ -35,6 +35,10 @@ class UserRolesUpdateRequest(BaseModel):
     role_ids: list[str]
 
 
+class UserCompaniesUpdateRequest(BaseModel):
+    company_ids: list[str]
+
+
 class DailySummarySubscriptionUpdateRequest(BaseModel):
     subscribed: bool
 
@@ -430,6 +434,41 @@ async def set_user_roles(
         validate_uuid_path(user_id, resource="User")
         service = UserService(db)
         return service.set_user_roles(user_id, body.role_ids)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{user_id}/companies")
+async def get_user_companies(
+    user_id: str,
+    current_user: dict = Depends(require_permission("user_management.users.view")),
+    db: Session = Depends(get_db)
+):
+    """List companies granted to a user as [{id,name,code}]."""
+    try:
+        validate_uuid_path(user_id, resource="User")
+        service = UserService(db)
+        return service.list_user_companies(user_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/{user_id}/companies", status_code=status.HTTP_200_OK)
+async def set_user_companies(
+    user_id: str,
+    body: UserCompaniesUpdateRequest = Body(...),
+    current_user: dict = Depends(require_permission("user_management.users.edit")),
+    db: Session = Depends(get_db)
+):
+    """Replace a user's company grants with the given company_ids."""
+    try:
+        validate_uuid_path(user_id, resource="User")
+        service = UserService(db)
+        return service.set_user_companies(user_id, body.company_ids)
     except HTTPException:
         raise
     except Exception as e:

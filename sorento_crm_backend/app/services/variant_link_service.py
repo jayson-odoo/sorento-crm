@@ -24,6 +24,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.product import Product
+from app.services.company_scope_sql import company_sql_predicate
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,12 @@ def _derive_parent_id(db: Session, product_id: str, product_code: str) -> Option
     if not norm_child:
         return None
     n_norm = _norm_sql("product_code")
+    # Multi-company isolation (Group I): a variant relationship must stay within
+    # one company — the raw ``text()`` bypasses the ORM scope filter, so scope the
+    # candidate-parent search by hand from the session scope (single company on
+    # API create / import). Never link a child to another company's parent.
+    company_frag, company_params = company_sql_predicate(db)
+    company_and = f"AND {company_frag}" if company_frag else ""
     # Candidate parents: strictly-shorter products whose normalized code is a
     # prefix of mine. ``left(:norm_child, len)`` avoids LIKE wildcard hazards
     # from ``_`` / ``%`` in codes. Longest first; tie-break by code for
@@ -89,10 +96,11 @@ def _derive_parent_id(db: Session, product_id: str, product_code: str) -> Option
               AND {n_norm} <> ''
               AND length({n_norm}) < :nlen
               AND left(:norm_child, length({n_norm})) = {n_norm}
+              {company_and}
             ORDER BY length({n_norm}) DESC, product_code ASC
             """
         ),
-        {"self_id": product_id, "norm_child": norm_child, "nlen": len(norm_child)},
+        {"self_id": product_id, "norm_child": norm_child, "nlen": len(norm_child), **company_params},
     ).fetchall()
     for cand_id, cand_code in rows:
         if boundary_ok(product_code, len(normalize_code(cand_code))):
@@ -111,6 +119,9 @@ def _adopt_orphans(db: Session, parent: Product) -> int:
     if not norm_me:
         return 0
     n_norm = _norm_sql("product_code")
+    # Multi-company isolation (Group I): only adopt orphans in the same company.
+    company_frag, company_params = company_sql_predicate(db)
+    company_and = f"AND {company_frag}" if company_frag else ""
     candidates = db.execute(
         text(
             f"""
@@ -120,9 +131,10 @@ def _adopt_orphans(db: Session, parent: Product) -> int:
               AND length({n_norm}) > :nlen
               AND left({n_norm}, :nlen) = :norm_me
               AND variant_link_manual = false
+              {company_and}
             """
         ),
-        {"self_id": parent.id, "norm_me": norm_me, "nlen": len(norm_me)},
+        {"self_id": parent.id, "norm_me": norm_me, "nlen": len(norm_me), **company_params},
     ).fetchall()
     changed = 0
     for child_id, child_code, current_parent in candidates:
@@ -184,8 +196,13 @@ def reconcile_variant_links(db: Session, code_or_id: str) -> dict:
 def child_ids_of(db: Session, product_id: str) -> list[str]:
     """Ids of products currently pointing at ``product_id`` — captured pre-delete
     so they can be re-derived (re-anchored to the next ancestor) afterwards."""
+    # Multi-company isolation (Group I): scope the child scan by hand (raw text
+    # bypasses the ORM filter). Children of an in-company parent are already
+    # in-company, so this is belt-and-braces, but it keeps the enforcement uniform.
+    company_frag, company_params = company_sql_predicate(db)
+    company_and = f"AND {company_frag}" if company_frag else ""
     rows = db.execute(
-        text("SELECT id FROM products WHERE variant_of_id = :pid"),
-        {"pid": product_id},
+        text(f"SELECT id FROM products WHERE variant_of_id = :pid {company_and}"),
+        {"pid": product_id, **company_params},
     ).fetchall()
     return [r[0] for r in rows]

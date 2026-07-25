@@ -19,6 +19,7 @@ from app.services.product_service import ProductAttachmentService
 from app.services.attachment_field_link_service import AttachmentFieldLinkService
 from app.models.product import Product, ProductAttachment
 from app.models.resources import Attachment
+from app.api.v1.external.utils import scope_to_attachment_company
 from app.services.attachment_notification_helper import (
     build_attachment_detail_url,
     build_product_detail_url,
@@ -109,6 +110,10 @@ def create_product_attachment(
             detail="Invalid attachment_id",
         )
 
+    # Multi-company isolation (Group G): only match products in the attachment's
+    # company. A same-coded product in another company must NOT be linked (AC-G2).
+    scope_to_attachment_company(db, attachment)
+
     if payload.get_use_bulk():
         return _link_attachment_to_products_bulk(
             db,
@@ -196,6 +201,10 @@ def _link_attachment_to_products_bulk(
     attachment_row = (
         db.query(Attachment).filter(Attachment.id == attachment_id).first()
     )
+    # Multi-company isolation (Group G): restrict product matching to the
+    # attachment's company. Covers the /link-products route that reaches this
+    # helper directly; idempotent when create_product_attachment already scoped.
+    scope_to_attachment_company(db, attachment_row)
     # The integration's principal is a real users row, so attribution is recorded.
     created_by = current_user["id"]
     linked: list[ProductAttachmentBulkLinkItem] = []

@@ -40,15 +40,45 @@ from app.api.v1.external.utils import (
     get_warehouses_by_code_or_name,
     parse_date_value,
 )
-from app.models.job import JobStatus
+from app.models.job import ImportJob, JobStatus
 from app.services import import_outcome_codes as oc
 from app.services.import_outcome import ImportOutcome
+from app.services.company_scope import set_company_scope
 from app.models.procurement import SPOAllocation
 from app.models.order import Order, OrderLine
 from app.schemas.resources import AttachmentCreate
 from app.schemas.procurement import SPOAllocationCreate
 
 logger = logging.getLogger(__name__)
+
+def _apply_import_job_scope(db, db_job_id: Optional[str]) -> None:
+    """Re-establish the request's company scope on the worker session (multi-company
+    isolation, AC-D2/D3/K4).
+
+    The worker registers the scope enforcement but every ``SessionLocal()`` starts
+    at UNSET (fail-closed), which would (a) make owned reads return 0 rows and
+    (b) make owned inserts raise (nothing to auto-stamp). We read the ImportJob's
+    ``company_id`` snapshot (captured at enqueue) and set a single-company scope so
+    owned inserts auto-stamp + reads isolate. A NULL snapshot (system / None-scope
+    import, or a pre-isolation job) runs system-scoped (``None`` = all companies)
+    with a warning — back-compat for the pre-multi-company behaviour.
+    """
+    company_id = None
+    if db_job_id:
+        try:
+            job = db.query(ImportJob).filter(ImportJob.id == db_job_id).first()
+            company_id = getattr(job, "company_id", None) if job else None
+        except Exception:
+            company_id = None
+    if company_id:
+        set_company_scope(db, frozenset({str(company_id)}))
+    else:
+        logger.warning(
+            "Import job %s has no company snapshot; running system-scoped (all companies)",
+            db_job_id,
+        )
+        set_company_scope(db, None)
+
 
 # Batch size for attachment bulk import (files per batch); sleep between batches to avoid overload
 ATTACHMENT_BULK_IMPORT_BATCH_SIZE = 5
@@ -127,6 +157,7 @@ def process_stock_import(db_job_id: str, stock_data: list, user_id: str):
     from rq import get_current_job
     
     db = SessionLocal()
+    _apply_import_job_scope(db, db_job_id)
     job_service = JobService(db)
     
     # Get RQ job ID
@@ -205,6 +236,7 @@ def process_warehouse_import(db_job_id: str, warehouses_data: list, user_id: str
     from rq import get_current_job
 
     db = SessionLocal()
+    _apply_import_job_scope(db, db_job_id)
     job_service = JobService(db)
 
     rq_job = get_current_job()
@@ -280,6 +312,7 @@ def process_product_import(db_job_id: str, products_data: list, user_id: str):
     from rq import get_current_job
 
     db = SessionLocal()
+    _apply_import_job_scope(db, db_job_id)
     job_service = JobService(db)
 
     rq_job = get_current_job()
@@ -360,6 +393,7 @@ def process_order_tracking_import(db_job_id: str, file_data: bytes, user_id: str
     from rq import get_current_job
     
     db = SessionLocal()
+    _apply_import_job_scope(db, db_job_id)
     job_service = JobService(db)
     
     # Get RQ job ID
@@ -512,6 +546,7 @@ def process_attachment_bulk_import(
     from rq import get_current_job
 
     db = SessionLocal()
+    _apply_import_job_scope(db, db_job_id)
     job_service = JobService(db)
 
     rq_job = get_current_job()
@@ -1035,6 +1070,7 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
     import openpyxl
 
     db = SessionLocal()
+    _apply_import_job_scope(db, db_job_id)
     job_service = JobService(db)
     rq_job = get_current_job()
     rq_job_id = rq_job.id if rq_job else None
@@ -1358,6 +1394,7 @@ def validate_spo_import(file_data: bytes, filename: str) -> Dict[str, Any]:
         return {"valid": False, "errors": ["Filename must provide SPO number (e.g. SPO-2025.10-0050.xlsx)"], "warnings": [], "summary": {}}
 
     db = SessionLocal()
+    set_company_scope(db, None)  # validation preview reads across all companies (no job snapshot)
     try:
         workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
     except Exception as exc:
@@ -1594,6 +1631,7 @@ def _run_grn_listing_import_core(
 def validate_grn_listing_import(file_data: bytes) -> Dict[str, Any]:
     """Run GRN listing validation (same logic as import, then rollback). No DB writes."""
     db = SessionLocal()
+    set_company_scope(db, None)  # validation preview reads across all companies (no job snapshot)
     try:
         result = _run_grn_listing_import_core(db, file_data)
         db.rollback()
@@ -1621,6 +1659,7 @@ def validate_grn_lines_import(file_data: bytes) -> Dict[str, Any]:
     from app.api.v1.external.utils import normalize_code
 
     db = SessionLocal()
+    set_company_scope(db, None)  # validation preview reads across all companies (no job snapshot)
     try:
         workbook = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
     except Exception as exc:
@@ -1733,6 +1772,7 @@ def process_grn_listing_import(db_job_id: str, file_data: bytes, filename: str, 
     from rq import get_current_job
 
     db = SessionLocal()
+    _apply_import_job_scope(db, db_job_id)
     job_service = JobService(db)
     rq_job = get_current_job()
     rq_job_id = rq_job.id if rq_job else None
@@ -1809,6 +1849,7 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
     import openpyxl
 
     db = SessionLocal()
+    _apply_import_job_scope(db, db_job_id)
     job_service = JobService(db)
     rq_job = get_current_job()
     rq_job_id = rq_job.id if rq_job else None
@@ -2346,6 +2387,7 @@ def process_delivery_order_detail_import(db_job_id: str, file_data: bytes, filen
     from app.api.v1.external.utils import normalize_code
 
     db = SessionLocal()
+    _apply_import_job_scope(db, db_job_id)
     job_service = JobService(db)
     rq_job = get_current_job()
     rq_job_id = rq_job.id if rq_job else None

@@ -79,6 +79,10 @@ def blank_schema_engine():
             schema_translate_map={None: name, "scm": f"{name}_scm"}
         )
         with scoped.connect() as connection:
+            # The Sorento company row is seeded by the ``after_create`` DDL event on
+            # the companies table (tests/conftest.py), which fires here during
+            # create_all — so every owned insert's auto-stamped company_id resolves
+            # against the FK. Nothing to seed by hand.
             Base.metadata.create_all(connection, checkfirst=False)
             connection.commit()
 

@@ -8,7 +8,10 @@ from pydantic import BaseModel
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.models.procurement import SPOAllocation, PickingHeader, PickingLine
-from app.services.procurement_service import InboundShipmentService
+from app.services.procurement_service import (
+    DuplicatePackingListError,
+    InboundShipmentService,
+)
 from app.schemas.procurement import (
     InboundShipmentCreate,
     InboundShipmentUpdate,
@@ -217,6 +220,11 @@ async def create_packing_list(
         return shipment
     except HTTPException:
         raise
+    except DuplicatePackingListError as exc:
+        # Same container + ETA + shipment date as an already-received shipment.
+        # Surface the explanation as a 409 — the bare `except Exception` below
+        # would otherwise turn a user-fixable mistake into a 500.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=exc.message)
     except Exception as e:
         raise handle_internal_error(str(e))
 

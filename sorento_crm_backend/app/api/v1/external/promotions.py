@@ -16,6 +16,7 @@ from app.schemas.external.marketing import (
     PromotionCreateResponse,
 )
 from app.schemas.marketing import PromotionResponse
+from app.models.base import set_company_scope
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, PromotionAttachment
 from app.models.resources import Attachment
 from app.api.v1.external.utils import parse_date_value, get_products_by_code_exact
@@ -132,6 +133,24 @@ def create_promotion(
 
     Notifications (in-app + email): same as before for attachments + notify_user_id.
     """
+    # Multi-company isolation (Group G): pin the scope to the bound attachment's
+    # company BEFORE matching products or creating the promotion/groups/lines, so
+    # an n8n call (X-API-Key, scope=all) can't build a promotion from another
+    # company's products. Distinct non-null company ids across the linked
+    # attachments feed the scope; a single company auto-stamps the created rows,
+    # while an all-NULL (shared) set leaves the resolver scope untouched (AC-G3).
+    _attachment_ids = _attachment_ids_from_promotion_payload(payload)
+    if _attachment_ids:
+        _att_company_ids = {
+            row.company_id
+            for row in db.query(Attachment.company_id)
+            .filter(Attachment.id.in_(_attachment_ids))
+            .all()
+            if row.company_id
+        }
+        if _att_company_ids:
+            set_company_scope(db, frozenset(_att_company_ids))
+
     if payload.promotion_groups:
         product_codes = []
         for g in payload.promotion_groups:

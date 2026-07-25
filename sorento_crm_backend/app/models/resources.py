@@ -4,10 +4,11 @@ from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
+from app.models.base import CompanyScopedMixin
 import uuid
 
 
-class AttachmentDirectory(Base):
+class AttachmentDirectory(Base, CompanyScopedMixin):
     """Hierarchical folder for organizing attachments."""
     __tablename__ = "attachment_directories"
 
@@ -50,8 +51,15 @@ class AttachmentType(Base):
     attachments = relationship("Attachment", back_populates="attachment_type")
 
 
-class Attachment(Base):
+class Attachment(Base, CompanyScopedMixin):
     __tablename__ = "attachments"
+
+    # Multi-company: attachments carry a NULLABLE company_id. NULL = shared (form
+    # attachments on global complaints/PR/SI); non-null = owned (resource /
+    # product / promotion). The scope filter therefore uses
+    # `company_id IS NULL OR company_id IN {scope}` (AC-H5). This one stays
+    # nullable permanently — the later NOT-NULL flip skips it.
+    __company_shared__ = True
 
     # Audit user upload activity across ALL create paths (resource upload, entity
     # attachments on complaint/PR/SI, product photos, form files) — model-level so it

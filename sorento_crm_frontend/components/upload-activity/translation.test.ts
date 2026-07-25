@@ -64,10 +64,26 @@ describe('translation.ERROR_CODE_FRIENDLY', () => {
       'WEBHOOK_DISABLED',
       'POST_FAILED',
       'FILE_TOO_LARGE',
+      'DUPLICATE_PACKING_LIST',
     ];
     for (const code of required) {
       expect(ERROR_CODE_FRIENDLY[code], `missing friendly text for ${code}`).toBeTruthy();
     }
+  });
+
+  it('explains a duplicate packing list without exposing mechanism jargon', () => {
+    // Backend rejects a packing list re-uploaded after its GRN completed. The
+    // headline has to read as a user-caused, user-fixable situation — not as an
+    // integration outage.
+    const f = makeFile({
+      status: 'failed',
+      error_code: 'DUPLICATE_PACKING_LIST',
+      error_message:
+        'Container TEMU1234567 (shipment date 2026-06-01, ETA 2026-06-20) was already recorded on 2026-06-05 and is fully received.',
+    });
+    expect(summariseFile(f)).toBe(
+      'Duplicate packing list — this container was already received',
+    );
   });
 });
 

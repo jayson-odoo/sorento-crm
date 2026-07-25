@@ -39,6 +39,12 @@ class ImportJob(Base):
     job_type = Column(String, nullable=False)  # e.g., 'stock_import', 'order_import'
     status = Column(SQLEnum(JobStatus, name="jobstatus", native_enum=True, values_callable=lambda obj: [e.value for e in obj]), default=JobStatus.PENDING.value, nullable=False, index=True)
     user_id = Column(String, nullable=False, index=True)
+
+    # Active company snapshotted at enqueue (multi-company isolation). The worker
+    # reads this back and re-establishes the request's company scope so owned
+    # writes auto-stamp + are isolated. NULL => system/None-scope import.
+    # NOT a CompanyScopedMixin (job-tracking infra, never auto-filtered).
+    company_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     
     # Job metadata
     filename = Column(String, nullable=True)
@@ -81,7 +87,8 @@ class ImportJobRow(Base):
     (buffered bulk inserts, never one INSERT per row) so the detail survives an
     import that rolls back, and so a 4k-row file costs a handful of round trips.
 
-    Job-tracking infrastructure like ``ImportJob`` - never business-partitioned.
+    Job-tracking infrastructure like ``ImportJob``: deliberately NOT a
+    ``CompanyScopedMixin`` — it is never auto-filtered / business-partitioned.
     """
 
     __tablename__ = "import_job_rows"

@@ -12,6 +12,11 @@ declare module 'next-auth' {
       roleIds?: string[];
       roleName?: string | null;
       status: string;
+      // Multi-company isolation (PLAN §3.11 / §11). Active company is the JWT
+      // claim source-of-truth; grants is the lightweight id list of switchable
+      // companies. Both resolved from GET /companies/my-context at login.
+      active_company_id?: string;
+      company_grants?: string[];
     };
   }
 
@@ -26,6 +31,8 @@ declare module 'next-auth' {
     status: string;
     // Opaque FastAPI session token returned by /api/v1/auth/login.
     apiToken?: string;
+    active_company_id?: string;
+    company_grants?: string[];
   }
 }
 
@@ -41,5 +48,8 @@ declare module 'next-auth/jwt' {
     status: string;
     // Opaque FastAPI session token forwarded as Bearer to /api/v1/*.
     apiToken?: string;
+    // Multi-company isolation: active company claim + switchable grant ids.
+    active_company_id?: string;
+    company_grants?: string[];
   }
 }

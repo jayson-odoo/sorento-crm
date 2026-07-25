@@ -118,6 +118,7 @@ def log_audit(
     contact_id: Optional[str] = None,
     description: Optional[str] = None,
     ip_address: Optional[str] = None,
+    company_id: Optional[str] = None,
     skip_flush: bool = False,
 ) -> AuditLog:
     """Write one audit log entry. Call from API layer after create/update/delete.
@@ -126,6 +127,9 @@ def log_audit(
         contact_id: Acting contact (respond_contacts.id) for portal/public-link writes
             with no staff ``user_id``. Defaults to the request's actor-contact context,
             so auto-tracked ORM rows attribute to the contact by name instead of "System".
+        company_id: Company of the CHANGED entity (multi-company). NULL when the audited
+            entity has no company_id column/value. Used ONLY by the admin audit listing
+            filter; never auto-stamped (audit_logs is not an owned mixin).
         skip_flush: If True, don't flush (useful when already inside a flush operation).
     """
     from app.audit_context import get_trace_id, get_actor_contact_id
@@ -140,6 +144,7 @@ def log_audit(
         new_values=new_values,
         description=description,
         ip_address=ip_address,
+        company_id=company_id,
         trace_id=get_trace_id(),
     )
     db.add(entry)
@@ -217,6 +222,13 @@ def list_audit_logs(
         q = q.filter(AuditLog.action == action.upper())
     if trace_id:
         q = q.filter(AuditLog.trace_id == trace_id)
+    # Multi-company: staff audit listing shows only the active company's rows
+    # (+ legacy-null / entity-has-no-company rows). audit_logs is not an owned
+    # mixin; filter by hand. See admin_listing_company_filter for the four states.
+    from app.services.company_scope import admin_listing_company_filter
+    scope_filter = admin_listing_company_filter(db, AuditLog.company_id)
+    if scope_filter is not None:
+        q = q.filter(scope_filter)
     if changed_from:
         q = q.filter(AuditLog.changed_at >= changed_from)
     if changed_to:
@@ -313,7 +325,7 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
         new_values = _model_to_audit_dict(obj)
         if cols is not None:
             new_values = {k: v for k, v in new_values.items() if k in cols}
-        pending.append((entity_type, entity_id, "CREATE", None, new_values))
+        pending.append((entity_type, entity_id, "CREATE", None, new_values, getattr(obj, "company_id", None)))
     for obj in session.dirty:
         if not _is_audited(obj):
             continue
@@ -326,7 +338,7 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
         old_values, new_values = _old_new_from_dirty(obj, columns=cols)
         if not old_values and not new_values:
             continue
-        pending.append((entity_type, entity_id, "UPDATE", old_values, new_values))
+        pending.append((entity_type, entity_id, "UPDATE", old_values, new_values, getattr(obj, "company_id", None)))
     for obj in session.deleted:
         if not _is_audited(obj):
             continue
@@ -339,7 +351,7 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
         old_values = _model_to_audit_dict(obj)
         if cols is not None:
             old_values = {k: v for k, v in old_values.items() if k in cols}
-        pending.append((entity_type, entity_id, "DELETE", old_values, None))
+        pending.append((entity_type, entity_id, "DELETE", old_values, None, getattr(obj, "company_id", None)))
 
     # Add audit log rows in the same flush (so we never call flush from inside an event)
     if not pending:
@@ -362,7 +374,7 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
     contact_id = session.info.get("actor_contact_id") or get_actor_contact_id()
     session.info["audit_flushing"] = True
     try:
-        for entity_type, entity_id, action, old_values, new_values in pending:
+        for entity_type, entity_id, action, old_values, new_values, entity_company_id in pending:
             log_audit(
                 session,
                 entity_type,
@@ -373,6 +385,7 @@ def _session_before_flush(session: Session, _flush_context: Any, _instances: Any
                 user_id=user_id,
                 contact_id=contact_id,
                 ip_address=ip_address,
+                company_id=entity_company_id,
                 skip_flush=True,
             )
     finally:

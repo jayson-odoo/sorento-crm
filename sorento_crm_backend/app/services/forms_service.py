@@ -201,10 +201,20 @@ class FormService:
             form_ids=form_ids,
         )
 
+        # Multi-company: the staff forms-management listing shows only the active
+        # company's forms (+ legacy-null). Form is DELIBERATELY not an owned mixin
+        # (portal / public / workflow / embedding reads must stay unscoped), so we
+        # filter this ONE listing by hand. Applied here (not in _build_list_query)
+        # so `neighbours` and every other _build_list_query caller stay unscoped.
+        from app.services.company_scope import admin_listing_company_filter
+        scope_filter = admin_listing_company_filter(self.db, Form.company_id)
+        if scope_filter is not None:
+            q = q.filter(scope_filter)
+
         total = q.count()
         offset = (page - 1) * limit
         forms = q.offset(offset).limit(limit).all()
-        
+
         from app.schemas.common import PaginationResponse
         
         return {
@@ -253,6 +263,13 @@ class FormService:
             form_dict["access_levels"] = access_svc.get_default_access_levels()
         # created_by column doesn't exist in database, skip setting it
         # form_dict["created_by"] = created_by
+        # Multi-company: stamp the active company on a staff-created form (single
+        # scope only; None/UNSET/multi leave it NULL). Manual — Form is not an
+        # owned mixin, so the before_insert auto-stamp never fires here.
+        from app.services.company_scope import get_company_scope
+        _scope = get_company_scope(self.db)
+        if isinstance(_scope, frozenset) and len(_scope) == 1:
+            form_dict["company_id"] = next(iter(_scope))
         form = Form(**form_dict)
         self.db.add(form)
         self.db.commit()

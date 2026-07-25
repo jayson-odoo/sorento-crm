@@ -11,6 +11,7 @@ from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.services.job_service import JobService
+from app.services.company_scope import admin_listing_company_filter
 from app.services.import_outcome_codes import label_for
 from app.models.job import ImportJob, ImportJobRow
 from app.schemas.job import ImportJobResponse, ImportJobRowResponse, JobStatusResponse
@@ -63,6 +64,9 @@ async def list_jobs(
             count_query = count_query.filter(ImportJob.job_type == job_type)
         if job_status:
             count_query = count_query.filter(ImportJob.status == job_status.value)
+        count_scope_filter = admin_listing_company_filter(db, ImportJob.company_id)
+        if count_scope_filter is not None:
+            count_query = count_query.filter(count_scope_filter)
         total_count = count_query.count()
         
         # Convert jobs to response format, ensuring UUIDs are strings

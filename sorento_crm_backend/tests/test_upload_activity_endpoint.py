@@ -365,3 +365,52 @@ def test_unsupported_scope_rejected(client):
     c, _db = client
     r = c.get("/api/v1/resource-management/upload-activity?scope=tenant")
     assert r.status_code == 422
+
+
+def test_failed_log_surfaces_payload_error_when_column_is_null(client):
+    """n8n's error branch posts only {status, response_payload:{error}} — it
+    never writes the error_message COLUMN that every user-facing surface reads,
+    so the drawer used to show a bare "Integration failed" while the real reason
+    sat unread in response_payload. Fall back to it.
+    """
+    c, db = client
+    aid = _add_attachment(db, filename="packing-list.pdf")
+    _add_log(
+        db,
+        attachment_id=aid,
+        status="failed",
+        payload={"error": "Container TEMU1234567 was already recorded and is fully received."},
+    )
+
+    r = c.get("/api/v1/resource-management/upload-activity")
+    assert r.status_code == 200, r.text
+    file = r.json()["sessions"][0]["files"][0]
+    assert file["status"] == "failed"
+    assert file["error_message"] == (
+        "Container TEMU1234567 was already recorded and is fully received."
+    )
+
+
+def test_error_message_column_wins_over_payload_error(client):
+    """When the backend stamped the column itself (duplicate packing list), that
+    deliberate copy must win over n8n's serialized error string."""
+    c, db = client
+    aid = _add_attachment(db, filename="packing-list.pdf")
+    log_id = _add_log(
+        db,
+        attachment_id=aid,
+        status="failed",
+        payload={"error": "409 - {\"detail\":\"...\"}"},
+        error_code="DUPLICATE_PACKING_LIST",
+    )
+    from app.models.integration import IntegrationLog
+
+    log = db.query(IntegrationLog).filter(IntegrationLog.id == log_id).first()
+    log.error_message = "Container TEMU1234567 (shipment date 2026-06-01, ETA 2026-06-20) ..."
+    db.commit()
+
+    r = c.get("/api/v1/resource-management/upload-activity")
+    assert r.status_code == 200, r.text
+    file = r.json()["sessions"][0]["files"][0]
+    assert file["error_code"] == "DUPLICATE_PACKING_LIST"
+    assert file["error_message"].startswith("Container TEMU1234567 (shipment date")

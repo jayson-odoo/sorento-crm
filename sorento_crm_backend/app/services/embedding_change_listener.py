@@ -109,7 +109,36 @@ def _embedding_queue_exists(bind) -> bool:
     return cached
 
 
-def _queue_from_mapper(connection, source_type: str, source_id: str, event_type: str) -> None:
+def build_queue_payload(
+    source_type: str,
+    source_id: str,
+    event_type: str,
+    company_id=None,
+) -> dict:
+    """Queue-row JSON payload for a model-change event.
+
+    ``company_id`` (the source entity's company, multi-company isolation) is
+    threaded through so the embedding worker can stamp fresh document/chunk rows
+    even before it re-loads the source — AC-I5: a fresh embedding must never be
+    company-less when its source has a company. Extracted (from the inline dict
+    ``_queue_from_mapper`` used to build) so it is unit-testable without a DB.
+    """
+    return {
+        "event_id": str(uuid.uuid4()),
+        "event_type": event_type,
+        "event_version": 1,
+        "occurred_at": datetime.utcnow().isoformat(),
+        "source_type": source_type,
+        "source_id": str(source_id),
+        "company_id": str(company_id) if company_id is not None else None,
+        "changed_fields": ["model_change_listener"],
+        "triggered_by": "system",
+    }
+
+
+def _queue_from_mapper(
+    connection, source_type: str, source_id: str, event_type: str, company_id=None
+) -> None:
     if source_type in _suppressed_set():
         return
     if not _embedding_queue_exists(connection):
@@ -121,16 +150,7 @@ def _queue_from_mapper(connection, source_type: str, source_id: str, event_type:
             source_id=str(source_id),
             event_type=event_type,
             event_version=1,
-            payload={
-                "event_id": str(uuid.uuid4()),
-                "event_type": event_type,
-                "event_version": 1,
-                "occurred_at": datetime.utcnow().isoformat(),
-                "source_type": source_type,
-                "source_id": str(source_id),
-                "changed_fields": ["model_change_listener"],
-                "triggered_by": "system",
-            },
+            payload=build_queue_payload(source_type, source_id, event_type, company_id),
             status="pending",
             retry_count=0,
             available_at=datetime.utcnow(),
@@ -142,15 +162,24 @@ def _queue_from_mapper(connection, source_type: str, source_id: str, event_type:
 def _attach_listeners(model, source_type: str) -> None:
     @event.listens_for(model, "after_insert")
     def _after_insert(_mapper, connection, target):
-        _queue_from_mapper(connection, source_type, target.id, f"{source_type}.created")
+        _queue_from_mapper(
+            connection, source_type, target.id, f"{source_type}.created",
+            getattr(target, "company_id", None),
+        )
 
     @event.listens_for(model, "after_update")
     def _after_update(_mapper, connection, target):
-        _queue_from_mapper(connection, source_type, target.id, f"{source_type}.updated")
+        _queue_from_mapper(
+            connection, source_type, target.id, f"{source_type}.updated",
+            getattr(target, "company_id", None),
+        )
 
     @event.listens_for(model, "after_delete")
     def _after_delete(_mapper, connection, target):
-        _queue_from_mapper(connection, source_type, target.id, f"{source_type}.deleted")
+        _queue_from_mapper(
+            connection, source_type, target.id, f"{source_type}.deleted",
+            getattr(target, "company_id", None),
+        )
 
 
 def register_embedding_change_listeners() -> None:

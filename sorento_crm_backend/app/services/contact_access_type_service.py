@@ -339,3 +339,36 @@ class ContactAccessTypeService:
             raise handle_not_found("RespondContact", f"respond_io_id={rid}, space_id={sid}")
         return self.get_contact_access_codes(str(contact.id))
 
+    def resolve_contact_company_ids(self, respond_io_id: str, space_id: str) -> List[str]:
+        """Resolve a Respond.io (contact_id, space_id) pair to the contact's company ids.
+
+        Sibling of ``resolve_contact_access_codes`` for multi-company isolation
+        (PLAN §3.13). Reuses the same RespondContact→RespondWorkspace ``space_id``
+        join, then reads the admin-managed ``respond_contact_companies`` M2M.
+
+        Non-raising by design (this feeds the request-entry scope resolver, which
+        must never 500): returns ``[]`` when the params are blank, when NO contact
+        matches, OR when the contact matched but has NO company memberships — the
+        caller maps ``[]`` to an empty scope (0 owned rows, fail-closed).
+        """
+        rid = (respond_io_id or "").strip()
+        sid = (space_id or "").strip()
+        if not rid or not sid:
+            return []
+        contact = (
+            self.db.query(RespondContact)
+            .join(RespondWorkspace, RespondWorkspace.id == RespondContact.workspace_id)
+            .filter(RespondContact.respond_io_id == rid, RespondWorkspace.space_id == sid)
+            .first()
+        )
+        if contact is None:
+            return []
+        from app.models.company import RespondContactCompany
+
+        rows = (
+            self.db.query(RespondContactCompany.company_id)
+            .filter(RespondContactCompany.respond_contact_id == str(contact.id))
+            .all()
+        )
+        return [r[0] for r in rows]
+
