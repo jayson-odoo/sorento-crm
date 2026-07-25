@@ -11,7 +11,7 @@ from app.schemas.inventory import (
     WarehouseCreate, WarehouseUpdate, StorageZoneCreate, StorageZoneUpdate,
     StockCreate, StockUpdate, StockBatchCreate, StockBatchUpdate
 )
-from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
+from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error, AppException
 from app.services.import_log_service import ImportLogService
 from app.services.identifier_resolver import resolve_identifier
 
@@ -251,6 +251,7 @@ class WarehouseService:
         rows: list[dict],
         user_id: str,
         validate_only: bool = False,
+        outcome=None,
     ):
         """Upsert warehouses from Excel data, keyed by warehouse_code (case-insensitive).
 
@@ -262,7 +263,16 @@ class WarehouseService:
 
         Returns dict with created/updated/skipped counts + errors/warnings; if
         validate_only=True returns valid/errors/warnings/summary without writes.
+
+        ``outcome``: optional ImportOutcome recorder so every row's fate is captured
+        for the job detail page. None for non-job callers.
         """
+        from app.services import import_outcome_codes as _oc
+        from app.services.import_outcome import ImportOutcome as _ImportOutcome
+
+        if outcome is None:
+            outcome = _ImportOutcome(None, persist=False)
+
         column_mapping = {
             "Sytem Location": "warehouse_code",
             "System Location": "warehouse_code",
@@ -338,7 +348,9 @@ class WarehouseService:
             row = _map_row(raw)
             code = row.get("warehouse_code")
             if not code:
-                errors.append(f"Row {idx}: missing warehouse_code / Sytem Location.")
+                msg = "missing warehouse_code / Sytem Location."
+                errors.append(f"Row {idx}: {msg}")
+                outcome.skip(row=idx, code=_oc.MISSING_REQUIRED_FIELD, message=msg)
                 continue
             code = str(code).strip()
             row["warehouse_code"] = code
@@ -404,6 +416,15 @@ class WarehouseService:
                         target.is_active = row["is_active"]
                     if key not in seen_keys:
                         updated += 1
+                    outcome.updated(
+                        row=idx,
+                        message=f"Warehouse updated: {row['warehouse_code']}",
+                        value=row["warehouse_code"],
+                        identity={"warehouse_code": row["warehouse_code"],
+                                  "warehouse_name": row.get("warehouse_name")},
+                        entity_type="warehouse",
+                        entity_id=getattr(target, "id", None),
+                    )
                 else:
                     new = Warehouse(
                         warehouse_code=row["warehouse_code"],
@@ -415,10 +436,24 @@ class WarehouseService:
                     existing_by_code[key] = new
                     if key not in seen_keys:
                         created += 1
+                    outcome.success(
+                        row=idx,
+                        message=f"Warehouse created: {row['warehouse_code']}",
+                        value=row["warehouse_code"],
+                        identity={"warehouse_code": row["warehouse_code"],
+                                  "warehouse_name": row.get("warehouse_name")},
+                        entity_type="warehouse",
+                    )
                 seen_keys.add(key)
             except Exception as ex:
                 errors.append(f"Row {idx}: {ex}")
                 skipped += 1
+                outcome.fail(
+                    row=idx,
+                    code=_oc.ROW_ERROR,
+                    message=str(ex),
+                    value=row.get("warehouse_code"),
+                )
 
         try:
             self.db.commit()
@@ -1067,7 +1102,7 @@ class StockService:
         
         return stock_items
 
-    def bulk_import_stock(self, stock_data: list[dict], user_id: str, validate_only: bool = False):
+    def bulk_import_stock(self, stock_data: list[dict], user_id: str, validate_only: bool = False, outcome=None):
         """Bulk import stock from Excel data using bulk operations for performance.
 
         Args:
@@ -1077,7 +1112,22 @@ class StockService:
 
         Returns:
             dict with created, updated, skipped counts and errors; if validate_only, valid/errors/warnings/summary.
+
+        outcome: optional ImportOutcome recorder so every row's fate is captured for
+            the job detail page. None for non-job callers.
         """
+        from app.services import import_outcome_codes as _oc
+        from app.services.import_outcome import ImportOutcome as _ImportOutcome
+
+        if outcome is None:
+            outcome = _ImportOutcome(None, persist=False)
+
+        def _stock_identity(_row: dict) -> dict:
+            return {
+                "product_code": _row.get("_product_code") if isinstance(_row, dict) else None,
+                "warehouse": _row.get("_warehouse_name") if isinstance(_row, dict) else None,
+            }
+
         created = 0
         updated = 0
         errors = []
@@ -1284,6 +1334,11 @@ class StockService:
                         message = f"Row {idx}: Product not found (code '{product_code}')"
                         errors.append(message)
                         error_records.append({"row": idx, "error": message, "data": row_data})
+                        outcome.skip(
+                            row=idx, code=_oc.PRODUCT_NOT_FOUND, message=message,
+                            value=product_code,
+                            identity={"product_code": product_code, "warehouse": warehouse_code or warehouse_name},
+                        )
                         continue
                 
                 # Look up warehouse_id from warehouse_code (case-insensitive)
@@ -1300,6 +1355,11 @@ class StockService:
                         )
                         errors.append(message)
                         error_records.append({"row": idx, "error": message, "data": row_data})
+                        outcome.skip(
+                            row=idx, code=_oc.WAREHOUSE_NOT_FOUND, message=message,
+                            value=warehouse_code,
+                            identity={"product_code": product_code, "warehouse": warehouse_code},
+                        )
                         continue
 
                 # Look up warehouse_id from warehouse_name (case-insensitive) - fallback
@@ -1316,6 +1376,11 @@ class StockService:
                         )
                         errors.append(message)
                         error_records.append({"row": idx, "error": message, "data": row_data})
+                        outcome.skip(
+                            row=idx, code=_oc.WAREHOUSE_NOT_FOUND, message=message,
+                            value=warehouse_name,
+                            identity={"product_code": product_code, "warehouse": warehouse_name},
+                        )
                         continue
                 
                 # Validate required fields
@@ -1323,6 +1388,11 @@ class StockService:
                     message = f"Row {idx}: Product is required (code '{product_code or '-'}')"
                     errors.append(message)
                     error_records.append({"row": idx, "error": message, "data": row_data})
+                    outcome.skip(
+                        row=idx, code=_oc.MISSING_ITEM_CODE, message=message,
+                        value=product_code,
+                        identity={"product_code": product_code, "warehouse": warehouse_code or warehouse_name},
+                    )
                     continue
                 
                 if not mapped_data.get('warehouse_id'):
@@ -1333,6 +1403,11 @@ class StockService:
                     )
                     errors.append(message)
                     error_records.append({"row": idx, "error": message, "data": row_data})
+                    outcome.skip(
+                        row=idx, code=_oc.MISSING_LOCATION, message=message,
+                        value=warehouse_code or warehouse_name,
+                        identity={"product_code": product_code, "warehouse": warehouse_code or warehouse_name},
+                    )
                     continue
                 
                 # Handle quantity logic
@@ -1398,6 +1473,7 @@ class StockService:
                 message = f"Row {idx}: {str(e)}"
                 errors.append(message)
                 error_records.append({"row": idx, "error": message, "data": row_data})
+                outcome.fail(row=idx, code=_oc.ROW_ERROR, message=message)
                 continue
         
         # Step 3: Bulk lookup existing stock by product_id + warehouse_id
@@ -1432,6 +1508,27 @@ class StockService:
 
         for row_dict in rows_to_update:
             final_updates.append(row_dict)
+
+        # Attribute per source row now the create/update split is final. `_row_idx`
+        # was carried on each row_dict precisely so the outcome can point back at
+        # the spreadsheet row.
+        if not validate_only:
+            for row_dict in final_creates:
+                outcome.success(
+                    row=row_dict.get("_row_idx"),
+                    message=f"Stock created: {row_dict.get('_product_code') or ''}".strip(),
+                    value=row_dict.get("_product_code"),
+                    identity=_stock_identity(row_dict),
+                    entity_type="stock",
+                )
+            for row_dict in final_updates:
+                outcome.updated(
+                    row=row_dict.get("_row_idx"),
+                    message=f"Stock updated: {row_dict.get('_product_code') or ''}".strip(),
+                    value=row_dict.get("_product_code"),
+                    identity=_stock_identity(row_dict),
+                    entity_type="stock",
+                )
 
         create_dict = {}
         for row_dict in final_creates:

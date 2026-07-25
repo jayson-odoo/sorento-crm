@@ -283,6 +283,10 @@ class SystemSetting(Base):
     # the shortest-lived value, the metadata row stays useful much longer.
     api_call_log_payload_retention_days = Column(Integer, nullable=False, server_default="30", default=30)
     api_call_log_row_retention_days = Column(Integer, nullable=False, server_default="180", default=180)
+    # Per-row import outcome detail (import_job_rows). Counts and the aggregated
+    # breakdown live on import_jobs.result and are never pruned - only the
+    # drill-down rows age out.
+    import_job_rows_retention_days = Column(Integer, nullable=False, server_default="90", default=90)
 
     # New products / import: default product_supplier (standard lead time + supplier)
     default_product_supplier_id = Column(
