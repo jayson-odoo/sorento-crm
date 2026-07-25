@@ -7,29 +7,36 @@ all. A green job that cannot say what it dropped is not observable.
 
 Covers UAC AC-A1..A3 and AC-B1..B4
 (documentation/plans/imports/import-job-row-outcomes-acceptance-criteria.md).
+
+Runs against a throwaway Postgres schema (tests/_pg_fixture), not sqlite: the
+importer and the outcome recorder use SEPARATE sessions that both commit, so
+the substrate has to be the real one — and `import_jobs.result` is JSONB, which
+sqlite cannot emit at all.
+
+The schema is per-test and dropped afterwards rather than the run-wide
+``blank_session``: nothing here can be rolled back (the importer commits on its
+own session), and committed rows in the shared blank schema leak into every
+later test that counts them — it broke test_product_discontinued_notify and
+test_notification_dedup_key_split when tried that way.
 """
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from io import BytesIO
 from unittest.mock import patch
 
 import openpyxl
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
+from app.database import Base, engine
+from app.models.embeddings import EmbeddingQueue
 from app.models.inventory import Warehouse
 from app.models.job import ImportJob, ImportJobRow, JobStatus
 from app.models.order import Order, OrderLine
-from app.models.product import Product
-
-WAREHOUSE_CODE = "BRW"
-KNOWN_PRODUCTS = ["SRTWC-TEST-A", "SRTWC-TEST-B"]
-UNKNOWN_PRODUCT = "SRTWC-TEST-MISSING"
-DOC_NO = "DO-OUTCOME-TEST-1"
+from app.models.product import Product, ProductCategory, UnitOfMeasure
+from tests._pg_fixture import _globally_required_tables, _with_dependencies
 
 HEADERS = [
     "Doc No",
@@ -43,15 +50,25 @@ HEADERS = [
 ]
 
 
-def _build_workbook_bytes() -> bytes:
+@dataclass(frozen=True)
+class Fixture:
+    """The unique identifiers one test's rows are tagged with."""
+
+    doc_no: str
+    warehouse_code: str
+    known_products: tuple[str, str]
+    unknown_product: str
+
+
+def _build_workbook_bytes(fx: Fixture) -> bytes:
     """Three data rows: two resolvable, one with an unknown product code."""
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Template"
     ws.append(HEADERS)
-    ws.append([DOC_NO, KNOWN_PRODUCTS[0], WAREHOUSE_CODE, 2, 100, None, 200, 0])
-    ws.append([DOC_NO, KNOWN_PRODUCTS[1], WAREHOUSE_CODE, 5, 50, None, 250, 0])
-    ws.append([DOC_NO, UNKNOWN_PRODUCT, WAREHOUSE_CODE, 1, 10, None, 10, 0])
+    ws.append([fx.doc_no, fx.known_products[0], fx.warehouse_code, 2, 100, None, 200, 0])
+    ws.append([fx.doc_no, fx.known_products[1], fx.warehouse_code, 5, 50, None, 250, 0])
+    ws.append([fx.doc_no, fx.unknown_product, fx.warehouse_code, 1, 10, None, 10, 0])
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -59,59 +76,96 @@ def _build_workbook_bytes() -> bytes:
 
 @pytest.fixture
 def session_factory():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
+    """A sessionmaker over a private, empty Postgres schema, dropped at teardown.
+
+    A factory rather than a session because the code under test opens its own:
+    the importer calls ``SessionLocal()`` and the outcome recorder opens a
+    SECOND one, deliberately, so its rows survive an import that rolls back.
+    """
+    tables = _with_dependencies(
+        [
             Order.__table__,
             OrderLine.__table__,
             Product.__table__,
             Warehouse.__table__,
             ImportJob.__table__,
             ImportJobRow.__table__,
-        ],
+            # Another test module registers the embedding change listener
+            # globally; once it has, every Order insert here enqueues an event.
+            # Absent in a single-file run, fatal in a full-suite one.
+            EmbeddingQueue.__table__,
+        ]
+        + _globally_required_tables()
     )
-    return sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    name = f"zzt_import_outcome_{uuid.uuid4().hex[:10]}"
+
+    admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+    admin.exec_driver_sql(f'CREATE SCHEMA "{name}"')
+    admin.close()
+
+    scoped = engine.execution_options(schema_translate_map={None: name})
+    with scoped.connect() as connection:
+        Base.metadata.create_all(connection, tables=tables, checkfirst=False)
+        connection.commit()
+
+    try:
+        yield sessionmaker(autocommit=False, autoflush=False, bind=scoped)
+    finally:
+        cleanup = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+        cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
+        cleanup.close()
 
 
 @pytest.fixture
 def seeded(session_factory):
-    """One order, one warehouse, two products — and the ImportJob rows to run."""
+    """One order, one warehouse, two products, all uniquely tagged."""
+    tag = uuid.uuid4().hex[:8].upper()
+    fx = Fixture(
+        doc_no=f"ZZT-DO-{tag}",
+        warehouse_code=f"ZZTWH-{tag}",
+        known_products=(f"ZZT-{tag}-A", f"ZZT-{tag}-B"),
+        unknown_product=f"ZZT-{tag}-MISSING",
+    )
+
     db = session_factory()
     try:
-        db.add(Order(id=str(uuid.uuid4()), order_number=DOC_NO, is_cancelled=False))
+        # Postgres enforces these foreign keys; the old sqlite fixture invented
+        # loose UUIDs for category / uom and got away with it.
+        category = ProductCategory(
+            id=str(uuid.uuid4()), category_code=f"ZZTCAT-{tag}", category_name="Test"
+        )
+        uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=f"ZZTUOM-{tag}", uom_name="Each")
+        db.add_all([category, uom])
+        db.flush()
+
+        db.add(Order(id=str(uuid.uuid4()), order_number=fx.doc_no, is_cancelled=False))
         db.add(
             Warehouse(
                 id=str(uuid.uuid4()),
-                warehouse_code=WAREHOUSE_CODE,
+                warehouse_code=fx.warehouse_code,
                 warehouse_name="Test warehouse",
                 is_active=True,
             )
         )
-        for code in KNOWN_PRODUCTS:
+        for code in fx.known_products:
             db.add(
                 Product(
                     id=str(uuid.uuid4()),
                     product_code=code,
                     product_name=f"Test {code}",
-                    category_id=str(uuid.uuid4()),
-                    base_uom_id=str(uuid.uuid4()),
+                    category_id=category.id,
+                    base_uom_id=uom.id,
                     list_price=0,
                 )
             )
         db.commit()
     finally:
         db.close()
-    return session_factory
+    return session_factory, fx
 
 
 def _make_job(session_factory, user_id: str):
-    """Returns the job's UUID. ImportJob.id is a real UUID column, so sqlite needs a
-    uuid object (the psycopg2 dialect coerces strings, the generic one does not)."""
+    """Returns the job's UUID."""
     db = session_factory()
     try:
         job = ImportJob(
@@ -153,11 +207,11 @@ def _breakdown_counts(job: ImportJob) -> dict[str, dict[str, int]]:
 
 def test_first_import_attributes_every_row(seeded):
     """Two rows create lines, one is skipped with a named reason."""
+    factory, fx = seeded
     user_id = str(uuid.uuid4())
-    file_bytes = _build_workbook_bytes()
-    job_id = _make_job(seeded, user_id)
+    job_id = _make_job(factory, user_id)
 
-    job = _run_import(seeded, job_id, file_bytes, user_id)
+    job = _run_import(factory, job_id, _build_workbook_bytes(fx), user_id)
 
     assert job.successful_rows == 2
     assert job.skipped_rows == 1
@@ -170,16 +224,17 @@ def test_first_import_attributes_every_row(seeded):
 def test_reimport_attributes_every_duplicate_skip(seeded):
     """THE REGRESSION: re-importing the same file must name every skip.
 
-    Today the dedup branch bumps `skipped` with no code, so the reasons list is
-    empty while `skipped_rows == 3` — exactly the reported job.
+    Before the fix the dedup branch bumped `skipped` with no code, so the
+    reasons list was empty while `skipped_rows == 3` — exactly the reported job.
     """
+    factory, fx = seeded
     user_id = str(uuid.uuid4())
-    file_bytes = _build_workbook_bytes()
+    file_bytes = _build_workbook_bytes(fx)
 
-    first = _run_import(seeded, _make_job(seeded, user_id), file_bytes, user_id)
+    first = _run_import(factory, _make_job(factory, user_id), file_bytes, user_id)
     assert first.successful_rows == 2
 
-    second = _run_import(seeded, _make_job(seeded, user_id), file_bytes, user_id)
+    second = _run_import(factory, _make_job(factory, user_id), file_bytes, user_id)
     assert second.successful_rows == 0
     assert second.skipped_rows == 3
 
@@ -195,13 +250,13 @@ def test_reimport_attributes_every_duplicate_skip(seeded):
 
 def test_every_row_is_persisted_for_drill_down(seeded):
     """AC-A1: the breakdown is not enough - each row must be individually retrievable."""
+    factory, fx = seeded
     user_id = str(uuid.uuid4())
-    file_bytes = _build_workbook_bytes()
-    job_id = _make_job(seeded, user_id)
+    job_id = _make_job(factory, user_id)
 
-    _run_import(seeded, job_id, file_bytes, user_id)
+    _run_import(factory, job_id, _build_workbook_bytes(fx), user_id)
 
-    db = seeded()
+    db = factory()
     try:
         rows = (
             db.query(ImportJobRow)
@@ -219,17 +274,19 @@ def test_every_row_is_persisted_for_drill_down(seeded):
 
     missing = [r for r in rows if r.code == "product_not_found"]
     assert len(missing) == 1
-    assert missing[0].value == UNKNOWN_PRODUCT
+    assert missing[0].value == fx.unknown_product
     # Identity carries business keys the operator can act on, never UUIDs.
-    assert missing[0].identity["doc_no"] == DOC_NO
-    assert missing[0].identity["item_code"] == UNKNOWN_PRODUCT
+    assert missing[0].identity["doc_no"] == fx.doc_no
+    assert missing[0].identity["item_code"] == fx.unknown_product
 
 
 def test_counts_and_breakdown_always_reconcile(seeded):
     """AC-B4: every counted row is explained by exactly one breakdown entry."""
+    factory, fx = seeded
     user_id = str(uuid.uuid4())
-    file_bytes = _build_workbook_bytes()
-    job = _run_import(seeded, _make_job(seeded, user_id), file_bytes, user_id)
+    job = _run_import(
+        factory, _make_job(factory, user_id), _build_workbook_bytes(fx), user_id
+    )
 
     result = job.result or {}
     counts = result.get("counts") or {}

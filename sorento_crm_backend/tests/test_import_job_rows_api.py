@@ -3,6 +3,9 @@
 Covers UAC AC-D1..D5: filtering, paging, CSV of the FILTERED set, 404 on an
 unknown job, 403 for a non-owner, and an empty list (not an error) for a job
 whose rows were never captured or have aged out.
+
+Runs on a blank Postgres schema (tests/_pg_fixture), not sqlite: `identity` is
+JSONB and the free-text search casts it to text, which only Postgres can do.
 """
 from __future__ import annotations
 
@@ -13,82 +16,68 @@ import uuid
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.api.v1.system.jobs import router as jobs_router
-from app.database import Base, get_db
+from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.job import ImportJob, ImportJobRow, JobStatus
+from tests._pg_fixture import blank_session
 
 OWNER_ID = str(uuid.uuid4())
 OTHER_ID = str(uuid.uuid4())
 
 
-@pytest.fixture
-def client_and_job():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine, tables=[ImportJob.__table__, ImportJobRow.__table__]
-    )
-    TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-    db = TestingSession()
-    job = ImportJob(
-        id=uuid.uuid4(),
-        job_id=str(uuid.uuid4()),
-        job_type="delivery_order_detail_import",
-        status=JobStatus.FINISHED.value,
-        user_id=OWNER_ID,
-        total_rows=6,
-    )
-    db.add(job)
-    db.flush()
-
-    seeds = [
-        ("created", "created", "Order line created", None, 2),
-        ("created", "created", "Order line created", None, 3),
-        ("skipped", "duplicate_line", "Identical line already exists", "DO-1", 4),
-        ("skipped", "product_not_found", "Product not found: ABC-1", "ABC-1", 5),
-        ("skipped", "product_not_found", "Product not found: ABC-2", "ABC-2", 6),
-        ("failed", "row_error", "numeric field overflow", "DO-9", 7),
-    ]
-    for outcome, code, message, value, row_number in seeds:
-        db.add(
-            ImportJobRow(
-                id=uuid.uuid4(),
-                import_job_id=job.id,
-                row_number=row_number,
-                outcome=outcome,
-                code=code,
-                message=message,
-                value=value,
-                identity={"doc_no": value or "DO-0", "item_code": value},
-            )
-        )
-    db.commit()
-    job_key = job.job_id
-    db.close()
-
+def _app_for(db, user_id: str = OWNER_ID):
     app = FastAPI()
     app.include_router(jobs_router, prefix="/api/v1/system")
 
     def _override_db():
-        session = TestingSession()
-        try:
-            yield session
-        finally:
-            session.close()
+        yield db
 
     app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[get_current_user] = lambda: {"id": OWNER_ID}
+    app.dependency_overrides[get_current_user] = lambda: {"id": user_id}
+    return app
 
-    return TestClient(app), job_key, app
+
+@pytest.fixture
+def client_and_job():
+    with blank_session() as db:
+        job = ImportJob(
+            id=uuid.uuid4(),
+            job_id=str(uuid.uuid4()),
+            job_type="delivery_order_detail_import",
+            status=JobStatus.FINISHED.value,
+            user_id=OWNER_ID,
+            total_rows=6,
+        )
+        db.add(job)
+        db.flush()
+
+        seeds = [
+            ("created", "created", "Order line created", None, 2),
+            ("created", "created", "Order line created", None, 3),
+            ("skipped", "duplicate_line", "Identical line already exists", "DO-1", 4),
+            ("skipped", "product_not_found", "Product not found: ABC-1", "ABC-1", 5),
+            ("skipped", "product_not_found", "Product not found: ABC-2", "ABC-2", 6),
+            ("failed", "row_error", "numeric field overflow", "DO-9", 7),
+        ]
+        for outcome, code, message, value, row_number in seeds:
+            db.add(
+                ImportJobRow(
+                    id=uuid.uuid4(),
+                    import_job_id=job.id,
+                    row_number=row_number,
+                    outcome=outcome,
+                    code=code,
+                    message=message,
+                    value=value,
+                    identity={"doc_no": value or "DO-0", "item_code": value},
+                )
+            )
+        db.commit()
+
+        app = _app_for(db)
+        yield TestClient(app), job.job_id, app
 
 
 def test_lists_every_captured_row(client_and_job):
@@ -167,41 +156,18 @@ def test_non_owner_is_denied(client_and_job):
 
 def test_job_without_captured_rows_returns_empty_not_error():
     """A legacy job, or one whose detail has been pruned, still renders."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=[ImportJob.__table__, ImportJobRow.__table__])
-    TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    with blank_session() as db:
+        job = ImportJob(
+            id=uuid.uuid4(),
+            job_id=str(uuid.uuid4()),
+            job_type="stock_import",
+            status=JobStatus.FINISHED.value,
+            user_id=OWNER_ID,
+        )
+        db.add(job)
+        db.commit()
 
-    db = TestingSession()
-    job = ImportJob(
-        id=uuid.uuid4(),
-        job_id=str(uuid.uuid4()),
-        job_type="stock_import",
-        status=JobStatus.FINISHED.value,
-        user_id=OWNER_ID,
-    )
-    db.add(job)
-    db.commit()
-    job_key = job.job_id
-    db.close()
-
-    app = FastAPI()
-    app.include_router(jobs_router, prefix="/api/v1/system")
-
-    def _override_db():
-        session = TestingSession()
-        try:
-            yield session
-        finally:
-            session.close()
-
-    app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[get_current_user] = lambda: {"id": OWNER_ID}
-
-    res = TestClient(app).get(f"/api/v1/system/jobs/{job_key}/rows")
-    assert res.status_code == 200
-    assert res.json()["pagination"]["total"] == 0
-    assert res.json()["empty"] is True
+        res = TestClient(_app_for(db)).get(f"/api/v1/system/jobs/{job.job_id}/rows")
+        assert res.status_code == 200
+        assert res.json()["pagination"]["total"] == 0
+        assert res.json()["empty"] is True

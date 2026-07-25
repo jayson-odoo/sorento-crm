@@ -1,22 +1,22 @@
 """import_job_rows: per-row outcome capture for every import job
 
-Chained onto the COMMITTED head ``301_promo_expiry_rule_engine`` rather than the
-in-flight multi-company chain (302..306) so this ships independently. That is a
-deliberate second head: run ``alembic merge`` once both chains land, and check
-``alembic heads`` before any deploy carrying both (``upgrade head`` fails to
-resolve with two heads; ``upgrade heads`` applies both).
+Chained onto main's single head ``cbf3a0044924`` (the merge of the promo-expiry
+and integration chains), NOT the in-flight multi-company chain (302..306), so
+this ships independently. Re-check ``alembic heads`` after any merge from main:
+a second head makes ``upgrade head`` fail to resolve at deploy time, which is
+exactly what this migration hit once already.
 
 See documentation/plans/imports/PLAN-import-job-row-outcomes.md §2.1/§2.7.
 
 Revision ID: 307_import_job_rows
-Revises: 301_promo_expiry_rule_engine
+Revises: cbf3a0044924
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "307_import_job_rows"
-down_revision = "301_promo_expiry_rule_engine"
+down_revision = "cbf3a0044924"
 branch_labels = None
 depends_on = None
 
