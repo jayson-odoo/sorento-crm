@@ -21,20 +21,16 @@ from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.access import RespondContact
 from app.models.chat_history import ChatHistory
-from app.models.lookup import LookupBinding
 from app.models.respond_template import (
     RespondChannel,
     RespondMessageTemplate,
     RespondTemplateDefault,
 )
 from app.models.respond_workspace import RespondWorkspace
+from tests._pg_fixture import blank_session
 
 WORKSPACE_ID = str(uuid.uuid4())
 CHANNEL_RID = 453209
@@ -42,39 +38,8 @@ CHANNEL_RID = 453209
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for model in (RespondContact, RespondChannel, RespondMessageTemplate, RespondTemplateDefault, ChatHistory):
-        for col in list(model.__table__.columns):
-            if isinstance(col.type, JSONB):
-                col.type = GenericJSON()
-                col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            RespondWorkspace.__table__,
-            RespondContact.__table__,
-            RespondChannel.__table__,
-            RespondMessageTemplate.__table__,
-            RespondTemplateDefault.__table__,
-            ChatHistory.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 @pytest.fixture

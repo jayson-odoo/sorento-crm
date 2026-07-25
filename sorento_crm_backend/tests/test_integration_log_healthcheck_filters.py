@@ -9,41 +9,25 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.types import JSON
 
-from app.database import Base
 from app.models.integration import IntegrationLog
-from app.models.lookup import LookupBinding
 from app.services.integration_service import IntegrationLogService
 from app.services.n8n_liveness_service import HEALTHCHECK_CHANNEL
-
-
-def _prep(*models):
-    for model in models:
-        for col in model.__table__.columns:
-            if isinstance(col.type, (JSONB, ARRAY)):
-                col.type = JSON()
-                col.server_default = None
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    _prep(IntegrationLog, LookupBinding)
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine, tables=[IntegrationLog.__table__, LookupBinding.__table__]
-    )
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    """A blank Postgres schema, rolled back after the test.
+
+    Was in-memory sqlite plus a `_prep` helper that rewrote JSONB/ARRAY columns
+    to JSON *on the shared model classes*. That mutation was global and
+    permanent for the process, so it leaked into every other test importing the
+    same models. Postgres needs neither the rewrite nor the hand-picked table
+    list.
+    """
+    with blank_session() as session:
+        yield session
 
 
 def _log(session, *, channel, created_at, status="sent"):

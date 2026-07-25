@@ -21,40 +21,20 @@ import uuid
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.types import JSON
 
-from app.database import Base
 from app.models.scheduled_task import ScheduledTask
 from app.services import scheduled_task_service as svc
+from tests._pg_fixture import blank_session
 
 
-def _prep(*models):
-    for model in models:
-        for col in model.__table__.columns:
-            if isinstance(col.type, (JSONB, ARRAY)):
-                col.type = JSON()
-                col.server_default = None
-
-
-_MODELS = [ScheduledTask]
-
-
+# The old fixture rewrote ScheduledTask's JSONB/ARRAY columns to JSON in place so
+# they would emit on sqlite. That edit was permanent and process-wide -- it
+# altered the model for every test that ran afterwards. On Postgres the real
+# column types work as declared, so the mutation is gone.
 @pytest.fixture
 def db():
-    _prep(*_MODELS)
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine, tables=[m.__table__ for m in _MODELS])
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    with blank_session() as session:
+        yield session
 
 
 NOW = datetime(2026, 7, 1, 12, 0, 0)

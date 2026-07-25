@@ -16,47 +16,24 @@ import uuid
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.access import RespondContact
-from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine
+from app.models.procurement import PurchaseRequestHeader
 from app.models.user import User
 from app.services.procurement_service import PurchaseRequestService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
+    """A blank Postgres schema, rolled back after the test.
 
-    for col in list(RespondContact.__table__.columns):
-        if isinstance(col.type, JSONB):
-            col.type = GenericJSON()
-            col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            RespondContact.__table__,
-            User.__table__,
-            PurchaseRequestHeader.__table__,
-            PurchaseRequestLine.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    Was in-memory sqlite, which additionally had to rewrite RespondContact's
+    JSONB columns to generic JSON *on the shared table object* -- a global
+    mutation leaking into every other test in the run. Postgres needs neither.
+    """
+    with blank_session() as session:
+        yield session
 
 
 def _user_with_phone(db, phone="60123456789", name="Rejecter"):

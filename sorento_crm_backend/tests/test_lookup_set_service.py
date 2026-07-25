@@ -1,33 +1,20 @@
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from app.schemas.lookup import LookupSetCreate, LookupSetUpdate
 from app.services.lookup_set_service import LookupSetService
 from app.services.error_handler import AppException
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db_session():
-    """In-memory SQLite, mirrors test_lookup_models.py pattern."""
-    from app.database import Base
-    from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            LookupSet.__table__,
-            LookupOption.__table__,
-            LookupOptionKeyword.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    """Empty Postgres schema, mirrors test_lookup_models.py pattern.
+
+    Blank rather than the live database because test_list_paginated asserts an
+    absolute row total, which only holds on an empty slate.
+    """
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 def test_create_and_get(db_session):

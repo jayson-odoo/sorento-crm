@@ -9,12 +9,11 @@ from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 # MUST be first app import — resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
+from tests._pg_fixture import blank_session
 
 
 _USER_ID = "130c548f-048f-53b2-97a6-3a54676bea77"
@@ -42,63 +41,25 @@ def _seed_user(db: Session) -> None:
 @pytest.fixture
 def client():
     from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
-    from app.models.user import User, UserRole, UserRoleAssignment
-    from app.models.resources import Attachment, AttachmentType
-    from app.models.integration import IntegrationLog
-    from app.models.job import ImportJob
-    from app.models.lookup import LookupBinding  # validator listener checks this table
 
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    with blank_session() as db:
+        _seed_user(db)
 
-    # Create only the tables touched by this endpoint — Attachment has a JSONB
-    # column (`access_levels`) that SQLite can't render, so swap to JSON for tests.
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
+        def _override_get_db():
+            yield db
 
-    # Monkeypatch column types where JSONB blocks SQLite create_all.
-    for col in list(Attachment.__table__.columns):
-        if isinstance(col.type, JSONB):
-            col.type = GenericJSON()
-    for col in list(ImportJob.__table__.columns):
-        if isinstance(col.type, JSONB):
-            col.type = GenericJSON()
+        def _override_current_user():
+            return {"id": _USER_ID, "email": "u1@test.com"}
 
-    tables = [
-        User.__table__,
-        UserRole.__table__,
-        UserRoleAssignment.__table__,
-        Attachment.__table__,
-        AttachmentType.__table__,
-        IntegrationLog.__table__,
-        ImportJob.__table__,
-        LookupBinding.__table__,
-    ]
-    from app.database import Base
-    Base.metadata.create_all(engine, tables=tables)
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[get_current_user] = _override_current_user
+        app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
 
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = SessionLocal()
-    _seed_user(db)
-
-    def _override_get_db():
-        yield db
-
-    def _override_current_user():
-        return {"id": _USER_ID, "email": "u1@test.com"}
-
-    app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user] = _override_current_user
-    app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
-
-    with TestClient(app) as c:
-        yield c, db
-
-    app.dependency_overrides.clear()
-    db.close()
+        try:
+            with TestClient(app) as c:
+                yield c, db
+        finally:
+            app.dependency_overrides.clear()
 
 
 def _add_attachment(

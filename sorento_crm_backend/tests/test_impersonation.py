@@ -1,33 +1,20 @@
 """Tests for admin impersonation: routes, validation, and audit-actor swap."""
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
-# SQLite doesn't know JSONB. Tests run on in-memory SQLite, so map it to JSON.
-@compiles(JSONB, "sqlite")
-def _jsonb_sqlite(_element, _compiler, **_kw):
-    return "JSON"
-
-
-from app.database import Base
 from app.main import app  # registers all routers, dependencies, models
 from app.audit_context import set_audit_context
 from app.dependencies import get_current_user, get_db, get_real_user
 from app.models.audit import AuditLog
 from app.models.impersonation import ImpersonationSession
-from app.models.lookup import LookupBinding
 from app.models.user import (
     User,
-    UserPermission,
     UserRole,
     UserRoleAssignment,
-    UserRolePermission,
 )
 from app.services.audit_service import _swap_actor_fields_during_impersonation
+from tests._pg_fixture import blank_session
 
 
 def _seed_role(db: Session, *, role_id: str, slug: str) -> UserRole:
@@ -58,83 +45,62 @@ def _seed_user(
 
 @pytest.fixture
 def api():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    # Create only the tables this test actually exercises — full Base.metadata
-    # has duplicate-index collisions and pg-only types that don't compile on SQLite.
-    only = [
-        User.__table__,
-        UserRole.__table__,
-        UserRoleAssignment.__table__,
-        UserPermission.__table__,
-        UserRolePermission.__table__,
-        ImpersonationSession.__table__,
-        AuditLog.__table__,
-        LookupBinding.__table__,  # global write-listener queries this on every insert
-    ]
-    Base.metadata.create_all(engine, tables=only)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = SessionLocal()
+    with blank_session() as db:
+        admin_role = _seed_role(db, role_id="r_admin", slug="admin")
+        member_role = _seed_role(db, role_id="r_member", slug="member")
+        db.commit()
 
-    admin_role = _seed_role(db, role_id="r_admin", slug="admin")
-    member_role = _seed_role(db, role_id="r_member", slug="member")
-    db.commit()
-
-    admin = _seed_user(db, user_id="22f43cd5-cfe1-5bd1-9197-ed029698989d", email="admin1@test.com", role_id=admin_role.id)
-    target = _seed_user(db, user_id="a1cb11f1-0c6e-5ec2-99aa-48ca3cc1a35e", email="user1@test.com", role_id=member_role.id)
-    other_admin = _seed_user(db, user_id="5f796e60-982f-5377-92ea-6a1e43e1f82f", email="admin2@test.com", role_id=admin_role.id)
-    inactive = _seed_user(
-        db,
-        user_id="234ff7d4-064f-5cda-90d5-48148bfc6954",
-        email="user2@test.com",
-        role_id=member_role.id,
-        status="INACTIVE",
-    )
-
-    state = {"acting_as": admin.id}
-
-    def _override_real_user():
-        # Always returns whoever state["acting_as"] points at — represents the JWT principal.
-        u = db.query(User).filter(User.id == state["acting_as"]).first()
-        slug_row = (
-            db.query(UserRole.slug)
-            .join(UserRoleAssignment, UserRoleAssignment.role_id == UserRole.id)
-            .filter(UserRoleAssignment.user_id == u.id)
-            .first()
+        admin = _seed_user(db, user_id="22f43cd5-cfe1-5bd1-9197-ed029698989d", email="admin1@test.com", role_id=admin_role.id)
+        target = _seed_user(db, user_id="a1cb11f1-0c6e-5ec2-99aa-48ca3cc1a35e", email="user1@test.com", role_id=member_role.id)
+        other_admin = _seed_user(db, user_id="5f796e60-982f-5377-92ea-6a1e43e1f82f", email="admin2@test.com", role_id=admin_role.id)
+        inactive = _seed_user(
+            db,
+            user_id="234ff7d4-064f-5cda-90d5-48148bfc6954",
+            email="user2@test.com",
+            role_id=member_role.id,
+            status="INACTIVE",
         )
-        return {
-            "id": u.id,
-            "email": u.email,
-            "role_id": None,
-            "name": u.name,
-            "avatar": None,
-            "status": u.status,
-            "role_name": slug_row[0] if slug_row else None,
-        }
 
-    def _override_get_db():
-        yield db
+        state = {"acting_as": admin.id}
 
-    app.dependency_overrides[get_real_user] = _override_real_user
-    app.dependency_overrides[get_current_user] = _override_real_user
-    app.dependency_overrides[get_db] = _override_get_db
+        def _override_real_user():
+            # Always returns whoever state["acting_as"] points at — represents the JWT principal.
+            u = db.query(User).filter(User.id == state["acting_as"]).first()
+            slug_row = (
+                db.query(UserRole.slug)
+                .join(UserRoleAssignment, UserRoleAssignment.role_id == UserRole.id)
+                .filter(UserRoleAssignment.user_id == u.id)
+                .first()
+            )
+            return {
+                "id": u.id,
+                "email": u.email,
+                "role_id": None,
+                "name": u.name,
+                "avatar": None,
+                "status": u.status,
+                "role_name": slug_row[0] if slug_row else None,
+            }
 
-    with TestClient(app) as client:
-        yield {
-            "client": client,
-            "db": db,
-            "admin": admin,
-            "target": target,
-            "other_admin": other_admin,
-            "inactive": inactive,
-            "state": state,
-        }
+        def _override_get_db():
+            yield db
 
-    app.dependency_overrides.clear()
-    db.close()
+        app.dependency_overrides[get_real_user] = _override_real_user
+        app.dependency_overrides[get_current_user] = _override_real_user
+        app.dependency_overrides[get_db] = _override_get_db
+
+        with TestClient(app) as client:
+            yield {
+                "client": client,
+                "db": db,
+                "admin": admin,
+                "target": target,
+                "other_admin": other_admin,
+                "inactive": inactive,
+                "state": state,
+            }
+
+        app.dependency_overrides.clear()
 
 
 def test_start_requires_admin(api):
@@ -237,11 +203,6 @@ def test_stop_ends_session_and_idempotent(api):
     assert len(end_audits) == 1
 
 
-@pytest.mark.skip(
-    reason="Partial unique index `WHERE ended_at IS NULL` is postgres-only; "
-    "SQLite enforces full unique on admin_user_id and rejects the second insert "
-    "before commit even though the prior row was ended. Verify on Postgres."
-)
 def test_starting_again_auto_ends_prior(api):
     db = api["db"]
     r1 = api["client"].post(

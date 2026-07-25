@@ -10,21 +10,16 @@ history that makes the table worth having.
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.database import Base
-from app.models.api_call_log import ApiCallLog
 from app.services.api_call_log_service import prune_api_call_log
+from app.models.api_call_log import ApiCallLog
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine("sqlite://")
-    Base.metadata.create_all(engine, tables=[ApiCallLog.__table__])
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    with blank_session() as session:
+        yield session
 
 
 def _row(session, *, days_ago, payload="body"):

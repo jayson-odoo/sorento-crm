@@ -14,20 +14,12 @@ from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 # MUST be first app import — resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 
-
-@compiles(JSONB, "sqlite")  # type: ignore[misc]
-def _jsonb_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
-
+from tests._pg_fixture import blank_session
 
 _ADMIN_ID = "119c091d-f6bd-5b97-9a60-f65b08a723f6"
 _ADMIN_ROLE = "101e642d-cb99-53a2-9297-0326d1fe083a"
@@ -84,47 +76,19 @@ def _seed(db: Session) -> None:
 
 @pytest.fixture
 def db_and_app():
-    from app.database import Base
     from app.dependencies import get_current_user, get_db
-    from app.models.user import User, UserRole, UserRoleAssignment
-    from app.models.complaints import Complaint
-    from app.models.procurement import StockInquiry
-    from app.models.audit import AuditLog
-    from app.models.lookup import LookupBinding
-    from app.models.sla import ConversationSLATracking, SLAPolicy, SLAPolicyTier
 
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    tables = [
-        User.__table__,
-        UserRole.__table__,
-        UserRoleAssignment.__table__,
-        Complaint.__table__,
-        StockInquiry.__table__,
-        AuditLog.__table__,
-        ConversationSLATracking.__table__,
-        SLAPolicy.__table__,
-        SLAPolicyTier.__table__,
-        # Lookup validator listener queries this on insert in the full suite.
-        LookupBinding.__table__,
-    ]
-    Base.metadata.create_all(engine, tables=tables)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = SessionLocal()
-    _seed(db)
+    with blank_session() as db:
+        _seed(db)
 
-    def _override_get_db():
-        yield db
+        def _override_get_db():
+            yield db
 
-    app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[get_db] = _override_get_db
 
-    yield db, get_current_user
+        yield db, get_current_user
 
-    app.dependency_overrides.clear()
-    db.close()
+        app.dependency_overrides.clear()
 
 
 def test_permitted_user_gets_200(db_and_app):

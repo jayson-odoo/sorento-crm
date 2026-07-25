@@ -14,14 +14,13 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from app.schemas.lookup import LookupSetCreate, LookupOptionCreate, LookupKeywordIn
 from app.services.lookup_set_service import LookupSetService
 from app.services.lookup_option_service import LookupOptionService
 from app.services.lookup_validator import validate_lookup_value, _cache_clear
 from app.services.error_handler import AppException
+from tests._pg_fixture import blank_session
 
 
 SET_KEY = "procurement_sponsor_subject"
@@ -29,39 +28,12 @@ SET_KEY = "procurement_sponsor_subject"
 
 @pytest.fixture
 def db_session():
-    from app.database import Base
-    from app.models.lookup import (
-        LookupSet,
-        LookupOption,
-        LookupOptionKeyword,
-        LookupBinding,
-    )
-    from app.models.user import User
-    from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine
-
-    engine = create_engine("sqlite:///:memory:")
-    # Deliberately do NOT enable PRAGMA foreign_keys so the users self-FK and the
-    # respond_contacts FK column can exist without their referenced tables.
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            LookupSet.__table__,
-            LookupOption.__table__,
-            LookupOptionKeyword.__table__,
-            LookupBinding.__table__,
-            User.__table__,
-            PurchaseRequestHeader.__table__,
-            PurchaseRequestLine.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    _cache_clear()
-    try:
-        yield session
-    finally:
-        session.close()
+    with blank_session() as session:
         _cache_clear()
+        try:
+            yield session
+        finally:
+            _cache_clear()
 
 
 @pytest.fixture

@@ -4,7 +4,7 @@ The callback endpoint updates the ORIGINAL log's status from the body (success
 AND failed) and must NOT write a secondary `integration_log_update` meta-log row
 (it previously hardcoded a success meta-log, blinding the health dashboard).
 
-Endpoint test: TestClient hits the real route with an sqlite-backed session.
+Endpoint test: TestClient hits the real route with a Postgres-backed session.
 The route itself carries no auth dependency, but the router-level module guard
 resolves get_current_user_or_api_key, so we override that + get_db.
 """
@@ -12,42 +12,24 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-from sqlalchemy.types import JSON
 
 from app.main import app  # noqa: E402  (import first to settle app wiring)
 import app.database as app_database
-from app.database import Base
 from app.dependencies import get_current_user_or_api_key
 from app.models.integration import IntegrationLog
-from app.models.lookup import LookupBinding
-
-
-def _prep(*models):
-    for model in models:
-        for col in model.__table__.columns:
-            if isinstance(col.type, (JSONB, ARRAY)):
-                col.type = JSON()
-                col.server_default = None
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    _prep(IntegrationLog, LookupBinding)
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine, tables=[IntegrationLog.__table__, LookupBinding.__table__]
-    )
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+    """A blank Postgres schema, rolled back after the test.
+
+    Was in-memory sqlite plus a `_prep` helper that rewrote JSONB/ARRAY columns
+    to JSON on the shared model classes -- a global, permanent mutation that
+    leaked into every other test importing those models.
+    """
+    with blank_session() as session:
+        yield session
 
 
 @pytest.fixture

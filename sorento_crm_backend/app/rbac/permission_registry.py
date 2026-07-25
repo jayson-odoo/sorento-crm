@@ -220,6 +220,26 @@ PERMISSION_REGISTRY.extend([
     {"slug": "integration.respond_templates.edit", "name": "Edit WhatsApp Template Defaults", "description": "Set or clear the default template + param mapping per auto-send use case."},
     {"slug": "integration.respond_templates.sync", "name": "Sync WhatsApp Templates", "description": "Trigger a Respond.io channel + template sync."},
 ])
+# Managing integration records and their API keys. Separate from
+# integration_logs.*: reading what an integration did and being able to mint a
+# credential for it are very different levels of trust.
+PERMISSION_REGISTRY.extend(_crud("integration", "integrations", "Integrations"))
+PERMISSION_REGISTRY.extend([
+    {"slug": "integration.integrations.manage_keys", "name": "Manage Integration API Keys", "description": "Issue, rotate and revoke API keys for an integration. Grants the ability to mint a working credential."},
+])
+# Capabilities exposed only over /api/v1/external, for integration callers
+# (n8n, the MCP server, the AutoCount ESB). These have no human-facing screen,
+# so no slug existed until AC-AC-05 required every external endpoint to enforce
+# one. Granted to existing roles by migration 298 -- a permission with no grant
+# path silently 403s the feature it was meant to protect.
+PERMISSION_REGISTRY.extend([
+    {"slug": "integration.storage.presign", "name": "Presign storage URLs", "description": "Generate presigned upload/download URLs and view links for stored files."},
+    {"slug": "integration.assignment.resolve", "name": "Resolve next assignee", "description": "Ask Sorento which team member should handle a conversation next."},
+    {"slug": "integration.conversation_context.edit", "name": "Read and write conversation context", "description": "Read or update conversation variables and assistant memory frames."},
+    {"slug": "integration.contacts.sync", "name": "Sync contacts", "description": "Create or update Respond.io contact records from an external system."},
+    {"slug": "integration.semantic_search.use", "name": "Use semantic search", "description": "Run embedding and tool retrieval searches."},
+    {"slug": "integration.ideation.submit", "name": "Submit ideation turns", "description": "Post ideation capture turns from an external channel."},
+])
 
 # System
 PERMISSION_REGISTRY.extend(_crud("system", "import_jobs", "Import Jobs"))

@@ -93,7 +93,8 @@ def create_form(
         )
 
     service = FormService(db)
-    created_by = current_user.get("id") or "system"
+    # The integration's principal is a real users row, so attribution is recorded.
+    created_by = current_user["id"]
     try:
         form = service.create_form(form_data, created_by)
         if attachment_id:

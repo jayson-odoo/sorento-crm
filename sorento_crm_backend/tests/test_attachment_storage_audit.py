@@ -4,43 +4,16 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.resources import Attachment, AttachmentDirectory, AttachmentType
 import app.services.attachment_storage_audit_service as audit
-
-
-@compiles(JSONB, "sqlite")
-def _jsonb_as_json_on_sqlite(_element, _compiler, **_kw):
-    return "JSON"
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            AttachmentDirectory.__table__,
-            AttachmentType.__table__,
-            Attachment.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        yield session
 
 
 def _seed(db, *, key: str, provider: str = "r2", is_deleted: bool = False) -> str:

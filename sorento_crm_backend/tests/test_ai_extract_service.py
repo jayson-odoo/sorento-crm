@@ -19,8 +19,6 @@ import types
 from typing import Any
 
 import pytest
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
 
 from app.services.ai_extract.extract_service import (
     AIExtractService,
@@ -38,6 +36,7 @@ from app.services.llm_provider import (
     _attach_images_anthropic,
     _attach_images_openai,
 )
+from tests._pg_fixture import blank_session
 
 
 # ---- Helpers --------------------------------------------------------------
@@ -45,32 +44,8 @@ from app.services.llm_provider import (
 
 @pytest.fixture
 def db_session():
-    from app.database import Base
-    from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
-
-    engine = create_engine("sqlite:///:memory:")
-
-    @event.listens_for(engine, "connect")
-    def _enable_fk(dbapi_connection, _record):
-        cur = dbapi_connection.cursor()
-        cur.execute("PRAGMA foreign_keys=ON")
-        cur.close()
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            LookupSet.__table__,
-            LookupOption.__table__,
-            LookupOptionKeyword.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = Session()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 @pytest.fixture

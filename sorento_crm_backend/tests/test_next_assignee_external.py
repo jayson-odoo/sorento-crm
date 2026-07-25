@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.dependencies import get_db, get_external_api_user
+from tests._external_auth import external_permissions_granted
 
 
 @pytest.fixture
@@ -21,7 +22,11 @@ def client():
 
     app.dependency_overrides[get_external_api_user] = _user
     app.dependency_overrides[get_db] = _db
-    yield TestClient(app)
+    # Authorization is deliberately out of scope here: this suite mocks the
+    # database, so the real RBAC lookup cannot answer. Enforcement is covered
+    # by test_external_permission_guard / _coverage.
+    with external_permissions_granted():
+        yield TestClient(app)
     app.dependency_overrides.clear()
 
 

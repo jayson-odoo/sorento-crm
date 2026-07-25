@@ -27,19 +27,13 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.access import (
     AccessAgent,
     AgentTeam,
-    RespondContact,
     Team,
     TeamMember,
 )
-from app.models.lookup import LookupBinding
 from app.models.sla import (
     ConversationSLAEventLog,
     ConversationSLATracking,
@@ -49,57 +43,16 @@ from app.models.sla import (
 from app.models.user import SystemSetting, User
 from app.services.handling_lock_service import HandlingLockService
 from app.tasks.notification_tasks import _send_whatsapp_for_notification
+from tests._pg_fixture import blank_session
 
 
 # --------------------------------------------------------------------------- #
-# PRODUCER — sqlite fixture (mirrors tests/test_form_handling_lock.py)         #
+# PRODUCER — blank Postgres schema (mirrors tests/test_form_handling_lock.py)  #
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY, JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for model in (RespondContact, SystemSetting):
-        for col in list(model.__table__.columns):
-            if isinstance(col.type, (JSONB, PG_ARRAY)):
-                col.type = GenericJSON()
-                col.server_default = None
-
-    for idx in list(AgentTeam.__table__.indexes):
-        if idx.name in (
-            "uq_agent_teams_agent_code_tier_null",
-            "uq_agent_teams_agent_code_tier_not_null",
-        ):
-            AgentTeam.__table__.indexes.discard(idx)
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            SLAPolicy.__table__,
-            SLAPolicyTier.__table__,
-            ConversationSLATracking.__table__,
-            ConversationSLAEventLog.__table__,
-            RespondContact.__table__,
-            User.__table__,
-            SystemSetting.__table__,
-            AccessAgent.__table__,
-            Team.__table__,
-            TeamMember.__table__,
-            AgentTeam.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 @pytest.fixture

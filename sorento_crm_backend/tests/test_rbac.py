@@ -3,25 +3,23 @@ RBAC tests: multi-role aggregation, superadmin bypass, deny-by-default, role-per
 Run with: pytest tests/test_rbac.py -v
 """
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session
 from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission
 from app.services.user_service import UserPermissionService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db_session():
-    """Create an in-memory SQLite session for unit tests. Requires DB schema to be created."""
-    from app.database import Base
-    from app import models  # noqa: F401 - register all model tables
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    """A blank Postgres schema, rolled back after the test.
+
+    Was an in-memory sqlite engine. sqlite omitted tables these fixtures rely on
+    and shared one connection across the fixture and route threads, which is
+    what made this file fail intermittently with "no such table:
+    user_permissions" depending on test order.
+    """
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 @pytest.fixture
@@ -36,11 +34,12 @@ def rbac_data(db_session: Session):
     db_session.flush()
     db_session.add(UserRolePermission(role_id=role1.id, permission_id=perm1.id))
     db_session.add(UserRolePermission(role_id=role2.id, permission_id=perm2.id))
+    # No role_id: that column is gone from User. Role membership is carried by
+    # the UserRoleAssignment rows added just below.
     user = User(
         id="u1",
         email="u1@test.com",
         name="User 1",
-        role_id=role1.id,
         status="ACTIVE",
     )
     db_session.add(user)
@@ -81,7 +80,6 @@ def test_deny_without_permission(db_session: Session, rbac_data: dict):
         id=u3_id,
         email="u3@test.com",
         name="User 3",
-        role_id=rbac_data["role1_id"],
         status="ACTIVE",
     )
     db_session.add(u_only_r1)

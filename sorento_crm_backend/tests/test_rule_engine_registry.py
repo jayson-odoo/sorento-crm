@@ -9,7 +9,7 @@ resolve_facts on a Promotion ORM object -> flat fact dict:
 Plus the accessLevels dynamic-options resolver returns active ContactAccessType
 rows as {value: code, label: name}.
 
-Uses an in-memory sqlite engine (conftest compiles JSONB -> JSON for sqlite).
+Runs against a blank copy of the real Postgres schema, rolled back per test.
 """
 from __future__ import annotations
 
@@ -17,41 +17,18 @@ import uuid
 from datetime import date, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.access import ContactAccessType
 from app.models.marketing import Promotion
 from app.rule_engine.registry import fact_map, get_facts, resolve_facts
 from app.services.sla_service import MALAYSIA_TZ
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    # ContactAccessType.keywords carries a pg `'[]'::jsonb` server_default whose
-    # `::jsonb` cast sqlite's DDL compiler can't parse — null it for the fixture.
-    for tbl in (Promotion.__table__, ContactAccessType.__table__):
-        for col in tbl.columns:
-            sd = getattr(col.server_default, "arg", None)
-            if sd is not None and "::" in str(sd):
-                col.server_default = None
-    Base.metadata.create_all(
-        engine,
-        tables=[Promotion.__table__, ContactAccessType.__table__],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 def _malaysia_today() -> date:

@@ -21,44 +21,20 @@ import uuid
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
 from app.models.access import RespondContact
 from app.models.procurement import StockInquiry
 from app.models.user import User
 from app.services.procurement_service import StockInquiryService
+from tests._pg_fixture import blank_session
 
 SEND = "_send_stock_inquiry_contact_message"
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
-
-    for col in list(RespondContact.__table__.columns):
-        if isinstance(col.type, JSONB):
-            col.type = GenericJSON()
-            col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[RespondContact.__table__, User.__table__, StockInquiry.__table__],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 def _inquiry(db, status: str) -> str:

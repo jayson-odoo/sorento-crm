@@ -26,22 +26,8 @@ from __future__ import annotations
 import typing
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from app.database import Base
-from app.models.ai_assistant import (
-    AIAssistantConfig,
-    AIAssistantConversation,
-    AIAssistantGovernanceEvent,
-    AIAssistantMessage,
-    AIAssistantUnansweredQuery,
-    AIAssistantUsageLog,
-    AIAssistantWishlistCluster,
-)
-from app.models.lookup import LookupBinding
 from app.models.user import User
 from app.schemas.ai_assistant import AIAssistantAuthContext
 from app.schemas.ai_semantic_parser import (
@@ -56,6 +42,7 @@ from app.services.ai_assistant_service import (
     AIAssistantChatService,
 )
 from app.services.entity_resolver import ResolutionResult
+from tests._pg_fixture import blank_session
 
 
 def _parse(intent: str, *, confidence: float = 0.9) -> ParseResult:
@@ -129,40 +116,25 @@ def test_low_confidence_ideate_demotes_to_agent():
 # ===========================================================================
 # AC-06 — in-app WEB brain redirects ideate to /ideas (no create_idea)
 # ===========================================================================
-@compiles(JSONB, "sqlite")  # type: ignore[misc]
-def _jsonb_sqlite(_type_, _compiler, **_kw):  # noqa: D401, ANN001
-    return "TEXT"
-
-
 @pytest.fixture
 def db_session() -> Session:
-    engine = create_engine("sqlite:///:memory:")
-    tables = [
-        User.__table__,
-        AIAssistantConfig.__table__,
-        AIAssistantConversation.__table__,
-        AIAssistantMessage.__table__,
-        AIAssistantGovernanceEvent.__table__,
-        AIAssistantUsageLog.__table__,
-        AIAssistantWishlistCluster.__table__,
-        AIAssistantUnansweredQuery.__table__,
-        LookupBinding.__table__,
-    ]
-    Base.metadata.create_all(engine, tables=tables)
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    """A blank Postgres schema, rolled back after the test.
+
+    Was in-memory sqlite with a JSONB->TEXT compiler shim. The shim mattered:
+    it turned the assistant's JSONB metadata columns into strings, so the
+    ``metadata_json`` assertion below was reading a hand-rolled type rather
+    than the one production uses.
+    """
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
-@pytest.fixture(autouse=True)
-def _stub_rate_limit_clause(monkeypatch):
-    import app.services.ai_assistant_service as svc_module
-    from sqlalchemy import literal
-
-    monkeypatch.setattr(svc_module, "text", lambda _expr: literal(0))
+# The autouse ``_stub_rate_limit_clause`` fixture that lived here is gone. It
+# rewrote ``text`` to ``literal(0)`` inside the chat service so sqlite would not
+# choke on the per-minute rate-limit window, ``func.now() - text("interval '1
+# minute'")``. That substitution meant the rate-limit query under test was never
+# the one production runs. Postgres executes the real interval, so the stub is
+# no longer needed -- and the real clause is now exercised.
 
 
 @pytest.fixture

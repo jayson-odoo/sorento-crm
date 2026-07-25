@@ -12,76 +12,54 @@ import uuid
 from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.audit import AuditLog
-from app.models.embeddings import EmbeddingQueue
-from app.models.lookup import LookupBinding, LookupOption, LookupSet
-from app.models.notification import Notification, NotificationDelivery, PushSubscription
-from app.models.attachment_field_link import AttachmentFieldLink
-from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
-from app.models.resources import Attachment, AttachmentDirectory, AttachmentType
+from app.models.notification import Notification
+from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.user import User
 from app.schemas.product import ProductUpdate
 from app.services.product_service import ProductService
 import app.services.product_discontinued_notify_service as svc
-
-
-@compiles(JSONB, "sqlite")
-def _jsonb_as_json_on_sqlite(_element, _compiler, **_kw):
-    return "JSON"
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            Product.__table__,
-            ProductCategory.__table__,
-            Brand.__table__,
-            UnitOfMeasure.__table__,
-            AttachmentDirectory.__table__,
-            AttachmentType.__table__,
-            Attachment.__table__,
-            AttachmentFieldLink.__table__,
-            User.__table__,
-            Notification.__table__,
-            NotificationDelivery.__table__,
-            PushSubscription.__table__,
-            LookupSet.__table__,
-            LookupOption.__table__,
-            LookupBinding.__table__,
-            AuditLog.__table__,
-            EmbeddingQueue.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    """A blank Postgres schema, rolled back after the test.
+
+    Was in-memory sqlite with a JSONB->JSON compile shim and a hand-listed
+    subset of tables that had to be extended whenever a global listener started
+    touching a new one. The real schema has all 199.
+    """
+    with blank_session() as session:
+        yield session
+
+
+def _parent_refs(db):
+    """The category + UOM rows Product's NOT NULL FKs point at.
+
+    sqlite let each product carry a random unmatched UUID in these columns;
+    Postgres enforces them, so one real parent pair is shared by the products a
+    test creates.
+    """
+    if not hasattr(db, "_refs"):
+        category_id = str(uuid.uuid4())
+        uom_id = str(uuid.uuid4())
+        db.add(ProductCategory(id=category_id, category_code="CAT1", category_name="Category One"))
+        db.add(UnitOfMeasure(id=uom_id, uom_code="EA", uom_name="Each"))
+        db.flush()
+        db._refs = (category_id, uom_id)
+    return db._refs
 
 
 def _product(db, *, code: str, discontinued: bool, notified_at=None, batch_id=None):
+    category_id, uom_id = _parent_refs(db)
     p = Product(
         id=str(uuid.uuid4()),
         product_code=code,
         product_name=code,
         description="**** EOL" if discontinued else "active",
-        category_id=str(uuid.uuid4()),
-        base_uom_id=str(uuid.uuid4()),
+        category_id=category_id,
+        base_uom_id=uom_id,
         list_price=10,
         is_active=True,
         is_discontinued=discontinued,

@@ -11,11 +11,8 @@ from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import create_engine, JSON
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import text
 
-from app.database import Base
 from app.models.access import (
     AccessAgent,
     AgentTeam,
@@ -25,7 +22,6 @@ from app.models.access import (
     TeamMember,
 )
 from app.models.integration import IntegrationLog
-from app.models.lookup import LookupBinding
 from app.models.sla import (
     ConversationSLAEventLog,
     ConversationSLATracking,
@@ -47,54 +43,20 @@ from app.models.user import (
 from app.services.error_handler import AppException
 from app.services.sla_service import ConversationSLATrackingService
 from app.services.sla_takeover_service import SlaTakeoverService
+from tests import _pg_fixture
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    for col in RespondContact.__table__.columns:
-        if col.name == "session_vars":
-            col.type = JSON()
-            col.server_default = None
-    # sqlite can't DDL postgres ARRAY columns (system_settings.notify_*_role_ids).
-    from sqlalchemy.dialects.postgresql import ARRAY as _PGARRAY
-
-    for col in SystemSetting.__table__.columns:
-        if isinstance(col.type, _PGARRAY):
-            col.type = JSON()
-            col.server_default = None
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            User.__table__,
-            UserRole.__table__,
-            UserRoleAssignment.__table__,
-            SystemSetting.__table__,
-            AccessAgent.__table__,
-            Team.__table__,
-            TeamMember.__table__,
-            AgentTeam.__table__,
-            AgentTeamRoundRobinCursor.__table__,
-            SLAPolicy.__table__,
-            SLAPolicyTier.__table__,
-            ConversationSLATracking.__table__,
-            ConversationSLAEventLog.__table__,
-            SlaTakeoverRequest.__table__,
-            RespondContact.__table__,
-            IntegrationLog.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        # descendant_team_ids() drops to raw text() SQL on Postgres ("FROM teams"),
+        # which the engine's schema_translate_map does not rewrite -- unqualified
+        # names would resolve against the real public schema and read live rows.
+        # SET LOCAL is scoped to the outer transaction, so it unwinds with it.
+        blank = _pg_fixture._BLANK["name"]
+        session.execute(text(f'SET LOCAL search_path TO "{blank}", "{blank}_scm"'))
+        yield session
 
 
 # ---- builders -------------------------------------------------------------

@@ -10,22 +10,18 @@ import uuid
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services import product_service as product_service_mod
 from app.services.product_service import ProductService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture(autouse=True)
 def _isolate_side_effects(monkeypatch):
     """Coercion of the price happens before any supplier/settings/embedding work.
-    Stub those out: SystemSetting has an ARRAY column SQLite can't render, the
-    embedding fan-out writes JSONB + enqueues RQ jobs, and the default-supplier
-    lookup is irrelevant to price handling."""
+    Stub those out: the embedding fan-out enqueues RQ jobs, and the
+    default-supplier / lead-time lookups are irrelevant to price handling."""
     monkeypatch.setattr(
         product_service_mod.ProductService,
         "_bulk_publish_product_embedding_events",
@@ -45,26 +41,12 @@ def _isolate_side_effects(monkeypatch):
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            ProductCategory.__table__,
-            Brand.__table__,
-            UnitOfMeasure.__table__,
-            Product.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    """A blank Postgres schema, rolled back after the test.
+
+    Was in-memory sqlite over a hand-listed subset of the product tables.
+    """
+    with blank_session() as session:
+        yield session
 
 
 @pytest.fixture

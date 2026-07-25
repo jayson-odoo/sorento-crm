@@ -10,19 +10,12 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.procurement import (
-    ApprovalToken,
-    PurchaseRequestHeader,
-    PurchaseRequestLine,
-)
+from app.models.procurement import ApprovalToken, PurchaseRequestHeader
 from app.models.user import User
 from app.services import procurement_service as procurement_service_mod
 from app.services.procurement_service import PurchaseRequestService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture(autouse=True)
@@ -45,26 +38,8 @@ def _silence_side_effects(monkeypatch):
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            PurchaseRequestHeader.__table__,
-            PurchaseRequestLine.__table__,
-            ApprovalToken.__table__,
-            User.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        yield session
 
 
 def _seed_submitted_request_with_token(db) -> str:

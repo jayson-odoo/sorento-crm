@@ -13,7 +13,8 @@ Covers the endpoint side of:
   A8 (root scope at the HTTP layer),
   RBAC (unauthenticated -> 401/403).
 
-Auth-bypass + sqlite fixture pattern copied from test_upload_activity_endpoint.py.
+Auth-bypass pattern copied from test_upload_activity_endpoint.py; runs against a
+blank Postgres schema, rolled back at teardown.
 """
 from __future__ import annotations
 
@@ -22,12 +23,12 @@ from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 # MUST be first app import — resolves circular-import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
+
+from tests._pg_fixture import blank_session
 
 _USER_ID = "773b536d-c675-5a29-b44c-37f956462ba0"
 _ROLE_ID = "eb0d8146-c1be-524b-a31a-34b5cdc1ac01"
@@ -54,57 +55,24 @@ def _seed_user(db: Session) -> None:
 @pytest.fixture
 def client():
     from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
-    from app.models.user import User, UserRole, UserRoleAssignment
-    from app.models.resources import Attachment, AttachmentDirectory, AttachmentType
-    from app.models.lookup import LookupBinding  # validator listener checks this table
 
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
+    with blank_session() as db:
+        _seed_user(db)
 
-    from sqlalchemy.dialects.postgresql import JSONB
-    from sqlalchemy.types import JSON as GenericJSON
+        def _override_get_db():
+            yield db
 
-    for col in list(Attachment.__table__.columns):
-        if isinstance(col.type, JSONB):
-            col.type = GenericJSON()
+        def _override_current_user():
+            return {"id": _USER_ID, "email": "drive@test.com"}
 
-    from app.database import Base
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[get_current_user] = _override_current_user
+        app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
 
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            User.__table__,
-            UserRole.__table__,
-            UserRoleAssignment.__table__,
-            AttachmentDirectory.__table__,
-            AttachmentType.__table__,
-            Attachment.__table__,
-            LookupBinding.__table__,
-        ],
-    )
+        with TestClient(app) as c:
+            yield c, db
 
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = SessionLocal()
-    _seed_user(db)
-
-    def _override_get_db():
-        yield db
-
-    def _override_current_user():
-        return {"id": _USER_ID, "email": "drive@test.com"}
-
-    app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user] = _override_current_user
-    app.dependency_overrides[get_current_user_or_api_key] = _override_current_user
-
-    with TestClient(app) as c:
-        yield c, db
-
-    app.dependency_overrides.clear()
-    db.close()
+        app.dependency_overrides.clear()
 
 
 def _folder(db: Session, name: str, parent_id: str | None = None) -> str:
@@ -197,12 +165,10 @@ def test_drive_route_not_captured_by_attachment_id(client):
 def test_single_attachment_get_route_distinct_from_drive(client):
     """Regression: /{attachment_id} resolves to the single-get handler, NOT /drive.
 
-    The single-get handler resolves linked entities across many domain tables
-    (products, etc.) not created in this minimal sqlite fixture, so it raises a
-    500 here — but crucially it is the SINGLE-attachment handler executing, not
-    the drive list handler. We assert the response is NOT the drive list shape
-    (no ``data[]``/``pagination``/``recursive``), which proves route resolution
-    did not fall through to /drive.
+    Whatever the single-get handler returns for this attachment, it is the
+    SINGLE-attachment handler executing, not the drive list handler. We assert
+    the response is NOT the drive list shape (no ``data[]``/``pagination``/
+    ``recursive``), which proves route resolution did not fall through to /drive.
     """
     c, db = client
     aid = _file(db, filename="single.pdf", directory_id=None)

@@ -25,21 +25,19 @@ from typing import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.orm import Session
 
 # Import app.main first so the full module graph (dependencies, guards, models)
 # initializes in the right order — avoids a partially-initialized circular import.
 from app.main import app
 import app.dependencies as deps
-from app.database import Base, SessionLocal, engine
+from app.database import SessionLocal, engine
 from app.models.order import Order
 from app.models.complaints import Complaint
 from app.models.procurement import PurchaseRequestHeader
-from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.user_service import UserPermissionService
+from tests._pg_fixture import blank_session
 
 _UUID = "2654ab89-2449-4910-84bf-f718ccc661d2"
 
@@ -102,36 +100,25 @@ def api(monkeypatch) -> Iterator[tuple[TestClient, set]]:
     is needed — the endpoint is exercised only up to the point it reaches the
     service, which is exactly the auth + RBAC + delegation surface under test.
     """
-    eng = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    # Only the users table is queried before the (spied) service call, by the
-    # approval-decision route's approver lookup.
-    Base.metadata.create_all(eng, tables=[User.__table__])
-    TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=eng)
-    sess = TestingSession()
+    with blank_session() as sess:
+        allow: set = set()
 
-    allow: set = set()
+        def _override_db():
+            yield sess
 
-    def _override_db():
-        yield sess
-
-    app.dependency_overrides[deps.get_db] = _override_db
-    app.dependency_overrides[deps.get_current_user] = lambda: {"id": "u-admin"}
-    app.dependency_overrides[deps.get_current_user_or_api_key] = lambda: {"id": "u-admin"}
-    monkeypatch.setattr(
-        UserPermissionService, "check_user_has_permission", lambda self, uid, slug: slug in allow
-    )
-    client = TestClient(app)
-    try:
-        yield client, allow
-    finally:
-        sess.close()
-        app.dependency_overrides.pop(deps.get_db, None)
-        app.dependency_overrides.pop(deps.get_current_user, None)
-        app.dependency_overrides.pop(deps.get_current_user_or_api_key, None)
+        app.dependency_overrides[deps.get_db] = _override_db
+        app.dependency_overrides[deps.get_current_user] = lambda: {"id": "u-admin"}
+        app.dependency_overrides[deps.get_current_user_or_api_key] = lambda: {"id": "u-admin"}
+        monkeypatch.setattr(
+            UserPermissionService, "check_user_has_permission", lambda self, uid, slug: slug in allow
+        )
+        client = TestClient(app)
+        try:
+            yield client, allow
+        finally:
+            app.dependency_overrides.pop(deps.get_db, None)
+            app.dependency_overrides.pop(deps.get_current_user, None)
+            app.dependency_overrides.pop(deps.get_current_user_or_api_key, None)
 
 
 def _spy_raise_418(monkeypatch, target_cls, method_name):
@@ -234,23 +221,18 @@ def test_cancel_without_reason_does_not_set_remarks(api, monkeypatch):
     ],
 )
 def test_no_credentials_returns_401(monkeypatch, url, body):
-    eng = create_engine(
-        "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
-    )
-    Base.metadata.create_all(eng, tables=[User.__table__])
-    sess = sessionmaker(bind=eng)()
+    with blank_session() as sess:
 
-    def _override_db():
-        yield sess
+        def _override_db():
+            yield sess
 
-    app.dependency_overrides[deps.get_db] = _override_db
-    client = TestClient(app)
-    try:
-        resp = client.post(url, json=body)  # no Authorization, no X-API-Key
-        assert resp.status_code == 401
-    finally:
-        sess.close()
-        app.dependency_overrides.pop(deps.get_db, None)
+        app.dependency_overrides[deps.get_db] = _override_db
+        client = TestClient(app)
+        try:
+            resp = client.post(url, json=body)  # no Authorization, no X-API-Key
+            assert resp.status_code == 401
+        finally:
+            app.dependency_overrides.pop(deps.get_db, None)
 
 
 # --------------------------------------------------------------------------- #

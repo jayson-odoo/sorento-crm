@@ -5,7 +5,7 @@ creates a UserDownload row); empty ids -> 400; unknown id -> 404; auth denial
 (no principal) -> 401/403; enqueue failure (Redis down) -> the UserDownload row
 is marked failed.
 
-sqlite fixture + dependency overrides (auth pattern from
+Blank Postgres schema + dependency overrides (auth pattern from
 test_upload_activity_endpoint.py). enqueue_job is monkeypatched so no Redis is hit.
 """
 from __future__ import annotations
@@ -14,11 +14,9 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from app.main import app  # noqa: E402
+from tests._pg_fixture import blank_session
 
 
 _USER_ID = "130c548f-048f-53b2-97a6-3a54676bea77"
@@ -31,50 +29,30 @@ def ctx(monkeypatch):
         get_current_user_or_api_key,
         get_db,
     )
-    from app.database import Base
-    from app.models.audit import AuditLog
-    from app.models.download import UserDownload
-    from app.models.lookup import LookupBinding
-    from app.models.marketing import Promotion
 
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            Promotion.__table__,
-            UserDownload.__table__,
-            AuditLog.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    db = SessionLocal()
+    with blank_session() as db:
 
-    def _override_get_db():
-        yield db
+        def _override_get_db():
+            yield db
 
-    def _override_user():
-        return {"id": _USER_ID, "email": "u@test.com"}
+        def _override_user():
+            return {"id": _USER_ID, "email": "u@test.com"}
 
-    app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user] = _override_user
-    app.dependency_overrides[get_current_user_or_api_key] = _override_user
+        app.dependency_overrides[get_db] = _override_get_db
+        app.dependency_overrides[get_current_user] = _override_user
+        app.dependency_overrides[get_current_user_or_api_key] = _override_user
 
-    # Capture enqueue calls; never touch Redis.
-    calls: list = []
-    import app.services.queue_service as qs
+        # Capture enqueue calls; never touch Redis.
+        calls: list = []
+        import app.services.queue_service as qs
 
-    monkeypatch.setattr(qs, "enqueue_job", lambda *a, **kw: calls.append((a, kw)))
+        monkeypatch.setattr(qs, "enqueue_job", lambda *a, **kw: calls.append((a, kw)))
 
-    with TestClient(app) as client:
-        yield client, db, calls
-
-    app.dependency_overrides.clear()
-    db.close()
+        try:
+            with TestClient(app) as client:
+                yield client, db, calls
+        finally:
+            app.dependency_overrides.clear()
 
 
 def _mk_promo(db) -> str:

@@ -2,7 +2,11 @@
 
 CHANGE 9 (separate fix): GET /api/v1/user-management/roles/ + list_roles now
 ILIKE-filter name + slug (case-insensitive partial). Endpoint is JWT-only, so this
-is a service-level test against the sqlite harness.
+is a service-level test against a blank Postgres schema.
+
+ILIKE is the point of the change, and sqlite's LIKE is case-insensitive for
+ASCII by accident -- so the old harness could not tell ILIKE from LIKE. Postgres
+can.
 
 Run:
     venv/bin/pytest tests/test_roles_search.py -q
@@ -12,38 +16,16 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from app.database import Base
-from app.models.lookup import LookupBinding  # validator listener checks this table
-from app.models.user import UserPermission, UserRole, UserRolePermission
+from app.models.user import UserRole
 from app.services.user_service import UserRoleService
+from tests._pg_fixture import blank_session
 
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            UserRole.__table__,
-            UserPermission.__table__,
-            UserRolePermission.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
-        yield s
-    finally:
-        s.close()
+    with blank_session() as session:
+        yield session
 
 
 def _seed_role(db, slug, name):

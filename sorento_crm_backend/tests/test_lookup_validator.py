@@ -1,6 +1,4 @@
 import pytest
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
 
 from app.schemas.lookup import LookupSetCreate, LookupOptionCreate, LookupBindingCreate
 from app.services.lookup_set_service import LookupSetService
@@ -9,6 +7,7 @@ from app.services.lookup_binding_service import LookupBindingService
 from app.services.lookup_eligibility import _REGISTRY, register_lookup_eligible
 from app.services.lookup_validator import validate_lookup_value, _cache_clear
 from app.services.error_handler import AppException
+from tests._pg_fixture import blank_session
 
 
 class _M:
@@ -17,29 +16,14 @@ class _M:
 
 @pytest.fixture
 def db_session():
-    from app.database import Base
-    from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
-    engine = create_engine("sqlite:///:memory:")
+    """Empty Postgres schema over the full real DDL.
 
-    @event.listens_for(engine, "connect")
-    def _enable_fk(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            LookupSet.__table__, LookupOption.__table__,
-            LookupOptionKeyword.__table__, LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    session = SessionLocal()
-    try:
+    Blank rather than the live database because a live binding on the same
+    table/column would change which values validate. ``_M`` needs no table of
+    its own -- the validator resolves bindings by table-name string.
+    """
+    with blank_session() as session:
         yield session
-    finally:
-        session.close()
 
 
 def setup_function(_):
