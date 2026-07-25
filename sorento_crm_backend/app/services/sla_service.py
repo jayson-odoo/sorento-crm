@@ -4728,12 +4728,34 @@ class ConversationSLATrackingService:
             resolve_assignee_respond_user_id_from_tracking,
         )
 
+        from app.services.integration_service import log_respond_send
+
         client = RespondClient()
+        request_payload = {"message": {"type": "text", "text": text}}
         try:
             response = client.send_message(ident, text)
-        except Exception:
+        except Exception as e:
             logger.exception("Respond send failed for SLA tracking %s", tracking_id)
+            # Record the failure in the Respond outbox before re-raising. This
+            # path used to log to stderr only, so a failed conversation reply was
+            # invisible in integration_logs.
+            log_respond_send(
+                self.db,
+                business_table="conversation_sla_tracking",
+                business_id=str(tracking_id),
+                identifier=ident,
+                request_payload=request_payload,
+                exc=e,
+            )
             raise
+        log_respond_send(
+            self.db,
+            business_table="conversation_sla_tracking",
+            business_id=str(tracking_id),
+            identifier=ident,
+            request_payload=request_payload,
+            response=response,
+        )
         enqueue_crm_chat_outbound_webhook(
             self.db,
             business_table="conversation_sla_tracking",

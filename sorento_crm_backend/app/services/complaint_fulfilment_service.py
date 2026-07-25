@@ -172,6 +172,14 @@ class ComplaintFulfilmentService:
 
         db = self.db
 
+        # Newly-created orders in the caller's batch are pending inserts with no PK
+        # yet (session autoflush is off). str(order.id) would stringify None -> the
+        # literal 'None', which then fails the UUID cast when we INSERT the link rows.
+        # Flush so every touched order has its id populated before we read it below.
+        # Validate-only never persists (caller rolls back), so skip the flush there.
+        if not dry_run:
+            db.flush()
+
         # 1. Parse new tokens per order; gather them for ONE batched complaint lookup.
         parsed: list[tuple[Order, set[str]]] = []
         all_new_tokens: set[str] = set()

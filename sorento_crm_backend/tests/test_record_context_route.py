@@ -21,9 +21,9 @@ from app.main import app  # noqa: E402
 
 from tests._pg_fixture import blank_session
 
-_ADMIN_ID = "rc-admin"
-_ADMIN_ROLE = "rc-role-superadmin"
-_NOPERM_ID = "rc-noperm"
+_ADMIN_ID = "119c091d-f6bd-5b97-9a60-f65b08a723f6"
+_ADMIN_ROLE = "101e642d-cb99-53a2-9297-0326d1fe083a"
+_NOPERM_ID = "ceb49c23-4415-5447-92bf-eeda221add96"
 _COMPLAINT_ID = str(uuid.uuid4())
 _INQUIRY_ID = str(uuid.uuid4())
 

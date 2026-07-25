@@ -8,6 +8,8 @@ export interface RecipientConfig {
   extra_emails: string[];
 }
 
+import type { RuleGroup } from '@/components/rule-builder/types';
+
 export interface Automation {
   id: string;
   name: string;
@@ -15,6 +17,9 @@ export interface Automation {
   enabled: boolean;
   trigger_type: string;
   trigger_config: Record<string, unknown>;
+  /** Optional condition tree filtering which trigger matches this automation
+   * acts on. Null = match all. Wire shape mirrors the rule engine. */
+  conditions_json: RuleGroup | null;
   action_type: string;
   email_template_id: string;
   email_template_name?: string | null;
@@ -44,6 +49,7 @@ export interface AutomationCreateBody {
   email_template_id: string;
   recipient_config?: RecipientConfig;
   group_matches?: boolean;
+  conditions_json?: RuleGroup | null;
   schedule_type?: 'manual' | 'daily';
   run_time?: string | null;
   timezone?: string;
@@ -77,6 +83,10 @@ export interface TriggerSpec {
   label: string;
   description: string;
   config_schema: Record<string, unknown>;
+  /** Rule-engine fact sources this trigger exposes. Non-empty ⇒ the automation
+   * form renders the RuleBuilder so matches can be filtered. Absent/empty on
+   * triggers that can't be filtered (backend may omit until wired). */
+  fact_sources?: string[];
 }
 
 export interface ListResponse<T> {

@@ -22,10 +22,8 @@ from app.main import app  # noqa: E402
 from tests._pg_fixture import blank_session
 
 
-_SUPERADMIN_USER_ID = "test-admin-user"
-_SUPERADMIN_ROLE_ID = "role-superadmin"
-
-
+_SUPERADMIN_USER_ID = "49e0b157-c9a7-5c2c-8dfc-f8cbf4175087"
+_SUPERADMIN_ROLE_ID = "7c50d6db-8dce-555a-85a2-86cf7756f33f"
 def _seed_superadmin(db: Session) -> None:
     """Seed a superadmin role + user so all RBAC checks are bypassed.
 

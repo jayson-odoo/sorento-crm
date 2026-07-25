@@ -1,5 +1,5 @@
 """Resource management models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Index, event
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, event
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -83,17 +83,17 @@ class Attachment(Base):
     # CDN base URL of a ~320px thumbnail object ("{key}.thumb.jpg") for the Files
     # grid; NULL for non-images / pre-backfill rows. Signed on read like file_path.
     thumbnail_path = Column(Text, nullable=True)
-    file_size_bytes = Column(Integer, nullable=True)
+    file_size_bytes = Column(BigInteger, nullable=True)
     mime_type = Column(String(100), nullable=True)
     file_hash = Column(String(64), nullable=True)
     entity_type = Column(String(100), nullable=True)
-    entity_id = Column(String, nullable=True)
-    uploaded_by = Column(String, nullable=True)
+    entity_id = Column(UUID(as_uuid=False), nullable=True)
+    uploaded_by = Column(UUID(as_uuid=False), nullable=True)
     uploaded_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     is_deleted = Column(Boolean, default=False, nullable=False)
     deleted_at = Column(DateTime(timezone=False), nullable=True)
-    deleted_by = Column(String, nullable=True)
+    deleted_by = Column(UUID(as_uuid=False), nullable=True)
     directory_id = Column(UUID(as_uuid=False), ForeignKey("attachment_directories.id", ondelete="SET NULL"), nullable=True)
     full_directory_path = Column(Text, nullable=True)  # e.g. "SORENTO CABANA (DEALER) --> SORENTO --> Product Photo --> Angle Valve"
     description = Column(Text, nullable=True)  # User-editable description for search / n8n AI agent

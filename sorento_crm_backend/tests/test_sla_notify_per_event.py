@@ -22,7 +22,7 @@ def _tracker():
         id="t1",
         assigned_to_id="u1",
         source_entity_type="purchase_request",
-        source_entity_id="pr1",
+        source_entity_id="ed46d5e7-d871-5921-b065-69e87db348fd",
         team_set_code="project_sales_manager",
         current_tier=2,
         due_at=datetime(2026, 6, 21, 9, 0, 0),

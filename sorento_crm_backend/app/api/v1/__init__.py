@@ -28,9 +28,8 @@ from app.api.v1 import (
     downloads,
     scm,
 )
-from app.api.v1.system import modules_runtime
+from app.api.v1.system import modules_runtime, rule_facts
 from app.api.v1.assistant import record_context as assistant_record_context
-from app.api.v1.user_management.access_agent_mcp_tools import router as _agent_mcp_tools_router
 from app.modules.runtime.guards import require_module_enabled, require_module_enabled_with_api_key
 
 api_router = APIRouter()
@@ -121,17 +120,11 @@ api_router.include_router(
     tags=["user-management"],
     dependencies=[Depends(require_module_enabled("base"))],
 )
-# Per-agent MCP tool ownership sub-routes — mounted separately with API-key guard
-# so automated callers (n8n, admin scripts) can use X-API-Key.
-api_router.include_router(
-    _agent_mcp_tools_router,
-    prefix="/user-management/access-agents",
-    tags=["access-agents"],
-    dependencies=[Depends(require_module_enabled_with_api_key("base"))],
-)
 # Integration management (AC-AC-08). JWT only -- deliberately NOT X-API-Key:
 # an integration must not be able to mint credentials for itself or enumerate
 # the other integrations, or a compromise of one caller escalates to all of them.
+# (The per-agent MCP tool ownership sub-routes that used to sit here were removed
+# on main in PR #30; only the integration-management mount stays.)
 api_router.include_router(
     integrations.admin.router,
     prefix="/integrations/manage",
@@ -166,6 +159,9 @@ api_router.include_router(
     dependencies=[Depends(require_module_enabled_with_api_key("base"))],
 )
 api_router.include_router(system.router, prefix="/system", tags=["system"])
+# Rule-facts catalog for the RuleBuilder (nested AND/OR condition builder in the
+# Automation edit form). JWT + automation.view permission; never X-API-Key.
+api_router.include_router(rule_facts.router, prefix="/rule-facts", tags=["rule-facts"])
 # Bubble record-context assembler (JWT+RBAC only; never exposed to EXTERNAL_API_KEY).
 api_router.include_router(
     assistant_record_context.router,
@@ -215,19 +211,6 @@ api_router.include_router(
     tags=["scm"],
     dependencies=[Depends(require_module_enabled_with_api_key("scm"))],
 )
-
-# Public quoting customer-approval endpoint — unauthenticated, must be mounted
-# OUTSIDE the commercial_core module guard.
-try:
-    from app.modules.commercial_core.routes import commercial_public_quoting as _public_quoting
-    api_router.include_router(
-        _public_quoting.router,
-        prefix="/public/commercial",
-        tags=["commercial-public-quoting"],
-    )
-except Exception:  # noqa: BLE001
-    # commercial_core not installed yet — skip silently.
-    pass
 
 # Auto-discovery of self-contained modules under app/modules/<key>/.
 # Additive: skips prefixes already registered above (LEGACY_REGISTERED_PREFIXES).

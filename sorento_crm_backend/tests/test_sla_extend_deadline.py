@@ -57,9 +57,7 @@ def db():
         yield s
 
 
-ASSIGNEE_ID = "user-assignee"
-
-
+ASSIGNEE_ID = "6dc131a2-52a4-5183-ac51-f99a2adc2bf8"
 def _seed_policy(db, **policy_over) -> str:
     pid = str(uuid.uuid4())
     db.add(SLAPolicy(id=pid, code="NORMAL", name="Normal", **policy_over))
@@ -870,15 +868,15 @@ def test_extend_does_not_advance_round_robin_cursor(db):
     never advance it: the cursor's last_assigned_user_id is unchanged afterward."""
     # Two RR-eligible members so a cursor advance would be observable.
     _seed_user(db)  # the actor / current assignee
-    _seed_user(db, "next-1")
-    _seed_user(db, "next-2")
+    _seed_user(db, "74dcc05f-9de1-56c8-b66c-5d81b3672c79")
+    _seed_user(db, "00aa4179-2642-5755-b3a3-72dab04cac0a")
 
     agent_id = str(uuid.uuid4())
     db.add(AccessAgent(id=agent_id, code="complaint", name="Complaint Agent"))
     team2_id = str(uuid.uuid4())
     db.add(Team(id=team2_id, name="Tier 2 Team"))
-    db.add(TeamMember(id=str(uuid.uuid4()), team_id=team2_id, user_id="next-1", sort_order=1))
-    db.add(TeamMember(id=str(uuid.uuid4()), team_id=team2_id, user_id="next-2", sort_order=2))
+    db.add(TeamMember(id=str(uuid.uuid4()), team_id=team2_id, user_id="74dcc05f-9de1-56c8-b66c-5d81b3672c79", sort_order=1))
+    db.add(TeamMember(id=str(uuid.uuid4()), team_id=team2_id, user_id="00aa4179-2642-5755-b3a3-72dab04cac0a", sort_order=2))
     # Agent team set 'cs' at tier 2 -> team2.
     db.add(AgentTeam(id=str(uuid.uuid4()), agent_id=agent_id, code="cs", team_id=team2_id, tier=2))
     # Flush parents first -- Postgres enforces the cursor's team/agent FKs, and the
@@ -890,7 +888,7 @@ def test_extend_does_not_advance_round_robin_cursor(db):
             id=str(uuid.uuid4()),
             agent_id=agent_id,
             team_id=team2_id,
-            last_assigned_user_id="next-1",
+            last_assigned_user_id="74dcc05f-9de1-56c8-b66c-5d81b3672c79",
         )
     )
     db.commit()
@@ -922,7 +920,7 @@ def test_extend_does_not_advance_round_robin_cursor(db):
     )
     # The notify PEEKED (next-in-line = next-2) but must NOT have advanced the cursor.
     assert cursor is not None
-    assert cursor.last_assigned_user_id == "next-1"
+    assert cursor.last_assigned_user_id == "74dcc05f-9de1-56c8-b66c-5d81b3672c79"
 
 
 # ---------------------------------------------------------------------------
@@ -975,17 +973,17 @@ def test_list_my_pending_emits_due_at_resolution(db):
 # ===========================================================================
 def _seed_next_tier_chain(db, *, source_entity_type="complaint"):
     """Seed an agent + tier-2 team + cursor so an extend's next-tier notify resolves
-    a concrete recipient ('next-1'). Returns (agent_id, team2_id, recipient_id)."""
+    a concrete recipient ('74dcc05f-9de1-56c8-b66c-5d81b3672c79'). Returns (agent_id, team2_id, recipient_id)."""
     _seed_user(db)  # actor / current assignee (ASSIGNEE_ID)
-    _seed_user(db, "next-1")
+    _seed_user(db, "74dcc05f-9de1-56c8-b66c-5d81b3672c79")
     agent_id = str(uuid.uuid4())
     db.add(AccessAgent(id=agent_id, code="complaint", name="Complaint Agent"))
     team2_id = str(uuid.uuid4())
     db.add(Team(id=team2_id, name="Tier 2 Team"))
-    db.add(TeamMember(id=str(uuid.uuid4()), team_id=team2_id, user_id="next-1", sort_order=1))
+    db.add(TeamMember(id=str(uuid.uuid4()), team_id=team2_id, user_id="74dcc05f-9de1-56c8-b66c-5d81b3672c79", sort_order=1))
     db.add(AgentTeam(id=str(uuid.uuid4()), agent_id=agent_id, code="cs", team_id=team2_id, tier=2))
     db.commit()
-    return agent_id, team2_id, "next-1"
+    return agent_id, team2_id, "74dcc05f-9de1-56c8-b66c-5d81b3672c79"
 
 
 def _attach_agent(db, tid, agent_id):

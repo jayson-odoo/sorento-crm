@@ -481,7 +481,7 @@ def test_Z2_put_rejects_locked_remarks_cs(db: Session) -> None:
     svc = OrderService(db)
     with pytest.raises(AppException) as exc:
         svc.update_order(
-            str(o.id), OrderUpdate(remarks_cs="CDF-CHANGED"), updated_by="tester"
+            str(o.id), OrderUpdate(remarks_cs="CDF-CHANGED"), updated_by="40e836b9-b307-5b9d-b7b4-1dea8f2110b8"
         )
     assert exc.value.status_code == 422
     detail = exc.value.detail

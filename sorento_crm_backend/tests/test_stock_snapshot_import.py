@@ -86,7 +86,7 @@ def test_missing_active_row_is_zeroed_with_system_adjustment_ledger(db):
         stock_data=[
             {"Item Code": "SKU-KEEP", "Location": "WH-KEEP", "Total Quantity": 10},
         ],
-        user_id="user-1",
+        user_id="717677a2-1052-5fb1-9f10-981584261561",
         validate_only=False,
     )
 
@@ -125,7 +125,7 @@ def test_inactive_warehouse_row_is_not_zeroed(db):
         stock_data=[
             {"Item Code": "SKU-ON", "Location": "WH-ON", "Total Quantity": 10},
         ],
-        user_id="user-1",
+        user_id="717677a2-1052-5fb1-9f10-981584261561",
         validate_only=False,
     )
 
@@ -154,7 +154,7 @@ def test_validate_only_reports_zero_count_without_mutating(db):
         stock_data=[
             {"Item Code": "SKU-KEEP", "Location": "WH-KEEP", "Total Quantity": 10},
         ],
-        user_id="user-1",
+        user_id="717677a2-1052-5fb1-9f10-981584261561",
         validate_only=True,
     )
 

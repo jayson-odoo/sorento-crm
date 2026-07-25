@@ -43,7 +43,7 @@ def db():
 
 def _user(db, name, **kw) -> str:
     uid = str(uuid.uuid4())
-    db.add(User(id=uid, email=f"{name}@x.com", name=name, status="active", **kw))
+    db.add(User(id=uid, email=f"{name}@x.com", name=name, status="ACTIVE", **kw))
     db.commit()
     return uid
 

@@ -69,6 +69,22 @@ function wrap(node: ReactNode) {
   return render(<QueryClientProvider client={qc}>{node}</QueryClientProvider>);
 }
 
+/** Route the shared `apiFetch` mock by URL.
+ *
+ * One mock serves both the settings POST and the page's user-select query. A
+ * blanket `mockResolvedValue({ json: () => ({}) })` therefore handed the
+ * user-select query an object, and `users?.map(...)` threw — optional chaining
+ * guards null, not a non-array. Those escaped as unhandled rejections: the
+ * assertions still passed, but vitest exited non-zero, which the deploy gate
+ * treats as a failure. `/users/select` really does return an array
+ * (`response_model=list[UserSelectResponse]`), so mirror that. */
+function stubApiFetch(users: unknown[] = []) {
+  apiFetch.mockImplementation(async (url: string) => ({
+    ok: true,
+    json: async () => (typeof url === 'string' && url.includes('/users/select') ? users : {}),
+  }));
+}
+
 function resetSettings() {
   mockSettings.healthDigestEnabled = true;
   mockSettings.healthAlertsEnabled = false;
@@ -104,7 +120,7 @@ describe('SystemHealthSettingsPage', () => {
   });
 
   it('saves snake_case keys with the current values', async () => {
-    apiFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+    stubApiFetch();
     wrap(<SystemHealthSettingsPage />);
 
     fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
@@ -133,7 +149,7 @@ describe('SystemHealthSettingsPage', () => {
   });
 
   it('clamps a blank threshold back to the seeded value on save (non-negative int fallback)', async () => {
-    apiFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+    stubApiFetch();
     wrap(<SystemHealthSettingsPage />);
 
     fireEvent.change(screen.getByTestId('health-integration-fail-threshold'), {
@@ -148,7 +164,7 @@ describe('SystemHealthSettingsPage', () => {
   });
 
   it('clamps a negative audit floor back to the seeded value on save', async () => {
-    apiFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+    stubApiFetch();
     wrap(<SystemHealthSettingsPage />);
 
     fireEvent.change(screen.getByTestId('health-audit-volume-floor'), {
@@ -163,7 +179,7 @@ describe('SystemHealthSettingsPage', () => {
   });
 
   it('persists a valid edited integer value', async () => {
-    apiFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+    stubApiFetch();
     wrap(<SystemHealthSettingsPage />);
 
     fireEvent.change(screen.getByTestId('health-integration-fail-threshold'), {
@@ -196,7 +212,7 @@ describe('SystemHealthSettingsPage', () => {
 describe('SystemHealthSettingsPage — WhatsApp round-trip latency (OBS-S4-21)', () => {
   beforeEach(() => {
     apiFetch.mockReset();
-    apiFetch.mockResolvedValue({ ok: true, json: async () => ({}) });
+    stubApiFetch();
     resetSettings();
   });
 

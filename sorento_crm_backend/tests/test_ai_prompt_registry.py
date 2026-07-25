@@ -303,11 +303,11 @@ def wired_chat(seeded: Session, monkeypatch):
 
 def test_respond_stamps_prompt_versions_metadata(wired_chat, seeded: Session):
     svc, _provider = wired_chat
-    user = User(id="u-c2", email="c2@test.com", name="C2", status="ACTIVE")
+    user = User(id="c515ac63-4eb5-5bd0-9312-cacee5637b14", email="c2@test.com", name="C2", status="ACTIVE")
     seeded.add(user)
     seeded.commit()
 
-    _conv, msg = svc.respond(user_id="u-c2", conversation_id=None, message="list all orders")
+    _conv, msg = svc.respond(user_id="c515ac63-4eb5-5bd0-9312-cacee5637b14", conversation_id=None, message="list all orders")
     versions = (msg.metadata_json or {}).get("prompt_versions")
     assert versions, "prompt_versions must be present and non-empty"
     names = [v["name"] for v in versions]
@@ -321,11 +321,11 @@ def test_respond_stamps_prompt_versions_metadata(wired_chat, seeded: Session):
 
 def test_respond_ignores_config_system_prompt(wired_chat, seeded: Session):
     svc, provider = wired_chat
-    user = User(id="u-c3", email="c3@test.com", name="C3", status="ACTIVE")
+    user = User(id="52f70404-cbc8-54d4-88d6-418665059b1d", email="c3@test.com", name="C3", status="ACTIVE")
     seeded.add(user)
     seeded.commit()
 
-    svc.respond(user_id="u-c3", conversation_id=None, message="list all orders")
+    svc.respond(user_id="52f70404-cbc8-54d4-88d6-418665059b1d", conversation_id=None, message="list all orders")
     joined = "\n".join(provider.system_texts)
     assert "GARBAGE_CUSTOM_PROMPT_SHOULD_BE_IGNORED" not in joined
     assert "Sorento AI Orchestrator" in joined  # registry agent_system won
@@ -333,7 +333,7 @@ def test_respond_ignores_config_system_prompt(wired_chat, seeded: Session):
 
 def test_dry_run_override_forces_version(wired_chat, seeded: Session):
     svc, provider = wired_chat
-    user = User(id="u-dry", email="dry@test.com", name="Dry", status="ACTIVE")
+    user = User(id="56a15c49-b581-55b5-9e13-6efd5bae0abf", email="dry@test.com", name="Dry", status="ACTIVE")
     seeded.add(user)
     seeded.commit()
     # Save a v2 of agent_system with a detectable marker; do NOT publish it.
@@ -341,7 +341,7 @@ def test_dry_run_override_forces_version(wired_chat, seeded: Session):
         "agent_system", template="MARKER_V2_AGENT_SYSTEM", commit_message="m", user_id=None
     )
     svc.respond(
-        user_id="u-dry",
+        user_id="56a15c49-b581-55b5-9e13-6efd5bae0abf",
         conversation_id=None,
         message="list all orders",
         prompt_overrides={"agent_system": saved["id"]},

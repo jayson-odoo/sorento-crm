@@ -16,10 +16,8 @@ from app.main import app  # noqa: E402
 from tests._pg_fixture import blank_session
 
 
-_USER_ID = "test-user-1"
-_ROLE_ID = "role-superadmin"
-
-
+_USER_ID = "130c548f-048f-53b2-97a6-3a54676bea77"
+_ROLE_ID = "7c50d6db-8dce-555a-85a2-86cf7756f33f"
 def _seed_user(db: Session) -> None:
     from app.models.user import User, UserRole, UserRoleAssignment
 

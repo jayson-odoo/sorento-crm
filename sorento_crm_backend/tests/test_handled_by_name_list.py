@@ -49,16 +49,16 @@ def _complaint_service_over(complaints, tracker_map, name_map):
 
 
 def test_complaint_list_resolves_handled_by_name():
-    complaint = Complaint(id="c1")
+    complaint = Complaint(id="a464017f-adb4-5685-b832-9c6e852318d4")
     tracker = SimpleNamespace(
-        source_entity_id="c1",
+        source_entity_id="a464017f-adb4-5685-b832-9c6e852318d4",
         assigned_to_id=None,
         assigned_to=None,
         handled_by_id="u-handler",
     )
     svc = _complaint_service_over(
         [complaint],
-        tracker_map={"c1": tracker},
+        tracker_map={"a464017f-adb4-5685-b832-9c6e852318d4": tracker},
         name_map={"u-handler": "Alice Handler"},
     )
     result = svc.list_complaints(viewer_user_id=None)
@@ -67,16 +67,16 @@ def test_complaint_list_resolves_handled_by_name():
 
 
 def test_complaint_list_handled_by_name_none_when_unheld():
-    complaint = Complaint(id="c1")
+    complaint = Complaint(id="a464017f-adb4-5685-b832-9c6e852318d4")
     tracker = SimpleNamespace(
-        source_entity_id="c1",
+        source_entity_id="a464017f-adb4-5685-b832-9c6e852318d4",
         assigned_to_id="u-assignee",
         assigned_to=None,
         handled_by_id=None,  # nobody has claimed the handling lock
     )
     svc = _complaint_service_over(
         [complaint],
-        tracker_map={"c1": tracker},
+        tracker_map={"a464017f-adb4-5685-b832-9c6e852318d4": tracker},
         name_map={"u-assignee": "Bob Assignee"},
     )
     result = svc.list_complaints(viewer_user_id=None)
@@ -103,7 +103,7 @@ def _pr_query_returning(rows_by_model):
 
 def test_pr_attach_resolves_handled_by_name():
     tracker = SimpleNamespace(
-        source_entity_id="pr1",
+        source_entity_id="ed46d5e7-d871-5921-b065-69e87db348fd",
         assigned_to_id="u-assignee",
         handled_by_id="u-handler",
         initiated_at=2,
@@ -114,7 +114,7 @@ def test_pr_attach_resolves_handled_by_name():
         {ConversationSLATracking: [tracker], User: [assignee, handler]}
     )
     svc = PurchaseRequestService(db)
-    item = SimpleNamespace(id="pr1")
+    item = SimpleNamespace(id="ed46d5e7-d871-5921-b065-69e87db348fd")
     svc._attach_sla_assignees([item])
     assert item.handled_by_name == "Alice Handler"
     assert item.assigned_to_name == "Bob Assignee"
@@ -122,7 +122,7 @@ def test_pr_attach_resolves_handled_by_name():
 
 def test_pr_attach_handled_by_name_none_when_unheld():
     tracker = SimpleNamespace(
-        source_entity_id="pr1",
+        source_entity_id="ed46d5e7-d871-5921-b065-69e87db348fd",
         assigned_to_id="u-assignee",
         handled_by_id=None,
         initiated_at=2,
@@ -132,6 +132,6 @@ def test_pr_attach_handled_by_name_none_when_unheld():
         {ConversationSLATracking: [tracker], User: [assignee]}
     )
     svc = PurchaseRequestService(db)
-    item = SimpleNamespace(id="pr1")
+    item = SimpleNamespace(id="ed46d5e7-d871-5921-b065-69e87db348fd")
     svc._attach_sla_assignees([item])
     assert item.handled_by_name is None

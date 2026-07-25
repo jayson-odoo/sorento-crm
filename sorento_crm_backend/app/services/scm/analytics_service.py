@@ -565,8 +565,21 @@ def _compute_supplier_performance(db: Session, as_of, supplier_ids, product_ids,
         m = _line_metrics(line, policy["grace"])
         if m is None:
             continue
-        by_supplier.setdefault(str(m["supplier_id"]), []).append(m)
-        by_pair.setdefault((str(m["supplier_id"]), str(m["product_id"])), []).append(m)
+        # A receipt line with no supplier cannot be attributed. Skip it rather
+        # than bucketing under str(None) == "None", which later reaches
+        # `supplier_id = :sid` on a uuid column and aborts the whole run with
+        # `invalid input syntax for type uuid: "None"`.
+        supplier_id = m.get("supplier_id")
+        if supplier_id is None:
+            continue
+        sid = str(supplier_id)
+        product_id = m.get("product_id")
+        by_supplier.setdefault(sid, []).append(m)
+        # product_id may legitimately be NULL — keep it as None so the
+        # `IS NOT DISTINCT FROM` delete matches the supplier-level row.
+        by_pair.setdefault(
+            (sid, str(product_id) if product_id is not None else None), []
+        ).append(m)
 
     written = 0
     supplier_scores: dict[str, Optional[dict]] = {}

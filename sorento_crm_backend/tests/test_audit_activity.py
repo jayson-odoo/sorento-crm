@@ -33,7 +33,7 @@ def _seeded(session):
     order_id = str(uuid.uuid4())
     actor_id = str(uuid.uuid4())
     session.add_all([
-        User(id=actor_id, email="jane@example.com", name="Jane Tan", status="active"),
+        User(id=actor_id, email="jane@example.com", name="Jane Tan", status="ACTIVE"),
         Complaint(id=complaint_id, complaint_number="CMP-1042", status="resolved"),
         Order(id=order_id, order_number="SO-5567"),
     ])

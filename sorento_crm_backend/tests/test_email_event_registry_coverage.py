@@ -78,7 +78,7 @@ def db():
 
 
 class _FakeUser:
-    def __init__(self, uid="u1", email="next@example.com"):
+    def __init__(self, uid="82dce68d-596c-5265-9263-07b67db11d44", email="next@example.com"):
         self.id = uid
         self.email = email
 
@@ -86,7 +86,7 @@ class _FakeUser:
 def _build_notification(db, *, type_, event_type) -> Notification:
     n = Notification(
         id=str(uuid.uuid4()),
-        user_id="u1",
+        user_id="82dce68d-596c-5265-9263-07b67db11d44",
         type=type_,
         title="SLA deadline extended: CMP-0001",
         body="The resolution deadline was extended. Reason: supplier.",

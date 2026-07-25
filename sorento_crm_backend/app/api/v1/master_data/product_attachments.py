@@ -20,6 +20,7 @@ async def get_product_attachments(
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
+    query: Optional[str] = Query(None, description="Free-text search: product code/name, filename, attachment type."),
     entities: Optional[list[str]] = Query(
         None,
         description="DEPRECATED — free-text entity bag. Prefer `product_ids` / `attachment_ids`.",
@@ -56,6 +57,7 @@ async def get_product_attachments(
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
             attachment_ids=parse_uuid_list(attachment_ids, param_name="attachment_ids"),
             attachment_type_ids=parse_uuid_list(attachment_type_ids, param_name="attachment_type_ids"),
+            query=query,
             user_type=user_type,
             contact_access_codes=None,
             entities=normalize_entities_query_param(entities),

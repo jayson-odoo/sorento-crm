@@ -6,11 +6,16 @@ vi.mock('../lib/portal-client', async (importOriginal) => {
   const original = await importOriginal<typeof import('../lib/portal-client')>();
   return {
     ...original,
-    lookupSet: vi.fn().mockResolvedValue([
-      { value: 'showroom', label: 'Showroom' },
-      { value: 'mockup', label: 'Mockup' },
-      { value: 'others', label: 'Others' },
-    ]),
+    // lookupSet resolves to LookupSetResult ({ options, defaultValue }), not a
+    // bare array — the component reads `data.options`.
+    lookupSet: vi.fn().mockResolvedValue({
+      options: [
+        { value: 'showroom', label: 'Showroom' },
+        { value: 'mockup', label: 'Mockup' },
+        { value: 'others', label: 'Others' },
+      ],
+      defaultValue: null,
+    }),
   };
 });
 

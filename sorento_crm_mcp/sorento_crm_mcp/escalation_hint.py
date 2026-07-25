@@ -100,8 +100,7 @@ def _is_empty_response(data: Any) -> bool:
       - {"detail": "...not found..."} from a 404 passthrough
       - {"error": "..."} that is not an ACCESS_DENIED (those are handled separately)
 
-    Caller must not invoke this for ACCESS_DENIED payloads (those are produced
-    by access_guard before the tool is even called).
+    Caller must not invoke this for ACCESS_DENIED payloads.
     """
     if isinstance(data, list):
         return len(data) == 0

@@ -13,7 +13,6 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Search, X } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -72,26 +71,6 @@ export default function ProductAttachmentsList() {
         size: 150,
         cell: ({ row }) => row.original.attachment?.attachment_type?.type_name || '-',
         meta: { headerTitle: 'Attachment Type', skeleton: <Skeleton className="h-4 w-24" /> },
-      },
-      {
-        accessorKey: 'is_primary',
-        header: ({ column }) => <DataGridColumnHeader title="Is Primary" column={column} />,
-        size: 100,
-        cell: ({ row }) => (
-          row.original.is_primary ? (
-            <Badge variant="primary">Primary</Badge>
-          ) : (
-            <Badge variant="outline">Secondary</Badge>
-          )
-        ),
-        meta: { headerTitle: 'Is Primary', skeleton: <Skeleton className="h-4 w-16" /> },
-      },
-      {
-        accessorKey: 'sort_order',
-        header: ({ column }) => <DataGridColumnHeader title="Sort Order" column={column} />,
-        size: 100,
-        cell: ({ row }) => row.original.sort_order ?? '-',
-        meta: { headerTitle: 'Sort Order', skeleton: <Skeleton className="h-4 w-16" /> },
       },
     ],
     [],

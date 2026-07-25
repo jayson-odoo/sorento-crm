@@ -182,7 +182,7 @@ def test_update_to_active_clears_marker(db):
     )
     db.commit()
 
-    ProductService(db).update_product(p.id, ProductUpdate(description="now active"), updated_by="t")
+    ProductService(db).update_product(p.id, ProductUpdate(description="now active"), updated_by="90fbc7bc-61d3-57e0-8328-af7cf485afdf")
 
     db.refresh(p)
     assert p.is_discontinued is False
@@ -198,7 +198,7 @@ def test_update_still_discontinued_keeps_marker(db):
     p = _product(db, code="Y", discontinued=True, notified_at=when, batch_id=batch)
     db.commit()
 
-    ProductService(db).update_product(p.id, ProductUpdate(description="**** still EOL"), updated_by="t")
+    ProductService(db).update_product(p.id, ProductUpdate(description="**** still EOL"), updated_by="90fbc7bc-61d3-57e0-8328-af7cf485afdf")
 
     db.refresh(p)
     assert p.is_discontinued is True

@@ -923,3 +923,76 @@ class IntegrationLogService:
             except ValueError:
                 pass
         return 10
+
+
+def log_respond_send(
+    db: Session,
+    *,
+    business_table: str,
+    business_id: str,
+    identifier: str,
+    request_payload: dict,
+    response: Optional[object] = None,
+    exc: Optional[BaseException] = None,
+) -> None:
+    """Write one Respond.io outbox row for a send that did NOT go through
+    ``respond_io_tasks._send_and_log``.
+
+    Every Respond.io send must leave an ``integration_logs`` trace on success AND
+    failure — local dev runs with deliberately-wrong credentials, so a 401'd send
+    still has to be readable from the Respond outbox. Synchronous senders that
+    call ``RespondClient.send_message`` directly (portal link delivery, SLA
+    conversation reply) previously wrote nothing at all, so those failures were
+    invisible everywhere.
+
+    Mirrors ``_send_and_log``'s failure handling: prefer the payload actually
+    attempted (``_attach_send_context`` stamps it on the exception) and capture
+    Respond's real HTTP status and body so a 403 is diagnosable rather than just
+    "403 Forbidden for url ...".
+
+    Best-effort by construction: logging must never be the reason a send fails.
+    """
+    try:
+        payload = request_payload
+        status_code = None
+        response_body = None
+        error_message = None
+
+        if exc is not None:
+            payload = getattr(exc, "request_payload", request_payload)
+            error_message = str(exc)[:5000]
+            resp = getattr(exc, "response", None)
+            if resp is not None:
+                try:
+                    status_code = resp.status_code
+                except Exception:
+                    status_code = None
+                try:
+                    response_body = (resp.text or "")[:50000]
+                except Exception:
+                    response_body = None
+        elif response is not None:
+            response_body = str(response)[:50000]
+
+        IntegrationLogService(db).create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="respond_io",
+                business_table=business_table,
+                business_id=str(business_id),
+                external_reference=identifier or "",
+                direction="outbound",
+                endpoint=(
+                    f"https://api.respond.io/v2/contact/id:{identifier or ''}/message"
+                ),
+                http_method="POST",
+                status="failed" if exc is not None else "success",
+                status_code=status_code,
+                response_payload=response_body,
+                error_message=error_message,
+            ),
+            request_payload_dict=payload,
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "Failed to write Respond outbox row for %s %s", business_table, business_id
+        )

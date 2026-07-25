@@ -1,5 +1,6 @@
 """Notification service: create, list, mark read/archive/resolve, delete."""
 import logging
+import re
 from datetime import datetime
 from typing import Optional, List, Tuple
 
@@ -9,6 +10,35 @@ from sqlalchemy.orm import Session
 from app.models.notification import Notification, NotificationDelivery
 
 logger = logging.getLogger(__name__)
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
+)
+
+
+def _split_entity_and_dedup(
+    source_entity_id: Optional[str], dedup_key: Optional[str]
+) -> Tuple[Optional[str], Optional[str]]:
+    """Derive (entity_uuid_or_none, dedup_scope) from the create args.
+
+    `source_entity_id` used to carry two things at once: the entity a
+    notification is about, AND the idempotency scope — which for batched /
+    periodic notifications was a synthetic string with no entity behind it
+    (`alert:...`, `digest:<date>`, `{type}_{batch}`). Now they are separate
+    columns: `source_entity_id` is a uuid (or NULL), `dedup_key` is the scope.
+
+    This keeps every caller working unchanged. The dedup scope defaults to the
+    passed `source_entity_id`, so passing a uuid de-duplicates exactly as before
+    and passing a synthetic string still de-duplicates on that string; only a
+    real uuid survives into the `source_entity_id` column.
+    """
+    dedup = dedup_key if dedup_key is not None else source_entity_id
+    entity = (
+        source_entity_id
+        if source_entity_id and _UUID_RE.match(str(source_entity_id))
+        else None
+    )
+    return entity, dedup
 
 
 class NotificationService:
@@ -24,16 +54,23 @@ class NotificationService:
         data: Optional[dict] = None,
         source_entity_type: Optional[str] = None,
         source_entity_id: Optional[str] = None,
+        dedup_key: Optional[str] = None,
         event_type: Optional[str] = None,
     ) -> Optional[Notification]:
         """Create a notification. If idempotency keys are set and a matching notification exists, returns existing (no duplicate)."""
-        if source_entity_type and source_entity_id and event_type:
+        # create() unconditionally fans out to all three channels on the new-row
+        # path below; the idempotent branch ensures those same channels exist on
+        # an already-present row. These locals were referenced there but never
+        # defined — the branch NameError'd on every duplicate until now.
+        send_in_app = send_email = send_web_push = True
+        entity_id, dedup = _split_entity_and_dedup(source_entity_id, dedup_key)
+        if source_entity_type and dedup and event_type:
             existing = (
                 self.db.query(Notification)
                 .filter(
                     Notification.user_id == user_id,
                     Notification.source_entity_type == source_entity_type,
-                    Notification.source_entity_id == source_entity_id,
+                    Notification.dedup_key == dedup,
                     Notification.event_type == event_type,
                 )
                 .first()
@@ -96,7 +133,8 @@ class NotificationService:
             body=body,
             data=data or {},
             source_entity_type=source_entity_type,
-            source_entity_id=source_entity_id,
+            source_entity_id=entity_id,
+            dedup_key=dedup,
             event_type=event_type,
         )
         self.db.add(notification)
@@ -141,16 +179,18 @@ class NotificationService:
         body: Optional[str] = None,
         source_entity_type: Optional[str] = None,
         source_entity_id: Optional[str] = None,
+        dedup_key: Optional[str] = None,
         event_type: Optional[str] = None,
     ) -> Optional[Notification]:
         """Create a notification with in-app delivery only (no email or web_push). Used when sending one email to many recipients."""
-        if source_entity_type and source_entity_id and event_type:
+        entity_id, dedup = _split_entity_and_dedup(source_entity_id, dedup_key)
+        if source_entity_type and dedup and event_type:
             existing = (
                 self.db.query(Notification)
                 .filter(
                     Notification.user_id == user_id,
                     Notification.source_entity_type == source_entity_type,
-                    Notification.source_entity_id == source_entity_id,
+                    Notification.dedup_key == dedup,
                     Notification.event_type == event_type,
                 )
                 .first()
@@ -164,7 +204,8 @@ class NotificationService:
             body=body,
             data={},
             source_entity_type=source_entity_type,
-            source_entity_id=source_entity_id,
+            source_entity_id=entity_id,
+            dedup_key=dedup,
             event_type=event_type,
         )
         self.db.add(notification)
@@ -188,6 +229,7 @@ class NotificationService:
         data: Optional[dict] = None,
         source_entity_type: Optional[str] = None,
         source_entity_id: Optional[str] = None,
+        dedup_key: Optional[str] = None,
         event_type: Optional[str] = None,
         send_in_app: bool = True,
         send_email: bool = True,
@@ -244,13 +286,14 @@ class NotificationService:
                 self.db.rollback()
         if not send_in_app and not send_email and not send_web_push and not send_whatsapp:
             raise ValueError("At least one delivery channel must be enabled")
-        if source_entity_type and source_entity_id and event_type:
+        entity_id, dedup = _split_entity_and_dedup(source_entity_id, dedup_key)
+        if source_entity_type and dedup and event_type:
             existing = (
                 self.db.query(Notification)
                 .filter(
                     Notification.user_id == user_id,
                     Notification.source_entity_type == source_entity_type,
-                    Notification.source_entity_id == source_entity_id,
+                    Notification.dedup_key == dedup,
                     Notification.event_type == event_type,
                 )
                 .first()
@@ -264,7 +307,8 @@ class NotificationService:
             body=body,
             data=data or {},
             source_entity_type=source_entity_type,
-            source_entity_id=source_entity_id,
+            source_entity_id=entity_id,
+            dedup_key=dedup,
             event_type=event_type,
         )
         self.db.add(notification)

@@ -128,7 +128,7 @@ def _seed_existing(db, **overrides) -> SPOAllocation:
         receipt_status=overrides.pop("receipt_status", "pending"),
         quantity_received=overrides.pop("quantity_received", 0),
         quantity_rejected=overrides.pop("quantity_rejected", 0),
-        created_by=overrides.pop("created_by", "seed-user"),
+        created_by=overrides.pop("created_by", "0af16f9d-32f9-5903-80a2-83bdf48a694e"),
     )
     db.add(alloc)
     db.commit()
@@ -144,12 +144,12 @@ def test_new_allocation_created(db, stub_refresh):
     db.commit()
 
     action, alloc = SPOAllocationService(db).upsert_allocation(
-        _payload("SPO-A", product_id, warehouse_id, shipment_id, 12), "importer"
+        _payload("SPO-A", product_id, warehouse_id, shipment_id, 12), "13004397-4f58-51da-b134-833583c4a584"
     )
 
     assert action == "created"
     assert alloc.allocated_quantity == 12
-    assert alloc.created_by == "importer"
+    assert alloc.created_by == "13004397-4f58-51da-b134-833583c4a584"
     assert db.query(SPOAllocation).count() == 1
     stub_refresh.assert_called_once_with(shipment_id)
 
@@ -158,7 +158,7 @@ def test_new_allocation_created(db, stub_refresh):
 def test_existing_higher_qty_updated_others_untouched(db, stub_refresh):
     existing = _seed_existing(
         db, allocated_quantity=10, quantity_received=0, receipt_status="pending",
-        created_by="original",
+        created_by="e6886591-1751-5fca-bc1a-99a585495025",
     )
     stub_refresh.reset_mock()
 
@@ -167,7 +167,7 @@ def test_existing_higher_qty_updated_others_untouched(db, stub_refresh):
             existing.spo_number, existing.product_id, existing.warehouse_id,
             existing.inbound_shipment_id, 15,
         ),
-        "importer",
+        "13004397-4f58-51da-b134-833583c4a584",
     )
 
     assert action == "updated"
@@ -176,7 +176,7 @@ def test_existing_higher_qty_updated_others_untouched(db, stub_refresh):
     # Only allocated_quantity changes; the rest is left alone.
     assert alloc.quantity_received == 0
     assert alloc.receipt_status == "pending"
-    assert alloc.created_by == "original"
+    assert alloc.created_by == "e6886591-1751-5fca-bc1a-99a585495025"
     assert alloc.updated_at is not None
     assert db.query(SPOAllocation).count() == 1
 
@@ -191,7 +191,7 @@ def test_existing_lower_but_at_or_above_received_updated(db, stub_refresh):
             existing.spo_number, existing.product_id, existing.warehouse_id,
             existing.inbound_shipment_id, 5,
         ),
-        "importer",
+        "13004397-4f58-51da-b134-833583c4a584",
     )
 
     assert action == "updated"
@@ -209,7 +209,7 @@ def test_identical_qty_unchanged_no_write(db, stub_refresh):
             existing.spo_number, existing.product_id, existing.warehouse_id,
             existing.inbound_shipment_id, 10,
         ),
-        "importer",
+        "13004397-4f58-51da-b134-833583c4a584",
     )
 
     assert action == "unchanged"
@@ -229,7 +229,7 @@ def test_guard_new_qty_below_received_raises_and_no_change(db, stub_refresh):
                 existing.spo_number, existing.product_id, existing.warehouse_id,
                 existing.inbound_shipment_id, 5,
             ),
-            "importer",
+            "13004397-4f58-51da-b134-833583c4a584",
         )
 
     msg = str(exc.value)
@@ -311,7 +311,7 @@ def test_mixed_file_counters(db, stub_refresh):
          patch.object(it, "get_inbound_shipment_by_container_number", lambda _db, _c: ship_obj), \
          patch("app.api.v1.external.utils.normalize_code", lambda x: x), \
          patch.object(db, "close", lambda: None):
-        it.process_spo_import("dbjob-mix", file_bytes, f"{spo}.xlsx", "importer")
+        it.process_spo_import("dbjob-mix", file_bytes, f"{spo}.xlsx", "13004397-4f58-51da-b134-833583c4a584")
 
     res = captured["result"]
     assert res["allocations_created"] == 1, res
@@ -340,7 +340,7 @@ def test_shipment_line_status_refreshed_after_update(db, stub_refresh):
             existing.spo_number, existing.product_id, existing.warehouse_id,
             existing.inbound_shipment_id, 20,
         ),
-        "importer",
+        "13004397-4f58-51da-b134-833583c4a584",
     )
 
     stub_refresh.assert_called_once_with(existing.inbound_shipment_id)

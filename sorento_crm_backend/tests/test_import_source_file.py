@@ -122,10 +122,10 @@ def test_download_returns_signed_url_for_owner(db, monkeypatch):
         "app.services.storage_router.resolve_signed_url",
         lambda key, provider=None, expires_in=3600: f"https://signed.test/{key}?sig=abc",
     )
-    job = _make_job(db, user_id="user-1", key="import-sources/abc/Original Upload.xlsx")
+    job = _make_job(db, user_id="717677a2-1052-5fb1-9f10-981584261561", key="import-sources/abc/Original Upload.xlsx")
 
     res = asyncio.run(
-        jobs_api.download_job_source_file(job.job_id, current_user={"id": "user-1"}, db=db)
+        jobs_api.download_job_source_file(job.job_id, current_user={"id": "717677a2-1052-5fb1-9f10-981584261561"}, db=db)
     )
     assert res["url"].startswith("https://signed.test/")
     assert res["filename"] == "Original Upload.xlsx"
@@ -134,16 +134,16 @@ def test_download_returns_signed_url_for_owner(db, monkeypatch):
 
 def test_download_404_when_no_source_file(db):
     """AC-4: a job with no retained file returns 404."""
-    job = _make_job(db, user_id="user-1", key=None)
+    job = _make_job(db, user_id="717677a2-1052-5fb1-9f10-981584261561", key=None)
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(jobs_api.download_job_source_file(job.job_id, current_user={"id": "user-1"}, db=db))
+        asyncio.run(jobs_api.download_job_source_file(job.job_id, current_user={"id": "717677a2-1052-5fb1-9f10-981584261561"}, db=db))
     assert exc.value.status_code == 404
 
 
 def test_download_403_for_non_owner(db, monkeypatch):
     """AC-5: a non-owner is denied."""
     monkeypatch.setattr(jobs_api.JobService, "sync_job_status", lambda self, _jid: None)
-    job = _make_job(db, user_id="owner", key="import-sources/abc/f.xlsx")
+    job = _make_job(db, user_id="bce624f8-fccd-501c-ae54-ee8598c65be3", key="import-sources/abc/f.xlsx")
     with pytest.raises(HTTPException) as exc:
         asyncio.run(jobs_api.download_job_source_file(job.job_id, current_user={"id": "intruder"}, db=db))
     assert exc.value.status_code == 403
