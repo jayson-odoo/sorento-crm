@@ -143,7 +143,33 @@ import app.services.company_scope as _company_scope  # noqa: E402  (ensures modu
 from sqlalchemy.orm import Session as _SAScopeSession  # noqa: E402
 from sqlalchemy import event as _sa_scope_event  # noqa: E402
 
-_SORENTO_TEST_SCOPE = frozenset({"00000000-0000-0000-0000-000000000001"})
+# Install the enforcement listeners (do_orm_execute filter + before_insert
+# auto-stamp) for the whole test process, exactly as production does at app/worker
+# import time. Idempotent (``_INSTALLED`` guard). Without this a test that uses a
+# bare ``SessionLocal`` and never imports ``app.main`` gets no auto-stamp, so its
+# owned inserts leave ``company_id`` NULL and violate the NOT NULL / FK — the
+# ``after_begin`` default below only sets the scope, it does not stamp.
+_company_scope.register_company_scope_listeners()
+
+_SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
+_SORENTO_TEST_SCOPE = frozenset({_SORENTO_COMPANY_ID})
+
+# Seed the incumbent Sorento company into EVERY schema the suite builds, the moment
+# its ``companies`` table is created. Test schemas come from ``create_all`` (the
+# shared blank schema AND per-module scratch schemas), never from migration 302 which
+# seeds this row in production. Since the scope layer auto-stamps owned inserts with
+# the incumbent company, that row must exist or every ``*_company_id_fkey`` rejects
+# the insert. An ``after_create`` DDL hook covers all of them uniformly.
+from app.models.company import Company as _ScopeCompany  # noqa: E402
+
+
+@_sa_scope_event.listens_for(_ScopeCompany.__table__, "after_create")
+def _seed_default_company_after_create(target, connection, **kw):  # noqa: ANN001
+    connection.execute(
+        target.insert().values(
+            id=_SORENTO_COMPANY_ID, name="Sorento", code="SRT", is_active=True
+        )
+    )
 
 
 @_sa_scope_event.listens_for(_SAScopeSession, "after_begin")

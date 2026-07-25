@@ -226,5 +226,11 @@ async def apply_company_scope(
     except Exception as exc:  # noqa: BLE001 — resolver must never 500 the request
         logger.warning("company scope resolver failed; falling back to UNSET (fail-closed): %s", exc)
         scope = UNSET
+    # ``db`` is always a real Session in production (from get_db). Guard only for
+    # test doubles that override get_db with a non-Session (a bare generator or
+    # None): stamping is a no-op there, and this router-level dependency must never
+    # 500 a request just because it could not attach the scope.
+    if not hasattr(db, "info"):
+        return scope
     set_company_scope(db, scope)
     return scope

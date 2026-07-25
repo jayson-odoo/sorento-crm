@@ -79,22 +79,11 @@ def blank_schema_engine():
             schema_translate_map={None: name, "scm": f"{name}_scm"}
         )
         with scoped.connect() as connection:
+            # The Sorento company row is seeded by the ``after_create`` DDL event on
+            # the companies table (tests/conftest.py), which fires here during
+            # create_all — so every owned insert's auto-stamped company_id resolves
+            # against the FK. Nothing to seed by hand.
             Base.metadata.create_all(connection, checkfirst=False)
-            # Multi-company: the blank schema is built from create_all (schema only,
-            # no data migrations), so ``companies`` is empty. But conftest defaults an
-            # absent scope to the Sorento company, so every owned insert auto-stamps
-            # ``company_id = Sorento`` and would violate the companies FK. Seed the
-            # fixed Sorento row (mirrors migration 302's seed) so owned inserts resolve.
-            from app.models.company import Company
-
-            connection.execute(
-                Company.__table__.insert().values(
-                    id="00000000-0000-0000-0000-000000000001",
-                    name="Sorento",
-                    code="SRT",
-                    is_active=True,
-                )
-            )
             connection.commit()
 
         _BLANK["engine"] = scoped

@@ -34,44 +34,18 @@ from app.services.user_service import UserService
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY, JSONB
-    from sqlalchemy.types import JSON as GenericJSON
+    # Postgres blank schema (the suite is Postgres-only; no sqlite, no shared-
+    # metadata mutation which leaks column types into other tests' blank schema).
+    from tests._pg_fixture import blank_session
 
-    for model in (User,):
-        for col in list(model.__table__.columns):
-            if isinstance(col.type, (JSONB, PG_ARRAY)):
-                col.type = GenericJSON()
-                col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            Company.__table__,
-            UserCompany.__table__,
-            RespondContactCompany.__table__,
-            User.__table__,
-            UserRole.__table__,
-            UserRoleAssignment.__table__,
-            LookupBinding.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 @pytest.fixture
 def companies(db):
-    srt = Company(id=str(uuid.uuid4()), name="Sorento", code="SRT")
-    mch = Company(id=str(uuid.uuid4()), name="Mocha", code="MCH")
+    srt = Company(id=str(uuid.uuid4()), name="Sorento", code="ZZSRT")
+    mch = Company(id=str(uuid.uuid4()), name="Mocha", code="ZZMCH")
     db.add_all([srt, mch])
     db.commit()
     return {"srt": srt.id, "mch": mch.id}

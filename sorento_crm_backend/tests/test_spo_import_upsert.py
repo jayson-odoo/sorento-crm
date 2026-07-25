@@ -22,6 +22,7 @@ from app.models.procurement import (
     PickingLine,
 )
 from app.models.inventory import Warehouse
+from app.models.job import ImportJob, JobStatus
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.resources import Attachment
 from app.schemas.procurement import SPOAllocationCreate
@@ -304,6 +305,15 @@ def test_mixed_file_counters(db, stub_refresh):
     wh_obj = types.SimpleNamespace(id=wh)
     ship_obj = types.SimpleNamespace(id=ship)
 
+    # Postgres needs a real import_jobs row: the db_job_id is a uuid column and the
+    # FK parent of import_job_rows (the outcome capture). sqlite let a loose string
+    # id through; Postgres rejects it and aborts the whole import. Seed one and pass
+    # its uuid.
+    job_db_id = str(uuid.uuid4())
+    db.add(ImportJob(id=job_db_id, job_id="job-mix", job_type="spo_import",
+                     user_id="13004397-4f58-51da-b134-833583c4a584", status=JobStatus.STARTED.value))
+    db.commit()
+
     with patch.object(it, "SessionLocal", lambda: db), \
          patch.object(it, "JobService", _FakeJobService), \
          patch.object(it, "get_products_by_code_exact", lambda _db, codes: {c: prod_objs[c] for c in codes if c in prod_objs}), \
@@ -311,7 +321,7 @@ def test_mixed_file_counters(db, stub_refresh):
          patch.object(it, "get_inbound_shipment_by_container_number", lambda _db, _c: ship_obj), \
          patch("app.api.v1.external.utils.normalize_code", lambda x: x), \
          patch.object(db, "close", lambda: None):
-        it.process_spo_import("dbjob-mix", file_bytes, f"{spo}.xlsx", "13004397-4f58-51da-b134-833583c4a584")
+        it.process_spo_import(job_db_id, file_bytes, f"{spo}.xlsx", "13004397-4f58-51da-b134-833583c4a584")
 
     res = captured["result"]
     assert res["allocations_created"] == 1, res

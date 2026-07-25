@@ -40,7 +40,7 @@ from app.models.procurement import (
     PickingHeader,
     PickingLine,
 )
-from app.models.product import Product
+from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.resources import Attachment
 from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCreate
 from app.services.procurement_service import (
@@ -56,44 +56,35 @@ def _jsonb_as_json_on_sqlite(_element, _compiler, **_kw):
 
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            Product.__table__,
-            Attachment.__table__,
-            InboundShipment.__table__,
-            InboundShipmentLine.__table__,
-            SPOAllocation.__table__,
-            PickingHeader.__table__,
-            PickingLine.__table__,
-            IntegrationLog.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    # Postgres blank schema (the suite is Postgres-only). sqlite is wrong here: the
+    # multi-company auto-stamp writes the incumbent company UUID onto every owned
+    # insert, and sqlite's NUMERIC affinity coerces that all-but-one-zero UUID to
+    # the integer 1, so reads then blow up in uuid.UUID(1).
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 # ---- helpers ---------------------------------------------------------------
 
 
 def _product(db, code: str) -> str:
+    # Postgres enforces the category/uom FKs, so seed real ones (unique per call).
+    cat_id = str(uuid.uuid4())
+    uom_id = str(uuid.uuid4())
+    suffix = uuid.uuid4().hex[:8]
+    db.add(ProductCategory(id=cat_id, category_code=f"ZZTC-{suffix}", category_name="ZZT cat"))
+    db.add(UnitOfMeasure(id=uom_id, uom_code=f"ZZTU-{suffix}", uom_name="ZZT uom"))
+    db.flush()
     pid = str(uuid.uuid4())
     db.add(
         Product(
             id=pid,
             product_code=code,
             product_name=code,
-            category_id=str(uuid.uuid4()),
-            base_uom_id=str(uuid.uuid4()),
+            category_id=cat_id,
+            base_uom_id=uom_id,
             list_price=0,
             is_active=True,
         )

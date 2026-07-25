@@ -38,42 +38,24 @@ BASE = "/api/v1/system/companies"
 # --------------------------------------------------------------------------- #
 @pytest.fixture
 def db():
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY, JSONB
-    from sqlalchemy.types import JSON as GenericJSON
+    # Postgres blank schema (the suite is Postgres-only; no sqlite, no shared-
+    # metadata mutation which leaks column types into other tests' blank schema).
+    from tests._pg_fixture import blank_session
 
-    for model in (RespondContact, User):
-        for col in list(model.__table__.columns):
-            if isinstance(col.type, (JSONB, PG_ARRAY)):
-                col.type = GenericJSON()
-                col.server_default = None
-
-    Base.metadata.create_all(
-        engine,
-        tables=[
-            Company.__table__,
-            UserCompany.__table__,
-            RespondContactCompany.__table__,
-            User.__table__,
-            RespondContact.__table__,
-        ],
-    )
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.close()
 
 
 @pytest.fixture
 def seed(db):
     """Two companies (Sorento, Mocha); a superadmin; a regular user granted Sorento
     only, with last_active = Sorento; one respond contact."""
+    # The shared blank schema is seeded with the incumbent Sorento company (so
+    # other suites' owned inserts satisfy the FK). This suite asserts exact company
+    # counts/codes, so clear it inside this rolled-back transaction first.
+    db.query(UserCompany).delete()
+    db.query(RespondContactCompany).delete()
+    db.query(Company).delete()
     srt = Company(id=str(uuid.uuid4()), name="Sorento", code="SRT")
     mch = Company(id=str(uuid.uuid4()), name="Mocha", code="MCH")
     db.add_all([srt, mch])
