@@ -77,6 +77,10 @@ def test_auto_flush_stamps_actor_contact_from_context(db):
 def test_derive_description_status_transition():
     class _It:
         description = None
+        # entity_type / action are read by the attachment branch, so the stub has to
+        # carry them or the test fails on the stub rather than on the behaviour.
+        entity_type = "complaint"
+        action = "UPDATE"
         old_values = {"status": "pending", "updated_at": "x"}
         new_values = {"status": "approved", "updated_at": "y"}
 
@@ -99,6 +103,8 @@ def test_derive_description_prefers_explicit_description():
 def test_derive_description_none_when_no_status_change():
     class _It:
         description = None
+        entity_type = "complaint"
+        action = "UPDATE"
         old_values = {"name": "a"}
         new_values = {"name": "b"}
 
