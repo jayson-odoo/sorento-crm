@@ -168,7 +168,7 @@ export async function exportOrders(params?: {
 /**
  * Bulk import orders from Excel data
  */
-export async function bulkImportOrders(data: Record<string, unknown>[]): Promise<{ created: number; updated: number; errors: string[] }> {
+export async function bulkImportOrders(data: unknown[]): Promise<{ created: number; updated: number; errors: string[] }> {
   const response = await apiFetch('/api/v1/order-management/orders/bulk-import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
