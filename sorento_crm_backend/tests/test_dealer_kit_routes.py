@@ -497,3 +497,93 @@ def test_a_bundle_with_no_components_is_rejected_by_validation(api):
             json={"name": "ZZT empty", "price": "10.00", "components": []},
         )
     assert res.status_code == 422, res.text
+
+
+# --------------------------------------------------------------------------
+# PDF export enqueue (S3)
+# --------------------------------------------------------------------------
+
+
+def _publish(c, page_id):
+    version = c.post(
+        f"/api/v1/dealer-kit/pages/{page_id}/versions",
+        json={"doc": {"sections": []}, "commitMessage": "live"},
+    ).json()
+    c.put(
+        f"/api/v1/dealer-kit/pages/{page_id}/labels/published",
+        json={"versionId": version["id"]},
+    )
+    return version
+
+
+def test_requesting_an_export_returns_202_with_a_download_to_watch(api):
+    _db, _as = api
+    _as(_ADMIN_ID)
+
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-export-route")
+        _publish(c, page_id)
+
+        res = c.post(
+            f"/api/v1/dealer-kit/pages/{page_id}/exports",
+            json={"audience": "dealer", "showInvoicePrice": False},
+        )
+        # 202: the file does not exist yet, and the caller watches My Downloads
+        # rather than blocking on the render.
+        assert res.status_code == 202, res.text
+        body = res.json()
+        assert body["downloadId"]
+        assert body["audience"] == "dealer"
+        assert body["filename"].endswith(".pdf")
+
+
+def test_exporting_is_a_read_so_an_editor_without_publish_may_do_it(api):
+    _db, _as = api
+
+    _as(_ADMIN_ID)
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-export-perm")
+        _publish(c, page_id)
+
+    # A salesperson who may SEE a page may take it to a customer.
+    _as(_EDITOR_ID)
+    with TestClient(app) as c:
+        res = c.post(f"/api/v1/dealer-kit/pages/{page_id}/exports", json={})
+    assert res.status_code == 202, res.text
+
+
+def test_a_stranger_cannot_export_a_page(api):
+    _db, _as = api
+
+    _as(_ADMIN_ID)
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-export-denied")
+        _publish(c, page_id)
+
+    _as(_NOPERM_ID)
+    with TestClient(app) as c:
+        res = c.post(f"/api/v1/dealer-kit/pages/{page_id}/exports", json={})
+    assert res.status_code == 403, res.text
+
+
+def test_an_unpublished_page_cannot_be_exported(api):
+    _db, _as = api
+    _as(_ADMIN_ID)
+
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-export-unpublished")
+        res = c.post(f"/api/v1/dealer-kit/pages/{page_id}/exports", json={})
+    assert res.status_code == 409, res.text
+
+
+def test_an_unknown_audience_is_rejected(api):
+    _db, _as = api
+    _as(_ADMIN_ID)
+
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-export-audience")
+        _publish(c, page_id)
+        res = c.post(
+            f"/api/v1/dealer-kit/pages/{page_id}/exports", json={"audience": "everyone"}
+        )
+    assert res.status_code == 422, res.text

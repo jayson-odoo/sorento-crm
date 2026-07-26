@@ -295,3 +295,56 @@ class BundleComponent(Base):
     sort_order = Column(Integer, nullable=False, server_default="0")
 
     bundle = relationship("Bundle", back_populates="components")
+
+
+class ExportRequest(Base):
+    """The viewer context a catalogue PDF was requested with.
+
+    ``user_downloads`` is the generic "a file is being made for you" row shared
+    by every export in the system and deliberately has no params column. A
+    catalogue PDF needs more: it has to be rendered AS SOMEBODY, because a
+    dealer's copy and a consumer's copy of the same page carry different prices.
+
+    That decision belongs to the moment the export is REQUESTED. Leaving the
+    worker to work it out later is how it ends up falling back to a system
+    principal and quietly rendering staff prices into a consumer's document.
+
+    ``page_version_id`` is pinned here too: publishing again while a PDF is
+    queued must not change what that PDF contains.
+
+    Not company-scoped itself - it hangs off a page, and the page carries the
+    partition.
+    """
+
+    __tablename__ = "export_request"
+    __table_args__ = (
+        UniqueConstraint("download_id", name="uq_dealer_kit_export_request_download"),
+        Index("ix_dealer_kit_export_request_page_id", "page_id"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    download_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("user_downloads.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    page_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.page.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    page_version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.page_version.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # The AUDIENCE, not the requester. Staff exporting a dealer's copy is a
+    # normal thing to want.
+    audience = Column(String(20), nullable=False, server_default="staff")
+    show_invoice_price = Column(Boolean, nullable=False, server_default="false")
+    requested_by = Column(UUID(as_uuid=False), nullable=True)
+    created_at = _created_at()
+
+    page = relationship("Page")
+    version = relationship("PageVersion")

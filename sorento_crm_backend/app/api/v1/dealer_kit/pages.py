@@ -32,6 +32,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.dealer_kit import (
+    ExportRequestIn,
+    ExportRequestOut,
     LabelMove,
     PageCreate,
     PageDetail,
@@ -39,6 +41,7 @@ from app.schemas.dealer_kit import (
     PageVersionOut,
     VersionCreate,
 )
+from app.services.dealer_kit import export_service
 from app.services.dealer_kit import page_service as svc
 
 router = APIRouter()
@@ -205,3 +208,39 @@ def stage_version(
         db, page_id, svc.STAGING, version_id=payload.version_id, user_id=_user_id(user)
     )
     return _label_response(db, row)
+
+
+@router.post(
+    "/pages/{page_id}/exports",
+    response_model=ExportRequestOut,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def request_export(
+    page_id: str,
+    payload: ExportRequestIn,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_VIEW),
+):
+    """Queue a PDF of this page for the given audience.
+
+    202, not 201: the file does not exist yet. The response carries the download
+    id so the caller can watch it in My Downloads rather than blocking on a
+    render that takes seconds.
+
+    ``page.view`` rather than ``page.edit`` - exporting a catalogue is reading
+    it, and a salesperson who may see a page may take it to a customer.
+    """
+    download = export_service.request_export(
+        db,
+        page_id=page_id,
+        audience=payload.audience,
+        show_invoice_price=payload.show_invoice_price,
+        user_id=_user_id(user) or "",
+        version_id=payload.version_id,
+    )
+    return ExportRequestOut(
+        download_id=download.id,
+        status=str(download.status),
+        filename=download.filename,
+        audience=payload.audience,
+    )

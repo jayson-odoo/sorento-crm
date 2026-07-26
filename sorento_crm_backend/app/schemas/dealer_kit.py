@@ -219,3 +219,22 @@ class TileTemplateOut(BaseModel):
     name: str
     fields: list[str] = Field(default_factory=list)
     updated_at: datetime = Field(serialization_alias="updatedAt")
+
+
+class ExportRequestIn(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    # WHO the document is for, not who asked for it: staff exporting a dealer's
+    # copy to email out is the normal case.
+    audience: str = Field(default="staff")
+    show_invoice_price: bool = Field(default=False, validation_alias="showInvoicePrice")
+    version_id: Optional[str] = Field(default=None, validation_alias="versionId")
+
+
+class ExportRequestOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    download_id: str = Field(serialization_alias="downloadId")
+    status: str
+    filename: Optional[str] = None
+    audience: str
