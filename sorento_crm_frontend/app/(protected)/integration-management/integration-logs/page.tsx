@@ -15,6 +15,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import RequireAccess from '@/app/components/common/RequireAccess';
 import IntegrationLogsList from './components/IntegrationLogsList';
 
 export const metadata: Metadata = {
@@ -24,7 +25,7 @@ export const metadata: Metadata = {
 
 export default async function IntegrationLogsPage() {
   return (
-    <>
+    <RequireAccess superadmin>
       <Container>
         <Toolbar>
           <ToolbarHeading>
@@ -50,6 +51,6 @@ export default async function IntegrationLogsPage() {
           <IntegrationLogsList />
         </Suspense>
       </Container>
-    </>
+    </RequireAccess>
   );
 }

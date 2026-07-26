@@ -28,7 +28,7 @@ from app.api.v1 import (
     downloads,
     scm,
 )
-from app.api.v1.system import modules_runtime, rule_facts
+from app.api.v1.system import modules_runtime, rule_facts, companies as system_companies
 from app.api.v1.assistant import record_context as assistant_record_context
 from app.modules.runtime.guards import require_module_enabled, require_module_enabled_with_api_key
 
@@ -158,6 +158,11 @@ api_router.include_router(
     tags=["integrations"],
     dependencies=[Depends(require_module_enabled_with_api_key("base"))],
 )
+# Multi-company isolation: Companies admin + grant/membership management +
+# my-context / switch (System Management → Companies). Self-gated (JWT + superadmin
+# for writes); mounted alongside the base system router. Companies tables are not
+# company-scoped, so the do_orm_execute filter never touches them.
+api_router.include_router(system_companies.router, prefix="/system", tags=["system-companies"])
 api_router.include_router(system.router, prefix="/system", tags=["system"])
 # Rule-facts catalog for the RuleBuilder (nested AND/OR condition builder in the
 # Automation edit form). JWT + automation.view permission; never X-API-Key.

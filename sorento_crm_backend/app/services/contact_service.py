@@ -6,6 +6,7 @@ import logging
 import json
 from fastapi import HTTPException
 from app.models.access import RespondContact
+from app.models.company import Company, RespondContactCompany
 from app.schemas.user import RespondContactCreate, RespondContactUpdate, RespondContactResponse, ContactAgentAccessCreate
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
 from app.services.integration_service import RespondClient, IntegrationLogService
@@ -253,6 +254,35 @@ class ContactService:
         self.db.commit()
         self.db.refresh(contact)
         return contact
+
+    def list_contact_companies(self, contact_id: str) -> list[dict]:
+        """Return the companies granted to a contact as ``[{id,name,code}]``."""
+        self.get_contact(contact_id)
+        rows = (
+            self.db.query(Company)
+            .join(RespondContactCompany, RespondContactCompany.company_id == Company.id)
+            .filter(RespondContactCompany.respond_contact_id == contact_id)
+            .order_by(Company.name.asc())
+            .all()
+        )
+        return [{"id": str(c.id), "name": c.name, "code": c.code} for c in rows]
+
+    def set_contact_companies(self, contact_id: str, company_ids: list[str]) -> dict:
+        """Replace a contact's company grants with the given ids (unknown ids skipped)."""
+        self.get_contact(contact_id)
+        self.db.query(RespondContactCompany).filter(
+            RespondContactCompany.respond_contact_id == contact_id
+        ).delete(synchronize_session=False)
+        self.db.flush()
+        granted: list[str] = []
+        for cid in company_ids or []:
+            if cid in granted:
+                continue
+            if self.db.query(Company).filter(Company.id == cid).first():
+                self.db.add(RespondContactCompany(company_id=cid, respond_contact_id=contact_id))
+                granted.append(cid)
+        self.db.commit()
+        return {"message": "Contact companies updated successfully"}
 
     def delete_contact(self, contact_id: str) -> None:
         """Delete a respond contact and all contact–agent linkages. Related contact_agent_access rows are deleted; conversation_sla_tracking.respond_contact_id is SET NULL."""

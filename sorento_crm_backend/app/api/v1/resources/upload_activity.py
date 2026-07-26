@@ -168,6 +168,24 @@ def _summary(log: Optional[IntegrationLog], outcome_status: str) -> str:
     return str(payload.get("summary") or "")
 
 
+def _error_message(log: Optional[IntegrationLog]) -> Optional[str]:
+    """Error text for the drawer, falling back to the payload.
+
+    n8n's error branch posts ``{"status": "failed", "response_payload":
+    {"error": "..."}}`` and never sets the ``error_message`` column — but every
+    user-facing surface reads the column, so the reason ended up visible only on
+    the raw-log page and the drawer showed a bare "Integration failed". Fall
+    back to ``response_payload.error`` so any n8n failure carries its reason.
+    """
+    if log is None:
+        return None
+    if log.error_message:
+        return log.error_message
+    payload = _parse_response_payload(log.response_payload)
+    fallback = payload.get("error")
+    return fallback if isinstance(fallback, str) and fallback.strip() else None
+
+
 def _build_file(
     db: Session, attachment: Attachment, log: Optional[IntegrationLog]
 ) -> UploadActivityFile:
@@ -182,7 +200,7 @@ def _build_file(
         linked=linked,
         unlinked_reasons=_unlinked_reasons(log),
         error_code=log.error_code if log else None,
-        error_message=log.error_message if log else None,
+        error_message=_error_message(log),
         integration_log_id=str(log.id) if log else None,
         last_updated_at=(log.updated_at if log else attachment.created_at) or attachment.created_at,
     )

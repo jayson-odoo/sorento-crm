@@ -13,7 +13,7 @@ try:
 except ImportError:
     pass
 
-from fastapi import FastAPI, Request, status
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -125,6 +125,12 @@ from app.services import lookup_eligibility_registrations as _lookup_eligibility
 from app.services.lookup_write_listener import register_lookup_write_listeners
 register_lookup_write_listeners()
 
+# Multi-company isolation: fail-closed SELECT filter + insert auto-stamp on every
+# CompanyScopedMixin model. Registered here (import time, not startup_event) so it
+# is active in the API; the worker registers it via its own import path.
+from app.services.company_scope import register_company_scope_listeners
+register_company_scope_listeners()
+
 
 def _register_activities_adapters() -> None:
     """Register per-entity Activities & Notes adapters at process boot.
@@ -163,8 +169,13 @@ def _register_activities_adapters() -> None:
 # Run synchronously at import time so it precedes the first request.
 _register_activities_adapters()
 
-# Include API routes
-app.include_router(api_router, prefix="/api/v1")
+# Include API routes. The company-scope resolver runs as a router-level dependency
+# for EVERY /api/v1/* request: it resolves the caller's four-state scope (JWT active
+# company / X-API-Key contact / system) and stamps it onto the request DB session so
+# the do_orm_execute filter enforces isolation without editing each route. It shares
+# the route's session (get_db is cached per-request) and never 500s (fail-closed).
+from app.services.company_scope_resolver import apply_company_scope
+app.include_router(api_router, prefix="/api/v1", dependencies=[Depends(apply_company_scope)])
 
 # Initialize scheduler for background tasks
 scheduler = None

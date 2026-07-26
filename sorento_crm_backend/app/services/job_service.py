@@ -9,6 +9,7 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.models.job import ImportJob, JobStatus
+from app.services.company_scope import admin_listing_company_filter
 from app.services.queue_service import enqueue_job, get_job_status, cancel_job as cancel_rq_job
 
 logger = logging.getLogger(__name__)
@@ -16,6 +17,30 @@ logger = logging.getLogger(__name__)
 _IMPORT_NOTIFICATION_DISCLAIMER = (
     "\n\nThis is a system-generated message. Please do not reply."
 )
+
+
+def active_company_id_from_scope(db: Session) -> Optional[str]:
+    """Snapshot the request's active company from the session scope for an import.
+
+    Reads the four-state company scope stamped on the request session by the
+    resolver. Only a single-company scope yields a concrete company to persist
+    onto the ImportJob (the worker later re-establishes exactly that company so
+    its owned writes auto-stamp + isolate). None (all-companies / system) and
+    UNSET / empty / multi-company all snapshot NULL (the worker then runs
+    system-scoped, ``set_company_scope(None)``) — logged for traceability.
+    """
+    try:
+        from app.models.base import get_company_scope
+
+        scope = get_company_scope(db)
+    except Exception:  # never block an import on scope resolution
+        return None
+    if isinstance(scope, frozenset) and len(scope) == 1:
+        return str(next(iter(scope)))
+    logger.debug(
+        "Import enqueue: no single-company scope (%r); snapshotting NULL company_id", scope
+    )
+    return None
 
 
 def _notify_import_job_event(
@@ -62,15 +87,26 @@ class JobService:
         job_type: str,
         user_id: str,
         filename: Optional[str] = None,
-        metadata: Optional[dict] = None
+        metadata: Optional[dict] = None,
+        company_id: Optional[str] = None,
     ) -> ImportJob:
-        """Create a new import job record."""
+        """Create a new import job record.
+
+        ``company_id`` snapshots the request's active company so the worker can
+        re-establish scope for owned writes (multi-company isolation). When not
+        passed explicitly it is derived from the request session's company scope
+        (``active_company_id_from_scope``) — so the snapshot is captured even for
+        callers that don't thread it through.
+        """
+        if company_id is None:
+            company_id = active_company_id_from_scope(self.db)
         job = ImportJob(
             job_id=str(uuid.uuid4()),  # Temporary, will be updated with RQ job ID
             job_type=job_type,
             status=JobStatus.PENDING.value,  # Use enum value explicitly
             user_id=user_id,
             filename=filename,
+            company_id=company_id,
             job_metadata=metadata or {}
         )
         self.db.add(job)
@@ -241,7 +277,14 @@ class JobService:
         if status:
             # Compare with enum value (string)
             query = query.filter(ImportJob.status == status.value if isinstance(status, JobStatus) else status)
-        
+
+        # Multi-company: staff import-jobs listing shows only the active company's
+        # jobs (+ legacy-null). ImportJob is not an owned mixin (worker infra), so
+        # filter by hand. See admin_listing_company_filter for the four-state rules.
+        scope_filter = admin_listing_company_filter(self.db, ImportJob.company_id)
+        if scope_filter is not None:
+            query = query.filter(scope_filter)
+
         return query.order_by(desc(ImportJob.created_at)).limit(limit).offset(offset).all()
     
     def cancel_job(self, job_id_or_db_id: str) -> bool:

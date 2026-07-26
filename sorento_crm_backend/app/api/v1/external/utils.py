@@ -5,9 +5,29 @@ from datetime import datetime, date
 from typing import Iterable, Dict, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+from app.models.base import set_company_scope
 from app.models.product import Product
 from app.models.inventory import Warehouse
 from app.models.procurement import InboundShipment, InboundShipmentLine
+
+
+def scope_to_attachment_company(db: Session, attachment) -> Optional[str]:
+    """Pin the request's company scope to a bound attachment's company (Group G).
+
+    The n8n binding endpoints run under X-API-Key with a ``None`` (all-companies)
+    scope, so a match-by-code (product code, packing-list number, ...) could
+    otherwise resolve — and bind — an entity in the WRONG company. When the
+    attachment carries a ``company_id`` we set the session scope to that single
+    company so (1) the central filter restricts every entity-resolution query to
+    in-company rows and (2) any child rows created here auto-stamp that company.
+    A NULL company_id (shared form attachment, AC-G3) leaves the resolver scope
+    untouched. Returns the company id it scoped to, or ``None``.
+    """
+    company_id = getattr(attachment, "company_id", None)
+    if company_id:
+        set_company_scope(db, frozenset({str(company_id)}))
+        return str(company_id)
+    return None
 
 
 def parse_date_value(value: str | date | datetime | None) -> date | None:

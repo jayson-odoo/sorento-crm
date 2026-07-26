@@ -123,6 +123,60 @@ def _restore_column_types():
             pass
     yield
 
+# ---------------------------------------------------------------------------
+# Company-scope test default (multi-company isolation).
+#
+# Production defaults an absent ``db.info['company_scope']`` to UNSET
+# (fail-closed -> 0 rows) so a request path that never runs the resolver cannot
+# leak. Legacy tests, however, seed and query owned tables WITHOUT setting any
+# scope. Under the fail-closed default they return 0 rows; and because
+# migration 305 makes owned ``company_id`` NOT NULL on the live Postgres test
+# DB, a null-company insert is rejected outright. So for the test process we
+# default an absent scope to the **Sorento** company (all backfilled live data
+# is Sorento): owned inserts auto-stamp Sorento (satisfying NOT NULL) and reads
+# filter to Sorento (where the data is). The ``after_begin`` listener only fills
+# the key when unset, so ``company_scope(db, ...)`` / ``set_company_scope`` still
+# win — the dedicated ``tests/test_company_scope.py`` overrides per-test to
+# assert the real four-state / fail-closed semantics.
+# ---------------------------------------------------------------------------
+import app.services.company_scope as _company_scope  # noqa: E402  (ensures module loaded)
+from sqlalchemy.orm import Session as _SAScopeSession  # noqa: E402
+from sqlalchemy import event as _sa_scope_event  # noqa: E402
+
+# Install the enforcement listeners (do_orm_execute filter + before_insert
+# auto-stamp) for the whole test process, exactly as production does at app/worker
+# import time. Idempotent (``_INSTALLED`` guard). Without this a test that uses a
+# bare ``SessionLocal`` and never imports ``app.main`` gets no auto-stamp, so its
+# owned inserts leave ``company_id`` NULL and violate the NOT NULL / FK — the
+# ``after_begin`` default below only sets the scope, it does not stamp.
+_company_scope.register_company_scope_listeners()
+
+_SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
+_SORENTO_TEST_SCOPE = frozenset({_SORENTO_COMPANY_ID})
+
+# Seed the incumbent Sorento company into EVERY schema the suite builds, the moment
+# its ``companies`` table is created. Test schemas come from ``create_all`` (the
+# shared blank schema AND per-module scratch schemas), never from migration 302 which
+# seeds this row in production. Since the scope layer auto-stamps owned inserts with
+# the incumbent company, that row must exist or every ``*_company_id_fkey`` rejects
+# the insert. An ``after_create`` DDL hook covers all of them uniformly.
+from app.models.company import Company as _ScopeCompany  # noqa: E402
+
+
+@_sa_scope_event.listens_for(_ScopeCompany.__table__, "after_create")
+def _seed_default_company_after_create(target, connection, **kw):  # noqa: ANN001
+    connection.execute(
+        target.insert().values(
+            id=_SORENTO_COMPANY_ID, name="Sorento", code="SRT", is_active=True
+        )
+    )
+
+
+@_sa_scope_event.listens_for(_SAScopeSession, "after_begin")
+def _default_company_scope_for_tests(session, transaction, connection):  # noqa: ANN001
+    if getattr(_company_scope, "_ENFORCE", True):
+        session.info.setdefault("company_scope", _SORENTO_TEST_SCOPE)
+
 
 _IDEMP_REDIS = []  # process-wide cache: [client] or [None]
 

@@ -13,6 +13,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import RequireAccess from '@/app/components/common/RequireAccess';
 import WhatsAppTemplatesView from './components/WhatsAppTemplatesView';
 
 export const metadata: Metadata = {
@@ -22,7 +23,7 @@ export const metadata: Metadata = {
 
 export default async function WhatsAppTemplatesPage() {
   return (
-    <>
+    <RequireAccess permission="integration.respond_templates.view">
       <Container>
         <Toolbar>
           <ToolbarHeading>
@@ -45,6 +46,6 @@ export default async function WhatsAppTemplatesPage() {
       <Container className="space-y-5">
         <WhatsAppTemplatesView />
       </Container>
-    </>
+    </RequireAccess>
   );
 }

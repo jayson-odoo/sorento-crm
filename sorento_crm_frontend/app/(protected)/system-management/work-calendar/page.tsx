@@ -13,6 +13,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import RequireAccess from '@/app/components/common/RequireAccess';
 import WorkCalendarConfigCard from './components/WorkCalendarConfigCard';
 import PublicHolidaysList from './components/PublicHolidaysList';
 
@@ -23,7 +24,7 @@ export const metadata: Metadata = {
 
 export default function WorkCalendarPage() {
   return (
-    <>
+    <RequireAccess superadmin>
       <Container>
         <Toolbar>
           <ToolbarHeading>
@@ -47,6 +48,6 @@ export default function WorkCalendarPage() {
         <WorkCalendarConfigCard />
         <PublicHolidaysList />
       </Container>
-    </>
+    </RequireAccess>
   );
 }

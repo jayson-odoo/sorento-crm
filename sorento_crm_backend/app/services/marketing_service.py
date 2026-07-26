@@ -1665,10 +1665,21 @@ class CampaignTypeService:
             "updated_at" if "updated_at" in existing else "NULL::timestamp AS updated_at",
         ]
         sql = "SELECT " + ", ".join(select_parts) + " FROM campaign_types"
-        params = {}
+        # Multi-company isolation (Group I): campaign_types is an owned table but
+        # this legacy-DB fallback uses raw text() which bypasses the ORM scope
+        # filter — reproduce the four-state predicate by hand.
+        from app.services.company_scope_sql import company_sql_predicate
+
+        company_frag, company_params = company_sql_predicate(self.db)
+        params = dict(company_params)
+        clauses = []
         if type_id is not None:
-            sql += " WHERE id = :type_id"
+            clauses.append("id = :type_id")
             params["type_id"] = type_id
+        if company_frag:
+            clauses.append(company_frag)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
         return self.db.execute(text(sql), params).all()
     
     def create_campaign_type(self, type_data: CampaignTypeCreate):

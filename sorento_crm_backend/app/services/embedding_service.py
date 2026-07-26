@@ -11,13 +11,38 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
-from sqlalchemy import func
+from sqlalchemy import false as sa_false
+from sqlalchemy import func, or_
 
 from app.config import settings
+from app.models.base import get_company_scope
 from app.models.embeddings import EmbeddingQueue, EmbeddingDocument, EmbeddingChunk
 from app.services.queue_service import enqueue_job
 
 logger = logging.getLogger(__name__)
+
+
+def _embedding_company_filter(db: Session):
+    """Company-scope predicate for vector search over embedding rows (multi-company
+    isolation, AC-I4). Reads the four-state scope stamped on the session:
+
+      None              -> None  (no filter — all companies / system / back-compat)
+      frozenset({ids})  -> company_id IN (ids) OR company_id IS NULL
+                           (shared / company-less knowledge stays visible)
+      UNSET / empty     -> false()  (fail-closed: 0 rows)
+
+    Embedding rows are NOT CompanyScopedMixin (the ORM auto-filter never touches
+    them), so this predicate is injected manually into ``search_current``.
+    """
+    scope = get_company_scope(db)
+    if scope is None:
+        return None
+    if isinstance(scope, frozenset) and scope:
+        return or_(
+            EmbeddingChunk.company_id.is_(None),
+            EmbeddingChunk.company_id.in_(list(scope)),
+        )
+    return sa_false()  # UNSET / empty frozenset -> fail-closed
 
 
 EMBEDDING_NOISE_FIELDS = {"created_at", "updated_at", "updated_by", "synced_to_excel", "last_synced_to_excel"}
@@ -183,6 +208,11 @@ class EmbeddingReadService:
             filters.append(EmbeddingDocument.visibility_scope == visibility_scope)
         if tenant_id:
             filters.append(EmbeddingDocument.metadata_json["tenant_id"].astext == tenant_id)
+        # Multi-company isolation (AC-I4): restrict results to the caller's scope so
+        # e.g. a Mocha-scoped search never returns Sorento-owned entities.
+        company_filter = _embedding_company_filter(self.db)
+        if company_filter is not None:
+            filters.append(company_filter)
         rows = (
             self.db.query(EmbeddingChunk, EmbeddingDocument, similarity_expr)
             .join(EmbeddingDocument, EmbeddingDocument.id == EmbeddingChunk.document_id)

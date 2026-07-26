@@ -27,6 +27,11 @@ class ImportLog(Base):
     imported_by = Column(String, nullable=True)
     imported_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     duration_ms = Column(Integer, nullable=True)
+    # Multi-company: stamped from the request scope at creation. DELIBERATELY NOT a
+    # CompanyScopedMixin — the import pipeline (worker) writes logs with no request
+    # scope, so this stays a manual/nullable column filtered ONLY by the admin
+    # listing via ``admin_listing_company_filter``. NULL => legacy/system write.
+    company_id = Column(UUID(as_uuid=False), nullable=True, index=True)
 
     __table_args__ = (
         Index("ix_import_logs_entity_type", "entity_type"),

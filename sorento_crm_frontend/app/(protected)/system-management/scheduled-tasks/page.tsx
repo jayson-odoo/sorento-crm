@@ -14,6 +14,7 @@ import {
   ToolbarHeading,
   ToolbarTitle,
 } from '@/components/common/toolbar';
+import RequireAccess from '@/app/components/common/RequireAccess';
 import ScheduledTasksList from './components/ScheduledTasksList';
 
 export const metadata: Metadata = {
@@ -23,7 +24,7 @@ export const metadata: Metadata = {
 
 export default function ScheduledTasksPage() {
   return (
-    <>
+    <RequireAccess superadmin>
       <Container>
         <Toolbar>
           <ToolbarHeading>
@@ -47,6 +48,6 @@ export default function ScheduledTasksPage() {
       <Container>
         <ScheduledTasksList />
       </Container>
-    </>
+    </RequireAccess>
   );
 }

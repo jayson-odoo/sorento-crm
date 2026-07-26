@@ -88,6 +88,14 @@ def _empty_narrowing_response(tool_name: str, query: dict[str, Any] | None, need
 # discrete fields instead of one wrapped JSON blob.
 TOOL_OPTIONAL_BODY_PARAMS: dict[str, tuple[str, ...]] = {
     "crm_portal_link_get": ("submission_type", "base_url"),
+    # Multi-company isolation (AC-F7): contact_id + space_id optionally scope the
+    # lookup resolution to the contact's company/companies. Forwarded via BODY
+    # (not query) because a POST tool with required body params (set_key, raw)
+    # can't carry optional query args before them in the generated signature —
+    # the same limitation the compiler notes for the `view` param. Optional so
+    # existing n8n calls without them keep resolving across all companies
+    # (required-first ordering keeps set_key/raw/locale ahead of these two).
+    "crm_lookup_resolve": ("contact_id", "space_id"),
 }
 
 

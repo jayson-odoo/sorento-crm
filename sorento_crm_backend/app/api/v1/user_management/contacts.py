@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+class ContactCompaniesUpdateRequest(BaseModel):
+    company_ids: list[str]
+
+
 def _resolve_space_id(db: Session, contact_id: str) -> tuple[RespondContact, str]:
     """Look up contact and resolve its workspace's space_id.
 
@@ -206,6 +210,41 @@ async def update_contact(
         raise
     except Exception as e:
         logger.error(f"Error updating contact {contact_id}: {str(e)}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
+@router.get("/{contact_id}/companies")
+async def get_contact_companies(
+    contact_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """List companies granted to a contact as [{id,name,code}]. Superadmin-only."""
+    from app.api.v1.system.companies import _require_superadmin
+    try:
+        _require_superadmin(db, current_user)
+        return ContactService(db).list_contact_companies(contact_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.put("/{contact_id}/companies", status_code=status.HTTP_200_OK)
+async def set_contact_companies(
+    contact_id: str,
+    body: ContactCompaniesUpdateRequest = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Replace a contact's company grants with the given company_ids. Superadmin-only."""
+    from app.api.v1.system.companies import _require_superadmin
+    try:
+        _require_superadmin(db, current_user)
+        return ContactService(db).set_contact_companies(contact_id, body.company_ids)
+    except HTTPException:
+        raise
+    except Exception as e:
         raise handle_internal_error(str(e))
 
 

@@ -138,6 +138,12 @@ class LookupResolveRequest(BaseModel):
     set_key: str
     raw: str = Field(min_length=1)
     locale: Optional[str] = None
+    # Multi-company isolation (AC-I3): the MCP forwards the caller's Respond.io
+    # identity in the BODY (POST param-ordering constraint), so the query-param
+    # scope resolver never sees it. When both are present the resolve route
+    # re-derives the contact's company scope from them before resolving.
+    contact_id: Optional[str] = None
+    space_id: Optional[str] = None
 
 
 class LookupResolveResponse(BaseModel):

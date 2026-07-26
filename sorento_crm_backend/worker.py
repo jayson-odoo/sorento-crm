@@ -64,6 +64,15 @@ def _maybe_start_scheduler():
 
 
 if __name__ == '__main__':
+    # Multi-company isolation: register the fail-closed SELECT filter + insert
+    # auto-stamp here too. The worker never runs the API's startup_event, and
+    # RQ forks a work-horse per job that inherits these Session-class listeners
+    # from the parent. NOTE: worker jobs must set the session scope from the
+    # ImportJob company snapshot (later slice) — until then owned-table writes in
+    # jobs are fail-closed (rejected). See app/services/company_scope.py.
+    from app.services.company_scope import register_company_scope_listeners
+    register_company_scope_listeners()
+
     _maybe_start_scheduler()
     worker = ForkSafeWorker(['imports', 'respond_io'], connection=redis_conn)
     logger.info("Starting RQ worker for 'imports' and 'respond_io' queues...")

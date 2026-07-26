@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import SessionLocal
+from app.models.base import set_company_scope
 from app.models.embeddings import EmbeddingQueue, EmbeddingDocument, EmbeddingChunk
 from app.models.product import Product, ProductCategory, Brand
 from app.models.marketing import Promotion
@@ -25,6 +26,45 @@ from app.models.conversation_frame import ConversationFrame
 from app.services.embedding_service import EmbeddingReadService
 
 logger = logging.getLogger(__name__)
+
+
+# source_type -> owned model carrying company_id (multi-company isolation). Types
+# absent here are synthetic / company-less (mcp_tool, form, schema_doc,
+# order_status, conversation_frame, ``debtor:`` seeds) and stay company-less —
+# shared knowledge visible under every scope.
+_SOURCE_MODEL_FOR_COMPANY = {
+    "product": Product,
+    "promotion": Promotion,
+    "promotion_product": PromotionProduct,
+    "promotion_attachment": PromotionAttachment,
+    "product_attachment": ProductAttachment,
+    "attachment": Attachment,
+    "inbound_shipment": InboundShipment,
+    "inbound_shipment_line": InboundShipmentLine,
+    "spo_allocation": SPOAllocation,
+    "picking_header": PickingHeader,
+    "picking_line": PickingLine,
+    "order": Order,
+    "order_line": OrderLine,
+    "customer": Customer,
+    "transporter": Transporter,
+}
+
+
+def _company_id_for_source(db: Session, source_type: str, source_id: str):
+    """company_id of an owned source entity, or None for synthetic / company-less
+    sources. The worker runs system-scoped (``set_company_scope(None)``) so this
+    read is not company-filtered and can resolve any company's row."""
+    model = _SOURCE_MODEL_FOR_COMPANY.get(source_type)
+    if model is None:
+        return None
+    if isinstance(source_id, str) and source_id.startswith("debtor:"):
+        return None
+    try:
+        row = db.query(model.company_id).filter(model.id == source_id).first()
+    except Exception:
+        return None
+    return row[0] if row and row[0] is not None else None
 
 
 def _chunk_text(text: str, size: int, overlap: int) -> list[str]:
@@ -514,6 +554,12 @@ def _chunks_for_source(source_type: str, source: dict[str, Any]) -> list[str]:
 
 def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
     db = SessionLocal()
+    # The embedding pipeline is a system process that materializes embeddings for
+    # EVERY company's owned entities. A fresh SessionLocal() starts at UNSET
+    # (fail-closed) which would make owned source reads (Product, Order, ...)
+    # return 0 rows ("... not found"). Run None-scoped (all companies) so any
+    # source resolves; per-row isolation is enforced at SEARCH time via company_id.
+    set_company_scope(db, None)
     try:
         queue_item = db.query(EmbeddingQueue).filter(EmbeddingQueue.id == queue_id).first()
         if not queue_item:
@@ -527,6 +573,13 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         payload = queue_item.payload or {}
         source_payload = payload.get("payload") if isinstance(payload, dict) else None
         source = _canonical_for_source(db, queue_item.source_type, queue_item.source_id, payload=source_payload)
+        # Company of the source entity (multi-company isolation). Prefer the
+        # listener-copied value on the queue payload (guarantees a fresh embedding
+        # is never company-less when its source has a company — AC-I5); fall back to
+        # re-deriving from the loaded source row (bulk / backfilled enqueues).
+        company_id = payload.get("company_id") if isinstance(payload, dict) else None
+        if company_id is None:
+            company_id = _company_id_for_source(db, queue_item.source_type, queue_item.source_id)
         read_svc = EmbeddingReadService(db)
         source_hash = read_svc.deterministic_hash(
             {
@@ -571,6 +624,7 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
             doc.visibility_scope = source.get("visibility_scope")
             doc.source_hash = source_hash
             doc.source_updated_at = source.get("source_updated_at")
+            doc.company_id = company_id
             doc.is_active = True
         else:
             doc = EmbeddingDocument(
@@ -583,6 +637,7 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
                 visibility_scope=source.get("visibility_scope"),
                 source_hash=source_hash,
                 source_updated_at=source.get("source_updated_at"),
+                company_id=company_id,
                 is_active=True,
             )
             db.add(doc)
@@ -614,6 +669,7 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
                     embedding_provider=settings.embedding_provider,
                     source_hash=source_hash,
                     metadata_json=source.get("metadata", {}),
+                    company_id=company_id,
                     is_current=True,
                 )
             )
