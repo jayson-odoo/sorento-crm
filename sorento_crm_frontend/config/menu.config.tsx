@@ -613,6 +613,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'projects.projects.view',
       },
       {
+        title: 'Leads',
+        path: '/project-sales/leads',
+        permission: 'projects.projects.view',
+      },
+      {
         title: 'My Tasks',
         path: '/project-sales/my-tasks',
         permission: 'projects.projects.view',
@@ -1492,6 +1497,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Pipeline',
         path: '/project-sales/pipeline',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Leads',
+        path: '/project-sales/leads',
         permission: 'projects.projects.view',
       },
       {

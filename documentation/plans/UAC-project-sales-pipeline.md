@@ -1,8 +1,8 @@
 # UAC — Project Sales Pipeline (module `projects`)
 
-**Status:** S0, S1, S2 and S2b built (2026-07-26). Groups B, C, D, G, J and N are
-implemented and browser-verified except where noted below; A is implemented apart from the
-Excel import. Remaining slices S2c, S3-S6 unstarted.
+**Status:** S0, S1, S2, S2b and S2c built (2026-07-26). Groups B, C, D, G, J, N and O
+are implemented and browser-verified except where noted below; A is implemented apart from
+the Excel import. Remaining slices S3-S6 unstarted.
 
 **Verified against a running stack, not asserted:** every AC below marked ✅ was exercised
 either by a test that fails without it or in the browser at localhost:3010/:8010. ACs that

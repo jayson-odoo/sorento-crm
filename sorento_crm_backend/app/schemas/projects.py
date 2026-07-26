@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -256,6 +256,14 @@ class ProjectResponse(BaseModel):
     type_name: Optional[str] = None
     template_id: Optional[str] = None
     template_name: Optional[str] = None
+
+    # Provenance (AC-O10). All null on a project registered directly, which the detail
+    # page renders as "registered directly" rather than as an empty section.
+    lead_id: Optional[str] = None
+    lead_code: Optional[str] = None
+    lead_source: Optional[str] = None
+    lead_created_at: Optional[datetime] = None
+    lead_owner_user_id: Optional[str] = None
 
     status_id: Optional[str] = None
     status_key: Optional[str] = None
@@ -538,3 +546,174 @@ class ProjectTaskHistoryEntry(BaseModel):
     field: Optional[str] = None
     from_value: Optional[str] = None
     to_value: Optional[str] = None
+
+
+# ----------------------------------------------------------------- S2c leads
+
+
+class ProjectLeadBase(BaseModel):
+    title: str = Field(min_length=1)
+    customer_id: str = Field(description="Required (AC-O1): somebody told us about it.")
+    developer_party_id: Optional[str] = Field(
+        None, description="Often unknown at sighting time."
+    )
+    source: Optional[str] = None
+    source_detail: Optional[str] = None
+    estimated_value: Optional[Decimal] = None
+    location: Optional[str] = None
+    notes: Optional[str] = None
+    owner_user_id: Optional[str] = None
+
+
+class ProjectLeadNewCustomer(BaseModel):
+    """Create a customer for an organisation that has never bought anything.
+
+    Rows created this way carry ``source='project_lead'`` so order and invoice pickers
+    can filter prospects out if the noise becomes real.
+    """
+
+    customer_name: str = Field(min_length=1, max_length=255)
+    customer_code: Optional[str] = Field(None, max_length=50)
+    email: Optional[str] = Field(None, max_length=150)
+    phone_number: Optional[str] = Field(None, max_length=50)
+    registration_number: Optional[str] = Field(None, max_length=100)
+    notes: Optional[str] = None
+
+
+class ProjectLeadCreate(ProjectLeadBase):
+    customer_id: Optional[str] = Field(
+        None, description="Omit only when supplying `new_customer` instead."
+    )
+    new_customer: Optional[ProjectLeadNewCustomer] = Field(
+        None,
+        description=(
+            "Step 1 of the wizard when the informant is not yet a customer. Ignored "
+            "when `customer_id` is given."
+        ),
+    )
+
+
+class ProjectLeadUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1)
+    customer_id: Optional[str] = None
+    developer_party_id: Optional[str] = None
+    source: Optional[str] = None
+    source_detail: Optional[str] = None
+    estimated_value: Optional[Decimal] = None
+    location: Optional[str] = None
+    notes: Optional[str] = None
+    owner_user_id: Optional[str] = None
+
+
+class ProjectLeadDuplicateHint(BaseModel):
+    """Informational only (AC-O3). A lead is never blocked by one of these."""
+
+    lead_id: str
+    lead_code: str
+    owner_name: Optional[str] = None
+
+
+class ProjectLeadResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    lead_code: str
+    title: str
+
+    customer_id: str
+    customer_name: Optional[str] = None
+    developer_party_id: Optional[str] = None
+    developer_name: Optional[str] = None
+
+    source: Optional[str] = None
+    source_detail: Optional[str] = None
+    estimated_value: Optional[Decimal] = None
+    location: Optional[str] = None
+    notes: Optional[str] = None
+
+    status_id: Optional[str] = None
+    status_key: Optional[str] = None
+    status_label: Optional[str] = None
+    outcome: str = "open"
+    disqualified_reason: Optional[str] = None
+    qualified_at: Optional[datetime] = None
+
+    owner_user_id: Optional[str] = None
+    owner_name: Optional[str] = None
+
+    project_count: int = 0
+    possible_duplicates: List[ProjectLeadDuplicateHint] = Field(default_factory=list)
+    can_edit: bool = False
+
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ProjectLeadStatusChangeRequest(BaseModel):
+    to_status_id: str
+
+
+class ProjectLeadQualifyRequest(BaseModel):
+    """The confirm step of the wizard. Every field is optional: the lead already knows
+    most of it, and the point of qualify is to avoid re-keying what we were told."""
+
+    title: Optional[str] = Field(
+        None, description="Defaults to the lead's title. Split a masterplan here."
+    )
+    developer_party_id: Optional[str] = None
+    type_id: Optional[str] = None
+    template_id: Optional[str] = None
+    owner_user_id: Optional[str] = None
+    brand_ids: Optional[List[str]] = None
+    details: Optional[Dict[str, Any]] = Field(
+        None, description="Sales-profile fields, same shape as registration."
+    )
+
+
+class ProjectLeadDisqualifyRequest(BaseModel):
+    reason: str = Field(
+        min_length=1,
+        description=(
+            "Must be a value from the `project_lead_disqualify_reason` lookup set: a "
+            "free-text reason cannot be reported on."
+        ),
+    )
+
+
+class ProjectLeadReasonOption(BaseModel):
+    value: str
+    label: str
+
+
+class ProjectLeadDisqualifiedReasonCount(ProjectLeadReasonOption):
+    count: int
+
+
+class ProjectLeadConversionMetrics(BaseModel):
+    total: int
+    open: int
+    qualified: int
+    disqualified: int
+    decided: int
+    conversion_rate: Optional[float] = Field(
+        None,
+        description=(
+            "Qualified / decided. Null rather than 0 when nothing is decided yet: zero "
+            "would read as 'we convert nothing'."
+        ),
+    )
+    projects_from_leads: int
+    disqualified_reasons: List[ProjectLeadDisqualifiedReasonCount] = Field(
+        default_factory=list
+    )
+
+
+class CustomerPortfolioResponse(BaseModel):
+    """One customer's leads and projects (AC-O9), the account view.
+
+    Both lists always present, empty when there is nothing: the section renders either
+    way per the CRUD standard, with an explicit empty state rather than disappearing.
+    """
+
+    leads: List[ProjectLeadResponse] = Field(default_factory=list)
+    projects: List[ProjectResponse] = Field(default_factory=list)

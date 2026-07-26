@@ -219,6 +219,13 @@ class Project(Base, CompanyScopedMixin):
     template_id = Column(
         UUID(as_uuid=False), ForeignKey("project_templates.id", ondelete="RESTRICT"), nullable=True
     )
+    # Where this pursuit came from, when it came from a lead (AC-O10). Nullable
+    # because a project may be registered directly -- a tender notice arrives and is
+    # claimed the same hour, with no prior sighting. SET NULL rather than CASCADE: a
+    # deleted lead must never take a live registration with it.
+    lead_id = Column(
+        UUID(as_uuid=False), ForeignKey("project_leads.id", ondelete="SET NULL"), nullable=True
+    )
 
     # Funnel position, on the status engine (entity #1). Nullable so a row can be
     # created before its graph is configured; the service assigns the initial status.
@@ -265,6 +272,7 @@ class Project(Base, CompanyScopedMixin):
         UniqueConstraint("company_id", "project_code", name="uq_projects_company_code"),
         Index("ix_projects_company_outcome", "company_id", "outcome"),
         Index("ix_projects_status", "status_id"),
+        Index("ix_projects_lead", "lead_id"),
     )
 
 
@@ -535,4 +543,112 @@ class ProjectTask(Base, CompanyScopedMixin):
         # "My Tasks" reads open tasks for one user across every project, ordered by
         # due date, so it is worth an index of its own (AC-N9).
         Index("ix_project_tasks_assignee_due", "assignee_user_id", "due_date"),
+    )
+
+
+# A lead's own result axis, deliberately NOT reusing the project outcomes. A lead is
+# not won or lost: it is qualified into a project (which then has its own outcome) or
+# disqualified. Reusing OUTCOME_WON here would make "won leads" and "won projects"
+# double-count the same pursuit in every report.
+LEAD_OUTCOME_OPEN = "open"
+LEAD_OUTCOME_QUALIFIED = "qualified"
+LEAD_OUTCOME_DISQUALIFIED = "disqualified"
+
+# Where the rumour came from. Free-form `source_detail` carries the specifics; this
+# is the reportable bucket.
+LEAD_SOURCE_SITE_VISIT = "site_visit"
+LEAD_SOURCE_ARCHITECT = "architect"
+LEAD_SOURCE_CONTRACTOR = "contractor"
+LEAD_SOURCE_DEALER = "dealer"
+LEAD_SOURCE_INBOUND = "inbound"
+LEAD_SOURCE_OTHER = "other"
+LEAD_SOURCES = (
+    LEAD_SOURCE_SITE_VISIT,
+    LEAD_SOURCE_ARCHITECT,
+    LEAD_SOURCE_CONTRACTOR,
+    LEAD_SOURCE_DEALER,
+    LEAD_SOURCE_INBOUND,
+    LEAD_SOURCE_OTHER,
+)
+
+# The lookup set the disqualification reason must come from (AC-O6). A free-text
+# reason cannot be reported on, and "not interested" typed nine different ways is
+# what kills a conversion metric.
+LEAD_DISQUALIFY_REASON_SET_KEY = "project_lead_disqualify_reason"
+
+
+class ProjectLead(Base, CompanyScopedMixin):
+    """A sighting: somebody heard about a development before it is ours to claim.
+
+    **A lead is NOT exclusive** (AC-O3). No fuzzy lock, no clash block, no unique
+    index on the title. Several salespeople may record the same rumour, because
+    locking hearsay produces a worse land-grab than locking tenders: the first person
+    to type a guess would own a development nobody has confirmed exists, and a lead
+    often has no developer to lock on anyway.
+
+    Ownership locks at QUALIFY, which is where the registration clash check finally
+    runs (AC-O4). One lead may yield SEVERAL projects: a masterplan sighting turns
+    into a separate registration per phase (AC-O5).
+    """
+
+    __tablename__ = "project_leads"
+    # Qualify, disqualify and reassignment are exactly the decisions people dispute,
+    # same reasoning as `projects`.
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    lead_code = Column(String(64), nullable=False)
+
+    # Required (AC-O1), matching ecohub's non-nullable `Lead.clientId`. Somebody told
+    # us, so there is always a somebody. RESTRICT rather than SET NULL: silently
+    # orphaning the lead would leave a rumour with no source.
+    customer_id = Column(
+        UUID(as_uuid=False), ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False
+    )
+    # Optional: at sighting time the developer is frequently the unknown.
+    developer_party_id = Column(
+        UUID(as_uuid=False), ForeignKey("project_parties.id", ondelete="RESTRICT"), nullable=True
+    )
+
+    title = Column(Text, nullable=False)
+    # Kept for the informational near-duplicate hint on the list (AC-O3). Same
+    # normalisation as `projects.normalised_title` so a lead can be compared against
+    # registered projects with the one shared helper, NOT to enforce anything.
+    normalised_title = Column(Text, nullable=False)
+
+    source = Column(String(32), nullable=True)
+    source_detail = Column(Text, nullable=True)
+    estimated_value = Column(Numeric(15, 2), nullable=True)
+    location = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+
+    # Status engine entity #3 (AC-O7). Leads have no template, so no scoped graphs:
+    # one lead funnel per install.
+    status_id = Column(
+        UUID(as_uuid=False), ForeignKey("statuses.id", ondelete="SET NULL"), nullable=True
+    )
+    outcome = Column(
+        String(16), nullable=False, server_default=LEAD_OUTCOME_OPEN, default=LEAD_OUTCOME_OPEN
+    )
+    disqualified_reason = Column(String(150), nullable=True)
+    qualified_at = Column(DateTime(timezone=False), nullable=True)
+
+    owner_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        # The code is unique; the TITLE deliberately is not. See the class docstring.
+        UniqueConstraint("company_id", "lead_code", name="uq_project_leads_company_code"),
+        Index("ix_project_leads_company_outcome", "company_id", "outcome"),
+        Index("ix_project_leads_customer", "customer_id"),
+        Index("ix_project_leads_status", "status_id"),
+        # The near-duplicate hint scans normalised titles within a company.
+        Index("ix_project_leads_company_normalised", "company_id", "normalised_title"),
     )

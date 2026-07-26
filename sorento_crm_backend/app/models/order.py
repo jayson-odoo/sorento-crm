@@ -80,6 +80,11 @@ class Customer(Base, CompanyScopedMixin):
     mobile_number = Column(String(50), nullable=True)
     # SCM (M2): demand-nature channel routing via the customer's market segment.
     market_segment_code = Column(String(50), ForeignKey("market_segments.code", ondelete="SET NULL"), nullable=True)
+    # How this row got here. Set to 'project_lead' by the lead wizard, which can
+    # create a customer for an organisation that has never bought anything: order and
+    # invoice pickers can filter prospects out if the noise becomes real. Null on the
+    # 2,391 pre-existing rows, which is the honest answer for them.
+    source = Column(String(32), nullable=True)
 
     orders = relationship("Order", back_populates="customer")
     customer_contacts = relationship(

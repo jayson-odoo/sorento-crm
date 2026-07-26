@@ -16,7 +16,20 @@ import {
   listTemplateTasks,
   updateProjectTask,
   updateTemplateTask,
+  changeLeadStatus,
+  createLead,
   createParty,
+  deleteLead,
+  disqualifyLead,
+  getCustomerPortfolio,
+  getLead,
+  getLeadMetrics,
+  listDisqualifyReasons,
+  listLeads,
+  previewQualify,
+  qualifyLead,
+  reopenLead,
+  updateLead,
   createProjectTemplate,
   createProjectType,
   deleteProjectTemplate,
@@ -48,6 +61,9 @@ import type {
   ProjectRegisterBody,
   ProjectStakeholderBody,
   ProjectTaskBody,
+  LeadListParams,
+  LeadQualifyBody,
+  ProjectLeadBody,
   ProjectTemplateBody,
   ProjectTypeBody,
   ProjectTemplateTaskBody,
@@ -553,4 +569,165 @@ export function useProjectTemplateMutations() {
   });
 
   return { create, update, remove };
+}
+
+
+// ------------------------------------------------------------------- leads
+
+export const LEADS_KEY = 'project-leads';
+export const leadsListKey = (params: LeadListParams) => [LEADS_KEY, 'list', params];
+export const leadKey = (leadId: string) => [LEADS_KEY, 'detail', leadId];
+export const LEAD_METRICS_KEY = [LEADS_KEY, 'metrics'];
+export const LEAD_REASONS_KEY = [LEADS_KEY, 'disqualify-reasons'];
+export const customerPortfolioKey = (customerId: string) => [
+  LEADS_KEY,
+  'portfolio',
+  customerId,
+];
+
+export function useLeads(params: LeadListParams) {
+  return useQuery({ queryKey: leadsListKey(params), queryFn: () => listLeads(params) });
+}
+
+export function useLead(leadId: string | undefined) {
+  return useQuery({
+    queryKey: leadKey(leadId ?? ''),
+    queryFn: () => getLead(leadId as string),
+    enabled: Boolean(leadId),
+  });
+}
+
+export function useLeadMetrics() {
+  return useQuery({ queryKey: LEAD_METRICS_KEY, queryFn: () => getLeadMetrics() });
+}
+
+/**
+ * The reasons are admin-configured and change about once a year, so they are cached
+ * hard: refetching them on every dialog open is a request that never returns anything
+ * new.
+ */
+export function useDisqualifyReasons() {
+  return useQuery({
+    queryKey: LEAD_REASONS_KEY,
+    queryFn: () => listDisqualifyReasons(),
+    staleTime: 10 * 60 * 1000,
+  });
+}
+
+export function useCustomerPortfolio(customerId: string | undefined) {
+  return useQuery({
+    queryKey: customerPortfolioKey(customerId ?? ''),
+    queryFn: () => getCustomerPortfolio(customerId as string),
+    enabled: Boolean(customerId),
+  });
+}
+
+/**
+ * What qualifying would hit. Enabled only on an open lead: previewing a clash for a
+ * lead that is already qualified or dead is a question nobody asked.
+ */
+export function useQualifyPreview(
+  leadId: string | undefined,
+  params: { title?: string | null; developerPartyId?: string | null; enabled?: boolean },
+) {
+  const title = (params.title ?? '').trim();
+  return useQuery({
+    queryKey: [LEADS_KEY, 'qualify-preview', leadId ?? '', title.toLowerCase(), params.developerPartyId ?? null],
+    queryFn: () =>
+      previewQualify(leadId as string, {
+        title: title || null,
+        developer_party_id: params.developerPartyId ?? null,
+      }),
+    enabled: Boolean(leadId) && params.enabled !== false,
+    placeholderData: (previous) => previous,
+  });
+}
+
+/**
+ * Lead writes invalidate the PROJECT lists too.
+ *
+ * Qualifying creates a project, and disqualifying changes the conversion metric that
+ * the pipeline header reads. Invalidating only the lead list would leave the pipeline
+ * missing the project the user just created.
+ */
+function useLeadInvalidate() {
+  const queryClient = useQueryClient();
+  return (leadId?: string) => {
+    queryClient.invalidateQueries({ queryKey: [LEADS_KEY] });
+    queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY] });
+    if (leadId) queryClient.invalidateQueries({ queryKey: leadKey(leadId) });
+  };
+}
+
+export function useLeadMutations() {
+  const invalidate = useLeadInvalidate();
+
+  const create = useMutation({
+    mutationFn: (body: ProjectLeadBody) => createLead(body),
+    onSuccess: (lead) => {
+      invalidate(lead.id);
+      toast.success(`${lead.lead_code} recorded`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<ProjectLeadBody> }) =>
+      updateLead(id, body),
+    onSuccess: (lead) => {
+      invalidate(lead.id);
+      toast.success('Lead saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const move = useMutation({
+    mutationFn: ({ id, toStatusId }: { id: string; toStatusId: string }) =>
+      changeLeadStatus(id, toStatusId),
+    onSuccess: (lead) => {
+      invalidate(lead.id);
+      toast.success(`${lead.lead_code} moved to ${lead.status_label ?? 'a new stage'}`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const qualify = useMutation({
+    mutationFn: ({ id, body }: { id: string; body?: LeadQualifyBody }) =>
+      qualifyLead(id, body ?? {}),
+    onSuccess: (project) => {
+      invalidate();
+      toast.success(`${project.project_code} registered from this lead`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const disqualify = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      disqualifyLead(id, reason),
+    onSuccess: (lead) => {
+      invalidate(lead.id);
+      toast.success(`${lead.lead_code} disqualified`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const reopen = useMutation({
+    mutationFn: (id: string) => reopenLead(id),
+    onSuccess: (lead) => {
+      invalidate(lead.id);
+      toast.success(`${lead.lead_code} reopened`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteLead(id),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Lead deleted');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { create, update, move, qualify, disqualify, reopen, remove };
 }

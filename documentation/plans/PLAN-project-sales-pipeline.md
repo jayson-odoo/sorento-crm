@@ -200,9 +200,20 @@ history, "My Tasks", and the template checklist admin screen (Project Sales -> S
 | F13 | The delete confirm for an in-use checklist item told the user it could not be deleted and then offered a Delete button the server was certain to refuse with a 409. | Two dialogs: the ordinary confirm when nothing has copied the item, and a "cannot delete" notice offering **Deactivate instead** (which is the action the copy recommends) when something has. |
 | F14 | AC-N6 says a project's next action is derived from its earliest open task, but nothing surfaced it in the pipeline: the board card and grid predated tasks. | Board card and grid both show it, styled destructive when overdue, with an explicit "N open, none dated" state -- undated open work is not the same as nothing to do. |
 
-**S2c — Leads** (§5a). `project_leads` on the status engine as entity #3, select-or-create
-Customer wizard, qualify → runs the clash check and creates a Project, disqualify + reason,
-lead→project conversion metric, Customer detail page showing its leads and projects.
+**S2c — Leads** (§5a). **BUILT 2026-07-26.** `project_leads` on the status engine as
+entity #3, select-or-create Customer wizard, qualify → runs the clash check and creates a
+Project, disqualify + reason from a lookup set, lead→project conversion metric, and the
+customer portfolio endpoint behind the account view.
+
+**S2c findings (things the build discovered):**
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| F15 | Ecohub's five-rung project graph does not fit a rumour, and neither terminal rung can be reached by a status move: "qualified" with no project behind it, or "disqualified" with no reason, is a lie the conversion report then repeats. | Short lead funnel (New / Contacted / Qualifying + terminal Qualified / Disqualified). `change_lead_status` refuses the two terminal rungs with a 422 pointing at the Qualify and Disqualify actions, which do the work those rungs mean. The FE excludes them from the dropdown for the same reason. |
+| F16 | A customer reaches its projects by TWO routes: its developer party is bridged to it, or a project was qualified out of one of its leads (the informant is often an architect who never buys). A single join under-reports the account. | `customer_portfolio` unions both and dedupes by project id, so a lead recorded against the developer itself does not render twice. |
+| F17 | `/customers/select` returned 404 on a perfectly valid request: `customers.router` was mounted BEFORE `customers_select.router`, so `/{customer_id}` captured the literal word "select" and `validate_uuid_path` 404'd it as a missing customer. Pre-existing, and the lead wizard was the first thing to notice. | Mount order swapped, plus `tests/test_route_shadowing.py` asserting no literal leaf (select / metrics / export / my-tasks / ...) sits behind a same-prefix parameterised sibling anywhere in the assembled app. Same family as the `/sla/integration/escalate` bug. |
+| F18 | The qualify route 500'd with `serialize_projects() got an unexpected keyword argument 'user_id'` while every service test passed: the lead serializer took `user_id` and the project one took `actor_user_id`, and the route mixed them. | Renamed the lead serializer's argument to `actor_user_id` so the two agree, and added `tests/test_project_lead_routes.py` -- route-level tests through FastAPI, which is the seam the service tests could not cover. Verified by reintroducing the bug and watching the new test fail. |
+| F19 | The company-scope resolver runs as a router-level dependency and re-stamps the scope from the REQUEST, so a TestClient with no active company silently overwrote the fixture's pin with UNSET and every route returned 400. | The route-test fixture overrides `apply_company_scope`, which is what a real JWT carrying `active_company_id` does. Documented in the fixture so the next route-test author does not spend the same hour on it. |
 
 **S3 — Quotations.** Quotations, versions (edit-in-place + Revise-freezes), lines with
 snapshots, Project Series (category allowlist), price floor rules (3 levels × percent|absolute),

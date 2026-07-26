@@ -505,6 +505,19 @@ def serialize_projects(
         else {}
     )
 
+    # Where the pursuit came from, when it came from a lead (AC-O10). Bulk, and only
+    # when some project on the page HAS a lead: a directly-registered pipeline pays
+    # nothing for a feature it does not use.
+    lead_ids = {p.lead_id for p in projects if p.lead_id}
+    leads = {}
+    if lead_ids:
+        from app.models.projects import ProjectLead
+
+        leads = {
+            row.id: row
+            for row in db.query(ProjectLead).filter(ProjectLead.id.in_(lead_ids)).all()
+        }
+
     # Next action is DERIVED from the earliest open task (AC-N6). One bulk query for
     # the whole page, because the board renders every open project at once.
     from app.services.project_task_service import next_action_for_projects
@@ -541,6 +554,27 @@ def serialize_projects(
                 "type_name": types.get(project.type_id),
                 "template_id": project.template_id,
                 "template_name": templates.get(project.template_id),
+                # Null here is meaningful, not missing: the project was registered
+                # directly, and the detail page says so rather than showing a blank.
+                "lead_id": project.lead_id,
+                "lead_code": (
+                    leads[project.lead_id].lead_code
+                    if project.lead_id in leads
+                    else None
+                ),
+                "lead_source": (
+                    leads[project.lead_id].source if project.lead_id in leads else None
+                ),
+                "lead_created_at": (
+                    leads[project.lead_id].created_at
+                    if project.lead_id in leads
+                    else None
+                ),
+                "lead_owner_user_id": (
+                    leads[project.lead_id].owner_user_id
+                    if project.lead_id in leads
+                    else None
+                ),
                 "status_id": project.status_id,
                 "status_key": status.key if status else None,
                 "status_label": status.label if status else None,
@@ -963,3 +997,51 @@ def delete_project(
 def resolve_user_names(db: Session, user_ids) -> Dict[str, str]:
     """Public alias for the bulk user-name lookup, for route serialisers."""
     return _name_map(db, user_ids)
+
+
+def serialize_clash_candidates(db: Session, candidates) -> List[Dict[str, Any]]:
+    """Render each candidate with enough context to judge it (AC-C6a).
+
+    Owner, status and value are what let someone tell "my colleague's live tender" from
+    "a different phase with a similar name". A bare title would make the block look
+    arbitrary.
+
+    Lives here rather than in a router because two routers need it: the registration
+    preview and the lead qualify preview must describe a clash identically, or the same
+    collision reads as two different problems.
+    """
+    if not candidates:
+        return []
+
+    rows_by_id = {
+        p.id: p
+        for p in db.query(Project)
+        .filter(Project.id.in_([c.project_id for c in candidates]))
+        .all()
+    }
+    serialised = serialize_projects(
+        db, [rows_by_id[c.project_id] for c in candidates if c.project_id in rows_by_id]
+    )
+    by_id = {row["id"]: row for row in serialised}
+
+    out: List[Dict[str, Any]] = []
+    for candidate in candidates:
+        row = by_id.get(candidate.project_id, {})
+        out.append(
+            {
+                "project_id": candidate.project_id,
+                "project_code": candidate.project_code,
+                "title": candidate.title,
+                "outcome": candidate.outcome,
+                "status_label": row.get("status_label"),
+                "owner_user_id": candidate.owner_user_id,
+                "owner_name": row.get("owner_name"),
+                "developer_name": row.get("developer_name"),
+                "estimated_sales_value": row.get("estimated_sales_value"),
+                "brands": row.get("brands", []),
+                "last_activity_at": row.get("last_meaningful_activity_at"),
+                "similarity": candidate.similarity,
+                "blocks": candidate.blocks,
+            }
+        )
+    return out

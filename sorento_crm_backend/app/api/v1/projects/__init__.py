@@ -1,7 +1,7 @@
 """Project Sales API routes."""
 from fastapi import APIRouter
 
-from app.api.v1.projects import parties, projects, tasks, types
+from app.api.v1.projects import leads, parties, projects, tasks, types
 
 router = APIRouter()
 
@@ -13,4 +13,7 @@ router.include_router(types.router, prefix="/config", tags=["project-config"])
 # the projects router, so /projects/{id}/tasks is not captured by /projects/{id}.
 router.include_router(tasks.router, tags=["project-tasks"])
 router.include_router(parties.router, prefix="/parties", tags=["project-parties"])
+# Leads before projects for the same reason config is: /leads/{id}/qualify returns a
+# PROJECT, but the route itself lives under the leads prefix.
+router.include_router(leads.router, prefix="/leads", tags=["project-leads"])
 router.include_router(projects.router, prefix="/projects", tags=["projects"])

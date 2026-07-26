@@ -305,7 +305,10 @@ def test_every_company_id_table_is_registered():
     #       task is company data in its own right, and "My Tasks" queries them
     #       directly rather than always through their project, so they cannot rely on
     #       the project's partition to scope them.
-    expected_owned = 42
+    #   +1  Project Sales S2c: project_leads. Owned for the same reason as projects --
+    #       the lead list, the conversion metric and the duplicate hint all query it
+    #       directly, and a lead recorded by SRT is not Mocha's to see.
+    expected_owned = 43
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

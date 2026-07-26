@@ -8,12 +8,13 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.models.projects import Project, ProjectTask
+from app.models.projects import Project, ProjectLead, ProjectTask
 from app.modules.projects.bootstrap import MODULE_KEY
 from app.status_engine.registry import StatusEntity, register_status_entity
 
 PROJECT_ENTITY_TYPE = "project"
 PROJECT_TASK_ENTITY_TYPE = "project_task"
+PROJECT_LEAD_ENTITY_TYPE = "project_lead"
 
 
 def _project_scope(record: Project) -> Optional[str]:
@@ -44,6 +45,7 @@ def _migrate_projects(db: Session, from_status_id: str, to_status_id: str) -> in
 def register() -> None:
     _register_project()
     _register_project_task()
+    _register_project_lead()
 
 
 def _register_project() -> None:
@@ -127,5 +129,42 @@ def _register_project_task() -> None:
             # they are enforced by the service, and a rule reading them would be a
             # second, weaker copy of that guard.
             fact_attrs=("task_phase", "category", "assignee_user_id"),
+        )
+    )
+
+
+def _count_leads(db: Session, status_id: str) -> int:
+    return db.query(ProjectLead).filter(ProjectLead.status_id == status_id).count()
+
+
+def _migrate_leads(db: Session, from_status_id: str, to_status_id: str) -> int:
+    return (
+        db.query(ProjectLead)
+        .filter(ProjectLead.status_id == from_status_id)
+        .update({ProjectLead.status_id: to_status_id}, synchronize_session=False)
+    )
+
+
+def _register_project_lead() -> None:
+    """Entity #3 (AC-O7), and the first one with NO scoped graphs.
+
+    A lead has no template -- the template is chosen at registration, which is after a
+    lead stops being a lead -- so there is nothing to scope on. One lead funnel per
+    install. Omitting ``scope_resolver`` is what says so: the API derives
+    ``supports_scoped_graphs`` from it, so the admin is never offered a scope picker
+    that could only ever resolve the default.
+    """
+    register_status_entity(
+        StatusEntity(
+            entity_type=PROJECT_LEAD_ENTITY_TYPE,
+            label="Lead",
+            module=MODULE_KEY,
+            count_records=_count_leads,
+            migrate_records=_migrate_leads,
+            model=ProjectLead,
+            status_attr="status_id",
+            record_label_attr="title",
+            required_flags=["is_initial", "is_terminal"],
+            fact_attrs=("outcome", "source", "developer_party_id", "customer_id"),
         )
     )

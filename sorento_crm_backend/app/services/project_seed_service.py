@@ -19,13 +19,16 @@ from sqlalchemy.orm import Session
 
 from app.models.numbering import DocumentNumberingRule
 from app.models.projects import ProjectTemplate, ProjectTemplateRole, ProjectType
+from app.models.lookup import LookupOption, LookupSet
 from app.models.status import Status, StatusTransition
+from app.models.projects import LEAD_DISQUALIFY_REASON_SET_KEY
 from app.services.project_reference_service import DEFAULT_TEMPLATE_ROLES
 
 logger = logging.getLogger(__name__)
 
 PROJECT_ENTITY = "project"
 PROJECT_TASK_ENTITY = "project_task"
+PROJECT_LEAD_ENTITY = "project_lead"
 
 # The funnel from the client's process-flow PDF. The terminal rung is "PO Received",
 # not "Won": status says what happened, while the commercial outcome is derived, so a
@@ -87,6 +90,46 @@ DEFAULT_TASK_EDGES = (
     ("stuck", "done", "Resolved while stuck"),
     ("not_started", "done", "Not needed after all"),
 )
+
+# The lead funnel (AC-O7). Deliberately SHORT: a lead is a rumour being firmed up, and
+# a five-rung qualification pipeline for hearsay is ceremony nobody maintains. Both
+# terminal rungs are real endings -- qualified leads do not come back, they become
+# projects, and one lead may become several (AC-O5).
+DEFAULT_LEAD_STATUSES = (
+    # (key, label, initial, terminal)
+    ("new", "New", True, False),
+    ("contacted", "Contacted", False, False),
+    ("qualifying", "Qualifying", False, False),
+    ("qualified", "Qualified", False, True),
+    ("disqualified", "Disqualified", False, True),
+)
+
+_LEAD_LIVE = ("new", "contacted", "qualifying")
+DEFAULT_LEAD_EDGES = (
+    ("new", "contacted", "Contacted"),
+    ("contacted", "qualifying", "Start qualifying"),
+    ("new", "qualifying", "Start qualifying"),
+    ("qualifying", "qualified", "Qualified"),
+    ("contacted", "qualified", "Qualified"),
+)
+
+# Seeded starting points for the disqualification reason lookup (AC-O6). A free-text
+# reason cannot be reported on: "not interested" typed nine ways is nine buckets.
+DEFAULT_LEAD_DISQUALIFY_REASONS = (
+    ("no_project", "No such project"),
+    ("wrong_segment", "Not our segment"),
+    ("competitor_locked", "Competitor already specified"),
+    ("budget", "Budget too low"),
+    ("duplicate", "Duplicate of an existing lead or project"),
+    ("no_response", "No response from the contact"),
+)
+
+LEAD_NUMBERING = {
+    "doc_type": "project_lead",
+    "prefix_template": "LEAD-",
+    "number_digits": 6,
+    "start_value": 1,
+}
 
 DEFAULT_TYPES = (
     # (code, name, derives_delivery_from_launch, templates)
@@ -353,6 +396,135 @@ def seed_types_and_templates(db: Session, company_id: str) -> int:
     return created
 
 
+def seed_lead_numbering_rule(db: Session) -> bool:
+    """``LEAD-000001`` upward, its own sequence separate from ``PRJ-``.
+
+    Same global-sequence caveat as the project rule: ``doc_type`` is unique with no
+    company column, so lead codes are globally unique across companies.
+    """
+    existing = (
+        db.query(DocumentNumberingRule)
+        .filter(DocumentNumberingRule.doc_type == LEAD_NUMBERING["doc_type"])
+        .first()
+    )
+    if existing:
+        return False
+    db.add(
+        DocumentNumberingRule(
+            id=_uid(),
+            doc_type=LEAD_NUMBERING["doc_type"],
+            enabled=True,
+            prefix_template=LEAD_NUMBERING["prefix_template"],
+            number_digits=LEAD_NUMBERING["number_digits"],
+            next_value=LEAD_NUMBERING["start_value"],
+            start_value=LEAD_NUMBERING["start_value"],
+            reset_policy="none",
+        )
+    )
+    db.flush()
+    return True
+
+
+def seed_default_lead_graph(db: Session) -> int:
+    """The graph for ``project_lead`` (AC-O7). No scoped variants: leads have no template.
+
+    Same wholesale guard as the other two graphs.
+    """
+    already = (
+        db.query(func.count(Status.id))
+        .filter(Status.entity_type == PROJECT_LEAD_ENTITY, Status.scope_id.is_(None))
+        .scalar()
+    )
+    if already:
+        return 0
+
+    by_key: Dict[str, Status] = {}
+    for index, (key, label, initial, terminal) in enumerate(DEFAULT_LEAD_STATUSES):
+        row = Status(
+            id=_uid(),
+            entity_type=PROJECT_LEAD_ENTITY,
+            scope_id=None,
+            key=key,
+            label=label,
+            sort_order=index,
+            is_initial=initial,
+            is_terminal=terminal,
+            is_default=initial,
+        )
+        db.add(row)
+        by_key[key] = row
+    db.flush()
+
+    for from_key, to_key, label in DEFAULT_LEAD_EDGES:
+        db.add(
+            StatusTransition(
+                id=_uid(),
+                entity_type=PROJECT_LEAD_ENTITY,
+                scope_id=None,
+                from_status_id=by_key[from_key].id,
+                to_status_id=by_key[to_key].id,
+                label=label,
+                trigger_mode="manual",
+            )
+        )
+    # Disqualifiable from every live rung. A rumour that dies on the first phone call
+    # is the common case, not an exception reachable only from the last stage.
+    for from_key in _LEAD_LIVE:
+        db.add(
+            StatusTransition(
+                id=_uid(),
+                entity_type=PROJECT_LEAD_ENTITY,
+                scope_id=None,
+                from_status_id=by_key[from_key].id,
+                to_status_id=by_key["disqualified"].id,
+                label="Disqualify",
+                trigger_mode="manual",
+            )
+        )
+    db.flush()
+    return len(by_key)
+
+
+def seed_lead_disqualify_reasons(db: Session) -> int:
+    """The reason lookup set (AC-O6), created empty-safe and never re-asserted.
+
+    Uses the existing generic lookup machinery rather than a bespoke table: an admin
+    already has a screen for editing lookup options, and a second reason table would
+    need a second screen.
+    """
+    existing = (
+        db.query(LookupSet)
+        .filter(LookupSet.set_key == LEAD_DISQUALIFY_REASON_SET_KEY)
+        .first()
+    )
+    if existing:
+        return 0
+
+    lookup_set = LookupSet(
+        id=_uid(),
+        set_key=LEAD_DISQUALIFY_REASON_SET_KEY,
+        name="Lead disqualification reasons",
+        description=(
+            "Why a project lead was disqualified. Read by the lead disqualify action; "
+            "the conversion report groups by these."
+        ),
+    )
+    db.add(lookup_set)
+    db.flush()
+    for order, (value, label) in enumerate(DEFAULT_LEAD_DISQUALIFY_REASONS):
+        db.add(
+            LookupOption(
+                id=_uid(),
+                set_id=lookup_set.id,
+                value=value,
+                label=label,
+                sort_order=order,
+            )
+        )
+    db.flush()
+    return len(DEFAULT_LEAD_DISQUALIFY_REASONS)
+
+
 def _company_ids(db: Session) -> List[str]:
     from app.models.company import Company
 
@@ -361,10 +533,21 @@ def _company_ids(db: Session) -> List[str]:
 
 def run(db: Session, company_id: Optional[str] = None) -> Dict[str, int]:
     """Seed everything. Safe to call on every boot."""
-    summary = {"numbering": 0, "statuses": 0, "task_statuses": 0, "types": 0}
+    summary = {
+        "numbering": 0,
+        "statuses": 0,
+        "task_statuses": 0,
+        "lead_numbering": 0,
+        "lead_statuses": 0,
+        "lead_reasons": 0,
+        "types": 0,
+    }
     summary["numbering"] = 1 if seed_numbering_rule(db) else 0
     summary["statuses"] = seed_default_funnel(db)
     summary["task_statuses"] = seed_default_task_graph(db)
+    summary["lead_numbering"] = 1 if seed_lead_numbering_rule(db) else 0
+    summary["lead_statuses"] = seed_default_lead_graph(db)
+    summary["lead_reasons"] = seed_lead_disqualify_reasons(db)
 
     companies = [company_id] if company_id else _company_ids(db)
     for cid in companies:

@@ -16,6 +16,13 @@ import type {
   ProjectTask,
   ProjectTaskBody,
   ProjectTemplateBody,
+  CustomerPortfolio,
+  LeadConversionMetrics,
+  LeadListParams,
+  LeadQualifyBody,
+  LeadReasonOption,
+  ProjectLead,
+  ProjectLeadBody,
   ProjectTemplateTask,
   ProjectTemplateTaskBody,
   ProjectUpdateBody,
@@ -521,4 +528,140 @@ export async function deleteTemplateTask(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to remove the checklist item'));
+}
+
+// ------------------------------------------------------------------- leads
+
+const LEADS = `${BASE}/leads`;
+
+export async function listLeads(
+  params: LeadListParams = {},
+): Promise<ListEnvelope<ProjectLead>> {
+  const sp = new URLSearchParams();
+  if (params.query) sp.set('query', params.query);
+  (params.outcome ?? []).forEach((value) => sp.append('outcome', value));
+  (params.status_id ?? []).forEach((value) => sp.append('status_id', value));
+  (params.owner_user_id ?? []).forEach((value) => sp.append('owner_user_id', value));
+  (params.customer_id ?? []).forEach((value) => sp.append('customer_id', value));
+  (params.source ?? []).forEach((value) => sp.append('source', value));
+  if (params.page) sp.set('page', String(params.page));
+  if (params.limit) sp.set('limit', String(params.limit));
+  if (params.sort) sp.set('sort', params.sort);
+  if (params.dir) sp.set('dir', params.dir);
+  const query = sp.toString();
+  const response = await apiFetch(`${LEADS}${query ? `?${query}` : ''}`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load leads'));
+  return response.json();
+}
+
+export async function getLead(leadId: string): Promise<ProjectLead> {
+  const response = await apiFetch(`${LEADS}/${leadId}`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load the lead'));
+  return response.json();
+}
+
+export async function createLead(body: ProjectLeadBody): Promise<ProjectLead> {
+  const response = await apiFetch(LEADS, { method: 'POST', body: JSON.stringify(body) });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to record the lead'));
+  return response.json();
+}
+
+export async function updateLead(
+  leadId: string,
+  body: Partial<ProjectLeadBody>,
+): Promise<ProjectLead> {
+  const response = await apiFetch(`${LEADS}/${leadId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the lead'));
+  return response.json();
+}
+
+export async function changeLeadStatus(
+  leadId: string,
+  toStatusId: string,
+): Promise<ProjectLead> {
+  const response = await apiFetch(`${LEADS}/${leadId}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ to_status_id: toStatusId }),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to move the lead'));
+  return response.json();
+}
+
+/**
+ * What qualifying WOULD hit, before the user commits to it. Same matcher and
+ * thresholds as registration, so the preview cannot disagree with the decision.
+ */
+export async function previewQualify(
+  leadId: string,
+  params: { title?: string | null; developer_party_id?: string | null } = {},
+): Promise<ClashPreview> {
+  const sp = new URLSearchParams();
+  if (params.title) sp.set('title', params.title);
+  if (params.developer_party_id) sp.set('developer_party_id', params.developer_party_id);
+  const query = sp.toString();
+  const response = await apiFetch(
+    `${LEADS}/${leadId}/qualify-preview${query ? `?${query}` : ''}`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to check for clashes'));
+  return response.json();
+}
+
+/** Returns the PROJECT, because that is what qualifying produces (AC-O4). */
+export async function qualifyLead(
+  leadId: string,
+  body: LeadQualifyBody = {},
+): Promise<Project> {
+  const response = await apiFetch(`${LEADS}/${leadId}/qualify`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to qualify the lead'));
+  return response.json();
+}
+
+export async function disqualifyLead(
+  leadId: string,
+  reason: string,
+): Promise<ProjectLead> {
+  const response = await apiFetch(`${LEADS}/${leadId}/disqualify`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to disqualify the lead'));
+  return response.json();
+}
+
+export async function reopenLead(leadId: string): Promise<ProjectLead> {
+  const response = await apiFetch(`${LEADS}/${leadId}/reopen`, { method: 'POST' });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to reopen the lead'));
+  return response.json();
+}
+
+export async function deleteLead(leadId: string): Promise<void> {
+  const response = await apiFetch(`${LEADS}/${leadId}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete the lead'));
+}
+
+export async function listDisqualifyReasons(): Promise<LeadReasonOption[]> {
+  const response = await apiFetch(`${LEADS}/disqualify-reasons`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load reasons'));
+  return response.json();
+}
+
+export async function getLeadMetrics(): Promise<LeadConversionMetrics> {
+  const response = await apiFetch(`${LEADS}/metrics`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load lead metrics'));
+  return response.json();
+}
+
+export async function getCustomerPortfolio(customerId: string): Promise<CustomerPortfolio> {
+  const response = await apiFetch(`${LEADS}/by-customer/${customerId}/portfolio`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load this account'));
+  return response.json();
 }

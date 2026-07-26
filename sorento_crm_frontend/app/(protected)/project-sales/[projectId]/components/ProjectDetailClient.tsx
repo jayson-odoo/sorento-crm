@@ -219,6 +219,32 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                     value={project.brands.length ? project.brands.join(', ') : null}
                   />
                 </dl>
+
+                {/* AC-O10. "Registered directly" is a real answer, not a missing one:
+                    a tender notice claimed the same hour never had a lead. */}
+                <div className="mt-4 border-t border-border pt-3">
+                  <p className="text-xs text-muted-foreground">Came from</p>
+                  {project.lead_id ? (
+                    <p className="text-sm">
+                      <Link
+                        href={`/project-sales/leads/${project.lead_id}`}
+                        className="text-primary hover:underline"
+                      >
+                        Lead {project.lead_code}
+                      </Link>
+                      {project.lead_source
+                        ? ` · ${project.lead_source.replace(/_/g, ' ')}`
+                        : ''}
+                      {project.lead_created_at
+                        ? ` · recorded ${formatDate(project.lead_created_at)}`
+                        : ''}
+                    </p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Registered directly, with no prior lead.
+                    </p>
+                  )}
+                </div>
               </CardContent>
             </Card>
 

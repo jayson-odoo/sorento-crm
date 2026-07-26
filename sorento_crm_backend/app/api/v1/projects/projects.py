@@ -57,48 +57,6 @@ _PROFILE_KEYS = (
 )
 
 
-def _clash_payload(db: Session, candidates) -> List[dict]:
-    """Render each candidate with enough context to judge it (AC-C6a).
-
-    Owner, status and value are what let someone tell "my colleague's live tender"
-    from "a different phase with a similar name". A bare title would make the block
-    look arbitrary.
-    """
-    if not candidates:
-        return []
-    from app.models.projects import Project
-
-    projects = {
-        p.id: p
-        for p in db.query(Project)
-        .filter(Project.id.in_([c.project_id for c in candidates]))
-        .all()
-    }
-    rows = svc.serialize_projects(db, [projects[c.project_id] for c in candidates])
-    by_id = {row["id"]: row for row in rows}
-    out = []
-    for candidate in candidates:
-        row = by_id.get(candidate.project_id, {})
-        out.append(
-            {
-                "project_id": candidate.project_id,
-                "project_code": candidate.project_code,
-                "title": candidate.title,
-                "outcome": candidate.outcome,
-                "status_label": row.get("status_label"),
-                "owner_user_id": candidate.owner_user_id,
-                "owner_name": row.get("owner_name"),
-                "developer_name": row.get("developer_name"),
-                "estimated_sales_value": row.get("estimated_sales_value"),
-                "brands": row.get("brands", []),
-                "last_activity_at": row.get("last_meaningful_activity_at"),
-                "similarity": candidate.similarity,
-                "blocks": candidate.blocks,
-            }
-        )
-    return out
-
-
 @router.post("/clash-preview", response_model=ClashPreviewResponse)
 async def preview_clashes(
     payload: ClashPreviewRequest,
@@ -123,7 +81,7 @@ async def preview_clashes(
             include_other_developers=True,
         )
         return {
-            "candidates": _clash_payload(db, candidates),
+            "candidates": svc.serialize_clash_candidates(db, candidates),
             "would_block": any(c.blocks for c in candidates),
         }
     except Exception as exc:

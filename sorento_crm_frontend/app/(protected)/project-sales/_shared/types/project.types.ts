@@ -148,6 +148,16 @@ export interface Project {
   brands: string[];
   brand_ids: string[];
 
+  /**
+   * Provenance (AC-O10). All null when the project was registered directly, which the
+   * detail page states explicitly rather than rendering an empty section.
+   */
+  lead_id?: string | null;
+  lead_code?: string | null;
+  lead_source?: string | null;
+  lead_created_at?: string | null;
+  lead_owner_user_id?: string | null;
+
   last_meaningful_activity_at?: string | null;
   days_since_last_activity?: number | null;
   /**
@@ -385,4 +395,140 @@ export interface TaskHistoryEntry {
   field?: string | null;
   from_value?: string | null;
   to_value?: string | null;
+}
+
+// ------------------------------------------------------------------- leads
+
+/**
+ * A lead is a RUMOUR, and every rule in this module follows from that:
+ *
+ * - It is not exclusive. Two salespeople may record the same sighting, so
+ *   `possible_duplicates` is a hint the UI shows and never a block (AC-O3).
+ * - `customer_id` is required, because somebody told us (AC-O1).
+ * - Ownership locks at QUALIFY, which is where the registration clash check finally
+ *   runs (AC-O4). Until then a lead grants nobody anything.
+ */
+export type LeadOutcome = 'open' | 'qualified' | 'disqualified';
+
+export type LeadSource =
+  | 'site_visit'
+  | 'architect'
+  | 'contractor'
+  | 'dealer'
+  | 'inbound'
+  | 'other';
+
+export interface LeadDuplicateHint {
+  lead_id: string;
+  lead_code: string;
+  owner_name?: string | null;
+}
+
+export interface ProjectLead {
+  id: string;
+  lead_code: string;
+  title: string;
+
+  customer_id: string;
+  customer_name?: string | null;
+  developer_party_id?: string | null;
+  developer_name?: string | null;
+
+  source?: LeadSource | null;
+  source_detail?: string | null;
+  estimated_value?: string | null;
+  location?: string | null;
+  notes?: string | null;
+
+  status_id?: string | null;
+  /** Stable identifier. Branch on this, never on `status_label`, which admins rename. */
+  status_key?: string | null;
+  status_label?: string | null;
+  outcome: LeadOutcome;
+  disqualified_reason?: string | null;
+  qualified_at?: string | null;
+
+  owner_user_id?: string | null;
+  owner_name?: string | null;
+
+  /** One lead may produce several projects (AC-O5), so this is a count, not a flag. */
+  project_count: number;
+  possible_duplicates: LeadDuplicateHint[];
+  can_edit: boolean;
+
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+/** Step 1 of the wizard when the informant has never bought anything. */
+export interface LeadNewCustomer {
+  customer_name: string;
+  customer_code?: string | null;
+  email?: string | null;
+  phone_number?: string | null;
+  registration_number?: string | null;
+  notes?: string | null;
+}
+
+export interface ProjectLeadBody {
+  title: string;
+  customer_id?: string | null;
+  new_customer?: LeadNewCustomer | null;
+  developer_party_id?: string | null;
+  source?: LeadSource | null;
+  source_detail?: string | null;
+  estimated_value?: string | null;
+  location?: string | null;
+  notes?: string | null;
+  owner_user_id?: string | null;
+}
+
+/**
+ * Every field optional: the lead already knows most of it, and re-asking for what we
+ * were told is the re-keying this module exists to remove. `title` is here so a
+ * masterplan sighting can be split into one registration per phase.
+ */
+export interface LeadQualifyBody {
+  title?: string | null;
+  developer_party_id?: string | null;
+  type_id?: string | null;
+  template_id?: string | null;
+  owner_user_id?: string | null;
+  brand_ids?: string[];
+  details?: Record<string, unknown> | null;
+}
+
+export interface LeadReasonOption {
+  value: string;
+  label: string;
+}
+
+export interface LeadConversionMetrics {
+  total: number;
+  open: number;
+  qualified: number;
+  disqualified: number;
+  decided: number;
+  /** Null rather than 0 when nothing is decided: zero reads as "we convert nothing". */
+  conversion_rate?: number | null;
+  projects_from_leads: number;
+  disqualified_reasons: (LeadReasonOption & { count: number })[];
+}
+
+export interface CustomerPortfolio {
+  leads: ProjectLead[];
+  projects: Project[];
+}
+
+export interface LeadListParams {
+  query?: string;
+  outcome?: string[];
+  status_id?: string[];
+  owner_user_id?: string[];
+  customer_id?: string[];
+  source?: string[];
+  page?: number;
+  limit?: number;
+  sort?: string;
+  dir?: 'asc' | 'desc';
 }
