@@ -131,6 +131,12 @@ export function BlockInspector({
   }
 
   const props = block.props;
+  // A bound collection that appears in the LIBRARY list is shared with other
+  // pages. The list holds reusable ones only, so membership is the test.
+  const boundToLibrary =
+    props.kind === 'collection' &&
+    Boolean(props.collectionId) &&
+    collections.some((collection) => collection.id === props.collectionId);
 
   return (
     <Card>
@@ -202,11 +208,24 @@ export function BlockInspector({
               Choose products
             </Button>
 
-            <p className="text-xs text-muted-foreground">
-              {selection.pinnedProductIds.length === 0 && !selection.conditions
-                ? 'Nothing chosen yet. The block stays empty until it has products.'
-                : 'Products are resolved when the page is viewed, so prices follow the reader.'}
-            </p>
+            {boundToLibrary ? (
+              // Changing products here rewrites the shared set, which IS the
+              // point of a reusable collection - but it must never be a
+              // surprise. Silently editing other people's pages from inside
+              // this one is the failure mode worth spending three lines on.
+              <div className="rounded-md border border-amber-500/50 bg-amber-500/5 px-2.5 py-2">
+                <p className="text-xs text-foreground">
+                  This block uses a shared collection. Changing its products changes it
+                  everywhere it is used, not just on this page.
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                {selection.pinnedProductIds.length === 0 && !selection.conditions
+                  ? 'Nothing chosen yet. The block stays empty until it has products.'
+                  : 'Products are resolved when the page is viewed, so prices follow the reader.'}
+              </p>
+            )}
 
             {props.collectionId && (
               // Promotes the SAME row, so this page stays bound to it. That is
