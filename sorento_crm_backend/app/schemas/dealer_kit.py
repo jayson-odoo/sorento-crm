@@ -245,3 +245,70 @@ class ExportRequestOut(BaseModel):
     status: str
     filename: Optional[str] = None
     audience: str
+
+
+class SelectionCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    name: Optional[str] = Field(default=None, max_length=200)
+    source_page_id: Optional[str] = Field(default=None, validation_alias="sourcePageId")
+
+
+class SelectionRename(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+class SelectionLineWrite(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    product_id: str = Field(validation_alias="productId")
+    # Absolute, not a delta: a client that retries a request must not order two.
+    quantity: float = Field(default=1, ge=0)
+
+
+class RoomWrite(BaseModel):
+    """The room outline and what is standing in it.
+
+    Free-form JSON on purpose: the shape of a placement is a FRONTEND concern
+    that will move (rotation today, wall-mounted height tomorrow), and pinning
+    it into a Pydantic model here would mean a backend release for every change
+    to a drag handle. What the backend guarantees is that it round-trips
+    unchanged, and that the outline is a polygon in millimetres.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    outline: list[dict] = Field(default_factory=list)
+    placements: list[dict] = Field(default_factory=list)
+
+
+class SelectionLineOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    line_id: str = Field(serialization_alias="lineId")
+    product_id: str = Field(serialization_alias="productId")
+    product_code: Optional[str] = Field(default=None, serialization_alias="productCode")
+    product_name: str = Field(serialization_alias="productName")
+    quantity: float
+    price: Optional[str] = None
+    invoice_price: Optional[str] = Field(default=None, serialization_alias="invoicePrice")
+    line_total: Optional[str] = Field(default=None, serialization_alias="lineTotal")
+    dimensions_mm: Optional[dict] = Field(default=None, serialization_alias="dimensionsMm")
+    is_available: bool = Field(serialization_alias="isAvailable")
+    unavailable_reason: Optional[str] = Field(
+        default=None, serialization_alias="unavailableReason"
+    )
+
+
+class SelectionOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    name: Optional[str] = None
+    currency: str = "MYR"
+    lines: list[SelectionLineOut] = Field(default_factory=list)
+    total: Optional[str] = None
+    unavailable_count: int = Field(default=0, serialization_alias="unavailableCount")
+    room: Optional[dict] = None
+    # Derived from the outline, never stored (AC-R5).
+    room_area_sqm: Optional[float] = Field(default=None, serialization_alias="roomAreaSqm")

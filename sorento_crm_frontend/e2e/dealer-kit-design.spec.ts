@@ -1,5 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
+import { purgeSelections } from './dealerKitCleanup';
+
 /**
  * The room designer, in a real browser.
  *
@@ -40,9 +42,36 @@ async function openDesigner(page: Page) {
   await page.goto(href!, { waitUntil: 'commit' });
 }
 
+/**
+ * Every selection this run creates, so the teardown can delete exactly those.
+ * The dev database is a copy of production; a suite that leaves rows behind
+ * makes the real lists unreadable within a few runs.
+ */
+const createdSelections: string[] = [];
+
 test.describe('Dealer Kit room designer', () => {
+  // Each test logs in fresh AND now does real server round trips (the design is
+  // persisted, not local state), so the default 90s is not enough headroom.
+  test.describe.configure({ timeout: 180_000 });
+
   test.beforeEach(async ({ page }) => {
+    page.on('response', (response) => {
+      if (
+        response.request().method() === 'POST' &&
+        /\/dealer-kit\/selections$/.test(response.url()) &&
+        response.status() === 201
+      ) {
+        response
+          .json()
+          .then((body: { id?: string }) => body?.id && createdSelections.push(body.id))
+          .catch(() => undefined);
+      }
+    });
     await login(page);
+  });
+
+  test.afterAll(async ({ browser }, testInfo) => {
+    await purgeSelections(browser, createdSelections, testInfo.project.use.baseURL);
   });
 
   test('opens from the sidebar with a room and no products', async ({ page }) => {
@@ -102,6 +131,58 @@ test.describe('Dealer Kit room designer', () => {
         (node as HTMLCanvasElement).getContext('webgl')),
     );
     expect(hasContext).toBe(true);
+  });
+
+  test('wall lengths are shown live in millimetres', async ({ page }) => {
+    await openDesigner(page);
+
+    // AC-R1: a user reshaping a room must see the dimensions, not just an area.
+    // Without these, "roughly right" is how a worktop gets ordered 200mm short.
+    await expect(page.getByText('4000 mm').first()).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText('3000 mm').first()).toBeVisible();
+  });
+
+  test('a design survives a reload', async ({ page }) => {
+    await openDesigner(page);
+
+    const combobox = page.getByRole('combobox').first();
+    await expect(combobox).toBeVisible({ timeout: 20_000 });
+    await combobox.focus();
+    await page.keyboard.press('Enter');
+    const option = page.getByRole('option').first();
+    await expect(option).toBeVisible({ timeout: 20_000 });
+    const chosen = ((await option.textContent()) ?? '').split('\u00b7')[0].trim();
+    await option.dispatchEvent('click');
+    await tap(page, page.getByRole('button', { name: /add product to room/i }));
+
+    // Wait for the box to exist before saving. Saving mid-write is a no-op -
+    // the button is disabled while the line request is in flight - and a
+    // synthetic click on a disabled button fails silently, which looks exactly
+    // like a broken save.
+    await expect(page.locator('[data-dk-plan-box]').first()).toBeVisible({ timeout: 30_000 });
+
+    // The line comes back from the SERVER, so its presence proves the write
+    // landed rather than that local state changed (AC-T3).
+    const saved = page.waitForResponse(
+      (response) =>
+        /\/dealer-kit\/selections\/[^/]+\/room$/.test(response.url()) && response.ok(),
+    );
+    await tap(page, page.getByRole('button', { name: /save design/i }));
+    const body = await (await saved).json();
+    expect(body.roomAreaSqm).toBe(12);
+    expect(body.lines.length).toBeGreaterThan(0);
+    // A line never carries a price of its own - it is resolved per viewer.
+    expect(body.lines[0]).not.toHaveProperty('unitPrice');
+
+    await page.reload({ waitUntil: 'commit' });
+    await expect(page.getByRole('heading', { name: /room designer/i })).toBeVisible({
+      timeout: 20_000,
+    });
+    // Reopened from the server, not from memory: the product is still there.
+    await expect(page.getByText(chosen, { exact: false }).first()).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.locator('[data-dk-plan-box]').first()).toBeVisible({ timeout: 20_000 });
   });
 
 });

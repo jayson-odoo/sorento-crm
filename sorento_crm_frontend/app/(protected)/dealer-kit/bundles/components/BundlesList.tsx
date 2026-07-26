@@ -87,12 +87,14 @@ export function BundlesList() {
         {!isLoading && bundles.length > 0 && (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {bundles.map((bundle) => (
-              <div key={bundle.id} className="flex flex-col gap-2">
+              // The action belongs ON the card. Stacked underneath it reads as a
+              // detached control that could apply to anything.
+              <div key={bundle.id} className="relative">
                 <BundleCard bundle={bundle} />
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="self-end"
+                  className="absolute end-1 top-1 bg-background/80"
                   aria-label={`Delete ${bundle.name}`}
                   onClick={() => setDeleting(bundle)}
                 >
@@ -112,7 +114,7 @@ export function BundlesList() {
         title="Confirm delete"
         description={
           <>
-            Delete <strong>{deleting?.name}</strong>? Any page showing it loses the block\u2019s
+            Delete <strong>{deleting?.name}</strong>? Any page showing it loses the block&rsquo;s
             contents. This action cannot be undone.
           </>
         }

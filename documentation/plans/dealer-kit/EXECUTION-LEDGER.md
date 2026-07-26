@@ -542,6 +542,102 @@ in the worker container, verified in a container, not only on macOS.
 
 ---
 
+## S4 Phase 2 — the Selection spine, persistence, and the contact link — **APPROVED**
+
+Built in the order agreed: the contact link first (the plan named it as S4's blocker), then
+Selection, then room persistence, then real dimensions. The fifth item, the quote handoff, was
+deliberately NOT built - see below.
+
+**Eyeballed first, and it found things.** Before writing any Phase 2 code the whole module was
+walked in a real browser. Seven findings; the ones fixed here:
+
+1. **28 `zzt-` rows were sitting in the shared dev database** - 194 pages, 8 collections, 6
+   bundles, 5 tile designs. The E2E suite created them and never cleaned up. The dev DB is a
+   COPY OF PRODUCTION, so within a few more runs the real lists would have been unreadable.
+   Purged (scoped to the marker prefix; `collection.page_id` is ON DELETE CASCADE, so
+   page-owned collections went with their pages - verified, not assumed), and both specs now
+   tear down after themselves. Selections cannot be found by name prefix - the designer creates
+   them unnamed - so that spec records the ids it creates and deletes exactly those.
+2. **A literal `\u2019` in JSX text** in the bundle delete dialog. `\u2019` is not an escape
+   in JSX, so the confirmation read "the block\u2019s contents".
+3. **The bundle delete button sat outside its card**, detached and centred underneath it.
+4. **The product picker offered discontinued products with no badge.** `/products/select`
+   returned only id/code/name while the FE service mapped `category`, `brand`, `price` and
+   `isDiscontinued` - all silently blank since S1, including the discontinued warning. The
+   endpoint now returns them (`invoice_price` and `cost_price` stay out: a dropdown is not an
+   entitlement check).
+5. **The plan view had no wall dimensions**, which is not polish - AC-R1 requires live
+   millimetres, so the slice was failing its own criterion. Every wall is now labelled, derived
+   on each render so the figure is live during a drag.
+
+**Still open from that walk** (logged, not fixed): a library collection cannot be EDITED from
+the library list, only created from inside a page - the whole point of a library collection is
+"edit once, every page follows", so this is a real gap; and the Tile Designs and Bundles lists
+have no search while Pages and Collections do.
+
+**AC-D1 / AC-D2 - the contact to customer link.** A table, `respond_contact_customers`, not a
+`respond_contacts.customer_id` column. `customers` is company-scoped and `respond_contacts` is
+not, so one column cannot say "customer X at Sorento, customer Y at Mocha", and a
+company-scoped value on an unscoped row is one join from crossing the partition. Resolution
+REFUSES to guess: one link resolves, several resolve to the primary, several with no primary
+resolve to nothing. Phone matching only ever proposes - suffix match on nine digits so
+`60123456789`, `0123456789` and `123456789` are one subscriber, and anything shorter is refused
+rather than matched loosely.
+
+**AC-S1 - AC-S6 - the Selection.** Owner is a user XOR a contact behind a CHECK constraint,
+written at the model level AND in the service, because a service check is bypassed by the next
+caller who writes their own insert. Lines carry a product and a quantity and nothing
+price-shaped; a test asserts the absence of `price`/`unit_price`/`list_price`/`invoice_price`/
+`total` columns so the rule cannot be quietly relaxed. `product_id` is ON DELETE RESTRICT: a
+discontinued product stays on the line, flagged, and is left out of the total. Dropping it
+would edit somebody's basket behind their back.
+
+**Room persistence and AC-R5.** The outline is an ordered list of points in millimetres on
+`selection.room_json`; the area is derived by shoelace on every read and never stored. The
+designer reopens the last design, so a reload is no longer a restart - which created a new
+problem, that the first design would follow the user forever, so "New design" clears the canvas
+without deleting the saved work.
+
+**Tests.** Golden sets written RED first: 11 for the contact link, 13 for the Selection - both
+confirmed failing before any implementation existed. Then 6 route tests, whose real subject is
+that a Selection is private: both users in that fixture are superadmins, so a permission-shaped
+rule would pass it. Another user gets 404, not 403 - a 403 confirms the id exists and turns a
+guess into an enumeration of other people's designs.
+
+**What I did NOT build, and why.** AC-Q2/Q3/Q4, the quote handoff. **There is no `Quote` model
+anywhere in this CRM, and no pipeline for one to appear in.** Inventing quote numbering,
+ownership, expiry and order-conversion inside another slice - at the end of it - is exactly
+what the three-phase method exists to prevent. It needs a grill of its own. The Selection is
+built so that handoff is a read of one row when the shape is settled.
+
+**Two migrations, verified up / down / up** on a throwaway database against a stub of their real
+dependencies, asserting the partial unique index, the CHECK, and `confdeltype='r'` on the
+product FK. Note for whoever runs the full chain: `alembic upgrade` FROM SCRATCH is already
+broken on this repo for an unrelated reason (`conversation_sla_event_log` is created before
+`conversation_sla_tracking`), which is why verification is scoped this way.
+
+**On the full pytest run:** it reports 573 failures and 314 errors, and that is environmental,
+not this slice. Other agents' suites and servers share this database; a file that errors 14
+times in the full run passes 26/26 alone. The dealer-kit and company-scope suites run **230/230
+green in isolation**, which is the honest number.
+
+`test_company_scope` guards the owned-table count and it fired, exactly as intended - a new
+company-scoped table has to be an explicit decision. Updated 39 -> 41 with the reasoning for
+both, and a note that `selection_line` is deliberately NOT owned: it hangs off a scoped parent,
+so scoping it too would filter it twice and add nothing.
+
+**Verified:** 1323 vitest · 26 Playwright (both dealer-kit specs, against a prod build) ·
+230 pytest in isolation · database left with zero rows in every dealer_kit table.
+
+**Gate adds:** owner is XOR at the DATABASE level · no price column can exist on a line ·
+a discontinued choice is flagged, never dropped, and never counted · resolution declines rather
+than guesses an ambiguous customer · phone matching proposes and never writes · a design
+survives a reload · every wall carries its length in millimetres · the suite deletes what it
+creates.
+
+
+---
+
 ## Standing constraints (violating any of these fails the gate)
 
 - Tests are **Postgres only**. No sqlite. Committing tests use a private `zzt_` schema.

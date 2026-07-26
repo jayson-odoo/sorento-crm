@@ -297,10 +297,18 @@ def test_every_company_id_table_is_registered():
         f"(add the mixin or allowlist them): {offenders}"
     )
     # Foundation slice shipped 34 owned tables (PLAN §4.1); the Dealer Kit adds
-    # 5 more (page, tile_template, asset, collection, bundle). The count is
-    # asserted on purpose: a new owned table must be an explicit decision here,
-    # not something that slips in and silently misses the scope filter.
-    assert len(owned) == 39, f"expected 39 owned tables, found {len(owned)}: {sorted(owned)}"
+    # 5 more (page, tile_template, asset, collection, bundle), then S4 adds two:
+    #   selection                 - one person's basket, partitioned like the
+    #                               customers and prices it resolves against.
+    #   respond_contact_customers - the contact -> customer link. Scoped because
+    #                               `customers` is: the same phone number can be
+    #                               a Sorento account and a Mocha one, and the
+    #                               link row is what keeps those apart.
+    # `selection_line` is deliberately NOT owned - it hangs off a scoped parent,
+    # so scoping it too would filter it twice and add nothing.
+    # The count is asserted on purpose: a new owned table must be an explicit
+    # decision here, not something that slips in and silently misses the filter.
+    assert len(owned) == 41, f"expected 41 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

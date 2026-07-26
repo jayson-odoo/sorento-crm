@@ -1,14 +1,16 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Box as BoxIcon, Plus, RotateCw, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { AlertTriangle, Box as BoxIcon, Check, Plus, RotateCw, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   clampBoxIntoRoom,
@@ -17,6 +19,15 @@ import {
   type Point,
 } from '@/lib/dealer-kit/roomGeometry';
 import { listPickerProducts } from '../../services/productPickerService';
+import {
+  createSelection,
+  getSelection,
+  saveRoom,
+  setSelectionLine,
+  type Room,
+  type Selection,
+  type SelectionLine,
+} from '../../services/selectionService';
 import { RoomPlan } from './RoomPlan';
 import { RoomScene, UNKNOWN_SIZE_MM, type SceneBox } from './RoomScene';
 
@@ -28,9 +39,15 @@ import { RoomScene, UNKNOWN_SIZE_MM, type SceneBox } from './RoomScene';
  * they become separate models they start disagreeing, and the user is the one
  * who finds out.
  *
- * Phase 1: rooms start as a rectangle the user reshapes, products come from the
- * real catalogue, and nothing is persisted yet. Selection and the quote handoff
- * are the next phase; the shapes here are what they will be held to.
+ * **The Selection is the source of truth for WHAT, the room for WHERE.** Which
+ * products and how many lives on the server and comes back priced for whoever
+ * is looking; the outline and the placements are saved alongside it. Nothing
+ * price-shaped is computed here - a designer that did its own arithmetic would
+ * be a second price list nobody knew they were maintaining.
+ *
+ * Sizes come from the Selection too, so a box is at the product's real
+ * dimensions when the catalogue has them and an obvious placeholder when it
+ * does not (AC-V1, AC-V2).
  */
 
 /** A 4m x 3m room to start from. Reshaping four corners beats drawing from nothing. */
@@ -41,57 +58,134 @@ const STARTING_ROOM: Point[] = [
   { x: 0, y: 3000 },
 ];
 
+/** Where this design is remembered between visits, so a reload is not a restart. */
+const LAST_SELECTION_KEY = 'dealer-kit:last-selection';
+
 interface PlacedProduct extends SceneBox {
   productId: string;
+  lineId: string;
   code: string;
 }
 
+/** Rebuild the boxes from the Selection, keeping any position already chosen. */
+function boxesFor(selection: Selection, previous: PlacedProduct[]): PlacedProduct[] {
+  const placementByLine = new Map(
+    (selection.room?.placements ?? []).map((placement) => [placement.lineId, placement]),
+  );
+  const currentByLine = new Map(previous.map((box) => [box.lineId, box]));
+
+  const boxes: PlacedProduct[] = [];
+  selection.lines.forEach((line, index) => {
+    // A quantity of 3 is three boxes, because three of them stand in the room.
+    const count = Math.max(1, Math.round(line.quantity));
+    for (let copy = 0; copy < count; copy += 1) {
+      const id = `${line.lineId}-${copy}`;
+      const existing = currentByLine.get(id);
+      const saved = placementByLine.get(id);
+      const size = line.dimensionsMm;
+
+      boxes.push({
+        id,
+        lineId: id,
+        productId: line.productId,
+        code: line.productCode ?? line.productName,
+        label: line.productCode ?? line.productName,
+        x: existing?.x ?? saved?.x ?? 200 + ((index + copy) % 4) * 800,
+        y: existing?.y ?? saved?.y ?? 200 + Math.floor((index + copy) / 4) * 800,
+        width: size?.length ?? UNKNOWN_SIZE_MM.width,
+        depth: size?.width ?? UNKNOWN_SIZE_MM.depth,
+        heightMm: size?.height ?? UNKNOWN_SIZE_MM.height,
+        rotation: existing?.rotation ?? saved?.rotation ?? 0,
+        isEstimated: size == null,
+      });
+    }
+  });
+  return boxes;
+}
+
 export function RoomDesigner() {
+  const queryClient = useQueryClient();
+  const [selectionId, setSelectionId] = useState<string | null>(null);
   const [outline, setOutline] = useState<Point[]>(STARTING_ROOM);
   const [placed, setPlaced] = useState<PlacedProduct[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [productToAdd, setProductToAdd] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const hydrated = useRef(false);
 
-  const { data: products = [], isLoading } = useQuery({
+  useEffect(() => {
+    setSelectionId(window.localStorage.getItem(LAST_SELECTION_KEY));
+  }, []);
+
+  const { data: products = [], isLoading: productsLoading } = useQuery({
     queryKey: ['dealer-kit', 'picker-products'],
     queryFn: listPickerProducts,
+  });
+
+  const { data: selection, isLoading: selectionLoading } = useQuery({
+    queryKey: ['dealer-kit', 'selection', selectionId],
+    queryFn: () => getSelection(selectionId!),
+    enabled: !!selectionId,
+    retry: false,
+  });
+
+  // The server owns which products and their sizes; local state owns where they
+  // stand. Rebuilding on every selection change keeps the two in step without a
+  // second copy of the line list.
+  useEffect(() => {
+    if (!selection) return;
+    setPlaced((current) => boxesFor(selection, current));
+    if (!hydrated.current && selection.room?.outline?.length) {
+      setOutline(selection.room.outline);
+      hydrated.current = true;
+    }
+  }, [selection]);
+
+  const ensureSelection = useCallback(async (): Promise<string> => {
+    if (selectionId) return selectionId;
+    const created = await createSelection();
+    window.localStorage.setItem(LAST_SELECTION_KEY, created.id);
+    setSelectionId(created.id);
+    queryClient.setQueryData(['dealer-kit', 'selection', created.id], created);
+    return created.id;
+  }, [selectionId, queryClient]);
+
+  const lineMutation = useMutation({
+    mutationFn: async ({ productId, quantity }: { productId: string; quantity: number }) => {
+      const id = await ensureSelection();
+      return setSelectionLine(id, productId, quantity);
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['dealer-kit', 'selection', updated.id], updated);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const roomMutation = useMutation({
+    mutationFn: async (room: Room) => {
+      const id = await ensureSelection();
+      return saveRoom(id, room);
+    },
+    onSuccess: (updated) => {
+      queryClient.setQueryData(['dealer-kit', 'selection', updated.id], updated);
+      setDirty(false);
+      toast.success('Design saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   const addProduct = useCallback(() => {
     const product = products.find((candidate) => candidate.id === productToAdd);
     if (!product) return;
 
-    // Phase 1 has no dimensions on the select payload, so every box is
-    // currently an estimate and says so. Wiring real dimensions is a
-    // one-field change to the endpoint, not a redesign.
-    const size = UNKNOWN_SIZE_MM;
-
-    setPlaced((current) => {
-      const id = `placed-${current.length + 1}-${product.id.slice(0, 6)}`;
-      // Drop new items in a row rather than on top of each other.
-      const nextX = 200 + (current.length % 4) * (size.width + 200);
-      const nextY = 200 + Math.floor(current.length / 4) * (size.depth + 200);
-
-      const box: PlacedProduct = {
-        id,
-        productId: product.id,
-        code: product.code,
-        label: product.code,
-        x: nextX,
-        y: nextY,
-        width: size.width,
-        depth: size.depth,
-        heightMm: size.height,
-        rotation: 0,
-        isEstimated: true,
-      };
-      return [...current, clampBoxIntoRoom(box, outline) as PlacedProduct];
-    });
+    const line = selection?.lines.find((row) => row.productId === product.id);
+    lineMutation.mutate({ productId: product.id, quantity: (line?.quantity ?? 0) + 1 });
     setProductToAdd('');
-  }, [productToAdd, products, outline]);
+  }, [productToAdd, products, selection, lineMutation]);
 
   const moveBox = useCallback(
     (boxId: string, x: number, y: number) => {
+      setDirty(true);
       setPlaced((current) =>
         current.map((box) => {
           if (box.id !== boxId) return box;
@@ -104,7 +198,13 @@ export function RoomDesigner() {
     [outline],
   );
 
+  const changeOutline = useCallback((next: Point[]) => {
+    setOutline(next);
+    setDirty(true);
+  }, []);
+
   const rotateSelected = useCallback(() => {
+    setDirty(true);
     setPlaced((current) =>
       current.map((box) =>
         box.id === selectedId ? { ...box, rotation: (box.rotation + 90) % 360 } : box,
@@ -113,9 +213,47 @@ export function RoomDesigner() {
   }, [selectedId]);
 
   const removeSelected = useCallback(() => {
-    setPlaced((current) => current.filter((box) => box.id !== selectedId));
+    const box = placed.find((candidate) => candidate.id === selectedId);
+    if (!box || !selection) return;
+
+    const line = selection.lines.find((row) => row.productId === box.productId);
+    lineMutation.mutate({
+      productId: box.productId,
+      quantity: Math.max(0, (line?.quantity ?? 1) - 1),
+    });
     setSelectedId(null);
-  }, [selectedId]);
+  }, [placed, selectedId, selection, lineMutation]);
+
+  /**
+   * Put the canvas back to an empty room.
+   *
+   * The designer reopens the last design so a reload is not a restart, which
+   * means without this there is no way to start a second one - the first design
+   * would follow the user forever. The old design is NOT deleted: it is saved
+   * work, and forgetting it here is not the same as throwing it away.
+   */
+  const startFresh = useCallback(() => {
+    window.localStorage.removeItem(LAST_SELECTION_KEY);
+    hydrated.current = false;
+    setSelectionId(null);
+    setPlaced([]);
+    setOutline(STARTING_ROOM);
+    setSelectedId(null);
+    setDirty(false);
+  }, []);
+
+  const save = useCallback(() => {
+    roomMutation.mutate({
+      outline,
+      placements: placed.map((box) => ({
+        lineId: box.lineId,
+        productId: box.productId,
+        x: box.x,
+        y: box.y,
+        rotation: box.rotation,
+      })),
+    });
+  }, [outline, placed, roomMutation]);
 
   const collisions = useMemo(() => {
     const clashing = new Set<string>();
@@ -131,14 +269,30 @@ export function RoomDesigner() {
   }, [placed]);
 
   const area = areaSquareMetres(outline);
-  const estimated = placed.filter((box) => box.isEstimated).length;
+  const estimated = placed.filter((box) => box.isEstimated);
+  const estimatedNames = Array.from(new Set(estimated.map((box) => box.code)));
+  const lines = selection?.lines ?? [];
+  const busy = lineMutation.isPending || roomMutation.isPending;
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
       <div className="min-w-0 flex-1">
         <Card>
-          <CardHeader className="pb-3">
+          <CardHeader className="flex flex-col gap-3 pb-3 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle className="text-sm">The room</CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              {dirty && (
+                <span className="text-xs text-muted-foreground">Unsaved changes</span>
+              )}
+              <Button size="sm" variant="outline" onClick={startFresh} disabled={busy}>
+                <Plus className="size-4" />
+                New design
+              </Button>
+              <Button size="sm" variant={dirty ? 'primary' : 'outline'} onClick={save} disabled={busy}>
+                <Check className="size-4" />
+                {busy ? 'Saving' : 'Save design'}
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             <Tabs defaultValue="plan">
@@ -152,7 +306,7 @@ export function RoomDesigner() {
                   outline={outline}
                   boxes={placed}
                   selectedBoxId={selectedId}
-                  onOutlineChange={setOutline}
+                  onOutlineChange={changeOutline}
                   onMoveBox={moveBox}
                   onSelectBox={setSelectedId}
                 />
@@ -194,20 +348,22 @@ export function RoomDesigner() {
                     value: product.id,
                     label: `${product.code} · ${product.name}`,
                   }))}
-                  placeholder={isLoading ? 'Loading products' : 'Add a product'}
+                  placeholder={productsLoading ? 'Loading products' : 'Add a product'}
                 />
               </div>
               <Button
                 size="sm"
                 aria-label="Add product to room"
-                disabled={!productToAdd}
+                disabled={!productToAdd || busy}
                 onClick={addProduct}
               >
                 <Plus className="size-4" />
               </Button>
             </div>
 
-            {placed.length === 0 && (
+            {selectionLoading && <Skeleton className="h-16 w-full" />}
+
+            {!selectionLoading && lines.length === 0 && (
               <div className="rounded-lg border border-dashed border-border p-4 text-center">
                 <BoxIcon className="mx-auto size-5 text-muted-foreground" />
                 <p className="mt-2 text-xs font-medium text-foreground">Nothing placed yet</p>
@@ -217,28 +373,21 @@ export function RoomDesigner() {
               </div>
             )}
 
-            {placed.map((box) => (
-              <button
-                key={box.id}
-                type="button"
-                onClick={() => setSelectedId(box.id)}
-                aria-label={`Select ${box.code}`}
-                className={`flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-start ${
-                  box.id === selectedId ? 'border-primary bg-primary/5' : 'border-border'
-                }`}
-              >
-                <span className="min-w-0">
-                  <span className="block truncate font-mono text-xs">{box.code}</span>
-                  <span className="block text-[10px] text-muted-foreground">
-                    {box.width} x {box.depth} x {box.heightMm} mm
-                  </span>
-                </span>
-                {collisions.has(box.id) && (
-                  <Badge variant="warning" appearance="ghost" className="shrink-0 text-[9px]">
-                    Overlapping
-                  </Badge>
+            {lines.map((line) => (
+              <SelectionRow
+                key={line.lineId}
+                line={line}
+                selected={placed.some(
+                  (box) => box.productId === line.productId && box.id === selectedId,
                 )}
-              </button>
+                clashing={placed.some(
+                  (box) => box.productId === line.productId && collisions.has(box.id),
+                )}
+                onSelect={() => {
+                  const box = placed.find((candidate) => candidate.productId === line.productId);
+                  if (box) setSelectedId(box.id);
+                }}
+              />
             ))}
 
             {selectedId && (
@@ -247,26 +396,41 @@ export function RoomDesigner() {
                   <RotateCw className="size-4" />
                   Rotate
                 </Button>
-                <Button variant="outline" size="sm" onClick={removeSelected}>
+                <Button variant="outline" size="sm" onClick={removeSelected} disabled={busy}>
                   <Trash2 className="size-4 text-destructive" />
                   Remove
                 </Button>
               </div>
             )}
 
-            {estimated > 0 && (
+            {estimatedNames.length > 0 && (
               <Alert>
                 <AlertTriangle className="size-4" />
                 <AlertTitle className="text-xs">Sizes are estimated</AlertTitle>
                 <AlertDescription className="text-xs">
-                  {estimated} product{estimated === 1 ? '' : 's'} rendered at a default size
-                  because the catalogue has no dimensions for {estimated === 1 ? 'it' : 'them'}.
-                  A wrong-sized box that looks right is worse than one that says so.
+                  {/* Naming them matters: "one product" leaves the user hunting
+                      for which box is the lie (AC-V2). */}
+                  {estimatedNames.join(', ')} {estimatedNames.length === 1 ? 'is' : 'are'} drawn
+                  at a default size because the catalogue has no dimensions.
                 </AlertDescription>
               </Alert>
             )}
 
-            <div className="mt-2 border-t border-border pt-2 text-xs text-muted-foreground">
+            {selection && selection.unavailableCount > 0 && (
+              <Alert variant="destructive">
+                <AlertTriangle className="size-4" />
+                <AlertTitle className="text-xs">
+                  {selection.unavailableCount} product
+                  {selection.unavailableCount === 1 ? '' : 's'} cannot be ordered
+                </AlertTitle>
+                <AlertDescription className="text-xs">
+                  They stay in the design so you can see what changed, and they are left out of
+                  the total.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <div className="mt-2 space-y-1 border-t border-border pt-2 text-xs text-muted-foreground">
               <div className="flex justify-between">
                 <span>Room area</span>
                 <span>{area.toFixed(1)} m²</span>
@@ -275,10 +439,66 @@ export function RoomDesigner() {
                 <span>Products</span>
                 <span>{placed.length}</span>
               </div>
+              {selection?.total && (
+                <div className="flex justify-between pt-1 text-sm font-medium text-foreground">
+                  <span>Total</span>
+                  <span>
+                    {selection.currency} {selection.total}
+                  </span>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
       </aside>
     </div>
+  );
+}
+
+function SelectionRow({
+  line,
+  selected,
+  clashing,
+  onSelect,
+}: {
+  line: SelectionLine;
+  selected: boolean;
+  clashing: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-label={`Select ${line.productCode ?? line.productName}`}
+      className={`flex items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-start ${
+        selected ? 'border-primary bg-primary/5' : 'border-border'
+      }`}
+    >
+      <span className="min-w-0">
+        <span className="block truncate font-mono text-xs">
+          {line.productCode ?? line.productName}
+          {line.quantity > 1 && <span className="text-muted-foreground"> ×{line.quantity}</span>}
+        </span>
+        <span className="block text-[10px] text-muted-foreground">
+          {line.dimensionsMm
+            ? `${line.dimensionsMm.length} x ${line.dimensionsMm.width} x ${line.dimensionsMm.height} mm`
+            : 'No dimensions in the catalogue'}
+          {line.lineTotal ? ` · ${line.lineTotal}` : ''}
+        </span>
+      </span>
+      <span className="flex shrink-0 gap-1">
+        {!line.isAvailable && (
+          <Badge variant="destructive" appearance="ghost" className="text-[9px]">
+            {line.unavailableReason === 'discontinued' ? 'Discontinued' : 'Unavailable'}
+          </Badge>
+        )}
+        {clashing && (
+          <Badge variant="warning" appearance="ghost" className="text-[9px]">
+            Overlapping
+          </Badge>
+        )}
+      </span>
+    </button>
   );
 }

@@ -102,6 +102,14 @@ export function RoomPlan({
   );
 
   const area = areaSquareMetres(outline);
+  /** Only used to decide which side of a wall its label sits on. */
+  const centroid = useMemo(() => {
+    if (outline.length === 0) return { x: 0, y: 0 };
+    return {
+      x: outline.reduce((total, point) => total + point.x, 0) / outline.length,
+      y: outline.reduce((total, point) => total + point.y, 0) / outline.length,
+    };
+  }, [outline]);
   const path =
     outline.length >= 3
       ? `${outline.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')} Z`
@@ -164,6 +172,42 @@ export function RoomPlan({
             strokeLinejoin="round"
           />
         )}
+
+        {/*
+          A wall length beside every wall (AC-R1). Without it a user drags a
+          corner and has no idea whether they just made a 3.6m run or a 4.1m
+          one - and "roughly right" is how a worktop gets ordered 200mm short.
+          Derived from the outline on every render, so it is live during a drag
+          rather than a value that catches up on drop.
+        */}
+        {outline.length >= 3 &&
+          outline.map((point, index) => {
+            const next = outline[(index + 1) % outline.length];
+            const length = Math.round(Math.hypot(next.x - point.x, next.y - point.y));
+            if (length === 0) return null;
+
+            // Nudged off the wall, on the side away from the room's middle, so
+            // the label never sits on top of the line it measures.
+            const midX = (point.x + next.x) / 2;
+            const midY = (point.y + next.y) / 2;
+            const offsetX = midX < centroid.x ? -180 : 180;
+            const offsetY = midY < centroid.y ? -180 : 180;
+            const horizontal = Math.abs(next.x - point.x) >= Math.abs(next.y - point.y);
+
+            return (
+              <text
+                key={`wall-${index}`}
+                x={midX + (horizontal ? 0 : offsetX)}
+                y={midY + (horizontal ? offsetY : 0)}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                className="fill-muted-foreground"
+                style={{ fontSize: 150 }}
+              >
+                {length} mm
+              </text>
+            );
+          })}
 
         {boxes.map((box) => {
           const corners = boxCorners(box);

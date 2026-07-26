@@ -27,13 +27,24 @@ async def get_products_select(
             )
         
         products = q.limit(100).all()
-        
+
+        # Category, brand, list price and the discontinued flag are what a
+        # product dropdown actually shows. Their absence was not cosmetic: a
+        # picker with no `is_discontinued` offers a product nobody can buy with
+        # nothing to say so. `invoice_price` and `cost_price` stay out - a
+        # dropdown is not an entitlement check.
         return {
             "data": [
                 {
                     "id": p.id,
                     "product_code": p.product_code,
                     "product_name": p.product_name,
+                    "category_name": (
+                        p.category.category_name if p.category is not None else None
+                    ),
+                    "brand_name": p.brand.brand_name if p.brand is not None else None,
+                    "list_price": str(p.list_price) if p.list_price is not None else None,
+                    "is_discontinued": bool(p.is_discontinued),
                 }
                 for p in products
             ]

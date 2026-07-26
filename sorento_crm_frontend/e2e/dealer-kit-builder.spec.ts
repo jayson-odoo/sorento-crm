@@ -1,5 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
+import { purgeWithFreshLogin } from './dealerKitCleanup';
+
 /**
  * Dealer Kit page builder — full FE → BE → DB round-trip.
  *
@@ -141,6 +143,13 @@ async function createPage(page: Page, stem = 'catalogue'): Promise<string> {
 }
 
 test.describe('Dealer Kit page builder', () => {
+  // The dev database is a copy of production. Rows this suite creates are
+  // named with the reserved zzt- prefix and are deleted again here, so the
+  // real lists stay readable after a run.
+  test.afterAll(async ({ browser }, testInfo) => {
+    await purgeWithFreshLogin(browser, testInfo.project.use.baseURL);
+  });
+
   test.beforeEach(async ({ page }) => {
     await login(page);
   });

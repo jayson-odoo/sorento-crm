@@ -20,6 +20,7 @@ import uuid
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -348,3 +349,88 @@ class ExportRequest(Base):
 
     page = relationship("Page")
     version = relationship("PageVersion")
+
+
+class Selection(Base, CompanyScopedMixin):
+    """What somebody chose. The spine the room and the quote hang off.
+
+    Holds product ids and quantities and nothing price-shaped. Prices are
+    resolved for whoever is reading, at read time, exactly as tiles are (AC-G1,
+    AC-S2). A price written onto a line is a price that goes stale the moment
+    the price list moves, and the first anyone hears of it is a customer holding
+    a quote nobody can honour.
+
+    The owner is a CRM user OR a contact, never both and never neither, and the
+    CHECK below is the reason that stays true. Two owners means two people can
+    edit one basket and one of them is wrong; no owner means data nobody can
+    reach.
+    """
+
+    __tablename__ = "selection"
+    __table_args__ = (
+        CheckConstraint(
+            "(user_id IS NOT NULL AND contact_id IS NULL) "
+            "OR (user_id IS NULL AND contact_id IS NOT NULL)",
+            name="ck_dealer_kit_selection_one_owner",
+        ),
+        Index("ix_dealer_kit_selection_user_id", "user_id"),
+        Index("ix_dealer_kit_selection_contact_id", "contact_id"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    name = Column(String(200), nullable=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="CASCADE"), nullable=True
+    )
+    # Where they came in from, when they came from a catalogue at all. Null is a
+    # designer opened cold, which is a normal way to start.
+    source_page_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.page.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # The room, as an ordered list of points in millimetres, plus placements.
+    # A polygon and not a bitmap, so it can be reopened and re-edited forever
+    # (AC-R2). Area is DERIVED from it and never stored (AC-R5).
+    room_json = Column(JSONB, nullable=True)
+    created_at = _created_at()
+    updated_at = _updated_at()
+
+    lines = relationship(
+        "SelectionLine",
+        back_populates="selection",
+        cascade="all, delete-orphan",
+        order_by="SelectionLine.sort_order",
+    )
+
+
+class SelectionLine(Base):
+    """One product on a Selection, with a quantity and deliberately no price."""
+
+    __tablename__ = "selection_line"
+    __table_args__ = (
+        UniqueConstraint(
+            "selection_id", "product_id", name="uq_dealer_kit_selection_line"
+        ),
+        Index("ix_dealer_kit_selection_line_selection_id", "selection_id"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    selection_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.selection.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # RESTRICT, not CASCADE: deleting a product must not quietly rewrite what
+    # somebody chose. A discontinued product stays on the line and is flagged.
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False
+    )
+    quantity = Column(Numeric(15, 4), nullable=False, server_default="1")
+    sort_order = Column(Integer, nullable=False, server_default="0")
+    created_at = _created_at()
+
+    selection = relationship("Selection", back_populates="lines")
