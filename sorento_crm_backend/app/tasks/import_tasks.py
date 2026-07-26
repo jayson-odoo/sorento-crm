@@ -348,6 +348,11 @@ def process_product_import(db_job_id: str, products_data: list, user_id: str):
             result=outcome.finalize(
                 "Product import completed",
                 total_rows=len(products_data),
+                # Master data the import had to create for itself (unknown Item
+                # Group / Item Brand / UOM), so the operator can see what appeared.
+                created_categories=result.get('created_categories', 0),
+                created_brands=result.get('created_brands', 0),
+                created_uoms=result.get('created_uoms', 0),
                 # legacy keys, kept one release
                 created=result['created'],
                 updated=result['updated'],
@@ -357,8 +362,11 @@ def process_product_import(db_job_id: str, products_data: list, user_id: str):
         )
 
         logger.info(
-            "Product import job %s completed: created=%s, updated=%s, errors=%s",
+            "Product import job %s completed: created=%s, updated=%s, errors=%s, "
+            "new_categories=%s, new_brands=%s, new_uoms=%s",
             job_id_str, result['created'], result['updated'], len(result['errors']),
+            result.get('created_categories', 0), result.get('created_brands', 0),
+            result.get('created_uoms', 0),
         )
         _write_import_audit(
             db,

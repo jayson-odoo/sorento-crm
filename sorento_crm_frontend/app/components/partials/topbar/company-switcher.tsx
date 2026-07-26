@@ -15,16 +15,36 @@ import { cn } from '@/lib/utils';
 import { useCompany } from '@/app/providers/CompanyProvider';
 
 /**
- * Top-right active-company switcher. Hidden for single-company users (a single
- * grant means there's nothing to switch to). PLAN §11 — one active company at a
- * time; superadmin/multi-grant users see the full switchable list.
+ * Top-right active-company switcher. PLAN §11 - one active company at a time;
+ * superadmin/multi-grant users see the full switchable list. Single-grant users
+ * still see which company they are in, but as a read-only badge (nothing to
+ * switch to). Zero grants / still loading renders nothing.
  */
 export function CompanySwitcher() {
   const { grants, activeCompany, setActiveCompany } = useCompany();
 
-  // Single-company users have nothing to switch — render nothing. (activeCompany
-  // is null only while loading or with zero grants — both covered here.)
-  if (grants.length <= 1 || !activeCompany) return null;
+  // activeCompany is null only while loading or with zero grants.
+  if (!activeCompany) return null;
+
+  // One grant: informational only. Same visual shell as the switcher (so the
+  // header doesn't shift between user types) minus the chevron and the menu.
+  if (grants.length <= 1) {
+    return (
+      <div
+        className="inline-flex h-9 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium text-accent-foreground"
+        title={`Active company: ${activeCompany.name}`}
+        data-testid="company-indicator"
+      >
+        <Building2 className="size-4 shrink-0 text-muted-foreground" />
+        <span className="truncate max-w-[120px] text-sm font-medium">
+          {activeCompany.name}
+        </span>
+        <Badge variant="secondary" size="sm" className="font-mono shrink-0">
+          {activeCompany.code}
+        </Badge>
+      </div>
+    );
+  }
 
   // setActiveCompany persists + re-mints the token and owns the success/error toast.
   const handleSelect = (companyId: string) => {
