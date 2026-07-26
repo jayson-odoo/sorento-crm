@@ -47,7 +47,7 @@ def _user_id(user: dict | None) -> str | None:
     return user.get("id") or user.get("user_id")
 
 
-def _out(db: Session, row) -> CollectionOut:
+def _out(db: Session, row, candidates=None) -> CollectionOut:
     return CollectionOut(
         id=row.id,
         scope=row.scope,
@@ -57,7 +57,7 @@ def _out(db: Session, row) -> CollectionOut:
         pinned_product_ids=list(row.pinned_product_ids or []),
         excluded_product_ids=list(row.excluded_product_ids or []),
         manual_order=list(row.manual_order or []),
-        member_count=len(collection_service.resolve_members(db, row)),
+        member_count=len(collection_service.resolve_members(db, row, candidates)),
         updated_at=row.updated_at,
     )
 
@@ -70,7 +70,10 @@ def _out(db: Session, row) -> CollectionOut:
 @router.get("/collections", response_model=list[CollectionOut])
 def list_collections(db: Session = Depends(get_db), _user: dict = Depends(_VIEW)):
     """Reusable collections only. Page-scoped ones are an editor detail (AC-F4)."""
-    return [_out(db, row) for row in collection_service.list_library(db)]
+    # One candidate load for the whole list. Resolving each collection on its
+    # own would rescan the catalogue once per row.
+    candidates = collection_service.sellable_products(db)
+    return [_out(db, row, candidates) for row in collection_service.list_library(db)]
 
 
 @router.post(

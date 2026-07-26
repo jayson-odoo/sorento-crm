@@ -328,3 +328,36 @@ def test_a_bundle_needs_at_least_one_component():
             bundle_service.create_bundle(
                 db, name="ZZT empty", price=Decimal("10.00"), components=[]
             )
+
+
+# --------------------------------------------------------------------------
+# Cost of resolving several collections at once
+# --------------------------------------------------------------------------
+
+
+def test_resolving_many_collections_scans_the_catalogue_once():
+    """The candidate load is the expensive part and is identical for every
+    collection in the same company scope, so listing N collections must not
+    mean N catalogue scans."""
+    from sqlalchemy import event
+
+    with pg_session() as db:
+        product = _product(db)
+        collections = [_collection(db, pinned_product_ids=[product.id]) for _ in range(4)]
+
+        scans = []
+
+        def _count(conn, cursor, statement, params, context, executemany):
+            if "FROM products" in statement:
+                scans.append(statement)
+
+        event.listen(db.bind, "before_cursor_execute", _count)
+        try:
+            candidates = collection_service.sellable_products(db)
+            for collection in collections:
+                collection_service.resolve_members(db, collection, candidates)
+        finally:
+            event.remove(db.bind, "before_cursor_execute", _count)
+
+        # One load, shared across all four - not one per collection.
+        assert len(scans) == 1, f"expected 1 catalogue scan, got {len(scans)}"

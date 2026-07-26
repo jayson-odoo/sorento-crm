@@ -173,9 +173,21 @@ def _money(value: Optional[Decimal], currency: str) -> Optional[str]:
     return f"{currency} {Decimal(value):,.2f}"
 
 
-def resolve_members(db: Session, collection: Collection) -> list[Product]:
-    """The ordered member products of a collection."""
-    candidates = _sellable_products(db)
+def resolve_members(
+    db: Session,
+    collection: Collection,
+    candidates: Optional[list[Product]] = None,
+) -> list[Product]:
+    """The ordered member products of a collection.
+
+    ``candidates`` lets a caller resolving SEVERAL collections load the product
+    set once. Without it, listing twenty collections meant twenty full catalogue
+    scans in one request - the rule engine is a Python evaluator, so the
+    candidate load is the expensive part and it is identical for every
+    collection in the same company scope.
+    """
+    if candidates is None:
+        candidates = _sellable_products(db)
     by_id = {product.id: product for product in candidates}
 
     member_ids = assemble_members(
@@ -190,12 +202,21 @@ def resolve_members(db: Session, collection: Collection) -> list[Product]:
     return [by_id[member_id] for member_id in member_ids if member_id in by_id]
 
 
+def sellable_products(db: Session) -> list[Product]:
+    """Public handle on the candidate set, for callers resolving several
+    collections in one request."""
+    return _sellable_products(db)
+
+
 def resolve_tiles(
-    db: Session, collection: Collection, viewer: ViewerContext = ANONYMOUS
+    db: Session,
+    collection: Collection,
+    viewer: ViewerContext = ANONYMOUS,
+    candidates: Optional[list[Product]] = None,
 ) -> list[dict]:
     """Members as tiles, with prices decided for THIS viewer."""
     tiles = []
-    for product in resolve_members(db, collection):
+    for product in resolve_members(db, collection, candidates):
         currency = product.currency or "MYR"
         tiles.append(
             {

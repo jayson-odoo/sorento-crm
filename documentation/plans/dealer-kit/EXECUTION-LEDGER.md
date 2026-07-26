@@ -24,7 +24,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 | Slice | Phase 1 (FE prototype) | Phase 2 (BE + wiring + tests) | Phase 3 (review) | Slice |
 |---|---|---|---|---|
 | **S1 builder core** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
-| **S2 collections + bundles** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | not started | in progress |
+| **S2 collections + bundles** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 | **S3 PDF export** | blocked on S2 | blocked | blocked | blocked |
 
 ---
@@ -367,10 +367,66 @@ collection and watching BOTH bound pages change is not covered by an E2E yet - o
 same-row assertion in pytest. The test was originally named as though it proved the whole of
 AC-F7 and has been renamed to what it actually asserts.
 
-**Still to build for S2:** tile-template CRUD (tile designs are the last mocked thing - the
-inspector still offers three hard-coded designs), bundle authoring UI (bundles can be created
-through the API and rendered, but not built in the UI), "used by N pages" on the library list,
-and the propagation E2E above. **S2 Phase 3 (review) has not run.**
+#### Tile designs and bundle authoring — landed
+
+Sidebar now carries **Tile Designs** and **Bundles**. No production code references a mock
+fixture any more; only `BundleCard`'s own test does.
+
+A tile design is an ordered field list, stored in a JSONB `doc` rather than columns because the
+plan is to grow it into a mini-grid with static assets - that should be a document change, not
+a migration. Order is editable because order IS the design ("price above the name" is a real
+decision a checkbox list cannot express), and the dialog previews through the SAME
+`ProductTile` the catalogue and the PDF use, so what a Designer approves is what prints.
+
+The field list is a server-side whitelist. A design binding a field the renderer cannot draw
+would leave a blank space in a printed catalogue that nobody notices until it is at the
+printer, so it is a 422 while authoring instead.
+
+#### S2 Phase 3 gate — PASSED
+
+**19 Playwright · 44 vitest · 191 pytest green.** Reviewed by reading the S2 diff rather than
+trusting the suites, which is what turned up the first two below.
+
+**Four findings, all fixed:**
+
+1. **The collections list rescanned the catalogue once per row.** `_out()` resolved each
+   collection independently, and the expensive part - loading candidate products - is identical
+   for every collection in the same company scope. Twenty collections meant twenty full scans in
+   one request. The candidate set is now loaded once and passed down, pinned by
+   `test_resolving_many_collections_scans_the_catalogue_once`.
+2. **Editing products on a block bound to a LIBRARY collection silently rewrote the shared set.**
+   That is the intended behaviour of a reusable collection, but doing it silently means editing
+   other people's pages from inside yours without being told. The inspector now says so, and
+   only when the bound collection is actually in the library.
+3. **A single-component bundle printed the same figure twice** - once as the bundle price, once
+   as that component's allocation. Arithmetically correct, reads as a mistake. The allocation
+   column appears only when there is a split to explain.
+4. **A private `_require` was being called from the route layer.** Renamed to a public
+   `get_collection`.
+
+**Checklist:** shared `ui` + `common` primitives throughout · `SearchableSelect`, never a raw
+`<select>` · every destructive action behind `ConfirmDeleteDialog` with "cannot be undone" ·
+`extractApiError` everywhere · no UUID rendered · every new list has loading, empty and error
+states · every modal scrolls to its submit button · no horizontal body scroll at 375/768/1280.
+
+**Known and accepted, not fixed:**
+
+- The resolver still evaluates the rule per product in Python. The rule engine is a Python
+  evaluator, so the predicate cannot be pushed into SQL without the second evaluator this
+  design exists to avoid. The per-request rescan (finding 1) was the acute half of it; what
+  remains is linear in catalogue size and fine at Sorento's, but S3's PDF worker will inherit
+  it and a much larger catalogue will need a bounded candidate set.
+- **`TILE_FIELDS` is declared on both sides** (`tile_template_service.py` and
+  `catalogueService.ts`). The server is authoritative and rejects anything else, so a drift is a
+  422 rather than a silent blank - but they must be changed together.
+- **Deleting a collection BLOCK leaves its page-scoped collection row behind.** Harmless (it is
+  invisible in the library and dies with the page) but it is litter.
+- **Propagation is still not covered by an E2E**: editing a library collection and watching both
+  bound pages change. The same-row promotion is asserted in pytest, and the sharing is asserted
+  in Playwright; the two together imply it without proving it end to end.
+
+**Still open for a later slice:** "used by N pages" on the library list, editing an existing
+bundle (create and delete only for now), and the mini-grid tile designer.
 
 **Gate adds:** collection resolution golden set **first** · bundle allocation sums exactly to
 the cent · bundle unavailable when any component is discontinued (derived, never stored) ·
