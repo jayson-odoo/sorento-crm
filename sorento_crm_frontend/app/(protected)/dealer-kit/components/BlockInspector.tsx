@@ -11,7 +11,9 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Textarea } from '@/components/ui/textarea';
 import type { Block, BlockProps } from '@/lib/dealer-kit/types';
-import { MOCK_COLLECTIONS, MOCK_TILE_TEMPLATES, MOCK_BUNDLES } from '../__mocks__/catalogue';
+import { useQuery } from '@tanstack/react-query';
+import { listBundles, listCollections } from '../services/catalogueService';
+import { MOCK_TILE_TEMPLATES } from '../__mocks__/catalogue';
 import {
   EMPTY_SELECTION,
   ProductPickerDialog,
@@ -77,6 +79,17 @@ export function BlockInspector({
   onChangeSelection: (next: ProductSelection) => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  // Hooks must run before the early return below, so these are declared here
+  // even though only a collection or bundle block reads them.
+  const { data: collections = [] } = useQuery({
+    queryKey: ['dealer-kit', 'collections'],
+    queryFn: listCollections,
+  });
+  const { data: bundles = [] } = useQuery({
+    queryKey: ['dealer-kit', 'bundles'],
+    queryFn: listBundles,
+  });
 
   if (!block) {
     return (
@@ -184,9 +197,9 @@ export function BlockInspector({
                 clearable
                 value={props.collectionId ?? ''}
                 onChange={(value) => onChangeProps({ ...props, collectionId: value || null })}
-                options={MOCK_COLLECTIONS.map((collection) => ({
+                options={collections.map((collection) => ({
                   value: collection.id,
-                  label: `${collection.name} (${collection.memberCount})`,
+                  label: `${collection.name ?? 'Untitled'} (${collection.memberCount})`,
                 }))}
                 placeholder="Use this page's own selection"
               />
@@ -244,9 +257,9 @@ export function BlockInspector({
                 clearable
                 value={props.bundleId ?? ''}
                 onChange={(value) => onChangeProps({ ...props, bundleId: value || null })}
-                options={MOCK_BUNDLES.map((bundle) => ({
+                options={bundles.map((bundle) => ({
                   value: bundle.id,
-                  label: `${bundle.name} · ${bundle.price}`,
+                  label: `${bundle.name} · ${bundle.price}${bundle.available ? '' : ' (unavailable)'}`,
                 }))}
                 placeholder="Pick a bundle"
               />

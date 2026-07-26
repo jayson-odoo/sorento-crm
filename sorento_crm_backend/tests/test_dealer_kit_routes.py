@@ -302,3 +302,198 @@ def test_unknown_page_is_404_on_every_route(api):
             == 404
         )
         assert c.delete(f"/api/v1/dealer-kit/pages/{missing}").status_code == 404
+
+
+# --------------------------------------------------------------------------
+# Collections and bundles (S2)
+# --------------------------------------------------------------------------
+
+
+def _seed_product(db):
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+    from tests._pg_fixture import unique_code
+
+    code = unique_code("ZZTC")
+    category = ProductCategory(category_code=code, category_name=f"ZZT cat {code}")
+    uom = UnitOfMeasure(uom_code=code[:20], uom_name=f"ZZT uom {code}")
+    db.add_all([category, uom])
+    db.flush()
+    product = Product(
+        product_code=code,
+        product_name=f"ZZT product {code}",
+        category_id=category.id,
+        base_uom_id=uom.id,
+        list_price=100,
+        invoice_price=70,
+        currency="MYR",
+        is_active=True,
+        is_discontinued=False,
+    )
+    db.add(product)
+    db.flush()
+    return product
+
+
+def test_a_page_scoped_collection_is_created_silently_and_stays_out_of_the_library(api):
+    """AC-F4: picking products inside the editor makes a collection nobody has
+    to name, and it must not clutter the reusable library."""
+    db, _as = api
+    _as(_ADMIN_ID)
+
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-collection-host")
+        product = _seed_product(db)
+
+        created = c.post(
+            "/api/v1/dealer-kit/collections",
+            json={
+                "scope": "page",
+                "pageId": page_id,
+                "pinnedProductIds": [product.id],
+            },
+        )
+        assert created.status_code == 201, created.text
+        assert created.json()["memberCount"] == 1
+
+        listed = c.get("/api/v1/dealer-kit/collections")
+        assert created.json()["id"] not in [row["id"] for row in listed.json()]
+
+
+def test_saving_as_reusable_puts_it_in_the_library_without_changing_its_id(api):
+    db, _as = api
+    _as(_ADMIN_ID)
+
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-promote-host")
+        created = c.post(
+            "/api/v1/dealer-kit/collections",
+            json={"scope": "page", "pageId": page_id},
+        ).json()
+
+        promoted = c.post(
+            f"/api/v1/dealer-kit/collections/{created['id']}/save-as-library",
+            json={"name": "ZZT Kitchen range"},
+        )
+        assert promoted.status_code == 200, promoted.text
+        # Same row, so the block that built it is still bound to it.
+        assert promoted.json()["id"] == created["id"]
+        assert promoted.json()["scope"] == "library"
+
+        listed = c.get("/api/v1/dealer-kit/collections")
+        assert created["id"] in [row["id"] for row in listed.json()]
+
+
+def test_an_editor_may_change_a_collection_but_a_stranger_may_not(api):
+    db, _as = api
+
+    _as(_ADMIN_ID)
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-perm-host")
+        collection = c.post(
+            "/api/v1/dealer-kit/collections",
+            json={"scope": "page", "pageId": page_id},
+        ).json()
+
+    _as(_EDITOR_ID)
+    with TestClient(app) as c:
+        assert (
+            c.put(
+                f"/api/v1/dealer-kit/collections/{collection['id']}",
+                json={"scope": "page", "pageId": page_id, "pinnedProductIds": []},
+            ).status_code
+            == 200
+        )
+
+    _as(_NOPERM_ID)
+    with TestClient(app) as c:
+        assert c.get("/api/v1/dealer-kit/collections").status_code == 403
+        assert (
+            c.post(
+                "/api/v1/dealer-kit/collections",
+                json={"scope": "page", "pageId": page_id},
+            ).status_code
+            == 403
+        )
+
+
+def test_resolving_a_collection_returns_tiles_without_an_invoice_price_by_default(api):
+    db, _as = api
+    _as(_ADMIN_ID)
+
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-resolve-host")
+        product = _seed_product(db)
+        collection = c.post(
+            "/api/v1/dealer-kit/collections",
+            json={"scope": "page", "pageId": page_id, "pinnedProductIds": [product.id]},
+        ).json()
+
+        resolved = c.get(f"/api/v1/dealer-kit/collections/{collection['id']}/resolve")
+        assert resolved.status_code == 200, resolved.text
+        tiles = resolved.json()["tiles"]
+        assert len(tiles) == 1
+        assert tiles[0]["price"] == "MYR 100.00"
+        # The document toggle defaults off, so the figure is absent entirely.
+        # Match the FORMATTED price, not the bare digits - a stray "70" turns up
+        # inside a UUID and would make this pass or fail by luck.
+        assert tiles[0]["invoicePrice"] is None
+        assert "MYR 70.00" not in resolved.text
+
+
+def test_the_invoice_price_appears_only_when_the_document_asks_for_it(api):
+    db, _as = api
+    _as(_ADMIN_ID)
+
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-invoice-host")
+        product = _seed_product(db)
+        collection = c.post(
+            "/api/v1/dealer-kit/collections",
+            json={"scope": "page", "pageId": page_id, "pinnedProductIds": [product.id]},
+        ).json()
+
+        resolved = c.get(
+            f"/api/v1/dealer-kit/collections/{collection['id']}/resolve",
+            params={"showInvoicePrice": "true"},
+        )
+        assert resolved.json()["tiles"][0]["invoicePrice"] == "MYR 70.00"
+
+
+def test_a_bundle_reports_availability_derived_from_its_components(api):
+    db, _as = api
+    _as(_ADMIN_ID)
+
+    with TestClient(app) as c:
+        good = _seed_product(db)
+        bad = _seed_product(db)
+        bad.is_discontinued = True
+        db.flush()
+
+        created = c.post(
+            "/api/v1/dealer-kit/bundles",
+            json={
+                "name": "ZZT route bundle",
+                "price": "500.00",
+                "components": [
+                    {"productId": good.id},
+                    {"productId": bad.id},
+                ],
+            },
+        )
+        assert created.status_code == 201, created.text
+        body = created.json()
+        assert body["available"] is False
+        assert bad.product_name in body["unavailableReason"]
+        assert len(body["components"]) == 2
+
+
+def test_a_bundle_with_no_components_is_rejected_by_validation(api):
+    _db, _as = api
+    _as(_ADMIN_ID)
+
+    with TestClient(app) as c:
+        res = c.post(
+            "/api/v1/dealer-kit/bundles",
+            json={"name": "ZZT empty", "price": "10.00", "components": []},
+        )
+    assert res.status_code == 422, res.text

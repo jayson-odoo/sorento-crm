@@ -163,6 +163,7 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
       )}
 
       <PageEditor
+        pageId={pageId}
         doc={doc}
         onDocChange={(updater, options) => {
           setDoc((previous) => (previous ? updater(previous) : previous));

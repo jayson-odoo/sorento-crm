@@ -25,12 +25,15 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { BlockInspector } from './BlockInspector';
 import { EMPTY_SELECTION, type ProductSelection } from './ProductPickerDialog';
+import { useQueries, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
-  MOCK_RESOLVED_BUNDLE,
-  MOCK_TILE_TEMPLATES,
-  MOCK_UNAVAILABLE_BUNDLE,
-  mockResolveCollection,
-} from '../__mocks__/catalogue';
+  createCollection,
+  resolveBundle,
+  resolveCollection,
+  updateCollection,
+} from '../services/catalogueService';
+import { MOCK_TILE_TEMPLATES } from '../__mocks__/catalogue';
 import { cn } from '@/lib/utils';
 import {
   BREAKPOINT_COLUMNS,
@@ -107,6 +110,8 @@ function newBlock(type: BlockType): Block {
 }
 
 export interface PageEditorProps {
+  /** Needed to own a page-scoped collection, which dies with the page (AC-F4). */
+  pageId: string;
   doc: PageDoc;
   /**
    * Updater, not a value. Layout measurement can settle several blocks in one
@@ -120,7 +125,8 @@ export interface PageEditorProps {
   onDocChange: (updater: (previous: PageDoc) => PageDoc, options?: { silent?: boolean }) => void;
 }
 
-export function PageEditor({ doc, onDocChange }: PageEditorProps) {
+export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
+  const queryClient = useQueryClient();
   const [mode, setMode] = useState<CanvasMode>('desktop');
   const [activeSectionId, setActiveSectionId] = useState<string | null>(
     doc.sections[0]?.id ?? null,
@@ -128,10 +134,10 @@ export function PageEditor({ doc, onDocChange }: PageEditorProps) {
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Block | null>(null);
   /**
-   * Phase 1: the product selection behind each collection block lives in editor
-   * state, keyed by block id. Phase 2 moves it to a page-scoped Collection row
-   * created silently on the server (AC-F4), which is why it is NOT written into
-   * the saved document here - the document must never carry a product list.
+   * The picker's working copy, keyed by block id. It is NEVER written into the
+   * saved document - the document carries a `collectionId` and nothing else, so
+   * that it holds no product list and no prices (AC-G1). The selection itself
+   * lives in a page-scoped Collection row on the server.
    */
   const [selections, setSelections] = useState<Record<string, ProductSelection>>({});
 
@@ -303,44 +309,118 @@ export function PageEditor({ doc, onDocChange }: PageEditorProps) {
   );
 
   /**
-   * Phase 1 stand-in for server-side resolution. The editor resolves against the
-   * DESIGNER's own viewer context, which is why the same block can look
-   * different here and on the public page - and why the document itself carries
-   * neither tiles nor prices.
+   * Resolution happens on the SERVER, once per bound block.
+   *
+   * The editor resolves against the Designer's own viewer context, which is why
+   * a block can legitimately look different here and on the public page - and
+   * why the document itself carries neither tiles nor prices. Resolving in the
+   * browser instead would mean a second copy of the rule engine and a preview
+   * that could disagree with what gets published.
    */
+  const boundBlocks = useMemo(() => {
+    const collections: string[] = [];
+    const bundles: string[] = [];
+    for (const section of doc.sections) {
+      for (const block of section.blocks) {
+        if (block.props.kind === 'collection' && block.props.collectionId) {
+          collections.push(block.props.collectionId);
+        }
+        if (block.props.kind === 'bundle' && block.props.bundleId) {
+          bundles.push(block.props.bundleId);
+        }
+      }
+    }
+    return {
+      collections: Array.from(new Set(collections)),
+      bundles: Array.from(new Set(bundles)),
+    };
+  }, [doc.sections]);
+
+  const collectionQueries = useQueries({
+    queries: boundBlocks.collections.map((id) => ({
+      queryKey: ['dealer-kit', 'resolve-collection', id],
+      queryFn: () => resolveCollection(id),
+    })),
+  });
+
+  const bundleQueries = useQueries({
+    queries: boundBlocks.bundles.map((id) => ({
+      queryKey: ['dealer-kit', 'resolve-bundle', id],
+      queryFn: () => resolveBundle(id),
+    })),
+  });
+
   const resolveBlock = useCallback(
     (block: Block) => {
       // Bound to a local so the narrowing survives into the callbacks below -
       // TypeScript re-widens `block.props` inside a nested closure.
       const props = block.props;
 
-      if (props.kind === 'collection') {
-        const selection = selections[block.id];
-        if (!selection) return undefined;
-        const members = Array.from(
-          new Set([...selection.pinnedProductIds]),
-        ).filter((id) => !selection.excludedProductIds.includes(id));
+      if (props.kind === 'collection' && props.collectionId) {
+        const index = boundBlocks.collections.indexOf(props.collectionId);
+        const resolved = collectionQueries[index]?.data;
+        if (!resolved) return undefined;
         const template = MOCK_TILE_TEMPLATES.find(
           (candidate) => candidate.id === props.tileTemplateId,
         );
-        return {
-          tiles: mockResolveCollection(members),
-          tileFields: template?.fields,
-        };
+        return { tiles: resolved.tiles, tileFields: template?.fields };
       }
 
       if (props.kind === 'bundle' && props.bundleId) {
-        return {
-          bundle:
-            props.bundleId === MOCK_UNAVAILABLE_BUNDLE.id
-              ? MOCK_UNAVAILABLE_BUNDLE
-              : MOCK_RESOLVED_BUNDLE,
-        };
+        const index = boundBlocks.bundles.indexOf(props.bundleId);
+        const resolved = bundleQueries[index]?.data;
+        return resolved ? { bundle: resolved } : undefined;
       }
 
       return undefined;
     },
-    [selections],
+    [boundBlocks, collectionQueries, bundleQueries],
+  );
+
+  /**
+   * Push a product selection to the server.
+   *
+   * First save creates a page-scoped Collection silently - the Designer never
+   * names it and never sees it in the library (AC-F4) - and the block records
+   * only its id. The document therefore holds a reference, never a product list
+   * and never a price.
+   */
+  const persistSelection = useCallback(
+    async (block: Block, selection: ProductSelection) => {
+      if (block.props.kind !== 'collection' || !activeSection) return;
+      const existingId = block.props.collectionId;
+
+      const payload = {
+        conditions: (selection.conditions as Record<string, unknown> | null) ?? null,
+        pinnedProductIds: selection.pinnedProductIds,
+        excludedProductIds: selection.excludedProductIds,
+      };
+
+      try {
+        if (existingId) {
+          await updateCollection(existingId, { ...payload, scope: 'page', pageId });
+          await queryClient.invalidateQueries({
+            queryKey: ['dealer-kit', 'resolve-collection', existingId],
+          });
+          return;
+        }
+
+        const created = await createCollection({ ...payload, scope: 'page', pageId });
+        updateSection(activeSection.id, (section) => ({
+          ...section,
+          blocks: section.blocks.map((candidate) =>
+            candidate.id === block.id && candidate.props.kind === 'collection'
+              ? { ...candidate, props: { ...candidate.props, collectionId: created.id } }
+              : candidate,
+          ),
+        }));
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : 'Could not save this product selection.',
+        );
+      }
+    },
+    [activeSection, pageId, queryClient, updateSection],
   );
 
   const handleAddSection = useCallback(() => {
@@ -548,6 +628,7 @@ export function PageEditor({ doc, onDocChange }: PageEditorProps) {
           onChangeSelection={(next) => {
             if (!selectedBlock) return;
             setSelections((current) => ({ ...current, [selectedBlock.id]: next }));
+            void persistSelection(selectedBlock, next);
           }}
         />
       </aside>

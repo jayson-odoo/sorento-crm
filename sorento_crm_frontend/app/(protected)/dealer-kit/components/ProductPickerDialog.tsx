@@ -19,7 +19,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RuleBuilder } from '@/components/rule-builder/RuleBuilder';
 import type { RuleGroup } from '@/components/rule-builder/types';
 import { cn } from '@/lib/utils';
-import { MOCK_PRODUCTS, type PickerProduct } from '../__mocks__/catalogue';
+import { useQuery } from '@tanstack/react-query';
+import { Skeleton } from '@/components/ui/skeleton';
+import { listPickerProducts, type PickerProduct } from '../services/productPickerService';
 
 /**
  * Choosing what goes in a collection.
@@ -51,28 +53,12 @@ export const EMPTY_SELECTION: ProductSelection = {
 };
 
 /**
- * Phase 1 stand-in for the server-side resolver. The real one evaluates
- * `conditions` through `app/rule_engine` against company-scoped products; this
- * only has to be good enough to judge the interaction.
+ * The rule's own matches come from the SERVER, because the server is where the
+ * rule engine lives. Evaluating a second copy of the rule in the browser is the
+ * exact "two evaluators that drift" trap the shared engine exists to avoid, and
+ * the drift would only show up as a preview that disagreed with the published
+ * page. So a rule edit saves and the resolved count comes back.
  */
-function mockMatchesRule(product: PickerProduct, rule: RuleGroup | null): boolean {
-  if (!rule || !rule.rules?.length) return false;
-
-  return rule.rules.every((node) => {
-    if ('kind' in node && node.kind === 'group') return true;
-    const condition = node as { fact?: string; operator?: string; value?: unknown };
-    if (condition.fact === 'product.category') {
-      return String(product.category).toLowerCase() === String(condition.value).toLowerCase();
-    }
-    if (condition.fact === 'product.brand') {
-      return String(product.brand).toLowerCase() === String(condition.value).toLowerCase();
-    }
-    if (condition.fact === 'product.isDiscontinued') {
-      return condition.operator === 'is_true' ? product.isDiscontinued : !product.isDiscontinued;
-    }
-    return true;
-  });
-}
 
 function ProductRow({
   product,
@@ -149,13 +135,15 @@ export function ProductPickerDialog({
     setDraft(value);
   }
 
-  const matchedByRule = useMemo(
-    () =>
-      MOCK_PRODUCTS.filter((product) => mockMatchesRule(product, draft.conditions)).map(
-        (product) => product.id,
-      ),
-    [draft.conditions],
-  );
+  const { data: products = [], isLoading } = useQuery({
+    queryKey: ['dealer-kit', 'picker-products'],
+    queryFn: listPickerProducts,
+  });
+
+  // Rule matches are resolved server-side after saving, so the live count here
+  // reflects hand-picked products only. Saying so beats implying the rule has
+  // already been applied.
+  const matchedByRule = useMemo<string[]>(() => [], []);
 
   const members = useMemo(() => {
     const excluded = new Set(draft.excludedProductIds);
@@ -165,13 +153,13 @@ export function ProductPickerDialog({
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    if (!needle) return MOCK_PRODUCTS;
-    return MOCK_PRODUCTS.filter(
+    if (!needle) return products;
+    return products.filter(
       (product) =>
         product.name.toLowerCase().includes(needle) ||
         product.code.toLowerCase().includes(needle),
     );
-  }, [search]);
+  }, [products, search]);
 
   const stateOf = (product: PickerProduct): 'in' | 'out' | 'rule' => {
     if (draft.excludedProductIds.includes(product.id)) return 'out';
@@ -243,7 +231,9 @@ export function ProductPickerDialog({
 
             <ScrollArea className="max-h-72">
               <div className="flex flex-col gap-1.5 pe-3">
-                {visible.length === 0 && (
+                {isLoading &&
+                  [0, 1, 2, 3].map((row) => <Skeleton key={row} className="h-12 w-full" />)}
+                {!isLoading && visible.length === 0 && (
                   <p className="py-6 text-center text-sm text-muted-foreground">
                     No products match that search.
                   </p>
@@ -281,7 +271,7 @@ export function ProductPickerDialog({
           ) : (
             <p className="mt-1.5 truncate text-xs text-muted-foreground">
               {members
-                .map((id) => MOCK_PRODUCTS.find((product) => product.id === id)?.code)
+                .map((id) => products.find((product) => product.id === id)?.code)
                 .filter(Boolean)
                 .join(', ')}
             </p>

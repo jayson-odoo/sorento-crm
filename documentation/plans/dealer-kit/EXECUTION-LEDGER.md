@@ -24,7 +24,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 | Slice | Phase 1 (FE prototype) | Phase 2 (BE + wiring + tests) | Phase 3 (review) | Slice |
 |---|---|---|---|---|
 | **S1 builder core** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
-| **S2 collections + bundles** | **PASSED** 2026-07-26 | engines landed (TDD) | blocked | in progress |
+| **S2 collections + bundles** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | not started | in progress |
 | **S3 PDF export** | blocked on S2 | blocked | blocked | blocked |
 
 ---
@@ -297,9 +297,63 @@ bundles and the resolution itself. The mock resolver only filters discontinued p
 does not evaluate rules, which is why the rule tab's live count is approximate in the
 prototype and the real evaluator is exercised by `test_dealer_kit_product_facts.py` instead.
 
-**Still to build for S2:** the DB-backed collection resolver (company scope then rule then set
-algebra), the collection/bundle routes, and the whole FE prototype - product picker, tile
-binding, bundle rendering.
+#### S2 Phase 2 gate — PASSED (backend + FE off mocks)
+
+**145 pytest · 44 vitest · 15 Playwright green**, prod build on :3020 against backend :8020.
+
+The resolver runs four steps and the ORDER is the gate item: company scope narrows candidates
+FIRST (so a rule cannot reach another company's catalogue however it is written), then the
+shared rule engine, then the set algebra, then per-viewer pricing.
+
+| Gate item | Result |
+|---|---|
+| `product` fact source on the EXISTING rule engine, no second evaluator | pass |
+| Collection resolution golden set written first | pass (16 cases, red before green) |
+| Bundle allocation sums exactly to the cent | pass (26 cases) |
+| Bundle unavailable when any component discontinued, DERIVED not stored | pass - flipping a product's flag changes the answer with no write to the bundle |
+| Invoice price gated by document toggle AND viewer access | pass - toggle ON + non-staff still absent |
+| A denied price is absent from the RESPONSE, not hidden | pass - asserted on the serialised payload |
+| A rule cannot match another company's products | pass - a pinned foreign id resolves to nothing |
+| A discontinued or inactive product never becomes a tile | pass |
+| Page-scoped collection created silently, invisible in the library | pass |
+| Save-as-reusable keeps the same row so the page stays bound | pass |
+| FE off mocks onto real endpoints | pass - products, collections, bundles and resolution all live |
+
+**Decisions worth recording:**
+
+1. **An empty rule matches NOTHING here, not everything.** The engine's own convention is that
+   an empty tree is unconditional, which is right for "may this promotion run" and catastrophic
+   for "which products are in this collection" - it would put the entire catalogue on the page.
+   A collection with no rule has only its pins.
+2. **The picker does not evaluate rules in the browser.** A second copy of the rule engine
+   client-side is precisely the drift the shared engine exists to prevent, and the drift would
+   surface as a preview disagreeing with the published page. Rule matches resolve server-side
+   after saving; the live count in the dialog covers hand-picked products only and says so.
+3. **No separate collection permission.** A collection has no life outside the page that shows
+   it, so reads are `page.view` and writes are `page.edit`. A third slug is one more thing to
+   get wrong in a role.
+
+**Two crude test assertions were caught and fixed**, both the same mistake: checking for the
+bare digits `"70"` in a serialised payload, which also matches a UUID. They passed or failed by
+luck. Now matched on the formatted `"MYR 70.00"`.
+
+**Coverage that MOVED rather than vanished.** Two Playwright cases from Phase 1 (a discontinued
+product never becoming a tile, and a bundle with a discontinued part) depended on mock
+fixtures that no longer exist now the FE is live. Their assertions now live in pytest
+(`test_a_discontinued_product_never_becomes_a_member`,
+`test_a_bundle_is_unavailable_when_any_component_is_discontinued`) and vitest (`BundleCard`).
+The E2E count therefore went 17 -> 15 while coverage went up, not down.
+
+**Known limitation, not fixed:** `_sellable_products` loads every sellable product and
+evaluates the rule per product in Python. The rule engine is a Python evaluator, so the
+predicate cannot be pushed into SQL without the second evaluator this design exists to avoid.
+Fine at Sorento's catalogue size; it will need a bounded candidate set (category prefilter, or
+a cached membership table refreshed on publish) before a much larger catalogue.
+
+**Still to build for S2:** the collections library screen (list, rename, delete, "used by N
+pages"), binding one library collection to a second page and proving one edit reaches both
+(AC-F7), tile-template CRUD (tile designs are still the last mocked thing), and bundle
+authoring UI.
 
 **Gate adds:** collection resolution golden set **first** · bundle allocation sums exactly to
 the cent · bundle unavailable when any component is discontinued (derived, never stored) ·

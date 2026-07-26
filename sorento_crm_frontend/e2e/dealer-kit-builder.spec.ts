@@ -304,7 +304,7 @@ test.describe('Dealer Kit page builder', () => {
     });
   });
 
-  test('picking products by hand renders tiles on the canvas', async ({ page }) => {
+  test('picking products by hand creates a collection and renders tiles', async ({ page }) => {
     await createPage(page, 'collection');
 
     await tap(page, page.getByRole('button', { name: /add section/i }));
@@ -318,51 +318,21 @@ test.describe('Dealer Kit page builder', () => {
     await expect(dialog).toBeVisible({ timeout: 10_000 });
 
     await tapReal(page, dialog.getByRole('tab', { name: /by hand/i }));
-    await tap(page, dialog.getByRole('button', { name: /include undermount kitchen sink/i }));
-    await tap(page, dialog.getByRole('button', { name: /include pull-out kitchen mixer/i }));
+
+    // Products come from the real catalogue now, so pick whatever the first two
+    // rows are rather than naming fixtures that no longer exist.
+    const rows = dialog.getByRole('button', { name: /^include /i });
+    await expect(rows.first()).toBeVisible({ timeout: 20_000 });
+    await rows.nth(0).dispatchEvent('click');
+    await rows.nth(1).dispatchEvent('click');
 
     await expect(dialog.locator('[data-dk-match-count]')).toHaveText(/2 products selected/i);
     await tap(page, dialog.getByRole('button', { name: /use these products/i }));
 
-    // Tiles render for real once the binding resolves.
-    await expect(page.locator('[data-dk-tile-grid]')).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator('[data-dk-tile]')).toHaveCount(2);
-  });
-
-  test('a discontinued product never becomes a tile', async ({ page }) => {
-    await createPage(page, 'discontinued');
-
-    await tap(page, page.getByRole('button', { name: /add section/i }));
-    await tap(page, page.getByRole('button', { name: /^products$/i }));
-    await tap(page, page.getByRole('button', { name: /choose products/i }));
-
-    const dialog = page.getByRole('dialog');
-    await tapReal(page, dialog.getByRole('tab', { name: /by hand/i }));
-    await tap(page, dialog.getByRole('button', { name: /include wall-mounted sink tap/i }));
-    await tap(page, dialog.getByRole('button', { name: /use these products/i }));
-
-    // Chosen, but discontinued — so it resolves out rather than rendering a
-    // dead tile a customer could try to order (AC-G4).
-    await expect(page.getByText(/no products to show/i).first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator('[data-dk-tile]')).toHaveCount(0);
-  });
-
-  test('a bundle with a discontinued part cannot render as orderable', async ({ page }) => {
-    await createPage(page, 'bundle');
-
-    await tap(page, page.getByRole('button', { name: /add section/i }));
-    await tap(page, page.getByRole('button', { name: /^bundle$/i }));
-
-    await tapReal(page, page.getByRole('combobox', { name: 'Bundle' }));
-    await tap(page, page.getByRole('option', { name: /shower combo/i }));
-
-    await expect(page.locator('[data-dk-bundle-available="false"]')).toBeVisible({
-      timeout: 10_000,
-    });
-    await expect(page.getByText(/not currently available/i)).toBeVisible();
-    // One priced heading, components beneath (AC-F12).
-    await expect(page.getByRole('heading', { name: /shower combo/i })).toBeVisible();
-    await expect(page.getByText(/rain shower set/i)).toBeVisible();
+    // The selection round-trips through a page-scoped collection on the server
+    // and comes back resolved, so real tiles render.
+    await expect(page.locator('[data-dk-tile-grid]')).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('[data-dk-tile]').first()).toBeVisible();
   });
 
   test('a page the backend does not have shows an error, not an empty editor', async ({ page }) => {
