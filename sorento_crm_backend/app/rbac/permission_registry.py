@@ -372,6 +372,26 @@ PERMISSION_REGISTRY.append({
 })
 
 
+# Status engine (ADR-0001) — CORE plumbing that other modules ride. Configuring a
+# state machine changes what every record of that entity can legally do, so edit is
+# a deliberately separate grant from view.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "system.statuses.view",
+        "name": "View Status Graphs",
+        "description": "View configurable status graphs and their transitions.",
+    },
+    {
+        "slug": "system.statuses.edit",
+        "name": "Edit Status Graphs",
+        "description": (
+            "Create, edit, and delete statuses and transitions, and migrate records "
+            "between statuses."
+        ),
+    },
+])
+
+
 def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> int:
     """
     Idempotent sync: ensure every slug in PERMISSION_REGISTRY exists in user_permissions.

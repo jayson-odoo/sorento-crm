@@ -22,16 +22,7 @@ OptionsProvider = Union[
 ]
 
 
-def _lazy_once(fn: Callable[[], None]) -> Callable[[], None]:
-    """Wrap ``fn`` so it runs exactly once across all calls (idempotent init)."""
-    called: Dict[str, bool] = {}
-
-    def wrap() -> None:
-        if not called:
-            fn()
-            called["x"] = True
-
-    return wrap
+from app.lazy_registry import lazy_once as _lazy_once  # noqa: E402  (single shared helper)
 
 
 @dataclass(frozen=True)
