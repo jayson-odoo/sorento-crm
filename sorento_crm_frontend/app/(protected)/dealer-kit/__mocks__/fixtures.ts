@@ -17,6 +17,7 @@ export const MOCK_PAGES: PageSummary[] = [
     updatedAt: '2026-07-24T09:12:00',
     publishedVersion: 2,
     latestVersion: 3,
+    publicPath: '/c/SRT/2026-bathroom',
   },
   {
     id: 'page-kitchen-2026',
@@ -25,5 +26,6 @@ export const MOCK_PAGES: PageSummary[] = [
     updatedAt: '2026-07-11T14:02:00',
     publishedVersion: null,
     latestVersion: 1,
+    publicPath: '/c/SRT/2026-kitchen',
   },
 ];

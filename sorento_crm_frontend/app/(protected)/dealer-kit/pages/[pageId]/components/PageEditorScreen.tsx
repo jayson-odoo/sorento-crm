@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertCircle, CloudUpload, History, Save } from 'lucide-react';
+import { AlertCircle, CloudUpload, ExternalLink, History, Save } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -127,6 +127,16 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {publishedVersion && page.publicPath && (
+              // Only once something is live: a link to a page that 404s reads
+              // as a broken feature rather than an unpublished draft.
+              <Button variant="outline" size="sm" asChild>
+                <a href={page.publicPath} target="_blank" rel="noreferrer">
+                  <ExternalLink className="size-4" />
+                  View live
+                </a>
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => setShowHistory((open) => !open)}>
               <History className="size-4" />
               History

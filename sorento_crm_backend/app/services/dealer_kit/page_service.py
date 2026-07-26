@@ -47,6 +47,21 @@ def _require_page(db: Session, page_id: str) -> Page:
     return page
 
 
+def public_path(db: Session, page) -> Optional[str]:
+    """The shareable address for a page: ``/c/{company_code}/{slug}``.
+
+    Built here rather than in the UI because the company segment is what keeps
+    two companies' identical slugs apart, and a screen has no business deriving
+    that rule (nor holding a company id to derive it from).
+    """
+    from app.models.company import Company
+
+    if not getattr(page, "company_id", None):
+        return None
+    code = db.query(Company.code).filter(Company.id == page.company_id).scalar()
+    return f"/c/{code}/{page.slug}" if code else None
+
+
 def list_pages(db: Session) -> list[dict]:
     """Pages with their published and latest version numbers.
 
@@ -59,6 +74,16 @@ def list_pages(db: Session) -> list[dict]:
         return []
 
     page_ids = [p.id for p in pages]
+
+    # One lookup for every company represented, rather than one per page.
+    from app.models.company import Company
+
+    company_ids = {p.company_id for p in pages if getattr(p, "company_id", None)}
+    codes = (
+        dict(db.query(Company.id, Company.code).filter(Company.id.in_(company_ids)).all())
+        if company_ids
+        else {}
+    )
 
     latest = dict(
         db.query(PageVersion.page_id, func.max(PageVersion.version))
@@ -82,6 +107,11 @@ def list_pages(db: Session) -> list[dict]:
             "updated_at": p.updated_at,
             "published_version": published.get(p.id),
             "latest_version": latest.get(p.id, 0),
+            "public_path": (
+                f"/c/{codes[p.company_id]}/{p.slug}"
+                if getattr(p, "company_id", None) in codes
+                else None
+            ),
         }
         for p in pages
     ]
@@ -141,7 +171,7 @@ def author_names(db: Session, user_ids: Iterable[Optional[str]]) -> dict[str, st
     return {uid: (name or email or "Unknown") for uid, name, email in rows}
 
 
-def labels_for(db: Session, page_id: str) -> dict[str, str]:
+def labels_for(db: Session, page_id: str) -> dict[str, list[str]]:
     """version_id -> label, for decorating a version list."""
     rows = db.query(PageLabel).filter(PageLabel.page_id == page_id).all()
     out: dict[str, list[str]] = {}

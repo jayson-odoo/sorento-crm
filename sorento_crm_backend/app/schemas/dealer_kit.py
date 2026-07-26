@@ -43,6 +43,8 @@ class PageSummary(BaseModel):
         default=None, serialization_alias="publishedVersion"
     )
     latest_version: int = Field(default=0, serialization_alias="latestVersion")
+    # The shareable address, resolved server-side. See page_service.public_path.
+    public_path: Optional[str] = Field(default=None, serialization_alias="publicPath")
 
 
 class PageVersionOut(BaseModel):
@@ -67,6 +69,7 @@ class PageDetail(BaseModel):
         default=None, serialization_alias="publishedVersion"
     )
     latest_version: int = Field(default=0, serialization_alias="latestVersion")
+    public_path: Optional[str] = Field(default=None, serialization_alias="publicPath")
     doc: dict[str, Any]
     versions: list[PageVersionOut] = Field(default_factory=list)
 

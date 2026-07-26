@@ -12,7 +12,7 @@ import {
   type PaginationState,
   type SortingState,
 } from '@tanstack/react-table';
-import { AlertCircle, FileText, Plus, Search } from 'lucide-react';
+import { AlertCircle, FileText, Plus, Search, Trash2 } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -24,9 +24,10 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { listPages } from '../services/dealerKitService';
+import { deletePage, listPages } from '../services/dealerKitService';
 import { NewPageDialog } from './NewPageDialog';
 import type { PageSummary } from '@/lib/dealer-kit/types';
 
@@ -34,6 +35,7 @@ export function PagesList() {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [newOpen, setNewOpen] = useState(false);
+  const [deleting, setDeleting] = useState<PageSummary | null>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -73,11 +75,16 @@ export function PagesList() {
       {
         accessorKey: 'slug',
         header: ({ column }) => <DataGridColumnHeader title="Address" column={column} />,
-        cell: ({ row }) => (
-          <div className="truncate font-mono text-xs text-muted-foreground" title={`/c/${row.original.slug}`}>
-            /c/{row.original.slug}
-          </div>
-        ),
+        cell: ({ row }) => {
+          // The backend resolves this, company segment included. Guessing it
+          // here would print an address that does not resolve.
+          const path = row.original.publicPath ?? `/${row.original.slug}`;
+          return (
+            <div className="truncate font-mono text-xs text-muted-foreground" title={path}>
+              {path}
+            </div>
+          );
+        },
         size: 200,
         minSize: 120,
         meta: { headerTitle: 'Address', skeleton: <Skeleton className="h-4 w-28" /> },
@@ -118,6 +125,31 @@ export function PagesList() {
         size: 180,
         minSize: 130,
         meta: { headerTitle: 'Last edited', skeleton: <Skeleton className="h-4 w-32" /> },
+      },
+      {
+        id: 'actions',
+        header: '',
+        cell: ({ row }) => (
+          <div className="flex justify-end">
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-label={`Delete ${row.original.name}`}
+              onClick={(event) => {
+                // The row itself opens the editor, so the action must not
+                // navigate on its way to the confirmation.
+                event.stopPropagation();
+                setDeleting(row.original);
+              }}
+            >
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+          </div>
+        ),
+        size: 70,
+        minSize: 70,
+        enableResizing: false,
+        meta: { headerTitle: 'Actions', skeleton: <Skeleton className="h-4 w-6" /> },
       },
     ],
     [],
@@ -212,6 +244,23 @@ export function PagesList() {
       </Card>
 
       <NewPageDialog open={newOpen} onOpenChange={setNewOpen} />
+
+      <ConfirmDeleteDialog
+        open={!!deleting}
+        onOpenChange={(open) => !open && setDeleting(null)}
+        title="Confirm delete"
+        description={
+          <>
+            Delete <strong>{deleting?.name}</strong>? Every saved version goes with it, including
+            the one that is live. This action cannot be undone.
+          </>
+        }
+        successMessage="Page deleted"
+        queryKeysToInvalidate={[['dealer-kit', 'pages']]}
+        onDelete={async () => {
+          if (deleting) await deletePage(deleting.id);
+        }}
+      />
     </DataGrid>
   );
 }

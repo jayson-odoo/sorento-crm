@@ -55,6 +55,7 @@ interface PageSummaryWire {
   updatedAt: string;
   publishedVersion: number | null;
   latestVersion: number;
+  publicPath: string | null;
 }
 
 interface PageVersionWire {
@@ -93,6 +94,7 @@ function toSummary(wire: PageSummaryWire): PageSummary {
     updatedAt: wire.updatedAt,
     publishedVersion: wire.publishedVersion,
     latestVersion: wire.latestVersion,
+    publicPath: wire.publicPath ?? null,
   };
 }
 

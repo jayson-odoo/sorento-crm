@@ -104,6 +104,7 @@ def create_page(
         updated_at=page.updated_at,
         published_version=None,
         latest_version=0,
+        public_path=svc.public_path(db, page),
         doc={"sections": [], "printProfile": svc.DEFAULT_PRINT_PROFILE},
         versions=[],
     )
@@ -133,6 +134,7 @@ def get_page(page_id: str, db: Session = Depends(get_db), _user: dict = Depends(
         updated_at=page.updated_at,
         published_version=published,
         latest_version=versions[0].version if versions else 0,
+        public_path=svc.public_path(db, page),
         doc=doc,
         versions=versions,
     )

@@ -23,8 +23,8 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 
 | Slice | Phase 1 (FE prototype) | Phase 2 (BE + wiring + tests) | Phase 3 (review) | Slice |
 |---|---|---|---|---|
-| **S1 builder core** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | not started | in progress |
-| **S2 collections + bundles** | blocked on S1 | blocked | blocked | blocked |
+| **S1 builder core** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
+| **S2 collections + bundles** | ready to start | blocked | blocked | not started |
 | **S3 PDF export** | blocked on S2 | blocked | blocked | blocked |
 
 ---
@@ -114,6 +114,13 @@ permissions + grant sweep, version/label service, routes, then FE off mocks onto
 
 #### Phase 2 gate result — PASSED, with one claim explicitly withheld
 
+> **Corrected in Phase 3.** This gate was signed off while the public renderer was still
+> missing, which is part of the flow S1 declares. The gate items below were all genuinely met;
+> the gate itself was incomplete, because none of them said "a reader can open the page". Phase
+> 3 built it and re-verified. Recorded here rather than rewritten, since a gate that quietly
+> edits its own history is worth nothing.
+
+
 Verified against the real stack: backend on :8020, a **prod build** of the frontend on :3020,
 the live Postgres. **60 pytest · 32 vitest · 10 Playwright, all green.**
 
@@ -161,6 +168,47 @@ edits) passes.
 - [ ] No duplication of `extractApiError` / `buildDataGridParams` / user-select helpers
 - [ ] Delete + unlink confirmed via `ConfirmDeleteDialog`, hard delete, count in bulk copy
 - [ ] Prod build (`npm run build && npm start`) before handoff
+
+#### Phase 3 gate result — PASSED after the review found a missing leg of the slice
+
+**13 Playwright · 67 pytest · 32 vitest green**, against backend :8020 and a prod build on
+:3020. Review was done by reading the slice diff rather than trusting the green suites, which
+is what surfaced the first two findings below - no test was failing, because no test existed.
+
+**Six findings. Five fixed, one accepted.**
+
+1. **The public renderer did not exist.** `published_doc` had no caller: no public route, no
+   reader-facing page. S1's own end-to-end flow ends "open the public URL and see it", so the
+   slice was not finishable as written, and Phase 2 should not have been marked passed with
+   this open. Now built: `GET /api/v1/public/c/{company_code}/{slug}`, a chrome-free
+   `/c/{company}/{slug}` page, and a `CatalogueRenderer` shared with the editor's own
+   `BlockPreview` so what a Designer arranges is literally what a reader sees.
+2. **The public address was ambiguous across companies.** `slug` is unique PER company by
+   deliberate design, so Sorento and Mocha may each publish a "bathroom-2026". The list was
+   rendering `/c/{slug}`, which cannot resolve once a second company exists, and resolving it
+   by "whichever matches" would have been a cross-company leak. The address now carries the
+   company code, resolved server-side (`publicPath`) so no screen has to derive the rule.
+   `test_two_companies_may_hold_the_same_slug_and_each_reader_gets_theirs` pins it.
+3. **The list had no delete**, though the API had `DELETE /pages/{id}` and the CRUD standard
+   requires hard delete behind a confirmation. Added via the shared `ConfirmDeleteDialog`,
+   with copy that says every version goes, including the live one.
+4. **`labels_for` was annotated `dict[str, str]` but returns `dict[str, list[str]]`.**
+   Behaviour was right, the type was a lie.
+5. **The backend on :8020 was running without `--reload`.** Every backend change since it
+   booted was invisible to the browser, so the earlier "verified against the real API" run
+   proved less than it appeared to - it passed against stale code that happened to satisfy it.
+   Caught because the new public route 404'd with FastAPI's *unmatched route* body rather than
+   the handler's own message. Restarted with `--reload` and everything re-verified.
+6. **Accepted, not fixed:** `save_version` computes `max(version) + 1` and two simultaneous
+   saves of the same page would collide. The `(page_id, version)` unique constraint turns that
+   into a failed request rather than a corrupted history, which is the correct failure, and two
+   Designers saving one page in the same instant is not a real scenario yet. Revisit if
+   concurrent editing ever becomes one.
+
+**Checklist:** no duplication of `extractApiError` / `buildDataGridParams` / user-select
+helpers · no raw `<select>` · no UUID rendered anywhere (authors resolve to names, the public
+address uses a company code) · DataGrid fixed layout with explicit sizes · modals scroll to
+their submit button · delete is hard and confirmed.
 
 ---
 

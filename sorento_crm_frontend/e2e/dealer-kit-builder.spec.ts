@@ -203,6 +203,89 @@ test.describe('Dealer Kit page builder', () => {
     await expect(page.getByText('Version 1').first()).toBeVisible();
   });
 
+  test('the published page is readable with no login, and follows the label', async ({
+    page,
+    context,
+  }) => {
+    await createPage(page, 'public');
+
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^heading$/i }));
+    await tap(page, page.getByRole('button', { name: /^save$/i }));
+    await expect(page.getByText(/saved as version 1/i)).toBeVisible({ timeout: 20_000 });
+
+    // Nothing is live yet, so there is no link to follow.
+    await expect(page.getByRole('link', { name: /view live/i })).toHaveCount(0);
+
+    await tap(page, page.getByRole('button', { name: /^publish$/i }));
+    await expect(page.getByText(/Live · v1/)).toBeVisible({ timeout: 20_000 });
+
+    const live = page.getByRole('link', { name: /view live/i });
+    await expect(live, 'a published page offers its public link').toBeVisible({
+      timeout: 10_000,
+    });
+    const href = await live.getAttribute('href');
+    // The address carries the company segment; without it two companies'
+    // identical slugs could not both resolve.
+    expect(href).toMatch(/^\/c\/[^/]+\/zzt-public-/);
+
+    // Read it as a stranger would: a fresh context with no session at all.
+    const anonymous = await context.browser()!.newContext();
+    const reader = await anonymous.newPage();
+    try {
+      await reader.goto(href!, { waitUntil: 'commit' });
+      await expect(reader.locator('[data-dk-catalogue]')).toBeVisible({ timeout: 20_000 });
+      // It rendered the catalogue rather than bouncing to a login screen.
+      expect(reader.url()).toContain('/c/');
+      await expect(reader.locator('input[type="password"]')).toHaveCount(0);
+    } finally {
+      await anonymous.close();
+    }
+  });
+
+  test('an unpublished address is not readable by a stranger', async ({ page, context }) => {
+    const name = await createPage(page, 'unpub');
+
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^heading$/i }));
+    await tap(page, page.getByRole('button', { name: /^save$/i }));
+    await expect(page.getByText(/saved as version 1/i)).toBeVisible({ timeout: 20_000 });
+
+    // Saved but never published. Guessing the address must not reveal the draft.
+    await openDealerKitLeaf(page, /catalogue pages/i);
+    const row = page.getByRole('row', { name: new RegExp(name, 'i') }).first();
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    const address = (await row.innerText()).match(/\/c\/[^\s]+/)?.[0];
+    expect(address, 'the list shows the shareable address').toBeTruthy();
+
+    const anonymous = await context.browser()!.newContext();
+    const reader = await anonymous.newPage();
+    try {
+      await reader.goto(address!, { waitUntil: 'commit' });
+      await expect(reader.getByText(/not available/i)).toBeVisible({ timeout: 20_000 });
+      await expect(reader.locator('[data-dk-catalogue]')).toHaveCount(0);
+    } finally {
+      await anonymous.close();
+    }
+  });
+
+  test('deleting a page asks first, then removes it', async ({ page }) => {
+    const name = await createPage(page, 'delete-page');
+
+    await openDealerKitLeaf(page, /catalogue pages/i);
+    await expect(page.getByText(name).first()).toBeVisible({ timeout: 20_000 });
+
+    await tap(page, page.getByRole('button', { name: new RegExp(`delete ${name}`, 'i') }));
+
+    // A destructive action never happens on one click.
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible({ timeout: 10_000 });
+    await expect(dialog.getByText(/cannot be undone/i)).toBeVisible();
+
+    await tap(page, dialog.getByRole('button', { name: /^delete$/i }));
+    await expect(page.getByText(name)).toHaveCount(0, { timeout: 20_000 });
+  });
+
   test('a page the backend does not have shows an error, not an empty editor', async ({ page }) => {
     await page.goto('/dealer-kit/pages/00000000-0000-0000-0000-0000000000ff', {
       waitUntil: 'commit',

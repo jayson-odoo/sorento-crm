@@ -142,6 +142,12 @@ export interface PageSummary {
   id: string;
   name: string;
   slug: string;
+  /**
+   * The shareable address, resolved by the backend as `/c/{companyCode}/{slug}`.
+   * Built server-side because the company segment is what keeps two companies'
+   * identical slugs apart, and the UI holds no company id to derive it from.
+   */
+  publicPath: string | null;
   updatedAt: string;
   publishedVersion: number | null;
   latestVersion: number;
