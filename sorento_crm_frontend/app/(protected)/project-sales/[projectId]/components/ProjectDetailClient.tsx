@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Flame, Loader2, Trash2 } from 'lucide-react';
+import { Clock, Flame, Loader2, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,7 +16,10 @@ import {
   useDeleteProject,
   useProject,
 } from '../../_shared/hooks/useProjects';
+import EntityActivitiesLayout from '@/components/common/ActivitiesNotesPanel/EntityActivitiesLayout';
+import { STALE_TONE_CLASS, describeStaleness } from '../../_shared/lib/staleness';
 import { CriticalPanel } from './CriticalPanel';
+import { ProjectActivityPanel } from './ProjectActivityPanel';
 import { ProjectAccessPanel } from './ProjectAccessPanel';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
 import { QuotationsPanel } from './QuotationsPanel';
@@ -98,11 +101,17 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
     );
   }
 
+  const stale = describeStaleness(project);
   const statuses = (graph.data?.statuses ?? [])
     .filter((status) => status.is_active)
     .sort((a, b) => a.sort_order - b.sort_order);
 
   return (
+    // The shared drawer (AC-H1): posting, @-mentions and internal notes come from the same
+    // component tickets use, against the project adapter. Wrapping here rather than inside
+    // the Activity tab so the composer is reachable from every tab -- the moment somebody
+    // wants to record what a developer just said is rarely while looking at the feed.
+    <EntityActivitiesLayout entityType="project" entityId={project.id}>
     <div className="space-y-5">
       {/* flex-col until sm: a long title and the action buttons cannot share a row at
           phone width without overlapping and forcing page-wide horizontal overflow. */}
@@ -119,6 +128,16 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
               <Badge variant="destructive" className="gap-1">
                 <Flame className="size-3" aria-hidden />
                 Critical
+              </Badge>
+            )}
+            {stale && (
+              <Badge
+                variant="outline"
+                className={`gap-1 ${STALE_TONE_CLASS[stale.tone as 'notice']}`}
+                title={stale.detail}
+              >
+                <Clock className="size-3" aria-hidden />
+                {stale.label}
               </Badge>
             )}
             {!project.can_edit && <Badge variant="outline">Read only</Badge>}
@@ -160,6 +179,22 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           )}
         </div>
       </header>
+
+      {/* The ladder says its own reason and its own consequence (AC-H6). A badge alone
+          leaves the reader guessing what "Unattended" changed; this states it, and the
+          takeover route is a click away in Access on the Overview tab. */}
+      {stale && (
+        <div
+          className={
+            stale.level >= 3
+              ? 'rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3'
+              : 'rounded-lg border border-amber-300 bg-amber-50/60 px-4 py-3 dark:bg-amber-950/20'
+          }
+        >
+          <p className="text-sm font-medium">{stale.label}</p>
+          <p className="text-sm text-muted-foreground">{stale.detail}</p>
+        </div>
+      )}
 
       {/* Horizontal scroll on the tab strip only, so nine tabs never make the page
           itself scroll sideways. */}
@@ -268,12 +303,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       {activeTab === 'samples' && <SamplesPanel project={project} />}
       {activeTab === 'sponsorships' && <SponsorshipsPanel project={project} />}
       {activeTab === 'pos' && <PurchaseOrdersPanel project={project} />}
-      {activeTab === 'activity' && (
-        <NotYetPanel
-          title="Activity"
-          body="The shared activity feed, mentions and internal notes plug in through the existing activities registry. Meaningful activity is what the staleness nudges read, so it lands with the follow-up slice."
-        />
-      )}
+      {activeTab === 'activity' && <ProjectActivityPanel project={project} />}
       {activeTab === 'documents' && (
         <NotYetPanel
           title="Documents"
@@ -300,6 +330,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         </p>
       )}
     </div>
+    </EntityActivitiesLayout>
   );
 }
 

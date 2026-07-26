@@ -153,6 +153,17 @@ def create_po(
     db.flush()
 
     setattr(po, _STATUS_MOVED_ATTR, _advance_to_po_received(db, project) if is_first else False)
+
+    from app.services import project_activity_service as activity
+
+    activity.record_project_event(
+        db,
+        project=project,
+        template="po_recorded",
+        payload={"po_id": str(po.id), "po_number": po.po_number},
+        actor_id=actor_user_id,
+    )
+    db.flush()
     return po
 
 

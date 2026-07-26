@@ -83,9 +83,24 @@ def _notify_breaches(db: Session, line, actor_user_id: str) -> None:
             event["floor_value"],
             event["floor_level"],
         )
-    # The notification fan-out itself lands with the S5 notification slice, which owns
-    # the management recipient list. Logged loudly until then rather than silently
-    # dropped, so the transition is observable in the meantime.
+    # S5b: the fan-out itself. Management only -- the person who typed the price does not
+    # need telling what they just did, and the recipient rule lives in one place
+    # (project_notify_service) so it cannot drift from the PO and staleness alerts.
+    from app.models.projects import Project, ProjectQuotation
+    from app.services import project_notify_service as notify
+
+    project = (
+        db.query(Project)
+        .join(ProjectQuotation, ProjectQuotation.project_id == Project.id)
+        .filter(ProjectQuotation.id == str(events[0]["quotation_id"]))
+        .first()
+    )
+    if project is None:
+        return
+    for event in events:
+        notify.notify_floor_breach(
+            db, project=project, event=event, actor_user_id=actor_user_id
+        )
 
 
 # --------------------------------------------------------------- quotations

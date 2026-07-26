@@ -73,6 +73,24 @@ DEFAULT_WIN_PROBABILITIES = {
     "dormant": 0,
 }
 
+# Starting staleness thresholds per rung, in days (AC-H4). Same NULL-only fill rule as the
+# probabilities above.
+#
+# They TIGHTEN down the funnel, which is the whole point of making them per status: a
+# Registered project may fairly sit a month while the developer finishes their own paperwork,
+# but a Tendering one going quiet for a week is a lost tender nobody has admitted yet.
+#
+# Terminal rungs are deliberately ABSENT from this map, so they stay NULL and never go stale.
+# There is nothing to chase on a lost project, and a badge on a finished one is noise that
+# teaches people to ignore badges.
+DEFAULT_STALE_AFTER_DAYS = {
+    "identified": 21,
+    "registered": 30,
+    "specified": 21,
+    "quoted": 14,
+    "tendering": 7,
+}
+
 # Forward edges, plus Lost/Dormant reachable from every live rung. Deliberately NOT a
 # fully-connected graph: the point of a configurable funnel is that illegal moves are
 # rejected, and "anything to anything" makes the engine decorative.
@@ -321,6 +339,33 @@ def ensure_win_probabilities(db: Session) -> int:
     )
     for row in rows:
         row.win_probability = DEFAULT_WIN_PROBABILITIES[row.key]
+    if rows:
+        db.flush()
+    return len(rows)
+
+
+def ensure_stale_thresholds(db: Session) -> int:
+    """Fill ``statuses.stale_after_days`` where it is NULL, on the default project graph.
+
+    Separate from `ensure_win_probabilities` even though the shape is identical, because the
+    two answer different questions and a team may well tune one and not the other. Merging
+    them would also make the boot summary say "3 dials filled" without saying which.
+
+    NULL-only, and terminal rungs are not in the map at all, so they stay NULL: never stale
+    is the correct answer for a finished project, not a very large number.
+    """
+    rows = (
+        db.query(Status)
+        .filter(
+            Status.entity_type == PROJECT_ENTITY,
+            Status.scope_id.is_(None),
+            Status.stale_after_days.is_(None),
+            Status.key.in_(list(DEFAULT_STALE_AFTER_DAYS)),
+        )
+        .all()
+    )
+    for row in rows:
+        row.stale_after_days = DEFAULT_STALE_AFTER_DAYS[row.key]
     if rows:
         db.flush()
     return len(rows)
@@ -718,6 +763,7 @@ def run(db: Session, company_id: Optional[str] = None) -> Dict[str, int]:
         "quotation_loss_reasons": 0,
         "po_edges": 0,
         "win_probabilities": 0,
+        "stale_thresholds": 0,
         "types": 0,
     }
     summary["numbering"] = 1 if seed_numbering_rule(db) else 0
@@ -726,6 +772,7 @@ def run(db: Session, company_id: Optional[str] = None) -> Dict[str, int]:
     # seeded before AC-F10 existed needs these edges added to a graph it already has.
     summary["po_edges"] = ensure_po_received_edges(db)
     summary["win_probabilities"] = ensure_win_probabilities(db)
+    summary["stale_thresholds"] = ensure_stale_thresholds(db)
     summary["task_statuses"] = seed_default_task_graph(db)
     summary["lead_numbering"] = 1 if seed_lead_numbering_rule(db) else 0
     summary["lead_statuses"] = seed_default_lead_graph(db)

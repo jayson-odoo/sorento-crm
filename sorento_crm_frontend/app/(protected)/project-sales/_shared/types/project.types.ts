@@ -167,6 +167,16 @@ export interface Project {
   next_action_date?: string | null;
   next_action_overdue: boolean;
   open_task_count: number;
+
+  /**
+   * Staleness ladder, stamped by the daily sweep (AC-H6): 0 fine, 1 owner nudged, 2 owner
+   * warned and management copied, 3 Unattended and open to takeover requests. Read, never
+   * recomputed client-side - the sweep is what notified the owner.
+   */
+  stale_level: number;
+  stale_reason?: 'overdue_task' | 'no_activity' | null;
+  stale_since?: string | null;
+  is_unattended: boolean;
   can_edit: boolean;
 
   created_at?: string | null;

@@ -59,6 +59,8 @@ function project(overrides: Partial<Project> = {}): Project {
     brands: [],
     brand_ids: [],
     next_action_overdue: false,
+    stale_level: 0,
+    is_unattended: false,
     open_task_count: 0,
     can_edit: true,
     ...overrides,

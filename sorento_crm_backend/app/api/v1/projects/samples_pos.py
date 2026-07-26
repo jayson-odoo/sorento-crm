@@ -285,6 +285,40 @@ async def list_po_lines(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+def _notify_po_mismatch(db: Session, po, line) -> None:
+    """Tell the owner and management that a PO line disagrees with what we quoted (AC-F9).
+
+    Fired from the LINE routes rather than from the service so it runs once the line is
+    committed: an alert about a line that a later rollback removed is worse than a late one.
+    Erosion from v1 (AC-F9a) deliberately does NOT notify -- it is the expected result of a
+    negotiation, and alerting on it would make every well-negotiated PO look broken.
+    """
+    if not (line.model_mismatch or line.price_mismatch):
+        return
+    try:
+        from app.models.projects import Project
+        from app.services import project_notify_service as notify
+
+        project = db.query(Project).filter(Project.id == po.project_id).first()
+        if project is None:
+            return
+        notify.notify_po_mismatch(
+            db,
+            project=project,
+            po=po,
+            mismatches=[
+                {
+                    "kind": "model mismatch" if line.model_mismatch else "price mismatch",
+                    "product_code": line.product_code,
+                    "description": line.description,
+                }
+            ],
+        )
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("PO mismatch notify failed for po=%s line=%s: %s", po.id, line.id, exc)
+
+
 @router.post(
     "/purchase-orders/{po_id}/lines",
     response_model=ProjectPurchaseOrderLineResponse,
@@ -307,6 +341,7 @@ async def create_po_line(
         )
         db.commit()
         db.refresh(line)
+        _notify_po_mismatch(db, po, line)
         return po_svc.serialize_lines(db, [line])[0]
     except Exception as exc:
         db.rollback()
@@ -335,6 +370,7 @@ async def update_po_line(
         )
         db.commit()
         db.refresh(line)
+        _notify_po_mismatch(db, po, line)
         return po_svc.serialize_lines(db, [line])[0]
     except Exception as exc:
         db.rollback()

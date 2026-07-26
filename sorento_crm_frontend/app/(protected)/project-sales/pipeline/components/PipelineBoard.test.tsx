@@ -119,6 +119,10 @@ describe('PipelineBoard', () => {
         projects={[
           project({
             is_critical: true,
+            // The ladder rung comes from the server now (AC-H6). The card used to guess with
+            // a flat 30-day rule, which was wrong at both ends of the funnel.
+            stale_level: 2,
+            stale_reason: 'no_activity',
             days_since_last_activity: 45,
             estimated_sales_value: '1250000.00',
             brands: ['Sorento', 'Mocha', 'Third'],
@@ -128,7 +132,7 @@ describe('PipelineBoard', () => {
       />,
     );
     expect(screen.getByText('Critical')).toBeInTheDocument();
-    expect(screen.getByText('45d quiet')).toBeInTheDocument();
+    expect(screen.getByText('Falling behind')).toBeInTheDocument();
     expect(screen.getByText('RM 1.3m')).toBeInTheDocument();
     // Only the first two brands, then a count -- a card is a glance, not a list.
     expect(screen.getByText('+1')).toBeInTheDocument();

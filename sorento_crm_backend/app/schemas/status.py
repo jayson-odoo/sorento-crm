@@ -1,5 +1,6 @@
 """Status engine schemas (ADR-0001)."""
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -31,6 +32,12 @@ class StatusBase(BaseModel):
     is_default: bool = False
     position_x: Optional[float] = None
     position_y: Optional[float] = None
+    # Per-rung dials read by the Project Sales module (AC-I2, AC-H4). Both nullable and both
+    # meaningless to entity types that ignore them: `statuses` is a CORE table shared by
+    # tickets, tasks, leads and projects, so a dial nobody set stays NULL rather than
+    # defaulting to a number nobody chose.
+    win_probability: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    stale_after_days: Optional[int] = Field(default=None, ge=1, le=3650)
 
 
 class StatusCreate(StatusBase):
@@ -55,6 +62,8 @@ class StatusUpdate(BaseModel):
     is_default: Optional[bool] = None
     position_x: Optional[float] = None
     position_y: Optional[float] = None
+    win_probability: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    stale_after_days: Optional[int] = Field(default=None, ge=1, le=3650)
 
 
 class StatusResponse(StatusBase):

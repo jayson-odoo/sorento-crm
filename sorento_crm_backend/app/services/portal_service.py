@@ -941,6 +941,35 @@ class PortalService:
         except Exception as e:  # noqa: BLE001
             logger.warning("Post-submit notify failed for %s %s: %s", kind, row.id, e)
 
+        # A sponsorship recorded against a project is real work on that project (AC-H2),
+        # so it advances the project's staleness clock and shows in its feed. Best-effort:
+        # the form is already submitted and committed by this point.
+        if kind == "sponsorship_form" and getattr(row, "project_id", None):
+            try:
+                from app.models.projects import Project
+                from app.services import project_activity_service as activity
+
+                project = (
+                    self.db.query(Project)
+                    .filter(Project.id == str(row.project_id))
+                    .first()
+                )
+                if project is not None:
+                    activity.record_project_event(
+                        self.db,
+                        project=project,
+                        template="sponsorship_recorded",
+                        payload={
+                            "sponsorship_form_id": str(row.id),
+                            "request_number": getattr(row, "request_number", None),
+                        },
+                    )
+                    self.db.commit()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    "Sponsorship project activity not recorded for %s: %s", row.id, e
+                )
+
         # Form SLA: emit `submit` so the configured form_sla_configs spawn a tracker.
         # Portal submit bypasses the API state-transition methods; this hook covers
         # complaint / stock_inquiry / purchase_request / sponsorship_form uniformly.

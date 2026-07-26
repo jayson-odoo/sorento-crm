@@ -1,8 +1,8 @@
 # UAC — Project Sales Pipeline (module `projects`)
 
-**Status:** S0, S1, S2, S2b, S2c, S3 and S4 built (2026-07-26). Groups B, C, D, E, F, G, J, N
-and O are implemented and browser-verified except where noted below; A is implemented apart
-from the Excel import. Remaining slices S5-S6 unstarted.
+**Status:** S0, S1, S2, S2b, S2c, S3, S4, S5a and S5b built (2026-07-27). Groups B, C, D, E,
+F, G, H, I, J, N and O are implemented and browser-verified except where noted below; A is
+implemented apart from the Excel import. Remaining slice S6 unstarted.
 
 **Verified against a running stack, not asserted:** every AC below marked ✅ was exercised
 either by a test that fails without it or in the browser at localhost:3010/:8010. ACs that
@@ -12,10 +12,12 @@ did NOT ship are marked ⏸ with the reason, rather than being quietly left ambi
   grouped within the sheet, BOTH sides of a repeated `(developer, normalised_title)` failed.
   Half of that is worse than none: it would create exactly the silent duplicate the module
   exists to prevent.
-- ⏸ **AC-H1 / AC-H2 (activities adapter).** Partly un-deferred by S2b: creating or
-  completing a task now advances `last_meaningful_activity_at` (AC-N8), which is the first
-  entry in the AC-H2 whitelist. The quotation and sample events still wait for S3/S4, and
-  the shared activity FEED (notes, mentions) is untouched.
+- ✅ **AC-H1 / AC-H2 (activities adapter).** Shipped in S5b. The project registers an
+  adapter, so the shared feed / notes / mentions panel works with no new tables, and all six
+  whitelisted system events plus any human post advance `last_meaningful_activity_at` (task
+  create / complete from S2b's AC-N8 still count). An import or a field edit deliberately
+  does not, and the Activity tab labels which events counted so a surprising nudge can be
+  explained on screen.
 - ⏸ **AC-N5a (link a task to a quotation version / sample / Project PO).** The columns, the
   schema and the API accept the link, and after S4 all three targets now exist -- but the
   picker itself is still not in the UI. Un-blocked rather than done.
@@ -24,11 +26,10 @@ did NOT ship are marked ⏸ with the reason, rather than being quietly left ambi
 - ⏸ **AC-G2 (board default per role).** The Board/Grid toggle and per-user persistence ship;
   defaulting Board for sales and Grid for management needs the role read, deferred with the
   rest of the role-aware UX.
-- ⏸ **AC-E5 / AC-E6, the "notifies management" half.** Both alerts compute, store and render
-  correctly, and a breach WARNs to the server log naming the line, the price, the floor and
-  the level that produced it. The notification fan-out itself lands in S5, which owns the
-  notification surface for this module - a half-wired fan-out would be worse than none,
-  because management would trust an incomplete channel.
+- ✅ **AC-E5 / AC-E6, the "notifies management" half.** Shipped in S5b, which established the
+  single definition of management (`projects.projects.view_all_financials`, G20) the fan-out
+  was waiting on. A floor breach now notifies management in-app and by email on the
+  TRANSITION into breach only, deduplicated per line, and the loud log line stays.
 - ⏸ **AC-E8, the display and off-catalog-upload half.** A line picked from the catalogue
   DOES resolve and store its product image (`resolve_product_image` on snapshot), so the
   data is there. Rendering it in the line table and letting an off-catalog line upload its
@@ -290,6 +291,18 @@ Still open in Group F:
   with a reason; history retains the original registrant.
 - **AC-H7** **"My Tasks"** lists the current user's open tasks across all projects, overdue
   first, then upcoming, with the project and its status on each row.
+
+**Status after S5b.** AC-H1, AC-H2, AC-H4 and AC-H6 ship in full; AC-H3 and AC-H7 shipped in
+S2b and are now read by the ladder. **AC-H5 ships with one deliberate deviation:** the sweep is
+a `scheduled_tasks` row on the existing heartbeat, not an `automations` row. `automations`
+requires an email template and models "send this template on a schedule"; the ladder writes
+state, an activity row, notifications and a badge. The AC's actual requirement - no new
+scheduler - is met, and manual runs use the existing `POST /scheduled-tasks/{id}/run-now`.
+Reasoning in PLAN §5e.
+
+Also landed here, deferred from earlier slices: the **AC-E6a floor-breach** and **AC-F9 PO
+mismatch** notification fan-outs, which S3 and S4 shipped as log lines pending one definition
+of "management" (`projects.projects.view_all_financials`, grill finding G20).
 
 ## Group I — Forecast and reporting
 

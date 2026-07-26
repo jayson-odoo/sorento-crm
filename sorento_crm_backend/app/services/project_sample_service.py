@@ -115,6 +115,17 @@ def create_sample(
     sample.quotation_version_id = version.id
     db.add(sample)
     db.flush()
+
+    from app.services import project_activity_service as activity
+
+    activity.record_project_event(
+        db,
+        project=project,
+        template="sample_submitted",
+        payload={"sample_id": str(sample.id), "version_id": str(version.id)},
+        actor_id=actor_user_id,
+    )
+    db.flush()
     return sample
 
 

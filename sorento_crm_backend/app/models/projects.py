@@ -251,6 +251,15 @@ class Project(Base, CompanyScopedMixin):
     # by opening the record or fixing a typo, so the staleness ladder cannot be gamed.
     last_meaningful_activity_at = Column(DateTime(timezone=False), nullable=True)
 
+    # Ladder state (AC-H6). Derived from the clock above and the rung's threshold, but
+    # PERSISTED so the daily sweep can notify once per rung instead of every morning.
+    # 0 = fine, 1 = owner nudged, 2 = owner warned and management copied, 3 = Unattended.
+    stale_level = Column(Integer, nullable=False, server_default="0", default=0)
+    # When the project ENTERED the ladder, not when it last moved up it: "untouched since
+    # 3 March" is the sentence a manager can act on.
+    stale_since = Column(DateTime(timezone=False), nullable=True)
+    stale_reason = Column(String(16), nullable=True)  # overdue_task | no_activity
+
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(

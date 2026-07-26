@@ -4,6 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { AlertTriangle, CalendarClock, Clock, Flame, GripVertical } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { STALE_TONE_CLASS, describeStaleness } from '../../_shared/lib/staleness';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import type { Status } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
@@ -184,7 +185,10 @@ function ProjectCard({
   // Only a project the user may edit is draggable. A card that moves and then snaps
   // back with a 403 is worse than one that never moved.
   const draggable = project.can_edit;
-  const stale = (project.days_since_last_activity ?? 0) >= 30;
+  // The server stamps the rung per status threshold (AC-H4/H6). This card used to guess
+  // with a flat 30 days, which was wrong in both directions: 30 days is fine at Registered
+  // and far too long at Tendering.
+  const stale = describeStaleness(project);
   const nextAction = describeNextAction(project);
 
   return (
@@ -232,9 +236,13 @@ function ProjectCard({
               </Badge>
             )}
             {stale && (
-              <Badge variant="outline" className="gap-1 text-[11px] text-amber-700">
+              <Badge
+                variant="outline"
+                className={`gap-1 text-[11px] ${STALE_TONE_CLASS[stale.tone as 'notice']}`}
+                title={stale.detail}
+              >
                 <Clock className="size-3" aria-hidden />
-                {project.days_since_last_activity}d quiet
+                {stale.label}
               </Badge>
             )}
             {project.brands.slice(0, 2).map((brand) => (

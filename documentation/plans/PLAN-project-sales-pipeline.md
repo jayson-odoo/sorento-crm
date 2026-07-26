@@ -3,10 +3,9 @@
 **Status:** **In build.** Drafted from grill session 2026-07-25, review rounds 1-2 applied
 (numbering / delivery lag / loss reasons made configurable; sponsorship flag pinned to
 `respond_contacts`; task management added and decided - see §7).
-Built: **S0, S1, S2, S2b, S2c, S3, S4, S5a** (see the slice list in §4 for what each one
-landed and what it discovered). Next: **S5b** - staleness ladder, activity events, My
-Follow-ups (UAC Group H), which also owns the notification fan-out S3 and S4 currently only
-log.
+Built: **S0, S1, S2, S2b, S2c, S3, S4, S5a, S5b** (see the slice list in §4 for what each
+one landed and what it discovered; the S3/S4 notification fan-outs landed with S5b). Next:
+**S6** - MCP read tools, then the PR + Complaint linkage (UAC Groups K, L).
 **Owner:** jayson
 **Slug:** project-sales-pipeline
 **Classification:** MODULE (`projects`), `public` schema, normal FKs, company-scoped.
@@ -262,8 +261,12 @@ already exists, the second is scheduling.
 - **S5a — DONE.** Three-number forecast, per-status probability, configurable delivery lag
   with per-project override, management dashboard (Forecast &amp; Reports). Notes in §5d.
   → UAC Group I.
-- **S5b — next.** Staleness automation + ladder + takeover requests, My Follow-ups, and the
-  notification fan-out that S3 and S4 currently only log. → UAC Group H.
+- **S5b — DONE.** Activity adapter + meaningful-activity whitelist, per-status staleness
+  thresholds with fork-copy and reapply-defaults, the daily sweep on the existing scheduler,
+  the three-rung ladder, and the notification fan-out S3 and S4 had only logged. Notes in
+  §5e. → UAC Group H. **Not built:** "My Follow-ups" as a separate screen, because AC-H7's
+  My Tasks (shipped in S2b) already answers "what do I owe, soonest first" and a second
+  worklist reading the same tasks would be two places to keep in step.
 
 **S6 — MCP read tools; then PR + Complaint linkage.** → UAC Groups K, L.
 
@@ -458,6 +461,61 @@ does not get argued with in a meeting.
 | F34 | The seeder left every `win_probability` NULL, so Weighted read RM 0.00 on a fresh install and the column looked broken rather than unconfigured. | Seeded starting ladder, NULL-only backfill, three tests: the ladder climbs, a tuned 0 survives reseeding, and an existing graph gets backfilled. |
 | F35 | A forecast test asserted "no probability contributes nothing" by relying on the seeder leaving NULLs - true until F34, then silently testing the wrong thing. | The test now ARRANGES the NULL explicitly. The behaviour is unchanged; what changed is that the test states its own precondition instead of inheriting it. |
 | F36 | `test_the_funnel_is_not_fully_connected` still asserted Identified cannot reach PO Received - an intent S4's F29 deliberately overruled, so it had been red since S4. | Rewritten around what the funnel actually guarantees: the forward ladder is one rung at a time (no skipping to Quoted/Tendering/Specified), and only the three ENDINGS short-circuit it. Asserted as an exact set, so a future stray edge fails. |
+
+## 5e. Staleness ladder and activity events (slice S5b)
+
+No new tables again. The feed reuses `activity_events` through the generic activities registry
+(AC-H1); the ladder adds three columns and one cron row:
+
+```
+projects.stale_level   INTEGER NOT NULL DEFAULT 0   -- 0 fine / 1 nudge / 2 warn / 3 unattended
+projects.stale_since   TIMESTAMP NULL               -- when it ENTERED the ladder
+projects.stale_reason  VARCHAR(16) NULL             -- overdue_task | no_activity
+scheduled_tasks('project_staleness_sweep', daily)   -- seeded in migration 317
+```
+
+**Where AC-H5 was followed in spirit, not to the letter.** The AC says the sweep is an
+`automations` row. It is not: `automations.email_template_id` is NOT NULL and `action_type`
+defaults to `send_email`, so that table models "send this template to these recipients on a
+schedule". The ladder writes state, an activity row, in-app notifications AND emails, and
+flips a badge, so putting it there would have meant a dummy email template plus an action type
+the runner does not understand. It is a `scheduled_tasks` row instead, on the SAME heartbeat
+that already runs `form_sla_overdue_scan` and `takeover_request_commit`. The AC's real
+requirement -- **no new scheduler** -- is met, and running it by hand uses the existing
+`POST /scheduled-tasks/{id}/run-now`, so there is no bespoke admin route either.
+
+**Two triggers, in priority order (AC-H3).** An overdue next action wins over inactivity: a
+project worked on yesterday that carries a task due three weeks ago is not idle, it is late.
+A project with an IN-DATE open task is off the ladder entirely regardless of how quiet it has
+been -- having a plan is the work, and nagging somebody whose site visit is booked for
+Thursday is how a tool teaches people to ignore it.
+
+**One threshold, three rungs.** `stale_after_days` is the nudge point; twice it warns the
+owner and copies management; three times marks the project Unattended. Multiples rather than
+three configured numbers, so an admin who tunes one number cannot produce a ladder where
+level 2 fires before level 1. Seeded 21/30/21/14/7 down the funnel and deliberately absent on
+terminal rungs, which therefore never go stale.
+
+**"Management" now means exactly one thing** (`projects.projects.view_all_financials`, G20),
+resolved from RBAC in `project_notify_service`. That is what unblocked the two fan-outs S3 and
+S4 shipped as log lines: the floor breach (management only -- the person who typed the price
+does not need telling what they just did) and the PO mismatch (owner AND management, because
+a PO that disagrees with the quotation becomes a delivery dispute). Price erosion from v1
+still deliberately does not notify (AC-F9a).
+
+**Nothing auto-reassigns.** Level 3 changes what colleagues are ALLOWED to ask for; the
+takeover request UI from S2 is the route, a manager still decides, and the badge copy says so
+in as many words.
+
+### S5b findings (browser and test)
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| F37 | `func.upper(User.status)` passed every test and died on the first real sweep: `function upper("UserStatus") does not exist`. The live column is a Postgres ENUM; the MODEL declares it `String`, so the blank schema built from the models accepted `upper()` happily. | Plain equality, which works for both. Plus a test that runs the recipient query against the REAL schema (read-only, rolled back) -- any query touching a legacy column type needs at least one such exercise, because a model-built test schema cannot see the mismatch. |
+| F38 | A failing notification took the whole sweep down with it. The recipient query raised, which poisoned the session, and the sweep's own `db.commit()` then died with `InFailedSqlTransaction` -- so a broken mailer discarded every correctly-identified stale project. "Best-effort" had only ever been tested against a Python exception, never a failed SQL statement. | The ladder commits BEFORE any notification is attempted, and each attempt rolls back a poisoned session so project two is not punished for project one. Pinned by a test that makes `_notify` raise and asserts the level survived. |
+| F39 | `begin_nested()` around each notification looked like the right isolation and was not: `NotificationService` commits internally, which closes the savepoint under it (`Can't operate on closed transaction inside context manager`) and turned all three sends into failures. | Per-project try / rollback-if-inactive instead. The savepoint was solving a problem the commit-first ordering had already removed. |
+| F40 | Moving the stage cleared the staleness banner instantly but the Activity tab still showed the old events, so the page disagreed with itself about what had just happened. | The feed is keyed on `updated_at` and `stale_level`, not just the project id -- the same rule the SLA banner follows. Verified in the browser: the status POST is followed by a project refetch AND an activities refetch. |
+| F41 | The pipeline card guessed staleness with a flat `days_since_last_activity >= 30`, which is simultaneously too slack at Registered (30 days is normal) and far too generous at Tendering (a week of silence is a lost tender). | The card reads the server's stamped rung. Its test moved with it, and now asserts the rung's WORDING rather than a day count. |
 
 ## 6a. Grill findings and resolutions (round 1, 2026-07-25)
 

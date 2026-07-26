@@ -628,6 +628,13 @@ def serialize_projects(
                 "open_task_count": next_actions.get(project.id, {}).get(
                     "open_task_count", 0
                 ),
+                # Staleness ladder (AC-H6). Sent as the stamped level rather than recomputed
+                # per row: the sweep is what decides a rung, and a list that computed its own
+                # answer could disagree with the notification the owner just received.
+                "stale_level": int(project.stale_level or 0),
+                "stale_reason": project.stale_reason,
+                "stale_since": project.stale_since,
+                "is_unattended": int(project.stale_level or 0) >= 3,
                 "can_edit": (
                     is_manager
                     or (
@@ -945,6 +952,20 @@ def change_status(
         )
 
     project.status_id = to_status_id
+    db.flush()
+
+    # A funnel move is real work (AC-H2), so it advances the staleness clock and writes the
+    # feed row. Done here rather than in the route because the board, the detail page and
+    # any future automation all come through this one function.
+    from app.services import project_activity_service as activity
+
+    activity.record_project_event(
+        db,
+        project=project,
+        template="stage_changed",
+        payload={"to_status_id": str(to_status_id)},
+        actor_id=actor_user_id,
+    )
     db.flush()
     return project
 

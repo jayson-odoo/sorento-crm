@@ -299,6 +299,14 @@ class ProjectResponse(BaseModel):
     next_action_date: Optional[date] = None
     next_action_overdue: bool = False
     open_task_count: int = 0
+
+    # Staleness ladder, stamped by the daily sweep (AC-H6). 0 fine, 1 owner nudged, 2 owner
+    # warned and management copied, 3 Unattended -- at which point colleagues may ASK to take
+    # the project over. Nothing here ever changes the owner.
+    stale_level: int = 0
+    stale_reason: Optional[str] = None
+    stale_since: Optional[datetime] = None
+    is_unattended: bool = False
     can_edit: bool = False
 
     created_at: Optional[datetime] = None

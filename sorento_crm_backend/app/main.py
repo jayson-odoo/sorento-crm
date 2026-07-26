@@ -160,6 +160,27 @@ def _register_activities_adapters() -> None:
             )
         )
         logging.info("Activities adapter registered: ticket")
+
+        from app.services import project_activity_service
+
+        register_activities_adapter(
+            ActivitiesAdapter(
+                entity_type=project_activity_service.ENTITY_TYPE,
+                permission_view="projects.projects.view",
+                permission_post="projects.projects.view",
+                # Posting is deliberately gated on VIEW, not edit: a colleague who can see a
+                # project should be able to add "developer told me the tender closed" without
+                # being able to change its numbers. Silencing observers loses the information
+                # the pursuit record exists to hold.
+                get_respond_contacts=project_activity_service.respond_contacts_for,
+                on_post=lambda db, project_id, actor_id, body_html: (
+                    project_activity_service.note_user_activity(
+                        db, project_id=project_id, actor_id=actor_id
+                    )
+                ),
+            )
+        )
+        logging.info("Activities adapter registered: project")
     except Exception as e:  # noqa: BLE001
         logging.error(
             f"Failed to register activities adapters: {str(e)}", exc_info=True

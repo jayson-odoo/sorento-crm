@@ -207,6 +207,17 @@ def create_quotation(
         )
     )
     db.flush()
+
+    from app.services import project_activity_service as activity
+
+    activity.record_project_event(
+        db,
+        project=project,
+        template="quotation_created",
+        payload={"quotation_id": str(quotation.id), "scope_label": quotation.scope_label},
+        actor_id=actor_user_id,
+    )
+    db.flush()
     return quotation
 
 
@@ -280,6 +291,22 @@ def revise(
         )
     db.flush()
     _recalculate_total(db, nxt)
+
+    project = db.query(Project).filter(Project.id == quotation.project_id).first()
+    if project is not None:
+        from app.services import project_activity_service as activity
+
+        activity.record_project_event(
+            db,
+            project=project,
+            template="quotation_revised",
+            payload={
+                "quotation_id": str(quotation.id),
+                "version_no": nxt.version_no,
+            },
+            actor_id=actor_user_id,
+        )
+        db.flush()
     return nxt
 
 
