@@ -1,8 +1,8 @@
 # UAC — Project Sales Pipeline (module `projects`)
 
-**Status:** S0, S1, S2, S2b, S2c and S3 built (2026-07-26). Groups B, C, D, E, G, J, N and O
-are implemented and browser-verified except where noted below; A is implemented apart from
-the Excel import. Remaining slices S4-S6 unstarted.
+**Status:** S0, S1, S2, S2b, S2c, S3 and S4 built (2026-07-26). Groups B, C, D, E, F, G, J, N
+and O are implemented and browser-verified except where noted below; A is implemented apart
+from the Excel import. Remaining slices S5-S6 unstarted.
 
 **Verified against a running stack, not asserted:** every AC below marked ✅ was exercised
 either by a test that fails without it or in the browser at localhost:3010/:8010. ACs that
@@ -17,11 +17,10 @@ did NOT ship are marked ⏸ with the reason, rather than being quietly left ambi
   entry in the AC-H2 whitelist. The quotation and sample events still wait for S3/S4, and
   the shared activity FEED (notes, mentions) is untouched.
 - ⏸ **AC-N5a (link a task to a quotation version / sample / Project PO).** The columns, the
-  schema and the API accept the link, but there is no picker in the UI: none of the three
-  targets exists before S3/S4, so the picker would have nothing to offer.
-- ⏸ **AC-G10 (delete blocked by a Project PO).** The guard ships and is written against
-  `information_schema`, so it is already correct — but the `project_purchase_orders` table
-  arrives in S4, so it currently has nothing to find.
+  schema and the API accept the link, and after S4 all three targets now exist -- but the
+  picker itself is still not in the UI. Un-blocked rather than done.
+- ✅ **AC-G10 (delete blocked by a Project PO).** No longer pending: `project_purchase_orders`
+  exists as of S4, and both a service test and a route test now assert the 409.
 - ⏸ **AC-G2 (board default per role).** The Board/Grid toggle and per-user persistence ship;
   defaulting Board for sales and Grid for management needs the role read, deferred with the
   rest of the role-aware UX.
@@ -223,6 +222,24 @@ disagree, the deviation is called out inline with a **[DEVIATION]** tag and a re
 - **AC-F10** Recording the first PO on a project auto-transitions its **status** to
   **"PO Received"** (the single auto edge in v1). It does **not** set outcome — outcome is
   derived from quotations per AC-E10.
+
+**Group F notes (S4).** Three asymmetries are deliberate and are recorded in
+`PLAN-project-sales-pipeline.md` §5c rather than being re-derived by the next reader: a
+sample is refused against a superseded version while a PO is not (we control what we send,
+not what they send back); a mismatch reads as an exception while erosion from v1 reads as a
+plain number; and the per-contact flag decides whether a project link is REQUIRED, never
+whether it may be wrong -- ownership is checked for every contact, flagged or not.
+
+Still open in Group F:
+
+- ⏸ **AC-F6 (linking the ~28 pre-link sponsorship rows).** The column, the picker and the
+  rollup all ship; the historical rows are linked BY HAND, as the AC requires. No fuzzy
+  backfill runs, because a wrong link is worse than no link once the rollup reports a number
+  somebody acts on.
+- ⏸ **AC-F5, the portal-side rehearsal.** The hard block is enforced in
+  `PortalService.submit_draft` and covered by service tests, and the picker + per-contact
+  requirement render in the form. It has NOT been exercised end to end in a browser as a
+  flagged portal contact, which needs a live portal token for a flagged contact.
 
 ## Group G — Pipeline UX
 

@@ -36,6 +36,20 @@ import {
   updateQuotationLine,
   updateSeries,
   upsertPriceFloor,
+  listSamples,
+  createSample,
+  updateSample,
+  deleteSample,
+  listPurchaseOrders,
+  createPurchaseOrder,
+  updatePurchaseOrder,
+  deletePurchaseOrder,
+  listPurchaseOrderLines,
+  createPurchaseOrderLine,
+  updatePurchaseOrderLine,
+  deletePurchaseOrderLine,
+  listProjectSponsorships,
+  getSponsorshipRollup,
   createLead,
   createParty,
   deleteLead,
@@ -82,6 +96,9 @@ import type {
   ProjectTaskBody,
   LeadListParams,
   PriceFloorRuleBody,
+  ProjectSampleBody,
+  ProjectPurchaseOrderBody,
+  PurchaseOrderLineBody,
   ProjectQuotationBody,
   ProjectSeriesBody,
   QuotationLineBody,
@@ -985,4 +1002,181 @@ export function usePriceFloorMutations() {
   });
 
   return { upsert, remove };
+}
+
+// ------------------------------------------------------- samples and customer POs
+
+export const SAMPLES_KEY = 'project-samples';
+export const POS_KEY = 'project-purchase-orders';
+export const samplesKey = (projectId: string) => [SAMPLES_KEY, projectId];
+export const poLinesKey = (poId: string) => [POS_KEY, 'lines', poId];
+
+export function useSamples(projectId: string | undefined) {
+  return useQuery({
+    queryKey: samplesKey(projectId ?? ''),
+    queryFn: () => listSamples(projectId as string),
+    enabled: Boolean(projectId),
+  });
+}
+
+export function usePurchaseOrders(projectId: string | undefined) {
+  return useQuery({
+    queryKey: [POS_KEY, projectId],
+    queryFn: () => listPurchaseOrders(projectId as string),
+    enabled: Boolean(projectId),
+  });
+}
+
+export function usePurchaseOrderLines(poId: string | undefined) {
+  return useQuery({
+    queryKey: poLinesKey(poId ?? ''),
+    queryFn: () => listPurchaseOrderLines(poId as string),
+    enabled: Boolean(poId),
+  });
+}
+
+/**
+ * A sample write invalidates the QUOTATIONS too: the version a sample hangs off shows a
+ * sample count, so recording one changes a panel the user may be looking at.
+ */
+export function useSampleMutations(projectId: string) {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: samplesKey(projectId) });
+    queryClient.invalidateQueries({ queryKey: quotationsKey(projectId) });
+  };
+
+  const create = useMutation({
+    mutationFn: (body: ProjectSampleBody) => createSample(projectId, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Sample recorded');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<ProjectSampleBody> }) =>
+      updateSample(id, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Sample saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // No success toast: the only caller is a ConfirmDeleteDialog, which raises its own.
+  const remove = useMutation({
+    mutationFn: (sampleId: string) => deleteSample(sampleId),
+    onSuccess: () => invalidate(),
+  });
+
+  return { create, update, remove };
+}
+
+/**
+ * A PO write invalidates the PROJECT as well: the first PO moves the funnel to PO
+ * Received (AC-F10), so the header and the board column change with it.
+ */
+export function usePurchaseOrderMutations(projectId: string) {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: [POS_KEY, projectId] });
+    queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
+    queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY, 'list'] });
+  };
+
+  const create = useMutation({
+    mutationFn: (body: ProjectPurchaseOrderBody) => createPurchaseOrder(projectId, body),
+    onSuccess: (po) => {
+      invalidate();
+      // Two different truths, and the user needs to know which one happened: the PO is
+      // always recorded, the funnel move is not always legal from where the project sits.
+      if (po.status_moved_to_po_received) {
+        toast.success(`${po.po_number} recorded. The project moved to PO Received.`);
+      } else {
+        toast.success(`${po.po_number} recorded.`);
+      }
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<ProjectPurchaseOrderBody> }) =>
+      updatePurchaseOrder(id, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Purchase order saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (poId: string) => deletePurchaseOrder(poId),
+    onSuccess: () => invalidate(),
+  });
+
+  return { create, update, remove };
+}
+
+export function usePurchaseOrderLineMutations(projectId: string, poId: string) {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: poLinesKey(poId) });
+    queryClient.invalidateQueries({ queryKey: [POS_KEY, projectId] });
+  };
+
+  const create = useMutation({
+    mutationFn: (body: PurchaseOrderLineBody) => createPurchaseOrderLine(poId, body),
+    onSuccess: (line) => {
+      invalidate();
+      // A mismatch is recorded, never refused (AC-F9), so this is information rather
+      // than an error -- but it has to be said out loud or nobody looks.
+      if (line.model_mismatch) {
+        toast.warning('Added. This item is not on the quoted version.');
+      } else if (line.price_mismatch) {
+        toast.warning(`Added. Quoted at ${line.quoted_unit_price}, ordered at ${line.unit_price}.`);
+      } else {
+        toast.success('Line added');
+      }
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<PurchaseOrderLineBody> }) =>
+      updatePurchaseOrderLine(poId, id, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Line saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (lineId: string) => deletePurchaseOrderLine(poId, lineId),
+    onSuccess: () => invalidate(),
+  });
+
+  return { create, update, remove };
+}
+
+// ------------------------------------------------------------- sponsorship link
+
+export const SPONSORSHIPS_KEY = 'project-sponsorships';
+
+export function useProjectSponsorships(projectId: string | undefined) {
+  return useQuery({
+    queryKey: [SPONSORSHIPS_KEY, projectId],
+    queryFn: () => listProjectSponsorships(projectId as string),
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useSponsorshipRollup(projectId: string | undefined) {
+  return useQuery({
+    queryKey: [SPONSORSHIPS_KEY, 'rollup', projectId],
+    queryFn: () => getSponsorshipRollup(projectId as string),
+    enabled: Boolean(projectId),
+  });
 }

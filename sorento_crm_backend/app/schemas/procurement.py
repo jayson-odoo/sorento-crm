@@ -710,6 +710,9 @@ class PurchaseRequestHeaderBase(BaseModel):
     request_date: Optional[date] = None
     customer_name: Optional[str] = None
     project_title: Optional[str] = None
+    # AC-F3: the sponsorship-to-project link. Nullable everywhere, and project_title
+    # stays as the display fallback for the rows that predate it (AC-F6).
+    project_id: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None  # sponsorship form
     total_project_value: Optional[Decimal] = None  # sponsorship form
@@ -767,6 +770,9 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     request_date: Optional[date] = None
     customer_name: Optional[str] = None
     project_title: Optional[str] = None
+    # AC-F3: the sponsorship-to-project link. Nullable everywhere, and project_title
+    # stays as the display fallback for the rows that predate it (AC-F6).
+    project_id: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None
     total_project_value: Optional[Decimal] = None
@@ -925,6 +931,9 @@ class PublicApprovalSummaryResponse(BaseModel):
     request_type: str
     customer_name: Optional[str] = None
     project_title: Optional[str] = None
+    # AC-F3: the sponsorship-to-project link. Nullable everywhere, and project_title
+    # stays as the display fallback for the rows that predate it (AC-F6).
+    project_id: Optional[str] = None
     purpose: Optional[str] = None
     delivery_address: Optional[str] = None  # sponsorship form
     total_project_value: Optional[Decimal] = None  # sponsorship form (numeric)

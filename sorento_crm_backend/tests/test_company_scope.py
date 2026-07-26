@@ -314,7 +314,11 @@ def test_every_company_id_table_is_registered():
     #       quotation tables are queried directly by the alert counts and the forecast.
     #       project_series_categories is the exception: keyed by (series, category), it
     #       inherits its partition from the series.
-    expected_owned = 48
+    #   +3  Project Sales S4: project_samples, project_purchase_orders,
+    #       project_purchase_order_lines. A customer PO is revenue, so it is the last
+    #       table that should be readable across a company boundary, and both children
+    #       are queried directly by the flag counts and the erosion figure.
+    expected_owned = 51
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

@@ -936,3 +936,224 @@ class ProjectQuotationOutcomeRequest(BaseModel):
             "`project_quotation_loss_reason` lookup set."
         ),
     )
+
+
+# --------------------------------------------------- S4 samples and customer POs
+
+
+class ProjectSampleBase(BaseModel):
+    quotation_version_id: str = Field(
+        description=(
+            "The VERSION, never the quotation: 'which price was the developer looking "
+            "at when they approved this finish' is what the binding exists to answer."
+        )
+    )
+    submitted_on: Optional[date] = None
+    developer_feedback: Optional[str] = None
+    salesperson_notes: Optional[str] = None
+
+
+class ProjectSampleCreate(ProjectSampleBase):
+    pass
+
+
+class ProjectSampleUpdate(BaseModel):
+    quotation_version_id: Optional[str] = None
+    submitted_on: Optional[date] = None
+    developer_feedback: Optional[str] = None
+    salesperson_notes: Optional[str] = None
+
+
+class ProjectSampleResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    quotation_version_id: str
+    quotation_id: Optional[str] = None
+    scope_label: Optional[str] = None
+    version_no: Optional[int] = None
+    is_version_current: bool = Field(
+        True,
+        description=(
+            "Derived. False means the version was superseded AFTER this sample went "
+            "out, which the panel says plainly rather than hiding."
+        ),
+    )
+    submitted_on: Optional[date] = None
+    submitted_by: Optional[str] = None
+    submitted_by_name: Optional[str] = None
+    developer_feedback: Optional[str] = None
+    salesperson_notes: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ProjectPurchaseOrderBase(BaseModel):
+    po_number: str = Field(min_length=1, max_length=100)
+    po_source: str = Field(
+        "contractor_direct", description="contractor_direct | trading_house"
+    )
+    quotation_version_id: Optional[str] = Field(
+        None,
+        description=(
+            "The version the contractor was last shown, which is the only fair thing to "
+            "compare the PO against (AC-F9). Null is allowed: a PO can arrive before "
+            "anything was formally quoted, and it simply gets no mismatch check."
+        ),
+    )
+    issuing_party_id: Optional[str] = None
+    po_date: Optional[date] = None
+    po_amount: Optional[Decimal] = None
+    notes: Optional[str] = None
+
+
+class ProjectPurchaseOrderCreate(ProjectPurchaseOrderBase):
+    pass
+
+
+class ProjectPurchaseOrderUpdate(BaseModel):
+    po_number: Optional[str] = Field(None, min_length=1, max_length=100)
+    po_source: Optional[str] = None
+    quotation_version_id: Optional[str] = None
+    issuing_party_id: Optional[str] = None
+    po_date: Optional[date] = None
+    po_amount: Optional[Decimal] = None
+    notes: Optional[str] = None
+
+
+class ProjectPurchaseOrderResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    quotation_version_id: Optional[str] = None
+    quotation_id: Optional[str] = None
+    scope_label: Optional[str] = None
+    version_no: Optional[int] = None
+
+    po_source: str = "contractor_direct"
+    issuing_party_id: Optional[str] = None
+    issuing_party_name: Optional[str] = None
+    po_number: str
+    po_date: Optional[date] = None
+    po_amount: Optional[Decimal] = None
+    notes: Optional[str] = None
+
+    line_count: int = 0
+    line_total: Decimal = Decimal("0")
+    model_mismatch_count: int = 0
+    price_mismatch_count: int = 0
+
+    # AC-F9a: erosion since v1, as a number rather than a flag. A negotiation is
+    # SUPPOSED to move the price; management wants the size of the move.
+    v1_total: Optional[Decimal] = None
+    drift_delta: Optional[Decimal] = None
+    drift_percent: Optional[Decimal] = Field(
+        None,
+        description="Null when v1 priced nothing: a percentage against zero is not a number.",
+    )
+
+    # True only on the response to the create that actually moved the funnel (AC-F10).
+    status_moved_to_po_received: bool = False
+
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ProjectPurchaseOrderLineBase(BaseModel):
+    product_id: Optional[str] = None
+    product_code: Optional[str] = Field(
+        None, description="What the PO itself printed, often the contractor's own code."
+    )
+    description: Optional[str] = None
+    unit_price: Decimal = Decimal("0")
+    quantity: Decimal = Decimal("1")
+    uom: Optional[str] = None
+    sort_order: int = 0
+    notes: Optional[str] = None
+
+
+class ProjectPurchaseOrderLineCreate(ProjectPurchaseOrderLineBase):
+    pass
+
+
+class ProjectPurchaseOrderLineUpdate(BaseModel):
+    product_id: Optional[str] = None
+    product_code: Optional[str] = None
+    description: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    quantity: Optional[Decimal] = None
+    uom: Optional[str] = None
+    sort_order: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class ProjectPurchaseOrderLineResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    po_id: str
+    product_id: Optional[str] = None
+    product_code: Optional[str] = None
+    description: Optional[str] = None
+    unit_price: Decimal = Decimal("0")
+    quantity: Decimal = Decimal("1")
+    uom: Optional[str] = None
+    line_total: Decimal = Decimal("0")
+
+    # What the bound version said WHEN THE PO WAS CHECKED (stored, not re-derived).
+    quoted_unit_price: Optional[Decimal] = None
+    model_mismatch: bool = False
+    price_mismatch: bool = False
+
+    sort_order: int = 0
+    notes: Optional[str] = None
+
+
+class ProjectSponsorshipResponse(BaseModel):
+    """A sponsorship form linked to this project (AC-F3, AC-F6).
+
+    `project_title` is still carried: it is what the ~28 pre-link rows display, and a
+    linked row may still disagree with the free text somebody typed months ago.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    request_number: Optional[str] = None
+    request_date: Optional[date] = None
+    status: Optional[str] = None
+    approval_status: Optional[str] = None
+    customer_name: Optional[str] = None
+    project_title: Optional[str] = None
+    sponsor_subject: Optional[str] = None
+    sponsor_subject_other: Optional[str] = None
+    total_project_value: Optional[Decimal] = None
+    purpose: Optional[str] = None
+
+
+class SponsorshipYearTotal(BaseModel):
+    year: int
+    total: Decimal
+    form_count: int
+
+
+class ProjectSponsorshipRollupResponse(BaseModel):
+    """AC-F7. Per project AND per year: "what did this development cost us" and "what did
+    sponsorship cost us in 2026" are two different management questions."""
+
+    project_id: str
+    total: Decimal
+    form_count: int
+    by_year: List[SponsorshipYearTotal] = Field(default_factory=list)
+
+
+class SponsorshipConversionResponse(BaseModel):
+    """AC-F7's second half. `rate` is null rather than 0 when nothing was sponsored: 0%
+    reads as "we sponsor and never win", which is a different and much worse claim."""
+
+    sponsored_projects: int = 0
+    converted_projects: int = 0
+    rate: Optional[Decimal] = None
+    sponsored_spend: Decimal = Decimal("0")

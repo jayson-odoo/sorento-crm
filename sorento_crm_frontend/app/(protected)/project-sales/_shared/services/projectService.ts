@@ -23,6 +23,14 @@ import type {
   LeadReasonOption,
   PriceFloorRule,
   PriceFloorRuleBody,
+  ProjectSponsorship,
+  SponsorshipRollup,
+  ProjectSample,
+  ProjectSampleBody,
+  ProjectPurchaseOrder,
+  ProjectPurchaseOrderBody,
+  PurchaseOrderLine,
+  PurchaseOrderLineBody,
   ProjectLead,
   ProjectLeadBody,
   ProjectQuotation,
@@ -863,4 +871,141 @@ export async function deletePriceFloor(ruleId: string): Promise<void> {
     method: 'DELETE',
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete the floor'));
+}
+
+// ------------------------------------------------------- S4 samples and POs
+
+export async function listSamples(
+  projectId: string,
+  versionId?: string,
+): Promise<ProjectSample[]> {
+  const query = versionId ? `?version_id=${encodeURIComponent(versionId)}` : '';
+  const response = await apiFetch(`${BASE}/projects/${projectId}/samples${query}`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load samples'));
+  const body: ListEnvelope<ProjectSample> = await response.json();
+  return body.data;
+}
+
+export async function createSample(
+  projectId: string,
+  body: ProjectSampleBody,
+): Promise<ProjectSample> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/samples`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to record the sample'));
+  return response.json();
+}
+
+export async function updateSample(
+  sampleId: string,
+  body: Partial<ProjectSampleBody>,
+): Promise<ProjectSample> {
+  const response = await apiFetch(`${BASE}/samples/${sampleId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the sample'));
+  return response.json();
+}
+
+export async function deleteSample(sampleId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/samples/${sampleId}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete the sample'));
+}
+
+export async function listPurchaseOrders(
+  projectId: string,
+): Promise<ProjectPurchaseOrder[]> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/purchase-orders`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load purchase orders'));
+  const body: ListEnvelope<ProjectPurchaseOrder> = await response.json();
+  return body.data;
+}
+
+export async function createPurchaseOrder(
+  projectId: string,
+  body: ProjectPurchaseOrderBody,
+): Promise<ProjectPurchaseOrder> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/purchase-orders`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to record the PO'));
+  return response.json();
+}
+
+export async function updatePurchaseOrder(
+  poId: string,
+  body: Partial<ProjectPurchaseOrderBody>,
+): Promise<ProjectPurchaseOrder> {
+  const response = await apiFetch(`${BASE}/purchase-orders/${poId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the PO'));
+  return response.json();
+}
+
+export async function deletePurchaseOrder(poId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/purchase-orders/${poId}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete the PO'));
+}
+
+export async function listPurchaseOrderLines(poId: string): Promise<PurchaseOrderLine[]> {
+  const response = await apiFetch(`${BASE}/purchase-orders/${poId}/lines`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load PO lines'));
+  const body: ListEnvelope<PurchaseOrderLine> = await response.json();
+  return body.data;
+}
+
+export async function createPurchaseOrderLine(
+  poId: string,
+  body: PurchaseOrderLineBody,
+): Promise<PurchaseOrderLine> {
+  const response = await apiFetch(`${BASE}/purchase-orders/${poId}/lines`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to add the line'));
+  return response.json();
+}
+
+export async function updatePurchaseOrderLine(
+  poId: string,
+  lineId: string,
+  body: Partial<PurchaseOrderLineBody>,
+): Promise<PurchaseOrderLine> {
+  const response = await apiFetch(`${BASE}/purchase-orders/${poId}/lines/${lineId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the line'));
+  return response.json();
+}
+
+export async function deletePurchaseOrderLine(poId: string, lineId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/purchase-orders/${poId}/lines/${lineId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to remove the line'));
+}
+
+export async function listProjectSponsorships(
+  projectId: string,
+): Promise<ProjectSponsorship[]> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/sponsorships`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load sponsorships'));
+  const body: ListEnvelope<ProjectSponsorship> = await response.json();
+  return body.data;
+}
+
+export async function getSponsorshipRollup(projectId: string): Promise<SponsorshipRollup> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/sponsorships/rollup`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the sponsorship rollup'));
+  return response.json();
 }

@@ -927,3 +927,156 @@ class ProjectQuotationLine(Base, CompanyScopedMixin):
         Index("ix_project_quotation_lines_version", "version_id", "sort_order"),
         Index("ix_project_quotation_lines_flags", "version_id", "is_below_floor"),
     )
+
+
+# --------------------------------------------------------------------- S4 samples
+
+# Where the PO came from (AC-F8). The contractor may buy direct, or through a trading
+# house that never appears in the quotation -- which is why the source is recorded
+# separately from the issuing party rather than inferred from it.
+PO_SOURCE_CONTRACTOR_DIRECT = "contractor_direct"
+PO_SOURCE_TRADING_HOUSE = "trading_house"
+PO_SOURCES = (PO_SOURCE_CONTRACTOR_DIRECT, PO_SOURCE_TRADING_HOUSE)
+
+
+class ProjectSample(Base, CompanyScopedMixin):
+    """A physical sample sent to the developer, bound to a quotation VERSION (AC-F1).
+
+    Binding to the version rather than the quotation is the whole point: "which price
+    was the developer looking at when they approved this finish" is only answerable if
+    the version is recorded. A new sample cannot be recorded against a SUPERSEDED
+    version (AC-F2) -- but one recorded before a revise stays, and stays editable,
+    because the developer's feedback normally arrives after the revise and it is the one
+    thing the sample exists to capture.
+    """
+
+    __tablename__ = "project_samples"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    quotation_version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_quotation_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    submitted_on = Column(Date, nullable=True)
+    submitted_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    developer_feedback = Column(Text, nullable=True)
+    salesperson_notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_project_samples_project", "project_id"),
+        Index("ix_project_samples_version", "quotation_version_id"),
+    )
+
+
+class ProjectPurchaseOrder(Base, CompanyScopedMixin):
+    """A customer PO against a project (AC-F8).
+
+    Its own table, NEVER ``purchase_orders`` (ADR-0002): that table is supplier-side
+    procurement, and merging an inbound customer commitment into it would mean every
+    procurement report silently counts revenue as spend.
+
+    Bound to a quotation VERSION, because the version is the price the contractor was
+    actually last shown, and that is the only fair thing to compare a PO against
+    (AC-F9). Unlike a sample, a PO MAY be recorded against a superseded version: the
+    contractor buys off the document they were given, which is frequently not the newest
+    one, and refusing it would make the PO unrecordable through no fault of the person
+    recording it.
+    """
+
+    __tablename__ = "project_purchase_orders"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    quotation_version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_quotation_versions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    po_source = Column(String(24), nullable=False, server_default=PO_SOURCE_CONTRACTOR_DIRECT)
+    # Who issued it. Separate from po_source deliberately: a trading house PO still names
+    # the trading house here, and a contractor-direct PO names the contractor.
+    issuing_party_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_parties.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    po_number = Column(String(100), nullable=False)
+    po_date = Column(Date, nullable=True)
+    po_amount = Column(Numeric(15, 2), nullable=True)
+    notes = Column(Text, nullable=True)
+
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_project_purchase_orders_project", "project_id"),
+        Index("ix_project_purchase_orders_version", "quotation_version_id"),
+        # PO numbers are the issuer's, so they are unique per issuer at best. Scoped to
+        # the project instead: recording the same PO number twice on one project is the
+        # actual mistake worth stopping.
+        UniqueConstraint("project_id", "po_number", name="uq_project_purchase_orders_number"),
+    )
+
+
+class ProjectPurchaseOrderLine(Base, CompanyScopedMixin):
+    """One line of a customer PO, with its two mismatch flags (AC-F9).
+
+    The flags are FLAGS, not refusals: a PO that arrived is a fact, and a system that
+    declines to record it because a model code differs just means it gets tracked in
+    somebody's spreadsheet instead.
+
+    ``quoted_unit_price`` is a snapshot of what the bound version said at the moment the
+    PO was checked, for the same reason the price floor is snapshotted (AC-E7): editing
+    the quotation next week must not make last week's PO change its mind about whether
+    it matched.
+    """
+
+    __tablename__ = "project_purchase_order_lines"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    po_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_purchase_orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+    # What the PO itself called the item. Often the contractor's own code, which is
+    # exactly why a mismatch is worth showing rather than resolving.
+    product_code = Column(String(100), nullable=True)
+    description = Column(Text, nullable=True)
+    unit_price = Column(Numeric(12, 2), nullable=False, server_default="0", default=0)
+    quantity = Column(Numeric(12, 2), nullable=False, server_default="1", default=1)
+    uom = Column(String(50), nullable=True)
+    line_total = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
+
+    quoted_unit_price = Column(Numeric(12, 2), nullable=True)
+    model_mismatch = Column(Boolean, nullable=False, server_default="false", default=False)
+    price_mismatch = Column(Boolean, nullable=False, server_default="false", default=False)
+
+    sort_order = Column(Integer, nullable=False, server_default="0", default=0)
+    notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_project_po_lines_po", "po_id", "sort_order"),)

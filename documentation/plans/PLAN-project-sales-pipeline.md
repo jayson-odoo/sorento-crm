@@ -3,8 +3,9 @@
 **Status:** **In build.** Drafted from grill session 2026-07-25, review rounds 1-2 applied
 (numbering / delivery lag / loss reasons made configurable; sponsorship flag pinned to
 `respond_contacts`; task management added and decided - see §7).
-Built: **S0, S1, S2, S2b, S2c, S3** (see the slice list in §4 for what each one landed and
-what it discovered). Next: **S4** - samples, sponsorship link, Project POs (UAC Group F).
+Built: **S0, S1, S2, S2b, S2c, S3, S4** (see the slice list in §4 for what each one landed
+and what it discovered). Next: **S5** - forecast, staleness, worklist (UAC Groups H, I),
+which also owns the notification fan-out S3 and S4 currently only log.
 **Owner:** jayson
 **Slug:** project-sales-pipeline
 **Classification:** MODULE (`projects`), `public` schema, normal FKs, company-scoped.
@@ -235,9 +236,23 @@ The management fan-out on a floor breach LOGS today and is wired to notification
 | F25 | The mutation hook toasted on a successful delete and so did `ConfirmDeleteDialog`, putting two notifications on screen for one action. | The quotation `remove` mutation raises no toast: the dialog owns success and error messaging because it is the only caller. |
 | F26 | Resolving the floor in the browser to preview it would be a second implementation of the ancestry walk, and the two would eventually disagree. | The dialog does not evaluate the floor at all. The price is sent, and the answer that comes back is what the line shows -- with the rule that produced it named ("set on a parent category"), so the salesperson knows whose policy to argue with. |
 
-**S4 — Samples, sponsorship link, POs.** Samples bound to versions with the
-superseded-version block; sponsorship `project_id` + per-contact flag + mandatory picker with
-hard block; Project POs with the match check; PO → Won auto edge. → UAC Group F.
+**S4 — Samples, sponsorship link, POs** (§5c). **BUILT 2026-07-26.** Samples bound to
+versions with the superseded block; Project POs in their own table with the two mismatch
+flags, the erosion figure and the auto edge to PO Received; sponsorship `project_id` +
+per-contact rollout flag + mandatory picker with a hard block, plus the spend rollup and
+sponsorship-to-PO conversion. → UAC Group F.
+
+**S4 findings (things the build discovered):**
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| F27 | AC-F2 blocks a sample against a superseded version, but says nothing about a sample recorded BEFORE the revise. Refusing to edit it afterwards would throw away the developer feedback, which normally arrives after the revise and is the one thing the sample exists to capture. | Create is blocked; EDIT is not, unless the binding itself changes (that is a new submission wearing an edit). The row states "Version superseded" rather than merely dropping a badge. |
+| F28 | A PO must NOT inherit the sample rule. The contractor buys off the document they were given, which is frequently not the newest one, so refusing a superseded binding would make the PO unrecordable through no fault of the recorder. | POs accept any version, and the picker labels each one Current / Superseded. The sample picker offers only the current one, so it never presents a choice the server will reject. |
+| F29 | `po_received` was reachable only from Quoted and Tendering, so AC-F10's auto edge silently did nothing on exactly the projects whose funnel was least well maintained. | Edges added from every live rung, plus `ensure_po_received_edges` -- idempotent and JOIN-shaped, because the funnel seeder is wholesale-guarded and would never reach an install that already has a graph. The move still goes THROUGH the engine; an illegal one records the PO and reports `status_moved_to_po_received: false`. |
+| F30 | A freshly recorded PO with no lines and no amount rendered "100.0% below v1", i.e. "we gave the whole thing away". Found in the browser, on the first PO ever recorded. | Drift withholds BOTH numbers when the PO has no figure yet: a delta of -RM 35,000 is the same lie in currency as -100%. |
+| F31 | A PO line recorded with only a `product_id` rendered as "Unnamed item" beside a mismatch badge -- useless, because the first question is WHICH item differs. | The product's code and description are snapshotted onto the line, and never overwrite what the PO actually printed: "WC-BLK-01 for our SRT-WC-01" IS the mismatch somebody needs to see. |
+| F32 | `contact_to_response_dict` is built by hand, so the new rollout flag reached the DB but never the FE -- the toggle would have rendered its default forever. | Added to the manual dict, pinned by a test. Same family as the `get_user` / `get_me` drop-fields bug already in the lessons list. |
+| F33 | `purchase_requests` has no `company_id`, so the conversion metric could not be scoped the way every other project number is. | Scoped through `projects` instead, which is the company that matters anyway; conversion is counted per PROJECT, not per form, so two sponsorships on one development that yields one PO is one conversion rather than two. |
 
 **S5 — Forecast, staleness, worklist.** Three-number forecast, per-status probability,
 configurable delivery lag with per-project override, management dashboard, staleness
@@ -347,6 +362,47 @@ a service that moved both would make the board disagree with the pipeline.
 from two sides -- what we are supposed to be selling, and how cheap it may go -- and a
 scope can be perfectly on-series and still under-priced, which is only visible when the two
 are read together.
+
+## 5c. Samples, customer POs and the sponsorship link (slice S4)
+
+```
+project_samples(id, company_id, project_id, quotation_version_id, submitted_on,
+        submitted_by, developer_feedback, salesperson_notes)
+
+project_purchase_orders(id, company_id, project_id,
+        quotation_version_id NULL ON DELETE SET NULL,   -- a PO outlives the quotation
+        po_source 'contractor_direct'|'trading_house',
+        issuing_party_id NULL, po_number, po_date, po_amount, notes)
+  -- UNIQUE (project_id, po_number): a PO number belongs to its issuer, so it is unique
+  --   per issuer at best. Twice on ONE project is the mistake worth stopping.
+project_purchase_order_lines(id, company_id, po_id, product_id NULL, product_code,
+        description, unit_price, quantity, uom, line_total,
+        quoted_unit_price, model_mismatch, price_mismatch)   -- flags STORED, as AC-E7
+
+purchase_requests.project_id NULL ON DELETE SET NULL   -- AC-F3, one form not two
+respond_contacts.requires_registered_project BOOLEAN NOT NULL DEFAULT false  -- AC-F4
+```
+
+**Three deliberate asymmetries.**
+
+1. **Sample vs PO on a superseded version.** A sample is refused (AC-F2), a PO is not. The
+   sample is us sending something out, so we control which price it answers. The PO is
+   them sending something in, off whichever document they were given.
+2. **Mismatch vs drift.** A mismatch (AC-F9) is an exception to chase and reads as one. The
+   erosion from v1 (AC-F9a) is the expected outcome of a negotiation and reads as a plain
+   number. Presenting erosion as an alert would make every well-negotiated PO look broken.
+3. **Required vs permitted on a sponsorship link.** The per-contact flag decides whether a
+   project is REQUIRED. It never decides whether a link may be WRONG: a sponsorship
+   attached to somebody else's project corrupts that project's spend rollup either way, so
+   ownership is checked for flagged and unflagged contacts alike.
+
+**The rollout is per contact on purpose.** Sorento wants to require a registered project
+from the salespeople they have briefed without breaking the form for everybody else on the
+same morning. `false` by default is what makes the migration deployable with no flag day.
+
+**Deferred, and named in the UAC:** the ~28 pre-link sponsorship rows are linked BY HAND
+(AC-F6). No fuzzy backfill writes a link nobody checked -- a wrong link is worse than no
+link, because the rollup then reports a number somebody will act on.
 
 ## 6a. Grill findings and resolutions (round 1, 2026-07-25)
 

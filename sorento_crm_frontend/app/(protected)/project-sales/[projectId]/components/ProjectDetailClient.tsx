@@ -18,7 +18,10 @@ import {
 } from '../../_shared/hooks/useProjects';
 import { CriticalPanel } from './CriticalPanel';
 import { ProjectAccessPanel } from './ProjectAccessPanel';
+import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
 import { QuotationsPanel } from './QuotationsPanel';
+import { SamplesPanel } from './SamplesPanel';
+import { SponsorshipsPanel } from './SponsorshipsPanel';
 import { StakeholdersPanel } from './StakeholdersPanel';
 import { TasksPanel } from './TasksPanel';
 
@@ -262,24 +265,9 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
 
       {activeTab === 'tasks' && <TasksPanel project={project} />}
       {activeTab === 'quotations' && <QuotationsPanel project={project} />}
-      {activeTab === 'samples' && (
-        <NotYetPanel
-          title="Sample submissions"
-          body="Samples bind to a quotation version, so they arrive after quotations."
-        />
-      )}
-      {activeTab === 'sponsorships' && (
-        <NotYetPanel
-          title="Sponsorships"
-          body="Sponsorship forms are recorded today as free text. Linking them to this project arrives with the sponsorship slice, including the transition period where both the free-text and the picker versions of the form work."
-        />
-      )}
-      {activeTab === 'pos' && (
-        <NotYetPanel
-          title="Project purchase orders"
-          body="A customer's PO against this project is recorded separately from supplier purchase orders. Once any PO exists here, this project can be archived but not deleted."
-        />
-      )}
+      {activeTab === 'samples' && <SamplesPanel project={project} />}
+      {activeTab === 'sponsorships' && <SponsorshipsPanel project={project} />}
+      {activeTab === 'pos' && <PurchaseOrdersPanel project={project} />}
       {activeTab === 'activity' && (
         <NotYetPanel
           title="Activity"

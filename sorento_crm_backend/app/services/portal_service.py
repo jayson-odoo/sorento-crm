@@ -894,6 +894,18 @@ class PortalService:
             row.rejected_by = None
             row.rejected_from = None
         else:  # purchase_request / sponsorship_form
+            if kind == "sponsorship_form":
+                # AC-F4/AC-F5, and it lives HERE rather than in _apply_payload because a
+                # draft may legitimately be incomplete. The portal FE also gates the
+                # field, but the portal is a public token-reached surface and the browser
+                # is not a trust boundary.
+                from app.services import sponsorship_link_service
+
+                sponsorship_link_service.assert_project_requirement(
+                    self.db,
+                    contact=self.get_contact(token),
+                    project_id=getattr(row, "project_id", None),
+                )
             approval_rejected = (
                 (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
             )
@@ -1297,6 +1309,11 @@ class PortalService:
         return (
             "customer_name",
             "project_title",
+            # AC-F3: the link itself. Ownership and the per-contact requirement are
+            # enforced in submit_draft, not here, because a DRAFT is allowed to be
+            # incomplete -- blocking on save would stop somebody parking a half-filled
+            # form, which is what drafts are for.
+            "project_id",
             "purpose",
             "delivery_address",
             "total_project_value",
@@ -1550,6 +1567,24 @@ class PortalService:
             "purpose": row.purpose,
         }
 
+    def _project_code(self, project_id) -> Optional[str]:
+        """The human-readable reference for a linked project, or None.
+
+        Looked up unscoped on purpose: the portal request is authorised by the contact's
+        token, and the contact's company set was already checked when the link was
+        accepted, so re-filtering here would only hide a link that is legitimately theirs.
+        """
+        if not project_id:
+            return None
+        from app.models.projects import Project
+
+        row = (
+            self.db.query(Project.project_code)
+            .filter(Project.id == str(project_id))
+            .first()
+        )
+        return row[0] if row else None
+
     def _serialize_request_detail(self, row: PurchaseRequestHeader) -> dict:
         base = self._serialize_request_summary(row)
         base.update(
@@ -1569,6 +1604,10 @@ class PortalService:
                 "expected_po_date": row.expected_po_date.isoformat() if row.expected_po_date else None,
                 "requested_by": row.requested_by,
                 "external_reference": row.external_reference,
+                # AC-F3. The id round-trips the picker; the code and title are what the
+                # portal shows, because a UUID in the UI is never the answer.
+                "project_id": str(row.project_id) if row.project_id else None,
+                "project_code": self._project_code(row.project_id),
                 "products": [
                     {
                         "id": str(line.id),

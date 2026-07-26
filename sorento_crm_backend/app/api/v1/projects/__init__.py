@@ -1,7 +1,15 @@
 """Project Sales API routes."""
 from fastapi import APIRouter
 
-from app.api.v1.projects import leads, parties, projects, quotations, tasks, types
+from app.api.v1.projects import (
+    leads,
+    parties,
+    projects,
+    quotations,
+    samples_pos,
+    tasks,
+    types,
+)
 
 router = APIRouter()
 
@@ -16,6 +24,9 @@ router.include_router(tasks.router, tags=["project-tasks"])
 # (nested under a project, then /quotations/{id} and /quotation-versions/{id} for the
 # revision history) plus their own /config surface.
 router.include_router(quotations.router, tags=["project-quotations"])
+# Samples and customer POs mount at the root for the same reason: both are nested
+# under a project for listing but addressed directly for editing.
+router.include_router(samples_pos.router, tags=["project-samples-pos"])
 router.include_router(parties.router, prefix="/parties", tags=["project-parties"])
 # Leads before projects for the same reason config is: /leads/{id}/qualify returns a
 # PROJECT, but the route itself lives under the leads prefix.

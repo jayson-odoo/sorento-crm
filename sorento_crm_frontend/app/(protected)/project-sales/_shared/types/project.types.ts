@@ -683,3 +683,136 @@ export interface PriceFloorRuleBody {
   notes?: string | null;
   is_active?: boolean;
 }
+
+/**
+ * S4. A sample binds to a VERSION, a PO binds to the version the contractor was last
+ * shown. Both `is_version_current` and the PO's mismatch counts are server-derived --
+ * the browser must not re-derive either, or it will eventually disagree with the server
+ * about what was compared against what.
+ */
+export type PoSource = 'contractor_direct' | 'trading_house';
+
+export interface ProjectSample {
+  id: string;
+  project_id: string;
+  quotation_version_id: string;
+  quotation_id?: string | null;
+  scope_label?: string | null;
+  version_no?: number | null;
+  /** False = the version was superseded AFTER this sample went out. */
+  is_version_current: boolean;
+  submitted_on?: string | null;
+  submitted_by?: string | null;
+  submitted_by_name?: string | null;
+  developer_feedback?: string | null;
+  salesperson_notes?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ProjectSampleBody {
+  quotation_version_id: string;
+  submitted_on?: string | null;
+  developer_feedback?: string | null;
+  salesperson_notes?: string | null;
+}
+
+export interface ProjectPurchaseOrder {
+  id: string;
+  project_id: string;
+  quotation_version_id?: string | null;
+  quotation_id?: string | null;
+  scope_label?: string | null;
+  version_no?: number | null;
+
+  po_source: PoSource;
+  issuing_party_id?: string | null;
+  issuing_party_name?: string | null;
+  po_number: string;
+  po_date?: string | null;
+  po_amount?: string | null;
+  notes?: string | null;
+
+  line_count: number;
+  line_total: string;
+  model_mismatch_count: number;
+  price_mismatch_count: number;
+
+  /** AC-F9a: erosion since v1 as a NUMBER, not a flag. Null percent = no baseline. */
+  v1_total?: string | null;
+  drift_delta?: string | null;
+  drift_percent?: string | null;
+
+  /** True only on the create response that actually moved the funnel (AC-F10). */
+  status_moved_to_po_received?: boolean;
+
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ProjectPurchaseOrderBody {
+  po_number: string;
+  po_source: PoSource;
+  quotation_version_id?: string | null;
+  issuing_party_id?: string | null;
+  po_date?: string | null;
+  po_amount?: string | null;
+  notes?: string | null;
+}
+
+export interface PurchaseOrderLine {
+  id: string;
+  po_id: string;
+  product_id?: string | null;
+  product_code?: string | null;
+  description?: string | null;
+  unit_price: string;
+  quantity: string;
+  uom?: string | null;
+  line_total: string;
+  /** What the bound version said WHEN THE PO WAS CHECKED. */
+  quoted_unit_price?: string | null;
+  model_mismatch: boolean;
+  price_mismatch: boolean;
+  sort_order: number;
+  notes?: string | null;
+}
+
+export interface PurchaseOrderLineBody {
+  product_id?: string | null;
+  product_code?: string | null;
+  description?: string | null;
+  unit_price?: string;
+  quantity?: string;
+  uom?: string | null;
+  sort_order?: number;
+  notes?: string | null;
+}
+
+/** A sponsorship form linked to this project (AC-F3). Read-only here: procurement owns it. */
+export interface ProjectSponsorship {
+  id: string;
+  request_number?: string | null;
+  request_date?: string | null;
+  status?: string | null;
+  approval_status?: string | null;
+  customer_name?: string | null;
+  project_title?: string | null;
+  sponsor_subject?: string | null;
+  sponsor_subject_other?: string | null;
+  total_project_value?: string | null;
+  purpose?: string | null;
+}
+
+export interface SponsorshipYearTotal {
+  year: number;
+  total: string;
+  form_count: number;
+}
+
+export interface SponsorshipRollup {
+  project_id: string;
+  total: string;
+  form_count: number;
+  by_year: SponsorshipYearTotal[];
+}

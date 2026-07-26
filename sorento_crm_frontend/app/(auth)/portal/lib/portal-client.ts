@@ -53,6 +53,13 @@ export interface PortalContact {
   portal_slug?: string | null;
   /** Business WhatsApp number (digits) for the wa.me escape hatch. */
   whatsapp_number?: string | null;
+  /**
+   * AC-F4: when true, this contact's sponsorship form demands a registered project and
+   * cannot be submitted without one. Per contact, so the requirement rolls out one team
+   * at a time instead of breaking the form for everybody on the same day. The server
+   * enforces it regardless of what the form does.
+   */
+  requires_registered_project?: boolean;
   impersonation?: PortalImpersonationInfo | null;
 }
 
@@ -71,6 +78,10 @@ export interface PortalSubmissionSummary {
   // Optional kind-specific summary fields surfaced for the mobile card layout.
   product_code?: string | null;
   project_title?: string | null;
+  /** AC-F3: the registered project this sponsorship names, when it names one. */
+  project_id?: string | null;
+  /** Human-readable reference for that project, because a UUID is never the answer. */
+  project_code?: string | null;
   project_name?: string | null;
   project_customer?: string | null;
   customer_name?: string | null;
@@ -555,6 +566,25 @@ export async function lookupDebtors(q: string, limit = 20): Promise<DebtorLookup
   const url = `/api/v1/public/portal/lookups/debtors?q=${encodeURIComponent(q)}&limit=${limit}`;
   const res = await portalFetch(url);
   return unwrap<DebtorLookupItem[]>(res, 'Failed to load debtors.');
+}
+
+export interface ProjectLookupItem {
+  id: string;
+  project_code: string;
+  title: string;
+  company_name?: string | null;
+}
+
+/**
+ * Projects this contact may attach a sponsorship to (AC-F4a).
+ *
+ * The backend scopes the list to the companies the contact is linked to, so an empty
+ * result means "your company is not linked yet", not "no projects exist".
+ */
+export async function lookupProjects(q: string, limit = 20): Promise<ProjectLookupItem[]> {
+  const url = `/api/v1/public/portal/lookups/projects?q=${encodeURIComponent(q)}&limit=${limit}`;
+  const res = await portalFetch(url);
+  return unwrap<ProjectLookupItem[]>(res, 'Failed to load projects.');
 }
 
 export async function lookupDeliveryOrders(

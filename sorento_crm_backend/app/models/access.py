@@ -149,6 +149,13 @@ class RespondContact(Base):
     # Arbitrary per-contact conversation state. Read/overwritten wholesale by
     # GET|PUT /api/v1/external/conversation-variables/{respond_io_id}.
     session_vars = Column(JSONB(astext_type=Text()), nullable=False, server_default=text("'{}'::jsonb"))
+    # AC-F4: the sponsorship rollout switch, per CONTACT rather than global. Flagged
+    # contacts must pick a registered project; everybody else keeps today's free-text
+    # behaviour, which is what lets the requirement be introduced one team at a time
+    # instead of breaking the form for everybody on the same day.
+    requires_registered_project = Column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)

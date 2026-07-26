@@ -15,6 +15,8 @@ export interface RespondContact {
   workspace_name?: string | null;
   workspace_space_id?: string | null;
   access_type_codes?: string[];
+  /** AC-F4: their sponsorship form demands a registered project. */
+  requires_registered_project?: boolean;
   access_types?: RespondContactAccessType[];
   created_at: Date;
   updated_at: Date;
@@ -26,4 +28,6 @@ export interface RespondContactFormData {
   name?: string;
   workspace_id?: string | null;
   access_type_codes?: string[];
+  /** AC-F4: their sponsorship form demands a registered project. */
+  requires_registered_project?: boolean;
 }

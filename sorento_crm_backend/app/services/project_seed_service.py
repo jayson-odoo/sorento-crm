@@ -242,10 +242,21 @@ def seed_default_funnel(db: Session) -> int:
                 trigger_mode="manual",
             )
         )
-    # Every live rung can end in Lost or Dormant. Losing at the identified stage is
-    # as real as losing at tender.
+    # Every live rung can end in Lost, Dormant or PO Received. Losing at the identified
+    # stage is as real as losing at tender, and a PO genuinely does arrive on a project
+    # whose funnel position was never kept up to date -- AC-F10's auto edge has to be
+    # able to fire from wherever the project actually sits, or it silently does nothing
+    # on exactly the projects that were being tracked least carefully.
     for from_key in _LIVE:
-        for terminal_key, label in (("lost", "Mark lost"), ("dormant", "Mark dormant")):
+        for terminal_key, label in (
+            ("lost", "Mark lost"),
+            ("dormant", "Mark dormant"),
+            ("po_received", "PO received"),
+        ):
+            if (from_key, terminal_key) in {
+                (edge[0], edge[1]) for edge in DEFAULT_EDGES
+            }:
+                continue  # already declared explicitly above
             db.add(
                 StatusTransition(
                     id=_uid(),
@@ -259,6 +270,65 @@ def seed_default_funnel(db: Session) -> int:
             )
     db.flush()
     return created
+
+
+def ensure_po_received_edges(db: Session) -> int:
+    """Add the missing live-rung -> PO Received edges on a graph that already exists.
+
+    ``seed_default_funnel`` is wholesale-guarded, so an install seeded before AC-F10's
+    auto edge existed would never get the new edges from it. Idempotent and JOIN-shaped
+    ("add where missing") rather than "insert if the graph is empty", which is the only
+    form that can also correct an install seeded half way through the change.
+
+    Deliberately does NOT touch forked (scope_id NOT NULL) graphs: a template that
+    pruned its own edges made a choice, and the auto edge reports a no-move rather than
+    overruling it.
+    """
+    live_and_target = (
+        db.query(Status)
+        .filter(
+            Status.entity_type == PROJECT_ENTITY,
+            Status.scope_id.is_(None),
+            Status.key.in_(list(_LIVE) + ["po_received"]),
+        )
+        .all()
+    )
+    by_key = {row.key: row for row in live_and_target}
+    target = by_key.get("po_received")
+    if target is None:
+        return 0
+
+    existing = {
+        row[0]
+        for row in db.query(StatusTransition.from_status_id)
+        .filter(
+            StatusTransition.entity_type == PROJECT_ENTITY,
+            StatusTransition.scope_id.is_(None),
+            StatusTransition.to_status_id == target.id,
+        )
+        .all()
+    }
+
+    added = 0
+    for key in _LIVE:
+        source = by_key.get(key)
+        if source is None or source.id in existing:
+            continue
+        db.add(
+            StatusTransition(
+                id=_uid(),
+                entity_type=PROJECT_ENTITY,
+                scope_id=None,
+                from_status_id=source.id,
+                to_status_id=target.id,
+                label="PO received",
+                trigger_mode="manual",
+            )
+        )
+        added += 1
+    if added:
+        db.flush()
+    return added
 
 
 def seed_default_task_graph(db: Session) -> int:
@@ -592,10 +662,14 @@ def run(db: Session, company_id: Optional[str] = None) -> Dict[str, int]:
         "lead_statuses": 0,
         "lead_reasons": 0,
         "quotation_loss_reasons": 0,
+        "po_edges": 0,
         "types": 0,
     }
     summary["numbering"] = 1 if seed_numbering_rule(db) else 0
     summary["statuses"] = seed_default_funnel(db)
+    # Separate from the funnel seeder because that one is wholesale-guarded: an install
+    # seeded before AC-F10 existed needs these edges added to a graph it already has.
+    summary["po_edges"] = ensure_po_received_edges(db)
     summary["task_statuses"] = seed_default_task_graph(db)
     summary["lead_numbering"] = 1 if seed_lead_numbering_rule(db) else 0
     summary["lead_statuses"] = seed_default_lead_graph(db)
