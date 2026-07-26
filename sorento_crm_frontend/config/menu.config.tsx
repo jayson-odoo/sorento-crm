@@ -412,6 +412,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Catalogue Pages',
         path: '/dealer-kit',
       },
+      {
+        title: 'Product Collections',
+        path: '/dealer-kit/collections',
+      },
     ],
   },
   {

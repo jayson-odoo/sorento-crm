@@ -335,6 +335,56 @@ test.describe('Dealer Kit page builder', () => {
     await expect(page.locator('[data-dk-tile]').first()).toBeVisible();
   });
 
+  test('a selection saved to the library can be bound to a second page', async ({ page }) => {
+    // Half of AC-F7. This proves the SHARING: one library row, reachable from
+    // the sidebar, bound to a second page and rendering there. That the same
+    // row is promoted rather than copied - which is what makes a later edit
+    // reach both pages - is asserted in
+    // test_saving_as_reusable_keeps_the_same_row_so_the_page_stays_bound.
+    // Editing the collection and watching BOTH pages change is not covered by
+    // an E2E yet.
+    const reusableName = zzt('shared-set');
+
+    // Page one: pick a product, then promote the selection to the library.
+    await createPage(page, 'shared-a');
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^products$/i }));
+    await tap(page, page.getByRole('button', { name: /choose products/i }));
+
+    const picker = page.getByRole('dialog');
+    await tapReal(page, picker.getByRole('tab', { name: /by hand/i }));
+    const rows = picker.getByRole('button', { name: /^include /i });
+    await expect(rows.first()).toBeVisible({ timeout: 20_000 });
+    await rows.nth(0).dispatchEvent('click');
+    await tap(page, picker.getByRole('button', { name: /use these products/i }));
+
+    await tap(page, page.getByRole('button', { name: /save as reusable/i }));
+    await type(page.getByLabel('Name'), reusableName);
+    await tap(page, page.getByRole('dialog').getByRole('button', { name: /^save$/i }));
+    await expect(page.getByText(new RegExp(`saved "${reusableName}"`, 'i'))).toBeVisible({
+      timeout: 20_000,
+    });
+
+    // It now appears in the library, reachable from the sidebar.
+    await openDealerKitLeaf(page, /product collections/i);
+    await expect(page.getByRole('heading', { name: /product collections/i })).toBeVisible({
+      timeout: 20_000,
+    });
+    const libraryRow = page.getByRole('row', { name: new RegExp(reusableName, 'i') });
+    await expect(libraryRow).toBeVisible({ timeout: 20_000 });
+
+    // Page two binds the SAME collection and renders the same product.
+    await createPage(page, 'shared-b');
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^products$/i }));
+
+    await tapReal(page, page.getByRole('combobox', { name: /reusable collection/i }));
+    await tap(page, page.getByRole('option', { name: new RegExp(reusableName, 'i') }));
+
+    await expect(page.locator('[data-dk-tile-grid]')).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator('[data-dk-tile]').first()).toBeVisible();
+  });
+
   test('a page the backend does not have shows an error, not an empty editor', async ({ page }) => {
     await page.goto('/dealer-kit/pages/00000000-0000-0000-0000-0000000000ff', {
       waitUntil: 'commit',

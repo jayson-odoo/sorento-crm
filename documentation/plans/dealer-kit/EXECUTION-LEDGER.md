@@ -350,10 +350,27 @@ predicate cannot be pushed into SQL without the second evaluator this design exi
 Fine at Sorento's catalogue size; it will need a bounded candidate set (category prefilter, or
 a cached membership table refreshed on publish) before a much larger catalogue.
 
-**Still to build for S2:** the collections library screen (list, rename, delete, "used by N
-pages"), binding one library collection to a second page and proving one edit reaches both
-(AC-F7), tile-template CRUD (tile designs are still the last mocked thing), and bundle
-authoring UI.
+#### S2 sharing flow — landed after the Phase 2 gate
+
+The collections library screen (sidebar -> **Dealer Kit -> Product Collections**) and the
+**Save as reusable** action in the block inspector. **16 Playwright** now, including the
+sharing flow end to end: pick products on page A, promote the selection to the library, see it
+in the library list reached by clicking the sidebar, then bind that same collection on page B
+and watch it render.
+
+Promotion moves the SAME row rather than copying it, which is what makes "one edit reaches
+every page" true instead of a copy that starts drifting immediately
+(`test_saving_as_reusable_keeps_the_same_row_so_the_page_stays_bound`).
+
+**Named honestly:** the E2E proves the sharing, not the propagation. Editing a library
+collection and watching BOTH bound pages change is not covered by an E2E yet - only by the
+same-row assertion in pytest. The test was originally named as though it proved the whole of
+AC-F7 and has been renamed to what it actually asserts.
+
+**Still to build for S2:** tile-template CRUD (tile designs are the last mocked thing - the
+inspector still offers three hard-coded designs), bundle authoring UI (bundles can be created
+through the API and rendered, but not built in the UI), "used by N pages" on the library list,
+and the propagation E2E above. **S2 Phase 3 (review) has not run.**
 
 **Gate adds:** collection resolution golden set **first** · bundle allocation sums exactly to
 the cent · bundle unavailable when any component is discontinued (derived, never stored) ·

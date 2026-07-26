@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { MousePointerSquareDashed, Package } from 'lucide-react';
+import { toast } from 'sonner';
+import { Bookmark, MousePointerSquareDashed, Package } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,9 +11,21 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import type { Block, BlockProps } from '@/lib/dealer-kit/types';
-import { useQuery } from '@tanstack/react-query';
-import { listBundles, listCollections } from '../services/catalogueService';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  listBundles,
+  listCollections,
+  saveCollectionAsLibrary,
+} from '../services/catalogueService';
 import { MOCK_TILE_TEMPLATES } from '../__mocks__/catalogue';
 import {
   EMPTY_SELECTION,
@@ -79,6 +92,10 @@ export function BlockInspector({
   onChangeSelection: (next: ProductSelection) => void;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [reusableName, setReusableName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const queryClient = useQueryClient();
 
   // Hooks must run before the early return below, so these are declared here
   // even though only a collection or bundle block reads them.
@@ -191,6 +208,21 @@ export function BlockInspector({
                 : 'Products are resolved when the page is viewed, so prices follow the reader.'}
             </p>
 
+            {props.collectionId && (
+              // Promotes the SAME row, so this page stays bound to it. That is
+              // what makes "one edit reaches every page" true rather than a
+              // copy that immediately starts drifting (AC-F5, AC-F7).
+              <Button
+                variant="outline"
+                size="sm"
+                className="justify-start"
+                onClick={() => setSaveOpen(true)}
+              >
+                <Bookmark className="size-4" />
+                Save as reusable
+              </Button>
+            )}
+
             <Field label="Reusable collection" htmlFor="dk-collection">
               <SearchableSelect
                 id="dk-collection"
@@ -278,6 +310,57 @@ export function BlockInspector({
           </p>
         )}
       </CardContent>
+
+      <Dialog open={saveOpen} onOpenChange={setSaveOpen}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save as reusable collection</DialogTitle>
+            <DialogDescription>
+              Give this set of products a name and it becomes available to other pages. This
+              page keeps using it, and editing it later updates every page that does.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Field label="Name" htmlFor="dk-reusable-name">
+            <Input
+              id="dk-reusable-name"
+              value={reusableName}
+              placeholder="Kitchen range 2026"
+              onChange={(event) => setReusableName(event.target.value)}
+            />
+          </Field>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSaveOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!reusableName.trim() || saving}
+              onClick={async () => {
+                if (props.kind !== 'collection' || !props.collectionId) return;
+                setSaving(true);
+                try {
+                  await saveCollectionAsLibrary(props.collectionId, reusableName.trim());
+                  await queryClient.invalidateQueries({
+                    queryKey: ['dealer-kit', 'collections'],
+                  });
+                  toast.success(`Saved "${reusableName.trim()}" to the library`);
+                  setSaveOpen(false);
+                  setReusableName('');
+                } catch (error) {
+                  toast.error(
+                    error instanceof Error ? error.message : 'Could not save this collection.',
+                  );
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >
+              {saving ? 'Saving' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ProductPickerDialog
         open={pickerOpen}
