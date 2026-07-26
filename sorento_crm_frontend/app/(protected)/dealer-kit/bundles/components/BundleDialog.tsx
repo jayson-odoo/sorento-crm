@@ -1,0 +1,208 @@
+'use client';
+
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
+import { Plus, X } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { createBundle } from '../../services/catalogueService';
+import { listPickerProducts } from '../../services/productPickerService';
+
+/**
+ * Building a bundle: a name, one price, and the products it contains.
+ *
+ * The price is the BUNDLE's, not a sum. What each component is worth on an
+ * invoice is worked out by allocating that price pro-rata across them, which is
+ * why nothing here asks for per-component figures - they would immediately
+ * disagree with the total.
+ *
+ * Availability is never asked for either: it is derived from the components
+ * every time the bundle is read, so a discontinued part takes the bundle out of
+ * stock without anyone editing it.
+ */
+export function BundleDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState('');
+  const [price, setPrice] = useState('');
+  const [components, setComponents] = useState<{ productId: string; quantity: number }[]>([
+    { productId: '', quantity: 1 },
+  ]);
+  const [saving, setSaving] = useState(false);
+
+  const { data: products = [] } = useQuery({
+    queryKey: ['dealer-kit', 'picker-products'],
+    queryFn: listPickerProducts,
+  });
+
+  const options = products.map((product) => ({
+    value: product.id,
+    label: `${product.code} · ${product.name}`,
+  }));
+
+  const usable = components.filter((component) => component.productId);
+  const canSave = Boolean(name.trim()) && Number(price) >= 0 && price !== '' && usable.length > 0;
+
+  const reset = () => {
+    setName('');
+    setPrice('');
+    setComponents([{ productId: '', quantity: 1 }]);
+  };
+
+  const save = async () => {
+    if (!canSave) return;
+    setSaving(true);
+    try {
+      await createBundle(
+        name.trim(),
+        price,
+        usable.map((component) => ({
+          productId: component.productId,
+          quantity: Math.max(1, component.quantity),
+        })),
+      );
+      await queryClient.invalidateQueries({ queryKey: ['dealer-kit', 'bundles'] });
+      toast.success('Bundle created');
+      reset();
+      onOpenChange(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save this bundle.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>New bundle</DialogTitle>
+          <DialogDescription>
+            A bundle is a set of products sold together under one price. The price is split
+            across the products automatically when one is ordered.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="dk-bundle-name" className="text-xs">
+            Name
+          </Label>
+          <Input
+            id="dk-bundle-name"
+            value={name}
+            placeholder="Kitchen starter pack"
+            onChange={(event) => setName(event.target.value)}
+          />
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="dk-bundle-price" className="text-xs">
+            Bundle price
+          </Label>
+          <Input
+            id="dk-bundle-price"
+            type="number"
+            min={0}
+            step="0.01"
+            value={price}
+            placeholder="1800.00"
+            onChange={(event) => setPrice(event.target.value)}
+          />
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-medium text-foreground">Products in this bundle</p>
+
+          {components.map((component, index) => (
+            <div key={index} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1">
+                <SearchableSelect
+                  id={`dk-bundle-component-${index}`}
+                  value={component.productId}
+                  onChange={(value) =>
+                    setComponents((current) =>
+                      current.map((row, position) =>
+                        position === index ? { ...row, productId: value } : row,
+                      ),
+                    )
+                  }
+                  options={options}
+                  placeholder="Pick a product"
+                />
+              </div>
+
+              <Input
+                type="number"
+                min={1}
+                className="sm:w-24"
+                aria-label={`Quantity for product ${index + 1}`}
+                value={component.quantity}
+                onChange={(event) =>
+                  setComponents((current) =>
+                    current.map((row, position) =>
+                      position === index
+                        ? { ...row, quantity: Math.max(1, Number(event.target.value) || 1) }
+                        : row,
+                    ),
+                  )
+                }
+              />
+
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Remove product ${index + 1}`}
+                disabled={components.length === 1}
+                onClick={() =>
+                  setComponents((current) =>
+                    current.filter((_row, position) => position !== index),
+                  )
+                }
+              >
+                <X className="size-4" />
+              </Button>
+            </div>
+          ))}
+
+          <Button
+            variant="outline"
+            size="sm"
+            className="self-start"
+            onClick={() =>
+              setComponents((current) => [...current, { productId: '', quantity: 1 }])
+            }
+          >
+            <Plus className="size-4" />
+            Add product
+          </Button>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={!canSave || saving} onClick={save}>
+            {saving ? 'Saving' : 'Create bundle'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

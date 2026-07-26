@@ -27,13 +27,14 @@ import { BlockInspector } from './BlockInspector';
 import { EMPTY_SELECTION, type ProductSelection } from './ProductPickerDialog';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { useQuery } from '@tanstack/react-query';
 import {
   createCollection,
+  listTileTemplates,
   resolveBundle,
   resolveCollection,
   updateCollection,
 } from '../services/catalogueService';
-import { MOCK_TILE_TEMPLATES } from '../__mocks__/catalogue';
 import { cn } from '@/lib/utils';
 import {
   BREAKPOINT_COLUMNS,
@@ -336,6 +337,11 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
     };
   }, [doc.sections]);
 
+  const { data: tileTemplates = [] } = useQuery({
+    queryKey: ['dealer-kit', 'tile-templates'],
+    queryFn: listTileTemplates,
+  });
+
   const collectionQueries = useQueries({
     queries: boundBlocks.collections.map((id) => ({
       queryKey: ['dealer-kit', 'resolve-collection', id],
@@ -360,7 +366,7 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
         const index = boundBlocks.collections.indexOf(props.collectionId);
         const resolved = collectionQueries[index]?.data;
         if (!resolved) return undefined;
-        const template = MOCK_TILE_TEMPLATES.find(
+        const template = tileTemplates.find(
           (candidate) => candidate.id === props.tileTemplateId,
         );
         return { tiles: resolved.tiles, tileFields: template?.fields };
@@ -374,7 +380,7 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
 
       return undefined;
     },
-    [boundBlocks, collectionQueries, bundleQueries],
+    [boundBlocks, collectionQueries, bundleQueries, tileTemplates],
   );
 
   /**

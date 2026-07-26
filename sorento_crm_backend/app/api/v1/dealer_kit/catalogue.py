@@ -19,6 +19,8 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.dealer_kit import (
     BundleWrite,
+    TileTemplateOut,
+    TileTemplateWrite,
     CollectionOut,
     CollectionRename,
     CollectionWrite,
@@ -26,7 +28,11 @@ from app.schemas.dealer_kit import (
     ResolvedCollectionOut,
     TileOut,
 )
-from app.services.dealer_kit import bundle_service, collection_service
+from app.services.dealer_kit import (
+    bundle_service,
+    collection_service,
+    tile_template_service,
+)
 from app.services.dealer_kit.viewer import ViewerContext
 
 router = APIRouter()
@@ -201,4 +207,58 @@ def delete_bundle(
     bundle_id: str, db: Session = Depends(get_db), _user: dict = Depends(_EDIT)
 ):
     bundle_service.delete_bundle(db, bundle_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# --------------------------------------------------------------------------
+# Tile designs
+# --------------------------------------------------------------------------
+
+
+def _template_out(row) -> TileTemplateOut:
+    return TileTemplateOut(
+        id=row.id,
+        name=row.name,
+        fields=tile_template_service.fields_of(row),
+        updated_at=row.updated_at,
+    )
+
+
+@router.get("/tile-templates", response_model=list[TileTemplateOut])
+def list_tile_templates(db: Session = Depends(get_db), _user: dict = Depends(_VIEW)):
+    return [_template_out(row) for row in tile_template_service.list_templates(db)]
+
+
+@router.post(
+    "/tile-templates", response_model=TileTemplateOut, status_code=status.HTTP_201_CREATED
+)
+def create_tile_template(
+    payload: TileTemplateWrite, db: Session = Depends(get_db), user: dict = Depends(_EDIT)
+):
+    return _template_out(
+        tile_template_service.create_template(
+            db, name=payload.name, fields=payload.fields, user_id=_user_id(user)
+        )
+    )
+
+
+@router.put("/tile-templates/{template_id}", response_model=TileTemplateOut)
+def update_tile_template(
+    template_id: str,
+    payload: TileTemplateWrite,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_EDIT),
+):
+    return _template_out(
+        tile_template_service.update_template(
+            db, template_id, name=payload.name, fields=payload.fields
+        )
+    )
+
+
+@router.delete("/tile-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_tile_template(
+    template_id: str, db: Session = Depends(get_db), _user: dict = Depends(_EDIT)
+):
+    tile_template_service.delete_template(db, template_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

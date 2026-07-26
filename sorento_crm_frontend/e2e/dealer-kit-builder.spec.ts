@@ -385,6 +385,85 @@ test.describe('Dealer Kit page builder', () => {
     await expect(page.locator('[data-dk-tile]').first()).toBeVisible();
   });
 
+  test('a tile design is authored, previewed, and bound to a products block', async ({
+    page,
+  }) => {
+    const designName = zzt('design');
+
+    await openDealerKitLeaf(page, /tile designs/i);
+    await expect(page.getByRole('heading', { name: /tile designs/i })).toBeVisible({
+      timeout: 20_000,
+    });
+
+    await tap(page, page.getByRole('button', { name: /new design/i }).first());
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible({ timeout: 10_000 });
+
+    // 'Name' is also a tile field, so its reorder buttons match by label too.
+    await type(dialog.getByRole('textbox', { name: 'Name' }), designName);
+
+    // The preview is a real tile, so the design is judged as a design.
+    await expect(dialog.locator('[data-dk-design-preview]')).toBeVisible();
+    await expect(dialog.getByText('SK-3040')).toBeVisible();
+
+    // Reordering is part of the design: price above the name is a real choice.
+    await tap(page, dialog.getByRole('button', { name: /move price up/i }));
+
+    await tap(page, dialog.getByRole('button', { name: /save design/i }));
+    await expect(page.getByText(/tile design created/i)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(designName).first()).toBeVisible({ timeout: 20_000 });
+
+    // It is immediately bindable from a page's products block.
+    await createPage(page, 'design-bind');
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^products$/i }));
+
+    await tapReal(page, page.getByRole('combobox', { name: /tile design/i }));
+    await tap(page, page.getByRole('option', { name: new RegExp(designName, 'i') }));
+  });
+
+  test('a tile design cannot bind a field the renderer cannot draw', async ({ page }) => {
+    // The whitelist is server-side; the UI simply never offers an unknown field.
+    await openDealerKitLeaf(page, /tile designs/i);
+    await tap(page, page.getByRole('button', { name: /new design/i }).first());
+
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible({ timeout: 10_000 });
+    await expect(dialog.getByText(/cost/i)).toHaveCount(0);
+    await expect(dialog.getByText(/margin/i)).toHaveCount(0);
+  });
+
+  test('a bundle is created and shows as one price with its parts beneath', async ({ page }) => {
+    const bundleName = zzt('bundle');
+
+    await openDealerKitLeaf(page, /bundles/i);
+    await expect(page.getByRole('heading', { name: /^bundles$/i })).toBeVisible({
+      timeout: 20_000,
+    });
+
+    await tap(page, page.getByRole('button', { name: /new bundle/i }).first());
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible({ timeout: 10_000 });
+
+    await type(dialog.getByRole('textbox', { name: 'Name' }), bundleName);
+    await type(dialog.getByRole('spinbutton', { name: /bundle price/i }), '1800.00');
+
+    await tapReal(page, dialog.getByRole('combobox').first());
+    const option = page.getByRole('option').first();
+    await expect(option).toBeVisible({ timeout: 20_000 });
+    await option.dispatchEvent('click');
+
+    await tap(page, dialog.getByRole('button', { name: /create bundle/i }));
+    await expect(page.getByText(/bundle created/i)).toBeVisible({ timeout: 20_000 });
+
+    // One priced heading, components beneath (AC-F12).
+    const card = page.locator(`[data-dk-bundle]`).filter({ hasText: bundleName });
+    await expect(card).toBeVisible({ timeout: 20_000 });
+    // One priced heading. A single-component bundle does not repeat the
+    // figure on the component line, so this matches exactly once.
+    await expect(card.getByText('MYR 1,800.00')).toHaveCount(1);
+  });
+
   test('a page the backend does not have shows an error, not an empty editor', async ({ page }) => {
     await page.goto('/dealer-kit/pages/00000000-0000-0000-0000-0000000000ff', {
       waitUntil: 'commit',

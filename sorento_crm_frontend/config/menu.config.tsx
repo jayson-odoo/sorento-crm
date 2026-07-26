@@ -416,6 +416,14 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Product Collections',
         path: '/dealer-kit/collections',
       },
+      {
+        title: 'Tile Designs',
+        path: '/dealer-kit/tile-designs',
+      },
+      {
+        title: 'Bundles',
+        path: '/dealer-kit/bundles',
+      },
     ],
   },
   {

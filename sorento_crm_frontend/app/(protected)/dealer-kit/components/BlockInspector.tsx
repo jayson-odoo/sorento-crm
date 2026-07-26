@@ -24,9 +24,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   listBundles,
   listCollections,
+  listTileTemplates,
   saveCollectionAsLibrary,
 } from '../services/catalogueService';
-import { MOCK_TILE_TEMPLATES } from '../__mocks__/catalogue';
 import {
   EMPTY_SELECTION,
   ProductPickerDialog,
@@ -106,6 +106,10 @@ export function BlockInspector({
   const { data: bundles = [] } = useQuery({
     queryKey: ['dealer-kit', 'bundles'],
     queryFn: listBundles,
+  });
+  const { data: tileTemplates = [] } = useQuery({
+    queryKey: ['dealer-kit', 'tile-templates'],
+    queryFn: listTileTemplates,
   });
 
   if (!block) {
@@ -262,7 +266,7 @@ export function BlockInspector({
                 clearable
                 value={props.tileTemplateId ?? ''}
                 onChange={(value) => onChangeProps({ ...props, tileTemplateId: value || null })}
-                options={MOCK_TILE_TEMPLATES.map((template) => ({
+                options={tileTemplates.map((template) => ({
                   value: template.id,
                   label: template.name,
                 }))}

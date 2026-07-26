@@ -205,3 +205,17 @@ class ResolvedBundleOut(BaseModel):
         default=None, serialization_alias="unavailableReason"
     )
     components: list[BundleComponentOut] = Field(default_factory=list)
+
+
+class TileTemplateWrite(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    fields: list[str] = Field(min_length=1)
+
+
+class TileTemplateOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    name: str
+    fields: list[str] = Field(default_factory=list)
+    updated_at: datetime = Field(serialization_alias="updatedAt")

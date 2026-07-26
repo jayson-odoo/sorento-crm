@@ -18,6 +18,13 @@
  *          Tiles are resolved for the CALLING viewer. A price the viewer may
  *          not see is absent from the payload, not hidden (AC-G7).
  *
+ * GET    /tile-templates                       -> TileTemplate[]     page.view
+ * POST   /tile-templates {name,fields}         -> TileTemplate 201   page.edit
+ * PUT    /tile-templates/{id}                  -> TileTemplate       page.edit
+ * DELETE /tile-templates/{id}                  -> 204                page.edit
+ *          `fields` is a WHITELIST the renderer knows how to draw; an unknown
+ *          one is a 422 at authoring time rather than a blank space in print.
+ *
  * GET    /bundles                              -> ResolvedBundle[]   page.view
  * POST   /bundles       {name,price,components}-> ResolvedBundle 201 page.edit
  * GET    /bundles/{id}/resolve                 -> ResolvedBundle     page.view
@@ -33,7 +40,20 @@ import type {
   CollectionSummary,
   ResolvedBundle,
   ResolvedCollection,
+  TileField,
+  TileTemplate,
 } from '@/lib/dealer-kit/types';
+
+/** Every field a tile can bind. Mirrors TILE_FIELDS on the backend. */
+export const TILE_FIELDS: { value: TileField; label: string; hint: string }[] = [
+  { value: 'image', label: 'Photo', hint: 'The product image' },
+  { value: 'name', label: 'Name', hint: 'Product name' },
+  { value: 'code', label: 'Code', hint: 'Product code' },
+  { value: 'price', label: 'Price', hint: 'Resolved for whoever is reading' },
+  { value: 'dimensions', label: 'Dimensions', hint: 'Length x width x height' },
+  { value: 'badges', label: 'Certification badges', hint: 'Valid certifications only' },
+  { value: 'cta', label: 'Action button', hint: 'Add to selection' },
+];
 
 const BASE = '/api/v1/dealer-kit';
 
@@ -156,4 +176,79 @@ export async function resolveBundle(bundleId: string): Promise<ResolvedBundle> {
   const response = await apiFetch(`${BASE}/bundles/${encodeURIComponent(bundleId)}/resolve`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Could not load this bundle'));
   return response.json();
+}
+
+
+export async function listTileTemplates(): Promise<TileTemplate[]> {
+  const response = await apiFetch(`${BASE}/tile-templates`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not load tile designs'));
+  }
+  return response.json();
+}
+
+export async function createTileTemplate(
+  name: string,
+  fields: TileField[],
+): Promise<TileTemplate> {
+  const response = await apiFetch(`${BASE}/tile-templates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, fields }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not save this tile design'));
+  }
+  return response.json();
+}
+
+export async function updateTileTemplate(
+  templateId: string,
+  name: string,
+  fields: TileField[],
+): Promise<TileTemplate> {
+  const response = await apiFetch(`${BASE}/tile-templates/${encodeURIComponent(templateId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, fields }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not update this tile design'));
+  }
+  return response.json();
+}
+
+export async function deleteTileTemplate(templateId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/tile-templates/${encodeURIComponent(templateId)}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not delete this tile design'));
+  }
+}
+
+
+export async function createBundle(
+  name: string,
+  price: string,
+  components: { productId: string; quantity: number }[],
+): Promise<ResolvedBundle> {
+  const response = await apiFetch(`${BASE}/bundles`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, price, components }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not create this bundle'));
+  }
+  return response.json();
+}
+
+export async function deleteBundle(bundleId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/bundles/${encodeURIComponent(bundleId)}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not delete this bundle'));
+  }
 }

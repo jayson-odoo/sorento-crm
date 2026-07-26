@@ -19,6 +19,11 @@ import type { ResolvedBundle } from '@/lib/dealer-kit/types';
  * naming the component at fault.
  */
 export function BundleCard({ bundle }: { bundle: ResolvedBundle }) {
+  // With one component the allocation IS the bundle price, so printing it again
+  // beside the part is the same number twice and reads as a mistake. The
+  // allocation only earns its space once there is a split to explain.
+  const showAllocation = bundle.components.length > 1;
+
   return (
     <section
       className="flex h-full min-w-0 flex-col gap-2 rounded-lg border border-border bg-background p-3"
@@ -66,7 +71,9 @@ export function BundleCard({ bundle }: { bundle: ResolvedBundle }) {
                   Discontinued
                 </Badge>
               )}
-              <span className="text-[11px] text-muted-foreground">{component.allocated}</span>
+              {showAllocation && (
+                <span className="text-[11px] text-muted-foreground">{component.allocated}</span>
+              )}
             </div>
           </li>
         ))}
