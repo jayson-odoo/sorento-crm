@@ -406,6 +406,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'order_management.orders.view',
       },
       {
+        title: 'Quotations',
+        path: '/order-management/quotations',
+        permission: 'order_management.quotations.view',
+      },
+      {
         title: 'Delivery Order Status',
         path: '/order-management/order-statuses',
         permission: 'order_management.order_statuses.view',
@@ -509,6 +514,36 @@ export const MENU_SIDEBAR: MenuConfig = [
       path: '/master-data-management/units-of-measure',
       permission: 'master_data.units_of_measure.view',
     },
+    {
+      title: 'Credit Terms',
+      path: '/master-data-management/credit-terms',
+      permission: 'master_data.credit_terms.view',
+    },
+    {
+      title: 'Tax Codes',
+      path: '/master-data-management/tax-codes',
+      permission: 'master_data.tax_codes.view',
+    },
+    {
+      title: 'Sales Agents',
+      path: '/master-data-management/sales-agents',
+      permission: 'master_data.sales_agents.view',
+    },
+    {
+      title: 'Payment Methods',
+      path: '/master-data-management/payment-methods',
+      permission: 'master_data.payment_methods.view',
+    },
+    {
+      title: 'Tax Entities',
+      path: '/master-data-management/tax-entities',
+      permission: 'master_data.tax_entities.view',
+    },
+    {
+      title: 'Item Packages',
+      path: '/master-data-management/item-packages',
+      permission: 'master_data.item_packages.view',
+    },
     ],
   },
   {
@@ -550,6 +585,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Stock Inquiries',
         path: '/procurement-management/stock-inquiries',
         permission: 'procurement.stock_inquiries.view',
+      },
+      {
+        title: 'Request Quotations',
+        path: '/procurement-management/request-quotations',
+        permission: 'procurement.request_quotations.view',
       },
     ],
   },
@@ -599,6 +639,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Stock Ledger',
         path: '/inventory-management/stock-ledger',
         permission: 'inventory.stock_ledger.view',
+      },
+      {
+        title: 'Stock Balance Snapshots',
+        path: '/inventory-management/stock-balance-snapshots',
+        permission: 'inventory.stock_balance_snapshots.view',
       },
     ],
   },
@@ -1258,6 +1303,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         path: '/order-management/orders',
       },
       {
+        title: 'Quotations',
+        path: '/order-management/quotations',
+      },
+      {
         title: 'Delivery Order Status',
         path: '/order-management/order-statuses',
       },
@@ -1359,6 +1408,36 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       path: '/master-data-management/units-of-measure',
       permission: 'master_data.units_of_measure.view',
     },
+    {
+      title: 'Credit Terms',
+      path: '/master-data-management/credit-terms',
+      permission: 'master_data.credit_terms.view',
+    },
+    {
+      title: 'Tax Codes',
+      path: '/master-data-management/tax-codes',
+      permission: 'master_data.tax_codes.view',
+    },
+    {
+      title: 'Sales Agents',
+      path: '/master-data-management/sales-agents',
+      permission: 'master_data.sales_agents.view',
+    },
+    {
+      title: 'Payment Methods',
+      path: '/master-data-management/payment-methods',
+      permission: 'master_data.payment_methods.view',
+    },
+    {
+      title: 'Tax Entities',
+      path: '/master-data-management/tax-entities',
+      permission: 'master_data.tax_entities.view',
+    },
+    {
+      title: 'Item Packages',
+      path: '/master-data-management/item-packages',
+      permission: 'master_data.item_packages.view',
+    },
     ],
   },
   {
@@ -1400,6 +1479,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Stock Inquiries',
         path: '/procurement-management/stock-inquiries',
         permission: 'procurement.stock_inquiries.view',
+      },
+      {
+        title: 'Request Quotations',
+        path: '/procurement-management/request-quotations',
+        permission: 'procurement.request_quotations.view',
       },
     ],
   },
@@ -1449,6 +1533,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Stock Ledger',
         path: '/inventory-management/stock-ledger',
         permission: 'inventory.stock_ledger.view',
+      },
+      {
+        title: 'Stock Balance Snapshots',
+        path: '/inventory-management/stock-balance-snapshots',
+        permission: 'inventory.stock_balance_snapshots.view',
       },
     ],
   },

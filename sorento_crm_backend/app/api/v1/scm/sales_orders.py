@@ -19,6 +19,7 @@ from app.schemas.scm_orders import (
     SalesOrderListResponse,
     SalesOrderUpdate,
 )
+from app.schemas.autocount_mirror import MirrorAnnotationUpdate
 from app.services.scm.sales_order_service import SalesOrderService
 
 router = APIRouter()
@@ -70,6 +71,23 @@ def update_sales_order(
 def delete_sales_order(so_id: str, db: Session = Depends(get_db), _user: dict = Depends(_WRITE)):
     SalesOrderService(db).delete(so_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch("/sales-orders/{so_id}/annotation", response_model=SalesOrder)
+def annotate_sales_order(
+    so_id: str,
+    body: MirrorAnnotationUpdate,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_WRITE),
+):
+    """Update the two ingest-safe annotation columns. Allowed on AutoCount-synced
+    SOs (the one thing editable on a read-only mirror row)."""
+    fields = body.model_dump(exclude_unset=True)
+    return SalesOrderService(db).annotate(
+        so_id,
+        internal_note=fields.get("internal_note", ...) if "internal_note" in fields else ...,
+        follow_up=fields.get("follow_up", ...) if "follow_up" in fields else ...,
+    )
 
 
 @router.post("/sales-orders/{so_id}/create-do", response_model=CreateDoResponse)

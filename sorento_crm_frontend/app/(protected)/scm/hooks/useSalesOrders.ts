@@ -2,13 +2,14 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { SortingState } from '@tanstack/react-table';
 import {
+  annotateSalesOrder,
   createDoFromSalesOrder,
   createSalesOrder,
   deleteSalesOrder,
   getSalesOrders,
   updateSalesOrder,
 } from '../services/salesOrderService';
-import type { SalesOrderFormData } from '../types/scm.types';
+import type { MirrorAnnotationPayload, SalesOrderFormData } from '../types/scm.types';
 
 interface UseSalesOrdersParams {
   pageIndex: number;
@@ -74,6 +75,19 @@ export function useDeleteSalesOrder() {
       qc.invalidateQueries({ queryKey: ['scm', 'net-position'] });
     },
     onError: (e: Error) => toast.error(e.message || 'Failed to delete sales order'),
+  });
+}
+
+export function useAnnotateSalesOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: MirrorAnnotationPayload }) =>
+      annotateSalesOrder(id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['scm', 'sales-orders'] });
+      toast.success('Note saved');
+    },
+    onError: (e: Error) => toast.error(e.message || 'Failed to save note'),
   });
 }
 

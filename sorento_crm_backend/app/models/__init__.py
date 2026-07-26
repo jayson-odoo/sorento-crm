@@ -34,6 +34,15 @@ from app.models.workflow_stage import WorkflowStage
 from app.models.entity_conversation import EntityConversationMessage
 from app.models.integration import Integration, IntegrationApiKey, IntegrationLog
 from app.models.integration_reference import IntegrationReference
+from app.models.credit_term import CreditTerm
+from app.models.tax_code import TaxCode
+from app.models.sales_agent import SalesAgent
+from app.models.payment_method import PaymentMethod
+from app.models.tax_entity import TaxEntity
+from app.models.item_package import ItemPackage, ItemPackageLine
+from app.models.stock_balance_snapshot import StockBalanceSnapshotRun, StockBalanceSnapshot
+from app.models.quotation import Quotation, QuotationLine
+from app.models.request_quotation import RequestQuotation, RequestQuotationLine
 from app.models.import_log import ImportLog
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
 from app.models.job import ImportJob, ImportJobRow
@@ -169,6 +178,15 @@ __all__ = [
     "WorkflowStage",
     "EntityConversationMessage",
     "IntegrationLog",
+    "CreditTerm",
+    "TaxCode",
+    "SalesAgent",
+    "PaymentMethod",
+    "TaxEntity",
+    "ItemPackage",
+    "ItemPackageLine",
+    "StockBalanceSnapshotRun",
+    "StockBalanceSnapshot",
     "ImportLog",
     "ImportJob",
     "ImportJobRow",

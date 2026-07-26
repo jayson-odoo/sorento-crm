@@ -34,9 +34,11 @@ import OrderLineDeleteDialog from './OrderLineDeleteDialog';
 interface OrderLinesCardProps {
   orderId: string;
   lines: OrderLine[];
+  /** AutoCount-synced order: hide all line mutations (add / import / delete). */
+  readOnly?: boolean;
 }
 
-export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) {
+export default function OrderLinesCard({ orderId, lines, readOnly = false }: OrderLinesCardProps) {
   const queryClient = useQueryClient();
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
@@ -150,41 +152,47 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between gap-4">
           <CardTitle>Delivery Order Lines</CardTitle>
-          <div className="flex gap-2">
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={selectedLineIds.size === 0 || bulkDeleteLinesMutation.isPending}
-              onClick={() => setBulkDeleteDialogOpen(true)}
-            >
-              <Trash2 className="size-4 mr-1" />
-              Delete selected ({selectedLineIds.size})
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setImportDialogOpen(true)}>
-              <Upload className="size-4 mr-1" />
-              Import
-            </Button>
-            <Button variant="primary" size="sm" onClick={() => setAddDialogOpen(true)} disabled={createLineMutation.isPending}>
-              <Plus className="size-4 mr-1" />
-              Add line
-            </Button>
-          </div>
+          {!readOnly && (
+            <div className="flex gap-2">
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={selectedLineIds.size === 0 || bulkDeleteLinesMutation.isPending}
+                onClick={() => setBulkDeleteDialogOpen(true)}
+              >
+                <Trash2 className="size-4 mr-1" />
+                Delete selected ({selectedLineIds.size})
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setImportDialogOpen(true)}>
+                <Upload className="size-4 mr-1" />
+                Import
+              </Button>
+              <Button variant="primary" size="sm" onClick={() => setAddDialogOpen(true)} disabled={createLineMutation.isPending}>
+                <Plus className="size-4 mr-1" />
+                Add line
+              </Button>
+            </div>
+          )}
         </CardHeader>
         <CardContent className="space-y-4">
           {lines.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4">No delivery order lines. Import from Excel or add manually.</p>
+            <p className="text-sm text-muted-foreground py-4">
+              {readOnly ? 'No delivery order lines.' : 'No delivery order lines. Import from Excel or add manually.'}
+            </p>
           ) : (
             <div className="overflow-x-auto rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={allSelected}
-                        onCheckedChange={(v) => toggleSelectAll(v === true)}
-                        aria-label="Select all lines"
-                      />
-                    </TableHead>
+                    {!readOnly && (
+                      <TableHead className="w-10">
+                        <Checkbox
+                          checked={allSelected}
+                          onCheckedChange={(v) => toggleSelectAll(v === true)}
+                          aria-label="Select all lines"
+                        />
+                      </TableHead>
+                    )}
                     <TableHead>Product</TableHead>
                     <TableHead>Warehouse</TableHead>
                     <TableHead className="text-right">Qty</TableHead>
@@ -194,7 +202,7 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
                     <TableHead className="text-right">Tax</TableHead>
                     <TableHead className="text-right">Total (excl)</TableHead>
                     <TableHead className="text-right">Total (incl)</TableHead>
-                    <TableHead className="w-12" />
+                    {!readOnly && <TableHead className="w-12" />}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -202,13 +210,15 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
                     const productId = line.product?.id ?? line.product_id;
                     return (
                     <TableRow key={line.id}>
-                      <TableCell>
-                        <Checkbox
-                          checked={selectedLineIds.has(line.id)}
-                          onCheckedChange={(v) => toggleSelectOne(line.id, v === true)}
-                          aria-label={`Select line ${line.id}`}
-                        />
-                      </TableCell>
+                      {!readOnly && (
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedLineIds.has(line.id)}
+                            onCheckedChange={(v) => toggleSelectOne(line.id, v === true)}
+                            aria-label={`Select line ${line.id}`}
+                          />
+                        </TableCell>
+                      )}
                       <TableCell>
                         {productId ? (
                           <Link
@@ -231,17 +241,19 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
                       <TableCell className="text-right">{formatNum(line.tax)}</TableCell>
                       <TableCell className="text-right">{formatNum(line.total_excluding_tax)}</TableCell>
                       <TableCell className="text-right">{formatNum(line.total_including_tax)}</TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => setDeleteLine(line)}
-                          aria-label="Delete line"
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </TableCell>
+                      {!readOnly && (
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => setDeleteLine(line)}
+                            aria-label="Delete line"
+                          >
+                            <Trash2 className="size-4" />
+                          </Button>
+                        </TableCell>
+                      )}
                     </TableRow>
                     );
                   })}

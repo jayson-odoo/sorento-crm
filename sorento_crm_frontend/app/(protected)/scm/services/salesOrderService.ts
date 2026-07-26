@@ -20,7 +20,11 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiResponse } from '@/components/ui/data-grid';
-import type { SalesOrder, SalesOrderFormData } from '../types/scm.types';
+import type {
+  MirrorAnnotationPayload,
+  SalesOrder,
+  SalesOrderFormData,
+} from '../types/scm.types';
 
 const BASE = '/api/v1/scm/sales-orders';
 
@@ -91,6 +95,24 @@ export async function updateSalesOrder(
 export async function deleteSalesOrder(id: string): Promise<void> {
   const res = await apiFetch(`${BASE}/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete sales order'));
+}
+
+/**
+ * Update the Sorento-only annotation (internal note + follow-up) on a sales
+ * order. This is the ONLY mutation allowed on an AutoCount-mirrored SO — the BE
+ * 403s every other write with `AUTOCOUNT_READ_ONLY`. PATCH .../annotation.
+ */
+export async function annotateSalesOrder(
+  id: string,
+  data: MirrorAnnotationPayload,
+): Promise<SalesOrder> {
+  const res = await apiFetch(`${BASE}/${id}/annotation`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save note'));
+  return res.json();
 }
 
 export async function createDoFromSalesOrder(

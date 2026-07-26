@@ -5,6 +5,7 @@ from app.api.v1.order_management import (
     customers,
     customers_select,
     order_statuses,
+    quotations,
 )
 
 router = APIRouter()
@@ -13,3 +14,4 @@ router.include_router(orders.router, prefix="/orders", tags=["orders"])
 router.include_router(customers.router, prefix="/customers", tags=["customers"])
 router.include_router(customers_select.router, prefix="/customers", tags=["customers"])
 router.include_router(order_statuses.router, prefix="/order-statuses", tags=["order-statuses"])
+router.include_router(quotations.router, prefix="/quotations", tags=["quotations"])

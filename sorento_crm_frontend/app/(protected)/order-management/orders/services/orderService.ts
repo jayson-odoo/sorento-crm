@@ -1,5 +1,13 @@
 import { apiFetch } from '@/lib/api';
-import type { Order, OrderFormData, OrderDetail, OrderLine, OrderLineFormData } from '../types/order.types';
+import { extractApiError } from '@/lib/api-client';
+import type {
+  Order,
+  OrderFormData,
+  OrderDetail,
+  OrderLine,
+  OrderLineFormData,
+  OrderAnnotationPayload,
+} from '../types/order.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
 /**
@@ -76,6 +84,23 @@ export async function updateOrder(id: string, data: Partial<OrderFormData>): Pro
   return response.json();
 }
 
+/**
+ * Annotate the mirror carve-out (internal note + follow-up flag). Allowed even
+ * on AutoCount rows — the ONLY mutation the server permits on synced orders.
+ * Only the provided fields are applied; returns the full updated order.
+ */
+export async function annotateOrder(id: string, data: OrderAnnotationPayload): Promise<OrderDetail> {
+  const response = await apiFetch(`/api/v1/order-management/orders/${id}/annotation`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save note'));
+  }
+  return response.json();
+}
+
 export async function deleteOrder(id: string): Promise<void> {
   const response = await apiFetch(`/api/v1/order-management/orders/${id}`, { method: 'DELETE' });
   if (!response.ok) {
@@ -143,7 +168,7 @@ export async function exportOrders(params?: {
 /**
  * Bulk import orders from Excel data
  */
-export async function bulkImportOrders(data: any[]): Promise<{ created: number; updated: number; errors: string[] }> {
+export async function bulkImportOrders(data: unknown[]): Promise<{ created: number; updated: number; errors: string[] }> {
   const response = await apiFetch('/api/v1/order-management/orders/bulk-import', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -55,6 +55,15 @@ SUPPORTED_ENTITY_TYPES = {
     "picking_lines",
     "orders",
     "order_lines",
+    # AutoCount mirror masters (Slice 1+).
+    "credit_terms",
+    "tax_codes",
+    "sales_agents",
+    "payment_methods",
+    "tax_entities",
+    "item_packages",
+    "quotations",
+    "request_quotations",
 }
 
 DEFAULT_SOURCE_SYSTEM = "autocount"

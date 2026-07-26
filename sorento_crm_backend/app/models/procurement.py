@@ -300,6 +300,10 @@ class PurchaseOrder(Base, CompanyScopedMixin):
     currency = Column(String(3), nullable=True)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
+    # AutoCount mirror (Slice 8): human DocNo + ingest-safe annotations.
+    source_doc_no = Column(String(100), nullable=True)
+    internal_note = Column(Text, nullable=True)
+    follow_up = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -330,6 +334,9 @@ class PurchaseOrderLine(Base, CompanyScopedMixin):
     unit_cost = Column(Numeric(12, 2), nullable=True)
     currency = Column(String(3), nullable=True)
     expected_date = Column(Date, nullable=True)
+    # AutoCount PODTL extras (Slice 8): surface read-only in the PO detail.
+    description = Column(String(500), nullable=True)
+    sub_total = Column(Numeric(15, 2), nullable=True)
     moq_snapshot = Column(Integer, nullable=True)
     order_multiple_snapshot = Column(Integer, nullable=True)
     line_status = Column(String(50), default="open", nullable=False)

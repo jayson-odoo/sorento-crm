@@ -105,7 +105,14 @@ class SalesOrderService:
                 "product_name": ln.product.product_name if ln.product else "",
                 "qty_ordered": qo,
                 "qty_delivered": qd,
-                "uom": self._uom_for(ln.product) if ln.product else "",
+                "uom": ln.uom or (self._uom_for(ln.product) if ln.product else ""),
+                "unit_price": float(ln.unit_price) if ln.unit_price is not None else None,
+                "discount_amt": float(ln.discount_amt) if ln.discount_amt is not None else None,
+                "tax_rate": float(ln.tax_rate) if ln.tax_rate is not None else None,
+                "tax_amt": float(ln.tax_amt) if ln.tax_amt is not None else None,
+                "sub_total": float(ln.sub_total) if ln.sub_total is not None else None,
+                "delivery_date": ln.delivery_date.isoformat() if ln.delivery_date else None,
+                "tax_code": ln.tax_code,
             })
         order_dt = so.order_date or (so.created_at.date() if so.created_at else date.today())
         return {
@@ -126,6 +133,10 @@ class SalesOrderService:
             "committed_qty": committed,
             "lines": lines,
             "created_at": so.created_at.isoformat() if so.created_at else "",
+            "source": "autocount" if getattr(so, "source_system", None) == "autocount" else "manual",
+            "source_doc_no": getattr(so, "source_doc_no", None),
+            "internal_note": getattr(so, "internal_note", None),
+            "follow_up": bool(getattr(so, "follow_up", False)),
         }
 
     def _get_or_404(self, so_id: str) -> SalesOrder:
@@ -139,6 +150,28 @@ class SalesOrderService:
         if not so:
             raise AppException(404, "Sales order not found", code="SO_NOT_FOUND")
         return so
+
+    def _assert_native(self, so: SalesOrder) -> None:
+        """Block mutations on an AutoCount-synced SO (source_system='autocount').
+        AutoCount owns it; a Sorento edit would be overwritten on the next sync.
+        Annotations go through ``annotate`` and are exempt."""
+        if getattr(so, "source_system", "manual") == "autocount":
+            raise AppException(
+                403,
+                "This sales order is synced from AutoCount and is read-only. "
+                "Edit it in AutoCount; only internal notes can be changed here.",
+                code="AUTOCOUNT_READ_ONLY",
+            )
+
+    def annotate(self, so_id: str, *, internal_note=..., follow_up=...) -> dict:
+        """Write the two ingest-safe annotation columns (allowed on synced rows)."""
+        so = self._get_or_404(so_id)
+        if internal_note is not ...:
+            so.internal_note = internal_note
+        if follow_up is not ...:
+            so.follow_up = bool(follow_up)
+        self.db.commit()
+        return self.serialize(self._get_or_404(so_id))
 
     # -- reads ---------------------------------------------------------------
 
@@ -216,6 +249,7 @@ class SalesOrderService:
 
     def update(self, so_id: str, data, user_id: Optional[str]) -> dict:
         so = self._get_or_404(so_id)
+        self._assert_native(so)
         if data.customer_code is not None:
             so.customer_id = self._customer(data.customer_code).id
         if data.order_type is not None:
@@ -247,6 +281,7 @@ class SalesOrderService:
 
     def delete(self, so_id: str) -> None:
         so = self._get_or_404(so_id)
+        self._assert_native(so)
         self.db.delete(so)
         self.db.commit()
 
@@ -326,6 +361,7 @@ class SalesOrderService:
 
     def create_do_from_so(self, so_id: str, user_id: Optional[str]) -> dict:
         so = self._get_or_404(so_id)
+        self._assert_native(so)
         remaining = [
             ln for ln in so.lines
             if float(ln.qty_ordered or 0) - float(ln.qty_delivered or 0) > 0

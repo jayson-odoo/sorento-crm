@@ -107,6 +107,19 @@ def require_external_permission_for_path(
 # router rather than at mount time.
 # --------------------------------------------------------------------------- #
 EXTERNAL_ENDPOINT_PERMISSIONS: dict[str, str] = {
+    # AutoCount parent+lines masters (not flat -- own router, not ENTITY_SPECS)
+    "item-packages": "master_data.item_packages.edit",
+    # AutoCount stock-balance report -> run-history snapshots (own router)
+    "stock-balance": "inventory.stock_balance_snapshots.edit",
+    # AutoCount delivery order -> REUSE orders + order_lines (own router)
+    "delivery-orders": "order_management.orders.import",
+    # AutoCount quotation -> NEW quotations + quotation_lines (own router)
+    "quotations": "order_management.quotations.edit",
+    # AutoCount request-for-quotation -> NEW request_quotations (own router)
+    "request-quotations": "procurement.request_quotations.edit",
+    # AutoCount SO/PO -> REUSE sales_orders / purchase_orders (own routers)
+    "sales-orders": "scm.sales_orders.edit",
+    "purchase-orders": "scm.purchase_orders.edit",
     # Procurement / inventory documents
     "packing-lists": "procurement.packing_lists.add",
     "spo-allocations": "procurement.spo_allocations.add",

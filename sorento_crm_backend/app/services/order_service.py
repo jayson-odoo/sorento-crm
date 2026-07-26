@@ -677,6 +677,42 @@ class OrderService:
         self._attach_remarks_cs_locked(order)
         return order
 
+    def _assert_native(self, order) -> None:
+        """Block every mutating action on an AutoCount-ingested DO.
+
+        AutoCount is the source of truth for ingested orders — editing one in
+        Sorento would be silently overwritten on the next sync. The FE also gates
+        this (read-only UI), but that is UX only; this is the server guard so the
+        route can't be driven directly. Annotations (note / follow_up) go through
+        ``annotate_order``, which never calls this, so they stay editable.
+        """
+        if getattr(order, "sync_source", "manual") == "autocount":
+            from app.services.error_handler import AppException
+            from fastapi import status as _status
+
+            raise AppException(
+                status_code=_status.HTTP_403_FORBIDDEN,
+                message=(
+                    "This delivery order is synced from AutoCount and is read-only. "
+                    "Edit it in AutoCount; only internal notes can be changed here."
+                ),
+                code="AUTOCOUNT_READ_ONLY",
+            )
+
+    def annotate_order(self, order_id: str, *, internal_note=..., follow_up=...):
+        """Write the two ingest-safe annotation columns. Allowed on AutoCount
+        rows (that is their whole point). Sentinel default = field omitted =
+        leave unchanged; an explicit value (incl. None for the note) is applied."""
+        order = self.get_order(order_id)
+        if internal_note is not ...:
+            order.internal_note = internal_note
+        if follow_up is not ...:
+            order.follow_up = bool(follow_up)
+        self.db.commit()
+        self.db.refresh(order)
+        self._attach_remarks_cs_locked(order)
+        return order
+
     def _attach_remarks_cs_locked(self, order) -> None:
         """Stamp the transient ``remarks_cs_locked`` flag the OrderResponse exposes.
 
@@ -1594,6 +1630,7 @@ class OrderService:
     def update_order(self, order_id: str, order_data: OrderUpdate, updated_by: str):
         """Update an order."""
         order = self.get_order(order_id)
+        self._assert_native(order)
 
         update_data = order_data.model_dump(exclude_unset=True)
         if update_data:
@@ -1701,7 +1738,7 @@ class OrderService:
 
     def create_order_line(self, order_id: str, data: OrderLineCreate):
         """Add a line to an order. Lines are ordered by line_sequence (multiple lines may share product+warehouse)."""
-        self.get_order(order_id)  # ensure order exists
+        self._assert_native(self.get_order(order_id))  # ensure order exists + native
         next_seq = (
             self.db.query(func.coalesce(func.max(OrderLine.line_sequence), 0))
             .filter(OrderLine.order_id == order_id)
@@ -1716,6 +1753,7 @@ class OrderService:
 
     def update_order_line(self, order_id: str, line_id: str, data: OrderLineUpdate):
         """Update an order line."""
+        self._assert_native(self.get_order(order_id))
         line = (
             self.db.query(OrderLine)
             .filter(OrderLine.id == line_id, OrderLine.order_id == order_id)
@@ -1731,6 +1769,7 @@ class OrderService:
 
     def delete_order_line(self, order_id: str, line_id: str):
         """Remove an order line."""
+        self._assert_native(self.get_order(order_id))
         line = (
             self.db.query(OrderLine)
             .filter(OrderLine.id == line_id, OrderLine.order_id == order_id)
@@ -1746,6 +1785,7 @@ class OrderService:
         """Delete multiple lines from an order by line IDs."""
         if not line_ids:
             return {"message": "No order lines to delete", "deleted_count": 0}
+        self._assert_native(self.get_order(order_id))
         deleted = (
             self.db.query(OrderLine)
             .filter(OrderLine.order_id == order_id, OrderLine.id.in_(line_ids))
@@ -1775,6 +1815,7 @@ class OrderService:
         """Archive an order (soft delete). Data remains for retention."""
         from datetime import datetime, timezone
         order = self.get_order(order_id)
+        self._assert_native(order)
         order.deleted_at = datetime.now(timezone.utc)
         self.db.commit()
         return {"message": "Order archived successfully"}
@@ -1791,6 +1832,7 @@ class OrderService:
     def delete_order(self, order_id: str):
         """Hard delete an order (permanent). Use archive for retention."""
         order = self._get_order_any(order_id)
+        self._assert_native(order)
         self.db.delete(order)
         self.db.commit()
         return {"message": "Order deleted successfully"}
@@ -1799,6 +1841,22 @@ class OrderService:
         """Delete multiple orders by ID. Returns count of deleted."""
         if not order_ids:
             return {"message": "No orders to delete", "deleted_count": 0}
+        # Reject the whole batch if any target is AutoCount-sourced — a partial
+        # delete that silently skips the synced rows would look like success.
+        blocked = (
+            self.db.query(Order.id)
+            .filter(Order.id.in_(order_ids), Order.sync_source == "autocount")
+            .first()
+        )
+        if blocked is not None:
+            from app.services.error_handler import AppException
+            from fastapi import status as _status
+
+            raise AppException(
+                status_code=_status.HTTP_403_FORBIDDEN,
+                message="One or more selected delivery orders are synced from AutoCount and are read-only.",
+                code="AUTOCOUNT_READ_ONLY",
+            )
         deleted = self.db.query(Order).filter(Order.id.in_(order_ids)).delete(synchronize_session=False)
         self.db.commit()
         return {"message": f"Deleted {deleted} order(s)", "deleted_count": deleted}

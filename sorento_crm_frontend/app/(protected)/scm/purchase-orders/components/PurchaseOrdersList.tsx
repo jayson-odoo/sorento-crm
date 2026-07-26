@@ -26,6 +26,7 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { AutoCountSourceBadge } from '@/components/common/AutoCountSourceBadge';
 import { usePurchaseOrders } from '../../hooks/usePurchaseOrders';
 import { usePurchaseOrderActions } from '../../hooks/usePurchaseOrderActions';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
@@ -106,19 +107,24 @@ export default function PurchaseOrdersList() {
         accessorKey: 'po_number',
         header: ({ column }) => <DataGridColumnHeader title="PO number" column={column} />,
         cell: ({ row }) => (
-          <div className="flex flex-col">
-            <Link
-              href={`/scm/purchase-orders/${row.original.id}`}
-              onClick={(e) => e.stopPropagation()}
-              className="font-medium text-primary hover:underline"
-              title={`Open ${row.original.po_number}`}
-            >
-              {row.original.po_number}
-            </Link>
+          <div className="flex flex-col gap-0.5">
+            <div className="flex min-w-0 items-center gap-2">
+              <Link
+                href={`/scm/purchase-orders/${row.original.id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="truncate font-medium text-primary hover:underline"
+                title={`Open ${row.original.po_number}`}
+              >
+                {row.original.po_number}
+              </Link>
+              {row.original.source === 'autocount' ? (
+                <AutoCountSourceBadge source="autocount" />
+              ) : null}
+            </div>
             <span className="text-xs text-muted-foreground">{fmtDate(row.original.order_date)}</span>
           </div>
         ),
-        size: 160,
+        size: 200,
         meta: { headerTitle: 'PO number', skeleton: <Skeleton className="h-8 w-28" /> },
       },
       {
@@ -198,6 +204,8 @@ export default function PurchaseOrdersList() {
         header: '',
         cell: ({ row }) => {
           const po = row.original;
+          // AutoCount-mirrored POs are read-only — no Create GR (the BE 403s it).
+          if (po.source === 'autocount') return null;
           if (po.status === 'active' || po.status === 'confirmed' || po.status === 'partially_received') {
             return (
               <div className="flex items-center justify-end">
@@ -232,7 +240,9 @@ export default function PurchaseOrdersList() {
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     onRowSelectionChange: setRowSelection,
-    enableRowSelection: true,
+    // AutoCount-mirrored POs are read-only — exclude them from bulk-select so
+    // they can never be swept into a bulk Confirm (the BE 403s them anyway).
+    enableRowSelection: (row) => row.original.source !== 'autocount',
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     manualSorting: true,

@@ -21,6 +21,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCreateOrder, useUpdateOrder, useOrder } from '../hooks/useOrders';
+import { AutoCountSourceBadge } from '@/components/common/AutoCountSourceBadge';
 import { OrderSchema, type OrderSchemaType } from '../forms/order-schema';
 import type { OrderFormData } from '../types/order.types';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
@@ -276,6 +277,34 @@ export default function OrderForm({ orderId, onSuccess }: OrderFormProps) {
       <div className="flex items-center justify-center p-8">
         <LoaderCircleIcon className="size-6 animate-spin" />
       </div>
+    );
+  }
+
+  // AutoCount-synced orders are a read-only mirror — the whole edit form is
+  // withheld (the server also 403s any write). Editing the annotation carve-out
+  // lives on the detail page's note card. This also fail-closes a direct URL hit.
+  if (isEditMode && order?.source === 'autocount') {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex flex-wrap items-center gap-3">
+            {order.order_number}
+            <AutoCountSourceBadge source="autocount" />
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            This delivery order is synced from AutoCount and cannot be edited.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => (onSuccess ? onSuccess() : router.push('/order-management/orders'))}
+          >
+            Back to delivery order
+          </Button>
+        </CardContent>
+      </Card>
     );
   }
 
