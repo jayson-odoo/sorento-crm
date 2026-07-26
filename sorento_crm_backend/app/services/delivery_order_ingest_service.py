@@ -225,17 +225,23 @@ class DeliveryOrderIngestService:
 
     def _replace_lines(self, order_id: str, lines: list[dict]) -> None:
         # Canonical DODTL is authoritative; a merge would orphan a removed line.
+        # order_lines is company-scoped: the raw INSERT bypasses the ORM
+        # auto-stamp, so carry the header's company_id onto each line or the
+        # fail-closed SELECT filter hides them.
+        company_id = self.db.execute(
+            text("SELECT company_id FROM orders WHERE id = :o"), {"o": order_id}
+        ).scalar()
         self.db.execute(text("DELETE FROM order_lines WHERE order_id = :o"), {"o": order_id})
         for line in lines:
             self.db.execute(
                 text(
                     "INSERT INTO order_lines "
-                    "(id, order_id, line_sequence, product_id, warehouse_id, "
+                    "(id, order_id, company_id, line_sequence, product_id, warehouse_id, "
                     " quantity, unit_price, discount, tax, total) "
-                    "VALUES (:id, :order_id, :line_sequence, :product_id, :warehouse_id, "
+                    "VALUES (:id, :order_id, :company_id, :line_sequence, :product_id, :warehouse_id, "
                     " :quantity, :unit_price, :discount, :tax, :total)"
                 ),
-                {"id": str(uuid.uuid4()), "order_id": order_id, **line},
+                {"id": str(uuid.uuid4()), "order_id": order_id, "company_id": company_id, **line},
             )
 
     def _link(self, order_id: str, payload: CanonicalDeliveryOrder) -> None:
