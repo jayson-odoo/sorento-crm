@@ -424,6 +424,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Bundles',
         path: '/dealer-kit/bundles',
       },
+      {
+        title: 'Room Designer',
+        path: '/dealer-kit/design',
+      },
     ],
   },
   {
