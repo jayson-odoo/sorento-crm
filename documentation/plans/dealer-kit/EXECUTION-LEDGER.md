@@ -24,7 +24,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 | Slice | Phase 1 (FE prototype) | Phase 2 (BE + wiring + tests) | Phase 3 (review) | Slice |
 |---|---|---|---|---|
 | **S1 builder core** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
-| **S2 collections + bundles** | not started | **engines landed (TDD)** | blocked | in progress |
+| **S2 collections + bundles** | **PASSED** 2026-07-26 | engines landed (TDD) | blocked | in progress |
 | **S3 PDF export** | blocked on S2 | blocked | blocked | blocked |
 
 ---
@@ -250,6 +250,52 @@ Worth recording: the engine's node shape is `{combinator, rules[]}` with nested 
 guessed a `{type, children[]}` shape with camelCase operators, and the tests failed loudly -
 an empty `rules` array evaluates TRUE, so a wrong-shaped tree matches everything silently. Any
 future caller building a tree by hand should copy the shape from a test, not from memory.
+
+#### S2 Phase 1 gate — PASSED (FE prototype on mocks)
+
+**17 Playwright · 16 vitest · 89 pytest green**, prod build on :3020 against backend :8020.
+
+| Gate item | Result |
+|---|---|
+| Products pickable by rule AND by hand, composing | pass - one dialog, two tabs, live match count |
+| Rule tab uses the SHARED RuleBuilder on `product` facts | pass |
+| Tiles render per tile design, density per breakpoint | pass - `[data-dk-tile-grid]`, 2 tiles from 2 picks |
+| A discontinued product never becomes a tile | pass |
+| A bundle with a discontinued part cannot read as orderable | pass - `[data-dk-bundle-available="false"]` |
+| Bundle renders as one priced heading, components beneath | pass |
+| No price in the DOM when the viewer may not see one | pass (vitest - `price: null`, nothing rendered) |
+| Shared primitives only, no raw select | pass - `SearchableSelect`, `Dialog`, `ScrollArea` |
+| No horizontal body scroll at 1280 / 768 / 375 | pass |
+
+**Two backend changes were needed before the prototype could work at all**, both real gaps
+rather than prototype scaffolding:
+
+1. **The `product` fact source was never registered at import**, only lazily inside
+   `product_facts()`. The RuleBuilder asks the API for its field list on mount, so a Designer
+   would have opened the rule tab to an empty catalogue. Registered in `app/main.py` alongside
+   the other import-time registrations.
+2. **`/rule-facts` was gated on `automation.automations.view` alone.** That is a read-only list
+   of whitelisted field NAMES, and two unrelated consumers need it. A Dealer Kit Designer holds
+   no automation permission, so the rule tab would have 403'd. Now
+   `require_any_permission(["automation.automations.view", "dealer_kit.page.edit"])`.
+
+**Three defects found during the gate:**
+
+1. **Blocks could not be edited at all.** The canvas placed and resized them, but nothing could
+   change what was IN one - a heading was stuck on its placeholder text. This existed through
+   the whole of S1 and no S1 gate item asked, because they were all about grid, breakpoints and
+   publishing. `BlockInspector` fixes it and is where binding lives.
+2. **"No products chosen" was shown to someone who HAD chosen.** A Designer who picked a
+   discontinued product saw the unbound placeholder, which sends them hunting for the wrong
+   problem. "Chosen but everything resolved out" and "nothing chosen" are different states and
+   now read differently. Caught by the E2E, not by inspection.
+3. **The `type()` E2E helper threw `Illegal invocation` on a textarea**, because it called the
+   `HTMLInputElement` value setter on one. It has to use the element's own prototype.
+
+**Deliberately still mocked** (Phase 2 replaces): product list, tile templates, collections,
+bundles and the resolution itself. The mock resolver only filters discontinued products - it
+does not evaluate rules, which is why the rule tab's live count is approximate in the
+prototype and the real evaluator is exercised by `test_dealer_kit_product_facts.py` instead.
 
 **Still to build for S2:** the DB-backed collection resolver (company scope then rule then set
 algebra), the collection/bundle routes, and the whole FE prototype - product picker, tile

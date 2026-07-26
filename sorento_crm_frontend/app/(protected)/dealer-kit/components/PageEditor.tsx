@@ -23,6 +23,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { BlockInspector } from './BlockInspector';
+import { EMPTY_SELECTION, type ProductSelection } from './ProductPickerDialog';
+import {
+  MOCK_RESOLVED_BUNDLE,
+  MOCK_TILE_TEMPLATES,
+  MOCK_UNAVAILABLE_BUNDLE,
+  mockResolveCollection,
+} from '../__mocks__/catalogue';
 import { cn } from '@/lib/utils';
 import {
   BREAKPOINT_COLUMNS,
@@ -38,6 +46,7 @@ import {
   DEFAULT_PRINT_PROFILE,
   defaultHideInPrint,
   type Block,
+  type BlockProps,
   type BlockType,
   type PageDoc,
   type Section,
@@ -118,6 +127,13 @@ export function PageEditor({ doc, onDocChange }: PageEditorProps) {
   );
   const [selectedBlockId, setSelectedBlockId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Block | null>(null);
+  /**
+   * Phase 1: the product selection behind each collection block lives in editor
+   * state, keyed by block id. Phase 2 moves it to a page-scoped Collection row
+   * created silently on the server (AC-F4), which is why it is NOT written into
+   * the saved document here - the document must never carry a product list.
+   */
+  const [selections, setSelections] = useState<Record<string, ProductSelection>>({});
 
   const activeSection = useMemo(
     () => doc.sections.find((section) => section.id === activeSectionId) ?? null,
@@ -266,6 +282,65 @@ export function PageEditor({ doc, onDocChange }: PageEditorProps) {
       setPendingDelete(null);
     },
     [activeSection, updateSection],
+  );
+
+  const selectedBlock = useMemo(
+    () => activeSection?.blocks.find((block) => block.id === selectedBlockId) ?? null,
+    [activeSection, selectedBlockId],
+  );
+
+  const handleChangeProps = useCallback(
+    (next: BlockProps) => {
+      if (!activeSection || !selectedBlock) return;
+      updateSection(activeSection.id, (section) => ({
+        ...section,
+        blocks: section.blocks.map((block) =>
+          block.id === selectedBlock.id ? { ...block, props: next } : block,
+        ),
+      }));
+    },
+    [activeSection, selectedBlock, updateSection],
+  );
+
+  /**
+   * Phase 1 stand-in for server-side resolution. The editor resolves against the
+   * DESIGNER's own viewer context, which is why the same block can look
+   * different here and on the public page - and why the document itself carries
+   * neither tiles nor prices.
+   */
+  const resolveBlock = useCallback(
+    (block: Block) => {
+      // Bound to a local so the narrowing survives into the callbacks below -
+      // TypeScript re-widens `block.props` inside a nested closure.
+      const props = block.props;
+
+      if (props.kind === 'collection') {
+        const selection = selections[block.id];
+        if (!selection) return undefined;
+        const members = Array.from(
+          new Set([...selection.pinnedProductIds]),
+        ).filter((id) => !selection.excludedProductIds.includes(id));
+        const template = MOCK_TILE_TEMPLATES.find(
+          (candidate) => candidate.id === props.tileTemplateId,
+        );
+        return {
+          tiles: mockResolveCollection(members),
+          tileFields: template?.fields,
+        };
+      }
+
+      if (props.kind === 'bundle' && props.bundleId) {
+        return {
+          bundle:
+            props.bundleId === MOCK_UNAVAILABLE_BUNDLE.id
+              ? MOCK_UNAVAILABLE_BUNDLE
+              : MOCK_RESOLVED_BUNDLE,
+        };
+      }
+
+      return undefined;
+    },
+    [selections],
   );
 
   const handleAddSection = useCallback(() => {
@@ -453,6 +528,7 @@ export function PageEditor({ doc, onDocChange }: PageEditorProps) {
                   onSelectBlock={setSelectedBlockId}
                   onPlacementsChange={handlePlacementsChange}
                   onGrowBlock={handleGrowBlock}
+                  resolveBlock={resolveBlock}
                   onDeleteBlock={(blockId) => {
                     const block = activeSection.blocks.find((item) => item.id === blockId);
                     if (block) setPendingDelete(block);
@@ -463,6 +539,18 @@ export function PageEditor({ doc, onDocChange }: PageEditorProps) {
           </CardContent>
         </Card>
       </div>
+
+      <aside className="w-full shrink-0 lg:w-64">
+        <BlockInspector
+          block={mode === 'paper' ? null : selectedBlock}
+          selection={selectedBlock ? selections[selectedBlock.id] ?? EMPTY_SELECTION : EMPTY_SELECTION}
+          onChangeProps={handleChangeProps}
+          onChangeSelection={(next) => {
+            if (!selectedBlock) return;
+            setSelections((current) => ({ ...current, [selectedBlock.id]: next }));
+          }}
+        />
+      </aside>
 
       <ConfirmDeleteDialog
         open={Boolean(pendingDelete)}

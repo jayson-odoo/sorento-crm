@@ -187,6 +187,74 @@ export type TileField =
   | 'badges'
   | 'cta';
 
+/**
+ * A collection's resolved membership, as the renderer receives it.
+ *
+ * Resolution happens SERVER-side per viewer (AC-G2): the saved document holds
+ * only a `collectionId`, and what comes back here already reflects who is
+ * looking. `price` is a formatted string rather than a number because the
+ * server decides both the figure and whether the viewer may see one at all -
+ * `null` means "not for this reader", and there is no number in the payload to
+ * leak (AC-G7).
+ */
+export interface ResolvedTile {
+  productId: string;
+  productCode: string;
+  productName: string;
+  price: string | null;
+  invoicePrice: string | null;
+  imageUrl: string | null;
+  dimensions: string | null;
+  badges: string[];
+}
+
+export interface ResolvedCollection {
+  collectionId: string;
+  name: string | null;
+  tiles: ResolvedTile[];
+}
+
+export interface CollectionSummary {
+  id: string;
+  /** Page-scoped collections are unnamed until someone saves them to the library. */
+  name: string | null;
+  scope: 'page' | 'library';
+  memberCount: number;
+  updatedAt: string;
+}
+
+export interface BundleComponentView {
+  productId: string;
+  productCode: string;
+  productName: string;
+  quantity: number;
+  /** The bundle price allocated to this line. Sums exactly to the bundle price. */
+  allocated: string;
+  available: boolean;
+}
+
+/**
+ * A bundle as rendered: ONE priced heading with its components beneath (AC-F12).
+ * `available` is derived at read time from the components and is never stored
+ * (AC-F10) - a bundle with a discontinued part can never render as orderable.
+ */
+export interface ResolvedBundle {
+  id: string;
+  name: string;
+  price: string;
+  available: boolean;
+  unavailableReason: string | null;
+  components: BundleComponentView[];
+}
+
+export interface BundleSummary {
+  id: string;
+  name: string;
+  price: string;
+  componentCount: number;
+  available: boolean;
+}
+
 export const PAPER_SIZES_MM: Record<PaperSize, { width: number; height: number }> = {
   A4: { width: 210, height: 297 },
   A3: { width: 297, height: 420 },

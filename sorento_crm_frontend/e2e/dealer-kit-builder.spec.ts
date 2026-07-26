@@ -57,13 +57,15 @@ async function tap(page: Page, locator: ReturnType<Page['locator']>) {
 async function type(locator: ReturnType<Page['locator']>, value: string) {
   await expect(locator).toBeVisible({ timeout: 20_000 });
   await locator.evaluate((el, v) => {
-    const input = el as HTMLInputElement;
-    const setter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      'value',
-    )?.set;
-    setter?.call(input, v);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
+    const field = el as HTMLInputElement | HTMLTextAreaElement;
+    // The setter has to come from the element's OWN prototype. Calling the
+    // HTMLInputElement setter on a textarea throws "Illegal invocation".
+    const prototype =
+      field instanceof window.HTMLTextAreaElement
+        ? window.HTMLTextAreaElement.prototype
+        : window.HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(prototype, 'value')?.set?.call(field, v);
+    field.dispatchEvent(new Event('input', { bubbles: true }));
   }, value);
 }
 
@@ -284,6 +286,83 @@ test.describe('Dealer Kit page builder', () => {
 
     await tap(page, dialog.getByRole('button', { name: /^delete$/i }));
     await expect(page.getByText(name)).toHaveCount(0, { timeout: 20_000 });
+  });
+
+  test('editing a heading in the inspector changes what the canvas shows', async ({ page }) => {
+    await createPage(page, 'inspector');
+
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^heading$/i }));
+
+    // The block is selected on insert, so the inspector is already showing it.
+    const textarea = page.getByLabel('Block text');
+    await expect(textarea).toBeVisible({ timeout: 10_000 });
+    await type(textarea, 'ZZT Bathroom Range 2026');
+
+    await expect(page.getByText('ZZT Bathroom Range 2026').first()).toBeVisible({
+      timeout: 10_000,
+    });
+  });
+
+  test('picking products by hand renders tiles on the canvas', async ({ page }) => {
+    await createPage(page, 'collection');
+
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^products$/i }));
+
+    // Unbound, the block says so rather than showing a fake grid.
+    await expect(page.getByText(/no products chosen/i).first()).toBeVisible({ timeout: 10_000 });
+
+    await tap(page, page.getByRole('button', { name: /choose products/i }));
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible({ timeout: 10_000 });
+
+    await tapReal(page, dialog.getByRole('tab', { name: /by hand/i }));
+    await tap(page, dialog.getByRole('button', { name: /include undermount kitchen sink/i }));
+    await tap(page, dialog.getByRole('button', { name: /include pull-out kitchen mixer/i }));
+
+    await expect(dialog.locator('[data-dk-match-count]')).toHaveText(/2 products selected/i);
+    await tap(page, dialog.getByRole('button', { name: /use these products/i }));
+
+    // Tiles render for real once the binding resolves.
+    await expect(page.locator('[data-dk-tile-grid]')).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('[data-dk-tile]')).toHaveCount(2);
+  });
+
+  test('a discontinued product never becomes a tile', async ({ page }) => {
+    await createPage(page, 'discontinued');
+
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^products$/i }));
+    await tap(page, page.getByRole('button', { name: /choose products/i }));
+
+    const dialog = page.getByRole('dialog');
+    await tapReal(page, dialog.getByRole('tab', { name: /by hand/i }));
+    await tap(page, dialog.getByRole('button', { name: /include wall-mounted sink tap/i }));
+    await tap(page, dialog.getByRole('button', { name: /use these products/i }));
+
+    // Chosen, but discontinued — so it resolves out rather than rendering a
+    // dead tile a customer could try to order (AC-G4).
+    await expect(page.getByText(/no products to show/i).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.locator('[data-dk-tile]')).toHaveCount(0);
+  });
+
+  test('a bundle with a discontinued part cannot render as orderable', async ({ page }) => {
+    await createPage(page, 'bundle');
+
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^bundle$/i }));
+
+    await tapReal(page, page.getByRole('combobox', { name: 'Bundle' }));
+    await tap(page, page.getByRole('option', { name: /shower combo/i }));
+
+    await expect(page.locator('[data-dk-bundle-available="false"]')).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByText(/not currently available/i)).toBeVisible();
+    // One priced heading, components beneath (AC-F12).
+    await expect(page.getByRole('heading', { name: /shower combo/i })).toBeVisible();
+    await expect(page.getByText(/rain shower set/i)).toBeVisible();
   });
 
   test('a page the backend does not have shows an error, not an empty editor', async ({ page }) => {

@@ -3,7 +3,15 @@
 import { Image as ImageIcon, LayoutGrid, Package, Square } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import type { Block } from '@/lib/dealer-kit/types';
+import type {
+  Block,
+  ResolvedBundle,
+  ResolvedTile,
+  TileField,
+} from '@/lib/dealer-kit/types';
+import type { Breakpoint } from '@/lib/dealer-kit/deriveLayout';
+import { BundleCard } from './BundleCard';
+import { TileGrid } from './TileGrid';
 
 /**
  * How a block renders. Shared by the editor canvas and the public renderer, so
@@ -49,7 +57,29 @@ function BindingPlaceholder({
   );
 }
 
-export function BlockPreview({ block }: { block: Block }) {
+/**
+ * What a block's resolved bindings look like when they are available.
+ *
+ * Optional on purpose: the editor canvas resolves against a Designer's own
+ * viewer context, the public renderer resolves against the reader's, and a bare
+ * preview (a test, a thumbnail) passes nothing and gets placeholders. One
+ * component covers all three rather than three that drift.
+ */
+export interface ResolvedBinding {
+  tiles?: ResolvedTile[];
+  tileFields?: TileField[];
+  bundle?: ResolvedBundle;
+}
+
+export function BlockPreview({
+  block,
+  resolved,
+  breakpoint,
+}: {
+  block: Block;
+  resolved?: ResolvedBinding;
+  breakpoint?: Breakpoint;
+}) {
   const { props } = block;
 
   switch (props.kind) {
@@ -97,11 +127,27 @@ export function BlockPreview({ block }: { block: Block }) {
       );
     }
 
-    case 'collection':
+    case 'collection': {
+      // A resolved binding renders for real, INCLUDING when it resolved to
+      // nothing. "Chosen but everything filtered out" and "nothing chosen" are
+      // different situations and a Designer needs to be able to tell them
+      // apart - telling someone who just picked a discontinued product that
+      // they chose nothing sends them hunting for the wrong problem. Only an
+      // absent binding falls through to the placeholder.
+      if (resolved?.tiles !== undefined) {
+        return (
+          <TileGrid
+            tiles={resolved.tiles}
+            fields={resolved.tileFields ?? ['image', 'name', 'code', 'price']}
+            columns={props.columns[breakpoint ?? 'desktop']}
+          />
+        );
+      }
+
       return (
         <BindingPlaceholder
           icon={LayoutGrid}
-          label={props.collectionId ? 'Product collection' : 'No collection bound'}
+          label={props.collectionId ? 'Product collection' : 'No products chosen'}
           detail={
             props.collectionId
               ? `${props.columns.desktop} across on desktop`
@@ -110,8 +156,11 @@ export function BlockPreview({ block }: { block: Block }) {
           bound={Boolean(props.collectionId && props.tileTemplateId)}
         />
       );
+    }
 
-    case 'bundle':
+    case 'bundle': {
+      if (resolved?.bundle) return <BundleCard bundle={resolved.bundle} />;
+
       return (
         <BindingPlaceholder
           icon={Package}
@@ -124,6 +173,7 @@ export function BlockPreview({ block }: { block: Block }) {
           bound={Boolean(props.bundleId)}
         />
       );
+    }
 
     case 'artboard':
       return (

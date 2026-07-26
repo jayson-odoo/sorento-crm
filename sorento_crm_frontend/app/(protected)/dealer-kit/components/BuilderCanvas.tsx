@@ -17,6 +17,7 @@ import {
 import type { Block } from '@/lib/dealer-kit/types';
 
 import { BlockChrome } from './BlockChrome';
+import type { ResolvedBinding } from './BlockPreview';
 
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
@@ -74,6 +75,12 @@ export interface BuilderCanvasProps {
    * stale map and the second would silently wipe the first.
    */
   onGrowBlock: (blockId: string, rowSpan: number) => void;
+  /**
+   * Resolved bindings for a block, if it has any. The canvas does not resolve
+   * anything itself - resolution depends on who is viewing, which is the
+   * editor's business, not the grid's.
+   */
+  resolveBlock?: (block: Block) => ResolvedBinding | undefined;
   onDeleteBlock: (blockId: string) => void;
 }
 
@@ -136,6 +143,7 @@ export function BuilderCanvas({
   onSelectBlock,
   onPlacementsChange,
   onGrowBlock,
+  resolveBlock,
   onDeleteBlock,
 }: BuilderCanvasProps) {
   const columns = BREAKPOINT_COLUMNS[breakpoint];
@@ -262,6 +270,8 @@ export function BuilderCanvas({
                   onDelete={() => onDeleteBlock(block.id)}
                   onMeasure={handleMeasure}
                   rowSpan={placements[block.id]?.rowSpan}
+                  resolved={resolveBlock?.(block)}
+                  breakpoint={breakpoint}
                 />
               </div>
             ))}

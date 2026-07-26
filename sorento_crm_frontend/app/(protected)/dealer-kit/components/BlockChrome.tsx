@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { Block } from '@/lib/dealer-kit/types';
 
-import { BlockPreview } from './BlockPreview';
+import { BlockPreview, type ResolvedBinding } from './BlockPreview';
+import type { Breakpoint } from '@/lib/dealer-kit/deriveLayout';
 
 /**
  * Block types whose height is decided by their content rather than by the box.
@@ -34,6 +35,8 @@ export function BlockChrome({
   onDelete,
   onMeasure,
   rowSpan,
+  resolved,
+  breakpoint,
 }: {
   block: Block;
   isSelected: boolean;
@@ -42,6 +45,8 @@ export function BlockChrome({
   onMeasure?: (blockId: string, contentHeightPx: number) => void;
   /** Rows the grid currently allots. Re-reports when it changes so a reflow re-checks fit. */
   rowSpan?: number;
+  resolved?: ResolvedBinding;
+  breakpoint?: Breakpoint;
 }) {
   const headerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -67,7 +72,7 @@ export function BlockChrome({
     // `rowSpan` and `block.props` are deps on purpose: a ResizeObserver only
     // fires when the observed box itself changes, so after a neighbouring block
     // grows and the grid reflows, nothing would re-check this block's fit.
-  }, [block.id, block.props, rowSpan, onMeasure]);
+  }, [block.id, block.props, rowSpan, resolved, onMeasure]);
 
   return (
     <div
@@ -130,7 +135,7 @@ export function BlockChrome({
           height is meaningless, so they stretch and the Designer sizes them.
         */}
         <div ref={contentRef} className={cn(FLOWS_TO_CONTENT.has(block.type) ? 'h-auto' : 'h-full')}>
-          <BlockPreview block={block} />
+          <BlockPreview block={block} resolved={resolved} breakpoint={breakpoint} />
         </div>
       </div>
     </div>
