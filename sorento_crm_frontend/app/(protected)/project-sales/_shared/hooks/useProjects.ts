@@ -50,6 +50,7 @@ import {
   deletePurchaseOrderLine,
   listProjectSponsorships,
   getSponsorshipRollup,
+  getProjectDashboard,
   createLead,
   createParty,
   deleteLead,
@@ -1178,5 +1179,15 @@ export function useSponsorshipRollup(projectId: string | undefined) {
     queryKey: [SPONSORSHIPS_KEY, 'rollup', projectId],
     queryFn: () => getSponsorshipRollup(projectId as string),
     enabled: Boolean(projectId),
+  });
+}
+
+// ------------------------------------------------------------------- reporting
+
+export function useProjectDashboard() {
+  return useQuery({
+    queryKey: ['project-dashboard'],
+    queryFn: () => getProjectDashboard(),
+    staleTime: 60_000,
   });
 }

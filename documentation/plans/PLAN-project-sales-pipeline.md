@@ -3,9 +3,10 @@
 **Status:** **In build.** Drafted from grill session 2026-07-25, review rounds 1-2 applied
 (numbering / delivery lag / loss reasons made configurable; sponsorship flag pinned to
 `respond_contacts`; task management added and decided - see §7).
-Built: **S0, S1, S2, S2b, S2c, S3, S4** (see the slice list in §4 for what each one landed
-and what it discovered). Next: **S5** - forecast, staleness, worklist (UAC Groups H, I),
-which also owns the notification fan-out S3 and S4 currently only log.
+Built: **S0, S1, S2, S2b, S2c, S3, S4, S5a** (see the slice list in §4 for what each one
+landed and what it discovered). Next: **S5b** - staleness ladder, activity events, My
+Follow-ups (UAC Group H), which also owns the notification fan-out S3 and S4 currently only
+log.
 **Owner:** jayson
 **Slug:** project-sales-pipeline
 **Classification:** MODULE (`projects`), `public` schema, normal FKs, company-scoped.
@@ -254,9 +255,17 @@ sponsorship-to-PO conversion. → UAC Group F.
 | F32 | `contact_to_response_dict` is built by hand, so the new rollout flag reached the DB but never the FE -- the toggle would have rendered its default forever. | Added to the manual dict, pinned by a test. Same family as the `get_user` / `get_me` drop-fields bug already in the lessons list. |
 | F33 | `purchase_requests` has no `company_id`, so the conversion metric could not be scoped the way every other project number is. | Scoped through `projects` instead, which is the company that matters anyway; conversion is counted per PROJECT, not per form, so two sponsorships on one development that yields one PO is one conversion rather than two. |
 
-**S5 — Forecast, staleness, worklist.** Three-number forecast, per-status probability,
-configurable delivery lag with per-project override, management dashboard, staleness
-automation + ladder + takeover requests, My Follow-ups. → UAC Groups H, I.
+**S5 — Forecast, staleness, worklist.** Split in two, because the forecast maths and the
+staleness ladder share nothing but a slice number: the first is a read model over data that
+already exists, the second is scheduling.
+
+- **S5a — DONE.** Three-number forecast, per-status probability, configurable delivery lag
+  with per-project override, management dashboard (Forecast &amp; Reports). Notes in §5d.
+  → UAC Group I.
+- **S5b — next.** Staleness automation + ladder + takeover requests, My Follow-ups, and the
+  notification fan-out that S3 and S4 currently only log. → UAC Group H.
+
+**S6 — MCP read tools; then PR + Complaint linkage.** → UAC Groups K, L.
 
 **S6 — MCP read tools; then PR + Complaint linkage.** → UAC Groups K, L.
 
@@ -403,6 +412,52 @@ same morning. `false` by default is what makes the migration deployable with no 
 **Deferred, and named in the UAC:** the ~28 pre-link sponsorship rows are linked BY HAND
 (AC-F6). No fuzzy backfill writes a link nobody checked -- a wrong link is worse than no
 link, because the rollup then reports a number somebody will act on.
+
+## 5d. Forecast and reporting (slice S5a)
+
+No new tables. The forecast is a **read model** over quotations, POs and the funnel, plus
+three configuration dials:
+
+```
+statuses.win_probability      NUMERIC(5,2) NULL   -- AC-I2, NULL means "nobody decided"
+statuses.stale_after_days     INTEGER NULL        -- AC-H4, consumed by S5b
+system_settings.project_delivery_lag_months  INTEGER NOT NULL DEFAULT 30   -- AC-I3
+```
+
+**Three numbers, and the separation lives in the LAYOUT, not just the data (AC-I1).**
+Committed stands alone and is labelled as banked. Pipeline and Weighted share a visually
+distinct dashed band marked "Speculative / Not revenue" (AC-I2a). There is **no total field
+in the response schema and no total on the page**, deliberately: a single figure mixing a
+signed PO with a 10%-probability rumour is precisely the number this module exists to stop
+producing. A vitest asserts the absence, including the arithmetic sum of the fixture, so a
+future "helpful" total card fails the suite rather than shipping.
+
+**Why NULL rather than a default probability.** An unconfigured rung has no opinion, and
+inventing 50% puts a number in front of management that nobody chose. A status with no
+probability contributes zero to Weighted. The seeder does supply a **starting ladder**
+(10/25/40/60/75/100, Lost and Dormant a real 0) because a Weighted column that reads zero on
+day one is not evaluable, but it fills a NULL only and never overwrites: any value at all,
+including a deliberate 0, means somebody expressed an opinion. `ensure_win_probabilities` is
+its own idempotent step for the same reason `ensure_po_received_edges` is - the funnel seeder
+is wholesale-guarded and would never reach an install that already has its graph.
+
+**Undated money is reported, not dropped.** A project with neither a launch date nor an
+explicit delivery window lands in an `undated` band that the page renders as a "No date yet"
+row. Dropping it would make the year buckets disagree with the headline totals, and the first
+person who adds up the columns stops trusting the report. Same instinct as `rate: null`
+instead of `0%` wherever nothing has been decided yet.
+
+**The assumption is printed on the page.** "Launch date plus 30 months, unless a project
+states its own window" renders from the live setting, so a forecast nobody can interrogate
+does not get argued with in a meeting.
+
+### S5a findings (browser and test)
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| F34 | The seeder left every `win_probability` NULL, so Weighted read RM 0.00 on a fresh install and the column looked broken rather than unconfigured. | Seeded starting ladder, NULL-only backfill, three tests: the ladder climbs, a tuned 0 survives reseeding, and an existing graph gets backfilled. |
+| F35 | A forecast test asserted "no probability contributes nothing" by relying on the seeder leaving NULLs - true until F34, then silently testing the wrong thing. | The test now ARRANGES the NULL explicitly. The behaviour is unchanged; what changed is that the test states its own precondition instead of inheriting it. |
+| F36 | `test_the_funnel_is_not_fully_connected` still asserted Identified cannot reach PO Received - an intent S4's F29 deliberately overruled, so it had been red since S4. | Rewritten around what the funnel actually guarantees: the forward ladder is one rung at a time (no skipping to Quoted/Tendering/Specified), and only the three ENDINGS short-circuit it. Asserted as an exact set, so a future stray edge fails. |
 
 ## 6a. Grill findings and resolutions (round 1, 2026-07-25)
 

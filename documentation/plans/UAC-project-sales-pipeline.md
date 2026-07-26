@@ -314,6 +314,15 @@ Still open in Group F:
 - **AC-I5** Conversion rate is computed from quotation outcomes rolled to projects, so a
   partial win (house units won, common area lost) is not counted as a full win.
 
+**Status after S5a.** AC-I1, AC-I2, AC-I2a, AC-I3 and AC-I5 ship in full on Project Sales →
+Forecast &amp; Reports. AC-I4 ships **partially**: projects registered, potential value,
+conversion rate, loss reasons, delivery-by-year, salesperson performance and the
+sponsorship-investment / sponsorship-to-PO pair are all on the page. **Brand intelligence by
+location and budget band, and architect intelligence, are NOT built** - both need location and
+budget-band vocabularies that today are free text on the sales profile, so charting them now
+would report groupings nobody agreed on. Deferred with the rest of the S6 reporting work, and
+the vocabulary decision belongs to the client, not to us.
+
 ## Group J — RBAC
 
 - **AC-J1** Permission slugs: `projects.projects.view` / `.create` / `.edit` / `.delete` /

@@ -623,6 +623,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'projects.projects.view',
       },
       {
+        title: 'Forecast & Reports',
+        path: '/project-sales/reports',
+        permission: 'projects.projects.view',
+      },
+      {
         title: 'Parties',
         path: '/project-sales/parties',
         permission: 'projects.parties.view',
@@ -1512,6 +1517,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'My Tasks',
         path: '/project-sales/my-tasks',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Forecast & Reports',
+        path: '/project-sales/reports',
         permission: 'projects.projects.view',
       },
       {

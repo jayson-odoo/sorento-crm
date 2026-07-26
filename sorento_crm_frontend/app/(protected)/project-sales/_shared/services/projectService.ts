@@ -23,6 +23,7 @@ import type {
   LeadReasonOption,
   PriceFloorRule,
   PriceFloorRuleBody,
+  ProjectDashboard,
   ProjectSponsorship,
   SponsorshipRollup,
   ProjectSample,
@@ -1007,5 +1008,12 @@ export async function getSponsorshipRollup(projectId: string): Promise<Sponsorsh
   const response = await apiFetch(`${BASE}/projects/${projectId}/sponsorships/rollup`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the sponsorship rollup'));
+  return response.json();
+}
+
+export async function getProjectDashboard(): Promise<ProjectDashboard> {
+  const response = await apiFetch(`${BASE}/reports/dashboard`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the dashboard'));
   return response.json();
 }

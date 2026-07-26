@@ -38,7 +38,7 @@ PROJECT_LEAD_ENTITY = "project_lead"
 # project with a PO on one scope and a live quotation on another does not read as
 # finished (grill finding G1).
 DEFAULT_FUNNEL = (
-    # (key, label, initial, terminal, stale_after_days)
+    # (key, label, initial, terminal)
     ("identified", "Identified", True, False),
     ("registered", "Registered", False, False),
     ("specified", "Specified", False, False),
@@ -48,6 +48,30 @@ DEFAULT_FUNNEL = (
     ("lost", "Lost", False, True),
     ("dormant", "Dormant", False, True),
 )
+
+# Starting win probabilities per rung (AC-I2), used only to FILL A NULL. They are a
+# starting vocabulary for the Weighted number, exactly like the loss reasons below: the
+# sales manager tunes them from the status editor once they have their own history, and
+# the seeder never argues with that afterwards.
+#
+# Chosen to climb, because that is the only property a forecast reader relies on. The
+# absolute values matter far less than the ordering: nobody can defend "Specified is 40%"
+# on day one, but everybody agrees Specified beats Registered.
+#
+# Terminal rungs get a real 0 rather than a NULL. Lost is not an unknown, it is a decided
+# ending, and Dormant is a pursuit nobody is working. PO Received keeps 100 for the same
+# reason: it is honest even though a project that far along contributes through Committed
+# rather than Weighted.
+DEFAULT_WIN_PROBABILITIES = {
+    "identified": 10,
+    "registered": 25,
+    "specified": 40,
+    "quoted": 60,
+    "tendering": 75,
+    "po_received": 100,
+    "lost": 0,
+    "dormant": 0,
+}
 
 # Forward edges, plus Lost/Dormant reachable from every live rung. Deliberately NOT a
 # fully-connected graph: the point of a configurable funnel is that illegal moves are
@@ -270,6 +294,36 @@ def seed_default_funnel(db: Session) -> int:
             )
     db.flush()
     return created
+
+
+def ensure_win_probabilities(db: Session) -> int:
+    """Fill ``statuses.win_probability`` where it is NULL, on the default project graph.
+
+    Its own step for the same reason ``ensure_po_received_edges`` is: ``seed_default_funnel``
+    is wholesale-guarded, so an install that already has its funnel would never receive the
+    probabilities the Weighted number needs and the report would read zero forever.
+
+    NULL-only, never overwrite. NULL means nobody has expressed an opinion; any value means
+    somebody has, including a deliberate 0 on a rung the team does not trust. Re-asserting
+    the default on boot would revert that on every restart, and nobody connects the two
+    events. Forked (scope_id NOT NULL) graphs are left alone -- a template that tuned its own
+    funnel is making a choice.
+    """
+    rows = (
+        db.query(Status)
+        .filter(
+            Status.entity_type == PROJECT_ENTITY,
+            Status.scope_id.is_(None),
+            Status.win_probability.is_(None),
+            Status.key.in_(list(DEFAULT_WIN_PROBABILITIES)),
+        )
+        .all()
+    )
+    for row in rows:
+        row.win_probability = DEFAULT_WIN_PROBABILITIES[row.key]
+    if rows:
+        db.flush()
+    return len(rows)
 
 
 def ensure_po_received_edges(db: Session) -> int:
@@ -663,6 +717,7 @@ def run(db: Session, company_id: Optional[str] = None) -> Dict[str, int]:
         "lead_reasons": 0,
         "quotation_loss_reasons": 0,
         "po_edges": 0,
+        "win_probabilities": 0,
         "types": 0,
     }
     summary["numbering"] = 1 if seed_numbering_rule(db) else 0
@@ -670,6 +725,7 @@ def run(db: Session, company_id: Optional[str] = None) -> Dict[str, int]:
     # Separate from the funnel seeder because that one is wholesale-guarded: an install
     # seeded before AC-F10 existed needs these edges added to a graph it already has.
     summary["po_edges"] = ensure_po_received_edges(db)
+    summary["win_probabilities"] = ensure_win_probabilities(db)
     summary["task_statuses"] = seed_default_task_graph(db)
     summary["lead_numbering"] = 1 if seed_lead_numbering_rule(db) else 0
     summary["lead_statuses"] = seed_default_lead_graph(db)

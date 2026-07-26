@@ -44,6 +44,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
 )
@@ -102,6 +103,15 @@ class Status(Base):
     is_system = Column(Boolean, nullable=False, server_default="false", default=False)
 
     # Canvas coordinates for the graph editor. NULL = auto-layout.
+    # AC-I2: how likely a record at this rung is to land, as a percentage. On the STATUS
+    # so management tunes the forecast with no deploy. Nullable and NOT defaulted: an
+    # unconfigured rung has no opinion, and inventing 50% would put a number in front of
+    # management that nobody chose.
+    win_probability = Column(Numeric(5, 2), nullable=True)
+    # AC-H4: how long a record may sit at this rung before it is stale. Per status, because
+    # a Registered project may fairly sit 30 days while a Negotiating one may not sit 7.
+    stale_after_days = Column(Integer, nullable=True)
+
     position_x = Column(Float, nullable=True)
     position_y = Column(Float, nullable=True)
 

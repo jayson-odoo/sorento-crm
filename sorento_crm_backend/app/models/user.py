@@ -249,6 +249,13 @@ class SystemSetting(Base):
     # because a missed duplicate is silent, blocking is strict because a false block
     # fired often enough teaches users to ignore the warning. Calibrated on the live
     # title corpus -- see app/services/project_clash_service.py for the measurements.
+    # AC-I3: months from launch date to delivery, used to bucket the forecast by year.
+    # Seeded at 30 from the client's own worked example. A setting rather than a constant
+    # because it is a market observation, and it will change before the code does.
+    project_delivery_lag_months = Column(
+        Integer, nullable=False, server_default="30", default=30
+    )
+
     project_clash_surface_threshold = Column(
         Numeric(4, 3), nullable=False, server_default="0.550", default=0.550
     )

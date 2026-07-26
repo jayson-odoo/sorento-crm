@@ -1157,3 +1157,83 @@ class SponsorshipConversionResponse(BaseModel):
     converted_projects: int = 0
     rate: Optional[Decimal] = None
     sponsored_spend: Decimal = Decimal("0")
+
+
+# ------------------------------------------------------- S5a forecast (Group I)
+
+
+class ForecastYearRow(BaseModel):
+    """One delivery year. The three numbers stay in three fields (AC-I2a) so a UI cannot
+    stack a speculative figure on top of banked revenue in one column."""
+
+    year: int
+    pipeline: Decimal = Decimal("0")
+    weighted: Decimal = Decimal("0")
+    committed: Decimal = Decimal("0")
+
+
+class ForecastBandTotals(BaseModel):
+    pipeline: Decimal = Decimal("0")
+    weighted: Decimal = Decimal("0")
+    committed: Decimal = Decimal("0")
+
+
+class ProjectForecastResponse(BaseModel):
+    """AC-I1: three numbers, never blended.
+
+    There is deliberately no `total` field. A single number that mixes a banked PO with a
+    10%-probability rumour is the number every spreadsheet produces and nobody can act on,
+    and the fastest way to stop it being reported is to not compute it.
+    """
+
+    pipeline: Decimal = Decimal("0")
+    weighted: Decimal = Decimal("0")
+    committed: Decimal = Decimal("0")
+    project_count: int = 0
+    by_year: List[ForecastYearRow] = Field(default_factory=list)
+    undated: ForecastBandTotals = Field(
+        default_factory=ForecastBandTotals,
+        description=(
+            "Projects with no derivable delivery year. Reported rather than dropped: "
+            "dropped rows make the buckets disagree with the totals."
+        ),
+    )
+
+
+class ConversionResponse(BaseModel):
+    won: int = 0
+    lost: int = 0
+    decided: int = 0
+    open: int = 0
+    rate: Optional[Decimal] = Field(
+        None, description="Null with nothing decided. 0% would claim we lose everything."
+    )
+
+
+class LossReasonCount(BaseModel):
+    reason: str
+    label: str
+    count: int
+
+
+class SalespersonRow(BaseModel):
+    owner_user_id: Optional[str] = None
+    owner_name: Optional[str] = None
+    project_count: int = 0
+    pipeline: Decimal = Decimal("0")
+    weighted: Decimal = Decimal("0")
+    committed: Decimal = Decimal("0")
+
+
+class ProjectDashboardResponse(BaseModel):
+    """Everything AC-I4 asks for in one read, because the dashboard shows it in one screen
+    and four round trips would render it in four stages."""
+
+    forecast: ProjectForecastResponse
+    conversion: ConversionResponse
+    loss_reasons: List[LossReasonCount] = Field(default_factory=list)
+    by_salesperson: List[SalespersonRow] = Field(default_factory=list)
+    sponsorship: SponsorshipConversionResponse = Field(
+        default_factory=SponsorshipConversionResponse
+    )
+    delivery_lag_months: int = 30

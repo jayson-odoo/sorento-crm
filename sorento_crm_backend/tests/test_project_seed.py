@@ -77,8 +77,15 @@ def test_every_live_rung_can_be_lost():
 def test_the_funnel_is_not_fully_connected():
     """A configurable funnel where every move is legal is decorative.
 
-    Registering straight to PO Received would mean nothing was ever specified or
-    quoted, and the pipeline report would be fiction.
+    The forward path is one rung at a time: Identified cannot claim to be Quoted or
+    Tendering without having been Specified, because a pipeline report built on skipped
+    rungs is fiction.
+
+    The three ENDINGS are the deliberate exception and are reachable from every live rung.
+    Lost and Dormant, because a pursuit dies whenever it dies. PO Received, because AC-F10
+    records the arrival of a real customer PO wherever the project actually sits, and the
+    projects whose funnel position was never maintained are exactly the ones that would
+    otherwise silently miss the auto-advance.
     """
     with blank_session() as db:
         company_id = _sorento(db)
@@ -96,7 +103,17 @@ def test_the_funnel_is_not_fully_connected():
                 db, "project", by_key["identified"].id
             )
         }
-        assert by_key["po_received"].id not in from_identified
+        assert by_key["quoted"].id not in from_identified
+        assert by_key["tendering"].id not in from_identified
+        assert by_key["specified"].id not in from_identified
+        # The endings, and only the endings, short-circuit the ladder.
+        assert by_key["po_received"].id in from_identified
+        assert by_key["lost"].id in from_identified
+        assert by_key["dormant"].id in from_identified
+        assert from_identified == {
+            by_key[key].id
+            for key in ("registered", "po_received", "lost", "dormant")
+        }
 
 
 def test_seeding_twice_changes_nothing():
@@ -314,3 +331,95 @@ def test_seeding_the_task_graph_twice_changes_nothing():
         before = counts()
         project_seed_service.run(db, company_id=company_id)
         assert counts() == before
+
+
+def test_the_seeded_funnel_carries_win_probabilities():
+    """AC-I2. Weighted pipeline is unusable while every rung is NULL.
+
+    A fresh install must produce a Weighted number without an admin visiting the status
+    editor first, and the numbers must climb: a Tendering project is more likely to land
+    than an Identified one, and a forecast that says otherwise is worse than none.
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+
+        by_key = {
+            s.key: s.win_probability
+            for s in db.query(Status)
+            .filter(Status.entity_type == "project", Status.scope_id.is_(None))
+            .all()
+        }
+        for key in ("identified", "registered", "specified", "quoted", "tendering"):
+            assert by_key[key] is not None, f"{key} has no probability"
+        ordered = [
+            by_key["identified"],
+            by_key["registered"],
+            by_key["specified"],
+            by_key["quoted"],
+            by_key["tendering"],
+        ]
+        assert ordered == sorted(ordered)
+        assert all(0 <= int(p) <= 100 for p in ordered)
+        # Lost is a decided ending, so its probability is a real 0, not "unknown".
+        assert int(by_key["lost"]) == 0
+
+
+def test_a_tuned_probability_survives_reseeding():
+    """The backfill fills NULL only.
+
+    A NULL means nobody has expressed an opinion; any value at all means somebody has,
+    including a deliberate 0 on a rung the team does not trust. Re-asserting the default
+    on boot would silently overwrite that on every restart.
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+
+        quoted = (
+            db.query(Status)
+            .filter(
+                Status.entity_type == "project",
+                Status.scope_id.is_(None),
+                Status.key == "quoted",
+            )
+            .first()
+        )
+        quoted.win_probability = 0
+        db.flush()
+
+        project_seed_service.run(db, company_id=company_id)
+        db.refresh(quoted)
+        assert int(quoted.win_probability) == 0
+
+
+def test_probabilities_are_backfilled_onto_an_existing_graph():
+    """An install seeded before AC-I2 existed already HAS its funnel.
+
+    The wholesale-guarded funnel seeder skips such an install entirely, so the backfill
+    has to be its own idempotent step -- the same reason `ensure_po_received_edges` is.
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+
+        db.query(Status).filter(
+            Status.entity_type == "project", Status.scope_id.is_(None)
+        ).update({Status.win_probability: None}, synchronize_session=False)
+        db.flush()
+
+        filled = project_seed_service.ensure_win_probabilities(db)
+        assert filled >= 6
+
+        tendering = (
+            db.query(Status)
+            .filter(
+                Status.entity_type == "project",
+                Status.scope_id.is_(None),
+                Status.key == "tendering",
+            )
+            .first()
+        )
+        assert tendering.win_probability is not None
+        # Second call is a no-op, so boot number two does not report phantom work.
+        assert project_seed_service.ensure_win_probabilities(db) == 0

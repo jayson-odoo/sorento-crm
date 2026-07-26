@@ -816,3 +816,62 @@ export interface SponsorshipRollup {
   form_count: number;
   by_year: SponsorshipYearTotal[];
 }
+
+/**
+ * S5a. Three numbers, never blended (AC-I1). There is no `total` field on purpose: a single
+ * figure mixing a banked PO with a 10%-probability rumour is the number every spreadsheet
+ * produces and nobody can act on.
+ */
+export interface ForecastBand {
+  pipeline: string;
+  weighted: string;
+  committed: string;
+}
+
+export interface ForecastYearRow extends ForecastBand {
+  year: number;
+}
+
+export interface ProjectForecast extends ForecastBand {
+  project_count: number;
+  by_year: ForecastYearRow[];
+  /** Projects with no derivable delivery year: reported, never dropped. */
+  undated: ForecastBand;
+}
+
+export interface ProjectConversion {
+  won: number;
+  lost: number;
+  decided: number;
+  open: number;
+  /** Null with nothing decided. 0% would claim we lose everything. */
+  rate?: string | null;
+}
+
+export interface LossReasonCount {
+  reason: string;
+  label: string;
+  count: number;
+}
+
+export interface SalespersonRow extends ForecastBand {
+  owner_user_id?: string | null;
+  owner_name?: string | null;
+  project_count: number;
+}
+
+export interface SponsorshipConversion {
+  sponsored_projects: number;
+  converted_projects: number;
+  rate?: string | null;
+  sponsored_spend: string;
+}
+
+export interface ProjectDashboard {
+  forecast: ProjectForecast;
+  conversion: ProjectConversion;
+  loss_reasons: LossReasonCount[];
+  by_salesperson: SalespersonRow[];
+  sponsorship: SponsorshipConversion;
+  delivery_lag_months: number;
+}

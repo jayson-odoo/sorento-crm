@@ -2,6 +2,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.projects import (
+    forecast,
     leads,
     parties,
     projects,
@@ -15,6 +16,9 @@ router = APIRouter()
 
 # Config first: /config/types and /config/templates would otherwise be captured by
 # the /{project_id} path in the projects router.
+# Reports before the projects router for the same reason config is: /reports/forecast is a
+# literal segment that /projects/{project_id} must not capture.
+router.include_router(forecast.router, tags=["project-reports"])
 router.include_router(types.router, prefix="/config", tags=["project-config"])
 # Tasks mount at the module root because they span three shapes: nested under a
 # project, the cross-project /my-tasks worklist, and template checklist admin. Before
