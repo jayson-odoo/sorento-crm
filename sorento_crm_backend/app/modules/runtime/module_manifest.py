@@ -95,6 +95,11 @@ _RAW: Dict[str, dict] = {
         "description": "Tokenized public pages for shared entities.",
         "dependencies": ["base"],
     },
+    "dealer_kit": {
+        "display_name": "Dealer Sales Kit",
+        "description": "Catalogue page builder, product collections and brochure export.",
+        "dependencies": ["base", "product", "resources"],
+    },
     "scm": {
         "display_name": "Supply Chain & Inventory Optimisation",
         "description": "Reorder engine, net-position views, demand classification, supplier performance.",

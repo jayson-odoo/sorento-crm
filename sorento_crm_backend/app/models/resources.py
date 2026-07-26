@@ -1,5 +1,5 @@
 """Resource management models."""
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Index, Integer, String, Text, event
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, ForeignKey, Index, Integer, String, Text, event
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -46,6 +46,12 @@ class AttachmentType(Base):
     # may download without further gating. crm_resource_attachments_list is pinned
     # to these via `direct_access_only`.
     is_direct_access = Column(Boolean, default=False, nullable=False, server_default="false")
+    # Badge artwork for this document type. A product renders the badge because
+    # it HOLDS a document of this type, so the mark is a claim about the product
+    # and is never placed by hand.
+    certification_logo_attachment_id = Column(
+        UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     attachments = relationship("Attachment", back_populates="attachment_type")
@@ -81,6 +87,9 @@ class Attachment(Base, CompanyScopedMixin):
         "uploaded_by",
         "is_deleted",
         "deleted_by",
+        # Certification expiry. Audited on purpose: letting an expiry change go
+        # unrecorded turns a compliance question into an unanswerable one.
+        "valid_until",
     ]
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -98,6 +107,10 @@ class Attachment(Base, CompanyScopedMixin):
     entity_id = Column(UUID(as_uuid=False), nullable=True)
     uploaded_by = Column(UUID(as_uuid=False), nullable=True)
     uploaded_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    # Certification expiry. Lives on the DOCUMENT, not on each product link, so
+    # one edit updates every product holding it - and an expired certificate
+    # stops rendering its badge everywhere at once (AC-E5, AC-E8).
+    valid_until = Column(Date, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     is_deleted = Column(Boolean, default=False, nullable=False)
     deleted_at = Column(DateTime(timezone=False), nullable=True)

@@ -67,6 +67,16 @@ from app.models.email_template import EmailTemplate
 from app.models.automation import Automation, AutomationRun
 from app.models.impersonation import ImpersonationSession, ContactImpersonationSession
 from app.models.email_outbox import EmailOutbox, EmailEventConfig
+from app.models.dealer_kit import (
+    Page,
+    PageVersion,
+    PageLabel,
+    TileTemplate,
+    Asset,
+    Collection,
+    Bundle,
+    BundleComponent,
+)
 from app.models.scm import (
     ReorderPolicy,
     ItemClassification,
@@ -242,6 +252,15 @@ __all__ = [
     "MarketSignal",
     "ScmAnalyticsRun",
     "MarketResearchRun",
+    # Dealer Kit (schema: dealer_kit)
+    "Page",
+    "PageVersion",
+    "PageLabel",
+    "TileTemplate",
+    "Asset",
+    "Collection",
+    "Bundle",
+    "BundleComponent",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy
