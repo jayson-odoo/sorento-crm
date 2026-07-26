@@ -275,14 +275,15 @@ export interface SalesOrderLine {
   /** Stamped by create-DO-from-SO (soft link, no hard FK). */
   qty_delivered: number;
   uom: string;
-  // AutoCount mirror pricing (read-only) — null on native/recommendation lines.
-  unit_price: number | null;
-  discount_amt: number | null;
-  tax_rate: number | null;
-  tax_amt: number | null;
-  sub_total: number | null;
-  delivery_date: string | null;
-  tax_code: string | null;
+  // AutoCount mirror pricing (read-only) — null on native lines, absent on mock
+  // fixtures. Optional so both compile.
+  unit_price?: number | null;
+  discount_amt?: number | null;
+  tax_rate?: number | null;
+  tax_amt?: number | null;
+  sub_total?: number | null;
+  delivery_date?: string | null;
+  tax_code?: string | null;
 }
 
 export interface SalesOrder {
@@ -351,10 +352,11 @@ export interface PurchaseOrderLine {
   qty_ordered: number;
   qty_received: number;
   uom: string;
-  // AutoCount mirror pricing (read-only) — null on native/recommendation lines.
-  unit_cost: number | null;
-  description: string | null;
-  sub_total: number | null;
+  // AutoCount mirror pricing (read-only) — null on native/recommendation lines,
+  // absent on mock fixtures. Optional so both compile.
+  unit_cost?: number | null;
+  description?: string | null;
+  sub_total?: number | null;
 }
 
 export interface PurchaseOrder {
