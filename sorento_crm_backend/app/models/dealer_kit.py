@@ -68,7 +68,6 @@ class Page(Base, CompanyScopedMixin):
     __tablename__ = "page"
     __table_args__ = (
         UniqueConstraint("company_id", "slug", name="uq_dealer_kit_page_company_slug"),
-        Index("ix_dealer_kit_page_company_id", "company_id"),
         {"schema": SCHEMA},
     )
 
@@ -163,7 +162,6 @@ class TileTemplate(Base, CompanyScopedMixin):
 
     __tablename__ = "tile_template"
     __table_args__ = (
-        Index("ix_dealer_kit_tile_template_company_id", "company_id"),
         {"schema": SCHEMA},
     )
 
@@ -188,7 +186,6 @@ class Asset(Base, CompanyScopedMixin):
 
     __tablename__ = "asset"
     __table_args__ = (
-        Index("ix_dealer_kit_asset_company_id", "company_id"),
         Index("ix_dealer_kit_asset_kind", "kind"),
         {"schema": SCHEMA},
     )
@@ -217,7 +214,6 @@ class Collection(Base, CompanyScopedMixin):
 
     __tablename__ = "collection"
     __table_args__ = (
-        Index("ix_dealer_kit_collection_company_id", "company_id"),
         Index("ix_dealer_kit_collection_page_id", "page_id"),
         {"schema": SCHEMA},
     )
@@ -253,7 +249,6 @@ class Bundle(Base, CompanyScopedMixin):
 
     __tablename__ = "bundle"
     __table_args__ = (
-        Index("ix_dealer_kit_bundle_company_id", "company_id"),
         {"schema": SCHEMA},
     )
 

@@ -54,7 +54,20 @@ class AttachmentType(Base):
     )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
-    attachments = relationship("Attachment", back_populates="attachment_type")
+    # Two FK paths now link these tables: attachments.attachment_type_id (a file
+    # OF this type) and attachment_types.certification_logo_attachment_id (this
+    # type's badge artwork). Both sides must name the column they mean, or
+    # SQLAlchemy cannot pick a join.
+    attachments = relationship(
+        "Attachment",
+        back_populates="attachment_type",
+        foreign_keys="Attachment.attachment_type_id",
+    )
+    certification_logo = relationship(
+        "Attachment",
+        foreign_keys=[certification_logo_attachment_id],
+        viewonly=True,
+    )
 
 
 class Attachment(Base, CompanyScopedMixin):
@@ -140,7 +153,11 @@ class Attachment(Base, CompanyScopedMixin):
     # coalesce per-attachment n8n callbacks into a single outbox email.
     upload_batch_id = Column(String(36), nullable=True)
 
-    attachment_type = relationship("AttachmentType", back_populates="attachments")
+    attachment_type = relationship(
+        "AttachmentType",
+        back_populates="attachments",
+        foreign_keys=[attachment_type_id],
+    )
     directory = relationship("AttachmentDirectory", back_populates="attachments")
 
     __table_args__ = (

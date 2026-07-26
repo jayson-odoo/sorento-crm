@@ -3,7 +3,6 @@
 import { Image as ImageIcon, LayoutGrid, Package, Square } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { MOCK_ASSETS, MOCK_TILE_TEMPLATES } from '../__mocks__/fixtures';
 import type { Block } from '@/lib/dealer-kit/types';
 
 /**
@@ -84,50 +83,33 @@ export function BlockPreview({ block }: { block: Block }) {
 
     case 'image':
     case 'asset': {
-      const asset = MOCK_ASSETS.find((candidate) => candidate.id === props.assetId);
-
-      if (!asset) {
-        return (
-          <BindingPlaceholder
-            icon={ImageIcon}
-            label="No image chosen"
-            detail="Pick one from the asset library"
-            bound={false}
-          />
-        );
-      }
-
+      // An asset id resolves to a URL through the asset library, which is a
+      // later slice. Until it exists this renders as UNRESOLVED rather than
+      // reaching for a placeholder image - a stand-in picture would look like a
+      // working binding and hide the fact that nothing is wired yet.
       return (
-        // eslint-disable-next-line @next/next/no-img-element -- fixture URL in the Phase 1 prototype
-        <img
-          src={asset.url}
-          alt={props.alt || asset.name}
-          className={cn(
-            'h-full w-full rounded',
-            props.fit === 'contain' ? 'object-contain' : 'object-cover',
-          )}
+        <BindingPlaceholder
+          icon={ImageIcon}
+          label={props.assetId ? 'Image' : 'No image chosen'}
+          detail={props.assetId ? 'Resolved from the asset library' : 'Pick one from the asset library'}
+          bound={Boolean(props.assetId)}
         />
       );
     }
 
-    case 'collection': {
-      const template = MOCK_TILE_TEMPLATES.find(
-        (candidate) => candidate.id === props.tileTemplateId,
-      );
-
+    case 'collection':
       return (
         <BindingPlaceholder
           icon={LayoutGrid}
           label={props.collectionId ? 'Product collection' : 'No collection bound'}
           detail={
             props.collectionId
-              ? `${template?.name ?? 'No tile design'} · ${props.columns.desktop} across`
+              ? `${props.columns.desktop} across on desktop`
               : 'Choose the products this block shows'
           }
           bound={Boolean(props.collectionId && props.tileTemplateId)}
         />
       );
-    }
 
     case 'bundle':
       return (

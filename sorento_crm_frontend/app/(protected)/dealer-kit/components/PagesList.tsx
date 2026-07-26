@@ -27,11 +27,13 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { listPages } from '../services/dealerKitService';
+import { NewPageDialog } from './NewPageDialog';
 import type { PageSummary } from '@/lib/dealer-kit/types';
 
 export function PagesList() {
   const router = useRouter();
   const [search, setSearch] = useState('');
+  const [newOpen, setNewOpen] = useState(false);
   const [sorting, setSorting] = useState<SortingState>([]);
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -167,7 +169,7 @@ export function PagesList() {
               : 'A page is one publishable catalogue. Create one to start laying out sections and binding products to it.'}
           </p>
           {!search && (
-            <Button className="mt-4" size="sm">
+            <Button className="mt-4" size="sm" onClick={() => setNewOpen(true)}>
               <Plus className="size-4" />
               New page
             </Button>
@@ -188,7 +190,7 @@ export function PagesList() {
                 aria-label="Search pages"
               />
             </div>
-            <Button size="sm" className="shrink-0">
+            <Button size="sm" className="shrink-0" onClick={() => setNewOpen(true)}>
               <Plus className="size-4" />
               New page
             </Button>
@@ -208,6 +210,8 @@ export function PagesList() {
           <DataGridPagination />
         </CardFooter>
       </Card>
+
+      <NewPageDialog open={newOpen} onOpenChange={setNewOpen} />
     </DataGrid>
   );
 }

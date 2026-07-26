@@ -55,8 +55,13 @@ _PERMS = [
 
 # Existing roles that must not silently lose access to a screen they should see
 # (PRINCIPLES DoD #3). Marketing gets the authoring set; admins get everything.
+# "superadmin" is the canonical constant (UserPermissionService.SUPERADMIN_ROLE_SLUG)
+# and is listed for parity with the scm migration; it grants only if such a row
+# exists. The marketing slugs are the REAL ones in this system - there is no bare
+# "marketing" role, and naming one would have silently granted nothing, which is
+# the exact failure AC-A5 exists to catch.
 _GRANT_ALL_ROLES = ("superadmin", "admin")
-_GRANT_MARKETING_ROLES = ("marketing",)
+_GRANT_MARKETING_ROLES = ("marketing_manager", "marketing_executive")
 _MARKETING_SLUGS = {
     "dealer_kit.page.view",
     "dealer_kit.page.edit",
@@ -86,6 +91,21 @@ def _company_id():
 
 def upgrade() -> None:
     op.execute(f"CREATE SCHEMA IF NOT EXISTS {SCHEMA}")
+
+    # Table DDL is skipped when the schema is already populated. Concurrent
+    # branch work means this schema can legitimately exist before the revision
+    # runs (it was applied out of band while another branch held the alembic
+    # chain), and a bare create_table would abort the whole upgrade on a table
+    # that is already correct. RBAC and the catalog row below are ON CONFLICT
+    # guarded and always run, so a partial state still converges.
+    _existing = set(sa.inspect(op.get_bind()).get_table_names(schema=SCHEMA))
+    if not _existing:
+        _create_tables()
+
+    _post_ddl()
+
+
+def _create_tables() -> None:
 
     # ------------------------------------------------------------------ pages
     op.create_table(
@@ -253,6 +273,8 @@ def upgrade() -> None:
         "ix_dealer_kit_bundle_component_bundle_id", "bundle_component", ["bundle_id"], schema=SCHEMA
     )
 
+
+def _post_ddl() -> None:
     # ------------------------------------------------- additive public columns
     conn = op.get_bind()
     insp = sa.inspect(conn)

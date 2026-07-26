@@ -85,6 +85,8 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
   const handlePublish = async (versionId: string) => {
     try {
       await moveLabel(pageId, 'published', versionId);
+      // Recompute locally rather than refetching: the label is a pointer, so
+      // exactly one version can hold it and the new state is fully determined.
       setVersions((current) =>
         current.map((version) => ({
           ...version,

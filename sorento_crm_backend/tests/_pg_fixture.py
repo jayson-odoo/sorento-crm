@@ -63,8 +63,10 @@ def blank_schema_engine():
     whole session rather than per test. Data isolation is the caller's job: use
     ``blank_session()``, which discards writes.
 
-    ``scm`` is translated alongside the default schema, so the ``scm.*`` models
-    -- which could not be created on sqlite at all -- are included.
+    ``scm`` and ``dealer_kit`` are translated alongside the default schema, so
+    those models -- which could not be created on sqlite at all -- are included.
+    Any future module that declares its own schema must be added here too, or
+    ``create_all`` fails on the first table it cannot place.
     """
     if "engine" not in _BLANK:
         from app import models  # noqa: F401  register every model's table
@@ -73,10 +75,15 @@ def blank_schema_engine():
         admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}"')
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}_scm"')
+        admin.exec_driver_sql(f'CREATE SCHEMA "{name}_dealer_kit"')
         admin.close()
 
         scoped = engine.execution_options(
-            schema_translate_map={None: name, "scm": f"{name}_scm"}
+            schema_translate_map={
+                None: name,
+                "scm": f"{name}_scm",
+                "dealer_kit": f"{name}_dealer_kit",
+            }
         )
         with scoped.connect() as connection:
             # The Sorento company row is seeded by the ``after_create`` DDL event on
@@ -99,6 +106,7 @@ def drop_blank_schema():
         admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_scm" CASCADE')
+        admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_dealer_kit" CASCADE')
         admin.close()
 
 
