@@ -239,11 +239,11 @@ def find_clashes(
             outcome=row.Project.outcome,
             owner_user_id=row.Project.owner_user_id,
             similarity=round(float(row.score), 4),
-            # Three independent conditions, all required to stop a registration:
-            # similar enough to be the same development, still being pursued, and
-            # not a sibling phase. Everything else is returned as context.
             developer_party_id=row.Project.developer_party_id,
             developer_name=developer_names.get(row.Project.developer_party_id),
+            # Four conditions, ALL required to stop a registration: same developer,
+            # similar enough to be the same development, still being pursued, and not
+            # a sibling phase. Anything else comes back as context.
             blocks=(
                 # A different developer's project is never the same development,
                 # however alike the titles read.

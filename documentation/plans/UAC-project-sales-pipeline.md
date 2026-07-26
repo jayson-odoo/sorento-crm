@@ -1,6 +1,27 @@
 # UAC — Project Sales Pipeline (module `projects`)
 
-**Status:** Drafted from grill session 2026-07-25. Pre-code. Awaiting user grill round.
+**Status:** S0, S1 and S2 built (2026-07-26). Groups B, C, D, G, J are implemented and
+browser-verified except where noted below; A is implemented apart from the Excel import.
+Remaining slices S2b, S2c, S3-S6 unstarted.
+
+**Verified against a running stack, not asserted:** every AC below marked ✅ was exercised
+either by a test that fails without it or in the browser at localhost:3010/:8010. ACs that
+did NOT ship are marked ⏸ with the reason, rather than being quietly left ambiguous:
+
+- ⏸ **AC-C9 / AC-C9a (Excel import).** Needs its own intra-batch duplicate detector — rows
+  grouped within the sheet, BOTH sides of a repeated `(developer, normalised_title)` failed.
+  Half of that is worse than none: it would create exactly the silent duplicate the module
+  exists to prevent.
+- ⏸ **AC-H1 / AC-H2 (activities adapter, `last_meaningful_activity_at`).** The column is
+  written and read (the board badges "45d quiet"), but nothing advances it yet: the whitelist
+  of advancing events is defined by the task and quotation slices, so wiring it now means
+  wiring it twice.
+- ⏸ **AC-G10 (delete blocked by a Project PO).** The guard ships and is written against
+  `information_schema`, so it is already correct — but the `project_purchase_orders` table
+  arrives in S4, so it currently has nothing to find.
+- ⏸ **AC-G2 (board default per role).** The Board/Grid toggle and per-user persistence ship;
+  defaulting Board for sales and Grid for management needs the role read, deferred with the
+  rest of the role-aware UX.
 **Slug:** project-sales-pipeline
 **Source:** `Sorento Project Management Process Flow.pdf` (6pp) + client feedback on
 registration roles + grill decisions recorded in `documentation/CONTEXT.md` and
