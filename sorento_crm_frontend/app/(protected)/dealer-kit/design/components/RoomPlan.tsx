@@ -25,7 +25,14 @@ import {
  * these things usually go wrong.
  */
 
-const PADDING_MM = 400;
+/**
+ * Breathing room around the outline, in millimetres.
+ *
+ * Wide enough for a wall label to sit OUTSIDE the room without being clipped by
+ * the viewBox: the labels read "4000 mm" at 150 units, so 400 left half of one
+ * hanging off the edge.
+ */
+const PADDING_MM = 1000;
 
 export interface RoomPlanProps {
   outline: Point[];
@@ -235,16 +242,28 @@ export function RoomPlan({
                 )}
                 strokeWidth={16}
               />
+              {/*
+                Trimmed to what the footprint can hold. SVG text does not wrap
+                or clip on its own, so a long product code spills across the
+                whole plan and covers the room it is meant to label. Roughly
+                half the glyph width per character at this size.
+              */}
               <text
                 x={centre.x}
                 y={centre.y}
                 textAnchor="middle"
                 dominantBaseline="middle"
                 className="fill-foreground"
-                style={{ fontSize: 140 }}
+                style={{ fontSize: 110 }}
               >
-                {box.label}
+                {(() => {
+                  const fits = Math.max(3, Math.floor(Math.min(box.width, box.depth) / 55));
+                  return box.label.length > fits
+                    ? `${box.label.slice(0, fits - 1)}…`
+                    : box.label;
+                })()}
               </text>
+              <title>{box.label}</title>
             </g>
           );
         })}

@@ -179,9 +179,12 @@ test.describe('Dealer Kit room designer', () => {
       timeout: 20_000,
     });
     // Reopened from the server, not from memory: the product is still there.
-    await expect(page.getByText(chosen, { exact: false }).first()).toBeVisible({
-      timeout: 20_000,
-    });
+    // Targeted at the panel row rather than any text match - the plan box
+    // carries an SVG <title> with the same label for its hover tooltip, and a
+    // loose getByText picks that hidden node first.
+    await expect(
+      page.getByRole('button', { name: `Select ${chosen}` }).first(),
+    ).toBeVisible({ timeout: 20_000 });
     await expect(page.locator('[data-dk-plan-box]').first()).toBeVisible({ timeout: 20_000 });
   });
 
