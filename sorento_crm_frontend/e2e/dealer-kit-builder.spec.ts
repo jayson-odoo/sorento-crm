@@ -31,6 +31,56 @@ function zzt(stem: string): string {
   return `zzt-${stem}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * Click without Playwright's actionability auto-wait.
+ *
+ * The protected layout fires a localhost:7242 dev-ingest fetch that never
+ * resolves in a test environment, so the page stays in a pre-load state and a
+ * normal `.click()` hangs past its own timeout. `dispatchEvent` emits a real
+ * bubbling MouseEvent, which React's root listener picks up, without waiting for
+ * the page to settle first.
+ */
+async function tap(page: Page, locator: ReturnType<Page['locator']>) {
+  await expect(locator).toBeVisible({ timeout: 20_000 });
+  await locator.dispatchEvent('click');
+}
+
+/**
+ * Type into a React-controlled input without actionability auto-wait.
+ *
+ * Same root cause as `tap`: the page never reaches a settled state, so
+ * `locator.fill` hangs. Setting `.value` directly would be invisible to React,
+ * which tracks the previous value on the DOM node - so this goes through the
+ * native value setter and then fires a bubbling `input` event, which is exactly
+ * what React's onChange listens for.
+ */
+async function type(locator: ReturnType<Page['locator']>, value: string) {
+  await expect(locator).toBeVisible({ timeout: 20_000 });
+  await locator.evaluate((el, v) => {
+    const input = el as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value',
+    )?.set;
+    setter?.call(input, v);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }, value);
+}
+
+/**
+ * Click at real screen coordinates.
+ *
+ * Radix tab triggers do not activate from a synthetic `click` event - they key
+ * off pointer/focus - so `tap` is not enough for them. Real mouse events are,
+ * and `boundingBox` only waits for layout rather than full actionability.
+ */
+async function tapReal(page: Page, locator: ReturnType<Page['locator']>) {
+  await expect(locator).toBeVisible({ timeout: 20_000 });
+  const box = await locator.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+}
+
 async function login(page: Page) {
   await page.goto('/');
   const email = page.locator('input[type="email"], input[name="email"]').first();
@@ -76,11 +126,11 @@ async function createPage(page: Page, stem = 'catalogue'): Promise<string> {
   const name = zzt(stem);
 
   await openDealerKitLeaf(page, /catalogue pages/i);
-  await page.getByRole('button', { name: /new page/i }).first().click();
+  await tap(page, page.getByRole('button', { name: /new page/i }).first());
 
   await expect(page.getByRole('dialog')).toBeVisible({ timeout: 10_000 });
-  await page.getByLabel('Name').fill(name);
-  await page.getByRole('button', { name: /create page/i }).click();
+  await type(page.getByLabel('Name'), name);
+  await tap(page, page.getByRole('button', { name: /create page/i }));
 
   await expect(page.getByRole('heading', { name: /page builder/i })).toBeVisible({
     timeout: 20_000,
@@ -97,7 +147,7 @@ test.describe('Dealer Kit page builder', () => {
     const name = await createPage(page, 'listed');
 
     await openDealerKitLeaf(page, /catalogue pages/i);
-    await expect(page.getByText(name)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(name).first()).toBeVisible({ timeout: 20_000 });
     // A page with no published label must say so rather than implying a live version.
     await expect(page.getByText(/not published/i).first()).toBeVisible();
   });
@@ -108,16 +158,16 @@ test.describe('Dealer Kit page builder', () => {
     // Nothing is saved yet, so there is nothing to publish.
     await expect(page.getByRole('button', { name: /^save$/i })).toBeDisabled();
 
-    await page.getByRole('button', { name: /add section/i }).click();
-    await page.getByRole('button', { name: /^heading$/i }).click();
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^heading$/i }));
 
     await expect(page.getByText(/unsaved changes/i)).toBeVisible({ timeout: 10_000 });
-    await page.getByRole('button', { name: /^save$/i }).click();
+    await tap(page, page.getByRole('button', { name: /^save$/i }));
 
     await expect(page.getByText(/saved as version 1/i)).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText(/unsaved changes/i)).toHaveCount(0);
 
-    await page.getByRole('button', { name: /^publish$/i }).click();
+    await tap(page, page.getByRole('button', { name: /^publish$/i }));
     await expect(page.getByText(/is now live/i)).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText(/Live · v1/)).toBeVisible();
   });
@@ -126,31 +176,31 @@ test.describe('Dealer Kit page builder', () => {
     await createPage(page, 'rollback');
 
     // Version 1.
-    await page.getByRole('button', { name: /add section/i }).click();
-    await page.getByRole('button', { name: /^heading$/i }).click();
-    await page.getByRole('button', { name: /^save$/i }).click();
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^heading$/i }));
+    await tap(page, page.getByRole('button', { name: /^save$/i }));
     await expect(page.getByText(/saved as version 1/i)).toBeVisible({ timeout: 20_000 });
-    await page.getByRole('button', { name: /^publish$/i }).click();
+    await tap(page, page.getByRole('button', { name: /^publish$/i }));
     await expect(page.getByText(/Live · v1/)).toBeVisible({ timeout: 20_000 });
 
     // Version 2.
-    await page.getByRole('button', { name: /^text$/i }).click();
-    await page.getByRole('button', { name: /^save$/i }).click();
+    await tap(page, page.getByRole('button', { name: /^text$/i }));
+    await tap(page, page.getByRole('button', { name: /^save$/i }));
     await expect(page.getByText(/saved as version 2/i)).toBeVisible({ timeout: 20_000 });
-    await page.getByRole('button', { name: /^publish$/i }).click();
+    await tap(page, page.getByRole('button', { name: /^publish$/i }));
     await expect(page.getByText(/Live · v2/)).toBeVisible({ timeout: 20_000 });
 
     // Roll back through history. Both versions must survive it.
-    await page.getByRole('button', { name: /history/i }).click();
+    await tap(page, page.getByRole('button', { name: /history/i }));
     await expect(page.getByText(/version history/i)).toBeVisible();
-    await page.getByRole('button', { name: /roll back to this/i }).first().click();
+    await tap(page, page.getByRole('button', { name: /roll back to this/i }).first());
 
     await expect(page.getByRole('alertdialog')).toBeVisible();
-    await page.getByRole('button', { name: /^roll back$/i }).click();
+    await tap(page, page.getByRole('button', { name: /^roll back$/i }));
 
     await expect(page.getByText(/Live · v1/)).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText('Version 2')).toBeVisible();
-    await expect(page.getByText('Version 1')).toBeVisible();
+    await expect(page.getByText('Version 2').first()).toBeVisible();
+    await expect(page.getByText('Version 1').first()).toBeVisible();
   });
 
   test('a page the backend does not have shows an error, not an empty editor', async ({ page }) => {
@@ -162,56 +212,79 @@ test.describe('Dealer Kit page builder', () => {
 
   test('switches breakpoints and reports the derived state', async ({ page }) => {
     await createPage(page, 'breakpoints');
-    await page.getByRole('button', { name: /add section/i }).click();
-    await page.getByRole('button', { name: /^heading$/i }).click();
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^heading$/i }));
 
     await expect(page.getByText(/12 columns/)).toBeVisible({ timeout: 20_000 });
 
-    await page.getByRole('tab', { name: /mobile/i }).click();
+    await tapReal(page, page.getByRole('tab', { name: /mobile/i }));
     await expect(page.getByText(/4 columns/)).toBeVisible();
     await expect(page.getByText(/follows desktop/i).first()).toBeVisible();
   });
 
   test('draws page breaks in paper mode and nowhere else', async ({ page }) => {
     await createPage(page, 'paper');
-    await page.getByRole('button', { name: /add section/i }).click();
-    await page.getByRole('button', { name: /^heading$/i }).click();
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^heading$/i }));
 
     // The desktop canvas is not at paper width, so a break line there would be a
     // guess presented as fact (AC-H6).
     await expect(page.getByTestId('dk-paper-page-label')).toHaveCount(0);
     await expect(page.getByTestId('dk-builder-canvas')).toBeVisible();
 
-    await page.getByRole('tab', { name: /paper/i }).click();
+    await tapReal(page, page.getByRole('tab', { name: /paper/i }));
     await expect(page.getByTestId('dk-paper-page-label').first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId('dk-builder-canvas')).toHaveCount(0);
   });
 
   test('confirms before deleting a block', async ({ page }) => {
     await createPage(page, 'delete');
-    await page.getByRole('button', { name: /add section/i }).click();
-    await page.getByRole('button', { name: /^heading$/i }).click();
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^heading$/i }));
 
-    await page.getByRole('button', { name: /^delete .* block$/i }).first().click();
+    await tap(page, page.getByRole('button', { name: /^delete .* block$/i }).first());
     await expect(page.getByText('Confirm delete')).toBeVisible();
     await expect(page.getByText(/cannot be undone/i)).toBeVisible();
   });
 
-  test('does not scroll sideways from desktop down to phone width', async ({ page }) => {
-    await openDealerKitLeaf(page, /catalogue pages/i);
-    await expect(page.getByRole('heading', { name: /catalogue pages/i })).toBeVisible({
-      timeout: 20_000,
-    });
+});
 
-    for (const width of [1280, 768, 375]) {
-      await page.setViewportSize({ width, height: 900 });
+// Horizontal-overflow checks at three widths.
+//
+// The viewport is set through the FIXTURE, not `page.setViewportSize`. That call
+// waits for the page to settle, and the dev-ingest fetch means it never does, so
+// it hangs regardless of when it runs. `test.use` applies the size when the
+// browser context is created, before any page exists.
+for (const width of [1280, 768, 375]) {
+  test.describe(`Dealer Kit page builder at ${width}px`, () => {
+    test.use({ viewport: { width, height: 900 } });
+
+    test('does not scroll the body sideways', async ({ page }) => {
+      await login(page);
+
+      // Below the desktop breakpoint the sidebar collapses into a drawer, so the
+      // group button is legitimately absent. Menu gating is asserted at desktop
+      // width in the first test; what is under test HERE is the page's own
+      // layout, so it navigates directly.
+      if (width >= 1280) {
+        await openDealerKitLeaf(page, /catalogue pages/i);
+      } else {
+        await page.goto('/dealer-kit', { waitUntil: 'commit' });
+      }
+
+      await expect(page.getByRole('heading', { name: /catalogue pages/i })).toBeVisible({
+        timeout: 20_000,
+      });
+
+      // Wide content scrolls inside its own container instead.
       const overflowsBy = await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       );
       expect(
         overflowsBy,
-        `page body should not scroll horizontally at ${width}px`,
+        `body should not scroll horizontally at ${width}px`,
       ).toBeLessThanOrEqual(1);
-    }
+    });
   });
-});
+}
+

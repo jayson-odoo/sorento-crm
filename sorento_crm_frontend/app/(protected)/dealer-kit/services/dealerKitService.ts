@@ -42,9 +42,10 @@ import type {
   PageVersion,
 } from '@/lib/dealer-kit/types';
 
-// `apiFetch('/api/dealer-kit/...')` maps to the backend `/api/v1/dealer-kit/...`
-// through the rewrite table in lib/api.ts.
-const BASE = '/api/dealer-kit';
+// The full `/api/v1/...` form, as the SCM services use. The short `/api/<domain>/`
+// aliases only work for domains listed in lib/api.ts's rewrite table; an
+// unlisted one falls through to Next.js and 404s instead of reaching FastAPI.
+const BASE = '/api/v1/dealer-kit';
 
 /** Wire shapes, kept separate from the domain types so a rename on either side is a compile error. */
 interface PageSummaryWire {

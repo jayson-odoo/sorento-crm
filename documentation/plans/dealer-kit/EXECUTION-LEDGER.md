@@ -23,7 +23,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 
 | Slice | Phase 1 (FE prototype) | Phase 2 (BE + wiring + tests) | Phase 3 (review) | Slice |
 |---|---|---|---|---|
-| **S1 builder core** | **PASSED** 2026-07-26 | not started | not started | in progress |
+| **S1 builder core** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | not started | in progress |
 | **S2 collections + bundles** | blocked on S1 | blocked | blocked | blocked |
 | **S3 PDF export** | blocked on S2 | blocked | blocked | blocked |
 
@@ -111,6 +111,48 @@ permissions + grant sweep, version/label service, routes, then FE off mocks onto
 - [ ] vitest: loading / empty / error / data per new component
 - [ ] Playwright spec drives the full flow above and asserts the `/api/v1/*` calls
 - [ ] All three suites green
+
+#### Phase 2 gate result — PASSED, with one claim explicitly withheld
+
+Verified against the real stack: backend on :8020, a **prod build** of the frontend on :3020,
+the live Postgres. **60 pytest · 32 vitest · 10 Playwright, all green.**
+
+| Gate item | Result |
+|---|---|
+| Migration chains onto the committed head; one head | pass - `alembic heads` shows only `309_dealer_kit_module` |
+| `upgrade` → `downgrade -1` → `upgrade` clean both ways | pass - on a throwaway DB: 8 tables + 6 permissions created, both fully removed, then recreated identically |
+| Owned tables enrolled; leak test asserts UNSET → 0 rows | pass - `dealer_kit.page` added to the representative set in `test_company_scope.py` |
+| Versions immutable; `max(version)+1` per page | pass - `test_dealer_kit_pages.py` |
+| `page.edit` without `page.publish` → 403 on the API | pass - `test_dealer_kit_routes.py::test_editor_can_draft_but_not_publish` |
+| Unpublished page → public render 404s | pass - `test_an_unpublished_page_is_404_and_never_falls_through` |
+| pytest happy path + auth denial + validation per route | pass |
+| Fixture cleanup scoped to marker rows | pass - isolated schema or SAVEPOINT rollback; nothing deletes globally |
+| vitest loading / empty / error / data | pass (32) |
+| Playwright drives the full flow and asserts `/api/v1/*` | pass (10) |
+
+**The full round trip is proven end to end:** create page → add section → add block → save
+version 1 → publish → `Live · v1` → save version 2 → publish → roll back → both versions
+survive and the live one follows the label.
+
+**Three things were wrong and are now fixed:**
+
+1. **Route permissions had no test at all.** The 17 service tests could not reach the
+   permission split, which is the single most consequential decision in the slice. The new
+   `test_dealer_kit_routes.py` proves an editor can stage but is refused on `published`,
+   *and* that rollback is refused too - rollback moves the same label at the same readers,
+   so a gate that let it through would have been a real hole.
+2. **`/api/dealer-kit/` never reached FastAPI.** Only domains listed in the `lib/api.ts`
+   rewrite table are proxied; an unlisted one falls through to Next.js and 404s. Now on the
+   explicit `/api/v1/dealer-kit` form, as the SCM services use.
+3. **API-created pages had a null print profile**, so paper mode had no geometry to break
+   pages on. The backend seeds a default on create and the FE falls back to one.
+
+**Withheld deliberately:** "no regressions across the backend suite" is NOT claimed. The
+suite is already broken on this branch before any of my changes - a baseline run from a clean
+worktree at 5b7a704f6 gives **757 failed / 2159 passed / 371 errors**. A green full-suite run
+is not available to compare against, so the honest claim is the narrower one: every test
+touching Dealer Kit passes, and `test_company_scope.py` (the one shared file this slice
+edits) passes.
 
 ### Phase 3 — Review
 

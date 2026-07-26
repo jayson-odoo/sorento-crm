@@ -104,7 +104,7 @@ def create_page(
         updated_at=page.updated_at,
         published_version=None,
         latest_version=0,
-        doc={"sections": [], "printProfile": None},
+        doc={"sections": [], "printProfile": svc.DEFAULT_PRINT_PROFILE},
         versions=[],
     )
 
@@ -122,7 +122,7 @@ def get_page(page_id: str, db: Session = Depends(get_db), _user: dict = Depends(
     head = staging or (versions[0] if versions else None)
     published = next((v.version for v in versions if "published" in v.labels), None)
 
-    doc: dict = {"sections": [], "printProfile": None}
+    doc: dict = {"sections": [], "printProfile": svc.DEFAULT_PRINT_PROFILE}
     if head is not None:
         doc = next((v.doc for v in stored if v.id == head.id), doc)
 

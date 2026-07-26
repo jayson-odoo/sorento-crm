@@ -25,6 +25,14 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.dealer_kit import Page, PageLabel, PageVersion
 from app.services.error_handler import AppException
 
+DEFAULT_PRINT_PROFILE = {
+    "pageSize": "A4",
+    "orientation": "portrait",
+    "margins": {"top": 15, "right": 15, "bottom": 15, "left": 15},
+    "cover": True,
+    "headerFooter": {"left": "", "right": "", "pageNumbers": True},
+}
+
 PUBLISHED = "published"
 STAGING = "staging"
 VALID_LABELS = (PUBLISHED, STAGING)
@@ -88,7 +96,12 @@ def create_page(db: Session, *, name: str, slug: str, user_id: Optional[str]) ->
     if existing is not None:
         raise AppException(status_code=409, message=f"A page already uses the address '{slug}'")
 
-    page = Page(name=name, slug=slug, created_by=user_id)
+    # A new page ships with real paper geometry. Leaving it null pushes the
+    # decision onto every reader of the document, and paper mode has nothing to
+    # paginate against.
+    page = Page(
+        name=name, slug=slug, created_by=user_id, print_profile=DEFAULT_PRINT_PROFILE
+    )
     db.add(page)
     db.commit()
     db.refresh(page)

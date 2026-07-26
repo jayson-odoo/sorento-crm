@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal, Base
 from app.models.base import CompanyScopedMixin
 from app.models.company import Company
+from app.models.dealer_kit import Page as DealerKitPage
 from app.models.product import Brand, ProductCategory
 from app.models.inventory import Warehouse
 from app.models.marketing import CampaignType
@@ -74,6 +75,10 @@ REPRESENTATIVE = [
     (Warehouse, "warehouse_code", dict(warehouse_name="ZZSCOPE wh")),
     (CampaignType, "type_code", dict(type_name="ZZSCOPE ct")),
     (ProductCategory, "category_code", dict(category_name="ZZSCOPE cat")),
+    # Dealer Kit lives in its own Postgres schema. It is in this list because the
+    # do_orm_execute filter matching across a schema boundary is a distinct thing
+    # from matching inside public, and only a real query proves it.
+    (DealerKitPage, "slug", dict(name="ZZSCOPE dk page")),
 ]
 
 

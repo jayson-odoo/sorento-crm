@@ -35,6 +35,7 @@ import {
   type Breakpoint,
 } from '@/lib/dealer-kit/deriveLayout';
 import {
+  DEFAULT_PRINT_PROFILE,
   defaultHideInPrint,
   type Block,
   type BlockType,
@@ -397,7 +398,12 @@ export function PageEditor({ doc, onDocChange }: PageEditorProps) {
 
           <CardContent className="pb-6">
             {mode === 'paper' ? (
-              <PaperCanvas sections={doc.sections} profile={doc.printProfile} />
+              // A page created by the API, or saved before print settings
+              // existed, has no profile of its own but still has to be printable.
+              <PaperCanvas
+                sections={doc.sections}
+                profile={doc.printProfile ?? DEFAULT_PRINT_PROFILE}
+              />
             ) : !activeSection ? (
               <div className="rounded-lg border border-dashed border-border p-10 text-center">
                 <FileText className="mx-auto size-5 text-muted-foreground" />
