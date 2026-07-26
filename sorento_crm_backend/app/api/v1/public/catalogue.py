@@ -28,11 +28,53 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.base import company_scope
 from app.models.company import Company
+from app.models.dealer_kit import Collection
 from app.schemas.dealer_kit import PublicPage
+from app.services.dealer_kit import collection_service
 from app.services.dealer_kit import page_service as svc
+from app.services.dealer_kit.viewer import ANONYMOUS
 from app.services.error_handler import AppException
 
 router = APIRouter()
+
+
+def _tile_out(tile: dict) -> dict:
+    """snake_case resolver output -> the camelCase the renderer speaks."""
+    return {
+        "productId": tile["product_id"],
+        "productCode": tile["product_code"],
+        "productName": tile["product_name"],
+        "price": tile["price"],
+        "invoicePrice": tile["invoice_price"],
+        "imageUrl": tile["image_url"],
+        "dimensions": tile["dimensions"],
+        "badges": tile["badges"],
+    }
+
+
+def _tile_templates_for(db, doc) -> dict:
+    """templateId -> field list, for every design the document binds.
+
+    Sent alongside the tiles so the renderer never has to fetch a design of its
+    own: a print page that made its own API calls would be one more thing that
+    can be half-finished when Chromium decides the page is idle.
+    """
+    from app.models.dealer_kit import TileTemplate
+    from app.services.dealer_kit import tile_template_service
+
+    ids = {
+        (block.get("props") or {}).get("tileTemplateId")
+        for section in (doc or {}).get("sections", []) or []
+        for block in (section.get("blocks") or [])
+        if (block.get("props") or {}).get("kind") == "collection"
+    }
+    ids.discard(None)
+    if not ids:
+        return {}
+
+    rows = db.query(TileTemplate).filter(TileTemplate.id.in_(ids)).all()
+    return {row.id: tile_template_service.fields_of(row) for row in rows}
+
 
 
 @router.get("/{company_code}/{slug}", response_model=PublicPage)
@@ -52,5 +94,38 @@ def read_published_page(company_code: str, slug: str, db: Session = Depends(get_
 
     with company_scope(db, frozenset({company.id})):
         live = svc.published_doc(db, slug.strip().lower())
+        doc = live["doc"] or {}
 
-    return PublicPage(name=live["name"], slug=live["slug"], doc=live["doc"])
+        # Resolved HERE, for an anonymous reader. Without this a collection
+        # block renders as an unbound placeholder on the public page, which is
+        # the one surface where that is never acceptable.
+        candidates = collection_service.sellable_products(db)
+        collections: dict[str, list[dict]] = {}
+        for section in doc.get("sections", []) or []:
+            for block in section.get("blocks") or []:
+                props = block.get("props") or {}
+                if props.get("kind") != "collection":
+                    continue
+                collection_id = props.get("collectionId")
+                if not collection_id or collection_id in collections:
+                    continue
+                row = (
+                    db.query(Collection).filter(Collection.id == collection_id).first()
+                )
+                collections[collection_id] = (
+                    collection_service.resolve_tiles(db, row, ANONYMOUS, candidates)
+                    if row is not None
+                    else []
+                )
+
+        templates = _tile_templates_for(db, doc)
+
+    return PublicPage(
+        name=live["name"],
+        slug=live["slug"],
+        doc=doc,
+        collections={
+            key: [_tile_out(tile) for tile in tiles] for key, tiles in collections.items()
+        },
+        tile_templates=templates,
+    )

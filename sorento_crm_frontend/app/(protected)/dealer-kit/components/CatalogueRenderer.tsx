@@ -2,7 +2,13 @@
 
 import { BREAKPOINT_MIN_WIDTH } from '@/lib/dealer-kit/deriveLayout';
 import { cn } from '@/lib/utils';
-import type { Block, BlockLayout, Section } from '@/lib/dealer-kit/types';
+import type {
+  Block,
+  BlockLayout,
+  ResolvedTile,
+  Section,
+  TileField,
+} from '@/lib/dealer-kit/types';
 
 import { BlockPreview } from './BlockPreview';
 
@@ -79,14 +85,40 @@ function placementVars(
   };
 }
 
+export interface RenderedCatalogueData {
+  /** collectionId -> tiles, already priced for whoever is reading. */
+  collections?: Record<string, ResolvedTile[]>;
+  /** tileTemplateId -> the fields that design binds. */
+  tileTemplates?: Record<string, TileField[]>;
+}
+
+function bindingFor(block: Block, data: RenderedCatalogueData) {
+  const props = block.props;
+  if (props.kind !== 'collection' || !props.collectionId) return undefined;
+
+  const tiles = data.collections?.[props.collectionId];
+  if (tiles === undefined) return undefined;
+
+  return {
+    tiles,
+    tileFields: props.tileTemplateId
+      ? data.tileTemplates?.[props.tileTemplateId]
+      : undefined,
+  };
+}
+
 function RenderedBlock({
   block,
   section,
   index,
+  data,
+  breakpoint,
 }: {
   block: Block;
   section: Section;
   index: number;
+  data: RenderedCatalogueData;
+  breakpoint: 'desktop' | 'tablet' | 'mobile';
 }) {
   const fallbackRow = index * 2 + 1;
   const style = {
@@ -97,12 +129,20 @@ function RenderedBlock({
 
   return (
     <div className="dk-block" style={style} data-dk-block-id={block.id}>
-      <BlockPreview block={block} />
+      <BlockPreview block={block} resolved={bindingFor(block, data)} breakpoint={breakpoint} />
     </div>
   );
 }
 
-function RenderedSection({ section }: { section: Section }) {
+function RenderedSection({
+  section,
+  data,
+  breakpoint,
+}: {
+  section: Section;
+  data: RenderedCatalogueData;
+  breakpoint: 'desktop' | 'tablet' | 'mobile';
+}) {
   // `exclude` is a print instruction, not a visibility one: the section is part
   // of the digital catalogue and simply does not go on paper. Only the PDF path
   // acts on it.
@@ -118,7 +158,14 @@ function RenderedSection({ section }: { section: Section }) {
       <div className="mx-auto w-full max-w-[1400px] px-4 sm:px-6">
         <div className="dk-grid">
           {section.blocks.map((block, index) => (
-            <RenderedBlock key={block.id} block={block} section={section} index={index} />
+            <RenderedBlock
+              key={block.id}
+              block={block}
+              section={section}
+              index={index}
+              data={data}
+              breakpoint={breakpoint}
+            />
           ))}
         </div>
       </div>
@@ -130,11 +177,26 @@ export function CatalogueRenderer({
   name,
   sections,
   className,
+  resolvedCollections,
+  tileTemplates,
+  /**
+   * Which breakpoint's tile density to use. The LAYOUT is responsive via CSS at
+   * every width, but tile count per row is data, so print has to pick one -
+   * paper has a fixed width and no media query will fire for it.
+   */
+  breakpoint = 'desktop',
 }: {
   name: string;
   sections: Section[];
   className?: string;
+  resolvedCollections?: Record<string, ResolvedTile[]>;
+  tileTemplates?: Record<string, TileField[]>;
+  breakpoint?: 'desktop' | 'tablet' | 'mobile';
 }) {
+  const data: RenderedCatalogueData = {
+    collections: resolvedCollections,
+    tileTemplates,
+  };
   if (sections.length === 0) {
     // Published but empty is a real state, and it says so rather than rendering
     // a blank screen a reader would read as a broken link.
@@ -152,7 +214,12 @@ export function CatalogueRenderer({
     <div className={cn('w-full', className)} data-dk-catalogue>
       <style dangerouslySetInnerHTML={{ __html: LAYOUT_CSS }} />
       {sections.map((section) => (
-        <RenderedSection key={section.id} section={section} />
+        <RenderedSection
+          key={section.id}
+          section={section}
+          data={data}
+          breakpoint={breakpoint}
+        />
       ))}
     </div>
   );

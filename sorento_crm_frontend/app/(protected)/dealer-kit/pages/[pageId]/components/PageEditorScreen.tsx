@@ -2,7 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertCircle, CloudUpload, ExternalLink, History, Save } from 'lucide-react';
+import {
+  AlertCircle,
+  CloudUpload,
+  ExternalLink,
+  FileDown,
+  History,
+  Save,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -10,7 +17,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { getPage, moveLabel, saveVersion } from '../../../services/dealerKitService';
+import {
+  getPage,
+  moveLabel,
+  requestExport,
+  saveVersion,
+} from '../../../services/dealerKitService';
 import { PageEditor } from '../../../components/PageEditor';
 import { VersionHistory } from './VersionHistory';
 import type { PageDoc, PageVersion } from '@/lib/dealer-kit/types';
@@ -33,6 +45,7 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
   const [saving, setSaving] = useState(false);
   const [versions, setVersions] = useState<PageVersion[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (page) {
@@ -127,6 +140,32 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {publishedVersion && (
+              // Only once something is live: exporting a draft nobody published
+              // would produce a file that disagrees with the catalogue.
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={exporting}
+                onClick={async () => {
+                  setExporting(true);
+                  try {
+                    await requestExport(pageId, 'staff');
+                    toast.success('Building your PDF. It will appear in My Downloads.');
+                  } catch (error) {
+                    toast.error(
+                      error instanceof Error ? error.message : 'Could not start the export.',
+                    );
+                  } finally {
+                    setExporting(false);
+                  }
+                }}
+              >
+                <FileDown className="size-4" />
+                {exporting ? 'Starting' : 'Export PDF'}
+              </Button>
+            )}
+
             {publishedVersion && page.publicPath && (
               // Only once something is live: a link to a page that 404s reads
               // as a broken feature rather than an unpublished draft.

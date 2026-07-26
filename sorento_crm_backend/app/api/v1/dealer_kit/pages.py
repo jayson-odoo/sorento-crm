@@ -230,6 +230,10 @@ def request_export(
     ``page.view`` rather than ``page.edit`` - exporting a catalogue is reading
     it, and a salesperson who may see a page may take it to a customer.
     """
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.dealer_kit_export_tasks import generate_catalogue_pdf
+
     download = export_service.request_export(
         db,
         page_id=page_id,
@@ -238,6 +242,25 @@ def request_export(
         user_id=_user_id(user) or "",
         version_id=payload.version_id,
     )
+
+    try:
+        # Only the download id: everything else comes from the snapshot, so the
+        # task can never be invoked with a viewer that disagrees with the
+        # request.
+        enqueue_job(
+            generate_catalogue_pdf,
+            str(download.id),
+            queue_name="imports",
+            job_timeout=900,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Redis down: mark it failed so My Downloads shows the truth rather
+        # than a row that stays 'pending' forever.
+        DownloadService(db).mark_failed(
+            str(download.id), f"Could not queue PDF generation: {exc}"
+        )
+
+    db.refresh(download)
     return ExportRequestOut(
         download_id=download.id,
         status=str(download.status),

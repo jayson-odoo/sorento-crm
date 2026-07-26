@@ -29,6 +29,12 @@
  *          dependencies before path params, so one route could not carry the
  *          right permission declaratively.
  *
+ * POST   /pages/{id}/exports {audience,showInvoicePrice,versionId?}
+ *          -> 202 {downloadId,status,filename,audience}          page.view
+ *          Queues a PDF. 202 because the file does not exist yet - the caller
+ *          watches My Downloads. Exporting is READING a catalogue, so it needs
+ *          page.view rather than page.edit.
+ *
  * Errors use the standard AppException envelope, read with `extractApiError`.
  */
 
@@ -175,4 +181,23 @@ export async function moveLabel(
   }
 
   return toVersion(await response.json());
+}
+
+
+export type ExportAudience = 'staff' | 'dealer' | 'consumer';
+
+export async function requestExport(
+  pageId: string,
+  audience: ExportAudience = 'staff',
+  showInvoicePrice = false,
+): Promise<{ downloadId: string; status: string; filename: string | null }> {
+  const response = await apiFetch(`${BASE}/pages/${encodeURIComponent(pageId)}/exports`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ audience, showInvoicePrice }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not start the export'));
+  }
+  return response.json();
 }

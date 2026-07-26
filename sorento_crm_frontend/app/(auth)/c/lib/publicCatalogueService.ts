@@ -9,19 +9,26 @@
  * ---------------------------------------------------------------------------
  * CONTRACT
  *
- * GET /api/v1/public/c/{companyCode}/{slug}  -> { name, slug, doc }
+ * GET /api/v1/public/c/{companyCode}/{slug}
+ *     -> { name, slug, doc, collections, tileTemplates }
  *
  * 404 covers all three of "no such company", "no such page" and "not
  * published" - on purpose. An anonymous reader does not get to tell them apart.
  * ---------------------------------------------------------------------------
  */
 
-import type { PageDoc } from '@/lib/dealer-kit/types';
+import type { PageDoc, ResolvedTile, TileField } from '@/lib/dealer-kit/types';
 
 export interface PublishedCatalogue {
   name: string;
   slug: string;
   doc: PageDoc;
+  /**
+   * Collections resolved SERVER-side for an anonymous reader, so the page never
+   * asks for prices of its own and cannot be talked into showing more.
+   */
+  collections?: Record<string, ResolvedTile[]>;
+  tileTemplates?: Record<string, TileField[]>;
 }
 
 export class CatalogueNotFoundError extends Error {

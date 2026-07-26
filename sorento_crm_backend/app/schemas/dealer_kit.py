@@ -97,9 +97,16 @@ class PublicPage(BaseModel):
     numbers and commit messages are internal, and a reader has no use for them.
     """
 
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str
     slug: str
     doc: dict[str, Any]
+    # collectionId -> tiles, already priced for an anonymous reader.
+    collections: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    tile_templates: dict[str, list[str]] = Field(
+        default_factory=dict, serialization_alias="tileTemplates"
+    )
 
 
 # ---------------------------------------------------------------------------

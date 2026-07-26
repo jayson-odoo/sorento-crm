@@ -97,7 +97,12 @@ export default function PublicCataloguePage({
 
   return (
     <main className="min-h-screen bg-background">
-      <CatalogueRenderer name={status.page.name} sections={status.page.doc.sections ?? []} />
+      <CatalogueRenderer
+        name={status.page.name}
+        sections={status.page.doc.sections ?? []}
+        resolvedCollections={status.page.collections}
+        tileTemplates={status.page.tileTemplates}
+      />
     </main>
   );
 }
