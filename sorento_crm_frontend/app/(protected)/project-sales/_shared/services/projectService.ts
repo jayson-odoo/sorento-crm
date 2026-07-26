@@ -21,8 +21,18 @@ import type {
   LeadListParams,
   LeadQualifyBody,
   LeadReasonOption,
+  PriceFloorRule,
+  PriceFloorRuleBody,
   ProjectLead,
   ProjectLeadBody,
+  ProjectQuotation,
+  ProjectQuotationBody,
+  ProjectSeries,
+  ProjectSeriesBody,
+  QuotationLine,
+  QuotationLineBody,
+  QuotationOutcomeBody,
+  QuotationVersion,
   ProjectTemplateTask,
   ProjectTemplateTaskBody,
   ProjectUpdateBody,
@@ -664,4 +674,193 @@ export async function getCustomerPortfolio(customerId: string): Promise<Customer
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load this account'));
   return response.json();
+}
+
+// -------------------------------------------------------------- quotations
+
+/**
+ * Lines hang off a VERSION, never off a quotation. That is the model, not a URL
+ * accident: "which version was this line on" is the question the whole thing exists to
+ * answer.
+ */
+export async function listQuotations(projectId: string): Promise<ProjectQuotation[]> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/quotations`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load quotations'));
+  const body: ListEnvelope<ProjectQuotation> = await response.json();
+  return body.data;
+}
+
+export async function createQuotation(
+  projectId: string,
+  body: ProjectQuotationBody,
+): Promise<ProjectQuotation> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/quotations`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to create the quotation'));
+  return response.json();
+}
+
+export async function updateQuotation(
+  quotationId: string,
+  body: Partial<ProjectQuotationBody>,
+): Promise<ProjectQuotation> {
+  const response = await apiFetch(`${BASE}/quotations/${quotationId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to save the quotation'));
+  return response.json();
+}
+
+export async function deleteQuotation(quotationId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/quotations/${quotationId}`, { method: 'DELETE' });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to delete the quotation'));
+}
+
+export async function setQuotationOutcome(
+  quotationId: string,
+  body: QuotationOutcomeBody,
+): Promise<ProjectQuotation> {
+  const response = await apiFetch(`${BASE}/quotations/${quotationId}/outcome`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to record the outcome'));
+  return response.json();
+}
+
+export async function listQuotationVersions(
+  quotationId: string,
+): Promise<QuotationVersion[]> {
+  const response = await apiFetch(`${BASE}/quotations/${quotationId}/versions`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load versions'));
+  const body: ListEnvelope<QuotationVersion> = await response.json();
+  return body.data;
+}
+
+/** Freezes the current version and opens the next, carrying its lines (AC-E3). */
+export async function reviseQuotation(quotationId: string): Promise<QuotationVersion> {
+  const response = await apiFetch(`${BASE}/quotations/${quotationId}/revise`, {
+    method: 'POST',
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to open a new version'));
+  return response.json();
+}
+
+export async function listQuotationLines(versionId: string): Promise<QuotationLine[]> {
+  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load lines'));
+  const body: ListEnvelope<QuotationLine> = await response.json();
+  return body.data;
+}
+
+export async function createQuotationLine(
+  versionId: string,
+  body: QuotationLineBody,
+): Promise<QuotationLine> {
+  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to add the line'));
+  return response.json();
+}
+
+export async function updateQuotationLine(
+  versionId: string,
+  lineId: string,
+  body: Partial<QuotationLineBody>,
+): Promise<QuotationLine> {
+  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines/${lineId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the line'));
+  return response.json();
+}
+
+export async function deleteQuotationLine(
+  versionId: string,
+  lineId: string,
+): Promise<void> {
+  const response = await apiFetch(`${BASE}/quotation-versions/${versionId}/lines/${lineId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to delete the line'));
+}
+
+export async function listQuotationLossReasons(): Promise<{ value: string; label: string }[]> {
+  const response = await apiFetch(`${BASE}/config/loss-reasons`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load reasons'));
+  return response.json();
+}
+
+// ------------------------------------------------- series and price floors
+
+export async function listSeries(includeInactive = false): Promise<ProjectSeries[]> {
+  const response = await apiFetch(
+    `${BASE}/config/series${includeInactive ? '?include_inactive=true' : ''}`,
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load series'));
+  const body: ListEnvelope<ProjectSeries> = await response.json();
+  return body.data;
+}
+
+export async function createSeries(body: ProjectSeriesBody): Promise<ProjectSeries> {
+  const response = await apiFetch(`${BASE}/config/series`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to create the series'));
+  return response.json();
+}
+
+export async function updateSeries(
+  seriesId: string,
+  body: Partial<ProjectSeriesBody>,
+): Promise<ProjectSeries> {
+  const response = await apiFetch(`${BASE}/config/series/${seriesId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the series'));
+  return response.json();
+}
+
+export async function deleteSeries(seriesId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/config/series/${seriesId}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete the series'));
+}
+
+export async function listPriceFloors(): Promise<PriceFloorRule[]> {
+  const response = await apiFetch(`${BASE}/config/price-floors`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load price floors'));
+  const body: ListEnvelope<PriceFloorRule> = await response.json();
+  return body.data;
+}
+
+/** Upsert per level: one rule per target, so editing "the Basins floor" means that. */
+export async function upsertPriceFloor(body: PriceFloorRuleBody): Promise<PriceFloorRule> {
+  const response = await apiFetch(`${BASE}/config/price-floors`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the floor'));
+  return response.json();
+}
+
+export async function deletePriceFloor(ruleId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/config/price-floors/${ruleId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete the floor'));
 }

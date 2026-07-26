@@ -47,6 +47,7 @@ EXEMPTIONS: dict[str, str] = {
     "team_member_market_segments": "JUNCTION (team_member_id + segment_code)",
     "project_brands": "JUNCTION (project_id + brand_id)",
     "project_collaborators": "JUNCTION (project_id + user_id)",
+    "project_series_categories": "JUNCTION (series_id + category_id)",
     # One row per project, keyed BY the project. A surrogate uuid would invite a
     # second row per project, which is exactly what the PK is there to prevent.
     "project_sales_profile": "JUNCTION — 1:1 extension, PK is project_id",

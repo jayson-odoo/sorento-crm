@@ -532,3 +532,154 @@ export interface LeadListParams {
   sort?: string;
   dir?: 'asc' | 'desc';
 }
+
+// -------------------------------------------------------------- quotations
+
+/**
+ * The version model is defined by what it does NOT have (AC-E3a). There is no
+ * `current_version_id` column and no `is_frozen` flag: current is MAX(version_no) and
+ * everything below it is frozen. `is_current` on a version and `current_version_id` on
+ * a quotation are both SERVER-DERIVED for rendering. Never write them, and never
+ * re-derive "frozen" in the browser from anything else.
+ */
+export type QuotationOutcome = 'open' | 'won' | 'lost';
+
+export type UnitType = 'house_unit' | 'bathroom' | 'facility' | 'common_area';
+
+export type FloorMode = 'percent' | 'absolute';
+
+export type FloorLevel = 'product' | 'category' | 'category_ancestor' | 'system';
+
+export interface ProjectQuotation {
+  id: string;
+  project_id: string;
+  scope_label: string;
+  series_id?: string | null;
+  series_name?: string | null;
+  notes?: string | null;
+
+  outcome: QuotationOutcome;
+  loss_reason?: string | null;
+  loss_reason_label?: string | null;
+  decided_at?: string | null;
+
+  version_count: number;
+  current_version_id?: string | null;
+  current_version_no?: number | null;
+  current_total?: string | null;
+
+  /** Counted on the CURRENT version only: a breach on a superseded version is history. */
+  below_floor_count: number;
+  non_standard_count: number;
+  line_count: number;
+
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface ProjectQuotationBody {
+  scope_label: string;
+  series_id?: string | null;
+  notes?: string | null;
+}
+
+export interface QuotationVersion {
+  id: string;
+  quotation_id: string;
+  version_no: number;
+  is_current: boolean;
+  frozen_at?: string | null;
+  issued_by?: string | null;
+  issued_by_name?: string | null;
+  issued_on?: string | null;
+  total_amount: string;
+  notes?: string | null;
+  created_at?: string | null;
+}
+
+export interface QuotationLine {
+  id: string;
+  version_id: string;
+  product_id?: string | null;
+  product_code?: string | null;
+  description?: string | null;
+  list_price?: string | null;
+  image_attachment_id?: string | null;
+
+  unit_price: string;
+  quantity: string;
+  uom?: string | null;
+  unit_type?: UnitType | null;
+  line_total: string;
+
+  is_non_standard: boolean;
+  /** The floor in force WHEN PRICED (AC-E7). A later policy change never rewrites it. */
+  floor_value_applied?: string | null;
+  floor_level_applied?: FloorLevel | null;
+  is_below_floor: boolean;
+
+  sort_order: number;
+  notes?: string | null;
+}
+
+export interface QuotationLineBody {
+  product_id?: string | null;
+  description_snapshot?: string | null;
+  unit_price?: string;
+  quantity?: string;
+  uom?: string | null;
+  unit_type?: UnitType | null;
+  sort_order?: number;
+  notes?: string | null;
+  image_attachment_id?: string | null;
+}
+
+export interface QuotationOutcomeBody {
+  outcome: QuotationOutcome;
+  loss_reason?: string | null;
+}
+
+export interface ProjectSeries {
+  id: string;
+  name: string;
+  brand_id?: string | null;
+  brand_name?: string | null;
+  description?: string | null;
+  is_active: boolean;
+  category_ids: string[];
+  category_names: string[];
+  /** Nominated plus every descendant: what the non-standard check compares against. */
+  covered_category_count: number;
+  quotation_count: number;
+}
+
+export interface ProjectSeriesBody {
+  name: string;
+  brand_id?: string | null;
+  description?: string | null;
+  is_active?: boolean;
+  category_ids?: string[];
+}
+
+export interface PriceFloorRule {
+  id: string;
+  product_id?: string | null;
+  product_code?: string | null;
+  category_id?: string | null;
+  category_name?: string | null;
+  mode: FloorMode;
+  value: string;
+  notes?: string | null;
+  is_active: boolean;
+  /** Derived from which key is set, never stored. */
+  level: FloorLevel;
+}
+
+export interface PriceFloorRuleBody {
+  mode: FloorMode;
+  value: string;
+  product_id?: string | null;
+  category_id?: string | null;
+  notes?: string | null;
+  is_active?: boolean;
+}

@@ -308,7 +308,13 @@ def test_every_company_id_table_is_registered():
     #   +1  Project Sales S2c: project_leads. Owned for the same reason as projects --
     #       the lead list, the conversion metric and the duplicate hint all query it
     #       directly, and a lead recorded by SRT is not Mocha's to see.
-    expected_owned = 43
+    #   +5  Project Sales S3: project_series, price_floor_rules, project_quotations,
+    #       project_quotation_versions, project_quotation_lines. Floors and series are
+    #       per-company POLICY (Mocha's discount ceiling is not Sorento's), and the
+    #       quotation tables are queried directly by the alert counts and the forecast.
+    #       project_series_categories is the exception: keyed by (series, category), it
+    #       inherits its partition from the series.
+    expected_owned = 48
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

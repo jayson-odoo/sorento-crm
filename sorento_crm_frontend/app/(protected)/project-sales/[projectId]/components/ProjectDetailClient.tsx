@@ -18,6 +18,7 @@ import {
 } from '../../_shared/hooks/useProjects';
 import { CriticalPanel } from './CriticalPanel';
 import { ProjectAccessPanel } from './ProjectAccessPanel';
+import { QuotationsPanel } from './QuotationsPanel';
 import { StakeholdersPanel } from './StakeholdersPanel';
 import { TasksPanel } from './TasksPanel';
 
@@ -260,12 +261,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       {activeTab === 'stakeholders' && <StakeholdersPanel project={project} />}
 
       {activeTab === 'tasks' && <TasksPanel project={project} />}
-      {activeTab === 'quotations' && (
-        <NotYetPanel
-          title="Quotations"
-          body="Quotation versions, the price floor guardrail and the won/lost outcome per scope arrive with the quotations slice."
-        />
-      )}
+      {activeTab === 'quotations' && <QuotationsPanel project={project} />}
       {activeTab === 'samples' && (
         <NotYetPanel
           title="Sample submissions"

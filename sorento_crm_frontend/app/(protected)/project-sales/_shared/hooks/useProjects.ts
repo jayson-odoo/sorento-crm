@@ -17,6 +17,25 @@ import {
   updateProjectTask,
   updateTemplateTask,
   changeLeadStatus,
+  createQuotation,
+  createQuotationLine,
+  createSeries,
+  deletePriceFloor,
+  deleteQuotation,
+  deleteQuotationLine,
+  deleteSeries,
+  listPriceFloors,
+  listQuotationLines,
+  listQuotationLossReasons,
+  listQuotationVersions,
+  listQuotations,
+  listSeries,
+  reviseQuotation,
+  setQuotationOutcome,
+  updateQuotation,
+  updateQuotationLine,
+  updateSeries,
+  upsertPriceFloor,
   createLead,
   createParty,
   deleteLead,
@@ -62,6 +81,11 @@ import type {
   ProjectStakeholderBody,
   ProjectTaskBody,
   LeadListParams,
+  PriceFloorRuleBody,
+  ProjectQuotationBody,
+  ProjectSeriesBody,
+  QuotationLineBody,
+  QuotationOutcomeBody,
   LeadQualifyBody,
   ProjectLeadBody,
   ProjectTemplateBody,
@@ -730,4 +754,235 @@ export function useLeadMutations() {
   });
 
   return { create, update, move, qualify, disqualify, reopen, remove };
+}
+
+
+// -------------------------------------------------------------- quotations
+
+export const QUOTATIONS_KEY = 'project-quotations';
+export const quotationsKey = (projectId: string) => [QUOTATIONS_KEY, 'list', projectId];
+export const versionsKey = (quotationId: string) => [QUOTATIONS_KEY, 'versions', quotationId];
+export const linesKey = (versionId: string) => [QUOTATIONS_KEY, 'lines', versionId];
+export const LOSS_REASONS_KEY = [QUOTATIONS_KEY, 'loss-reasons'];
+export const SERIES_KEY = ['project-series'];
+export const PRICE_FLOORS_KEY = ['project-price-floors'];
+
+export function useQuotations(projectId: string | undefined) {
+  return useQuery({
+    queryKey: quotationsKey(projectId ?? ''),
+    queryFn: () => listQuotations(projectId as string),
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useQuotationVersions(quotationId: string | undefined) {
+  return useQuery({
+    queryKey: versionsKey(quotationId ?? ''),
+    queryFn: () => listQuotationVersions(quotationId as string),
+    enabled: Boolean(quotationId),
+  });
+}
+
+export function useQuotationLines(versionId: string | undefined) {
+  return useQuery({
+    queryKey: linesKey(versionId ?? ''),
+    queryFn: () => listQuotationLines(versionId as string),
+    enabled: Boolean(versionId),
+  });
+}
+
+export function useQuotationLossReasons() {
+  return useQuery({
+    queryKey: LOSS_REASONS_KEY,
+    queryFn: () => listQuotationLossReasons(),
+    staleTime: 10 * 60 * 1000,
+  });
+}
+
+export function useProjectSeries(includeInactive = false) {
+  return useQuery({
+    queryKey: [...SERIES_KEY, includeInactive],
+    queryFn: () => listSeries(includeInactive),
+  });
+}
+
+export function usePriceFloors() {
+  return useQuery({ queryKey: PRICE_FLOORS_KEY, queryFn: () => listPriceFloors() });
+}
+
+/**
+ * A quotation write invalidates the PROJECT as well.
+ *
+ * The project's outcome is derived from its quotations (AC-E10), so winning a scope
+ * changes the header, the pipeline card and the board column. Invalidating only the
+ * quotation list would leave all three stating the old outcome.
+ */
+export function useQuotationMutations(projectId: string) {
+  const queryClient = useQueryClient();
+  const invalidate = (quotationId?: string) => {
+    queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY] });
+    queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
+    queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY, 'list'] });
+    if (quotationId) queryClient.invalidateQueries({ queryKey: versionsKey(quotationId) });
+  };
+
+  const create = useMutation({
+    mutationFn: (body: ProjectQuotationBody) => createQuotation(projectId, body),
+    onSuccess: (quotation) => {
+      invalidate(quotation.id);
+      toast.success(`"${quotation.scope_label}" added`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<ProjectQuotationBody> }) =>
+      updateQuotation(id, body),
+    onSuccess: (quotation) => {
+      invalidate(quotation.id);
+      toast.success('Quotation saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const revise = useMutation({
+    mutationFn: (quotationId: string) => reviseQuotation(quotationId),
+    onSuccess: (version) => {
+      invalidate(version.quotation_id);
+      toast.success(`Version ${version.version_no} opened`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const decide = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: QuotationOutcomeBody }) =>
+      setQuotationOutcome(id, body),
+    onSuccess: (quotation) => {
+      invalidate(quotation.id);
+      toast.success(`"${quotation.scope_label}" marked ${quotation.outcome}`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  // No success toast here: the only caller is a ConfirmDeleteDialog, which raises its
+  // own. Toasting in both places puts two notifications on screen for one delete.
+  const remove = useMutation({
+    mutationFn: (quotationId: string) => deleteQuotation(quotationId),
+    onSuccess: () => invalidate(),
+  });
+
+  return { create, update, revise, decide, remove };
+}
+
+/**
+ * Line writes invalidate the lines AND the quotation list: the list carries the version
+ * total and the two alert counts, which every line edit can change.
+ */
+export function useQuotationLineMutations(projectId: string, versionId: string) {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: linesKey(versionId) });
+    queryClient.invalidateQueries({ queryKey: quotationsKey(projectId) });
+    queryClient.invalidateQueries({ queryKey: [QUOTATIONS_KEY, 'versions'] });
+  };
+
+  const create = useMutation({
+    mutationFn: (body: QuotationLineBody) => createQuotationLine(versionId, body),
+    onSuccess: (line) => {
+      invalidate();
+      if (line.is_below_floor) {
+        toast.warning(
+          `Below the floor of ${line.floor_value_applied}. Management has been notified.`,
+        );
+      } else {
+        toast.success('Line added');
+      }
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<QuotationLineBody> }) =>
+      updateQuotationLine(versionId, id, body),
+    onSuccess: (line) => {
+      invalidate();
+      if (line.is_below_floor) {
+        toast.warning(`Below the floor of ${line.floor_value_applied}.`);
+      } else {
+        toast.success('Line saved');
+      }
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (lineId: string) => deleteQuotationLine(versionId, lineId),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Line removed');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { create, update, remove };
+}
+
+export function useSeriesMutations() {
+  const queryClient = useQueryClient();
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: SERIES_KEY });
+
+  const create = useMutation({
+    mutationFn: (body: ProjectSeriesBody) => createSeries(body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Series created');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<ProjectSeriesBody> }) =>
+      updateSeries(id, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Series saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteSeries(id),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Series deleted');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { create, update, remove };
+}
+
+export function usePriceFloorMutations() {
+  const queryClient = useQueryClient();
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: PRICE_FLOORS_KEY });
+
+  const upsert = useMutation({
+    mutationFn: (body: PriceFloorRuleBody) => upsertPriceFloor(body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Price floor saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => deletePriceFloor(id),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Price floor removed');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { upsert, remove };
 }

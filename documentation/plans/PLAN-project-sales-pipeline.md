@@ -1,9 +1,10 @@
 # PLAN — Project Sales Pipeline (module `projects`)
 
-**Status:** Drafted from grill session 2026-07-25. **Pre-code.** Review rounds 1–2 applied
+**Status:** **In build.** Drafted from grill session 2026-07-25, review rounds 1-2 applied
 (numbering / delivery lag / loss reasons made configurable; sponsorship flag pinned to
-`respond_contacts`; **task management added and decided** — see §7, new slice S2b).
-Next: internal grill round on this plan, then implementation.
+`respond_contacts`; task management added and decided - see §7).
+Built: **S0, S1, S2, S2b, S2c, S3** (see the slice list in §4 for what each one landed and
+what it discovered). Next: **S4** - samples, sponsorship link, Project POs (UAC Group F).
 **Owner:** jayson
 **Slug:** project-sales-pipeline
 **Classification:** MODULE (`projects`), `public` schema, normal FKs, company-scoped.
@@ -215,9 +216,24 @@ customer portfolio endpoint behind the account view.
 | F18 | The qualify route 500'd with `serialize_projects() got an unexpected keyword argument 'user_id'` while every service test passed: the lead serializer took `user_id` and the project one took `actor_user_id`, and the route mixed them. | Renamed the lead serializer's argument to `actor_user_id` so the two agree, and added `tests/test_project_lead_routes.py` -- route-level tests through FastAPI, which is the seam the service tests could not cover. Verified by reintroducing the bug and watching the new test fail. |
 | F19 | The company-scope resolver runs as a router-level dependency and re-stamps the scope from the REQUEST, so a TestClient with no active company silently overwrote the fixture's pin with UNSET and every route returned 400. | The route-test fixture overrides `apply_company_scope`, which is what a real JWT carrying `active_company_id` does. Documented in the fixture so the next route-test author does not spend the same hour on it. |
 
-**S3 — Quotations.** Quotations, versions (edit-in-place + Revise-freezes), lines with
-snapshots, Project Series (category allowlist), price floor rules (3 levels × percent|absolute),
-the two alerts, outcomes + loss reasons, derived project outcome. → UAC Group E.
+**S3 — Quotations** (§5b). **BUILT 2026-07-26.** Quotations per scope, versions
+(edit-in-place + Revise-freezes), lines with product snapshots, Project Series (category
+allowlist), price floor rules (3 levels x percent|absolute), the two alerts stored on the
+line, outcomes + loss reasons from a lookup set, derived project outcome. Pricing policy
+gets its own admin screen (`/project-sales/pricing`) rather than a fifth section on Setup.
+The management fan-out on a floor breach LOGS today and is wired to notifications in S5.
+
+**S3 findings (things the build discovered):**
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| F20 | "Current version" as a stored `current_version_id` plus an `is_frozen` flag is two facts that must agree, and they stop agreeing the first time a write half-fails. | Neither column exists. Current is `MAX(version_no)` under `UNIQUE (quotation_id, version_no)`, frozen is anything below it, and both are server-DERIVED for rendering. The FE reads `is_current` and never re-derives it. |
+| F21 | A price floor of zero and no floor policy at all are different answers, and a percent rule against a product with no list price is a third. Collapsing them would either block a legitimate free-issue line or silently accept anything. | `resolve_floor` returns `None` for "no policy", and a percent rule with no list price falls THROUGH to the next level rather than resolving to zero. Pinned by a 12-case golden set written failing first. |
+| F22 | Recomputing the alerts on read means tightening a floor tomorrow retro-flags a quotation the customer already holds. | Both alerts plus the floor value and its level are STORED on the line at pricing time (AC-E7). A test tightens the policy afterwards and asserts the line does not change. |
+| F23 | A level column on `price_floor_rules` could disagree with the keys, and nothing stopped an admin creating three competing company-wide rules. | No level column: it is implied by which key is set. The unique index uses `NULLS NOT DISTINCT`, which makes the system-level rule a singleton per company, and the route UPSERTS per target so editing "the Basins floor" means exactly that. |
+| F24 | An off-catalog line with a series looked "standard" because there was no product to compare against the series. | Off-catalog is ALWAYS non-standard (AC-E5), series or no series, and the row says "Off-catalog" rather than showing an empty product cell. |
+| F25 | The mutation hook toasted on a successful delete and so did `ConfirmDeleteDialog`, putting two notifications on screen for one action. | The quotation `remove` mutation raises no toast: the dialog owns success and error messaging because it is the only caller. |
+| F26 | Resolving the floor in the browser to preview it would be a second implementation of the ancestry walk, and the two would eventually disagree. | The dialog does not evaluate the floor at all. The price is sent, and the answer that comes back is what the line shows -- with the rule that produced it named ("set on a parent category"), so the salesperson knows whose policy to argue with. |
 
 **S4 — Samples, sponsorship link, POs.** Samples bound to versions with the
 superseded-version block; sponsorship `project_id` + per-contact flag + mandatory picker with
@@ -280,6 +296,57 @@ prospects out if the noise becomes real.
 
 **Slice placement: S2c**, after S2b. Registration must exist before anything can convert into
 it, and leads are purely additive upstream — nothing downstream waits on them.
+
+## 5b. Quotations (slice S3)
+
+Six tables, and two of them are defined by a column they deliberately do NOT have.
+
+```
+project_series(id, company_id, name, brand_id→brands NULL, description, is_active)
+project_series_categories(series_id, category_id→product_categories)   -- junction, no id
+
+price_floor_rules(id, company_id, product_id NULL, category_id NULL,
+        mode 'percent'|'absolute', value, notes, is_active, created_by)
+  -- NO level column: the level IS which key is set.
+  -- UNIQUE (company_id, product_id, category_id) NULLS NOT DISTINCT
+  --   → the company-wide rule is a singleton, not something to create three of.
+
+project_quotations(id, company_id, project_id→projects, scope_label,
+        series_id→project_series NULL, notes, outcome 'open'|'won'|'lost',
+        loss_reason, decided_at, created_by)
+  -- NO current_version_id.
+
+project_quotation_versions(id, company_id, quotation_id→project_quotations,
+        version_no, frozen_at, issued_by→users, issued_on, total_amount, notes)
+  -- NO is_frozen.  UNIQUE (quotation_id, version_no)
+  -- current = MAX(version_no); frozen = anything below it.
+
+project_quotation_lines(id, company_id, version_id→project_quotation_versions,
+        product_id→products NULL, product_code_snapshot, description_snapshot,
+        list_price_snapshot, image_attachment_id, unit_price, quantity, uom,
+        unit_type, line_total,
+        is_non_standard, floor_value_applied, floor_level_applied, is_below_floor,
+        sort_order, notes)
+  -- the four alert columns are STORED at pricing time, never recomputed on read.
+```
+
+**Floor resolution** walks product → its category → each ancestor category, nearest first
+→ the company default, taking the first ACTIVE rule that produces a value. A percent rule
+against a product with no list price produces nothing and falls through; the ancestry walk
+is cycle-guarded and depth-capped. `None` means "no policy", which is not the same as a
+floor of zero.
+
+**Scope is the unit of outcome.** House Units and Common Area are won or lost separately,
+so the PROJECT's outcome is derived: won if ANY scope is won, lost only when ALL are, open
+otherwise -- and no quotations at all is open, not lost. The project's STATUS is never
+touched by this (AC-E10a): status is a funnel position, outcome is a commercial result, and
+a service that moved both would make the board disagree with the pipeline.
+
+**Admin surface.** Series and price floors live on their own page,
+`/project-sales/pricing`, not as two more sections on Setup. They answer the same question
+from two sides -- what we are supposed to be selling, and how cheap it may go -- and a
+scope can be perfectly on-series and still under-priced, which is only visible when the two
+are read together.
 
 ## 6a. Grill findings and resolutions (round 1, 2026-07-25)
 

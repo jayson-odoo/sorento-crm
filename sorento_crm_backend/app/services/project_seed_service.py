@@ -21,7 +21,10 @@ from app.models.numbering import DocumentNumberingRule
 from app.models.projects import ProjectTemplate, ProjectTemplateRole, ProjectType
 from app.models.lookup import LookupOption, LookupSet
 from app.models.status import Status, StatusTransition
-from app.models.projects import LEAD_DISQUALIFY_REASON_SET_KEY
+from app.models.projects import (
+    LEAD_DISQUALIFY_REASON_SET_KEY,
+    QUOTATION_LOSS_REASON_SET_KEY,
+)
 from app.services.project_reference_service import DEFAULT_TEMPLATE_ROLES
 
 logger = logging.getLogger(__name__)
@@ -122,6 +125,18 @@ DEFAULT_LEAD_DISQUALIFY_REASONS = (
     ("budget", "Budget too low"),
     ("duplicate", "Duplicate of an existing lead or project"),
     ("no_response", "No response from the contact"),
+)
+
+# Seeded loss reasons for a quotation (AC-E9). Client-editable afterwards: this is a
+# starting vocabulary, not a fixed enum.
+DEFAULT_QUOTATION_LOSS_REASONS = (
+    ("price", "Price"),
+    ("spec_locked_competitor", "Spec locked to a competitor"),
+    ("project_cancelled", "Project cancelled or deferred"),
+    ("no_sample", "No sample submitted"),
+    ("relationship", "Relationship"),
+    ("lead_time", "Lead time"),
+    ("other", "Other"),
 )
 
 LEAD_NUMBERING = {
@@ -525,6 +540,42 @@ def seed_lead_disqualify_reasons(db: Session) -> int:
     return len(DEFAULT_LEAD_DISQUALIFY_REASONS)
 
 
+def seed_quotation_loss_reasons(db: Session) -> int:
+    """The loss-reason lookup set (AC-E9), on the same generic machinery as the lead
+    reasons so an admin edits both in one screen."""
+    existing = (
+        db.query(LookupSet)
+        .filter(LookupSet.set_key == QUOTATION_LOSS_REASON_SET_KEY)
+        .first()
+    )
+    if existing:
+        return 0
+
+    lookup_set = LookupSet(
+        id=_uid(),
+        set_key=QUOTATION_LOSS_REASON_SET_KEY,
+        name="Quotation loss reasons",
+        description=(
+            "Why a project quotation was lost. Mandatory when a quotation is marked "
+            "lost; the win/loss report groups by these."
+        ),
+    )
+    db.add(lookup_set)
+    db.flush()
+    for order, (value, label) in enumerate(DEFAULT_QUOTATION_LOSS_REASONS):
+        db.add(
+            LookupOption(
+                id=_uid(),
+                set_id=lookup_set.id,
+                value=value,
+                label=label,
+                sort_order=order,
+            )
+        )
+    db.flush()
+    return len(DEFAULT_QUOTATION_LOSS_REASONS)
+
+
 def _company_ids(db: Session) -> List[str]:
     from app.models.company import Company
 
@@ -540,6 +591,7 @@ def run(db: Session, company_id: Optional[str] = None) -> Dict[str, int]:
         "lead_numbering": 0,
         "lead_statuses": 0,
         "lead_reasons": 0,
+        "quotation_loss_reasons": 0,
         "types": 0,
     }
     summary["numbering"] = 1 if seed_numbering_rule(db) else 0
@@ -548,6 +600,7 @@ def run(db: Session, company_id: Optional[str] = None) -> Dict[str, int]:
     summary["lead_numbering"] = 1 if seed_lead_numbering_rule(db) else 0
     summary["lead_statuses"] = seed_default_lead_graph(db)
     summary["lead_reasons"] = seed_lead_disqualify_reasons(db)
+    summary["quotation_loss_reasons"] = seed_quotation_loss_reasons(db)
 
     companies = [company_id] if company_id else _company_ids(db)
     for cid in companies:

@@ -632,6 +632,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/project-sales/setup',
         permission: 'projects.types.view',
       },
+      {
+        title: 'Pricing Policy',
+        path: '/project-sales/pricing',
+        permission: 'projects.types.view',
+      },
     ],
   },
   {
@@ -1517,6 +1522,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Setup',
         path: '/project-sales/setup',
+        permission: 'projects.types.view',
+      },
+      {
+        title: 'Pricing Policy',
+        path: '/project-sales/pricing',
         permission: 'projects.types.view',
       },
     ],

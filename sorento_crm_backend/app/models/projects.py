@@ -652,3 +652,278 @@ class ProjectLead(Base, CompanyScopedMixin):
         # The near-duplicate hint scans normalised titles within a company.
         Index("ix_project_leads_company_normalised", "company_id", "normalised_title"),
     )
+
+
+# ------------------------------------------------------------ S3 quotations
+
+# A quotation's commercial result. Distinct from the PROJECT's outcome, which is
+# DERIVED from these (AC-E10): won if any quotation is won, lost only when all are.
+QUOTATION_OUTCOME_OPEN = "open"
+QUOTATION_OUTCOME_WON = "won"
+QUOTATION_OUTCOME_LOST = "lost"
+
+# The loss-reason lookup set (AC-E9). Client-editable without a deploy, same mechanism
+# as the lead disqualification reasons.
+QUOTATION_LOSS_REASON_SET_KEY = "project_quotation_loss_reason"
+
+# What a line is priced per. Sorento quotes a development by repeating unit, not by
+# one flat bill of quantities: 300 house units at one basin each is a different
+# conversation from 300 basins.
+UNIT_TYPE_HOUSE_UNIT = "house_unit"
+UNIT_TYPE_BATHROOM = "bathroom"
+UNIT_TYPE_FACILITY = "facility"
+UNIT_TYPE_COMMON_AREA = "common_area"
+UNIT_TYPES = (
+    UNIT_TYPE_HOUSE_UNIT,
+    UNIT_TYPE_BATHROOM,
+    UNIT_TYPE_FACILITY,
+    UNIT_TYPE_COMMON_AREA,
+)
+
+# How a floor is expressed. Both are needed: category policy is usually "no more than
+# 20% off list", but a specific SKU is often "never below RM 950".
+FLOOR_MODE_PERCENT = "percent"
+FLOOR_MODE_ABSOLUTE = "absolute"
+FLOOR_MODES = (FLOOR_MODE_PERCENT, FLOOR_MODE_ABSOLUTE)
+
+
+class ProjectSeries(Base, CompanyScopedMixin):
+    """The catalogue a project is allowed to quote from (AC-E5).
+
+    Nominating a PARENT category covers all its descendants, so a series is a short
+    list of groups rather than a hand-maintained list of every SKU -- which is the
+    version that goes stale the week after it is written.
+    """
+
+    __tablename__ = "project_series"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    name = Column(String(150), nullable=False)
+    brand_id = Column(
+        UUID(as_uuid=False), ForeignKey("brands.id", ondelete="SET NULL"), nullable=True
+    )
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default="true", default=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("company_id", "name", name="uq_project_series_company_name"),
+    )
+
+
+class ProjectSeriesCategory(Base):
+    """One nominated category. Keyed by (series, category) so nominating twice is a
+    no-op rather than a duplicate row."""
+
+    __tablename__ = "project_series_categories"
+
+    series_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_series.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    category_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("product_categories.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+
+class PriceFloorRule(Base, CompanyScopedMixin):
+    """The lowest price a line may carry, per level (AC-E6).
+
+    The LEVEL is implied by which key is set, never stored: product_id set = product
+    level, category_id set = category level, both null = system. A stored level column
+    would be a second source of truth for something the keys already say, and the two
+    would eventually disagree.
+
+    Percent is of the product's LIST price. Absolute is a hard number and ignores list
+    entirely, deliberately: "never below RM 950" means it even on a discounted item.
+
+    Audited: a breach report is only arguable if who moved the policy, and when, is
+    recoverable. ``created_by`` alone answers that for the first write and no other.
+    """
+
+    __tablename__ = "price_floor_rules"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=True
+    )
+    category_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("product_categories.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    mode = Column(String(16), nullable=False, server_default=FLOOR_MODE_PERCENT)
+    value = Column(Numeric(12, 2), nullable=False)
+    notes = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default="true", default=True)
+
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        # One rule per level per target. NULLS NOT DISTINCT so the SYSTEM rule (both
+        # keys null) is a singleton per company rather than something an admin can
+        # accidentally create three of.
+        Index(
+            "uq_price_floor_rules_company_target",
+            "company_id",
+            "product_id",
+            "category_id",
+            unique=True,
+            postgresql_nulls_not_distinct=True,
+        ),
+    )
+
+
+class ProjectQuotation(Base, CompanyScopedMixin):
+    """One priced scope of a project (AC-E1).
+
+    A development is quoted in scopes -- house units, common area, showroom -- and each
+    is won or lost on its own. That is why outcome lives here and the project's outcome
+    is derived (AC-E10): a project with a won house-unit scope and an open common-area
+    scope is still live.
+    """
+
+    __tablename__ = "project_quotations"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    scope_label = Column(String(150), nullable=False)
+    series_id = Column(
+        UUID(as_uuid=False), ForeignKey("project_series.id", ondelete="SET NULL"), nullable=True
+    )
+    notes = Column(Text, nullable=True)
+
+    outcome = Column(
+        String(16),
+        nullable=False,
+        server_default=QUOTATION_OUTCOME_OPEN,
+        default=QUOTATION_OUTCOME_OPEN,
+    )
+    loss_reason = Column(String(150), nullable=True)
+    decided_at = Column(DateTime(timezone=False), nullable=True)
+
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_project_quotations_project", "project_id"),
+        Index("ix_project_quotations_outcome", "company_id", "outcome"),
+    )
+
+
+class ProjectQuotationVersion(Base, CompanyScopedMixin):
+    """A revision of a quotation (AC-E3, AC-E3a).
+
+    **No ``current_version_id`` and no ``is_frozen`` flag.** Current is
+    ``MAX(version_no)`` per quotation and everything below it is frozen. Two facts that
+    must agree is one fact too many: the flag and the pointer drift the first time a
+    write half-fails, and then nobody can say which version the customer holds.
+    """
+
+    __tablename__ = "project_quotation_versions"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    quotation_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_quotations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    version_no = Column(Integer, nullable=False)
+    # Stamped when a NEXT version is opened. Kept as a timestamp rather than a boolean
+    # because "when was this superseded" is the question people actually ask.
+    frozen_at = Column(DateTime(timezone=False), nullable=True)
+    issued_by = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    issued_on = Column(Date, nullable=True)
+    total_amount = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
+    notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "quotation_id", "version_no", name="uq_project_quotation_versions_no"
+        ),
+    )
+
+
+class ProjectQuotationLine(Base, CompanyScopedMixin):
+    """One priced item on a version (AC-E4).
+
+    Everything about the product is SNAPSHOTTED at quote time. A catalogue price change
+    next month must not rewrite what the customer was quoted, and a discontinued SKU
+    must still print on last year's quotation.
+
+    Audited, not just the version above it (AC-E2): the line is where the money changes,
+    and an edit that happens not to move the version total -- a quantity swap, a
+    description fix -- would otherwise leave no trail at all.
+    """
+
+    __tablename__ = "project_quotation_lines"
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_quotation_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Nullable: an off-catalog line is legitimate (a bespoke item, or something not yet
+    # in the catalogue) and always raises the non-standard alert (AC-E5).
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+    product_code_snapshot = Column(String(100), nullable=True)
+    description_snapshot = Column(Text, nullable=True)
+    list_price_snapshot = Column(Numeric(12, 2), nullable=True)
+    image_attachment_id = Column(
+        UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
+    )
+
+    unit_price = Column(Numeric(12, 2), nullable=False, server_default="0", default=0)
+    quantity = Column(Numeric(12, 2), nullable=False, server_default="1", default=1)
+    uom = Column(String(50), nullable=True)
+    unit_type = Column(String(24), nullable=True)
+    line_total = Column(Numeric(15, 2), nullable=False, server_default="0", default=0)
+
+    # Alert state, computed on save and STORED (AC-E7): recomputing on read would
+    # re-flag old quotations the moment policy changes.
+    is_non_standard = Column(Boolean, nullable=False, server_default="false", default=False)
+    floor_value_applied = Column(Numeric(12, 2), nullable=True)
+    floor_level_applied = Column(String(24), nullable=True)
+    is_below_floor = Column(Boolean, nullable=False, server_default="false", default=False)
+
+    sort_order = Column(Integer, nullable=False, server_default="0", default=0)
+    notes = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_project_quotation_lines_version", "version_id", "sort_order"),
+        Index("ix_project_quotation_lines_flags", "version_id", "is_below_floor"),
+    )

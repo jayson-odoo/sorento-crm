@@ -717,3 +717,222 @@ class CustomerPortfolioResponse(BaseModel):
 
     leads: List[ProjectLeadResponse] = Field(default_factory=list)
     projects: List[ProjectResponse] = Field(default_factory=list)
+
+
+# ------------------------------------------------------------ S3 quotations
+
+
+class ProjectSeriesBase(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    brand_id: Optional[str] = None
+    description: Optional[str] = None
+    is_active: bool = True
+
+
+class ProjectSeriesCreate(ProjectSeriesBase):
+    category_ids: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Nominated categories. A PARENT covers all its descendants, so this is a "
+            "short list of groups rather than a list of every SKU."
+        ),
+    )
+
+
+class ProjectSeriesUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=150)
+    brand_id: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+    category_ids: Optional[List[str]] = Field(
+        None, description="Sent WHOLE, not as a delta."
+    )
+
+
+class ProjectSeriesResponse(ProjectSeriesBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    brand_name: Optional[str] = None
+    category_ids: List[str] = Field(default_factory=list)
+    category_names: List[str] = Field(default_factory=list)
+    covered_category_count: int = Field(
+        0,
+        description=(
+            "Nominated categories plus every descendant -- what the non-standard check "
+            "actually compares against."
+        ),
+    )
+    quotation_count: int = 0
+
+
+class PriceFloorRuleBase(BaseModel):
+    mode: str = Field(
+        "percent",
+        description=(
+            "percent = of the product's list price; absolute = a hard amount that "
+            "ignores list entirely."
+        ),
+    )
+    value: Decimal
+    notes: Optional[str] = None
+    is_active: bool = True
+
+
+class PriceFloorRuleUpsert(PriceFloorRuleBase):
+    product_id: Optional[str] = Field(
+        None, description="Set for a product-level rule. Mutually exclusive with category_id."
+    )
+    category_id: Optional[str] = Field(
+        None, description="Set for a category-level rule. Covers that category only."
+    )
+
+
+class PriceFloorRuleResponse(PriceFloorRuleBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    product_id: Optional[str] = None
+    product_code: Optional[str] = None
+    category_id: Optional[str] = None
+    category_name: Optional[str] = None
+    level: str = Field(
+        description=(
+            "Derived from which key is set, never stored: product | category | system."
+        )
+    )
+
+
+class ProjectQuotationBase(BaseModel):
+    scope_label: str = Field(
+        min_length=1, max_length=150, description="e.g. House Units, Common Area, Showroom."
+    )
+    series_id: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ProjectQuotationCreate(ProjectQuotationBase):
+    pass
+
+
+class ProjectQuotationUpdate(BaseModel):
+    scope_label: Optional[str] = Field(None, min_length=1, max_length=150)
+    series_id: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ProjectQuotationResponse(ProjectQuotationBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    series_name: Optional[str] = None
+
+    outcome: str = "open"
+    loss_reason: Optional[str] = None
+    loss_reason_label: Optional[str] = None
+    decided_at: Optional[datetime] = None
+
+    version_count: int = 0
+    # There is no `current_version_id` COLUMN (AC-E3a); this is computed as
+    # MAX(version_no) at read time and is safe to render.
+    current_version_id: Optional[str] = None
+    current_version_no: Optional[int] = None
+    current_total: Optional[Decimal] = None
+
+    below_floor_count: int = 0
+    non_standard_count: int = 0
+    line_count: int = 0
+
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ProjectQuotationVersionResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    quotation_id: str
+    version_no: int
+    is_current: bool = Field(
+        description="Derived: version_no == MAX(version_no). Everything else is frozen."
+    )
+    frozen_at: Optional[datetime] = None
+    issued_by: Optional[str] = None
+    issued_by_name: Optional[str] = None
+    issued_on: Optional[date] = None
+    total_amount: Decimal = Decimal("0")
+    notes: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class ProjectQuotationLineBase(BaseModel):
+    product_id: Optional[str] = Field(
+        None, description="Null for an off-catalog line, which always raises the alert."
+    )
+    description_snapshot: Optional[str] = Field(
+        None, description="Required when there is no product: it is what the customer reads."
+    )
+    unit_price: Decimal = Decimal("0")
+    quantity: Decimal = Decimal("1")
+    uom: Optional[str] = None
+    unit_type: Optional[str] = Field(
+        None, description="house_unit | bathroom | facility | common_area"
+    )
+    sort_order: int = 0
+    notes: Optional[str] = None
+    image_attachment_id: Optional[str] = None
+
+
+class ProjectQuotationLineCreate(ProjectQuotationLineBase):
+    pass
+
+
+class ProjectQuotationLineUpdate(BaseModel):
+    product_id: Optional[str] = None
+    description_snapshot: Optional[str] = None
+    unit_price: Optional[Decimal] = None
+    quantity: Optional[Decimal] = None
+    uom: Optional[str] = None
+    unit_type: Optional[str] = None
+    sort_order: Optional[int] = None
+    notes: Optional[str] = None
+    image_attachment_id: Optional[str] = None
+
+
+class ProjectQuotationLineResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    version_id: str
+    product_id: Optional[str] = None
+    product_code: Optional[str] = None
+    description: Optional[str] = None
+    list_price: Optional[Decimal] = None
+    image_attachment_id: Optional[str] = None
+
+    unit_price: Decimal = Decimal("0")
+    quantity: Decimal = Decimal("1")
+    uom: Optional[str] = None
+    unit_type: Optional[str] = None
+    line_total: Decimal = Decimal("0")
+
+    is_non_standard: bool = False
+    # The floor IN FORCE WHEN PRICED (AC-E7). A later policy change never rewrites it.
+    floor_value_applied: Optional[Decimal] = None
+    floor_level_applied: Optional[str] = None
+    is_below_floor: bool = False
+
+    sort_order: int = 0
+    notes: Optional[str] = None
+
+
+class ProjectQuotationOutcomeRequest(BaseModel):
+    outcome: str = Field(description="open | won | lost")
+    loss_reason: Optional[str] = Field(
+        None,
+        description=(
+            "Mandatory when outcome is lost, and must be a value from the "
+            "`project_quotation_loss_reason` lookup set."
+        ),
+    )

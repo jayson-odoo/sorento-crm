@@ -1,8 +1,8 @@
 # UAC — Project Sales Pipeline (module `projects`)
 
-**Status:** S0, S1, S2, S2b and S2c built (2026-07-26). Groups B, C, D, G, J, N and O
+**Status:** S0, S1, S2, S2b, S2c and S3 built (2026-07-26). Groups B, C, D, E, G, J, N and O
 are implemented and browser-verified except where noted below; A is implemented apart from
-the Excel import. Remaining slices S3-S6 unstarted.
+the Excel import. Remaining slices S4-S6 unstarted.
 
 **Verified against a running stack, not asserted:** every AC below marked ✅ was exercised
 either by a test that fails without it or in the browser at localhost:3010/:8010. ACs that
@@ -25,6 +25,15 @@ did NOT ship are marked ⏸ with the reason, rather than being quietly left ambi
 - ⏸ **AC-G2 (board default per role).** The Board/Grid toggle and per-user persistence ship;
   defaulting Board for sales and Grid for management needs the role read, deferred with the
   rest of the role-aware UX.
+- ⏸ **AC-E5 / AC-E6, the "notifies management" half.** Both alerts compute, store and render
+  correctly, and a breach WARNs to the server log naming the line, the price, the floor and
+  the level that produced it. The notification fan-out itself lands in S5, which owns the
+  notification surface for this module - a half-wired fan-out would be worse than none,
+  because management would trust an incomplete channel.
+- ⏸ **AC-E8, the display and off-catalog-upload half.** A line picked from the catalogue
+  DOES resolve and store its product image (`resolve_product_image` on snapshot), so the
+  data is there. Rendering it in the line table and letting an off-catalog line upload its
+  own arrive with S4, alongside the sample-submission attachment UI they share.
 **Slug:** project-sales-pipeline
 **Source:** `Sorento Project Management Process Flow.pdf` (6pp) + client feedback on
 registration roles + grill decisions recorded in `documentation/CONTEXT.md` and

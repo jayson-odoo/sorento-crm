@@ -1,7 +1,7 @@
 """Project Sales API routes."""
 from fastapi import APIRouter
 
-from app.api.v1.projects import leads, parties, projects, tasks, types
+from app.api.v1.projects import leads, parties, projects, quotations, tasks, types
 
 router = APIRouter()
 
@@ -12,6 +12,10 @@ router.include_router(types.router, prefix="/config", tags=["project-config"])
 # project, the cross-project /my-tasks worklist, and template checklist admin. Before
 # the projects router, so /projects/{id}/tasks is not captured by /projects/{id}.
 router.include_router(tasks.router, tags=["project-tasks"])
+# Quotations mount at the root for the same reason as tasks: they span three shapes
+# (nested under a project, then /quotations/{id} and /quotation-versions/{id} for the
+# revision history) plus their own /config surface.
+router.include_router(quotations.router, tags=["project-quotations"])
 router.include_router(parties.router, prefix="/parties", tags=["project-parties"])
 # Leads before projects for the same reason config is: /leads/{id}/qualify returns a
 # PROJECT, but the route itself lives under the leads prefix.
