@@ -162,6 +162,16 @@ def register_project(
     if details or brand_ids is not None:
         apply_sales_details(db, project, details or {}, brand_ids=brand_ids)
 
+    # The template's checklist lands with the project (AC-N1), so a new registration
+    # already knows its next action instead of being an empty shell someone has to
+    # remember to populate.
+    if project.template_id:
+        from app.services.project_task_service import instantiate_template_tasks
+
+        instantiate_template_tasks(
+            db, project=project, actor_user_id=actor_user_id
+        )
+
     db.flush()
     return project
 
@@ -495,6 +505,12 @@ def serialize_projects(
         else {}
     )
 
+    # Next action is DERIVED from the earliest open task (AC-N6). One bulk query for
+    # the whole page, because the board renders every open project at once.
+    from app.services.project_task_service import next_action_for_projects
+
+    next_actions = next_action_for_projects(db, [p.id for p in projects])
+
     collaborating = set()
     if actor_user_id and not is_manager:
         collaborating = {
@@ -568,6 +584,15 @@ def serialize_projects(
                 "last_meaningful_activity_at": project.last_meaningful_activity_at,
                 "days_since_last_activity": _days_since(
                     project.last_meaningful_activity_at
+                ),
+                "next_action_date": next_actions.get(project.id, {}).get(
+                    "next_action_date"
+                ),
+                "next_action_overdue": next_actions.get(project.id, {}).get(
+                    "next_action_overdue", False
+                ),
+                "open_task_count": next_actions.get(project.id, {}).get(
+                    "open_task_count", 0
                 ),
                 "can_edit": (
                     is_manager

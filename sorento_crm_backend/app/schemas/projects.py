@@ -285,6 +285,12 @@ class ProjectResponse(BaseModel):
 
     last_meaningful_activity_at: Optional[datetime] = None
     days_since_last_activity: Optional[int] = None
+    # DERIVED from the earliest open task, never stored (AC-N6). Absent rather than
+    # null-dated when there is no open work at all: "nothing planned" and "planned with
+    # no date" are different states and the worklist treats them differently.
+    next_action_date: Optional[date] = None
+    next_action_overdue: bool = False
+    open_task_count: int = 0
     can_edit: bool = False
 
     created_at: Optional[datetime] = None
@@ -385,3 +391,150 @@ class ProjectCollaboratorResponse(BaseModel):
     user_name: Optional[str] = None
     granted_by: Optional[str] = None
     granted_at: Optional[datetime] = None
+
+
+# ---------------------------------------------------------------------- tasks
+
+
+class ProjectTemplateTaskBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    task_phase: str = Field(
+        "pursuit",
+        description=(
+            "pursuit = the sales work needed to win; delivery = post-win execution. "
+            "A separate axis from category, which is the work-stream."
+        ),
+    )
+    category: Optional[str] = Field(
+        None,
+        max_length=120,
+        description="Work-stream label, free-form per template (Spec-in, Sampling, ...)",
+    )
+    sort_order: int = 0
+    default_offset_days: Optional[int] = Field(
+        None,
+        ge=0,
+        description=(
+            "Days after registration this task is due. Null means no due date, which "
+            "is honest for work whose timing depends on events rather than elapsed days."
+        ),
+    )
+    is_active: bool = True
+
+
+class ProjectTemplateTaskCreate(ProjectTemplateTaskBase):
+    pass
+
+
+class ProjectTemplateTaskUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    task_phase: Optional[str] = None
+    category: Optional[str] = Field(None, max_length=120)
+    sort_order: Optional[int] = None
+    default_offset_days: Optional[int] = Field(None, ge=0)
+    is_active: Optional[bool] = None
+
+
+class ProjectTemplateTaskResponse(ProjectTemplateTaskBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    template_id: str
+    # How many live project tasks came from this item. Non-zero means delete is
+    # blocked and deactivate is the action (AC-N11), so the UI can say why up front.
+    in_use_count: int = 0
+
+
+class ProjectTaskBase(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    task_phase: str = "pursuit"
+    category: Optional[str] = Field(None, max_length=120)
+    assignee_user_id: Optional[str] = None
+    start_date: Optional[date] = None
+    due_date: Optional[date] = None
+    sort_order: int = 0
+    linked_entity_type: Optional[str] = Field(
+        None, description="quotation_version | sample | purchase_order"
+    )
+    linked_entity_id: Optional[str] = None
+
+
+class ProjectTaskCreate(ProjectTaskBase):
+    status_id: Optional[str] = Field(
+        None, description="Defaults to the task graph's initial status."
+    )
+
+
+class ProjectTaskUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    task_phase: Optional[str] = None
+    category: Optional[str] = Field(None, max_length=120)
+    assignee_user_id: Optional[str] = None
+    start_date: Optional[date] = None
+    due_date: Optional[date] = None
+    sort_order: Optional[int] = None
+    linked_entity_type: Optional[str] = None
+    linked_entity_id: Optional[str] = None
+
+
+class ProjectTaskStatusChangeRequest(BaseModel):
+    """Escalate and Stuck carry their context in the SAME request as the move.
+
+    Two calls would leave a window where the task is escalated to nobody, and a client
+    that crashed between them would leave it there permanently.
+    """
+
+    to_status_id: str
+    escalated_to_user_id: Optional[str] = Field(
+        None, description="Required when moving to a status keyed `escalate`."
+    )
+    stuck_reason: Optional[str] = Field(
+        None, description="Required when moving to a status keyed `stuck`."
+    )
+
+
+class ProjectTaskResponse(ProjectTaskBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    project_id: str
+    project_code: Optional[str] = None
+    project_title: Optional[str] = None
+
+    status_id: Optional[str] = None
+    status_key: Optional[str] = None
+    status_label: Optional[str] = None
+    is_open: bool = True
+
+    assignee_name: Optional[str] = None
+    escalated_to_user_id: Optional[str] = None
+    escalated_to_name: Optional[str] = None
+    stuck_reason: Optional[str] = None
+
+    completed_at: Optional[datetime] = None
+    is_overdue: bool = False
+    days_until_due: Optional[int] = None
+    source_template_task_id: Optional[str] = None
+    can_edit: bool = False
+
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ProjectTaskHistoryEntry(BaseModel):
+    """One change to a task, from the existing audit listeners (AC-N7).
+
+    No dedicated history table: the audit trail already captures per-field diffs, and a
+    second store would drift from it.
+    """
+
+    at: datetime
+    actor_name: Optional[str] = None
+    action: str
+    field: Optional[str] = None
+    from_value: Optional[str] = None
+    to_value: Optional[str] = None

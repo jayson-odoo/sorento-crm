@@ -33,6 +33,8 @@ from app.models.respond_template import (
 from app.models.status import Status, StatusTransition
 from app.models.projects import (
     Project,
+    ProjectTask,
+    ProjectTemplateTask,
     ProjectBrand,
     ProjectCollaborator,
     ProjectParty,
@@ -181,6 +183,8 @@ __all__ = [
     "Status",
     "StatusTransition",
     "Project",
+    "ProjectTask",
+    "ProjectTemplateTask",
     "ProjectBrand",
     "ProjectCollaborator",
     "ProjectParty",

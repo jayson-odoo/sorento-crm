@@ -199,6 +199,9 @@ class Project(Base, CompanyScopedMixin):
     """
 
     __tablename__ = "projects"
+    # Ownership changes, retitles and stage moves are exactly what people dispute
+    # later, so the project itself is audited too.
+    __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_code = Column(String(64), nullable=False)
@@ -399,4 +402,137 @@ class ProjectTakeoverRequest(Base):
 
     __table_args__ = (
         Index("ix_project_takeover_requests_project", "project_id", "status"),
+    )
+
+
+# Task lifecycle axis. Deliberately SEPARATE from ``category``: conflating them was
+# the design error the ecohub reference pass caught. Phase is where in the project's
+# life the task sits; category is which work-stream it belongs to.
+TASK_PHASE_PURSUIT = "pursuit"
+TASK_PHASE_DELIVERY = "delivery"
+TASK_PHASES = (TASK_PHASE_PURSUIT, TASK_PHASE_DELIVERY)
+
+# Artifacts a task may point at (AC-N5a). Adapted from ecohub's task->invoice link;
+# the tables arrive in S3/S4, so the link is stored as a loose (type, id) pair rather
+# than a FK that cannot exist yet.
+TASK_LINK_QUOTATION_VERSION = "quotation_version"
+TASK_LINK_SAMPLE = "sample"
+TASK_LINK_PURCHASE_ORDER = "purchase_order"
+TASK_LINK_TYPES = (
+    TASK_LINK_QUOTATION_VERSION,
+    TASK_LINK_SAMPLE,
+    TASK_LINK_PURCHASE_ORDER,
+)
+
+
+class ProjectTemplateTask(Base, CompanyScopedMixin):
+    """A checklist item a template hands to every project created from it (AC-N1).
+
+    Maps onto ecohub's ``TaskTemplateItem``. Lives on ``project_templates`` because
+    that layer already owns the stakeholder roles, so a template owning its task list
+    adds no new generic concept.
+    """
+
+    __tablename__ = "project_template_tasks"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    template_id = Column(
+        UUID(as_uuid=False), ForeignKey("project_templates.id", ondelete="CASCADE"), nullable=False
+    )
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    task_phase = Column(
+        String(16), nullable=False, server_default=TASK_PHASE_PURSUIT, default=TASK_PHASE_PURSUIT
+    )
+    # Work-stream label (Spec-in, Sampling, Commercial, Logistics). Free-form per
+    # template on purpose: every project type streams its work differently.
+    category = Column(String(120), nullable=True)
+    sort_order = Column(Integer, nullable=False, server_default="0", default=0)
+    # Days after the project is registered that this task is due. Null = no due date,
+    # which is honest for "chase the PO" where the date depends on events not elapsed
+    # time.
+    default_offset_days = Column(Integer, nullable=True)
+    is_active = Column(Boolean, nullable=False, server_default="true", default=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_project_template_tasks_template", "template_id", "sort_order"),
+    )
+
+
+class ProjectTask(Base, CompanyScopedMixin):
+    """A unit of work on one project, on the status engine as entity #2.
+
+    Not a ticket: a ticket is raised BY someone about a problem and carries SLA
+    response/resolution clocks and Respond.io links, whereas a task is work I plan.
+    They do not collide.
+
+    This is also what makes a project's next action derivable, which is why
+    ``next_action_date`` does not exist anywhere (AC-N6): two records of the same
+    promise drift apart.
+    """
+
+    __tablename__ = "project_tasks"
+    # AC-N7: the per-task history timeline is delivered FROM the audit trail, which
+    # already captures per-field diffs with an actor. A dedicated history table would
+    # be a second store to keep in sync, and the one nobody writes to is the one the
+    # timeline reads.
+    __audit_track__ = True
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+
+    task_phase = Column(
+        String(16), nullable=False, server_default=TASK_PHASE_PURSUIT, default=TASK_PHASE_PURSUIT
+    )
+    category = Column(String(120), nullable=True)
+
+    status_id = Column(
+        UUID(as_uuid=False), ForeignKey("statuses.id", ondelete="SET NULL"), nullable=True
+    )
+    assignee_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Escalate and Stuck cannot be set without their context (AC-N4a), guarded in the
+    # service rather than trusted to the dialog: "Escalated" with nobody named, or
+    # "Stuck" with no reason, is a status that tells the next reader nothing.
+    escalated_to_user_id = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    stuck_reason = Column(Text, nullable=True)
+
+    start_date = Column(Date, nullable=True)
+    due_date = Column(Date, nullable=True)
+    completed_at = Column(DateTime(timezone=False), nullable=True)
+    sort_order = Column(Integer, nullable=False, server_default="0", default=0)
+
+    source_template_task_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_template_tasks.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Loose pair, not a FK: quotation versions, samples and POs arrive in later
+    # slices, and a FK to a table that does not exist yet cannot be written.
+    linked_entity_type = Column(String(32), nullable=True)
+    linked_entity_id = Column(UUID(as_uuid=False), nullable=True)
+
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_project_tasks_project_phase", "project_id", "task_phase"),
+        Index("ix_project_tasks_status", "status_id"),
+        # "My Tasks" reads open tasks for one user across every project, ordered by
+        # due date, so it is worth an index of its own (AC-N9).
+        Index("ix_project_tasks_assignee_due", "assignee_user_id", "due_date"),
     )

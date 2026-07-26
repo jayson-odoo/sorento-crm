@@ -301,7 +301,11 @@ def test_every_company_id_table_is_registered():
     #       CompanyScopedMixin; project_sales_profile, project_brands,
     #       project_collaborators and project_takeover_requests deliberately do NOT --
     #       they are keyed by project_id and inherit their partition from the project.
-    expected_owned = 40
+    #   +2  Project Sales S2b: project_template_tasks, project_tasks. Both owned: a
+    #       task is company data in its own right, and "My Tasks" queries them
+    #       directly rather than always through their project, so they cannot rely on
+    #       the project's partition to scope them.
+    expected_owned = 42
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

@@ -238,3 +238,79 @@ def test_only_property_development_derives_delivery_from_launch():
             .all()
         }
         assert derives == {"property_development"}
+
+
+# ------------------------------------------------------- task graph (AC-N4)
+
+
+def test_the_seeded_task_graph_is_ecohubs_five_rungs():
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+
+        statuses = (
+            db.query(Status)
+            .filter(Status.entity_type == "project_task", Status.scope_id.is_(None))
+            .all()
+        )
+        assert {s.key for s in statuses} == {
+            "not_started",
+            "in_progress",
+            "escalate",
+            "stuck",
+            "done",
+        }
+        assert len([s for s in statuses if s.is_initial]) == 1
+        status_service.validate_graph(db, "project_task")
+        assert status_service.initial_status(db, "project_task").key == "not_started"
+
+
+def test_a_task_can_be_escalated_or_stuck_from_any_live_rung():
+    """A task gets blocked when it gets blocked, not at one designated moment.
+
+    A graph where only In Progress can go Stuck forces people to fake a start before
+    recording that they never could.
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+
+        by_key = {
+            s.key: s
+            for s in db.query(Status)
+            .filter(Status.entity_type == "project_task", Status.scope_id.is_(None))
+            .all()
+        }
+        for live in ("not_started", "in_progress"):
+            reachable = {
+                e.to_status_id
+                for e in status_service.available_transitions(
+                    db, "project_task", by_key[live].id
+                )
+            }
+            assert by_key["escalate"].id in reachable, f"{live} cannot escalate"
+            assert by_key["stuck"].id in reachable, f"{live} cannot go stuck"
+
+        # And the realistic path: stuck long enough that it gets escalated.
+        from_stuck = {
+            e.to_status_id
+            for e in status_service.available_transitions(
+                db, "project_task", by_key["stuck"].id
+            )
+        }
+        assert by_key["escalate"].id in from_stuck
+
+
+def test_seeding_the_task_graph_twice_changes_nothing():
+    with blank_session() as db:
+        company_id = _sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        counts = lambda: (  # noqa: E731
+            db.query(Status).filter(Status.entity_type == "project_task").count(),
+            db.query(StatusTransition)
+            .filter(StatusTransition.entity_type == "project_task")
+            .count(),
+        )
+        before = counts()
+        project_seed_service.run(db, company_id=company_id)
+        assert counts() == before

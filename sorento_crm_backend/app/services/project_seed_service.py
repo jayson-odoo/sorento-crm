@@ -25,6 +25,7 @@ from app.services.project_reference_service import DEFAULT_TEMPLATE_ROLES
 logger = logging.getLogger(__name__)
 
 PROJECT_ENTITY = "project"
+PROJECT_TASK_ENTITY = "project_task"
 
 # The funnel from the client's process-flow PDF. The terminal rung is "PO Received",
 # not "Won": status says what happened, while the commercial outcome is derived, so a
@@ -58,6 +59,33 @@ DEFAULT_EDGES = (
     ("quoted", "specified", "Re-specify"),
     ("tendering", "quoted", "Re-quote"),
     ("registered", "identified", "Back to identified"),
+)
+
+# Ecohub's five task rungs, ported as-is. Escalate was missing from the first draft of
+# this plan entirely, which is exactly the kind of gap a reference pass catches: without
+# it, a blocked task can only be "Stuck", and the difference between "I cannot proceed"
+# and "I have handed this to someone senior" is lost.
+DEFAULT_TASK_STATUSES = (
+    # (key, label, initial, terminal)
+    ("not_started", "Not Started", True, False),
+    ("in_progress", "In Progress", False, False),
+    ("escalate", "Escalate", False, False),
+    ("stuck", "Stuck", False, False),
+    ("done", "Done", False, True),
+)
+
+# A task gets escalated or stuck at ANY point, not at one designated moment, so both are
+# reachable from every live rung and both lead back. Done is terminal: reopening is an
+# admin choice (clear the terminal flag, add the edge), not the default.
+_TASK_LIVE = ("not_started", "in_progress", "escalate", "stuck")
+DEFAULT_TASK_EDGES = (
+    ("not_started", "in_progress", "Start"),
+    ("in_progress", "done", "Mark done"),
+    ("escalate", "in_progress", "Taken back"),
+    ("stuck", "in_progress", "Unblocked"),
+    ("escalate", "done", "Resolved by escalation"),
+    ("stuck", "done", "Resolved while stuck"),
+    ("not_started", "done", "Not needed after all"),
 )
 
 DEFAULT_TYPES = (
@@ -175,6 +203,70 @@ def seed_default_funnel(db: Session) -> int:
     return created
 
 
+def seed_default_task_graph(db: Session) -> int:
+    """The DEFAULT graph for ``project_task`` (AC-N4).
+
+    Same wholesale guard as the project funnel: skipped once any default-scope task
+    status exists, so a team that renamed or pruned a rung keeps their change.
+    """
+    already = (
+        db.query(func.count(Status.id))
+        .filter(Status.entity_type == PROJECT_TASK_ENTITY, Status.scope_id.is_(None))
+        .scalar()
+    )
+    if already:
+        return 0
+
+    by_key: Dict[str, Status] = {}
+    for index, (key, label, initial, terminal) in enumerate(DEFAULT_TASK_STATUSES):
+        row = Status(
+            id=_uid(),
+            entity_type=PROJECT_TASK_ENTITY,
+            scope_id=None,
+            key=key,
+            label=label,
+            sort_order=index,
+            is_initial=initial,
+            is_terminal=terminal,
+            is_default=initial,
+        )
+        db.add(row)
+        by_key[key] = row
+    db.flush()
+
+    for from_key, to_key, label in DEFAULT_TASK_EDGES:
+        db.add(
+            StatusTransition(
+                id=_uid(),
+                entity_type=PROJECT_TASK_ENTITY,
+                scope_id=None,
+                from_status_id=by_key[from_key].id,
+                to_status_id=by_key[to_key].id,
+                label=label,
+                trigger_mode="manual",
+            )
+        )
+    # Escalate and Stuck reachable from every live rung, and from each other: a task
+    # that has been stuck a fortnight is exactly what gets escalated.
+    for from_key in _TASK_LIVE:
+        for to_key, label in (("escalate", "Escalate"), ("stuck", "Mark stuck")):
+            if from_key == to_key:
+                continue
+            db.add(
+                StatusTransition(
+                    id=_uid(),
+                    entity_type=PROJECT_TASK_ENTITY,
+                    scope_id=None,
+                    from_status_id=by_key[from_key].id,
+                    to_status_id=by_key[to_key].id,
+                    label=label,
+                    trigger_mode="manual",
+                )
+            )
+    db.flush()
+    return len(by_key)
+
+
 def seed_types_and_templates(db: Session, company_id: str) -> int:
     """Per company, because types are company-scoped configuration.
 
@@ -269,9 +361,10 @@ def _company_ids(db: Session) -> List[str]:
 
 def run(db: Session, company_id: Optional[str] = None) -> Dict[str, int]:
     """Seed everything. Safe to call on every boot."""
-    summary = {"numbering": 0, "statuses": 0, "types": 0}
+    summary = {"numbering": 0, "statuses": 0, "task_statuses": 0, "types": 0}
     summary["numbering"] = 1 if seed_numbering_rule(db) else 0
     summary["statuses"] = seed_default_funnel(db)
+    summary["task_statuses"] = seed_default_task_graph(db)
 
     companies = [company_id] if company_id else _company_ids(db)
     for cid in companies:
