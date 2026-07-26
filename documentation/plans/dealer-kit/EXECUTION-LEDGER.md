@@ -25,7 +25,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 |---|---|---|---|---|
 | **S1 builder core** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 | **S2 collections + bundles** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
-| **S3 PDF export** | blocked on S2 | blocked | blocked | blocked |
+| **S3 PDF export** | not started | **foundation landed** | blocked | in progress |
 
 ---
 
@@ -437,6 +437,39 @@ denied · `product` fact source registered on the existing `app/rule_engine`, no
 
 **Flow:** page → *Export PDF* → `UserDownload` row `pending` → worker renders the print route
 through headless Chromium → My Downloads → download → **matches the screen**.
+
+#### S3 foundation — the enqueue snapshot (2026-07-26)
+
+Migration **311** (`dealer_kit.export_request`), the service, and
+`POST /pages/{id}/exports`. **213 pytest.** Migration verified upgrade / downgrade / upgrade
+clean on a throwaway database; single head. Numbered 311 because another branch already holds
+310, and colliding revision ids only surface at deploy time.
+
+The gate item this closes: **the render context is decided at enqueue and never re-derived.**
+Two failures it prevents, both of which produce a wrong FILE rather than an error anyone would
+notice:
+
+1. The worker runs with no request and no user, so "who is this for" has no answer at render
+   time - and the only fallback available to it is a system principal, which is a STAFF
+   principal. It would print internal prices into a document a consumer asked for. A download
+   with no snapshot now refuses to render rather than guessing.
+2. A page republished while its PDF sits in the queue would change what that PDF contains, so
+   the file someone downloads is not the thing they exported. The version id is pinned at
+   enqueue.
+
+Export is `page.view`, not `page.edit` - exporting a catalogue is reading it, and a salesperson
+who may see a page may take it to a customer. The route returns **202** with the download id,
+because the file does not exist yet.
+
+**Note for whoever picks this up:** `dealer_kit.export_request` was created on the local dev
+database directly (additive `create_all` for that one table), because this branch cannot run
+`alembic upgrade` there - the shared dev database sits on another branch's 310. The migration
+itself is verified independently on a throwaway database.
+
+**Still to build for S3:** the print route (a server-rendered page the worker loads), the RQ
+task, headless Chromium in the worker image, the Export button and My Downloads wiring, and
+the test that a dealer export and a staff export of one page carry different prices IN THE
+RENDERED FILE (the viewer split is proven at the service layer, not yet in a PDF).
 
 **Gate adds:** viewer context snapshotted at **enqueue** onto `dealer_kit.export_request`
 (`UserDownload` has no params column) · worker never falls back to a system principal · a
