@@ -47,8 +47,13 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.schemas.canonical_masters import (
+    CanonicalCreditTerm,
     CanonicalCustomer,
+    CanonicalPaymentMethod,
     CanonicalProductCategory,
+    CanonicalSalesAgent,
+    CanonicalTaxCode,
+    CanonicalTaxEntity,
     CanonicalUnitOfMeasure,
     CanonicalProduct,
     CanonicalSupplier,
@@ -182,14 +187,98 @@ def _warehouse_columns(payload: Any, db: Session) -> dict[str, Any]:
     }
 
 
+def _resolve_payment_terms_days(
+    db: Session, payment_terms_code: Optional[str], fallback_days: Optional[int]
+) -> Optional[int]:
+    """Days for a supplier/customer, resolved from the credit_terms master.
+
+    Slice 1 landed credit_terms, so a ``payment_terms_code`` now resolves to a
+    real ``term_days`` instead of being reported retryable forever. The code is
+    the AutoCount DisplayTerm, matched against ``credit_terms.display_term``.
+
+    Resolution order: an explicit numeric ``payment_terms_days`` on the payload
+    wins (the ESB already knew the number); otherwise the code is looked up. A
+    code that does not resolve is still retryable -- the credit term may simply
+    not have synced yet -- never silently dropped.
+    """
+    if fallback_days is not None:
+        return fallback_days
+    if not payment_terms_code:
+        return None
+    row = db.execute(
+        text("SELECT term_days FROM credit_terms WHERE display_term = :v LIMIT 1"),
+        {"v": payment_terms_code},
+    ).first()
+    if row is None:
+        raise MissingReference("payment_terms_code", payment_terms_code)
+    # A matched-but-null term_days is a resolved term with no day count (e.g.
+    # "Cash"); that is a real answer, not a miss.
+    return row[0]
+
+
+def _credit_term_columns(payload: Any, db: Session) -> dict[str, Any]:
+    return {
+        "display_term": payload.code,
+        "terms": payload.terms,
+        "term_days": payload.term_days,
+        "is_active": payload.is_active,
+    }
+
+
+def _tax_code_columns(payload: Any, db: Session) -> dict[str, Any]:
+    return {
+        "tax_code": payload.code,
+        "supply_purchase": payload.supply_purchase,
+        "tax_rate": payload.tax_rate,
+        "is_active": payload.is_active,
+    }
+
+
+def _sales_agent_columns(payload: Any, db: Session) -> dict[str, Any]:
+    return {
+        "sales_agent": payload.code,
+        "description": payload.description,
+        "is_active": payload.is_active,
+    }
+
+
+def _payment_method_columns(payload: Any, db: Session) -> dict[str, Any]:
+    return {
+        "payment_method": payload.code,
+        "description": payload.description,
+        "bank_account": payload.bank_account,
+        "journal_type": payload.journal_type,
+        "is_active": payload.is_active,
+    }
+
+
+def _tax_entity_columns(payload: Any, db: Session) -> dict[str, Any]:
+    return {
+        "tax_entity_id": payload.code,
+        "name": payload.name,
+        "tin": payload.tin,
+        "identity_no": payload.identity_no,
+        "tax_branch_id": payload.tax_branch_id,
+        "tax_classification": payload.tax_classification,
+        "gst_register_no": payload.gst_register_no,
+        "sst_register_no": payload.sst_register_no,
+        "tourism_tax_register_no": payload.tourism_tax_register_no,
+        "trade_name": payload.trade_name,
+        "business_activity_desc": payload.business_activity_desc,
+        "msic_code": payload.msic_code,
+        "address": payload.address,
+        "post_code": payload.post_code,
+        "city": payload.city,
+        "state_code": payload.state_code,
+        "country_code": payload.country_code,
+        "phone": payload.phone,
+        "email_address": payload.email_address,
+        "is_active": payload.is_active,
+    }
+
+
 def _supplier_columns(payload: Any, db: Session) -> dict[str, Any]:
-    terms = payload.payment_terms_days
-    if payload.payment_terms_code:
-        # The payment-terms master does not exist until Phase D. Rather than
-        # silently dropping the code -- which would persist a supplier with the
-        # wrong terms and no signal -- report it retryable so the ESB re-drains
-        # once that master lands.
-        raise MissingReference("payment_terms_code", payload.payment_terms_code)
+    terms = _resolve_payment_terms_days(db, payload.payment_terms_code, payload.payment_terms_days)
     return {
         "supplier_code": payload.code,
         "supplier_name": payload.name,
@@ -201,8 +290,7 @@ def _supplier_columns(payload: Any, db: Session) -> dict[str, Any]:
 
 
 def _customer_columns(payload: Any, db: Session) -> dict[str, Any]:
-    if payload.payment_terms_code:
-        raise MissingReference("payment_terms_code", payload.payment_terms_code)
+    terms = _resolve_payment_terms_days(db, payload.payment_terms_code, payload.payment_terms_days)
     return {
         "customer_code": payload.code,
         "customer_name": payload.name,
@@ -211,7 +299,7 @@ def _customer_columns(payload: Any, db: Session) -> dict[str, Any]:
         "registration_number": payload.registration_number,
         "tax_id": payload.tax_id,
         "credit_limit": payload.credit_limit,
-        "payment_terms_days": payload.payment_terms_days,
+        "payment_terms_days": terms,
         "country": payload.country,
         "is_active": payload.is_active,
     }
@@ -265,6 +353,14 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
     "suppliers": EntitySpec("suppliers", CanonicalSupplier, "supplier_code", _supplier_columns),
     "customers": EntitySpec("customers", CanonicalCustomer, "customer_code", _customer_columns),
     "products": EntitySpec("products", CanonicalProduct, "product_code", _product_columns),
+    # Slice 1: credit_terms unblocks supplier/customer payment_terms_code;
+    # tax_codes is the resolve-target for document-line TaxCode in later slices.
+    "credit_terms": EntitySpec("credit_terms", CanonicalCreditTerm, "display_term", _credit_term_columns),
+    "tax_codes": EntitySpec("tax_codes", CanonicalTaxCode, "tax_code", _tax_code_columns),
+    # Slice 2: flat reference masters.
+    "sales_agents": EntitySpec("sales_agents", CanonicalSalesAgent, "sales_agent", _sales_agent_columns),
+    "payment_methods": EntitySpec("payment_methods", CanonicalPaymentMethod, "payment_method", _payment_method_columns),
+    "tax_entities": EntitySpec("tax_entities", CanonicalTaxEntity, "tax_entity_id", _tax_entity_columns),
 }
 
 

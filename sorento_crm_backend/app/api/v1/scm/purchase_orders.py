@@ -20,6 +20,7 @@ from app.schemas.scm_decisions import (
     CreateGrResult,
 )
 from app.schemas.scm_orders import PurchaseOrder, PurchaseOrderListResponse
+from app.schemas.autocount_mirror import MirrorAnnotationUpdate
 from app.services.error_handler import AppException
 from app.services.scm.purchase_order_service import PurchaseOrderService
 
@@ -62,6 +63,23 @@ def create_gr_from_purchase_order(
 ):
     """Create a goods receipt from an active PO, stamping received qty (M4-D6)."""
     return PurchaseOrderService(db).create_gr(po_id, (_user or {}).get("id"))
+
+
+@router.patch("/purchase-orders/{po_id}/annotation", response_model=PurchaseOrder)
+def annotate_purchase_order(
+    po_id: str,
+    body: MirrorAnnotationUpdate,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_WRITE),
+):
+    """Update the two ingest-safe annotation columns. Allowed on AutoCount-synced
+    POs (the one thing editable on a read-only mirror row)."""
+    fields = body.model_dump(exclude_unset=True)
+    return PurchaseOrderService(db).annotate(
+        po_id,
+        internal_note=fields.get("internal_note", ...) if "internal_note" in fields else ...,
+        follow_up=fields.get("follow_up", ...) if "follow_up" in fields else ...,
+    )
 
 
 @router.get("/purchase-orders/{po_id}", response_model=PurchaseOrder)

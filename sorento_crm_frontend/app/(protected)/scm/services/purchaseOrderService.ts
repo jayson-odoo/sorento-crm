@@ -36,7 +36,7 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiResponse } from '@/components/ui/data-grid';
-import type { PurchaseOrder } from '../types/scm.types';
+import type { MirrorAnnotationPayload, PurchaseOrder } from '../types/scm.types';
 import {
   USE_SLICE_B_MOCKS,
   mockConfirmPurchaseOrders,
@@ -120,6 +120,24 @@ export async function bulkConfirmPurchaseOrders(ids: string[]): Promise<{ confir
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to confirm purchase orders'));
   return (await res.json()) as { confirmed_count: number };
+}
+
+/**
+ * Update the Sorento-only annotation (internal note + follow-up) on a purchase
+ * order. This is the ONLY mutation allowed on an AutoCount-mirrored PO — the BE
+ * 403s every other write with `AUTOCOUNT_READ_ONLY`. PATCH .../annotation.
+ */
+export async function annotatePurchaseOrder(
+  id: string,
+  data: MirrorAnnotationPayload,
+): Promise<PurchaseOrder> {
+  const res = await apiFetch(`${BASE}/${encodeURIComponent(id)}/annotation`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to save note'));
+  return (await res.json()) as PurchaseOrder;
 }
 
 /** Create a goods receipt from an active PO (M4-D6). Returns the GR reference. */

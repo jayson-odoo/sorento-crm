@@ -31,9 +31,13 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
 const usePurchaseOrder = vi.fn();
+const annotateMut = { mutate: vi.fn(), isPending: false };
 vi.mock('../../../hooks/usePurchaseOrders', () => ({
   usePurchaseOrder: (...a: unknown[]) => usePurchaseOrder(...a),
+  useAnnotatePurchaseOrder: () => annotateMut,
 }));
 
 import { PurchaseOrderDetail } from './PurchaseOrderDetail';

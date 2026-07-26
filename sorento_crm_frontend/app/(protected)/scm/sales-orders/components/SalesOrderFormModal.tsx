@@ -10,15 +10,20 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { AutoCountSourceBadge } from '@/components/common/AutoCountSourceBadge';
+import { MirrorAnnotationCard } from '@/components/common/MirrorAnnotationCard';
 import {
   useCustomerOptions,
   useOrderTypeOptions,
   useProductOptions,
 } from '../../hooks/useScmOptions';
+import { useAnnotateSalesOrder } from '../../hooks/useSalesOrders';
+import { fmtDate, fmtInt, fmtMoney } from '../../lib/format';
 import type {
   SalesOrder,
   SalesOrderFormData,
@@ -37,6 +42,128 @@ const PRIORITY_OPTIONS = [
 type LineDraft = { sku: string; qty_ordered: string; uom: string };
 
 const emptyLine = (): LineDraft => ({ sku: '', qty_ordered: '', uom: '' });
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className="text-sm font-medium break-words">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * Read-only surface for an AutoCount-mirrored sales order. The SO list has no
+ * dedicated detail page, so the form modal doubles as the mirror detail view:
+ * it renders the header, meta, and read-only pricing lines, plus the ONE allowed
+ * edit — the internal-note / follow-up annotation via `MirrorAnnotationCard`.
+ * Every mutating input/Save is deliberately absent (the BE 403s them anyway).
+ */
+function ReadOnlySalesOrderView({
+  so,
+  onOpenChange,
+}: {
+  so: SalesOrder;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const annotate = useAnnotateSalesOrder();
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="flex flex-wrap items-center gap-2">
+          <span className="break-words">{so.so_number}</span>
+          <AutoCountSourceBadge source="autocount" />
+        </DialogTitle>
+      </DialogHeader>
+
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <Field label="Customer">{so.customer_name || so.customer_code || '—'}</Field>
+          <Field label="Doc No">{so.source_doc_no || '—'}</Field>
+          <Field label="Type">{so.order_type_label || so.order_type || '—'}</Field>
+          <Field label="Status">
+            <Badge variant="secondary" appearance="light">
+              {so.status.replace(/[_-]+/g, ' ')}
+            </Badge>
+          </Field>
+          <Field label="Order date">{fmtDate(so.order_date)}</Field>
+          <Field label="Requested delivery">{fmtDate(so.requested_delivery_date)}</Field>
+          <Field label="Total qty">{fmtInt(so.total_qty)}</Field>
+          <Field label="Committed qty">{fmtInt(so.committed_qty)}</Field>
+        </div>
+
+        <div>
+          <Label className="mb-2 block">Lines</Label>
+          {so.lines.length > 0 ? (
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/30 text-left text-muted-foreground">
+                    <th className="px-3 py-2 font-medium">Product</th>
+                    <th className="px-3 py-2 font-medium">UoM</th>
+                    <th className="px-3 py-2 text-right font-medium">Qty</th>
+                    <th className="px-3 py-2 text-right font-medium">Unit price</th>
+                    <th className="px-3 py-2 text-right font-medium">Discount</th>
+                    <th className="px-3 py-2 font-medium">Tax</th>
+                    <th className="px-3 py-2 text-right font-medium">Tax amt</th>
+                    <th className="px-3 py-2 text-right font-medium">Sub total</th>
+                    <th className="px-3 py-2 font-medium">Delivery date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {so.lines.map((l) => (
+                    <tr key={l.id} className="border-b align-top last:border-0">
+                      <td className="px-3 py-2">
+                        <span className="font-medium">{l.sku}</span>
+                        {l.product_name && l.product_name !== l.sku ? (
+                          <span
+                            className="block max-w-xs truncate text-muted-foreground"
+                            title={l.product_name}
+                          >
+                            {l.product_name}
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2">{l.uom || '—'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtInt(l.qty_ordered)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtMoney(l.unit_price)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">
+                        {fmtMoney(l.discount_amt)}
+                      </td>
+                      <td className="px-3 py-2">
+                        {l.tax_code || '—'}
+                        {l.tax_rate !== null && l.tax_rate !== undefined
+                          ? ` (${l.tax_rate}%)`
+                          : ''}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtMoney(l.tax_amt)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{fmtMoney(l.sub_total)}</td>
+                      <td className="px-3 py-2">{fmtDate(l.delivery_date)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">This sales order has no lines.</p>
+          )}
+        </div>
+
+        <MirrorAnnotationCard
+          value={{ internal_note: so.internal_note, follow_up: so.follow_up }}
+          isSaving={annotate.isPending}
+          onSave={(next) => annotate.mutate({ id: so.id, data: next })}
+        />
+      </div>
+
+      <DialogFooter>
+        <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          Close
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}
 
 export function SalesOrderFormModal({
   open,
@@ -116,9 +243,15 @@ export function SalesOrderFormModal({
     });
   };
 
+  const isAutocount = editing?.source === 'autocount';
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-3xl">
+        {isAutocount && editing ? (
+          <ReadOnlySalesOrderView so={editing} onOpenChange={onOpenChange} />
+        ) : (
+          <>
         <DialogHeader>
           <DialogTitle>{editing ? 'Edit sales order' : 'Add sales order'}</DialogTitle>
         </DialogHeader>
@@ -248,6 +381,8 @@ export function SalesOrderFormModal({
             </Button>
           </DialogFooter>
         </form>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

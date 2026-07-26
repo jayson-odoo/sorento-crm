@@ -1,6 +1,6 @@
 """Order management schemas."""
-from pydantic import BaseModel, field_validator
-from typing import Optional, List
+from pydantic import BaseModel, field_validator, computed_field
+from typing import Optional, List, Literal
 from datetime import datetime
 from decimal import Decimal
 import uuid
@@ -195,7 +195,18 @@ class OrderResponse(OrderBase):
     customer: Optional[CustomerSimple] = None
     order_status: Optional[OrderStatusSimple] = None
     lines: Optional[list["OrderLineResponse"]] = []
-    
+    # AutoCount mirror provenance + ingest-safe annotations (Slice 5). `source`
+    # is the uniform gate the FE reads: "autocount" rows are read-only; "manual"
+    # rows keep full CRUD. Computed from the raw sync_source column.
+    sync_source: str = "manual"
+    internal_note: Optional[str] = None
+    follow_up: bool = False
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def source(self) -> Literal["autocount", "manual"]:
+        return "autocount" if self.sync_source == "autocount" else "manual"
+
     @field_validator('created_by', mode='before')
     @classmethod
     def convert_created_by_uuid(cls, v):

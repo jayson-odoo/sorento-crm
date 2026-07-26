@@ -278,6 +278,12 @@ async def startup_event():
         try:
             created = sync_permissions(_db)
             logging.info("RBAC permissions synced at startup: added=%d", created)
+            # Grant every external-ingest slug to the integration roles (the
+            # /external guard has no admin bypass). Idempotent; must run AFTER
+            # sync_permissions so the permission rows exist.
+            from app.services.integration_ingest_grants import grant_ingest_permissions
+            granted = grant_ingest_permissions(_db)
+            logging.info("Integration ingest grants synced at startup: added=%d", granted)
         finally:
             _db.close()
     except Exception as e:

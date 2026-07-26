@@ -70,6 +70,9 @@ class PurchaseOrderService:
                 "qty_ordered": float(ln.qty_ordered or 0),
                 "qty_received": float(ln.qty_received or 0),
                 "uom": ln.product.base_uom.uom_code if (ln.product and ln.product.base_uom) else "",
+                "unit_cost": float(ln.unit_cost) if ln.unit_cost is not None else None,
+                "description": getattr(ln, "description", None),
+                "sub_total": float(ln.sub_total) if getattr(ln, "sub_total", None) is not None else None,
             })
         return {
             "id": po.id,
@@ -88,7 +91,14 @@ class PurchaseOrderService:
             "lines": lines,
             "created_at": po.created_at.isoformat() if po.created_at else "",
             "is_on_order": self._is_on_order(po),
-            "source": "recommendation" if po.source_system == _REC_SOURCE else "manual",
+            "source": (
+                "autocount" if po.source_system == "autocount"
+                else "recommendation" if po.source_system == _REC_SOURCE
+                else "manual"
+            ),
+            "source_doc_no": getattr(po, "source_doc_no", None),
+            "internal_note": getattr(po, "internal_note", None),
+            "follow_up": bool(getattr(po, "follow_up", False)),
             "gr_reference": gr_reference,
         }
 
@@ -156,6 +166,28 @@ class PurchaseOrderService:
         gr_refs = self._gr_refs_for([po.id])
         return self.serialize(po, gr_refs.get(po.id))
 
+    def _assert_native(self, po: PurchaseOrder) -> None:
+        """Block workflow actions on an AutoCount-synced PO. AutoCount owns it."""
+        if getattr(po, "source_system", None) == "autocount":
+            raise AppException(
+                status_code=403,
+                message="This purchase order is synced from AutoCount and is read-only.",
+                code="AUTOCOUNT_READ_ONLY",
+            )
+
+    def annotate(self, po_id: str, *, internal_note=..., follow_up=...) -> Optional[dict]:
+        """Write the two ingest-safe annotation columns (allowed on synced rows)."""
+        po = self._base_query().filter(PurchaseOrder.id == po_id).first()
+        if po is None:
+            raise AppException(status_code=404, message="Purchase order not found.")
+        if internal_note is not ...:
+            po.internal_note = internal_note
+        if follow_up is not ...:
+            po.follow_up = bool(follow_up)
+        self.db.commit()
+        gr_refs = self._gr_refs_for([po.id])
+        return self.serialize(po, gr_refs.get(po.id))
+
     # -- M4 Slice B writes ---------------------------------------------------
 
     def bulk_confirm(self, ids: list[str], actor: Optional[str] = None) -> dict:
@@ -191,6 +223,7 @@ class PurchaseOrderService:
         po = self._base_query().filter(PurchaseOrder.id == po_id).first()
         if po is None:
             raise AppException(status_code=404, message="Purchase order not found.")
+        self._assert_native(po)
         if po.status not in ("active", "partial"):
             raise AppException(
                 status_code=422,

@@ -40,6 +40,7 @@ import { useOrders } from '../hooks/useOrders';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
 import type { Order } from '../types/order.types';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { AutoCountSourceBadge } from '@/components/common/AutoCountSourceBadge';
 import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
@@ -113,7 +114,7 @@ export default function OrdersList() {
     setAdvancedFilter(decodeAdvancedFilter(parsed.filters.advFilter));
   }, [listNavSearchKey]);
 
-  const { data, isLoading, isError, error, refetch, isFetching } = useOrders({
+  const { data, isLoading, isError, error, refetch } = useOrders({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -174,7 +175,15 @@ export default function OrdersList() {
       {
         accessorKey: 'order_number',
         header: ({ column }) => <DataGridColumnHeader title="Delivery Order Number" column={column} />,
-        size: 150,
+        size: 230,
+        cell: ({ row }) => (
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="font-medium truncate" title={row.original.order_number}>
+              {row.original.order_number}
+            </span>
+            {row.original.source === 'autocount' && <AutoCountSourceBadge source="autocount" />}
+          </div>
+        ),
         meta: { headerTitle: 'Delivery Order Number', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
@@ -293,7 +302,9 @@ export default function OrdersList() {
     pageCount: Math.ceil((data?.pagination.total || 0) / pagination.pageSize),
     getRowId: (row) => row.id,
     state: { pagination, sorting, rowSelection },
-    enableRowSelection: true,
+    // AutoCount-synced rows are read-only: exclude them from bulk-delete selection
+    // (the checkbox renders disabled). Native rows select as usual.
+    enableRowSelection: (row) => row.original.source !== 'autocount',
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,

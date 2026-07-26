@@ -247,6 +247,17 @@ export interface SupplierGroup {
 // Sales orders (M1-D14)
 // ---------------------------------------------------------------------------
 
+/** Record provenance shared by SO + PO. `autocount` = AutoCount-mirrored and
+ *  read-only; `recommendation` = drafted from an accepted reorder recommendation;
+ *  `manual` = created directly. Only `autocount` triggers the read-only gate. */
+export type ScmSource = 'autocount' | 'recommendation' | 'manual';
+
+/** Body for the SO/PO annotation PATCH — the only edit allowed on a mirror row. */
+export interface MirrorAnnotationPayload {
+  internal_note: string;
+  follow_up: boolean;
+}
+
 // `medium` is what the seed / back-end emits; `normal` is the FE-form default —
 // both are supported. Any unknown value still renders via a neutral fallback.
 export type SalesOrderPriority = 'low' | 'medium' | 'normal' | 'high' | 'urgent';
@@ -264,6 +275,14 @@ export interface SalesOrderLine {
   /** Stamped by create-DO-from-SO (soft link, no hard FK). */
   qty_delivered: number;
   uom: string;
+  // AutoCount mirror pricing (read-only) — null on native/recommendation lines.
+  unit_price: number | null;
+  discount_amt: number | null;
+  tax_rate: number | null;
+  tax_amt: number | null;
+  sub_total: number | null;
+  delivery_date: string | null;
+  tax_code: string | null;
 }
 
 export interface SalesOrder {
@@ -285,6 +304,15 @@ export interface SalesOrder {
   committed_qty: number;
   lines: SalesOrderLine[];
   created_at: string;
+  /** How the record originated. `autocount` rows are AutoCount-mirrored and
+   *  READ-ONLY (every mutation 403s server-side); only the internal note /
+   *  follow-up annotation is editable. `recommendation`/`manual` are native. */
+  source: ScmSource;
+  /** Originating AutoCount document number; null on native rows. */
+  source_doc_no: string | null;
+  /** Sorento-only annotation — survives re-sync (ingest never writes it). */
+  internal_note: string | null;
+  follow_up: boolean;
 }
 
 export interface SalesOrderFormData {
@@ -323,6 +351,10 @@ export interface PurchaseOrderLine {
   qty_ordered: number;
   qty_received: number;
   uom: string;
+  // AutoCount mirror pricing (read-only) — null on native/recommendation lines.
+  unit_cost: number | null;
+  description: string | null;
+  sub_total: number | null;
 }
 
 export interface PurchaseOrder {
@@ -344,9 +376,15 @@ export interface PurchaseOrder {
   /** True when this PO counts as incoming supply (on-order) — false for a draft
    *  or cancelled PO. Mirrors `scm.on_order_v`'s status filter (M4-D5/D6). */
   is_on_order?: boolean;
-  /** How the PO originated — `recommendation` = drafted from an accepted reorder
+  /** How the PO originated — `autocount` = AutoCount-mirrored and READ-ONLY (every
+   *  mutation 403s server-side); `recommendation` = drafted from an accepted reorder
    *  recommendation (Slice B); `manual` = created directly. */
-  source?: 'recommendation' | 'manual';
+  source?: ScmSource;
+  /** Originating AutoCount document number; null on native rows. */
+  source_doc_no?: string | null;
+  /** Sorento-only annotation — survives re-sync (ingest never writes it). */
+  internal_note?: string | null;
+  follow_up?: boolean;
   /** Goods-receipt reference once a GR has been created from this PO (M4-D6). */
   gr_reference?: string | null;
 }

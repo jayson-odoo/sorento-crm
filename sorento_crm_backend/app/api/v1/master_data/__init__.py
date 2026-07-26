@@ -15,6 +15,12 @@ from app.api.v1.master_data import (
     respond_contacts_select,
     spec_registry,
     product_specifications,
+    credit_terms,
+    tax_codes,
+    sales_agents,
+    payment_methods,
+    tax_entities,
+    item_packages,
 )
 
 router = APIRouter()
@@ -30,6 +36,12 @@ router.include_router(
     tags=["product-specifications"],
 )
 router.include_router(units_of_measure.router, prefix="/units-of-measure", tags=["units-of-measure"])
+router.include_router(credit_terms.router, prefix="/credit-terms", tags=["credit-terms"])
+router.include_router(tax_codes.router, prefix="/tax-codes", tags=["tax-codes"])
+router.include_router(sales_agents.router, prefix="/sales-agents", tags=["sales-agents"])
+router.include_router(payment_methods.router, prefix="/payment-methods", tags=["payment-methods"])
+router.include_router(tax_entities.router, prefix="/tax-entities", tags=["tax-entities"])
+router.include_router(item_packages.router, prefix="/item-packages", tags=["item-packages"])
 router.include_router(product_attachments.router, prefix="/product-attachments", tags=["product-attachments"])
 router.include_router(certificates.router, prefix="/certificates", tags=["certificates"])
 router.include_router(lookup_sets.router, prefix="/lookup-sets", tags=["lookup-sets"])

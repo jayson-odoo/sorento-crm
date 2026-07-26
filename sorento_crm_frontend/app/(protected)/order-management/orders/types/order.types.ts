@@ -1,6 +1,18 @@
 export interface Order {
   id: string;
   order_number: string;
+  /**
+   * Provenance gate. `autocount` rows are a read-only mirror of AutoCount and
+   * only the annotation carve-out (internal_note / follow_up) may be changed;
+   * every other mutation is server-guarded (403 AUTOCOUNT_READ_ONLY). `manual`
+   * rows are full CRUD. `sync_source` is the raw upstream value behind it.
+   */
+  source?: 'autocount' | 'manual';
+  sync_source?: string | null;
+  /** Sorento-only note, survives re-sync. Editable even on autocount rows. */
+  internal_note?: string | null;
+  /** Sorento-only follow-up flag, survives re-sync. Editable on autocount rows. */
+  follow_up?: boolean | null;
   order_date?: Date | null;
   estimated_delivery_date?: Date | null;
   actual_delivery_date?: Date | null;
@@ -114,6 +126,12 @@ export interface OrderFormData {
   tax_amount?: number;
   total_amount: number;
   remarks?: string;
+}
+
+/** Annotation carve-out payload for the mirror note editor (both fields optional). */
+export interface OrderAnnotationPayload {
+  internal_note?: string | null;
+  follow_up?: boolean;
 }
 
 export interface OrderLineFormData {
