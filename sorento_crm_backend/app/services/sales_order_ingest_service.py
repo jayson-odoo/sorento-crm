@@ -174,11 +174,18 @@ class SalesOrderIngestService:
         return IngestOutcome.CREATED, so_id
 
     def _replace_lines(self, so_id: str, lines: list[dict]) -> None:
+        # sales_order_lines is company-scoped: carry the header's company_id onto
+        # each raw-inserted line (the ORM auto-stamp doesn't fire on raw SQL) or
+        # the fail-closed SELECT filter hides them.
+        company_id = self.db.execute(
+            text("SELECT company_id FROM sales_orders WHERE id = :s"), {"s": so_id}
+        ).scalar()
         self.db.execute(text("DELETE FROM sales_order_lines WHERE sales_order_id = :s"), {"s": so_id})
         for line in lines:
-            names = ", ".join(["id", "sales_order_id", *line])
-            binds = ", ".join([":id", ":sales_order_id", *(f":{c}" for c in line)])
+            row = {"sales_order_id": so_id, "company_id": company_id, **line}
+            names = ", ".join(["id", *row])
+            binds = ", ".join([":id", *(f":{c}" for c in row)])
             self.db.execute(
                 text(f"INSERT INTO sales_order_lines ({names}) VALUES ({binds})"),
-                {"id": str(uuid.uuid4()), "sales_order_id": so_id, **line},
+                {"id": str(uuid.uuid4()), **row},
             )

@@ -167,11 +167,17 @@ class PurchaseOrderIngestService:
         return IngestOutcome.CREATED, po_id
 
     def _replace_lines(self, po_id: str, lines: list[dict]) -> None:
+        # purchase_order_lines is company-scoped: carry the header's company_id
+        # onto each raw-inserted line or the fail-closed SELECT filter hides them.
+        company_id = self.db.execute(
+            text("SELECT company_id FROM purchase_orders WHERE id = :p"), {"p": po_id}
+        ).scalar()
         self.db.execute(text("DELETE FROM purchase_order_lines WHERE purchase_order_id = :p"), {"p": po_id})
         for line in lines:
-            names = ", ".join(["id", "purchase_order_id", *line])
-            binds = ", ".join([":id", ":purchase_order_id", *(f":{c}" for c in line)])
+            row = {"purchase_order_id": po_id, "company_id": company_id, **line}
+            names = ", ".join(["id", *row])
+            binds = ", ".join([":id", *(f":{c}" for c in row)])
             self.db.execute(
                 text(f"INSERT INTO purchase_order_lines ({names}) VALUES ({binds})"),
-                {"id": str(uuid.uuid4()), "purchase_order_id": po_id, **line},
+                {"id": str(uuid.uuid4()), **row},
             )
