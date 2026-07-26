@@ -613,9 +613,19 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'projects.projects.view',
       },
       {
+        title: 'My Tasks',
+        path: '/project-sales/my-tasks',
+        permission: 'projects.projects.view',
+      },
+      {
         title: 'Parties',
         path: '/project-sales/parties',
         permission: 'projects.parties.view',
+      },
+      {
+        title: 'Setup',
+        path: '/project-sales/setup',
+        permission: 'projects.types.view',
       },
     ],
   },
@@ -1485,9 +1495,19 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         permission: 'projects.projects.view',
       },
       {
+        title: 'My Tasks',
+        path: '/project-sales/my-tasks',
+        permission: 'projects.projects.view',
+      },
+      {
         title: 'Parties',
         path: '/project-sales/parties',
         permission: 'projects.parties.view',
+      },
+      {
+        title: 'Setup',
+        path: '/project-sales/setup',
+        permission: 'projects.types.view',
       },
     ],
   },

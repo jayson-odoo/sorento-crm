@@ -1,8 +1,8 @@
 # UAC — Project Sales Pipeline (module `projects`)
 
-**Status:** S0, S1 and S2 built (2026-07-26). Groups B, C, D, G, J are implemented and
-browser-verified except where noted below; A is implemented apart from the Excel import.
-Remaining slices S2b, S2c, S3-S6 unstarted.
+**Status:** S0, S1, S2 and S2b built (2026-07-26). Groups B, C, D, G, J and N are
+implemented and browser-verified except where noted below; A is implemented apart from the
+Excel import. Remaining slices S2c, S3-S6 unstarted.
 
 **Verified against a running stack, not asserted:** every AC below marked ✅ was exercised
 either by a test that fails without it or in the browser at localhost:3010/:8010. ACs that
@@ -12,10 +12,13 @@ did NOT ship are marked ⏸ with the reason, rather than being quietly left ambi
   grouped within the sheet, BOTH sides of a repeated `(developer, normalised_title)` failed.
   Half of that is worse than none: it would create exactly the silent duplicate the module
   exists to prevent.
-- ⏸ **AC-H1 / AC-H2 (activities adapter, `last_meaningful_activity_at`).** The column is
-  written and read (the board badges "45d quiet"), but nothing advances it yet: the whitelist
-  of advancing events is defined by the task and quotation slices, so wiring it now means
-  wiring it twice.
+- ⏸ **AC-H1 / AC-H2 (activities adapter).** Partly un-deferred by S2b: creating or
+  completing a task now advances `last_meaningful_activity_at` (AC-N8), which is the first
+  entry in the AC-H2 whitelist. The quotation and sample events still wait for S3/S4, and
+  the shared activity FEED (notes, mentions) is untouched.
+- ⏸ **AC-N5a (link a task to a quotation version / sample / Project PO).** The columns, the
+  schema and the API accept the link, but there is no picker in the UI: none of the three
+  targets exists before S3/S4, so the picker would have nothing to offer.
 - ⏸ **AC-G10 (delete blocked by a Project PO).** The guard ships and is written against
   `information_schema`, so it is already correct — but the `project_purchase_orders` table
   arrives in S4, so it currently has nothing to find.

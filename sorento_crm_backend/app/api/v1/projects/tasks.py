@@ -265,6 +265,9 @@ async def list_my_tasks(
 ):
     """One person's open work across every project, overdue first (AC-N9).
 
+    "Mine" means assigned to me OR escalated to me: escalation asks for help without
+    reassigning, so this list is the only place the escalatee sees it.
+
     Deliberately not an ecohub pattern: its tasks live inside a single project because
     its user works one project at a time. Sorento salespeople hold dozens of concurrent
     pursuits.

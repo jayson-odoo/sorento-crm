@@ -164,6 +164,36 @@ export function PipelineGrid({
         ),
       },
       {
+        id: 'next_action',
+        // Derived server-side from the earliest open task. Not sortable: the backend
+        // sorts on real columns only, and a client-side sort of one page would order
+        // the visible rows while lying about the rest.
+        header: ({ column }) => <DataGridColumnHeader title="Next action" column={column} />,
+        size: 150,
+        enableSorting: false,
+        cell: ({ row }) =>
+          row.original.next_action_date ? (
+            <span
+              className={
+                row.original.next_action_overdue
+                  ? 'block truncate font-medium text-destructive'
+                  : 'block truncate'
+              }
+              title={
+                row.original.next_action_overdue
+                  ? `${formatGridDate(row.original.next_action_date)}, overdue`
+                  : formatGridDate(row.original.next_action_date)
+              }
+            >
+              {formatGridDate(row.original.next_action_date)}
+            </span>
+          ) : row.original.open_task_count > 0 ? (
+            <Muted>{row.original.open_task_count} open, none dated</Muted>
+          ) : (
+            <Muted>Nothing open</Muted>
+          ),
+      },
+      {
         accessorKey: 'last_meaningful_activity_at',
         header: ({ column }) => <DataGridColumnHeader title="Last activity" column={column} />,
         size: 130,
@@ -188,7 +218,7 @@ export function PipelineGrid({
           row.original.is_critical ? (
             <Badge variant="destructive">Critical</Badge>
           ) : (
-            <Muted>—</Muted>
+            <Muted>-</Muted>
           ),
       },
     ],
@@ -260,4 +290,10 @@ function formatMyr(value: string): string {
   const amount = Number(value);
   if (Number.isNaN(amount)) return value;
   return `RM ${amount.toLocaleString('en-MY', { maximumFractionDigits: 0 })}`;
+}
+
+function formatGridDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' });
 }

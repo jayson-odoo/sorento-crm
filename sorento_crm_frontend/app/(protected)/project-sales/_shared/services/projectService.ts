@@ -12,8 +12,17 @@ import type {
   ProjectStakeholderBody,
   ProjectTemplate,
   ProjectType,
+  ProjectTypeBody,
+  ProjectTask,
+  ProjectTaskBody,
+  ProjectTemplateBody,
+  ProjectTemplateTask,
+  ProjectTemplateTaskBody,
   ProjectUpdateBody,
   TakeoverRequest,
+  TaskHistoryEntry,
+  TaskPhase,
+  TaskStatusChangeBody,
 } from '../types/project.types';
 
 const BASE = '/api/v1/project-sales';
@@ -296,4 +305,220 @@ export async function listProjectTemplates(typeId?: string): Promise<ProjectTemp
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load templates'));
   const body: ListEnvelope<ProjectTemplate> = await response.json();
   return body.data;
+}
+
+export async function createProjectType(body: ProjectTypeBody): Promise<ProjectType> {
+  const response = await apiFetch(`${BASE}/config/types`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to create the project type'));
+  return response.json();
+}
+
+export async function updateProjectType(
+  typeId: string,
+  body: Partial<ProjectTypeBody>,
+): Promise<ProjectType> {
+  const response = await apiFetch(`${BASE}/config/types/${typeId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to save the project type'));
+  return response.json();
+}
+
+export async function deleteProjectType(typeId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/config/types/${typeId}`, { method: 'DELETE' });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to delete the project type'));
+}
+
+export async function createProjectTemplate(
+  body: ProjectTemplateBody,
+): Promise<ProjectTemplate> {
+  const response = await apiFetch(`${BASE}/config/templates`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to create the template'));
+  return response.json();
+}
+
+export async function updateProjectTemplate(
+  templateId: string,
+  body: Partial<ProjectTemplateBody>,
+): Promise<ProjectTemplate> {
+  const response = await apiFetch(`${BASE}/config/templates/${templateId}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to save the template'));
+  return response.json();
+}
+
+export async function deleteProjectTemplate(templateId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/config/templates/${templateId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to delete the template'));
+}
+
+// ------------------------------------------------------------------- tasks
+
+export async function listProjectTasks(
+  projectId: string,
+  taskPhase?: TaskPhase,
+): Promise<ProjectTask[]> {
+  const sp = new URLSearchParams();
+  if (taskPhase) sp.set('task_phase', taskPhase);
+  const query = sp.toString();
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/tasks${query ? `?${query}` : ''}`,
+  );
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load tasks'));
+  const body: ListEnvelope<ProjectTask> = await response.json();
+  return body.data;
+}
+
+export async function createProjectTask(
+  projectId: string,
+  body: ProjectTaskBody,
+): Promise<ProjectTask> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to add the task'));
+  return response.json();
+}
+
+export async function updateProjectTask(
+  projectId: string,
+  taskId: string,
+  body: Partial<ProjectTaskBody>,
+): Promise<ProjectTask> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/tasks/${taskId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the task'));
+  return response.json();
+}
+
+/**
+ * The move and its required context go in ONE request.
+ *
+ * Escalate needs a person and Stuck needs a reason; the server rejects the move
+ * without them, so splitting this into two calls would leave a window where the task
+ * is escalated to nobody.
+ */
+export async function changeTaskStatus(
+  projectId: string,
+  taskId: string,
+  body: TaskStatusChangeBody,
+): Promise<ProjectTask> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/tasks/${taskId}/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to move the task'));
+  return response.json();
+}
+
+export async function deleteProjectTask(projectId: string, taskId: string): Promise<void> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/tasks/${taskId}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to delete the task'));
+}
+
+export async function getTaskHistory(
+  projectId: string,
+  taskId: string,
+): Promise<TaskHistoryEntry[]> {
+  const response = await apiFetch(
+    `${BASE}/projects/${projectId}/tasks/${taskId}/history`,
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the task history'));
+  const body: ListEnvelope<TaskHistoryEntry> = await response.json();
+  return body.data;
+}
+
+export async function listMyTasks(
+  params: { include_unassigned_owned?: boolean; page?: number; limit?: number } = {},
+): Promise<ListEnvelope<ProjectTask>> {
+  const sp = new URLSearchParams();
+  if (params.include_unassigned_owned) sp.set('include_unassigned_owned', 'true');
+  if (params.page) sp.set('page', String(params.page));
+  if (params.limit) sp.set('limit', String(params.limit));
+  const query = sp.toString();
+  const response = await apiFetch(`${BASE}/my-tasks${query ? `?${query}` : ''}`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load your tasks'));
+  return response.json();
+}
+
+// ------------------------------------------------ template checklist admin
+
+export async function listTemplateTasks(
+  templateId: string,
+): Promise<ProjectTemplateTask[]> {
+  const response = await apiFetch(`${BASE}/config/templates/${templateId}/tasks`);
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to load the checklist'));
+  const body: ListEnvelope<ProjectTemplateTask> = await response.json();
+  return body.data;
+}
+
+export async function createTemplateTask(
+  templateId: string,
+  body: ProjectTemplateTaskBody,
+): Promise<ProjectTemplateTask> {
+  const response = await apiFetch(`${BASE}/config/templates/${templateId}/tasks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to add the checklist item'));
+  return response.json();
+}
+
+export async function updateTemplateTask(
+  templateId: string,
+  templateTaskId: string,
+  body: Partial<ProjectTemplateTaskBody>,
+): Promise<ProjectTemplateTask> {
+  const response = await apiFetch(
+    `${BASE}/config/templates/${templateId}/tasks/${templateTaskId}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to save the checklist item'));
+  return response.json();
+}
+
+export async function deleteTemplateTask(
+  templateId: string,
+  templateTaskId: string,
+): Promise<void> {
+  const response = await apiFetch(
+    `${BASE}/config/templates/${templateId}/tasks/${templateTaskId}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to remove the checklist item'));
 }

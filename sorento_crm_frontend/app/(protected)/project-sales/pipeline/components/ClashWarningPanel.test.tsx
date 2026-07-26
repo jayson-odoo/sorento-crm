@@ -1,5 +1,5 @@
 /**
- * S2 — ClashWarningPanel (AC-C6, AC-C6a, AC-C7).
+ * S2 - ClashWarningPanel (AC-C6, AC-C6a, AC-C7).
  *
  * The panel's job is to keep two outcomes visually and textually distinct: a match
  * that STOPS the registration, and a match that is merely worth reading. Collapsing

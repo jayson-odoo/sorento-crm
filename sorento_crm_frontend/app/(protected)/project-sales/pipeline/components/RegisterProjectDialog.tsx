@@ -164,7 +164,7 @@ export function RegisterProjectDialog({
                         description: party.registration_no ?? undefined,
                       }))}
                       placeholder="Search developers"
-                      emptyMessage="No developers yet — add one under Parties"
+                      emptyMessage="No developers yet. Add one under Parties"
                     />
                   </div>
 
@@ -270,7 +270,7 @@ export function RegisterProjectDialog({
                         label: party.name,
                       }))}
                       placeholder="Search architects"
-                      emptyMessage="No architects yet — add one under Parties"
+                      emptyMessage="No architects yet. Add one under Parties"
                     />
                   </div>
                   <div className="space-y-1.5">
@@ -285,7 +285,7 @@ export function RegisterProjectDialog({
                         label: party.name,
                       }))}
                       placeholder="Search main contractors"
-                      emptyMessage="No main contractors yet — add one under Parties"
+                      emptyMessage="No main contractors yet. Add one under Parties"
                     />
                   </div>
                   <div className="space-y-1.5">

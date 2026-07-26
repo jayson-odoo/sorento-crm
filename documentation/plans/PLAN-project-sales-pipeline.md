@@ -186,8 +186,19 @@ page overflow and a reachable submit button.*
 | F8 | A per-type "create if missing" seeder resurrects a project type the team deliberately deleted, on every restart. | Seeding is skipped wholesale once the company has any type — same guard shape as the funnel. Pinned by a test. |
 | F9 | Core knowing which modules supply status entities would violate ADR-0001. | Core knows a CONVENTION instead: `app/modules/<key>/status_entities.py` exposing `register()`, discovered generically. |
 
-**S2b — Task management** (§7). Template task checklists, `project_tasks` on the status engine
-as entity #2, list + board + gantt + history view, "My Tasks". Must precede S5.
+**S2b — Task management** (§7). **BUILT 2026-07-26.** Template task checklists,
+`project_tasks` on the status engine as entity #2, work-stream sections + timeline + per-task
+history, "My Tasks", and the template checklist admin screen (Project Sales -> Setup).
+
+**S2b findings (things the build discovered):**
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| F10 | Escalating a task put it in nobody's worklist. `my_tasks` filtered on `assignee_user_id` only, and escalation deliberately does NOT reassign (it asks for help), so the escalatee never saw it. An escalation nobody can see is not an escalation. | "Mine" now means assigned to me OR escalated to me. Pinned by a test that seeds a task assigned to somebody else and escalated to me. |
+| F11 | A task's forced context (escalate target, stuck reason) could not be collected in a second request without a window where the task sat escalated to nobody. | The dialog collects the context and sends it WITH the status id in one call; the server validates before writing. An ordinary rung skips the dialog entirely rather than asking for a confirmation of nothing. |
+| F12 | The per-task history rendered the audit stamp 8 hours early: `audit_logs` timestamps are naive UTC and a bare `toLocaleString` treats them as local. | Uses the shared `formatDateTimeInMalaysia`, the same helper the audit list uses. Same family as the MCP `updated_at` bug. |
+| F13 | The delete confirm for an in-use checklist item told the user it could not be deleted and then offered a Delete button the server was certain to refuse with a 409. | Two dialogs: the ordinary confirm when nothing has copied the item, and a "cannot delete" notice offering **Deactivate instead** (which is the action the copy recommends) when something has. |
+| F14 | AC-N6 says a project's next action is derived from its earliest open task, but nothing surfaced it in the pipeline: the board card and grid predated tasks. | Board card and grid both show it, styled destructive when overdue, with an explicit "N open, none dated" state -- undated open work is not the same as nothing to do. |
 
 **S2c — Leads** (§5a). `project_leads` on the status engine as entity #3, select-or-create
 Customer wizard, qualify → runs the clash check and creates a Project, disqualify + reason,

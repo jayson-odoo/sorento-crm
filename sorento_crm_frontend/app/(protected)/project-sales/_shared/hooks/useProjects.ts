@@ -5,7 +5,24 @@ import { toast } from 'sonner';
 import {
   addStakeholder,
   changeProjectStatus,
+  changeTaskStatus,
+  createProjectTask,
+  createTemplateTask,
+  deleteProjectTask,
+  deleteTemplateTask,
+  getTaskHistory,
+  listMyTasks,
+  listProjectTasks,
+  listTemplateTasks,
+  updateProjectTask,
+  updateTemplateTask,
   createParty,
+  createProjectTemplate,
+  createProjectType,
+  deleteProjectTemplate,
+  deleteProjectType,
+  updateProjectTemplate,
+  updateProjectType,
   createTakeoverRequest,
   decideTakeoverRequest,
   deleteParty,
@@ -30,7 +47,13 @@ import type {
   ProjectPartyBody,
   ProjectRegisterBody,
   ProjectStakeholderBody,
+  ProjectTaskBody,
+  ProjectTemplateBody,
+  ProjectTypeBody,
+  ProjectTemplateTaskBody,
   ProjectUpdateBody,
+  TaskPhase,
+  TaskStatusChangeBody,
 } from '../types/project.types';
 
 export const PROJECTS_KEY = 'projects';
@@ -297,4 +320,237 @@ export function useTakeoverMutations(projectId: string) {
   });
 
   return { request, decide };
+}
+
+// ------------------------------------------------------------------- tasks
+
+export const tasksKey = (projectId: string, phase?: TaskPhase) => [
+  PROJECTS_KEY,
+  'tasks',
+  projectId,
+  phase ?? 'all',
+];
+export const MY_TASKS_KEY = 'my-tasks';
+export const taskHistoryKey = (projectId: string, taskId: string) => [
+  PROJECTS_KEY,
+  'task-history',
+  projectId,
+  taskId,
+];
+export const templateTasksKey = (templateId: string) => ['project-template-tasks', templateId];
+
+export function useProjectTasks(projectId: string | undefined, phase?: TaskPhase) {
+  return useQuery({
+    queryKey: tasksKey(projectId ?? '', phase),
+    queryFn: () => listProjectTasks(projectId as string, phase),
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useMyTasks(params: {
+  include_unassigned_owned?: boolean;
+  page?: number;
+  limit?: number;
+}) {
+  return useQuery({
+    queryKey: [MY_TASKS_KEY, params],
+    queryFn: () => listMyTasks(params),
+  });
+}
+
+export function useTaskHistory(projectId: string, taskId: string | null) {
+  return useQuery({
+    queryKey: taskHistoryKey(projectId, taskId ?? ''),
+    queryFn: () => getTaskHistory(projectId, taskId as string),
+    enabled: Boolean(taskId),
+  });
+}
+
+/**
+ * Every task write invalidates the PROJECT too.
+ *
+ * The project's next action is derived from its earliest open task (AC-N6), so
+ * completing a task changes the project row the pipeline renders. Without this the
+ * board keeps showing a next action that has already been dealt with.
+ */
+export function useTaskMutations(projectId: string) {
+  const queryClient = useQueryClient();
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY, 'tasks', projectId] });
+    queryClient.invalidateQueries({ queryKey: projectKey(projectId) });
+    queryClient.invalidateQueries({ queryKey: [PROJECTS_KEY, 'list'] });
+    queryClient.invalidateQueries({ queryKey: [MY_TASKS_KEY] });
+  };
+
+  const create = useMutation({
+    mutationFn: (body: ProjectTaskBody) => createProjectTask(projectId, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Task added');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<ProjectTaskBody> }) =>
+      updateProjectTask(projectId, id, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Task saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const move = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: TaskStatusChangeBody }) =>
+      changeTaskStatus(projectId, id, body),
+    onSuccess: (task) => {
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: taskHistoryKey(projectId, task.id) });
+      toast.success(`"${task.name}" moved to ${task.status_label ?? 'a new status'}`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteProjectTask(projectId, id),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Task deleted');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { create, update, move, remove };
+}
+
+export function useTemplateTasks(templateId: string | undefined) {
+  return useQuery({
+    queryKey: templateTasksKey(templateId ?? ''),
+    queryFn: () => listTemplateTasks(templateId as string),
+    enabled: Boolean(templateId),
+  });
+}
+
+export function useTemplateTaskMutations(templateId: string) {
+  const queryClient = useQueryClient();
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: templateTasksKey(templateId) });
+
+  const create = useMutation({
+    mutationFn: (body: ProjectTemplateTaskBody) => createTemplateTask(templateId, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Checklist item added');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<ProjectTemplateTaskBody> }) =>
+      updateTemplateTask(templateId, id, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Checklist item saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteTemplateTask(templateId, id),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Checklist item removed');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { create, update, remove };
+}
+
+
+// -------------------------------------------------- types / templates admin
+
+/**
+ * A type or template write invalidates BOTH lists.
+ *
+ * Deleting a type orphans nothing (the server refuses while templates exist) but
+ * renaming one changes the label every template row shows, and creating a template
+ * changes the type's template_count. Invalidating one list only leaves the other
+ * disagreeing on screen.
+ */
+function useConfigInvalidate() {
+  const queryClient = useQueryClient();
+  return () => {
+    queryClient.invalidateQueries({ queryKey: PROJECT_TYPES_KEY });
+    queryClient.invalidateQueries({ queryKey: ['project-templates'] });
+  };
+}
+
+export function useProjectTypeMutations() {
+  const invalidate = useConfigInvalidate();
+
+  const create = useMutation({
+    mutationFn: (body: ProjectTypeBody) => createProjectType(body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Project type created');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<ProjectTypeBody> }) =>
+      updateProjectType(id, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Project type saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteProjectType(id),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Project type deleted');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { create, update, remove };
+}
+
+export function useProjectTemplateMutations() {
+  const invalidate = useConfigInvalidate();
+
+  const create = useMutation({
+    mutationFn: (body: ProjectTemplateBody) => createProjectTemplate(body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Template created');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const update = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Partial<ProjectTemplateBody> }) =>
+      updateProjectTemplate(id, body),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Template saved');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => deleteProjectTemplate(id),
+    onSuccess: () => {
+      invalidate();
+      toast.success('Template deleted');
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { create, update, remove };
 }

@@ -262,7 +262,7 @@ export function PartiesClient() {
         title="Confirm delete"
         description={
           deleting
-            ? `Delete "${deleting.name}"? This action cannot be undone. A party used as a developer on any project cannot be deleted — deactivate it instead.`
+            ? `Delete "${deleting.name}"? This action cannot be undone. A party used as a developer on any project cannot be deleted, so deactivate it instead.`
             : ''
         }
         onDelete={async () => {
@@ -418,7 +418,7 @@ function PartyFormDialog({
                   onChange={(event) => setIsActive(event.target.checked)}
                   className="size-4 rounded border-border"
                 />
-                Active — inactive parties stay on their projects but stop appearing in
+                Active. Inactive parties stay on their projects but stop appearing in
                 pickers
               </label>
             )}

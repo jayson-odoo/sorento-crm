@@ -335,7 +335,7 @@ function StakeholderFormDialog({
                     description: party.party_type.replace(/_/g, ' '),
                   }))}
                   placeholder="Search parties"
-                  emptyMessage="No parties yet — add one under Parties"
+                  emptyMessage="No parties yet. Add one under Parties"
                 />
                 <p className="text-xs text-muted-foreground">
                   Optional. A lone informant with no firm records fine.

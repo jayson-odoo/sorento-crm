@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { AlertTriangle, Clock, Flame, GripVertical } from 'lucide-react';
+import { AlertTriangle, CalendarClock, Clock, Flame, GripVertical } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -185,6 +185,7 @@ function ProjectCard({
   // back with a 403 is worse than one that never moved.
   const draggable = project.can_edit;
   const stale = (project.days_since_last_activity ?? 0) >= 30;
+  const nextAction = describeNextAction(project);
 
   return (
     <li
@@ -248,6 +249,19 @@ function ProjectCard({
             )}
           </div>
 
+          {nextAction && (
+            <p
+              className={cn(
+                'flex items-center gap-1 text-xs',
+                project.next_action_overdue ? 'font-medium text-destructive' : 'text-muted-foreground',
+              )}
+              title={nextAction.title}
+            >
+              <CalendarClock className="size-3 shrink-0" aria-hidden />
+              <span className="truncate">{nextAction.label}</span>
+            </p>
+          )}
+
           <div className="flex items-center justify-between gap-2 pt-0.5 text-xs">
             <span className="truncate text-muted-foreground" title={project.owner_name ?? ''}>
               {project.owner_name ?? 'Unassigned'}
@@ -262,6 +276,38 @@ function ProjectCard({
       </div>
     </li>
   );
+}
+
+/**
+ * The card's next-action line (AC-N6).
+ *
+ * Server-derived from the earliest open task, so this only formats it. Three distinct
+ * states, and none of them may render as blank: a dated action, open work that nobody
+ * has dated, and genuinely nothing open. The middle one is the reason a bare date field
+ * is not enough -- "no date" is not the same as "nothing to do".
+ */
+function describeNextAction(project: Project): { label: string; title: string } | null {
+  if (project.next_action_date) {
+    return {
+      label: formatNextActionDate(project.next_action_date),
+      title: project.next_action_overdue
+        ? `Next action ${formatNextActionDate(project.next_action_date)}, overdue`
+        : `Next action ${formatNextActionDate(project.next_action_date)}`,
+    };
+  }
+  if (project.open_task_count > 0) {
+    return {
+      label: `${project.open_task_count} open, none dated`,
+      title: `Next action: ${project.open_task_count} open task${project.open_task_count === 1 ? '' : 's'}, none with a due date`,
+    };
+  }
+  return null;
+}
+
+function formatNextActionDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleDateString('en-MY', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
 export function EmptyState({

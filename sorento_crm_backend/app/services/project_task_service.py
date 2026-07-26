@@ -595,18 +595,22 @@ def my_tasks(
             ProjectTask.completed_at.is_(None),
         )
     )
+    # Escalated-to counts as mine. Escalation asks for help without handing the work
+    # over, so the task stays with its assignee -- which means the escalatee learns about
+    # it here or not at all.
+    mine = or_(
+        ProjectTask.assignee_user_id == user_id,
+        ProjectTask.escalated_to_user_id == user_id,
+    )
     if include_unassigned_owned:
         # A project owner's unassigned tasks are still their problem; without this they
         # are invisible to everyone until someone happens to open the project.
-        query = query.filter(
-            or_(
-                ProjectTask.assignee_user_id == user_id,
-                (ProjectTask.assignee_user_id.is_(None))
-                & (Project.owner_user_id == user_id),
-            )
+        mine = or_(
+            mine,
+            (ProjectTask.assignee_user_id.is_(None))
+            & (Project.owner_user_id == user_id),
         )
-    else:
-        query = query.filter(ProjectTask.assignee_user_id == user_id)
+    query = query.filter(mine)
 
     total = query.count()
     page = max(1, int(page or 1))

@@ -427,6 +427,39 @@ def test_my_tasks_shows_only_my_open_tasks():
         assert total == 1
 
 
+def test_my_tasks_shows_work_escalated_to_me():
+    """Escalating to somebody who cannot see it is not an escalation.
+
+    The task stays assigned to whoever was already on it -- escalation asks for help,
+    it does not hand the work over -- so the escalatee only ever learns about it if
+    their own worklist surfaces it.
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        me = _user(db, f"{MARKER} Ali")
+        assignee = _user(db, f"{MARKER} Siti")
+        not_started, _ip, _done = _task_graph(db)
+        project = _project(db, company_id, assignee)
+
+        db.add(
+            ProjectTask(
+                id=_uid(),
+                company_id=company_id,
+                project_id=project.id,
+                name="Escalated to me",
+                status_id=not_started.id,
+                assignee_user_id=assignee,
+                escalated_to_user_id=me,
+            )
+        )
+        db.flush()
+
+        rows, total = tasks.my_tasks(db, user_id=me, company_id=company_id)
+
+        assert [t.name for t in rows] == ["Escalated to me"]
+        assert total == 1
+
+
 def test_my_tasks_can_include_unassigned_work_on_projects_i_own():
     """An unassigned task on my own project is still my problem; without this it is
     invisible until someone happens to open the project."""

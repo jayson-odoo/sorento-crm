@@ -1,5 +1,5 @@
 /**
- * S2 — PipelineBoard (AC-G3, AC-G4).
+ * S2 - PipelineBoard (AC-G3, AC-G4).
  *
  * Two things here are invisible to the eye and easy to regress: which cards are
  * draggable (only ones the server would let you edit) and where a project with no
@@ -132,6 +132,47 @@ describe('PipelineBoard', () => {
     expect(screen.getByText('RM 1.3m')).toBeInTheDocument();
     // Only the first two brands, then a count -- a card is a glance, not a list.
     expect(screen.getByText('+1')).toBeInTheDocument();
+  });
+
+  it('shows the derived next action, flagged when it is overdue (AC-N6)', () => {
+    render(
+      <PipelineBoard
+        statuses={[status()]}
+        projects={[
+          project({
+            next_action_date: '2026-07-01',
+            next_action_overdue: true,
+            open_task_count: 2,
+          }),
+        ]}
+        onMove={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('01 Jul 2026')).toBeInTheDocument();
+    expect(screen.getByTitle(/Next action .* overdue/i)).toBeInTheDocument();
+  });
+
+  it('says there is open work with no date rather than showing nothing', () => {
+    render(
+      <PipelineBoard
+        statuses={[status()]}
+        projects={[project({ next_action_date: null, open_task_count: 3 })]}
+        onMove={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('3 open, none dated')).toBeInTheDocument();
+  });
+
+  it('says nothing about a next action when there is no open work at all', () => {
+    render(
+      <PipelineBoard
+        statuses={[status()]}
+        projects={[project({ next_action_date: null, open_task_count: 0 })]}
+        onMove={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/none dated/i)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/Next action/i)).not.toBeInTheDocument();
   });
 
   it('does not call a recently-touched project stale', () => {

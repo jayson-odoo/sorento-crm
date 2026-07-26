@@ -19,6 +19,7 @@ import {
 import { CriticalPanel } from './CriticalPanel';
 import { ProjectAccessPanel } from './ProjectAccessPanel';
 import { StakeholdersPanel } from './StakeholdersPanel';
+import { TasksPanel } from './TasksPanel';
 
 /**
  * Project detail as URL-routed tabs (AC-G6).
@@ -208,7 +209,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                     label="Expected delivery"
                     value={
                       project.expected_delivery_from || project.expected_delivery_to
-                        ? `${formatDate(project.expected_delivery_from) ?? '?'} — ${formatDate(project.expected_delivery_to) ?? '?'}`
+                        ? `${formatDate(project.expected_delivery_from) ?? '?'} to ${formatDate(project.expected_delivery_to) ?? '?'}`
                         : null
                     }
                   />
@@ -232,12 +233,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
 
       {activeTab === 'stakeholders' && <StakeholdersPanel project={project} />}
 
-      {activeTab === 'tasks' && (
-        <NotYetPanel
-          title="Tasks"
-          body="Task checklists, the escalation ladder and the Stuck flag arrive in the next slice. When they do, this project's next action will be derived from its earliest open task."
-        />
-      )}
+      {activeTab === 'tasks' && <TasksPanel project={project} />}
       {activeTab === 'quotations' && (
         <NotYetPanel
           title="Quotations"
