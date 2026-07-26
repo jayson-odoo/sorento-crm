@@ -72,7 +72,9 @@ export function PartiesClient() {
     limit: 200,
   });
 
-  const rows = parties.data?.data ?? [];
+  // Memoised so the grouping below is not rebuilt on every render by a fresh []
+  // literal from the ?? fallback.
+  const rows = React.useMemo(() => parties.data?.data ?? [], [parties.data]);
   const grouped = React.useMemo(() => {
     const map = new Map<string, ProjectParty[]>();
     PARTY_TYPE_OPTIONS.forEach((option) => map.set(option.value, []));

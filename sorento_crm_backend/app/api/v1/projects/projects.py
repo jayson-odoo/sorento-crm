@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
-from app.dependencies import get_current_user, require_permission
+from app.dependencies import require_permission
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
     ClashPreviewRequest,
