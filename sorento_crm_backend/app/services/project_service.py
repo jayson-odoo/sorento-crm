@@ -26,6 +26,7 @@ from app.models.projects import (
 )
 from app.models.status import Status
 from app.status_engine.registry import get_status_entity
+from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.project_clash_service import (
@@ -679,7 +680,7 @@ def list_projects(
     )
 
     page = max(1, int(page or 1))
-    limit = max(1, min(int(limit or 50), 200))
+    limit = max(1, min(int(limit or 50), MAX_PAGE_LIMIT))
     rows = query.offset((page - 1) * limit).limit(limit).all()
     return rows, total
 

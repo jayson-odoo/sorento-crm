@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.projects._common import acting_company_id
 from app.database import get_db
 from app.dependencies import require_permission
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.projects import (
     ProjectPartyCreate,
     ProjectPartyResponse,
@@ -31,7 +31,7 @@ async def list_parties(
     query: Optional[str] = Query(None),
     include_inactive: bool = Query(False),
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):

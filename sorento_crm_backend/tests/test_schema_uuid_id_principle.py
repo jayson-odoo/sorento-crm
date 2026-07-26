@@ -45,6 +45,11 @@ EXEMPTIONS: dict[str, str] = {
     "respond_contact_access_types": "JUNCTION (contact_id + access_type_code)",
     "respond_contact_market_segments": "JUNCTION (contact_id + segment_code)",
     "team_member_market_segments": "JUNCTION (team_member_id + segment_code)",
+    "project_brands": "JUNCTION (project_id + brand_id)",
+    "project_collaborators": "JUNCTION (project_id + user_id)",
+    # One row per project, keyed BY the project. A surrogate uuid would invite a
+    # second row per project, which is exactly what the PK is there to prevent.
+    "project_sales_profile": "JUNCTION — 1:1 extension, PK is project_id",
     # --- EXTERNAL (schema owned elsewhere) ---
     "verification_tokens": "EXTERNAL — NextAuth composite PK (identifier + token)",
     "chat_histories": "EXTERNAL — Respond/n8n ingest, BigInteger id by their design",

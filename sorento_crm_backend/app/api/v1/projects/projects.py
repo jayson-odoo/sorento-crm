@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
 from app.dependencies import require_permission
-from app.schemas.common import ListResponse
+from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.projects import (
     ClashPreviewRequest,
     ClashPreviewResponse,
@@ -141,7 +141,7 @@ async def list_projects(
     brand_id: Optional[List[str]] = Query(None),
     only_critical: bool = Query(False),
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: str = Query("created_at"),
     dir: str = Query("desc"),
     current_user: dict = Depends(require_permission(VIEW)),

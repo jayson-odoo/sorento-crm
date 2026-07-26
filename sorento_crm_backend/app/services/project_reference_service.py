@@ -19,6 +19,7 @@ from app.models.projects import (
     ProjectTemplateRole,
     ProjectType,
 )
+from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import AppException
 
 PARTY_TYPES = (
@@ -65,7 +66,7 @@ def list_parties(
         )
     total = query.count()
     page = max(1, int(page or 1))
-    limit = max(1, min(int(limit or 50), 200))
+    limit = max(1, min(int(limit or 50), MAX_PAGE_LIMIT))
     rows = (
         query.order_by(ProjectParty.name.asc())
         .offset((page - 1) * limit)
