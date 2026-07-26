@@ -391,6 +391,65 @@ PERMISSION_REGISTRY.extend([
     },
 ])
 
+# Project Sales (UAC Group J). Every salesperson sees every project read-only, by
+# design: the module exists to stop two people unknowingly working one tender, and
+# hiding other people's projects would recreate exactly that blindness. Editing is
+# restricted to the owner and approved collaborators, enforced in the service.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "projects.projects.view",
+        "name": "View Projects",
+        "description": "View the project pipeline, project detail, and forecasts.",
+    },
+    {
+        "slug": "projects.projects.edit",
+        "name": "Edit Projects",
+        "description": (
+            "Register projects, edit projects you own or collaborate on, and move "
+            "them through the funnel."
+        ),
+    },
+    {
+        "slug": "projects.projects.delete",
+        "name": "Delete Projects",
+        "description": "Hard-delete a project that has no Project PO recorded.",
+    },
+    {
+        "slug": "projects.projects.manage",
+        "name": "Manage Any Project",
+        "description": (
+            "Sales-manager grant: reassign owners, decide join requests and disputes, "
+            "and edit any project regardless of ownership."
+        ),
+    },
+    {
+        "slug": "projects.parties.view",
+        "name": "View Project Parties",
+        "description": (
+            "View the organisation master of developers, architects, main contractors, "
+            "trading houses and consultants."
+        ),
+    },
+    {
+        "slug": "projects.parties.edit",
+        "name": "Edit Project Parties",
+        "description": "Create, edit and delete project party organisations.",
+    },
+    {
+        "slug": "projects.types.view",
+        "name": "View Project Types and Templates",
+        "description": "View configurable project types, templates and stakeholder roles.",
+    },
+    {
+        "slug": "projects.types.edit",
+        "name": "Edit Project Types and Templates",
+        "description": (
+            "Create and edit project types, templates and the stakeholder roles a "
+            "template offers."
+        ),
+    },
+])
+
 
 def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> int:
     """

@@ -291,8 +291,20 @@ def test_every_company_id_table_is_registered():
         f"Tables have a company_id column but are not CompanyScopedMixin subclasses "
         f"(add the mixin or allowlist them): {offenders}"
     )
-    # Foundation slice ships exactly 34 owned tables (PLAN §4.1).
-    assert len(owned) == 34, f"expected 34 owned tables, found {len(owned)}: {sorted(owned)}"
+    # The count is a tripwire, not a fact about the schema: it forces a human to look
+    # whenever an owned table appears, because an unpartitioned one leaks across
+    # companies silently. Update it deliberately, never to "make the test pass".
+    #
+    #   34  foundation slice (PLAN §4.1)
+    #   +6  Project Sales S2: project_types, project_templates, project_template_roles,
+    #       project_parties, projects, project_stakeholders. Each carries
+    #       CompanyScopedMixin; project_sales_profile, project_brands,
+    #       project_collaborators and project_takeover_requests deliberately do NOT --
+    #       they are keyed by project_id and inherit their partition from the project.
+    expected_owned = 40
+    assert len(owned) == expected_owned, (
+        f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
+    )
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

@@ -140,14 +140,19 @@ def list_status_entities() -> List[StatusEntity]:
 
 
 def _register_core() -> None:
-    """Core registers no entities.
+    """Core registers no entities of its own, then pulls in the modules'.
 
     The engine is infrastructure: it ships with an empty registry and every
-    entity arrives from a module bootstrap. Existing hardcoded status vocabularies
+    entity arrives from a module (ADR-0001). Existing hardcoded status vocabularies
     (complaints, PR/SF, stock inquiries, orders) are deliberately NOT migrated
-    here -- they move entity by entity, later (ADR-0001).
+    here -- they move entity by entity, later.
+
+    Discovery is by convention (``app/modules/<key>/status_entities.py``) rather
+    than a list, so core never has to learn the name of a module.
     """
-    return None
+    from app.status_engine.discovery import register_module_entities
+
+    register_module_entities()
 
 
 _ensure_core = lazy_once(_register_core)

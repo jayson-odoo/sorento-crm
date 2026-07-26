@@ -271,6 +271,19 @@ async def startup_event():
 
     try:
         from app.database import SessionLocal
+        from app.services import project_seed_service
+        _db = SessionLocal()
+        try:
+            # Additive only: never updates or removes a row, so a renamed status or a
+            # deleted project type survives every restart.
+            project_seed_service.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Project Sales seed failed at startup: {str(e)}", exc_info=True)
+
+    try:
+        from app.database import SessionLocal
         from app.services import record_action_bootstrap
         _db = SessionLocal()
         try:

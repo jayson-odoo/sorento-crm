@@ -149,10 +149,42 @@ registry + transition service + admin screens. Drop `workflow_stages`. `category
 Entity-default graph with per-template copy-on-write fork. Manual transitions only.
 Regression pass proving no existing status vocabulary changed. → UAC Group B.
 
-**S2 — Registration + parties + stakeholders + pipeline.** Types, templates, template roles,
-projects, sales profile, parties, stakeholders, brands M2M, the `pg_trgm` clash lock with the
-block/join/dispute flow, activities adapter, board+grid, detail tabs (empty tabs render),
-project numbering, Excel import. → UAC Groups A, C, D, G, J.
+**S2 — Registration + parties + stakeholders + pipeline.** — **CORE DONE**, two items
+deferred (below). Types, templates, template roles, projects, sales profile, parties,
+stakeholders, brands M2M, the `pg_trgm` clash lock with the block/join/dispute flow,
+board+grid, detail tabs (empty tabs render), project numbering. → UAC Groups A, C, D, G, J.
+
+*Gate: 61 backend tests green (18 clash matcher, 4 registration, 10 access, 10 lifecycle,
+5 status entity, 9 seed, 5 pre-existing engine files unaffected) + 16 vitest; single alembic
+head (`310_project_clash_thresholds`); browser-verified through the sidebar with 0 console
+errors — register dialog live clash preview blocking + context, sibling phase correctly NOT
+blocking, board with 8 seeded columns, detail page 9 tabs all rendering, 375px width with no
+page overflow and a reachable submit button.*
+
+**Deferred out of S2, with reasons:**
+
+- **Excel import (AC-C9, AC-C9a).** Needs the intra-batch duplicate detector, which is a
+  second matcher entry point (group rows within the sheet, fail BOTH sides of a repeated
+  `(developer, normalised_title)`). Shipping it half-done risks the exact silent-create it is
+  meant to prevent. Belongs with its own tests.
+- **Activities adapter (AC-H1/H2).** `last_meaningful_activity_at` is written and read (the
+  board shows "45d quiet"), but nothing advances it yet because the whitelist of
+  advancing events is defined by S2b tasks and S3 quotations. Wiring it now would mean
+  wiring it twice.
+
+**S2 findings (things the build discovered):**
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| F1 | Trigram similarity ranks sibling phases (`Phase 3A` vs `3B`, **0.818**) HIGHER than genuine abbreviations (`Ph 3B` vs `Phase 3B`, **0.762**). No single threshold separates them. | Blocking is not a function of similarity alone. Digit-bearing tokens are the discriminator: siblings when neither title's designator set contains the other's. |
+| F2 | Symmetric `similarity()` scores a short title against its verbose twin at **0.312** — a real duplicate would sail through, since the live data has titles like `KSL Setia Alam Project  (733 units service apartment)`. | Score is `GREATEST(similarity, strict_word_similarity both directions)`. Containment now scores 1.0. |
+| F3 | Calibrating over all **63 distinct live project titles** showed unrelated pairs sharing a generic noun (`IKI Hotel` / `The Jerai Hotel` 0.600, `Kami Residence` / `The Wyn Residence` 0.667) sitting above a single 0.55 bar. | **Two bars**, not one: surface at 0.55 (generous — a missed duplicate is silent), block at 0.70 (strict — a false block fired often teaches users to dismiss the warning). Both are `system_settings` columns per AC-C5. Final calibration on the real corpus: **1 block (the genuine reordered duplicate `Helicopter Centre in Subang` / `Subang Helicopter Centre`), 0 false blocks.** |
+| F4 | The title is typed BEFORE the developer is picked, so a developer-scoped check stayed silent on the most common path. | The preview widens to every developer (`include_other_developers`); widened rows are context-only and can never block, since identity needs the developer. |
+| F5 | A rename bypassed the lock entirely — register something innocuous, then rename onto a colleague's project. The DB unique index catches only the exact-key case. | The matcher runs on edit as well as create, excluding the project itself. |
+| F6 | `tests/_pg_fixture.py` pins `search_path` to the scratch schemas, so `public.similarity` was invisible. | Schema-qualified the call in app code rather than widening `search_path` — that guard is what stops test SQL writing to the real prod-copy tables. |
+| F7 | The status-engine test fixtures snapshot `_REGISTRY` BEFORE its lazy population fires, so restoring an empty snapshot permanently emptied the registry for the rest of the session (and `lazy_once` never re-runs). Only visible as another file failing when run after them. | Fixtures force `list_status_entities()` before snapshotting. |
+| F8 | A per-type "create if missing" seeder resurrects a project type the team deliberately deleted, on every restart. | Seeding is skipped wholesale once the company has any type — same guard shape as the funnel. Pinned by a test. |
+| F9 | Core knowing which modules supply status entities would violate ADR-0001. | Core knows a CONVENTION instead: `app/modules/<key>/status_entities.py` exposing `register()`, discovered generically. |
 
 **S2b — Task management** (§7). Template task checklists, `project_tasks` on the status engine
 as entity #2, list + board + gantt + history view, "My Tasks". Must precede S5.

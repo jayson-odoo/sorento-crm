@@ -9,6 +9,7 @@ from app.api.v1 import (
     procurement,
     incoming_stock,
     marketing,
+    projects,
     forms,
     complaints,
     sla,
@@ -82,6 +83,12 @@ api_router.include_router(
     prefix="/marketing",
     tags=["marketing"],
     dependencies=[Depends(require_module_enabled_with_api_key("marketing"))],
+)
+api_router.include_router(
+    projects.router,
+    prefix="/project-sales",
+    tags=["project-sales"],
+    dependencies=[Depends(require_module_enabled_with_api_key("projects"))],
 )
 api_router.include_router(
     forms.router,

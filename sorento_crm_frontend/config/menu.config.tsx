@@ -603,6 +603,23 @@ export const MENU_SIDEBAR: MenuConfig = [
     ],
   },
   {
+    title: 'Project Sales',
+    icon: Building2,
+    moduleKey: 'projects',
+    children: [
+      {
+        title: 'Pipeline',
+        path: '/project-sales/pipeline',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Parties',
+        path: '/project-sales/parties',
+        permission: 'projects.parties.view',
+      },
+    ],
+  },
+  {
     title: 'Marketing Management',
     icon: Megaphone,
     moduleKey: 'marketing',
@@ -1454,6 +1471,23 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Stock Ledger',
         path: '/inventory-management/stock-ledger',
         permission: 'inventory.stock_ledger.view',
+      },
+    ],
+  },
+  {
+    title: 'Project Sales',
+    icon: Building2,
+    moduleKey: 'projects',
+    children: [
+      {
+        title: 'Pipeline',
+        path: '/project-sales/pipeline',
+        permission: 'projects.projects.view',
+      },
+      {
+        title: 'Parties',
+        path: '/project-sales/parties',
+        permission: 'projects.parties.view',
       },
     ],
   },

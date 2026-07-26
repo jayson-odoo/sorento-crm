@@ -31,6 +31,18 @@ from app.models.respond_template import (
     RespondTemplateDefault,
 )
 from app.models.status import Status, StatusTransition
+from app.models.projects import (
+    Project,
+    ProjectBrand,
+    ProjectCollaborator,
+    ProjectParty,
+    ProjectSalesProfile,
+    ProjectStakeholder,
+    ProjectTakeoverRequest,
+    ProjectTemplate,
+    ProjectTemplateRole,
+    ProjectType,
+)
 from app.models.entity_conversation import EntityConversationMessage
 from app.models.integration import Integration, IntegrationApiKey, IntegrationLog
 from app.models.integration_reference import IntegrationReference
@@ -168,6 +180,16 @@ __all__ = [
     "RespondTemplateDefault",
     "Status",
     "StatusTransition",
+    "Project",
+    "ProjectBrand",
+    "ProjectCollaborator",
+    "ProjectParty",
+    "ProjectSalesProfile",
+    "ProjectStakeholder",
+    "ProjectTakeoverRequest",
+    "ProjectTemplate",
+    "ProjectTemplateRole",
+    "ProjectType",
     "EntityConversationMessage",
     "IntegrationLog",
     "ImportLog",
