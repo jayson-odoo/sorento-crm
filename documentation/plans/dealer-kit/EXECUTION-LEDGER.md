@@ -25,7 +25,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 |---|---|---|---|---|
 | **S1 builder core** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 | **S2 collections + bundles** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
-| **S3 PDF export** | n/a (no new UI surface) | **PASSED** 2026-07-26 | not started | in progress |
+| **S3 PDF export** | n/a (no new UI surface) | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 
 ---
 
@@ -506,9 +506,34 @@ a worker started without the env exported silently falls back to `s3` - and loca
 fails on a missing CloudFront key. Start the local worker with `set -a; . ./.env; set +a`.
 This affects every export in the system, not just Dealer Kit.
 
-**Still to build for S3:** verify Chromium in the worker CONTAINER (the Dockerfile has no
-browser install yet - this is the one gate item I cannot close on macOS), and a My Downloads
-E2E that watches a row go from pending to ready. **S3 Phase 3 (review) has not run.**
+#### S3 Phase 3 gate — PASSED
+
+**227 pytest · 20 Playwright.** Three findings, all fixed:
+
+1. **Chromium was never going to exist in the container.** `playwright` was not in
+   `requirements.txt` at all - it was in the local venv by accident - and the image installed
+   no browser. Both added. The install is deliberately two steps: the shared libraries need
+   root, but the BROWSER is installed as `appuser`, because it lands in that user's
+   `~/.cache/ms-playwright` and that is the only place the worker looks. Installing it as root
+   puts it in `/root/.cache` where `appuser` cannot read it, and the task then fails at launch
+   with "Executable doesn't exist" long after the image looked fine.
+2. **`DEALER_KIT_PRINT_BASE_URL` was undocumented** and defaults to `http://localhost:3000`.
+   Unset in a container, the worker renders nothing and every export fails on a timeout. Added
+   to the env reference in `CLAUDE.md` with what it means inside compose.
+3. A dead `page = None` before its real assignment.
+
+**Checked and correct:** the render token is minted when the job RUNS, not at enqueue, so a job
+that waits in the queue longer than the token's 15-minute TTL still renders. The subprocess
+timeout (120s) exceeds the page-ready timeout (60s), so a hung page fails as a render timeout
+rather than being killed mid-write.
+
+**The gate item I cannot close on macOS:** Chromium is verified rendering natively, and the
+Dockerfile now installs it, but **nobody has built that image and run an export in a
+container**. That is the first thing to do before this ships.
+
+**Also still open:** a My Downloads E2E that watches a row go pending -> ready (the round trip
+is proven by hand and by the render tests, not by a UI test), and the "does the PDF match the
+screen" comparison is structural (one renderer) rather than asserted pixel-wise.
 
 **Gate adds:** viewer context snapshotted at **enqueue** onto `dealer_kit.export_request`
 (`UserDownload` has no params column) · worker never falls back to a system principal · a

@@ -37,6 +37,11 @@ html2text>=2024.2.26
 # Native deps required at runtime: libcairo2, libpango-1.0-0, libpangocairo-1.0-0,
 # libgdk-pixbuf-2.0-0 (add to the backend Docker image / brew install pango gdk-pixbuf on macOS).
 weasyprint>=66
+# Headless Chromium for the Dealer Kit catalogue PDF export. The print page is
+# the same React tree the screen renders, so the PDF matches it; a second
+# HTML-to-PDF engine would drift. The browser binary is installed in the
+# Dockerfile, not by pip.
+playwright>=1.40
 # Anthropic SDK — SCM market-research live web search (web_search_20250305, key-gated).
 # Optional at runtime (local import), but must ship in the image or the search no-ops.
 anthropic>=0.96.0

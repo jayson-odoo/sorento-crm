@@ -49,6 +49,21 @@ RUN chown -R appuser:appuser /home/appuser/.local && \
 # Make sure scripts in .local are usable
 ENV PATH=/home/appuser/.local/bin:$PATH
 
+# Headless Chromium for the Dealer Kit catalogue PDF export (RQ task
+# `generate_catalogue_pdf`). The worker shares this image, so it is installed
+# here rather than in a separate one.
+#
+# Two steps on purpose: the shared libraries Chromium links against need root,
+# and the browser itself is installed AS appuser so it lands in that user's
+# ~/.cache/ms-playwright - which is the only place the worker process will look
+# for it. Installing the browser as root puts it in /root/.cache, where appuser
+# cannot read it, and the task then fails at launch with "Executable doesn't
+# exist" long after the image looked fine.
+RUN playwright install-deps chromium && rm -rf /var/lib/apt/lists/*
+USER appuser
+RUN playwright install chromium
+USER root
+
 # Copy application code
 COPY . .
 RUN chown -R appuser:appuser /app

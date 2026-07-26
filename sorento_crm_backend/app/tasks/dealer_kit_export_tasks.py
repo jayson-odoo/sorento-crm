@@ -100,7 +100,9 @@ def generate_catalogue_pdf(download_id: str) -> dict:
         # Refuses when the snapshot is missing rather than guessing an audience.
         request = export_service.get_request(db, download_id)
 
-        page = None
+        # All companies: the worker has no request identity to scope by, and it
+        # only needs the page's print geometry. Everything price-shaped is
+        # resolved by the print payload endpoint, inside the page's own company.
         set_company_scope(db, None)
         page = db.query(Page).filter(Page.id == request.page_id).first()
         if page is None:
