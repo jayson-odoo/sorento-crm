@@ -17,12 +17,13 @@ import { AlertCircle, FileText, Plus, Search } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTable } from '@/components/ui/card';
+import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { listPages } from '../services/dealerKitService';
@@ -195,12 +196,17 @@ export function PagesList() {
         </CardHeader>
 
         <CardTable>
-          <DataGridTable />
+          {/* The table is wider than a phone. It scrolls inside its own
+              container so the page body never scrolls sideways. */}
+          <ScrollArea>
+            <DataGridTable />
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
         </CardTable>
 
-        <CardContent className="py-3">
+        <CardFooter>
           <DataGridPagination />
-        </CardContent>
+        </CardFooter>
       </Card>
     </DataGrid>
   );

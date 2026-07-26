@@ -189,6 +189,7 @@ export function PaperCanvas({
           </div>
 
           <span
+            data-testid="dk-paper-page-label"
             className={cn(
               'text-xs font-medium',
               page.overflows ? 'text-destructive' : 'text-muted-foreground',

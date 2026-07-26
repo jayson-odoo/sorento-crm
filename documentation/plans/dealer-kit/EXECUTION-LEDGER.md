@@ -23,7 +23,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 
 | Slice | Phase 1 (FE prototype) | Phase 2 (BE + wiring + tests) | Phase 3 (review) | Slice |
 |---|---|---|---|---|
-| **S1 builder core** | not started | not started | not started | not started |
+| **S1 builder core** | **PASSED** 2026-07-26 | not started | not started | in progress |
 | **S2 collections + bundles** | blocked on S1 | blocked | blocked | blocked |
 | **S3 PDF export** | blocked on S2 | blocked | blocked | blocked |
 
@@ -56,6 +56,43 @@ history + publish/rollback UI, public renderer. All against fixtures.
 - [ ] `browser_console_messages` clean of unexpected errors/warnings
 - [ ] Derivation golden-set test written **before** the derivation implementation (AC-K2)
 - [ ] Documented API contract at the top of the service file
+
+#### Phase 1 gate result — PASSED, with the gaps named
+
+Verified in a real browser against a **prod build** on :3020, 7 Playwright cases green in ~27s,
+plus 32 vitest cases and the full 1285-test suite with no regressions.
+
+| Gate item | Result |
+|---|---|
+| Reached by clicking the sidebar from `/` | pass |
+| Grid drag moves a block and marks the page dirty | pass |
+| Breakpoints report 12 / 8 / 4 and show "follows desktop" | pass |
+| Paper mode draws breaks; desktop canvas draws none | pass |
+| No horizontal body scroll at 1280 / 768 / 375 | pass |
+| Loading and error states | pass (vitest) |
+| Shared `ui` + `common` primitives only | pass |
+| Console clean | pass |
+| Derivation golden set written before implementation | pass |
+| API contract documented | pass |
+
+**Four defects found and fixed during the gate, each a real bug rather than a test artefact:**
+
+1. **`react-grid-layout` v2 is not v1.** `WidthProvider` no longer exists and the flat props
+   became config objects, so the editor threw a client-side exception on load. My pre-install
+   check verified peer deps but not the export surface, which is the check that would have
+   caught it. Its `@types` package is also v1-only and was removed.
+2. **Blocks clipped their own content** (AC-C4). Root cause was a stale closure: two blocks
+   measuring in the same tick each spread a captured placement map, so the second silently
+   wiped the first. Fixed with a functional update.
+3. **The list scrolled the page body sideways at 768px** because it omitted the `ScrollArea`
+   wrapper every other list in the app uses.
+4. **"Unsaved changes" appeared before the user touched anything**, because the grid's own
+   load-time compaction was reported as an edit. Now only a real drag or resize counts.
+
+**Not verified, and deliberately not claimed:** resize-to-fit and collide-push as
+*interactions* (the config is wired and drag is proven, but only drag is driven by a test);
+the re-derive button; the populated and empty grid bodies in vitest, which do not mount under
+jsdom and are covered by Playwright instead.
 
 ### Phase 2 — Backend + wiring + tests
 

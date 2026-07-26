@@ -6,6 +6,7 @@ import {
   Bitcoin,
   Bolt,
   Book,
+  BookOpen,
   Briefcase,
   Building,
   Building2,
@@ -392,6 +393,24 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Market Signals',
         path: '/scm/market-signals',
         permission: 'scm.dashboard.view',
+      },
+    ],
+  },
+  {
+    // Dealer Kit — the catalogue page builder.
+    //
+    // Deliberately carries NO `moduleKey` and NO `permission` yet. The sidebar
+    // hides any branch whose moduleKey is absent from the tenant's enabled set,
+    // so declaring `dealer_kit` before the backend seeds its catalogue row would
+    // hide this entry outright. Both gates land in S1 phase 2, together with the
+    // module row and the permission slugs that actually enforce them — a gate
+    // added before its enforcement exists is a gate that lies.
+    title: 'Dealer Kit',
+    icon: BookOpen,
+    children: [
+      {
+        title: 'Catalogue Pages',
+        path: '/dealer-kit',
       },
     ],
   },

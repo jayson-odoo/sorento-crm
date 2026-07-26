@@ -98,7 +98,16 @@ function newBlock(type: BlockType): Block {
 
 export interface PageEditorProps {
   doc: PageDoc;
-  onDocChange: (next: PageDoc) => void;
+  /**
+   * Updater, not a value. Layout measurement can settle several blocks in one
+   * tick, and each of those must build on the previous result rather than on
+   * whatever `doc` this render captured.
+   *
+   * `silent` applies a change without marking the document dirty: the editor
+   * reflowing a block to fit its own content is not an edit the user made, and
+   * showing "Unsaved changes" for it would be a lie.
+   */
+  onDocChange: (updater: (previous: PageDoc) => PageDoc, options?: { silent?: boolean }) => void;
 }
 
 export function PageEditor({ doc, onDocChange }: PageEditorProps) {
@@ -118,19 +127,26 @@ export function PageEditor({ doc, onDocChange }: PageEditorProps) {
   const isDerived = activeSection?.layouts[breakpoint]?.isDerived ?? false;
 
   const updateSection = useCallback(
-    (sectionId: string, mutate: (section: Section) => Section) => {
-      onDocChange({
-        ...doc,
-        sections: doc.sections.map((section) =>
-          section.id === sectionId ? mutate(section) : section,
-        ),
-      });
+    (
+      sectionId: string,
+      mutate: (section: Section) => Section,
+      options?: { silent?: boolean },
+    ) => {
+      onDocChange(
+        (previous) => ({
+          ...previous,
+          sections: previous.sections.map((section) =>
+            section.id === sectionId ? mutate(section) : section,
+          ),
+        }),
+        options,
+      );
     },
-    [doc, onDocChange],
+    [onDocChange],
   );
 
   const handlePlacementsChange = useCallback(
-    (next: BlockPlacementMap) => {
+    (next: BlockPlacementMap, options?: { silent?: boolean }) => {
       if (!activeSection) return;
 
       updateSection(activeSection.id, (section) => {
@@ -147,7 +163,46 @@ export function PageEditor({ doc, onDocChange }: PageEditorProps) {
         }
 
         return { ...section, layouts: pinBreakpoint(section.layouts, breakpoint, next) };
-      });
+      }, options);
+    },
+    [activeSection, breakpoint, updateSection],
+  );
+
+  /**
+   * Grow one block so its content is not clipped (AC-C4).
+   *
+   * Applied against the latest section rather than a captured placement map, so
+   * two blocks growing in the same tick cannot overwrite each other. Idempotent:
+   * growing to a span the block already has is a no-op, which is what stops the
+   * measure-then-grow cycle from oscillating, and it never marks the document
+   * dirty on its own - reflowing to fit content is not an edit the user made.
+   */
+  const handleGrowBlock = useCallback(
+    (blockId: string, rowSpan: number) => {
+      if (!activeSection) return;
+
+      updateSection(
+        activeSection.id,
+        (section) => {
+          const current = section.layouts[breakpoint].blocks[blockId];
+          if (!current || current.rowSpan >= rowSpan) return section;
+
+          return {
+            ...section,
+            layouts: {
+              ...section.layouts,
+              [breakpoint]: {
+                ...section.layouts[breakpoint],
+                blocks: {
+                  ...section.layouts[breakpoint].blocks,
+                  [blockId]: { ...current, rowSpan },
+                },
+              },
+            },
+          };
+        },
+        { silent: true },
+      );
     },
     [activeSection, breakpoint, updateSection],
   );
@@ -223,9 +278,9 @@ export function PageEditor({ doc, onDocChange }: PageEditorProps) {
       printMode: 'include',
     };
 
-    onDocChange({ ...doc, sections: [...doc.sections, section] });
+    onDocChange((previous) => ({ ...previous, sections: [...previous.sections, section] }));
     setActiveSectionId(id);
-  }, [doc, onDocChange]);
+  }, [doc.sections.length, onDocChange]);
 
   const handleRederive = useCallback(() => {
     if (!activeSection || breakpoint === 'desktop') return;
@@ -391,6 +446,7 @@ export function PageEditor({ doc, onDocChange }: PageEditorProps) {
                   locked={isDerived && breakpoint !== 'desktop'}
                   onSelectBlock={setSelectedBlockId}
                   onPlacementsChange={handlePlacementsChange}
+                  onGrowBlock={handleGrowBlock}
                   onDeleteBlock={(blockId) => {
                     const block = activeSection.blocks.find((item) => item.id === blockId);
                     if (block) setPendingDelete(block);

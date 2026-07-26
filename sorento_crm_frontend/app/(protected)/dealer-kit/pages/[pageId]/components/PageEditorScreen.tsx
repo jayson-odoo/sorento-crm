@@ -152,9 +152,9 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
 
       <PageEditor
         doc={doc}
-        onDocChange={(next) => {
-          setDoc(next);
-          setDirty(true);
+        onDocChange={(updater, options) => {
+          setDoc((previous) => (previous ? updater(previous) : previous));
+          if (!options?.silent) setDirty(true);
         }}
       />
     </div>
