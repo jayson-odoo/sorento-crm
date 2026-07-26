@@ -74,6 +74,13 @@ if __name__ == '__main__':
     register_company_scope_listeners()
 
     _maybe_start_scheduler()
-    worker = ForkSafeWorker(['imports', 'respond_io'], connection=redis_conn)
-    logger.info("Starting RQ worker for 'imports' and 'respond_io' queues...")
+    # `catalogue_render` is separate on purpose: a Chromium render is slow and
+    # memory-hungry, and sharing the imports queue means one catalogue PDF
+    # blocks every Excel upload behind it.
+    worker = ForkSafeWorker(
+        ['imports', 'respond_io', 'catalogue_render'], connection=redis_conn
+    )
+    logger.info(
+        "Starting RQ worker for 'imports', 'respond_io' and 'catalogue_render' queues..."
+    )
     worker.work()

@@ -25,7 +25,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 |---|---|---|---|---|
 | **S1 builder core** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 | **S2 collections + bundles** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
-| **S3 PDF export** | not started | **foundation landed** | blocked | in progress |
+| **S3 PDF export** | n/a (no new UI surface) | **PASSED** 2026-07-26 | not started | in progress |
 
 ---
 
@@ -466,10 +466,49 @@ database directly (additive `create_all` for that one table), because this branc
 `alembic upgrade` there - the shared dev database sits on another branch's 310. The migration
 itself is verified independently on a throwaway database.
 
-**Still to build for S3:** the print route (a server-rendered page the worker loads), the RQ
-task, headless Chromium in the worker image, the Export button and My Downloads wiring, and
-the test that a dealer export and a staff export of one page carry different prices IN THE
-RENDERED FILE (the viewer split is proven at the service layer, not yet in a PDF).
+#### S3 Phase 2 gate — PASSED
+
+**227 pytest · 20 Playwright.** The full round trip runs for real: request -> queue ->
+Chromium -> R2 -> `ready` with a storage key.
+
+| Gate item | Result |
+|---|---|
+| Viewer context snapshotted at enqueue onto `export_request` | pass |
+| Worker never falls back to a system principal | pass - no snapshot means it refuses |
+| A dealer export and a staff export carry different prices **in the file** | pass - two real PDFs, invoice price present in one and absent from the other |
+| Chromium present and rendering | pass - verified on macOS; **not yet verified in a container** |
+| Version pinned so republishing cannot change a queued file | pass |
+| Export permission is `page.view` | pass |
+
+**Four real problems, all found by making the render actually run, and all of which returned a
+plausible wrong answer rather than an error:**
+
+1. **The print payload looked up the page BEFORE pinning the company scope.** The page is
+   company-scoped and the request is unauthenticated, so the session sat at the fail-closed
+   UNSET scope and found nothing - producing a 404 that looked exactly like a bad token,
+   because both branches said "Not found". The page is now read across all companies first to
+   learn its company, then the scope is pinned to that one. The two 404s no longer share a
+   message, which is what made this take three passes to see.
+2. **Tile designs were read outside the pinned scope**, so the payload always carried `{}` and
+   every tile silently fell back to a default field list. The design a Designer chose would
+   simply not have been applied, and nothing would have said so.
+3. **RQ's forked work-horse segfaults driving Playwright on macOS** (signal 11).
+   `OBJC_DISABLE_INITIALIZE_FORK_SAFETY` covers the Obj-C abort, not this. Rendering now runs
+   in a freshly SPAWNED subprocess (`catalogue_render_cli`), which has no forked state to trip
+   over, behaves the same in a Linux container, and keeps Chromium's memory out of the worker.
+4. **Catalogue rendering had been queued on `imports`.** A Chromium render is slow and
+   memory-hungry, and sharing that queue puts one PDF in front of every Excel upload behind it.
+   It now has its own `catalogue_render` queue, which the worker also listens on.
+
+**Worth knowing (pre-existing, not introduced here):** `default_provider()` reads
+`os.getenv("STORAGE_DEFAULT_PROVIDER")` rather than the pydantic settings that parse `.env`, so
+a worker started without the env exported silently falls back to `s3` - and locally that then
+fails on a missing CloudFront key. Start the local worker with `set -a; . ./.env; set +a`.
+This affects every export in the system, not just Dealer Kit.
+
+**Still to build for S3:** verify Chromium in the worker CONTAINER (the Dockerfile has no
+browser install yet - this is the one gate item I cannot close on macOS), and a My Downloads
+E2E that watches a row go from pending to ready. **S3 Phase 3 (review) has not run.**
 
 **Gate adds:** viewer context snapshotted at **enqueue** onto `dealer_kit.export_request`
 (`UserDownload` has no params column) · worker never falls back to a system principal · a

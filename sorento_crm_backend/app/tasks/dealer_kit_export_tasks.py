@@ -44,27 +44,46 @@ def _print_url(download_id: str) -> str:
 
 
 def _render_pdf(url: str, *, landscape: bool, paper: str) -> bytes:
-    from playwright.sync_api import sync_playwright
+    """Render in a freshly SPAWNED subprocess, never in this process.
 
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(args=["--no-sandbox"])
-        try:
-            page = browser.new_page()
-            page.goto(url, wait_until="networkidle", timeout=READY_TIMEOUT_MS)
-            # Explicit readiness beats networkidle alone: a lazy image can settle
-            # the network before React has painted the tiles.
-            page.wait_for_selector(READY_SELECTOR, timeout=READY_TIMEOUT_MS)
-            return page.pdf(
-                format=paper,
-                landscape=landscape,
-                # The document's own margins are already baked into the print
-                # page's CSS. Adding Chromium's on top would shrink every page
-                # by a second margin nobody chose.
-                margin={"top": "0", "right": "0", "bottom": "0", "left": "0"},
-                print_background=True,
+    RQ forks a work-horse per job, and driving Playwright's sync API inside that
+    fork segfaults on macOS (signal 11) - the browser launch does not survive a
+    fork it did not expect, and OBJC_DISABLE_INITIALIZE_FORK_SAFETY only covers
+    the Obj-C abort. A spawned process has no forked state to trip over, behaves
+    the same in a Linux container, and keeps Chromium's memory out of the
+    worker: a runaway render takes its own process down, not the queue.
+    """
+    import subprocess
+    import sys
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as workdir:
+        out_path = os.path.join(workdir, "catalogue.pdf")
+        command = [
+            sys.executable,
+            "-m",
+            "app.tasks.catalogue_render_cli",
+            url,
+            out_path,
+            "--paper",
+            paper,
+        ]
+        if landscape:
+            command.append("--landscape")
+
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=(READY_TIMEOUT_MS // 1000) + 60,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                (result.stderr or "").strip() or "PDF renderer exited non-zero"
             )
-        finally:
-            browser.close()
+
+        with open(out_path, "rb") as handle:
+            return handle.read()
 
 
 def generate_catalogue_pdf(download_id: str) -> dict:

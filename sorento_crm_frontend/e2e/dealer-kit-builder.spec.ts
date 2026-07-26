@@ -464,6 +464,25 @@ test.describe('Dealer Kit page builder', () => {
     await expect(card.getByText('MYR 1,800.00')).toHaveCount(1);
   });
 
+  test('exporting a published page queues a PDF', async ({ page }) => {
+    await createPage(page, 'export');
+
+    await tap(page, page.getByRole('button', { name: /add section/i }));
+    await tap(page, page.getByRole('button', { name: /^heading$/i }));
+    await tap(page, page.getByRole('button', { name: /^save$/i }));
+    await expect(page.getByText(/saved as version 1/i)).toBeVisible({ timeout: 20_000 });
+
+    // Nothing published, so there is nothing to export: a PDF of a draft would
+    // disagree with the catalogue people can actually see.
+    await expect(page.getByRole('button', { name: /export pdf/i })).toHaveCount(0);
+
+    await tap(page, page.getByRole('button', { name: /^publish$/i }));
+    await expect(page.getByText(/Live · v1/)).toBeVisible({ timeout: 20_000 });
+
+    await tap(page, page.getByRole('button', { name: /export pdf/i }));
+    await expect(page.getByText(/my downloads/i)).toBeVisible({ timeout: 20_000 });
+  });
+
   test('a page the backend does not have shows an error, not an empty editor', async ({ page }) => {
     await page.goto('/dealer-kit/pages/00000000-0000-0000-0000-0000000000ff', {
       waitUntil: 'commit',

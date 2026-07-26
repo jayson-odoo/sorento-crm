@@ -250,7 +250,10 @@ def request_export(
         enqueue_job(
             generate_catalogue_pdf,
             str(download.id),
-            queue_name="imports",
+            # Its own queue: a Chromium render is slow and memory-hungry, and
+            # sharing `imports` would put one catalogue PDF in front of every
+            # Excel upload behind it.
+            queue_name="catalogue_render",
             job_timeout=900,
         )
     except Exception as exc:  # noqa: BLE001
