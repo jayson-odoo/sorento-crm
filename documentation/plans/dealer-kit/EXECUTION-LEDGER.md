@@ -24,7 +24,7 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 | Slice | Phase 1 (FE prototype) | Phase 2 (BE + wiring + tests) | Phase 3 (review) | Slice |
 |---|---|---|---|---|
 | **S1 builder core** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
-| **S2 collections + bundles** | ready to start | blocked | blocked | not started |
+| **S2 collections + bundles** | not started | **engines landed (TDD)** | blocked | in progress |
 | **S3 PDF export** | blocked on S2 | blocked | blocked | blocked |
 
 ---
@@ -218,6 +218,42 @@ their submit button · delete is hard and confirmed.
 page-scoped Collection → bind it to a Tile Template → tiles render → *Save as reusable
 collection* → bind the same one to a second page → add a product → **both** pages reflect it.
 Bundles render as one priced heading with components beneath.
+
+#### S2 progress — the two deterministic engines, test-first
+
+Both golden sets were written and confirmed RED before either implementation existed, which
+is what the gate below asks for. **46 engine tests + 7 fact-source tests green.**
+
+- **Bundle price allocation** (`bundle_pricing.py`, AC-F11). The invariant is that allocated
+  lines sum **exactly** to the bundle price, never "within a cent" - a lost cent is invoiced
+  differently from the price the customer agreed to, and surfaces in accounting weeks later
+  with nobody able to explain it. Works in integer cents (allocating in Decimal and rounding
+  at the end reintroduces the error it exists to prevent), floors each pro-rata share, and
+  hands the remainder to the largest line, ties broken by position so the result is
+  deterministic. 26 cases including 1/3 remainders, a single cent across two components,
+  unpriced components, and magnitudes from 0.01 to 1,000,000.
+- **Collection membership** (`collection_membership.py`, AC-F2). Rule union pins minus
+  exclusions. Two rules carry it: an exclusion always wins (including over a pin the same
+  person added earlier - anything else is the system arguing with the more recent decision),
+  and `manual_order` is a preference rather than a membership list, so a stale id in it never
+  resurrects a product and a newly matched one neither jumps to the front nor vanishes.
+- **`product` fact source** (`product_facts.py`, AC-F3). Registered on the EXISTING
+  `app/rule_engine`, so a collection rule and a promo-expiry rule go through one evaluator
+  with one set of operator semantics. Facts are a whitelist: `cost_price` and `invoice_price`
+  are deliberately absent, and a test asserts they stay absent - otherwise anyone who can
+  build a collection reads margin off the rule builder's own field list. Resolution goes
+  through `resolve_facts`, so a rule naming a since-removed field degrades to False rather
+  than 500ing the page.
+
+Worth recording: the engine's node shape is `{combinator, rules[]}` with nested groups marked
+`kind: "group"`, and its operators are snake_case (`gt`, `is_false`, `contains_any`). I had
+guessed a `{type, children[]}` shape with camelCase operators, and the tests failed loudly -
+an empty `rules` array evaluates TRUE, so a wrong-shaped tree matches everything silently. Any
+future caller building a tree by hand should copy the shape from a test, not from memory.
+
+**Still to build for S2:** the DB-backed collection resolver (company scope then rule then set
+algebra), the collection/bundle routes, and the whole FE prototype - product picker, tile
+binding, bundle rendering.
 
 **Gate adds:** collection resolution golden set **first** · bundle allocation sums exactly to
 the cent · bundle unavailable when any component is discontinued (derived, never stored) ·
