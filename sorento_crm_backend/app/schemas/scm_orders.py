@@ -21,6 +21,14 @@ class SalesOrderLine(BaseModel):
     qty_ordered: float
     qty_delivered: float
     uom: str
+    # AutoCount SODTL pricing (Slice 8) — surfaced read-only; None on native rows.
+    unit_price: Optional[float] = None
+    discount_amt: Optional[float] = None
+    tax_rate: Optional[float] = None
+    tax_amt: Optional[float] = None
+    sub_total: Optional[float] = None
+    delivery_date: Optional[str] = None
+    tax_code: Optional[str] = None
 
 
 class SalesOrder(BaseModel):
@@ -39,6 +47,11 @@ class SalesOrder(BaseModel):
     committed_qty: float
     lines: List[SalesOrderLine]
     created_at: str
+    # AutoCount mirror (Slice 8): provenance gate + ingest-safe annotations.
+    source: str = "manual"
+    source_doc_no: Optional[str] = None
+    internal_note: Optional[str] = None
+    follow_up: bool = False
 
 
 class SalesOrderLineInput(BaseModel):
@@ -88,6 +101,10 @@ class PurchaseOrderLine(BaseModel):
     qty_ordered: float
     qty_received: float
     uom: str
+    # AutoCount PODTL extras (Slice 8) — surfaced read-only; None on native rows.
+    unit_cost: Optional[float] = None
+    description: Optional[str] = None
+    sub_total: Optional[float] = None
 
 
 class PurchaseOrder(BaseModel):
@@ -106,7 +123,11 @@ class PurchaseOrder(BaseModel):
     created_at: str
     # M4 Slice B — draft→confirm→GR flow
     is_on_order: bool = False
-    source: str = "manual"           # recommendation | manual
+    source: str = "manual"           # autocount | recommendation | manual
+    # AutoCount mirror (Slice 8): human DocNo + ingest-safe annotations.
+    source_doc_no: Optional[str] = None
+    internal_note: Optional[str] = None
+    follow_up: bool = False
     gr_reference: Optional[str] = None
 
 

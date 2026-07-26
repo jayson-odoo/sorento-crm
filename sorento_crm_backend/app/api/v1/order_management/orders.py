@@ -279,6 +279,7 @@ from app.schemas.order import (
     BulkDeleteOrderLinesRequest,
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT, ValidateImportResponse
+from app.schemas.autocount_mirror import MirrorAnnotationUpdate
 from app.services.error_handler import handle_internal_error
 
 router = APIRouter()
@@ -854,6 +855,32 @@ async def update_order(
     try:
         service = OrderService(db)
         order = service.update_order(order_id, order_data, current_user["id"])
+        return order
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.patch("/{order_id}/annotation", response_model=OrderResponse)
+async def annotate_order(
+    order_id: str,
+    body: MirrorAnnotationUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Update the two ingest-safe annotation columns (internal note + follow-up
+    flag). Allowed on AutoCount-synced orders too — that is the one thing users
+    can change on a read-only mirror row. Only fields present in the body are
+    applied (omitted = unchanged)."""
+    try:
+        fields = body.model_dump(exclude_unset=True)
+        service = OrderService(db)
+        order = service.annotate_order(
+            order_id,
+            internal_note=fields.get("internal_note", ...) if "internal_note" in fields else ...,
+            follow_up=fields.get("follow_up", ...) if "follow_up" in fields else ...,
+        )
         return order
     except HTTPException:
         raise

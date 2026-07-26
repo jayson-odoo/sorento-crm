@@ -1,6 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import type { SortingState } from '@tanstack/react-table';
-import { getPurchaseOrder, getPurchaseOrders } from '../services/purchaseOrderService';
+import {
+  annotatePurchaseOrder,
+  getPurchaseOrder,
+  getPurchaseOrders,
+} from '../services/purchaseOrderService';
+import type { MirrorAnnotationPayload } from '../types/scm.types';
 
 interface UsePurchaseOrdersParams {
   pageIndex: number;
@@ -39,5 +45,24 @@ export function usePurchaseOrder(id: string | null) {
     staleTime: 5_000,
     refetchOnWindowFocus: false,
     retry: 1,
+  });
+}
+
+/**
+ * Annotate a purchase order (internal note + follow-up) — the only mutation
+ * allowed on an AutoCount-mirrored PO. Invalidates the list + the PO's detail
+ * query so the saved note reflects immediately.
+ */
+export function useAnnotatePurchaseOrder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: MirrorAnnotationPayload }) =>
+      annotatePurchaseOrder(id, data),
+    onSuccess: (_res, { id }) => {
+      qc.invalidateQueries({ queryKey: ['scm', 'purchase-orders'] });
+      qc.invalidateQueries({ queryKey: ['scm', 'purchase-orders', 'detail', id] });
+      toast.success('Note saved');
+    },
+    onError: (e: Error) => toast.error(e.message || 'Failed to save note'),
   });
 }

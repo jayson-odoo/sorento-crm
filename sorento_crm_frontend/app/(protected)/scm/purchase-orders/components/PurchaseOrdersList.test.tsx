@@ -185,3 +185,36 @@ describe('PurchaseOrdersList — select-all + bulk Confirm gating (AC-M4.6)', ()
     expect(confirmMut.mutateAsync).toHaveBeenCalledWith(['po-draft-1']);
   });
 });
+
+describe('PurchaseOrdersList — AutoCount mirror rows (read-only gate, Slice 8)', () => {
+  it('shows the AutoCount badge and NO Create GR action on an autocount PO', () => {
+    mockList([
+      po({ id: 'po-ac', po_number: 'AC-SMOKE-PO-1', status: 'active', source: 'autocount', is_on_order: true }),
+    ]);
+    render(<PurchaseOrdersList />);
+    expect(screen.getByText('AutoCount')).toBeInTheDocument();
+    // An active PO would normally offer Create GR — an autocount one must not.
+    expect(screen.queryByRole('button', { name: /Create GR/i })).toBeNull();
+  });
+
+  it('keeps Create GR on a manual/native active PO', () => {
+    mockList([
+      po({ id: 'po-native', po_number: 'PO-2026/07-0009', status: 'active', source: 'manual', is_on_order: true }),
+    ]);
+    render(<PurchaseOrdersList />);
+    expect(screen.queryByText('AutoCount')).toBeNull();
+    expect(screen.getAllByRole('button', { name: /Create GR/i })).toHaveLength(1);
+  });
+
+  it('excludes an autocount PO from bulk-select (its row checkbox is disabled)', () => {
+    mockList([
+      po({ id: 'po-ac', po_number: 'AC-SMOKE-PO-1', status: 'active', source: 'autocount', is_on_order: true }),
+      po({ id: 'po-draft', po_number: 'PO-DRAFT-0001', status: 'draft_recommendation' }),
+    ]);
+    render(<PurchaseOrdersList />);
+    const rowCheckboxes = screen.getAllByLabelText('Select row');
+    // Two rows, but the autocount row's checkbox is not selectable.
+    const disabledCount = rowCheckboxes.filter((c) => (c as HTMLButtonElement).disabled).length;
+    expect(disabledCount).toBe(1);
+  });
+});

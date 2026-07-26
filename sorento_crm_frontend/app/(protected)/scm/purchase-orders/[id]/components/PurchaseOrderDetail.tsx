@@ -16,8 +16,10 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { usePurchaseOrder } from '../../../hooks/usePurchaseOrders';
-import { fmtDate, fmtInt } from '../../../lib/format';
+import { AutoCountSourceBadge } from '@/components/common/AutoCountSourceBadge';
+import { MirrorAnnotationCard } from '@/components/common/MirrorAnnotationCard';
+import { usePurchaseOrder, useAnnotatePurchaseOrder } from '../../../hooks/usePurchaseOrders';
+import { fmtDate, fmtInt, fmtMoney } from '../../../lib/format';
 import type { PurchaseOrder, PurchaseOrderLine, PurchaseOrderStatus } from '../../../types/scm.types';
 
 type BadgeDef = { variant: 'secondary' | 'primary' | 'warning' | 'success'; label: string };
@@ -54,6 +56,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 export function PurchaseOrderDetail({ id }: { id: string }) {
   const { data, isLoading, isError } = usePurchaseOrder(id);
+  const annotate = useAnnotatePurchaseOrder();
 
   const lines = useMemo<PurchaseOrderLine[]>(() => data?.lines ?? [], [data]);
 
@@ -93,6 +96,32 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         cell: ({ row }) => row.original.uom,
         size: 90,
         meta: { headerTitle: 'UoM' },
+      },
+      {
+        // AutoCount mirror pricing — read-only; renders "—" on native lines.
+        accessorKey: 'unit_cost',
+        header: ({ column }) => <DataGridColumnHeader title="Unit cost" column={column} />,
+        cell: ({ row }) => fmtMoney(row.original.unit_cost),
+        size: 120,
+        meta: { headerTitle: 'Unit cost', headerClassName: 'text-right', cellClassName: 'text-right tabular-nums' },
+      },
+      {
+        accessorKey: 'sub_total',
+        header: ({ column }) => <DataGridColumnHeader title="Sub total" column={column} />,
+        cell: ({ row }) => fmtMoney(row.original.sub_total),
+        size: 120,
+        meta: { headerTitle: 'Sub total', headerClassName: 'text-right', cellClassName: 'text-right tabular-nums' },
+      },
+      {
+        accessorKey: 'description',
+        header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.description ?? ''}>
+            {row.original.description || '—'}
+          </span>
+        ),
+        size: 220,
+        meta: { headerTitle: 'Description' },
       },
     ],
     [],
@@ -153,11 +182,12 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
       <Card>
         <CardHeader className="block">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <CardTitle className="text-lg">{po.po_number}</CardTitle>
               <Badge variant={s.variant} appearance="light">
                 {s.label}
               </Badge>
+              {po.source === 'autocount' ? <AutoCountSourceBadge source="autocount" /> : null}
               {onOrder ? (
                 <span className="inline-flex items-center gap-1 text-xs font-medium text-scm-incoming">
                   <CheckCircle2 className="size-3.5" /> On order
@@ -176,8 +206,13 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           <Field label="Total qty">{fmtInt(po.total_qty)}</Field>
           <Field label="Lines">{fmtInt(po.line_count)}</Field>
           <Field label="Source">
-            {po.source === 'recommendation' ? 'Reorder recommendation' : 'Manual'}
+            {po.source === 'autocount'
+              ? 'AutoCount'
+              : po.source === 'recommendation'
+                ? 'Reorder recommendation'
+                : 'Manual'}
           </Field>
+          <Field label="Doc No">{po.source_doc_no || '—'}</Field>
           <Field label="On order">{onOrder ? 'Yes' : 'No'}</Field>
         </div>
       </Card>
@@ -229,6 +264,13 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           )}
         </div>
       </Card>
+
+      {/* Internal notes — always rendered. The only edit allowed on a mirror PO. */}
+      <MirrorAnnotationCard
+        value={{ internal_note: po.internal_note, follow_up: po.follow_up }}
+        isSaving={annotate.isPending}
+        onSave={(next) => annotate.mutate({ id: po.id, data: next })}
+      />
     </div>
   );
 }

@@ -195,6 +195,14 @@ class Order(Base):
     tax_amount = Column(Numeric(15, 2), default=0, nullable=False)
     total_amount = Column(Numeric(15, 2), default=0, nullable=False)
     remarks = Column(Text, nullable=True)
+    # AutoCount mirror provenance + ingest-safe annotations (Slice 5). A row
+    # ingested from AutoCount carries sync_source='autocount' and is read-only in
+    # the Orders UI (mutations 403 server-side); native rows stay 'manual'. The
+    # two annotation columns are Sorento-only, never written by ingest, so they
+    # survive re-sync.
+    sync_source = Column(String(32), nullable=False, server_default="manual")
+    internal_note = Column(Text, nullable=True)
+    follow_up = Column(Boolean, nullable=False, server_default=text("false"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     deleted_at = Column(DateTime(timezone=False), nullable=True)
@@ -290,6 +298,11 @@ class SalesOrder(Base):
     status = Column(String(50), default="open", nullable=False)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
+    # AutoCount mirror (Slice 8): human DocNo + ingest-safe annotations. Ingest
+    # never writes the annotation columns, so they survive re-sync.
+    source_doc_no = Column(String(100), nullable=True)
+    internal_note = Column(Text, nullable=True)
+    follow_up = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -321,6 +334,16 @@ class SalesOrderLine(Base):
     line_status = Column(String(50), default="open", nullable=False)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
+    # AutoCount SODTL pricing (Slice 8): the SCM line lacked these; ingest fills
+    # them, they surface read-only in the SO detail.
+    unit_price = Column(Numeric(15, 2), nullable=True)
+    discount_amt = Column(Numeric(15, 2), nullable=True)
+    tax_rate = Column(Numeric(9, 4), nullable=True)
+    tax_amt = Column(Numeric(15, 2), nullable=True)
+    sub_total = Column(Numeric(15, 2), nullable=True)
+    delivery_date = Column(Date, nullable=True)
+    uom = Column(String(100), nullable=True)
+    tax_code = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

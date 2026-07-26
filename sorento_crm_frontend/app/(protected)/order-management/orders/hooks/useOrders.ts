@@ -14,12 +14,13 @@ import {
   updateOrder,
   deleteOrder,
   bulkDeleteOrders,
+  annotateOrder,
   createOrderLine,
   updateOrderLine,
   deleteOrderLine,
   bulkDeleteOrderLines,
 } from '../services/orderService';
-import type { Order, OrderFormData, OrderLineFormData } from '../types/order.types';
+import type { Order, OrderFormData, OrderLineFormData, OrderAnnotationPayload } from '../types/order.types';
 import { postListQuerySearch } from '@/lib/list-query/listQueryService';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 
@@ -163,6 +164,23 @@ export function useBulkDeleteOrders() {
       toast.success(result?.message ?? `${result?.deleted_count ?? 0} delivery order(s) deleted`);
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to bulk delete delivery orders'),
+  });
+}
+
+/**
+ * Save the mirror annotation (internal note + follow-up) on an order. The one
+ * mutation allowed on AutoCount rows; invalidates the order + list caches.
+ */
+export function useAnnotateOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: OrderAnnotationPayload }) => annotateOrder(id, data),
+    onSuccess: (_res, { id }) => {
+      queryClient.invalidateQueries({ queryKey: ['orders'] });
+      queryClient.invalidateQueries({ queryKey: ['order', id] });
+      toast.success('Note saved');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to save note'),
   });
 }
 

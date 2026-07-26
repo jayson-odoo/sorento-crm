@@ -54,6 +54,8 @@ PERMISSION_REGISTRY.append({"slug": "order_management.orders.export", "name": "E
 PERMISSION_REGISTRY.append({"slug": "order_management.orders.bulk_delete", "name": "Bulk Delete Delivery Orders", "description": "Permission to bulk delete delivery orders."})
 PERMISSION_REGISTRY.extend(_crud("order_management", "order_statuses", "Delivery Order Statuses"))
 PERMISSION_REGISTRY.extend(_crud("order_management", "customers", "Customers"))
+# AutoCount quotation mirror (Slice 6) — read-only + annotation.
+PERMISSION_REGISTRY.extend(_crud("order_management", "quotations", "Quotations"))
 
 # Complaint Management
 PERMISSION_REGISTRY.extend(_crud("complaint_management", "complaints", "Complaints"))
@@ -130,6 +132,13 @@ PERMISSION_REGISTRY.extend(_crud("master_data", "product_categories", "Product C
 PERMISSION_REGISTRY.extend(_crud("master_data", "brands", "Brands"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "lookup_sets", "Lookup Sets"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "units_of_measure", "Units of Measure"))
+# AutoCount mirror masters (read-only UI; .edit is the slug the ESB ingest uses).
+PERMISSION_REGISTRY.extend(_crud("master_data", "credit_terms", "Credit Terms"))
+PERMISSION_REGISTRY.extend(_crud("master_data", "tax_codes", "Tax Codes"))
+PERMISSION_REGISTRY.extend(_crud("master_data", "sales_agents", "Sales Agents"))
+PERMISSION_REGISTRY.extend(_crud("master_data", "payment_methods", "Payment Methods"))
+PERMISSION_REGISTRY.extend(_crud("master_data", "tax_entities", "Tax Entities"))
+PERMISSION_REGISTRY.extend(_crud("master_data", "item_packages", "Item Packages"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_root_causes", "Complaint Root Causes"))
 PERMISSION_REGISTRY.extend(_crud("master_data", "complaint_resolutions", "Complaint Resolutions"))
 
@@ -155,6 +164,11 @@ PERMISSION_REGISTRY.extend([
 ])
 PERMISSION_REGISTRY.extend(_crud("procurement", "purchase_requests", "Purchase Requests"))
 PERMISSION_REGISTRY.extend(_crud("procurement", "sponsorship_forms", "Sponsorship Forms"))
+# AutoCount request-for-quotation mirror (Slice 7) — read-only + annotation.
+PERMISSION_REGISTRY.extend(_crud("procurement", "request_quotations", "Request Quotations"))
+# AutoCount SO/PO reuse (Slice 8) — ingest + annotation on the SCM tables.
+PERMISSION_REGISTRY.extend(_crud("scm", "sales_orders", "SCM Sales Orders"))
+PERMISSION_REGISTRY.extend(_crud("scm", "purchase_orders", "SCM Purchase Orders"))
 PERMISSION_REGISTRY.extend([
     {"slug": "procurement.purchase_requests.send_for_approval", "name": "Send purchase request / sponsorship form for approval", "description": "Set request to pending approval and send approval link. Also grants Reject before sending for approval (mandatory reason)."},
     {"slug": "procurement.purchase_requests.process", "name": "Process purchase request / sponsorship form (CS)", "description": "Customer-service action: mark an approved purchase request or sponsorship form as processed by CS (status='processed_by_cs'; closes the customer-service SLA stage)."},
@@ -170,6 +184,7 @@ PERMISSION_REGISTRY.extend(_crud("inventory", "storage_zones", "Storage Zones"))
 PERMISSION_REGISTRY.extend(_with_import_export("inventory", "stock", "Stock"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_batches", "Stock Batches"))
 PERMISSION_REGISTRY.extend(_crud("inventory", "stock_ledger", "Stock Ledger"))
+PERMISSION_REGISTRY.extend(_crud("inventory", "stock_balance_snapshots", "Stock Balance Snapshots"))
 
 # Marketing
 PERMISSION_REGISTRY.extend(_crud("marketing", "promotions", "Promotions"))

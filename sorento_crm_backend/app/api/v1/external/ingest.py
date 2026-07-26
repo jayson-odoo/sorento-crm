@@ -49,6 +49,11 @@ INGEST_PERMISSIONS = {
     "suppliers": "procurement.suppliers.edit",
     "customers": "order_management.customers.edit",
     "products": "master_data.products.edit",
+    "credit_terms": "master_data.credit_terms.edit",
+    "tax_codes": "master_data.tax_codes.edit",
+    "sales_agents": "master_data.sales_agents.edit",
+    "payment_methods": "master_data.payment_methods.edit",
+    "tax_entities": "master_data.tax_entities.edit",
 }
 READ_PERMISSIONS = {
     "product_categories": "master_data.product_categories.view",
@@ -57,6 +62,11 @@ READ_PERMISSIONS = {
     "suppliers": "procurement.suppliers.view",
     "customers": "order_management.customers.view",
     "products": "master_data.products.view",
+    "credit_terms": "master_data.credit_terms.view",
+    "tax_codes": "master_data.tax_codes.view",
+    "sales_agents": "master_data.sales_agents.view",
+    "payment_methods": "master_data.payment_methods.view",
+    "tax_entities": "master_data.tax_entities.view",
 }
 
 # A batch cap the ESB can design against. Exceeding it errors rather than

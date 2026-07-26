@@ -47,6 +47,13 @@ from app.api.v1.external import (
     memory,
     ideation,
     ingest,
+    item_packages,
+    stock_balance,
+    delivery_orders,
+    quotations,
+    request_quotations,
+    sales_orders,
+    purchase_orders,
 )
 
 router = APIRouter()
@@ -69,6 +76,55 @@ router.include_router(
     dependencies=[
         Depends(require_external_permission_for_path(ingest.READ_PERMISSIONS))
     ],
+)
+
+router.include_router(
+    item_packages.router,
+    prefix="/item-packages",
+    tags=["external"],
+    dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["item-packages"]))],
+)
+
+router.include_router(
+    stock_balance.router,
+    prefix="/stock-balance",
+    tags=["external"],
+    dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["stock-balance"]))],
+)
+
+router.include_router(
+    delivery_orders.router,
+    prefix="/delivery-orders",
+    tags=["external"],
+    dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["delivery-orders"]))],
+)
+
+router.include_router(
+    quotations.router,
+    prefix="/quotations",
+    tags=["external"],
+    dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["quotations"]))],
+)
+
+router.include_router(
+    request_quotations.router,
+    prefix="/request-quotations",
+    tags=["external"],
+    dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["request-quotations"]))],
+)
+
+router.include_router(
+    sales_orders.router,
+    prefix="/sales-orders",
+    tags=["external"],
+    dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["sales-orders"]))],
+)
+
+router.include_router(
+    purchase_orders.router,
+    prefix="/purchase-orders",
+    tags=["external"],
+    dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["purchase-orders"]))],
 )
 
 router.include_router(

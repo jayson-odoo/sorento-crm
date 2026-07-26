@@ -14,10 +14,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useOrder, useUpdateOrder } from '../hooks/useOrders';
+import { useOrder, useUpdateOrder, useAnnotateOrder } from '../hooks/useOrders';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
 import { formatDate } from '@/lib/helpers';
 import { getStatusBadgeVariant } from '@/lib/status-badge';
+import { AutoCountSourceBadge } from '@/components/common/AutoCountSourceBadge';
+import { MirrorAnnotationCard } from '@/components/common/MirrorAnnotationCard';
 import OrderDeleteDialog from './order-delete-dialog';
 import OrderLinesCard from './OrderLinesCard';
 import OrderFulfilledComplaintsCard from './OrderFulfilledComplaintsCard';
@@ -36,6 +38,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
   const listQs = listSearch ? `?${listSearch}` : '';
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const updateMutation = useUpdateOrder();
+  const annotate = useAnnotateOrder();
   const { data: orderStatuses = [] } = useOrderStatusSelectQuery();
   const statusList = orderStatuses ?? [];
   const newOrDeliveredStatuses = statusList.filter((s) => {
@@ -76,63 +79,81 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
     );
   }
 
+  // AutoCount-synced orders are a read-only mirror: every mutating control is
+  // hidden and the server guards it (403 AUTOCOUNT_READ_ONLY). Only the
+  // annotation carve-out (internal note + follow-up) stays editable.
+  const isAutocount = order.source === 'autocount';
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold">{order.order_number}</h1>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-bold break-words">{order.order_number}</h1>
             {order.order_status && (
               <Badge variant={getStatusBadgeVariant(order.order_status.status_name)}>
                 {order.order_status.status_name}
               </Badge>
             )}
+            {isAutocount && <AutoCountSourceBadge source="autocount" />}
           </div>
           <p className="text-sm text-muted-foreground">
             {order.debtor_name || order.debtor_code || '—'} • Delivery order date: {order.order_date ? formatDate(new Date(order.order_date)) : '-'}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <OrderNavigation orderId={orderId} />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button type="button" variant="outline" size="icon" aria-label="Change delivery order status">
-                <Settings className="size-4" />
+          {!isAutocount && (
+            <>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="outline" size="icon" aria-label="Change delivery order status">
+                    <Settings className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {gearStatuses.map((status) => (
+                    <DropdownMenuItem
+                      key={status.id}
+                      onClick={() => handleStatusChange(status.id)}
+                      disabled={updateMutation.isPending}
+                    >
+                      {status.status_name}
+                    </DropdownMenuItem>
+                  ))}
+                  {gearStatuses.length === 0 && (
+                    <DropdownMenuItem disabled>No statuses available</DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <Button
+                variant="outline"
+                onClick={() =>
+                  router.push(`/order-management/orders/${orderId}/edit${listQs}`)
+                }
+              >
+                <Edit className="size-4" />
+                Edit
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {gearStatuses.map((status) => (
-                <DropdownMenuItem
-                  key={status.id}
-                  onClick={() => handleStatusChange(status.id)}
-                  disabled={updateMutation.isPending}
-                >
-                  {status.status_name}
-                </DropdownMenuItem>
-              ))}
-              {gearStatuses.length === 0 && (
-                <DropdownMenuItem disabled>No statuses available</DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Button
-            variant="outline"
-            onClick={() =>
-              router.push(`/order-management/orders/${orderId}/edit${listQs}`)
-            }
-          >
-            <Edit className="size-4" />
-            Edit
-          </Button>
-          <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
-            <Trash2 className="size-4" />
-            Delete
-          </Button>
+              <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
+                <Trash2 className="size-4" />
+                Delete
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
-      {order && (
+      {isAutocount && (
+        <MirrorAnnotationCard
+          value={{ internal_note: order.internal_note, follow_up: order.follow_up ?? undefined }}
+          isSaving={annotate.isPending}
+          onSave={(next) => annotate.mutate({ id: orderId, data: next })}
+        />
+      )}
+
+      {order && !isAutocount && (
         <OrderDeleteDialog
           open={deleteDialogOpen}
           closeDialog={() => setDeleteDialogOpen(false)}
@@ -216,7 +237,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
               )}
             </CardContent>
           </Card>
-          <OrderLinesCard orderId={orderId} lines={order.lines ?? []} />
+          <OrderLinesCard orderId={orderId} lines={order.lines ?? []} readOnly={isAutocount} />
         </TabsContent>
 
         <TabsContent value="financial" className="mt-0 focus-visible:outline-none">

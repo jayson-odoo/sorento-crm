@@ -8,7 +8,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { FileText, LoaderCircleIcon, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import { Eye, FileText, LoaderCircleIcon, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { AutoCountSourceBadge } from '@/components/common/AutoCountSourceBadge';
 import {
   useCreateDoFromSalesOrder,
   useCreateSalesOrder,
@@ -142,12 +143,19 @@ export default function SalesOrdersList() {
         accessorKey: 'so_number',
         header: ({ column }) => <DataGridColumnHeader title="SO number" column={column} />,
         cell: ({ row }) => (
-          <div className="flex flex-col">
-            <span className="font-medium">{row.original.so_number}</span>
+          <div className="flex flex-col gap-0.5">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate font-medium" title={row.original.so_number}>
+                {row.original.so_number}
+              </span>
+              {row.original.source === 'autocount' ? (
+                <AutoCountSourceBadge source="autocount" />
+              ) : null}
+            </div>
             <span className="text-xs text-muted-foreground">{fmtDate(row.original.order_date)}</span>
           </div>
         ),
-        size: 160,
+        size: 200,
         meta: { headerTitle: 'SO number', skeleton: <Skeleton className="h-8 w-28" /> },
       },
       {
@@ -228,6 +236,29 @@ export default function SalesOrdersList() {
         id: 'actions',
         header: '',
         cell: ({ row }) => {
+          // AutoCount-mirrored SOs are READ-ONLY — the BE 403s Edit/Delete/Create-DO
+          // (`AUTOCOUNT_READ_ONLY`), so the UI must not offer them. Only a View
+          // action opens the read-only detail + the allowed note annotation.
+          if (row.original.source === 'autocount') {
+            return (
+              <div className="flex items-center justify-end">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1 px-2 text-xs"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditing(row.original);
+                    setFormOpen(true);
+                  }}
+                  title="View (read-only — synced from AutoCount)"
+                >
+                  <Eye className="size-4" />
+                  View
+                </Button>
+              </div>
+            );
+          }
           const canCreateDo = row.original.committed_qty > 0 && row.original.status !== 'cancelled';
           return (
             <div className="flex items-center justify-end gap-1">
