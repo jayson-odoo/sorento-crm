@@ -63,18 +63,19 @@ def _product(db):
     return product
 
 
-def _image(db, product, *, access_levels, is_primary=False, sort_order=0, thumb=None):
+def _image(db, product, *, access_levels, is_primary=False, sort_order=0, thumb=None,
+           mime="image/jpeg", suffix="jpg"):
     from app.models.product import ProductAttachment
     from app.models.resources import Attachment
 
     name = unique_code("zztimg")
     attachment = Attachment(
         id=str(uuid.uuid4()),
-        original_filename=f"{name}.jpg",
-        stored_filename=f"{name}.jpg",
-        file_path=f"https://cdn.example.test/products/{name}.jpg",
+        original_filename=f"{name}.{suffix}",
+        stored_filename=f"{name}.{suffix}",
+        file_path=f"https://cdn.example.test/products/{name}.{suffix}",
         thumbnail_path=thumb,
-        mime_type="image/jpeg",
+        mime_type=mime,
         storage_provider="s3",
         company_id=SORENTO,
     )
@@ -191,3 +192,35 @@ def test_several_products_resolve_in_one_go():
 
         urls = product_images.primary_image_urls(db, products, CONSUMER)
         assert len(urls) == 3
+
+
+def test_a_pdf_attached_to_a_product_is_never_its_photo():
+    from app.services.dealer_kit import product_images
+
+    with pg_session() as db, company_scope(db, SCOPE):
+        product = _product(db)
+        # The live catalogue links 532 PDFs and a couple of videos to products.
+        # A spec sheet rendered as the product photo is worse than no photo.
+        _image(
+            db,
+            product,
+            access_levels=["end_user"],
+            is_primary=True,
+            mime="application/pdf",
+            suffix="pdf",
+        )
+
+        assert product_images.primary_image_urls(db, [product], CONSUMER) == {}
+
+
+def test_a_photo_wins_over_a_pdf_marked_primary():
+    from app.services.dealer_kit import product_images
+
+    with pg_session() as db, company_scope(db, SCOPE):
+        product = _product(db)
+        _image(db, product, access_levels=["end_user"], is_primary=True,
+               mime="application/pdf", suffix="pdf")
+        photo = _image(db, product, access_levels=["end_user"], sort_order=5)
+
+        url = product_images.primary_image_urls(db, [product], CONSUMER)[product.id]
+        assert photo.original_filename.split(".")[0] in url

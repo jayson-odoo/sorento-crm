@@ -67,6 +67,10 @@ def primary_image_urls(
         db.query(ProductAttachment, Attachment)
         .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
         .filter(ProductAttachment.product_id.in_(product_ids))
+        # Images only. `product_attachments` links whatever is attached to a
+        # product - the live data holds 532 PDFs and a couple of videos - and a
+        # spec sheet rendered as the product photo is worse than no photo.
+        .filter(Attachment.mime_type.ilike("image/%"))
         .order_by(
             ProductAttachment.product_id,
             # Someone deliberately marked one as primary; ordering must not
