@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   GridLayout,
   useContainerWidth,
@@ -148,7 +148,41 @@ export function BuilderCanvas({
 }: BuilderCanvasProps) {
   const columns = BREAKPOINT_COLUMNS[breakpoint];
   const layout = useMemo(() => toRglLayout(blocks, placements), [blocks, placements]);
-  const { width, containerRef, mounted } = useContainerWidth();
+  const { containerRef, mounted } = useContainerWidth();
+
+  /**
+   * Measure the canvas ourselves rather than trusting the hook's width.
+   *
+   * The hook reported 646px for a container that is really 518px, and a window
+   * resize did not correct it - so every block was laid out ~100px too wide and
+   * the selected one overlapped the inspector panel beside it, covering its
+   * controls.
+   *
+   * A CALLBACK ref, not an effect: the canvas is not rendered while the section
+   * is empty, so an effect keyed on mount measures nothing and never runs again
+   * once the first block arrives. A callback ref fires exactly when the node
+   * appears, which is the moment there is something to measure.
+   */
+  const [measuredWidth, setMeasuredWidth] = useState(0);
+  const observerRef = useRef<ResizeObserver | null>(null);
+
+  const attachCanvas = useCallback(
+    (node: HTMLDivElement | null) => {
+      containerRef.current = node;
+      observerRef.current?.disconnect();
+      observerRef.current = null;
+      if (!node) return;
+
+      const measure = () => setMeasuredWidth(node.getBoundingClientRect().width);
+      measure();
+      const observer = new ResizeObserver(measure);
+      observer.observe(node);
+      observerRef.current = observer;
+    },
+    [containerRef],
+  );
+
+  useEffect(() => () => observerRef.current?.disconnect(), []);
 
   // Latest measured content height per block, so a re-measure can be compared
   // against what the grid currently allots without re-rendering on every frame.
@@ -197,7 +231,7 @@ export function BuilderCanvas({
 
   return (
     <div
-      ref={containerRef}
+      ref={attachCanvas}
       data-testid="dk-builder-canvas"
       className={cn(
         'relative rounded-lg border border-border bg-background',
@@ -217,10 +251,10 @@ export function BuilderCanvas({
         </div>
       </div>
 
-      {mounted && (
+      {mounted && measuredWidth > 0 && (
         <GridLayout
           className="relative"
-          width={width}
+          width={measuredWidth}
           layout={layout}
           compactor={verticalCompactor}
           gridConfig={{

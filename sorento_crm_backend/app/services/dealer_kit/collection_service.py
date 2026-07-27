@@ -27,6 +27,7 @@ from app.models.product import Product
 from app.rule_engine.evaluator import collect_fact_keys, evaluate
 from app.services.dealer_kit.collection_membership import assemble_members
 from app.services.dealer_kit.product_facts import product_facts
+from app.services.dealer_kit import product_images
 from app.services.dealer_kit.viewer import ANONYMOUS, ViewerContext
 from app.services.error_handler import AppException
 
@@ -214,9 +215,14 @@ def resolve_tiles(
     viewer: ViewerContext = ANONYMOUS,
     candidates: Optional[list[Product]] = None,
 ) -> list[dict]:
-    """Members as tiles, with prices decided for THIS viewer."""
+    """Members as tiles, with prices and photos decided for THIS viewer."""
+    members = resolve_members(db, collection, candidates)
+    # One query for the whole grid. Resolving per tile turns a forty-product
+    # page into forty round trips.
+    images = product_images.primary_image_urls(db, members, viewer)
+
     tiles = []
-    for product in resolve_members(db, collection, candidates):
+    for product in members:
         currency = product.currency or "MYR"
         tiles.append(
             {
@@ -232,7 +238,11 @@ def resolve_tiles(
                     if viewer.invoice_price_visible
                     else None
                 ),
-                "image_url": None,
+                # Photos are viewer-gated exactly as prices are: trade imagery
+                # is tagged `dealer` and must not reach a consumer. Absent when
+                # there is no permitted photo, so the tile shows its no-image
+                # state rather than a broken one.
+                "image_url": images.get(product.id),
                 "dimensions": _dimensions(product),
                 "badges": [],
             }
