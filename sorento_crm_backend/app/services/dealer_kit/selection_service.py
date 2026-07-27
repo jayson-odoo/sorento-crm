@@ -72,6 +72,23 @@ def list_lines(db: Session, selection: Selection) -> list[SelectionLine]:
     )
 
 
+def _assert_product_exists(db: Session, product_id: str) -> None:
+    """A product id the catalogue does not have is a 404, not a 500.
+
+    Without this the insert reaches the foreign key and the caller gets an
+    opaque server error for what is simply a bad id. The lookup runs under the
+    caller's company scope, so another company's product reads as missing -
+    which is the correct answer, and the same one an attacker probing ids gets.
+    """
+    exists = db.query(Product.id).filter(Product.id == product_id).first()
+    if not exists:
+        raise AppException(
+            status_code=404,
+            message="That product is not in the catalogue.",
+            code="product_not_found",
+        )
+
+
 def add_line(
     db: Session, selection: Selection, product_id: str, quantity: Decimal | float | int = 1
 ) -> SelectionLine:
@@ -94,6 +111,7 @@ def add_line(
         db.flush()
         return existing
 
+    _assert_product_exists(db, product_id)
     line = SelectionLine(
         selection_id=selection.id,
         product_id=product_id,
@@ -113,6 +131,8 @@ def set_quantity(
     amount = Decimal(str(quantity))
     line = _find_line(db, selection, product_id)
     if not line:
+        # Setting an absent product to zero is already true, so do not make the
+        # caller prove the id exists to tell us nothing should change.
         return None if amount <= 0 else add_line(db, selection, product_id, amount)
 
     if amount <= 0:

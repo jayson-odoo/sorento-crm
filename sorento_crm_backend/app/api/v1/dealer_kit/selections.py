@@ -44,16 +44,32 @@ def _owned(db: Session, selection_id: str, user: dict):
     sequential guess into an enumeration of other people's designs.
     """
     selection = selection_service.get_selection(db, selection_id)
-    if selection.user_id != _user_id(user):
+    caller = _user_id(user)
+    # `caller` is checked for truth BEFORE comparing. A contact-owned selection
+    # has `user_id IS NULL`, so a principal whose id resolved to None used to
+    # match it - None == None - and read somebody else's basket. A contact's
+    # selection is never reachable through the CRM route; that is the portal's
+    # job, and it does not exist yet.
+    if not caller or selection.user_id != caller:
         raise AppException(status_code=404, message="Selection not found")
     return selection
 
 
 def _viewer(user: dict | None) -> ViewerContext:
-    # Staff read their own selection with staff eyes. `show_invoice_price` is
-    # the document-level toggle elsewhere; a selection has no document, so the
-    # entitlement alone decides and the two gates still both exist.
-    return ViewerContext(is_staff=bool(_user_id(user)), show_invoice_price=True)
+    """The reader of a selection.
+
+    `show_invoice_price` is FALSE, and that is the whole point. The internal
+    price needs two gates to agree (AC-G6): the document must ask for it and the
+    viewer must be entitled to it. A selection has no document and therefore no
+    toggle, so nothing is asking - and the design has DEALERS signed in as CRM
+    users, which made "any authenticated caller" the wrong test entirely. It
+    would have handed the figure the invoice is raised at to the person
+    negotiating against it.
+
+    `is_staff` still governs product imagery, where a CRM user seeing trade
+    photographs is correct.
+    """
+    return ViewerContext(is_staff=bool(_user_id(user)), show_invoice_price=False)
 
 
 def _out(db: Session, selection, user: dict | None) -> SelectionOut:

@@ -149,6 +149,27 @@ def _sellable_products(db: Session) -> list[Product]:
     )
 
 
+def _sellable_by_ids(db: Session, product_ids: Iterable[str]) -> list[Product]:
+    """Just these products, with the same sellable filter the scan applies.
+
+    The filter is repeated rather than skipped on purpose: on the scan path a
+    pin pointing at something discontinued dropped out because it was never in
+    the candidate set, and the cheap path has to keep that guarantee or an
+    unbuyable product reaches a public page.
+    """
+    ids = [product_id for product_id in product_ids if product_id]
+    if not ids:
+        return []
+    return (
+        db.query(Product)
+        .options(joinedload(Product.category), joinedload(Product.brand))
+        .filter(Product.id.in_(ids))
+        .filter(Product.is_active.is_(True), Product.is_discontinued.is_(False))
+        .order_by(Product.product_code)
+        .all()
+    )
+
+
 def _matched_ids(db: Session, conditions: Optional[dict], candidates: Iterable[Product]) -> list[str]:
     if not conditions or not conditions.get("rules"):
         # An empty rule matches nothing here, NOT everything. The engine's own
@@ -187,12 +208,25 @@ def resolve_members(
     candidate load is the expensive part and it is identical for every
     collection in the same company scope.
     """
+    conditions = collection.conditions_json
+    has_rule = bool(conditions and conditions.get("rules"))
+
     if candidates is None:
-        candidates = _sellable_products(db)
+        # A hand-picked collection needs its pins and nothing else. Scanning the
+        # catalogue to answer "show these four" cost a full product load - with
+        # category and brand joined - on every public page view, and the live
+        # catalogue holds over seventeen thousand sellable products. A rule has
+        # no cheaper path: it is a Python evaluator and must see the candidates.
+        candidates = (
+            _sellable_products(db)
+            if has_rule
+            else _sellable_by_ids(db, collection.pinned_product_ids or [])
+        )
+
     by_id = {product.id: product for product in candidates}
 
     member_ids = assemble_members(
-        matched=_matched_ids(db, collection.conditions_json, candidates),
+        matched=_matched_ids(db, conditions, candidates),
         pinned=collection.pinned_product_ids,
         excluded=collection.excluded_product_ids,
         manual_order=collection.manual_order,
