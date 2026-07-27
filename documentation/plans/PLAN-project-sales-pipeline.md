@@ -631,6 +631,19 @@ and `sorento_crm_mcp/tests/test_projects_sanitizer.py`.
 | F65 | The Unattended message told the owner "Colleagues can now ask to take it over", and three docstrings called level 3 the gate on takeover requests. There is no such gate: `create_takeover_request` has no stale-level check, because the same endpoint is AC-C7's recourse for a registration this project BLOCKED -- and a blocked registrant cannot wait for somebody else's project to go stale. The system was announcing a permission change that never happened. | Wording corrected on both surfaces (notification body and the FE badge sentence) to say what actually changes: the neglect becomes visible to everyone, and a colleague can ask to take it over -- which was always true. The gate was NOT added: gating it would break AC-C7. AC-H6's "opens the project to takeover requests" is therefore met by the badge, recorded here rather than silently reinterpreted. |
 | F66 | S6b resolved the complaint's `project_code` inside `_serialize_complaint`, which the complaints LIST calls once per row -- one extra SELECT per linked complaint. That serializer's whole `*_override` convention exists because a 50-row page used to fire per-row view-token, user and SLA queries, so the fix re-introduced the exact pattern the file warns about. | `_batch_project_display` resolves the page's linked projects in one query and rides in as `project_display_override`; the single-row detail path keeps its own lookup. Pinned as a ratio (more linked rows must not mean more queries), and both perf guards were verified to FAIL with the batching removed rather than trusted because they were green. |
 
+**Verification.** Two SOLO full-suite runs, one per branch, nothing else touching the database:
+baseline **114 failed / 3539 passed / 0 errors**, this branch **110 failed / 3568 passed / 0
+errors**. The only difference in the failure sets, in either direction, is the four
+`test_ai_prompt_registry` tests F62 fixes. Zero new failures. Plus 203 MCP tests, 135
+project-sales / complaint vitest tests, and a clean `tsc` over the touched areas.
+
+An earlier comparison read 857 failed / 426 errors and was thrown away: `conftest`'s
+session-start sweep does `DROP SCHEMA ... CASCADE` on EVERY `zzt_%` schema, so starting a
+second pytest session (even a single-file check) deletes the scratch schema the first one is
+still using -- hence `UndefinedTable` on `zzt_blank_<hex>.conversation_sla_tracking` in
+hundreds of unrelated tests. Zero `errors` is the clean-run tell; any error count at all means
+the environment was contended and the number is worthless.
+
 ## 6a. Grill findings and resolutions (round 1, 2026-07-25)
 
 Twenty-two findings from grilling this plan against the code it ports. Resolutions:
