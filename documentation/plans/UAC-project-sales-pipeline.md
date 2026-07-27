@@ -1,8 +1,8 @@
 # UAC — Project Sales Pipeline (module `projects`)
 
-**Status:** S0, S1, S2, S2b, S2c, S3, S4, S5a and S5b built (2026-07-27). Groups B, C, D, E,
-F, G, H, I, J, N and O are implemented and browser-verified except where noted below; A is
-implemented apart from the Excel import. Remaining slice S6 unstarted.
+**Status:** every slice built (S0 through S6b, 2026-07-27). Groups B, C, D, E, F, G, H, I, J,
+K, L, N and O are implemented and browser-verified except where noted below; A is implemented
+apart from the Excel import.
 
 **Verified against a running stack, not asserted:** every AC below marked ✅ was exercised
 either by a test that fails without it or in the browser at localhost:3010/:8010. ACs that
@@ -386,6 +386,10 @@ PLAN §5f, findings F43 and F44.
   errors for a human to resolve.
 - **AC-L3** `purchase_requests` (PR) and `complaints` gain `project_id` in a **follow-up
   slice**, using the same nullable-FK-plus-picker pattern. Not in v1.
+  ✅ **Shipped in S6b.** `complaints.project_id` (migration 318, ON DELETE SET NULL so a
+  complaint outlives its project), the picker on the complaint form AND on the office-side
+  PR / sponsorship form, and a resolved project CODE on both detail pages. `project_title`
+  free text survives on both as the fallback for rows that predate the link.
 - **AC-L4** A rollback path exists: disabling the module leaves all `purchase_requests` and
   `complaints` behaviour untouched.
 

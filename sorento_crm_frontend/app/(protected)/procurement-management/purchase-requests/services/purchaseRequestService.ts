@@ -440,3 +440,12 @@ export async function getPurchaseRequestConversation(
   }
   return response.json();
 }
+
+/**
+ * Project options for the PR / sponsorship-form project picker (AC-L3).
+ *
+ * Re-exported from the complaint feature's implementation rather than copied: both forms
+ * link to the same registered projects with the same label rule (code + title, never a UUID),
+ * and two copies would drift the moment one of them starts showing the developer.
+ */
+export { searchProjectsForLink } from '@/app/(protected)/complaint-management/complaints/services/complaintService';

@@ -39,6 +39,11 @@ export interface Complaint {
   contact_number?: string | null;
   customer_address?: string | null;
   project_title?: string | null;
+  /** AC-L3: the reportable link to a registered project. `project_code` / `project_name` are
+   *  the resolved display values -- never render the UUID. */
+  project_id?: string | null;
+  project_code?: string | null;
+  project_name?: string | null;
   contact_id?: string | null;
   space_id?: string | null;
   respond_inbox_url?: string | null;
@@ -88,6 +93,7 @@ export interface ComplaintFormData {
   contact_number?: string;
   customer_address?: string;
   project_title?: string;
+  project_id?: string | null;
   contact_id?: string | null;
   space_id?: string | null;
   technical_team_response?: string;

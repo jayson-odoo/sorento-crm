@@ -854,6 +854,9 @@ class PurchaseRequestAttachmentLinkRequest(BaseModel):
 
 class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     id: str
+    # Resolved for display (AC-L3): the office-side detail page shows a project CODE, never a
+    # UUID, matching what the portal already resolves for contacts.
+    project_code: Optional[str] = None
     request_number: Optional[str] = None
     view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None

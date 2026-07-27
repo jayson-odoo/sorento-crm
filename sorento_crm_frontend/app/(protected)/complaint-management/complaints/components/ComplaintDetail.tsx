@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Link2, ExternalLink, MessageSquare, CheckCircle2, XCircle, BadgeCheck, FileDown, ArrowUpCircle, Ban } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
@@ -980,6 +981,17 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             <div>
               <p className="text-sm text-muted-foreground">Project Title</p>
               <p className="font-medium">{complaint.project_title || '-'}</p>
+              {/* AC-L3: the registered project, by CODE. Rendered as a link because the
+                  first thing somebody wants after seeing it is the pursuit itself. */}
+              {complaint.project_code && (
+                <Link
+                  href={`/project-sales/${complaint.project_id}`}
+                  className="text-xs text-primary hover:underline"
+                >
+                  {complaint.project_code}
+                  {complaint.project_name ? ` - ${complaint.project_name}` : ''}
+                </Link>
+              )}
             </div>
           </div>
           {complaint.customer_address && (

@@ -36,6 +36,13 @@ class Complaint(Base):
     contact_number = Column(Text, nullable=True)
     customer_address = Column(Text, nullable=True)
     project_title = Column(Text, nullable=True)
+    # AC-L3: the reportable link to a registered project, added WITHOUT removing the text
+    # above -- every historical complaint has only the text, and SET NULL rather than CASCADE
+    # because a complaint is a customer's problem and a legal record that must outlive the
+    # pursuit it was attached to.
+    project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
     contact_id = Column(Text, nullable=True)
     space_id = Column(Text, nullable=True)
     respond_inbox_url = Column(Text, nullable=True)

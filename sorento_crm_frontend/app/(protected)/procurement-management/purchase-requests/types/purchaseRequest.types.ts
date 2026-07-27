@@ -29,6 +29,9 @@ export interface PurchaseRequest {
   request_date?: string | null;
   customer_name?: string | null;
   project_title?: string | null;
+  /** AC-L3: reportable link to a registered project. `project_code` is the display value. */
+  project_id?: string | null;
+  project_code?: string | null;
   purpose?: string | null;
   delivery_address?: string | null;
   total_project_value?: number | null;
@@ -103,6 +106,7 @@ export interface PurchaseRequestFormData {
   request_date?: string;
   customer_name?: string;
   project_title?: string;
+  project_id?: string | null;
   purpose?: string;
   delivery_address?: string;
   total_project_value?: number;

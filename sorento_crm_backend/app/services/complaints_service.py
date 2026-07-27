@@ -308,6 +308,22 @@ class ComplaintService:
         data["system_id"] = str(complaint.id)
         data["print_count"] = int(print_count or 0)
         data["form_type"] = "complaint"
+        # AC-L3 + the no-UUIDs-in-the-UI rule: the FE renders this dict, so a bare
+        # `project_id` would put a UUID on screen. Resolved here rather than in the FE so
+        # every surface (detail, list, PDF, webhook) shows the same identifier.
+        data["project_code"] = None
+        data["project_name"] = None
+        if complaint.project_id:
+            from app.models.projects import Project
+
+            project = (
+                self.db.query(Project.project_code, Project.title)
+                .filter(Project.id == str(complaint.project_id))
+                .first()
+            )
+            if project:
+                data["project_code"] = project[0]
+                data["project_name"] = project[1]
         data["view_url"] = (
             view_url_override
             if view_url_override is not None

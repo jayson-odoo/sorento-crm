@@ -3,9 +3,11 @@
 **Status:** **In build.** Drafted from grill session 2026-07-25, review rounds 1-2 applied
 (numbering / delivery lag / loss reasons made configurable; sponsorship flag pinned to
 `respond_contacts`; task management added and decided - see §7).
-Built: **S0, S1, S2, S2b, S2c, S3, S4, S5a, S5b** (see the slice list in §4 for what each
-one landed and what it discovered; the S3/S4 notification fan-outs landed with S5b). Next:
-**S6** - MCP read tools, then the PR + Complaint linkage (UAC Groups K, L).
+Built: **S0, S1, S2, S2b, S2c, S3, S4, S5a, S5b, S6a, S6b** — every planned slice (see §4
+for what each landed and what it discovered). Remaining known gaps are listed in the UAC
+header and in §6: the Excel import (AC-C9/C9a), brand + architect intelligence (AC-I4 half),
+the AC-N5a task-link picker, AC-G2's board-default-by-role, and the ~28 historical sponsorship
+rows to be linked by hand (AC-F6).
 **Owner:** jayson
 **Slug:** project-sales-pipeline
 **Classification:** MODULE (`projects`), `public` schema, normal FKs, company-scoped.
@@ -272,8 +274,9 @@ already exists, the second is scheduling.
 
 - **S6a — DONE.** Four read-only MCP tools, the resolver probes and UUID-coercion entries
   behind them, and the bootstrap that enables them. Notes in §5f. → UAC Group K.
-- **S6b — next.** `project_id` on complaints and PRs with the nullable-FK-plus-picker
-  pattern. → UAC AC-L3.
+- **S6b — DONE.** `project_id` on complaints (migration 318), the office-side picker on both
+  the complaint and the PR / sponsorship form, and a resolved project CODE on both detail
+  pages. Notes in §5g. → UAC AC-L3.
 
 **S6 — MCP read tools; then PR + Complaint linkage.** → UAC Groups K, L.
 
@@ -556,6 +559,40 @@ an agent that reads three numbers with no warning will add them up in prose.
 | F43 | 401 then became **403**. Integration principals (`sorento-mcp`, `n8n`, `foundryx-esb`) were seeded with the ADMIN permission set as it stood at THEIR seed time; nothing back-fills a permission a later module introduces. Every project tool would have 403'd forever while looking perfectly configured. | `project_mcp_bootstrap` grants exactly `projects.projects.view`, only to roles an `integrations.act_as_user_id` resolves to, only where missing. Narrow on purpose: a boot that widened a human role would be a security incident waiting to be found. |
 | F44 | AC-K1's "seed the `agent_mcp_tools` links" has no target: that table and the tool-to-agent ownership model were removed when n8n took over routing (see the `McpTool` docstring). | The intent -- a shipped tool nobody has to enable -- is met against `AIAssistantConfig.enabled_tools`, which is what the assistant's RAG actually selects from, the same list `it_support_bootstrap` maintains. Recorded here rather than silently reinterpreted. |
 | F45 | Locally the backend imports `sorento_crm_mcp` from the MAIN checkout, not from this worktree, so `sync_catalog` reported 35 tools while the worktree catalog has 39. | Environment artifact, not a defect: one tree ships. Verified instead by running the worktree's MCP server on port 8766 and calling every tool over Streamable HTTP -- which is how F42 and F43 surfaced at all. |
+
+## 5g. PR and complaint project linkage (slice S6b)
+
+```
+complaints.project_id  UUID NULL  REFERENCES projects(id) ON DELETE SET NULL   -- AC-L3
+-- purchase_requests.project_id already existed (S4, AC-F3)
+```
+
+**SET NULL, never CASCADE.** A complaint is a customer's problem and a legal record. It has to
+outlive the pursuit it happened to be attached to, so deleting a project unlinks its complaints
+rather than erasing them -- pinned by a test that deletes the project and asserts the complaint
+survives with its typed `project_title` intact.
+
+**The free text stays.** `project_title` is the only project information on thousands of
+historical rows and remains the display fallback, exactly as AC-F6 decided for sponsorships. No
+fuzzy backfill writes a link nobody checked.
+
+**Both surfaces resolve a CODE.** The picker's option label and both detail pages show
+`PRJ-000142 - Residensi Damai`, never a UUID. That is not a UI nicety: the portal already
+resolved `project_code` for contacts since S4, and the office-side read did not, so the same
+link rendered as a code in one place and as nothing in the other -- which reads as a broken
+link rather than as two code paths. Complaints resolve it in `_serialize_complaint`; PRs get it
+stamped onto the row in `get_request`.
+
+**One implementation of the picker search**, exported from the complaint feature's service and
+re-exported by the PR one. Two copies would drift the first time one of them starts showing the
+developer name.
+
+### S6b findings (browser)
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| F46 | Wrapping `SearchableSelect` in `FormControl` threw `React.Children.only expected to receive a single React element child` and took the whole card down -- the field never rendered at all. `FormControl` is a Radix `Slot`; the component renders a trigger plus its popover. | Render `SearchableSelect` directly under `FormItem`, with `FormMessage` after it. The other complaint-form usages nest it inside another component, which is why the pattern looked safe. |
+| F47 | The linked project showed nothing on the complaint detail page after the change was deployed, because :8010 runs WITHOUT `--reload` and was still serving the pre-change serializer. | Restarted. Third time this exact thing has cost a verification round in this module (S4, S5b, here) -- it is in the module memory now, but the honest fix is `--reload` locally. |
 
 ## 6a. Grill findings and resolutions (round 1, 2026-07-25)
 
