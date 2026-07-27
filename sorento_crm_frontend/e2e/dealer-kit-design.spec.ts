@@ -158,6 +158,41 @@ test.describe('Dealer Kit room designer', () => {
     await expect(page.getByText('3000 mm').first()).toBeVisible();
   });
 
+  test('a design the server no longer has does not brick the designer', async ({ page }) => {
+    await openDesigner(page);
+
+    // The last design is remembered in this browser. Point it at something the
+    // server will never return - a deleted design, or one belonging to a
+    // company the user has switched away from - and the designer must recover
+    // rather than 404 on every action until storage is cleared by hand.
+    await page.evaluate(() =>
+      window.localStorage.setItem(
+        'dealer-kit:last-selection',
+        '00000000-0000-0000-0000-0000000000ff',
+      ),
+    );
+    await page.reload({ waitUntil: 'commit' });
+
+    await expect(page.getByRole('heading', { name: /room designer/i })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByText(/nothing placed yet/i)).toBeVisible({ timeout: 20_000 });
+
+    const remembered = await page.evaluate(() =>
+      window.localStorage.getItem('dealer-kit:last-selection'),
+    );
+    expect(remembered).toBeNull();
+
+    // And the designer still works afterwards.
+    const combobox = page.getByRole('combobox').first();
+    await openTrigger(combobox);
+    const option = page.getByRole('option').first();
+    await expect(option).toBeVisible({ timeout: 20_000 });
+    await option.dispatchEvent('click');
+    await tap(page, page.getByRole('button', { name: /add product to room/i }));
+    await expect(page.locator('[data-dk-plan-box]').first()).toBeVisible({ timeout: 30_000 });
+  });
+
   test('a design survives a reload', async ({ page }) => {
     await openDesigner(page);
 

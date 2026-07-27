@@ -87,12 +87,34 @@ export function RoomDesigner() {
     queryFn: listPickerProducts,
   });
 
-  const { data: selection, isLoading: selectionLoading } = useQuery({
+  const {
+    data: selection,
+    isLoading: selectionLoading,
+    isError: selectionMissing,
+  } = useQuery({
     queryKey: ['dealer-kit', 'selection', selectionId],
     queryFn: () => getSelection(selectionId!),
     enabled: !!selectionId,
     retry: false,
   });
+
+  /**
+   * Forget a remembered design the server will not give us.
+   *
+   * The last design is remembered in this browser so a reload is not a restart,
+   * but the row can disappear underneath it - deleted, or belonging to a
+   * company the user has since switched away from. Left alone, every read 404s,
+   * every add fails against the stale id, and the designer is bricked until
+   * somebody clears their browser storage. Forgetting it starts a fresh one on
+   * the next action, which is what the user wanted anyway.
+   */
+  useEffect(() => {
+    if (!selectionMissing || !selectionId) return;
+    window.localStorage.removeItem(LAST_SELECTION_KEY);
+    setSelectionId(null);
+    hydrated.current = false;
+    setPlaced([]);
+  }, [selectionMissing, selectionId]);
 
   // The server owns which products and their sizes; local state owns where they
   // stand. Rebuilding on every selection change keeps the two in step without a
