@@ -95,8 +95,10 @@ test.describe('Dealer Kit room designer', () => {
     // pass alone and flake in a full run.
     const combobox = page.getByRole('combobox').first();
     await expect(combobox).toBeVisible({ timeout: 20_000 });
-    await combobox.focus();
-    await page.keyboard.press('Enter');
+    // Pressing through the locator, not page.keyboard: the page-level keyboard
+    // waits on page state, and this layout's dev-ingest fetch never resolves,
+    // so under load that wait can outlive the whole test.
+    await combobox.press('Enter');
 
     const option = page.getByRole('option').first();
     await expect(option).toBeVisible({ timeout: 20_000 });
@@ -118,8 +120,7 @@ test.describe('Dealer Kit room designer', () => {
     // page.mouse.click wedges against this layout's never-resolving fetch.
     const planTab = page.getByRole('tab', { name: /^plan$/i });
     await expect(planTab).toBeVisible({ timeout: 20_000 });
-    await planTab.focus();
-    await page.keyboard.press('ArrowRight');
+    await planTab.press('ArrowRight');
 
     const scene = page.locator('[data-dk-room-scene] canvas');
     await expect(scene).toBeVisible({ timeout: 20_000 });
@@ -147,8 +148,10 @@ test.describe('Dealer Kit room designer', () => {
 
     const combobox = page.getByRole('combobox').first();
     await expect(combobox).toBeVisible({ timeout: 20_000 });
-    await combobox.focus();
-    await page.keyboard.press('Enter');
+    // Pressing through the locator, not page.keyboard: the page-level keyboard
+    // waits on page state, and this layout's dev-ingest fetch never resolves,
+    // so under load that wait can outlive the whole test.
+    await combobox.press('Enter');
     const option = page.getByRole('option').first();
     await expect(option).toBeVisible({ timeout: 20_000 });
     const chosen = ((await option.textContent()) ?? '').split('\u00b7')[0].trim();
