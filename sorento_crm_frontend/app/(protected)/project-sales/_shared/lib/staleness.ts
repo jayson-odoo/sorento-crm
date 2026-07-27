@@ -60,7 +60,10 @@ export function describeStaleness(
   return {
     level,
     label: 'Unattended',
-    detail: `Flagged because ${why}. Colleagues can now ask to take it over. Nothing has been reassigned - a manager decides.`,
+    // "can NOW ask" claimed a permission change that never happens: asking to take a project
+    // over is open at every rung, because it doubles as the recourse for a registration this
+    // project blocked. What changes at this rung is that the neglect is visible to everyone.
+    detail: `Flagged because ${why}. Everyone can see it is unattended, and a colleague can ask to take it over. Nothing has been reassigned - a manager decides.`,
     tone: 'critical',
   };
 }

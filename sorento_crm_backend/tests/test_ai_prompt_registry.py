@@ -52,12 +52,13 @@ def seeded(db: Session) -> Session:
 # --------------------------------------------------------------------------- #
 
 
-def test_seed_creates_ten_keys_each_v1_with_production_label(seeded: Session):
+def test_seed_creates_every_key_at_v1_with_a_production_label(seeded: Session):
     names = {r.name for r in seeded.query(AIPromptVersion).all()}
+    # Counted from PROMPT_KEYS, never a literal: the registry grows whenever a module adds a
+    # node (M0 added `semantic_parser`, ideation added `ideate_extractor`, SCM added its
+    # explainer and market advisory), and a hardcoded total turns every one of those into a
+    # false failure that says nothing about whether seeding actually works.
     assert names == set(PROMPT_KEYS.keys())
-    # M0 added `semantic_parser` (reformulator/router kept as dormant rows);
-    # the ideation pipeline added `ideate_extractor` (D-CONFIRM brain extractor).
-    assert len(names) == len(PROMPT_KEYS) == 11
     for name in PROMPT_KEYS:
         versions = [r.version for r in seeded.query(AIPromptVersion).filter_by(name=name).all()]
         assert versions == [1]
@@ -69,8 +70,8 @@ def test_seed_creates_ten_keys_each_v1_with_production_label(seeded: Session):
 def test_seed_is_idempotent(seeded: Session):
     seed_prompt_registry(seeded.get_bind())
     seed_prompt_registry(seeded.get_bind())
-    assert seeded.query(AIPromptVersion).count() == 11
-    assert seeded.query(AIPromptLabel).count() == 11
+    assert seeded.query(AIPromptVersion).count() == len(PROMPT_KEYS)
+    assert seeded.query(AIPromptLabel).count() == len(PROMPT_KEYS)
 
 
 def test_seed_preserves_existing_custom_system_prompt_as_v2(db: Session):
@@ -227,7 +228,7 @@ def test_set_label_reports_production_and_staging(seeded: Session):
 
 def test_list_keys_shape(seeded: Session):
     rows = AIPromptService(seeded).list_keys()
-    assert len(rows) == 11
+    assert len(rows) == len(PROMPT_KEYS)
     by_name = {r["name"]: r for r in rows}
     assert by_name["agent_system"]["active"] is True
     assert by_name["agent_system"]["production_version"] == 1
@@ -285,8 +286,14 @@ def wired_chat(seeded: Session, monkeypatch):
     )
     svc._rag_select_tools = lambda *, standalone_query, enabled_tools, top_k: ([], [])  # type: ignore[assignment]
     svc._generate_suggestions = lambda **_k: []  # type: ignore[assignment]
-    svc_module.resolve_references = lambda _db, _q: ResolutionResult(  # type: ignore[assignment]
-        tokens=[], resolutions=[], elapsed_ms=0.0
+    # Through `monkeypatch`, NOT a bare rebind: a raw `svc_module.resolve_references = ...` is
+    # never undone, so it leaked into every test that ran later in the same session and made a
+    # genuine resolution path look broken. `**_k` because this stub stands in for a function
+    # whose keyword arguments are free to grow.
+    monkeypatch.setattr(
+        svc_module,
+        "resolve_references",
+        lambda *_a, **_k: ResolutionResult(tokens=[], resolutions=[], elapsed_ms=0.0),
     )
     # The rate-limit clause is `func.now() - text("interval '1 minute'")`. It
     # used to be stubbed to literal(0), because sqlite cannot parse an interval
@@ -395,7 +402,7 @@ def test_route_list_prompts_happy(api):
     res = client.get("/api/v1/system/ai-assistant/prompts")
     assert res.status_code == 200, res.text
     body = res.json()
-    assert len(body) == 11
+    assert len(body) == len(PROMPT_KEYS)
     assert {r["name"] for r in body} == set(PROMPT_KEYS.keys())
 
 

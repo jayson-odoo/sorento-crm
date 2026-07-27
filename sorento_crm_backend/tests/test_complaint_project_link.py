@@ -202,3 +202,62 @@ def test_an_unlinked_purchase_request_reports_no_code(linked):
 
     fetched = PurchaseRequestService(db).get_request(str(header.id))
     assert fetched.project_code is None
+
+
+def test_the_complaints_list_resolves_every_project_in_one_query(linked):
+    """This serializer's override convention exists because a 50-row page used to fire per-row
+    view-token, user and SLA queries. The S6b project resolve was added straight into the
+    serializer and re-introduced exactly that: one SELECT per linked complaint.
+
+    Pinned as a RATIO -- more linked rows must not mean more queries -- so a legitimate new
+    query elsewhere does not fail the test.
+    """
+    from sqlalchemy import event
+
+    from app.services.complaints_service import ComplaintService
+
+    db, project, _owner = linked
+    service = ComplaintService(db)
+    engine = db.get_bind()
+
+    def _count_after_adding(rows: int) -> int:
+        for _ in range(rows):
+            _complaint(db, project_id=str(project.id))
+        db.flush()
+        seen: list[str] = []
+
+        def _tap(_conn, _cur, statement, *_a, **_k):
+            seen.append(statement)
+
+        event.listen(engine, "before_cursor_execute", _tap)
+        try:
+            service.list_complaints(page=1, limit=50)
+        finally:
+            event.remove(engine, "before_cursor_execute", _tap)
+        return len(seen)
+
+    two_rows = _count_after_adding(2)
+    six_rows = _count_after_adding(4)
+    assert six_rows <= two_rows, (
+        f"query count grew with the number of linked complaints ({two_rows} -> {six_rows})"
+    )
+
+
+def test_a_listed_complaint_still_carries_its_project_code(linked):
+    """The batch must produce the same answer the per-row lookup did, including for a row with
+    no link at all -- otherwise the list and the detail page disagree about the same complaint.
+    """
+    from app.services.complaints_service import ComplaintService
+
+    db, project, _owner = linked
+    linked_row = _complaint(db, project_id=str(project.id))
+    plain_row = _complaint(db, project_title="NO LINK HERE")
+    db.flush()
+
+    result = ComplaintService(db).list_complaints(page=1, limit=50)
+    rows = {str(r["system_id"]): r for r in result["data"]}
+
+    assert rows[str(linked_row.id)]["project_code"] == project.project_code
+    assert rows[str(linked_row.id)]["project_name"] == project.title
+    assert rows[str(plain_row.id)]["project_code"] is None
+    assert rows[str(plain_row.id)]["project_title"] == "NO LINK HERE"
