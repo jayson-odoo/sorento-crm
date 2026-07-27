@@ -187,6 +187,7 @@ answer.
 ### Ready to demonstrate
 
 - Building and publishing catalogue pages, with rollback
+- Product photos on tiles, with trade-only imagery withheld from consumers
 - Product sets, defined by rule or by hand, reusable across pages
 - Tile styling
 - Bundles — several products sold at one price, with the parts listed underneath
@@ -240,7 +241,34 @@ view is that honest scale beats partial glamour, and it works for the whole cata
 If sales believe photo-realism is required to win dealers, that is a separate investment and we
 should scope it now rather than discover it in a demo.
 
-### 11.4 Which of the remaining six packages comes next?
+### 11.4 Only 7% of products have a photo — *this decides how the launch looks*
+
+Of 17,402 sellable products, **1,363 have a photograph** attached. The other 93%
+will render as a clean "no image" tile.
+
+Nothing is broken: the catalogue shows a photo the moment one exists, and it is already
+withholding trade-only imagery from consumers. But a brochure generator is judged on how it
+looks, and today most of the range has nothing to show.
+
+This is a content job, not an engineering one, and it is the single biggest lever on whether
+a dealer finds this impressive or embarrassing. Worth deciding:
+
+- Which range gets photographed first? A complete bathroom category demonstrates far better
+  than a thin scattering across everything.
+- Who owns getting them in? Photos attach to a product in the existing CRM screens.
+- Is a placeholder acceptable at launch for the long tail, or should unphotographed products be
+  excluded from published pages until they have one?
+
+A second observation from looking at the ones that DO exist: many are technical line drawings
+rather than product photography. They are legitimate images and they render, but a dimensioned
+outline drawing is a different thing from a photograph of a tap in a bathroom, and it changes
+how a catalogue page reads to a consumer. Worth a decision on which of the two the tile should
+prefer when a product has both.
+
+A related note: the same screens also attach PDFs and videos to products. Those are correctly
+ignored as tile photos - a spec sheet where a product picture should be looks like a fault.
+
+### 11.5 Which of the remaining six packages comes next?
 
 Stock check is the cheapest — it already exists and needs surfacing. Warranty is the most
 designed. Everything else is greenfield.
@@ -251,6 +279,8 @@ designed. Everything else is greenfield.
 
 **Does the dealer need internet?** Yes. Everything is live, which is what keeps prices and
 availability correct.
+
+**Why do most products show no picture?** Only 7% currently have a photo attached. See §11.4.
 
 **Can a dealer see Sorento's cost?** No. Internal pricing is never sent to a dealer's device,
 regardless of settings.
