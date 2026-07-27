@@ -5,6 +5,9 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 import { roomBounds, type Box, type Point } from '@/lib/dealer-kit/roomGeometry';
+// One definition of the placeholder size. Two would drift, and the drift would
+// show up as a box that is a different size in the plan than in 3D.
+export { UNKNOWN_SIZE_MM } from '@/lib/dealer-kit/roomBoxes';
 
 /**
  * The room in 3D, with every product as a correctly-sized box.
@@ -28,9 +31,6 @@ import { roomBounds, type Box, type Point } from '@/lib/dealer-kit/roomGeometry'
  */
 
 const MM_TO_M = 0.001;
-
-/** Fallback for a product with no dimensions - deliberately obvious (AC-V2). */
-export const UNKNOWN_SIZE_MM = { width: 600, depth: 600, height: 900 };
 
 export interface SceneBox extends Box {
   id: string;

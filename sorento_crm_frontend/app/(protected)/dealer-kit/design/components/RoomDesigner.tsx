@@ -28,8 +28,15 @@ import {
   type Selection,
   type SelectionLine,
 } from '../../services/selectionService';
+import {
+  boxesForSelection,
+  placementsOf,
+  quantityOf,
+  removeBox,
+  type PlacedBox,
+} from '@/lib/dealer-kit/roomBoxes';
 import { RoomPlan } from './RoomPlan';
-import { RoomScene, UNKNOWN_SIZE_MM, type SceneBox } from './RoomScene';
+import { RoomScene } from './RoomScene';
 
 /**
  * The room designer: pick products, shape the room, place them, confirm.
@@ -61,53 +68,11 @@ const STARTING_ROOM: Point[] = [
 /** Where this design is remembered between visits, so a reload is not a restart. */
 const LAST_SELECTION_KEY = 'dealer-kit:last-selection';
 
-interface PlacedProduct extends SceneBox {
-  productId: string;
-  lineId: string;
-  code: string;
-}
-
-/** Rebuild the boxes from the Selection, keeping any position already chosen. */
-function boxesFor(selection: Selection, previous: PlacedProduct[]): PlacedProduct[] {
-  const placementByLine = new Map(
-    (selection.room?.placements ?? []).map((placement) => [placement.lineId, placement]),
-  );
-  const currentByLine = new Map(previous.map((box) => [box.lineId, box]));
-
-  const boxes: PlacedProduct[] = [];
-  selection.lines.forEach((line, index) => {
-    // A quantity of 3 is three boxes, because three of them stand in the room.
-    const count = Math.max(1, Math.round(line.quantity));
-    for (let copy = 0; copy < count; copy += 1) {
-      const id = `${line.lineId}-${copy}`;
-      const existing = currentByLine.get(id);
-      const saved = placementByLine.get(id);
-      const size = line.dimensionsMm;
-
-      boxes.push({
-        id,
-        lineId: id,
-        productId: line.productId,
-        code: line.productCode ?? line.productName,
-        label: line.productCode ?? line.productName,
-        x: existing?.x ?? saved?.x ?? 200 + ((index + copy) % 4) * 800,
-        y: existing?.y ?? saved?.y ?? 200 + Math.floor((index + copy) / 4) * 800,
-        width: size?.length ?? UNKNOWN_SIZE_MM.width,
-        depth: size?.width ?? UNKNOWN_SIZE_MM.depth,
-        heightMm: size?.height ?? UNKNOWN_SIZE_MM.height,
-        rotation: existing?.rotation ?? saved?.rotation ?? 0,
-        isEstimated: size == null,
-      });
-    }
-  });
-  return boxes;
-}
-
 export function RoomDesigner() {
   const queryClient = useQueryClient();
   const [selectionId, setSelectionId] = useState<string | null>(null);
   const [outline, setOutline] = useState<Point[]>(STARTING_ROOM);
-  const [placed, setPlaced] = useState<PlacedProduct[]>([]);
+  const [placed, setPlaced] = useState<PlacedBox[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [productToAdd, setProductToAdd] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -134,7 +99,7 @@ export function RoomDesigner() {
   // second copy of the line list.
   useEffect(() => {
     if (!selection) return;
-    setPlaced((current) => boxesFor(selection, current));
+    setPlaced((current) => boxesForSelection(selection, current));
     if (!hydrated.current && selection.room?.outline?.length) {
       setOutline(selection.room.outline);
       hydrated.current = true;
@@ -191,7 +156,7 @@ export function RoomDesigner() {
           if (box.id !== boxId) return box;
           // Tidy rather than refuse: a drop half through a wall is a clear
           // intent the system can simply fix (AC-V4).
-          return clampBoxIntoRoom({ ...box, x, y }, outline) as PlacedProduct;
+          return clampBoxIntoRoom({ ...box, x, y }, outline) as PlacedBox;
         }),
       );
     },
@@ -214,15 +179,20 @@ export function RoomDesigner() {
 
   const removeSelected = useCallback(() => {
     const box = placed.find((candidate) => candidate.id === selectedId);
-    if (!box || !selection) return;
+    if (!box) return;
 
-    const line = selection.lines.find((row) => row.productId === box.productId);
+    // Take the clicked copy out locally FIRST, renumbering what is left, then
+    // tell the server the new count. Sending only "one fewer" would leave the
+    // rebuild deleting the last copy instead of the one they clicked.
+    const remaining = removeBox(placed, box.id);
+    setPlaced(remaining);
+    setSelectedId(null);
+    setDirty(true);
     lineMutation.mutate({
       productId: box.productId,
-      quantity: Math.max(0, (line?.quantity ?? 1) - 1),
+      quantity: quantityOf(remaining, box.productId),
     });
-    setSelectedId(null);
-  }, [placed, selectedId, selection, lineMutation]);
+  }, [placed, selectedId, lineMutation]);
 
   /**
    * Put the canvas back to an empty room.
@@ -245,13 +215,7 @@ export function RoomDesigner() {
   const save = useCallback(() => {
     roomMutation.mutate({
       outline,
-      placements: placed.map((box) => ({
-        lineId: box.lineId,
-        productId: box.productId,
-        x: box.x,
-        y: box.y,
-        rotation: box.rotation,
-      })),
+      placements: placementsOf(placed),
     });
   }, [outline, placed, roomMutation]);
 

@@ -19,6 +19,24 @@ async function tap(page: Page, locator: ReturnType<Page['locator']>) {
   await locator.dispatchEvent('click');
 }
 
+/**
+ * Open a Radix trigger without waiting for actionability.
+ *
+ * Three approaches were tried here and only this one is reliable.
+ * `page.keyboard.press` waits on PAGE state and `locator.press` waits on
+ * ELEMENT actionability, and this layout's dev-ingest fetch never resolves, so
+ * under load either can outlive the whole test. A dispatched `keydown` skips
+ * the wait but carries no default action, so the button never turns it into a
+ * click and the popover stays shut. Radix opens on POINTER events, so those are
+ * what gets dispatched - no waiting, and the real handler runs.
+ */
+async function openTrigger(locator: ReturnType<Page['locator']>) {
+  await expect(locator).toBeVisible({ timeout: 20_000 });
+  await locator.dispatchEvent('pointerdown', { button: 0, isPrimary: true, bubbles: true });
+  await locator.dispatchEvent('mousedown', { button: 0, bubbles: true });
+  await locator.dispatchEvent('click', { button: 0, bubbles: true });
+}
+
 async function login(page: Page) {
   await page.goto('/');
   const email = page.locator('input[type="email"], input[name="email"]').first();
@@ -95,10 +113,7 @@ test.describe('Dealer Kit room designer', () => {
     // pass alone and flake in a full run.
     const combobox = page.getByRole('combobox').first();
     await expect(combobox).toBeVisible({ timeout: 20_000 });
-    // Pressing through the locator, not page.keyboard: the page-level keyboard
-    // waits on page state, and this layout's dev-ingest fetch never resolves,
-    // so under load that wait can outlive the whole test.
-    await combobox.press('Enter');
+    await openTrigger(combobox);
 
     const option = page.getByRole('option').first();
     await expect(option).toBeVisible({ timeout: 20_000 });
@@ -120,7 +135,7 @@ test.describe('Dealer Kit room designer', () => {
     // page.mouse.click wedges against this layout's never-resolving fetch.
     const planTab = page.getByRole('tab', { name: /^plan$/i });
     await expect(planTab).toBeVisible({ timeout: 20_000 });
-    await planTab.press('ArrowRight');
+    await openTrigger(page.getByRole('tab', { name: /^3d$/i }));
 
     const scene = page.locator('[data-dk-room-scene] canvas');
     await expect(scene).toBeVisible({ timeout: 20_000 });
@@ -148,10 +163,7 @@ test.describe('Dealer Kit room designer', () => {
 
     const combobox = page.getByRole('combobox').first();
     await expect(combobox).toBeVisible({ timeout: 20_000 });
-    // Pressing through the locator, not page.keyboard: the page-level keyboard
-    // waits on page state, and this layout's dev-ingest fetch never resolves,
-    // so under load that wait can outlive the whole test.
-    await combobox.press('Enter');
+    await openTrigger(combobox);
     const option = page.getByRole('option').first();
     await expect(option).toBeVisible({ timeout: 20_000 });
     const chosen = ((await option.textContent()) ?? '').split('\u00b7')[0].trim();

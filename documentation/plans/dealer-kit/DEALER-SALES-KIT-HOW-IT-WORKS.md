@@ -268,7 +268,22 @@ prefer when a product has both.
 A related note: the same screens also attach PDFs and videos to products. Those are correctly
 ignored as tile photos - a spec sheet where a product picture should be looks like a fault.
 
-### 11.5 Which of the remaining six packages comes next?
+### 11.5 Nobody's phone number is on their customer record
+
+The system links a WhatsApp contact to the customer account they buy under by matching phone
+numbers, and it proposes the match for a human to confirm rather than applying it silently.
+
+Against today's data it can propose **nothing**: of 3,284 customer records, **7 have a phone
+number**, and of the 55 WhatsApp contacts, **none** match one. The separate "contact people"
+table that could hold them is completely empty.
+
+The consequence is not a broken feature - the link works, and a person can make it in a couple
+of clicks - but every link will be manual, and anything downstream that wants to know "which
+account is this consumer buying under" will have to ask. If quotes are to flow automatically
+from a consumer's design to the right dealer account, capturing phone numbers on customers is
+the prerequisite.
+
+### 11.6 Which of the remaining six packages comes next?
 
 Stock check is the cheapest — it already exists and needs surfacing. Warranty is the most
 designed. Everything else is greenfield.
