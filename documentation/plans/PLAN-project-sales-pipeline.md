@@ -675,6 +675,13 @@ Twenty-two findings from grilling this plan against the code it ports. Resolutio
   Accepted; watch for user confusion in UAT.
 - **MOCHA company** owns no products, customers or brands. Company-scoped projects are
   future-proofing; SRT is the only live user in phase 1.
+- **A deepening breach never re-alerts.** The floor event fires on the TRANSITION into breach
+  only (`is_below_floor and not was_below`), so a line moved from 5% below its floor to 60%
+  below is silent - deliberately, to avoid an alert storm on the negotiation people are
+  concentrating on. Noticed while fixing F53 and left as shipped, because "how much deeper
+  counts as a new decision" is a client question, not a code one. If they want it, the trigger
+  is a percentage-worsening threshold, and the dedup key already carries the price so the
+  alerting side needs no further change.
 - **`ai_assistant_configs` is a singleton by convention only** (noticed during the 2026-07-28
   hardening pass, deliberately NOT fixed there). Every reader -- including this module's MCP
   bootstrap -- does `db.query(AIAssistantConfig).first()` with no ORDER BY, so a second row
