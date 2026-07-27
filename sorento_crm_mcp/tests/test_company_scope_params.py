@@ -40,6 +40,12 @@ SCOPED_TOOLS: frozenset[str] = frozenset({
     "crm_incoming_stock_list",
     "crm_master_customers_list",
     "crm_lookup_resolve",
+    # Project Sales (S6): projects and their quotations are company-scoped rows, so the
+    # tools must forward the caller's contact / space like every other owned-data tool.
+    # crm_project_forecast is deliberately NOT here -- it is a whole-company aggregate.
+    "crm_projects_list",
+    "crm_project_detail",
+    "crm_project_quotations_list",
 })
 
 # AC-F8 — global (non-owned-data) tools that MUST NOT gain the scope params.

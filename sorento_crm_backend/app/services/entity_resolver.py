@@ -3256,6 +3256,111 @@ def resolve_references_intersection(
 # --------------------------------------------------------------------------- #
 # Public API
 # --------------------------------------------------------------------------- #
+def _probe_project(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Resolve a project by its CODE or its exact title (AC-K1).
+
+    Both, because people refer to a pursuit either way: office staff say "PRJ-000142", a
+    salesperson says "Residensi Damai Phase 1". The code is the canonical_code either way, so
+    whatever the caller typed, the agent gets back the identifier the tools accept.
+
+    Exact (whitespace-insensitive, case-insensitive) only. Tier 2 owns partial matching, and
+    a project list is exactly where a loose match is dangerous: two phases of one masterplan
+    have near-identical titles, and silently picking one would answer a question about the
+    wrong pursuit.
+    """
+    from app.models.projects import Project
+
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
+    keys = list(norm_to_token.keys())
+
+    rows = (
+        db.query(
+            Project.id,
+            Project.project_code,
+            Project.title,
+            Project.outcome,
+            Project.owner_user_id,
+        )
+        .filter(
+            or_(
+                _ws_insensitive_lower(Project.project_code).in_(keys),
+                _ws_insensitive_lower(Project.title).in_(keys),
+            )
+        )
+        .all()
+    )
+    for pid, code, title, outcome, owner_user_id in rows:
+        by_code = _strip_all_ws(str(code or "").lower())
+        by_title = _strip_all_ws(str(title or "").lower())
+        token = norm_to_token.get(by_code) or norm_to_token.get(by_title)
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="project",
+                canonical_code=code,
+                uuid=str(pid) if pid else None,
+                match_field="project_code" if norm_to_token.get(by_code) else "title",
+                display={
+                    "title": title,
+                    "outcome": outcome,
+                    "owner_user_id": owner_user_id,
+                },
+            )
+        )
+    return result
+
+
+def _probe_project_party(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Resolve a developer / architect / main contractor by name (AC-K1).
+
+    One probe for all party types rather than three: they share a table and a naming style,
+    and the party TYPE is returned in the display so the caller can tell "Damai Land the
+    developer" from a contractor of the same group. Filtering by type here would mean three
+    near-identical probes and a caller that has to know which one to ask.
+
+    The party name IS the canonical code -- these rows have no business code, which is the
+    honest answer for a record that exists because somebody typed a company name.
+    """
+    from app.models.projects import ProjectParty
+
+    result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
+    if not tokens:
+        return result
+    norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
+
+    rows = (
+        db.query(
+            ProjectParty.id,
+            ProjectParty.name,
+            ProjectParty.party_type,
+            ProjectParty.is_active,
+        )
+        .filter(_ws_insensitive_lower(ProjectParty.name).in_(list(norm_to_token.keys())))
+        .all()
+    )
+    for party_id, name, party_type, is_active in rows:
+        token = norm_to_token.get(_strip_all_ws(str(name or "").lower()))
+        if not token:
+            continue
+        result[token].append(
+            ResolvedEntity(
+                entity_type="project_party",
+                canonical_code=name,
+                uuid=str(party_id) if party_id else None,
+                match_field="name",
+                display={
+                    "party_type": party_type,
+                    "is_active": bool(is_active) if is_active is not None else True,
+                },
+            )
+        )
+    return result
+
+
 _TIER1_PROBES: tuple[tuple[Callable[[Session, list[str]], dict[str, list[ResolvedEntity]]], frozenset[str]], ...] = (
     (_probe_product, frozenset({"product"})),
     (_probe_customer_order, frozenset({"customer_order"})),
@@ -3270,6 +3375,8 @@ _TIER1_PROBES: tuple[tuple[Callable[[Session, list[str]], dict[str, list[Resolve
     (_probe_customer_debtor_name, frozenset({"customer"})),
     (_probe_attachment, frozenset({"attachment"})),
     (_probe_attachment_type, frozenset({"attachment_type"})),
+    (_probe_project, frozenset({"project"})),
+    (_probe_project_party, frozenset({"project_party"})),
 )
 
 

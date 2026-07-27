@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.projects import (
     ClashPreviewRequest,
@@ -33,10 +33,16 @@ from app.schemas.projects import (
 from app.services import project_reference_service as refs
 from app.services import project_service as svc
 from app.services.error_handler import handle_internal_error
+from app.services.uuid_list_param import parse_uuid_list
 from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter()
 
+# The MCP server presents X-API-Key with an act-as user, never a JWT, so the routes its
+# read-only tools call use `require_permission_with_api_key` (AC-K1/AC-K4). The permission is
+# still enforced -- against the resolved act-as user -- and every WRITE route deliberately
+# keeps plain `require_permission`, so AC-K2's "no write-capable project tools" is a property
+# of the API surface and not just of the tool catalog.
 VIEW = "projects.projects.view"
 EDIT = "projects.projects.edit"
 DELETE = "projects.projects.delete"
@@ -88,6 +94,20 @@ async def preview_clashes(
         raise handle_internal_error(str(exc))
 
 
+def _merge(*groups: Optional[List[str]]) -> Optional[List[str]]:
+    """Union of the FE's singular filter and the MCP's `<entity>_ids` filter.
+
+    Union rather than "one wins": both name the same axis, and a caller that passes both
+    means both. Returns None when nothing was passed, which the service reads as no filter.
+    """
+    out: list[str] = []
+    for group in groups:
+        for value in group or []:
+            if value and value not in out:
+                out.append(str(value))
+    return out or None
+
+
 @router.get("/", response_model=ListResponse[ProjectResponse])
 async def list_projects(
     query: Optional[str] = Query(None, description="Matches title or project code"),
@@ -98,23 +118,58 @@ async def list_projects(
     type_id: Optional[List[str]] = Query(None),
     brand_id: Optional[List[str]] = Query(None),
     only_critical: bool = Query(False),
+    # UUID-first filters for the MCP / AI surface (AC-K1). Named `<entity>_ids` and parsed
+    # with the shared `parse_uuid_list`, so they accept CSV, a JSON array or repeated params
+    # exactly like every other list route -- and reject an unparseable value with a 400
+    # rather than ignoring the filter, which would answer "Damai Land has 47 projects" after
+    # quietly listing the whole company.
+    #
+    # Additive: the singular FE params above are untouched. Both sets AND together, so a
+    # caller can combine them without a surprise.
+    project_ids: Optional[List[str]] = Query(
+        None, description="Canonical project UUIDs (csv / JSON list / repeated)."
+    ),
+    owner_user_ids: Optional[List[str]] = Query(
+        None, description="Owner user UUIDs. 'My pipeline' is this filter."
+    ),
+    developer_party_ids: Optional[List[str]] = Query(
+        None, description="Developer project-party UUIDs."
+    ),
+    status_key: Optional[List[str]] = Query(
+        None,
+        description=(
+            "Funnel rung by stable KEY (identified, registered, specified, quoted, "
+            "tendering, po_received, lost, dormant). Unknown keys are a 422 naming the "
+            "valid ones."
+        ),
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: str = Query("created_at"),
     dir: str = Query("desc"),
-    current_user: dict = Depends(require_permission(VIEW)),
+    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
     try:
         company_id = acting_company_id(db)
+        status_ids = list(status_id or [])
+        if status_key:
+            status_ids.extend(svc.status_ids_for_keys(db, status_key))
         rows, total = svc.list_projects(
             db,
             company_id=company_id,
             search=query,
-            status_ids=status_id,
+            status_ids=status_ids or None,
             outcomes=outcome,
-            owner_user_ids=owner_user_id,
-            developer_party_ids=developer_party_id,
+            owner_user_ids=_merge(
+                owner_user_id,
+                parse_uuid_list(owner_user_ids, param_name="owner_user_ids"),
+            ),
+            developer_party_ids=_merge(
+                developer_party_id,
+                parse_uuid_list(developer_party_ids, param_name="developer_party_ids"),
+            ),
+            project_ids=parse_uuid_list(project_ids, param_name="project_ids"),
             type_ids=type_id,
             brand_ids=brand_id,
             only_critical=only_critical,
@@ -135,7 +190,11 @@ async def list_projects(
             "empty": total == 0,
         }
     except Exception as exc:
-        raise handle_internal_error(str(exc))
+        # A rejected filter is the CALLER's answer, not a server fault: an unparseable
+        # `developer_party_ids` (400) and an unknown `status_key` (422) both have to reach
+        # the client as themselves. Wrapping them in a 500 would tell an agent the server is
+        # broken when the fix is in its own argument.
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
@@ -186,7 +245,7 @@ async def register_project(
 @router.get("/{project_id}", response_model=ProjectResponse)
 async def get_project(
     project_id: str,
-    current_user: dict = Depends(require_permission(VIEW)),
+    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
     try:

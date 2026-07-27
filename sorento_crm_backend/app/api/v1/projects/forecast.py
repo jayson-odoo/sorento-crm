@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.projects import (
     ConversionResponse,
     ProjectDashboardResponse,
@@ -36,7 +36,10 @@ REPORT_VIEW = "projects.reports.view"
 
 @router.get("/reports/forecast", response_model=ProjectForecastResponse)
 async def project_forecast(
-    _user: dict = Depends(require_permission(VIEW)),
+    # API-key readable (AC-K1): `crm_project_forecast`. Conversion and the composite
+    # dashboard stay JWT-only -- no tool asks for them, and an API-key surface should only be
+    # as wide as something actually needs.
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
     """AC-I1. Pipeline, Weighted and Committed, never blended."""

@@ -268,7 +268,12 @@ already exists, the second is scheduling.
   My Tasks (shipped in S2b) already answers "what do I owe, soonest first" and a second
   worklist reading the same tasks would be two places to keep in step.
 
-**S6 — MCP read tools; then PR + Complaint linkage.** → UAC Groups K, L.
+**S6 — MCP read tools; then PR + Complaint linkage.** Split:
+
+- **S6a — DONE.** Four read-only MCP tools, the resolver probes and UUID-coercion entries
+  behind them, and the bootstrap that enables them. Notes in §5f. → UAC Group K.
+- **S6b — next.** `project_id` on complaints and PRs with the nullable-FK-plus-picker
+  pattern. → UAC AC-L3.
 
 **S6 — MCP read tools; then PR + Complaint linkage.** → UAC Groups K, L.
 
@@ -516,6 +521,41 @@ in as many words.
 | F39 | `begin_nested()` around each notification looked like the right isolation and was not: `NotificationService` commits internally, which closes the savepoint under it (`Can't operate on closed transaction inside context manager`) and turned all three sends into failures. | Per-project try / rollback-if-inactive instead. The savepoint was solving a problem the commit-first ordering had already removed. |
 | F40 | Moving the stage cleared the staleness banner instantly but the Activity tab still showed the old events, so the page disagreed with itself about what had just happened. | The feed is keyed on `updated_at` and `stale_level`, not just the project id -- the same rule the SLA banner follows. Verified in the browser: the status POST is followed by a project refetch AND an activities refetch. |
 | F41 | The pipeline card guessed staleness with a flat `days_since_last_activity >= 30`, which is simultaneously too slack at Registered (30 days is normal) and far too generous at Tendering (a week of silence is a lost tender). | The card reads the server's stamped rung. Its test moved with it, and now asserts the rung's WORDING rather than a day count. |
+
+## 5f. MCP read tools (slice S6a)
+
+Four read-only tools (`crm_projects_list`, `crm_project_detail`, `crm_project_quotations_list`,
+`crm_project_forecast`), all GET, all `module="projects"`.
+
+**Name lookup obeys the UUID-first contract instead of breaking it.** AC-K1 asks for "project
+lookup by name/developer", and the obvious way to give it -- a `query` param on the list tool --
+is forbidden by the MCP package's own invariant (`test_no_freetext_query_on_data_list_tools`),
+for good reason: two phases of one masterplan have near-identical titles, and a fuzzy match
+that silently picks one answers a question about the wrong pursuit. So the path is the
+established two-call one: `_probe_project` and `_probe_project_party` were added to the entity
+resolver (exact, whitespace- and case-insensitive, on project code / title / party name), and
+`project_ids` / `project_id` / `developer_party_ids` were registered in
+`_UUID_PARAM_ENTITY_TYPES` so the dispatch layer substitutes the resolved UUID into the tool
+call. The one non-UUID filter is `status_key`, and that is deliberate: `key` is the documented
+stable identity per entity_type (G3), so "tendering" is an identifier, not a search term.
+
+**Errors are answers, not 500s.** An unparseable `developer_party_ids` returns 400 and an
+unknown `status_key` returns 422 naming the valid rungs. Both had to be re-raised past the
+route's blanket `except`, which was turning them into "internal error" -- an agent told the
+server is broken retries, while an agent told its argument is wrong fixes it.
+
+**The forecast tool's description carries the no-blending rule** (AC-I1). A test asserts the
+words are still there, because that description is the only place the rule reaches the model:
+an agent that reads three numbers with no warning will add them up in prose.
+
+### S6a findings (all four found by CALLING the tools, not by reading code)
+
+| # | Finding | Resolution |
+|---|---------|------------|
+| F42 | Every project route used `require_permission`, which is JWT-only. The MCP server presents `X-API-Key` with an act-as user, so all four tools returned `401 Authentication required` -- the tools were correct, registered, enabled, and completely unusable. | The four routes the tools call switched to `require_permission_with_api_key` (permission still enforced, against the act-as user). Every WRITE route deliberately keeps plain `require_permission`, so AC-K2 is a property of the API surface and not only of the catalog -- pinned by a test that POSTs with a key and expects 401/403. |
+| F43 | 401 then became **403**. Integration principals (`sorento-mcp`, `n8n`, `foundryx-esb`) were seeded with the ADMIN permission set as it stood at THEIR seed time; nothing back-fills a permission a later module introduces. Every project tool would have 403'd forever while looking perfectly configured. | `project_mcp_bootstrap` grants exactly `projects.projects.view`, only to roles an `integrations.act_as_user_id` resolves to, only where missing. Narrow on purpose: a boot that widened a human role would be a security incident waiting to be found. |
+| F44 | AC-K1's "seed the `agent_mcp_tools` links" has no target: that table and the tool-to-agent ownership model were removed when n8n took over routing (see the `McpTool` docstring). | The intent -- a shipped tool nobody has to enable -- is met against `AIAssistantConfig.enabled_tools`, which is what the assistant's RAG actually selects from, the same list `it_support_bootstrap` maintains. Recorded here rather than silently reinterpreted. |
+| F45 | Locally the backend imports `sorento_crm_mcp` from the MAIN checkout, not from this worktree, so `sync_catalog` reported 35 tools while the worktree catalog has 39. | Environment artifact, not a defect: one tree ships. Verified instead by running the worktree's MCP server on port 8766 and calling every tool over Streamable HTTP -- which is how F42 and F43 surfaced at all. |
 
 ## 6a. Grill findings and resolutions (round 1, 2026-07-25)
 

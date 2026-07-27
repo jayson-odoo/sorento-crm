@@ -195,6 +195,13 @@ _UUID_PARAM_ENTITY_TYPES: dict[str, str] = {
     "supplier_id": "supplier",
     "promotion_ids": "promotion",
     "promotion_id": "promotion",
+    # Project Sales (AC-K1). `developer_party_ids` maps to the shared party resolver, which
+    # covers developers, architects and main contractors in one probe -- the LLM writes the
+    # company name it was shown either way.
+    "project_ids": "project",
+    "project_id": "project",
+    "developer_party_ids": "project_party",
+    "developer_party_id": "project_party",
 }
 
 _UUID_RE = re.compile(

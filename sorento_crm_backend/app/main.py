@@ -292,6 +292,20 @@ async def startup_event():
 
     try:
         from app.database import SessionLocal
+        from app.services import project_mcp_bootstrap
+        _db = SessionLocal()
+        try:
+            # Runs after sync_catalog so the mcp_tools rows exist: enables the read-only
+            # project tools for the in-app assistant without an admin visiting a settings
+            # screen (AC-K1). Additive and idempotent.
+            project_mcp_bootstrap.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Project MCP bootstrap failed at startup: {str(e)}", exc_info=True)
+
+    try:
+        from app.database import SessionLocal
         from app.services import project_seed_service
         _db = SessionLocal()
         try:

@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
     PriceFloorRuleResponse,
@@ -112,7 +112,8 @@ def _notify_breaches(db: Session, line, actor_user_id: str) -> None:
 )
 async def list_quotations(
     project_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    # API-key readable (AC-K1): `crm_project_quotations_list` answers "what did we quote".
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
     try:

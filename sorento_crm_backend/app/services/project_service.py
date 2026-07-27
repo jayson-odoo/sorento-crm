@@ -676,6 +676,52 @@ def get_project_or_404(db: Session, project_id: str) -> Project:
 # ---------------------------------------------------------------- listing
 
 
+def status_ids_for_keys(db: Session, keys: List[str]) -> List[str]:
+    """Translate funnel KEYS to status ids, across the default graph and every fork.
+
+    Keys, not ids, because `key` is the documented stable identity per entity_type (grill
+    finding G3) and a caller (an AI agent, a report, a webhook) should be able to say
+    "tendering" without a status-table round trip. Every scope is included: a template that
+    forked its graph still has a rung keyed `tendering`, and "which projects are tendering"
+    means all of them.
+
+    An unknown key raises 422 naming the valid ones -- returning zero rows would read as
+    "nothing is at that stage", which is a different and wrong answer.
+    """
+    from app.models.status import Status
+
+    wanted = [k.strip() for k in keys if (k or "").strip()]
+    if not wanted:
+        return []
+
+    rows = (
+        db.query(Status.id, Status.key)
+        .filter(Status.entity_type == "project", Status.key.in_(wanted))
+        .all()
+    )
+    found = {row[1] for row in rows}
+    missing = [k for k in wanted if k not in found]
+    if missing:
+        known = sorted(
+            {
+                row[0]
+                for row in db.query(Status.key)
+                .filter(Status.entity_type == "project")
+                .distinct()
+                .all()
+            }
+        )
+        raise AppException(
+            status_code=422,
+            message=(
+                f"Unknown project stage {', '.join(repr(k) for k in missing)}. "
+                f"Valid stages: {', '.join(known)}."
+            ),
+            code="project_status_key_unknown",
+        )
+    return [str(row[0]) for row in rows]
+
+
 def list_projects(
     db: Session,
     *,
@@ -685,6 +731,7 @@ def list_projects(
     outcomes: Optional[List[str]] = None,
     owner_user_ids: Optional[List[str]] = None,
     developer_party_ids: Optional[List[str]] = None,
+    project_ids: Optional[List[str]] = None,
     type_ids: Optional[List[str]] = None,
     brand_ids: Optional[List[str]] = None,
     only_critical: bool = False,
@@ -717,6 +764,8 @@ def list_projects(
         query = query.filter(Project.owner_user_id.in_(owner_user_ids))
     if developer_party_ids:
         query = query.filter(Project.developer_party_id.in_(developer_party_ids))
+    if project_ids:
+        query = query.filter(Project.id.in_(project_ids))
     if type_ids:
         query = query.filter(Project.type_id.in_(type_ids))
     if brand_ids:

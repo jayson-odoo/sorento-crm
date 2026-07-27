@@ -805,4 +805,124 @@ CATALOG: tuple[ToolSpec, ...] = (
         external=True,
         domain="procurement",
     ),
+    # --- project sales (read-only; AC-K1 / AC-K2) ---
+    ToolSpec(
+        "crm_projects_list",
+        (
+            "List PROJECT SALES pursuits (property developments, hotels, fitouts we are trying to win) "
+            "with UUID filters, stage filter and pagination. "
+            "PRIMARY TOOL for 'which projects are we chasing', 'my pipeline', 'projects for "
+            "<developer>', 'projects at tendering stage', 'critical projects', 'what is <salesperson> "
+            "working on'. NOT for delivery orders or purchase orders -- a project is a pursuit, not a "
+            "transaction.\n\n"
+            "Each row returns project_code, title, developer_name, type_name, status_label, outcome "
+            "(open / won / lost / partial), owner_name, estimated_sales_value, launch_date, "
+            "days_since_last_activity, next_action_date, next_action_overdue, stale_level (0 fine, "
+            "1 nudged, 2 warned, 3 unattended) and is_unattended.\n\n"
+            "ALL FILTERS OPTIONAL. FILTER BY UUID: `project_ids`, `owner_user_ids`, "
+            "`developer_party_ids` each accept csv / JSON list / repeated canonical UUIDs -- resolve a "
+            "project code, salesperson or developer NAME to its UUID first; a non-UUID value is "
+            "rejected with 400 rather than silently ignored.\n"
+            "  * `owner_user_ids` IS 'my pipeline' -- pass the salesperson's user UUID.\n"
+            "  * `status_key` -- funnel rung by stable key: identified, registered, specified, quoted, "
+            "tendering, po_received, lost, dormant. An unknown key returns 422 naming the valid ones.\n"
+            "  * `outcome` -- open | won | lost | partial. Commercial result, DERIVED from the "
+            "quotations; a project can sit at 'tendering' with outcome 'partial' when one scope is won.\n"
+            "  * `only_critical=true` -- the Final Negotiation flag, not a stage.\n"
+            "SORT KEYS: created_at, updated_at, title, project_code, estimated_sales_value, "
+            "last_meaningful_activity_at; combine with dir=asc|desc.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/project-sales/projects/",
+        (),
+        (
+            "page",
+            "limit",
+            "project_ids",
+            "owner_user_ids",
+            "developer_party_ids",
+            "status_key",
+            "outcome",
+            "only_critical",
+            "sort",
+            "dir",
+            "contact_id",
+            "space_id",
+        ),
+        module="projects",
+        domain="projects",
+        escalation_team="sales",
+        related_tools=("crm_project_detail", "crm_project_quotations_list", "crm_project_forecast"),
+    ),
+    ToolSpec(
+        "crm_project_detail",
+        (
+            "Full detail for ONE project sales pursuit: registration facts (developer, registered "
+            "company / SPV, location, architect, main contractor, brands, estimated value, launch date, "
+            "expected delivery window), the funnel stage and derived outcome, the owner, the critical "
+            "flag with its management notes, activity recency and the derived next action, plus the "
+            "staleness rung. "
+            "USE after crm_projects_list when the user asks about one named project ('what is the status "
+            "of Residensi Damai', 'who owns PRJ-000142', 'when does <project> launch'). "
+            "INVOCATION: `project_id` is the canonical project UUID -- resolve the project code or title "
+            "first. For what we quoted on it, call crm_project_quotations_list.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/project-sales/projects/{project_id}",
+        ("project_id",),
+        ("contact_id", "space_id"),
+        module="projects",
+        domain="projects",
+        escalation_team="sales",
+        related_tools=("crm_projects_list", "crm_project_quotations_list"),
+    ),
+    ToolSpec(
+        "crm_project_quotations_list",
+        (
+            "List the QUOTATION SCOPES on one project (e.g. House Units, Common Area) with each scope's "
+            "current version number, current total, outcome (open / won / lost) and loss reason. "
+            "USE for 'what did we quote on <project>', 'how much is <project> worth', 'did we win the "
+            "common area', 'why did we lose <project>'. "
+            "A project has MANY quotations, one per scope, and each quotation has versions -- the total "
+            "returned is the CURRENT version's, which is the only figure that should be quoted back. "
+            "INVOCATION: `project_id` is the canonical project UUID.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
+        ),
+        "/api/v1/project-sales/projects/{project_id}/quotations",
+        ("project_id",),
+        ("contact_id", "space_id"),
+        module="projects",
+        domain="projects",
+        escalation_team="sales",
+        related_tools=("crm_project_detail", "crm_projects_list"),
+    ),
+    ToolSpec(
+        "crm_project_forecast",
+        (
+            "AGGREGATE project-sales forecast: THREE NUMBERS THAT MUST NEVER BE ADDED TOGETHER.\n"
+            "  * committed -- purchase orders on record. The only banked figure.\n"
+            "  * pipeline -- open quotations at their current version, or the registration estimate "
+            "where nothing is priced yet. SPECULATIVE.\n"
+            "  * weighted -- pipeline times the probability configured on each project's stage. "
+            "SPECULATIVE.\n"
+            "There is deliberately NO total: a single figure mixing a signed PO with a 10%-probability "
+            "rumour is the number this module exists to stop producing. When answering, report the "
+            "three separately and say which are speculative.\n\n"
+            "Also returns `by_year` (the same three per delivery year, derived from launch date plus the "
+            "configured lag unless a project states its own window) and `undated` for projects with no "
+            "derivable year -- report `undated` rather than dropping it, or the years will not "
+            "reconcile with the totals. `project_count` counts live pursuits only; lost projects "
+            "contribute nothing. No filters: it is the whole company's forecast."
+        ),
+        "/api/v1/project-sales/reports/forecast",
+        (),
+        (),
+        module="projects",
+        domain="projects",
+        escalation_team="sales",
+        related_tools=("crm_projects_list",),
+    ),
 )

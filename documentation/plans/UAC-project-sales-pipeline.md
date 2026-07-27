@@ -364,6 +364,20 @@ the vocabulary decision belongs to the client, not to us.
   with no contact sees **all** companies — the existing convention, stated here so it isn't
   rediscovered as a leak.
 
+**Status after S6a.** All four tools ship and were exercised against a running MCP server:
+`crm_projects_list`, `crm_project_detail`, `crm_project_quotations_list`,
+`crm_project_forecast`. AC-K2 holds at the API surface as well as in the catalog (write routes
+stay JWT-only). AC-K3 verified through the server: `updated_at` comes back naive Malaysia
+wall-clock with no offset. AC-K4 holds by the shared convention; the three scoped tools forward
+`contact_id` / `space_id` and the forecast aggregate deliberately does not.
+
+**One AC-K1 clause could not be honoured literally:** "`agent_mcp_tools` links are seeded by
+the startup hook". That table and the tool-to-agent ownership model were removed when n8n took
+over agent routing. The intent is met against `AIAssistantConfig.enabled_tools` (what the
+assistant's RAG selects from), plus a narrow grant of `projects.projects.view` to the roles the
+integration principals act as — without which every tool 403s while looking configured. See
+PLAN §5f, findings F43 and F44.
+
 ## Group L — Migration and go-live
 
 - **AC-L1** Day-one migration is a **single consolidated management-run Excel import**, with
