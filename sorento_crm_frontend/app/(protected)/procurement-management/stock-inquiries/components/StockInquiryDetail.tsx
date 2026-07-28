@@ -3,13 +3,16 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle, Ban } from 'lucide-react';
+import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle, Ban, UserRoundCog } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
 import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
+import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
+import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
+import ResponseAttachmentDropzone from '@/app/(protected)/complaint-management/complaints/components/ResponseAttachmentDropzone';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
@@ -44,6 +47,7 @@ import {
   useProjectSalesRejectStockInquiry,
   usePurchasingRejectStockInquiry,
   useReopenStockInquiry,
+  useUploadStockInquiryResponseAttachments,
 } from '../hooks/useStockInquiries';
 import { getOrCreateStockInquiryViewLink } from '../services/stockInquiryService';
 import { toast } from 'sonner';
@@ -78,6 +82,9 @@ export default function StockInquiryDetail({
   const projectSalesRejectMutation = useProjectSalesRejectStockInquiry();
   const purchasingRejectMutation = usePurchasingRejectStockInquiry();
   const reopenMutation = useReopenStockInquiry();
+  const uploadResponseAttachmentsMutation = useUploadStockInquiryResponseAttachments();
+  const reassignMutation = useReassignSLATracking();
+  const canReassign = useHasPermission('sla_management.conversation_sla_tracking.reassign');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [replyComposePrefill, setReplyComposePrefill] = useState<{
     key: number;
@@ -102,13 +109,13 @@ export default function StockInquiryDetail({
     enabled: !!isValidId,
   });
   const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
-  // Handling-lock ("I'm handling this") — live off the form-SLA handling tracker query.
+  // Handling-lock ("I'm handling this") - live off the form-SLA handling tracker query.
   const handlingLock = useHandlingLock({
     sourceEntityType: 'stock_inquiry',
     sourceEntityId: isValidId ? inquiryId : null,
     entityKey: inquiry?.updated_at,
   });
-  // A voided stock inquiry is fully read-only — suppress every business CTA.
+  // A voided stock inquiry is fully read-only - suppress every business CTA.
   const isVoided = (inquiry?.status ?? '').trim().toLowerCase() === 'voided';
   const businessCtasEnabled = handlingLock.businessCtasEnabled && !isVoided;
   const lockedCtaTitle = !businessCtasEnabled
@@ -119,6 +126,8 @@ export default function StockInquiryDetail({
   const [conversationSheetOpen, setConversationSheetOpen] = useState(false);
   const [editPurchasingResponseOpen, setEditPurchasingResponseOpen] = useState(false);
   const [editPurchasingResponseValue, setEditPurchasingResponseValue] = useState('');
+  const [responseAttachmentFiles, setResponseAttachmentFiles] = useState<File[]>([]);
+  const [reassignOpen, setReassignOpen] = useState(false);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const canSubmitForProjectSales = useHasPermission('procurement.stock_inquiries.submit_for_project_sales');
   const canProjectSalesApprove = useHasPermission('procurement.stock_inquiries.project_sales_approve');
@@ -194,6 +203,28 @@ export default function StockInquiryDetail({
       skipSaveShort: true,
     });
   }, [inquiry, sendPurchasingUpdateAndReplyViaRespond]);
+
+  const closeEditPurchasingResponse = useCallback(() => {
+    setEditPurchasingResponseOpen(false);
+    setResponseAttachmentFiles([]);
+  }, []);
+
+  /** Uploads staged attachments before the response text is saved. Returns false
+   *  (and leaves the popup open with the files intact) on any upload failure, so
+   *  the response text is never silently saved without the attachments. */
+  const uploadStagedResponseAttachments = useCallback(async () => {
+    if (responseAttachmentFiles.length === 0) return true;
+    try {
+      await uploadResponseAttachmentsMutation.mutateAsync({
+        inquiryId,
+        files: responseAttachmentFiles,
+      });
+      setResponseAttachmentFiles([]);
+      return true;
+    } catch {
+      return false; // toast already shown by the mutation
+    }
+  }, [responseAttachmentFiles, uploadResponseAttachmentsMutation, inquiryId]);
 
   if (!isValidId) {
     return (
@@ -394,6 +425,17 @@ export default function StockInquiryDetail({
               </DropdownMenuItem>
             )}
             <SlaExtendMenuItem activeTracker={activeTracker} onSelect={() => setExtendOpen(true)} />
+            {canReassign && activeTracker && !isVoided && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setReassignOpen(true);
+                }}
+              >
+                <UserRoundCog className="size-4" />
+                Reassign
+              </DropdownMenuItem>
+            )}
             <HandlingLockReleaseMenuItem
               state={handlingLock.state}
               onRelease={handlingLock.release}
@@ -628,7 +670,7 @@ export default function StockInquiryDetail({
                 try {
                   const res = await escalateFormTracking(activeTracker.id, escalateReason.trim());
                   queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'stock_inquiry', inquiryId] });
-                  handlingLock.refresh(); // lock banner keys on a separate query — refetch so it appears without reload
+                  handlingLock.refresh(); // lock banner keys on a separate query - refetch so it appears without reload
                   toast.success(`Escalated to tier ${res.current_tier}`);
                   setEscalateOpen(false);
                 } catch (err) {
@@ -654,6 +696,26 @@ export default function StockInquiryDetail({
         }
       />
 
+      <ReassignDialog
+        open={reassignOpen}
+        onOpenChange={setReassignOpen}
+        taskLabel={`Stock Inquiry${inquiry.inquiry_number ? ` · ${inquiry.inquiry_number}` : ''}`}
+        submitting={reassignMutation.isPending}
+        onConfirm={(userId) => {
+          if (!activeTracker) return;
+          reassignMutation.mutate(
+            { id: activeTracker.id, userId },
+            {
+              onSuccess: () => {
+                queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', 'stock_inquiry', inquiryId] });
+                handlingLock.refresh(); // lock banner keys on a separate query - refetch so it appears without reload
+                setReassignOpen(false);
+              },
+            },
+          );
+        }}
+      />
+
       {inquiry && (
         <StockInquiryDeleteDialog
           open={deleteDialogOpen}
@@ -665,7 +727,13 @@ export default function StockInquiryDetail({
         />
       )}
 
-      <Dialog open={editPurchasingResponseOpen} onOpenChange={setEditPurchasingResponseOpen}>
+      <Dialog
+        open={editPurchasingResponseOpen}
+        onOpenChange={(open) => {
+          setEditPurchasingResponseOpen(open);
+          if (!open) setResponseAttachmentFiles([]);
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Edit purchasing response</DialogTitle>
@@ -684,15 +752,36 @@ export default function StockInquiryDetail({
               className="resize-none"
             />
           </div>
+          <div className="space-y-2">
+            <Label>Attachments</Label>
+            <ResponseAttachmentDropzone
+              files={responseAttachmentFiles}
+              onFilesChange={setResponseAttachmentFiles}
+              disabled={uploadResponseAttachmentsMutation.isPending}
+            />
+          </div>
           <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
-            <Button variant="outline" onClick={() => setEditPurchasingResponseOpen(false)}>
+            <Button variant="outline" onClick={closeEditPurchasingResponse}>
               Cancel
             </Button>
             <Button
               variant="outline"
               data-guide-target="procurement.stock-inquiries.save-response-button"
-              disabled={updateInquiryMutation.isPending}
+              // Blank response = nothing to save or send. Disable up front instead
+              // of accepting the click and rejecting it with a toast afterwards.
+              disabled={
+                !editPurchasingResponseValue.trim() ||
+                updateInquiryMutation.isPending ||
+                uploadResponseAttachmentsMutation.isPending
+              }
+              title={
+                !editPurchasingResponseValue.trim()
+                  ? 'Enter a purchasing response first.'
+                  : undefined
+              }
               onClick={async () => {
+                const uploaded = await uploadStagedResponseAttachments();
+                if (!uploaded) return;
                 try {
                   await updateInquiryMutation.mutateAsync({
                     id: inquiryId,
@@ -704,7 +793,9 @@ export default function StockInquiryDetail({
                 }
               }}
             >
-              {updateInquiryMutation.isPending ? 'Saving…' : 'Save only'}
+              {updateInquiryMutation.isPending || uploadResponseAttachmentsMutation.isPending
+                ? 'Saving…'
+                : 'Save only'}
             </Button>
             {inquiry.respond_inbox_url &&
               (inquiry.status === 'pending_purchasing' || inquiry.status === 'responded') && (
@@ -712,13 +803,21 @@ export default function StockInquiryDetail({
                   variant="primary"
                   data-guide-target="procurement.stock-inquiries.update-and-reply-button"
                   disabled={
+                    !editPurchasingResponseValue.trim() ||
                     updateInquiryMutation.isPending ||
                     openingReplySheet ||
                     updateAndReplyMutation.isPending ||
+                    uploadResponseAttachmentsMutation.isPending ||
                     !businessCtasEnabled
                   }
-                  title={lockedCtaTitle}
+                  title={
+                    !editPurchasingResponseValue.trim()
+                      ? 'Enter a purchasing response first.'
+                      : lockedCtaTitle
+                  }
                   onClick={async () => {
+                    const uploaded = await uploadStagedResponseAttachments();
+                    if (!uploaded) return;
                     setOpeningReplySheet(true);
                     try {
                       await sendPurchasingUpdateAndReplyViaRespond(editPurchasingResponseValue);
@@ -786,7 +885,7 @@ export default function StockInquiryDetail({
           <InquiryReadValue>{inquiry.inquiry_number}</InquiryReadValue>
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Sales person">
-          <InquiryReadValue>{inquiry.salesperson}</InquiryReadValue>
+          <InquiryReadValue>{inquiry.salesperson_contact_name ?? inquiry.salesperson}</InquiryReadValue>
         </InquiryFormTableRow>
         <InquiryFormTableRow label="Product code">
           <InquiryReadValue>{inquiry.product_code}</InquiryReadValue>

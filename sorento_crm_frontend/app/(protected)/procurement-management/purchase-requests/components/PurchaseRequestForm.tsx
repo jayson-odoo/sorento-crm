@@ -53,6 +53,7 @@ import { PurchaseRequestDocumentEditCard } from './PurchaseRequestDocumentEditCa
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 import { purchaseRequestNumberFieldLabel, purchaseRequestNumberReplyPhrase } from '../lib/purchase-request-field-labels';
 import LookupBoundField from '@/components/common/LookupBoundField';
+import { RequestorContactSelect } from '@/app/(protected)/master-data-management/shared/components/RequestorContactSelect';
 import { cn } from '@/lib/utils';
 
 const PURCHASE_REQUESTS_EDIT = '/procurement-management/purchase-requests';
@@ -129,6 +130,7 @@ export default function PurchaseRequestForm({
       expected_po_date: null,
       expected_po_date_text: null,
       requested_by: null,
+      requested_by_contact_id: null,
       requested_at: null,
       products: [{ item_code: null, quantity: null, remark: null, unit_price: null, total: null }],
     },
@@ -198,6 +200,7 @@ export default function PurchaseRequestForm({
           : null,
         expected_po_date_text: request.expected_po_date_text ?? null,
         requested_by: request.requested_by ?? null,
+        requested_by_contact_id: request.requested_by_contact_id ?? null,
         requested_at: request.requested_at
           ? new Date(request.requested_at).toISOString().split('T')[0]
           : null,
@@ -243,6 +246,7 @@ export default function PurchaseRequestForm({
         expected_po_date: data.expected_po_date || undefined,
         expected_po_date_text: data.expected_po_date_text || undefined,
         requested_by: data.requested_by || undefined,
+        requested_by_contact_id: data.requested_by_contact_id ?? null,
         requested_at: data.requested_at || undefined,
         products: data.products
           .filter((p) => p.item_code != null || p.quantity != null || (isSponsorship && (p.unit_price != null || p.total != null)))
@@ -584,15 +588,18 @@ export default function PurchaseRequestForm({
                 )}
                 <FormField
                   control={form.control}
-                  name="requested_by"
+                  name="requested_by_contact_id"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Requested By</FormLabel>
                       <FormControl>
-                        <Input
-                          placeholder="Name"
-                          {...field}
-                          value={field.value ?? ''}
+                        <RequestorContactSelect
+                          value={field.value}
+                          onChange={field.onChange}
+                          submitterContactId={request?.contact_id}
+                          savedContactId={request?.requested_by_contact_id}
+                          savedContactName={request?.requested_by_contact_name ?? request?.requested_by}
+                          placeholder="Select requestor"
                         />
                       </FormControl>
                       <FormMessage />
@@ -947,6 +954,7 @@ export default function PurchaseRequestForm({
                           expected_po_date: values.expected_po_date ?? undefined,
                           expected_po_date_text: values.expected_po_date_text ?? undefined,
                           requested_by: values.requested_by ?? undefined,
+                          requested_by_contact_id: values.requested_by_contact_id ?? null,
                           requested_at: values.requested_at ?? undefined,
                           products: (values.products ?? []).map((p) => ({
                             item_code: p.item_code ?? undefined,

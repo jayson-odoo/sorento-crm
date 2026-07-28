@@ -17,6 +17,7 @@ import { useDeletePurchaseRequestAttachment } from '../hooks/usePurchaseRequests
 import { linkPurchaseRequestAttachment } from '../services/purchaseRequestService';
 import type { PurchaseRequestAttachment } from '../types/purchaseRequest.types';
 import ComplaintLinkAttachmentBrowserDialog from '@/app/(protected)/complaint-management/complaints/components/ComplaintLinkAttachmentBrowserDialog';
+import { attachmentUploaderLabel } from '@/app/(protected)/master-data-management/shared/lib/attachment-attribution';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -111,6 +112,7 @@ export default function PurchaseRequestAttachmentsSection({
               <TableHeader>
                 <TableRow>
                   <TableHead>File Name</TableHead>
+                  <TableHead>Uploaded By</TableHead>
                   <TableHead>File Size</TableHead>
                   <TableHead>Linked At</TableHead>
                   <TableHead>Actions</TableHead>
@@ -120,11 +122,20 @@ export default function PurchaseRequestAttachmentsSection({
                 {attachments.map((link, idx) => {
                   const displayName =
                     link.original_filename ?? link.file_name ?? 'Unnamed file';
+                  const uploaderLabel = attachmentUploaderLabel(
+                    link.uploaded_by_name,
+                    link.uploaded_by_role,
+                  );
                   return (
                     <TableRow key={link.id}>
                       <TableCell className="font-medium" title={displayName}>
                         <span className="truncate block max-w-[280px]" title={displayName}>
                           {displayName}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="truncate block max-w-[200px] text-sm" title={uploaderLabel}>
+                          {uploaderLabel}
                         </span>
                       </TableCell>
                       <TableCell>{formatFileSize(link.file_size_bytes)}</TableCell>

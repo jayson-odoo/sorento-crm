@@ -57,6 +57,7 @@ export default function AttachmentTypeFormDialog({
       description: '',
       allowed_extensions: '',
       max_file_size_mb: 10,
+      max_count_per_entity: null,
       supports_field_linkage: false,
     },
     mode: 'onSubmit',
@@ -71,6 +72,7 @@ export default function AttachmentTypeFormDialog({
           description: attachmentType.description || '',
           allowed_extensions: attachmentType.allowed_extensions,
           max_file_size_mb: attachmentType.max_file_size_mb,
+          max_count_per_entity: attachmentType.max_count_per_entity ?? null,
           supports_field_linkage: attachmentType.supports_field_linkage ?? false,
         });
       } else {
@@ -79,6 +81,7 @@ export default function AttachmentTypeFormDialog({
           description: '',
           allowed_extensions: '',
           max_file_size_mb: 10,
+          max_count_per_entity: null,
           supports_field_linkage: false,
         });
       }
@@ -95,6 +98,7 @@ export default function AttachmentTypeFormDialog({
             description: data.description || undefined,
             allowed_extensions: data.allowed_extensions,
             max_file_size_mb: data.max_file_size_mb,
+            max_count_per_entity: data.max_count_per_entity ?? null,
             supports_field_linkage: data.supports_field_linkage ?? false,
           },
         });
@@ -104,6 +108,7 @@ export default function AttachmentTypeFormDialog({
           description: data.description || undefined,
           allowed_extensions: data.allowed_extensions,
           max_file_size_mb: data.max_file_size_mb,
+          max_count_per_entity: data.max_count_per_entity ?? null,
           supports_field_linkage: data.supports_field_linkage ?? false,
         });
       }
@@ -188,6 +193,35 @@ export default function AttachmentTypeFormDialog({
                       onChange={(e) => field.onChange(parseInt(e.target.value) || 0)}
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="max_count_per_entity"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Max attachments per record</FormLabel>
+                  <FormControl>
+                    <Input
+                      type="number"
+                      min={1}
+                      placeholder="Leave blank for unlimited"
+                      value={field.value ?? ''}
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        // Blank clears the cap (NULL = unlimited); don't coerce to 0,
+                        // which would read as "no uploads allowed".
+                        field.onChange(raw === '' ? null : parseInt(raw, 10));
+                      }}
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">
+                    How many files of this type one record may hold. Blank = unlimited. Portal
+                    uploads are rejected once a record reaches this count.
+                  </p>
                   <FormMessage />
                 </FormItem>
               )}

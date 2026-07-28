@@ -71,7 +71,14 @@ class ComplaintAttachmentResponse(ComplaintAttachmentBase):
     original_filename: Optional[str] = None  # Human-readable name for display
     uploaded_at: datetime
     created_at: datetime
-    link_type: Optional[str] = None  # "complaint_attachment"
+    link_type: Optional[str] = None  # "complaint_attachment" | "response_attachment"
+    # Uploader attribution (UAC B2/B5). A response_model that omits these silently
+    # drops what serialize_link already computes, so the panel renders "Unknown".
+    mime_type: Optional[str] = None
+    uploader_kind: Optional[str] = None
+    uploaded_by_name: Optional[str] = None
+    uploaded_by_role: Optional[str] = None
+    can_unlink: Optional[bool] = None
 
     class Config:
         from_attributes = True

@@ -58,16 +58,16 @@ class Attachment(Base, CompanyScopedMixin):
     # attachments on global complaints/PR/SI); non-null = owned (resource /
     # product / promotion). The scope filter therefore uses
     # `company_id IS NULL OR company_id IN {scope}` (AC-H5). This one stays
-    # nullable permanently — the later NOT-NULL flip skips it.
+    # nullable permanently - the later NOT-NULL flip skips it.
     __company_shared__ = True
 
     # Audit user upload activity across ALL create paths (resource upload, entity
-    # attachments on complaint/PR/SI, product photos, form files) — model-level so it
+    # attachments on complaint/PR/SI, product photos, form files) - model-level so it
     # is path-agnostic. Bulk ZIP import (worker) suppresses per-row via
     # session.info["skip_audit_entity_types"] and logs one coarse row instead.
     __audit_track__ = True
     __audit_entity_type__ = "attachment"
-    # Meaningful columns only — skip churny/huge fields (file_path, thumbnail_path,
+    # Meaningful columns only - skip churny/huge fields (file_path, thumbnail_path,
     # file_hash, access_levels) so the diff stays readable.
     __audit_columns__ = [
         "original_filename",
@@ -79,6 +79,8 @@ class Attachment(Base, CompanyScopedMixin):
         "full_directory_path",
         "description",
         "uploaded_by",
+        "uploaded_by_contact_id",
+        "uploader_kind",
         "is_deleted",
         "deleted_by",
     ]
@@ -97,6 +99,12 @@ class Attachment(Base, CompanyScopedMixin):
     entity_type = Column(String(100), nullable=True)
     entity_id = Column(UUID(as_uuid=False), nullable=True)
     uploaded_by = Column(UUID(as_uuid=False), nullable=True)
+    # Uploader attribution. `uploaded_by` only ever held a users.id, and the portal
+    # upload path passed created_by=None - so a NULL meant both "a contact uploaded
+    # it" and "we don't know". These two columns make "by contact" vs "by user"
+    # derivable. TEXT (not UUID) to match respond_contacts.id, which is TEXT.
+    uploaded_by_contact_id = Column(Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True)
+    uploader_kind = Column(String(16), nullable=True)  # user | contact | system
     uploaded_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     is_deleted = Column(Boolean, default=False, nullable=False)

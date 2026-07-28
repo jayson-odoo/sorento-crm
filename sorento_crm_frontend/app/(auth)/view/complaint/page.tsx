@@ -1,13 +1,16 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { AlertCircle, ExternalLink } from 'lucide-react';
+import { AlertCircle, ExternalLink, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 
 interface ViewAttachment {
   id?: string;
@@ -15,6 +18,15 @@ interface ViewAttachment {
   original_filename?: string | null;
   file_url?: string | null;
   uploaded_at?: string | null;
+  /** 'user' = uploaded by CRM staff, 'contact' = uploaded by the submitting
+   *  contact, 'system' = worker-created. Absent/null on legacy rows. */
+  uploader_kind?: 'user' | 'contact' | 'system' | null;
+  uploaded_by_name?: string | null;
+  uploaded_by_role?: 'staff' | 'contact' | 'unknown';
+  /** false for staff ('user') uploads - this view has no unlink control at
+   *  all today, but the flag is honoured in case one is ever added here. */
+  can_unlink?: boolean;
+  mime_type?: string | null;
 }
 
 interface ComplaintViewSummary {
@@ -81,6 +93,29 @@ function ViewComplaintContent() {
   const [summary, setSummary] = useState<ComplaintViewSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const [staffPreviewOpen, setStaffPreviewOpen] = useState(false);
+
+  const attachments = useMemo(() => summary?.attachments ?? [], [summary?.attachments]);
+  const previewItems = useMemo<AttachmentPreviewItem[]>(
+    () =>
+      attachments.map((att, idx) => ({
+        id: att.id ?? String(idx),
+        name: att.original_filename ?? att.file_name ?? 'Attachment',
+        url: att.file_url ?? '',
+      })),
+    [attachments],
+  );
+
+  // Technical team's own response attachments - surfaced in the reply banner,
+  // scoped away from the contact's own uploads shown in the list below.
+  const staffAttachments = attachments.filter((a) => a.uploader_kind === 'user');
+  const staffPreviewItems: AttachmentPreviewItem[] = staffAttachments.map((att, idx) => ({
+    id: att.id ?? `staff-${idx}`,
+    name: att.original_filename ?? att.file_name ?? 'Attachment',
+    url: att.file_url ?? '',
+  }));
 
   const fetchSummary = useCallback(async () => {
     if (!token) {
@@ -195,29 +230,70 @@ function ViewComplaintContent() {
           <DetailRow label="Delivery address" value={summary?.customer_address ?? undefined} />
           <DetailRow label="Project title" value={summary?.project_title ?? undefined} />
           <DetailRow label="Technical team response" value={summary?.technical_team_response ?? undefined} />
+          {(summary?.technical_team_response ?? '').trim() && staffAttachments.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 py-1.5 border-b border-border/60 last:border-0">
+              <span className="text-xs text-muted-foreground">
+                {staffAttachments.length} attachment{staffAttachments.length === 1 ? '' : 's'} from
+                technical team
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setStaffPreviewOpen(true)}
+              >
+                View attachment{staffAttachments.length === 1 ? '' : 's'} ({staffAttachments.length})
+              </Button>
+            </div>
+          )}
           <DetailRow label="Status" value={summary?.status ?? undefined} />
           <DetailRow label="Last responded at" value={summary?.last_responded_at ? formatDateTimeStr(summary.last_responded_at) : undefined} />
           <DetailRow label="Created at" value={summary?.created_at ? formatDateTimeStr(summary.created_at) : undefined} />
-          {summary?.attachments && summary.attachments.length > 0 && (
+          {attachments.length > 0 && (
             <div className="pt-4 mt-2 border-t border-border">
               <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">Attachments</p>
               <div className="space-y-2">
-                {summary.attachments.map((att) => (
-                  <a
-                    key={att.id ?? att.file_name}
-                    href={att.file_url ?? '#'}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block text-sm font-medium text-primary hover:underline break-all"
-                  >
-                    {att.original_filename ?? att.file_name ?? 'Attachment'}
-                  </a>
-                ))}
+                {attachments.map((att, idx) => {
+                  const uploader = (att.uploaded_by_name ?? '').trim();
+                  return (
+                    <button
+                      key={att.id ?? att.file_name ?? idx}
+                      type="button"
+                      onClick={() => {
+                        setPreviewIndex(idx);
+                        setPreviewOpen(true);
+                      }}
+                      className="flex w-full items-start gap-2 text-left"
+                    >
+                      <Eye className="h-4 w-4 shrink-0 mt-0.5 text-primary" />
+                      <span>
+                        <span className="block text-sm font-medium text-primary hover:underline break-all">
+                          {att.original_filename ?? att.file_name ?? 'Attachment'}
+                        </span>
+                        {uploader && (
+                          <span className="block text-xs text-muted-foreground">By {uploader}</span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
         </CardContent>
       </Card>
+
+      <AttachmentPreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        items={previewItems}
+        startIndex={previewIndex}
+      />
+      <AttachmentPreviewModal
+        open={staffPreviewOpen}
+        onOpenChange={setStaffPreviewOpen}
+        items={staffPreviewItems}
+      />
     </div>
   );
 }

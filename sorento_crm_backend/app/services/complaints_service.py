@@ -350,7 +350,7 @@ class ComplaintService:
         else:
             data["handled_by_wa_phone"] = None
         # Rejecter attribution for the rejection banner. complaint.rejected_by holds a
-        # respond_user_id (NOT a users.id) — resolve name + wa.me digits via that path.
+        # respond_user_id (NOT a users.id) - resolve name + wa.me digits via that path.
         if data.get("rejected_by"):
             data["rejected_by_name"] = self._resolve_user_display_name(data["rejected_by"])
             if rejected_by_wa_phone_override is not _UNSET:
@@ -1272,7 +1272,7 @@ class ComplaintService:
 
     @staticmethod
     def _do_item_lines(items: Optional[Iterable[dict]]) -> list[str]:
-        """['CODE x QTY', ...] — one entry per delivered line (skips blank codes)."""
+        """['CODE x QTY', ...] - one entry per delivered line (skips blank codes)."""
         lines: list[str] = []
         for it in items or []:
             code = str((it or {}).get("product_code") or "").strip()
@@ -1285,7 +1285,7 @@ class ComplaintService:
 
     @classmethod
     def _format_do_items(cls, items: Optional[Iterable[dict]]) -> str:
-        """Plain-text delivery-notice item block — an 'Items delivered:' header with
+        """Plain-text delivery-notice item block - an 'Items delivered:' header with
         one item per line ('- CODE x QTY'). Empty string when there are no items."""
         lines = cls._do_item_lines(items)
         if not lines:
@@ -1355,7 +1355,7 @@ class ComplaintService:
         event_type = f"do_delivered:{order_number}"
 
         # One INDIVIDUAL email per team member (each as the To recipient) + in-app.
-        # Previously this was a single email with To=first member, CC=the rest — but
+        # Previously this was a single email with To=first member, CC=the rest - but
         # CC recipients were unreliably delivered (mail server/client filtering), so
         # only the To member actually got it. Direct per-recipient emails guarantee
         # every Tier 1/2 member receives their own copy.
@@ -1457,7 +1457,7 @@ class ComplaintService:
             "portal_url": self._complaint_portal_or_view_url(complaint, complaint_id),
             "view_url": (self._build_complaint_view_url(complaint_id) or "").strip(),
         }
-        # Automated system send — no acting Respond.io user; fall back to the
+        # Automated system send - no acting Respond.io user; fall back to the
         # complaint's assignee (used only for chat-thread assignee resolution).
         respond_user_id = (getattr(complaint, "assigned_to", None) or "").strip()
         self._enqueue_respond_message_for_complaint(
@@ -1659,7 +1659,7 @@ class ComplaintService:
     # response only moves the status forward (updated/responded) FROM these.
     # Once a decision/terminal state is reached (approved, rejected,
     # processed_by_cs, closed), editing or re-sending the response must NOT
-    # regress the status — the lifecycle is:
+    # regress the status - the lifecycle is:
     #   submitted -> responded -> approved | rejected
     #   approved  -> processed_by_cs | closed
     _RESPONSE_STAGE_STATUSES: tuple[str, ...] = ("new", "submitted", "updated", "responded")
@@ -1780,13 +1780,31 @@ class ComplaintService:
         do_number = (getattr(complaint, "delivery_order_number", None) or "").strip()
         do_spec = f" for delivery order {do_number}" if do_number else ""
         link_part = self._complaint_status_link_part(complaint, complaint_id)
-        display_message = (
-            f"There has been an update regarding your complaint{do_spec}: {stored_body}{link_part}"
+
+        # Attachment sentence (UAC D1-D4, D2 hard blocker): composed here for
+        # the OUTGOING message only, from the count of staff-uploaded
+        # (uploader_kind='user') attachments already linked to this complaint
+        # (staged in the "Edit technical team response" modal).
+        # complaint.technical_team_response above already holds ``stored_body``
+        # verbatim (byte for byte); ``outgoing_body`` below is a send-time-only
+        # variable, never assigned back to the column.
+        from app.services.entity_attachment_service import (
+            compose_response_attachment_sentence,
+            count_staff_attachments,
         )
-        # Structured-template vars: bare `update` core (the technical response) +
-        # explicit link. See PLAN-complaint-structured-update-template.md.
+
+        attachment_sentence = compose_response_attachment_sentence(
+            count_staff_attachments(self.db, "complaint", complaint_id)
+        )
+        outgoing_body = f"{stored_body}\n{attachment_sentence}" if attachment_sentence else stored_body
+
+        display_message = (
+            f"There has been an update regarding your complaint{do_spec}: {outgoing_body}{link_part}"
+        )
+        # Structured-template vars: bare `update` core (the technical response +
+        # attachment sentence, D10) + explicit link. See PLAN-complaint-structured-update-template.md.
         reply_extra_vars = {
-            "update": stored_body,
+            "update": outgoing_body,
             "portal_url": self._complaint_portal_or_view_url(complaint, complaint_id),
             "view_url": (self._build_complaint_view_url(complaint_id) or "").strip(),
         }
@@ -1986,7 +2004,7 @@ class ComplaintService:
             f"status changed to {decision}.{reason_part}{link_part}"
         )
         # Structured-template vars: LEAN `update` core (status only) + link.
-        # "Approved" / "Rejected, reason: X" — no preamble, no inline URL.
+        # "Approved" / "Rejected, reason: X" - no preamble, no inline URL.
         decide_update_core = (
             "Approved"
             if decision == "approved"
@@ -2195,7 +2213,7 @@ class ComplaintService:
             f"status changed to {status_label}.{note_part}{link_part}"
         )
         # Structured-template vars: LEAN `update` core (status only) + link.
-        # "Processed by CS" / "Closed" — optional note kept, no preamble/URL.
+        # "Processed by CS" / "Closed" - optional note kept, no preamble/URL.
         finalize_update_core = self._FINALIZE_UPDATE_LABELS.get(new_status, status_label)
         if note_clean:
             finalize_update_core += f". Note: {note_clean}"
@@ -2242,7 +2260,7 @@ class ComplaintService:
             )
 
         # (c) Close the customer-service form-SLA stage (best-effort). Both resolved
-        # and closed emit the same 'resolved' SLA event — the stage is done either way.
+        # and closed emit the same 'resolved' SLA event - the stage is done either way.
         try:
             from app.services.form_sla_service import emit_form_event
             emit_form_event(
@@ -2317,7 +2335,7 @@ class ComplaintService:
             complaint, actor_user_id=actor_user_id, respond_user_id=respond_user_id
         )
 
-        # Emit the 'voided' form-SLA event. NO direct tracker-stop code — the tracker
+        # Emit the 'voided' form-SLA event. NO direct tracker-stop code - the tracker
         # closes only if form_sla_config.resolve_event lists 'voided' (pure config).
         try:
             from app.services.form_sla_service import emit_form_event
@@ -2641,7 +2659,7 @@ class ComplaintService:
             f"There has been an update regarding your complaint{do_spec}: "
             f"{label_word} is identified as {target.name}.{link_part}"
         )
-        # Structured-template vars: LEAN `update` core — "Root cause is X" /
+        # Structured-template vars: LEAN `update` core - "Root cause is X" /
         # "Resolution is X", no preamble, no inline URL.
         notify_extra_vars = {
             "update": f"{label_word} is {target.name}",

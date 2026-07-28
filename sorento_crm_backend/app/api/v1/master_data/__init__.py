@@ -11,6 +11,7 @@ from app.api.v1.master_data import (
     lookup_eligibility,
     field_linkage,
     ai_extract_field,
+    respond_contacts_select,
 )
 
 router = APIRouter()
@@ -32,4 +33,9 @@ router.include_router(
     ai_extract_field.router,
     prefix="/ai-extract-field",
     tags=["ai-extract-field"],
+)
+router.include_router(
+    respond_contacts_select.router,
+    prefix="/respond-contacts",
+    tags=["respond-contacts"],
 )

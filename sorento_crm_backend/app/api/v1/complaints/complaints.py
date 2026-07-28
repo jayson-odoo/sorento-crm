@@ -1,7 +1,7 @@
 """Complaints API routes."""
 import logging
 
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body, File, UploadFile
 from sqlalchemy.orm import Session
 from typing import Optional, Union, List, Any
 from app.database import get_db
@@ -378,6 +378,56 @@ async def link_attachment_to_complaint(
         raise handle_internal_error(str(e))
 
 
+@router.post("/{complaint_id}/response-attachments", status_code=status.HTTP_201_CREATED)
+async def upload_complaint_response_attachment(
+    complaint_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Upload a staff response attachment onto the complaint, staged in the
+    "Edit technical team response" modal alongside the reply text. Uses the
+    response_attachment type (its own quota, independent of the contact's
+    portal_submission cap - UAC C4/D9) and stamps uploader_kind='user'."""
+    try:
+        validate_uuid_path(complaint_id, resource="Complaint")
+        service = ComplaintService(db)
+        complaint = service.get_complaint(complaint_id)
+        contents = await file.read()
+        from app.services.entity_attachment_service import create_response_attachment
+
+        return create_response_attachment(
+            db,
+            entity_type="complaint",
+            entity_id=str(complaint.id),
+            contents=contents,
+            filename=file.filename,
+            content_type=file.content_type,
+            uploaded_by=(current_user or {}).get("id"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/response-attachments/{link_id}", status_code=status.HTTP_200_OK)
+async def delete_complaint_response_attachment(
+    link_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Hard-unlink a staff-uploaded response attachment from a complaint (UAC F4)."""
+    try:
+        service = ComplaintService(db)
+        service.delete_complaint_attachment(link_id)
+        return {"message": "Attachment unlinked successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{complaint_id}/conversation")
 async def get_complaint_conversation(
     complaint_id: str,
@@ -618,7 +668,7 @@ def _raise_do_lookup_guidance(
             "this submit tool already searched for you."
         )
     elif provided_filters:
-        # Back-compat fallback — kept only when inline search was not run (e.g., search disabled).
+        # Back-compat fallback - kept only when inline search was not run (e.g., search disabled).
         detail["recommended_tools"] = [
             "crm_order_management_orders_by_product_list",
             "crm_order_management_orders_list",

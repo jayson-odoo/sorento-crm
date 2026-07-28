@@ -73,6 +73,19 @@ export default function AttachmentTypesList() {
         meta: { headerTitle: 'Max File Size (MB)' },
       },
       {
+        accessorKey: 'max_count_per_entity',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Max Files / Record" column={column} />
+        ),
+        size: 150,
+        cell: ({ row }) => (
+          <span className={row.original.max_count_per_entity == null ? 'text-muted-foreground' : ''}>
+            {row.original.max_count_per_entity ?? 'Unlimited'}
+          </span>
+        ),
+        meta: { headerTitle: 'Max Files / Record' },
+      },
+      {
         id: 'actions',
         header: '',
         cell: ({ row }) => {

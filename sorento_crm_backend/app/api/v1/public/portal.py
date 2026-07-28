@@ -36,7 +36,7 @@ from app.models.entity_attachment import EntityAttachmentLink
 from app.models.portal import PortalToken
 from app.models.resources import Attachment, AttachmentType
 from app.services.entity_attachment_service import EntityAttachmentService
-from app.services.error_handler import handle_validation_error
+from app.services.error_handler import AppException, handle_validation_error
 from app.services.portal_service import (
     PORTAL_ATTACHMENT_TYPE_CODE,
     PortalAuthError,
@@ -113,7 +113,7 @@ class TokenResponse(BaseModel):
 
 @router.post("/request-otp", response_model=OtpResponse)
 def portal_request_otp(payload: OtpRequestPayload, request: Request, db: Session = Depends(get_db)):
-    # Per-IP global limit on this unauthenticated endpoint — the per-contact
+    # Per-IP global limit on this unauthenticated endpoint - the per-contact
     # cooldown/cap in PortalService can't stop an attacker fanning out across many
     # contact_ids to enumerate or to DOS the Respond.io send queue. Fail-open.
     from app.config import settings as app_settings
@@ -589,6 +589,29 @@ def lookup_set_options(
     )
 
 
+class RequestorOption(BaseModel):
+    id: str
+    name: str
+
+
+class RequestorOptionsResponse(BaseModel):
+    items: list[RequestorOption]
+    has_more: bool
+
+
+@router.get("/requestor-options", response_model=RequestorOptionsResponse)
+def portal_requestor_options(
+    q: Optional[str] = Query(None, description="Case-insensitive substring match on name"),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Names-only eligible set for the "Requested by" / "Salesperson" picker
+    (PLAN-requested-by-contact-routing.md D3/D5/D6). Always includes the
+    token's own contact even when unsegmented, so nobody is ever blocked from
+    submitting on their own behalf."""
+    return PortalService(db).list_requestor_options(token, q=q)
+
+
 # ---------- Submissions ----------
 
 
@@ -633,6 +656,27 @@ def portal_get_submission(
     detail = PortalService(db).get_submission(token, _check_kind(kind), submission_id)
     detail["attachments"] = _list_attachments_for(db, _entity_type_for(kind), submission_id)
     return detail
+
+
+class SubmissionNeighboursResponse(BaseModel):
+    prev_id: Optional[str] = None
+    next_id: Optional[str] = None
+    position: int
+    total: int
+
+
+@router.get(
+    "/submissions/{kind}/{submission_id}/neighbours",
+    response_model=SubmissionNeighboursResponse,
+)
+def portal_submission_neighbours(
+    kind: str = Path(...),
+    submission_id: str = Path(...),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Prev/next over the contact's OWN submissions of the same kind (UAC G1/G2)."""
+    return PortalService(db).get_neighbours(token, _check_kind(kind), submission_id)
 
 
 @router.post("/submissions/{kind}")
@@ -765,8 +809,53 @@ def _list_attachments_for(db: Session, entity_type: str, entity_id: str) -> list
         .order_by(EntityAttachmentLink.sort_order.asc().nulls_last(), EntityAttachmentLink.created_at.asc())
         .all()
     )
+
+    # Batch-resolve uploader names in two queries rather than one per row - a
+    # submission can carry up to the type's per-record cap (10-20) attachments.
+    from app.models.access import RespondContact
+    from app.models.user import User
+
+    contact_ids = {att.uploaded_by_contact_id for _, att in rows if att.uploaded_by_contact_id}
+    user_ids = {att.uploaded_by for _, att in rows if att.uploaded_by}
+    contacts_by_id: dict[str, RespondContact] = {}
+    if contact_ids:
+        contacts_by_id = {
+            c.id: c
+            for c in db.query(RespondContact).filter(RespondContact.id.in_(contact_ids)).all()
+        }
+    users_by_id: dict[str, User] = {}
+    if user_ids:
+        users_by_id = {
+            u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()
+        }
+
     out: list[dict] = []
     for link, att in rows:
+        uploader_kind = att.uploader_kind
+        uploaded_by_name = "Unknown"
+        uploaded_by_role = "unknown"
+        if uploader_kind == "contact" and att.uploaded_by_contact_id:
+            contact = contacts_by_id.get(att.uploaded_by_contact_id)
+            name = (
+                (
+                    (contact.name or "").strip()
+                    or " ".join(
+                        p for p in [(contact.first_name or "").strip(), (contact.last_name or "").strip()] if p
+                    ).strip()
+                    or (contact.phone_number or "").strip()
+                )
+                if contact is not None
+                else ""
+            )
+            if name:
+                uploaded_by_name = name
+                uploaded_by_role = "contact"
+        elif uploader_kind == "user" and att.uploaded_by:
+            user = users_by_id.get(att.uploaded_by)
+            name = ((user.name or "").strip() or (user.email or "").strip()) if user is not None else ""
+            if name:
+                uploaded_by_name = name
+                uploaded_by_role = "staff"
         out.append(
             {
                 "link_id": str(link.id),
@@ -776,6 +865,13 @@ def _list_attachments_for(db: Session, entity_type: str, entity_id: str) -> list
                 "url": _safe_presigned_url(att.file_path, getattr(att, "storage_provider", None)) or att.file_path,
                 "content_type": att.mime_type if hasattr(att, "mime_type") else None,
                 "uploaded_at": att.uploaded_at.isoformat() if att.uploaded_at else None,
+                "uploader_kind": uploader_kind,
+                "uploaded_by_name": uploaded_by_name,
+                "uploaded_by_role": uploaded_by_role,
+                # A staff (`user`) upload has no unlink control in the portal
+                # server-enforced in portal_delete_attachment, this just matches
+                # the FE's gating so it never renders a control that would 403.
+                "can_unlink": uploader_kind != "user",
             }
         )
     return out
@@ -836,7 +932,7 @@ async def portal_upload_attachment(
             detail="File upload failed. Please try again.",
         ) from e
 
-    # Grid thumbnail (images only) — portal uploads are device bytes in our own
+    # Grid thumbnail (images only) - portal uploads are device bytes in our own
     # bucket, so the same small-variant path applies. Best-effort; never blocks.
     from app.services.image_thumbnailer import store_thumbnail
 
@@ -856,9 +952,17 @@ async def portal_upload_attachment(
         thumbnail_path=portal_thumbnail,
         storage_provider=portal_provider,
     )
+    # Uploader attribution (UAC B1): create_attachment_and_link has no fields
+    # for this, so stamp the freshly created row directly, in the same
+    # transaction as the link, before commit.
+    attachment = db.query(Attachment).filter(Attachment.id == link.attachment_id).first()
+    if attachment is not None:
+        attachment.uploader_kind = "contact"
+        attachment.uploaded_by_contact_id = token.contact_id
     db.commit()
     db.refresh(link)
-    attachment = db.query(Attachment).filter(Attachment.id == link.attachment_id).first()
+    if attachment is not None:
+        db.refresh(attachment)
     file_path = attachment.file_path if attachment else s3_key
     return {
         "link_id": str(link.id),
@@ -900,6 +1004,17 @@ def portal_delete_attachment(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
     else:
         portal.get_submission(token, raw_kind, link.entity_id)
+
+    # UAC F2 (hard blocker): a staff-uploaded attachment cannot be unlinked from
+    # the portal, even by a contact who owns the submission. FE gating alone is
+    # not a control on a token surface - enforce it server-side here too.
+    attachment = db.query(Attachment).filter(Attachment.id == link.attachment_id).first()
+    if attachment is not None and attachment.uploader_kind == "user":
+        raise AppException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message="This file was added by our team and cannot be removed here.",
+            code="STAFF_UPLOAD_LOCKED",
+        )
 
     EntityAttachmentService(db).delete_link(link_id)
     db.commit()

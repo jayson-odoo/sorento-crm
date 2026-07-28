@@ -142,6 +142,7 @@ function toRequestBody(data: PurchaseRequestFormData) {
     expected_po_date: data.expected_po_date ?? data.expected_po_date_text ?? null,
     expected_po_date_text: data.expected_po_date_text || null,
     requested_by: data.requested_by || null,
+    requested_by_contact_id: data.requested_by_contact_id ?? null,
     requested_at: data.requested_at || null,
     products,
   };
