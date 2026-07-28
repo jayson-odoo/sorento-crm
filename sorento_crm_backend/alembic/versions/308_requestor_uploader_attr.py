@@ -22,7 +22,7 @@ per-record quota and never consume the contact's `portal_submission` budget.
 Every step is idempotent: re-running is a no-op, and a partially-applied state
 (from a legacy create_all database) converges instead of failing.
 
-Revision ID: 308_requestor_and_uploader_attribution
+Revision ID: 308_requestor_uploader_attr
 Revises: 307_admin_listing_company
 """
 
@@ -31,7 +31,13 @@ import sqlalchemy as sa
 from sqlalchemy import inspect
 
 
-revision = "308_requestor_and_uploader_attribution"
+# Keep revision ids <= 32 chars. CI bootstraps a blank database and STAMPS the
+# head, and alembic creates `alembic_version.version_num` as VARCHAR(32), so the
+# head id is the one value that must fit: a longer id passes locally (legacy
+# column widened to 255) and then fails the job with "value too long for type
+# character varying(32)". Long ids further down the chain are never written,
+# which is why plenty of older revisions exceed 32 and nobody noticed.
+revision = "308_requestor_uploader_attr"
 down_revision = "307_admin_listing_company"
 branch_labels = None
 depends_on = None
@@ -147,6 +153,21 @@ def upgrade() -> None:
                     nullable=False,
                     server_default=sa.text("false"),
                 ),
+            )
+        # Ship the intended state so nobody has to remember to toggle it after a
+        # deploy: PROJECT contacts are the salesmen a PR / SF / stock inquiry is
+        # raised for; RETAIL contacts are end buyers and must never appear in the
+        # requestor picker. Written by code, not just by column default, so an
+        # install where the column already existed converges too. Admins can
+        # change either afterwards (Market Segments -> Requestor picker); this
+        # runs ONCE, on the upgrade that introduces the flag.
+        for code, selectable in (("project", True), ("retail", False)):
+            bind.execute(
+                sa.text(
+                    "UPDATE market_segments SET is_requestor_selectable = :flag "
+                    "WHERE lower(code) = :code"
+                ),
+                {"flag": selectable, "code": code},
             )
 
     # ------------------------------------------- response_attachment type (seed)
