@@ -2,6 +2,11 @@ export interface StockInquiry {
   id: string;
   inquiry_number?: string | null;
   salesperson?: string | null;
+  /** Contact FK routing key (CS pin lookup). The `salesperson` text stays the
+   *  display label, derived server-side when this FK is set. */
+  salesperson_contact_id?: string | null;
+  /** Resolved live contact name when the FK is set; falls back to `salesperson`. */
+  salesperson_contact_name?: string | null;
   product_code?: string | null;
   item_description?: string | null;
   project_customer?: string | null;
@@ -58,11 +63,18 @@ export interface StockInquiryAttachment {
   file_url?: string | null;
   file_size_bytes?: number | null;
   uploaded_at?: string | Date | null;
+  /** 'response_attachment' rows come from the purchasing response popup and
+   *  unlink through a dedicated endpoint. */
   link_type?: string | null;
+  /** Uploader attribution (S1) - names only, never a UUID. */
+  uploader_kind?: 'user' | 'contact' | 'system' | null;
+  uploaded_by_name?: string | null;
+  uploaded_by_role?: 'contact' | 'staff' | null;
 }
 
 export interface StockInquiryFormData {
   salesperson?: string;
+  salesperson_contact_id?: string | null;
   product_code?: string;
   item_description?: string;
   project_customer?: string;

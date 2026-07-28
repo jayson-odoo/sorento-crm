@@ -17,12 +17,15 @@ import {
   bulkDeleteStockInquiries,
   linkStockInquiryAttachment,
   deleteStockInquiryAttachment,
+  uploadStockInquiryResponseAttachment,
+  deleteStockInquiryResponseAttachment,
   submitStockInquiryForProjectSales,
   projectSalesApproveStockInquiry,
   projectSalesRejectStockInquiry,
   purchasingRejectStockInquiry,
   reopenStockInquiry,
   getStockInquiryConversation,
+  type ResponseAttachmentUploadResult,
 } from '../services/stockInquiryService';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
 
@@ -33,7 +36,7 @@ export type StockInquiriesListParams = DataGridApiFetchParams & {
 /**
  * Prev/next neighbours of a stock inquiry within the active filtered+sorted list
  * set. Serializes the list query (search/sort/status) with `buildDataGridParams`
- * — the same serialization the list page uses — so the backend honours filters
+ * - the same serialization the list page uses - so the backend honours filters
  * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
  */
 export function useStockInquiryNeighbours(
@@ -183,6 +186,51 @@ export function useDeleteStockInquiryAttachment() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (linkId: string) => deleteStockInquiryAttachment(linkId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiry'] });
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
+      toast.success('Attachment unlinked successfully');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to unlink attachment'),
+  });
+}
+
+/**
+ * Uploads staged response-attachment files sequentially (one request per file, per
+ * the backend contract). On a partial failure, best-effort rolls back the links
+ * already created in this batch so a failed submit never leaves an orphaned
+ * upload - the caller's Save/Update & Reply must not proceed on error.
+ */
+export function useUploadStockInquiryResponseAttachments() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ inquiryId, files }: { inquiryId: string; files: File[] }) => {
+      const uploaded: ResponseAttachmentUploadResult[] = [];
+      try {
+        for (const file of files) {
+          uploaded.push(await uploadStockInquiryResponseAttachment(inquiryId, file));
+        }
+      } catch (err) {
+        await Promise.allSettled(
+          uploaded.map((u) => deleteStockInquiryResponseAttachment(u.link_id)),
+        );
+        throw err;
+      }
+      return uploaded;
+    },
+    onSuccess: (_data, { inquiryId }) => {
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiry', inquiryId] });
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to upload attachment'),
+  });
+}
+
+export function useDeleteStockInquiryResponseAttachment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (linkId: string) => deleteStockInquiryResponseAttachment(linkId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['stock-inquiry'] });
       queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });

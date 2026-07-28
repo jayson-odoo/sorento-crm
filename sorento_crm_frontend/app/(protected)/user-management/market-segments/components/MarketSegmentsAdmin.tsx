@@ -46,10 +46,18 @@ export default function MarketSegmentsAdmin() {
     description: '',
     is_active: true,
     sort_order: '' as string | number,
+    is_requestor_selectable: false,
   });
 
   function resetForm() {
-    setForm({ code: '', name: '', description: '', is_active: true, sort_order: '' });
+    setForm({
+      code: '',
+      name: '',
+      description: '',
+      is_active: true,
+      sort_order: '',
+      is_requestor_selectable: false,
+    });
     setEditing(null);
   }
 
@@ -66,6 +74,7 @@ export default function MarketSegmentsAdmin() {
       description: row.description ?? '',
       is_active: row.is_active,
       sort_order: row.sort_order ?? '',
+      is_requestor_selectable: row.is_requestor_selectable,
     });
     setDialogOpen(true);
   }
@@ -82,6 +91,7 @@ export default function MarketSegmentsAdmin() {
             description: form.description.trim() || null,
             is_active: form.is_active,
             sort_order: sort,
+            is_requestor_selectable: form.is_requestor_selectable,
           },
         },
         {
@@ -103,6 +113,7 @@ export default function MarketSegmentsAdmin() {
           description: form.description.trim() || null,
           is_active: form.is_active,
           sort_order: sort ?? null,
+          is_requestor_selectable: form.is_requestor_selectable,
         },
         {
           onSuccess: () => {
@@ -177,6 +188,26 @@ export default function MarketSegmentsAdmin() {
             <Badge variant="primary">Active</Badge>
           ) : (
             <Badge variant="secondary">Inactive</Badge>
+          ),
+      },
+      {
+        id: 'is_requestor_selectable',
+        accessorFn: (row) => row.is_requestor_selectable,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Requestor picker" column={column} />
+        ),
+        size: 170,
+        enableSorting: false,
+        meta: { headerTitle: 'Requestor picker', skeleton: <Skeleton className="h-6 w-24" /> },
+        cell: ({ row }) =>
+          row.original.is_requestor_selectable ? (
+            <Badge variant="primary" appearance="light">
+              Included
+            </Badge>
+          ) : (
+            <Badge variant="secondary" appearance="light">
+              Excluded
+            </Badge>
           ),
       },
       {
@@ -316,6 +347,23 @@ export default function MarketSegmentsAdmin() {
                 onCheckedChange={(v) => setForm((f) => ({ ...f, is_active: v === true }))}
               />
               <Label htmlFor="segment-active">Active</Label>
+            </div>
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id="segment-requestor-selectable"
+                className="mt-0.5"
+                checked={form.is_requestor_selectable}
+                onCheckedChange={(v) =>
+                  setForm((f) => ({ ...f, is_requestor_selectable: v === true }))
+                }
+              />
+              <div className="grid gap-1">
+                <Label htmlFor="segment-requestor-selectable">Include in requestor picker</Label>
+                <p className="text-xs text-muted-foreground">
+                  Contacts in this segment can be picked as the requester on a purchase
+                  request, sponsorship form or stock inquiry.
+                </p>
+              </div>
             </div>
           </div>
           <DialogFooter>

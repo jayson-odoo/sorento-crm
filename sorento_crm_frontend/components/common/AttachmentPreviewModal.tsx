@@ -28,14 +28,29 @@ import { apiFetch } from '@/lib/api';
 import { toast } from 'sonner';
 
 /**
- * Download via the authenticated same-origin route. A plain `<a href download>`
- * to /download sends no auth header → 401 ("File wasn't available on site"), so
- * fetch the bytes through apiFetch and save the resulting blob.
+ * Fetch attachment bytes for the Download button and the Excel inline preview.
+ * Default: the authenticated same-origin `/download` route via `apiFetch` (JWT
+ * cookie/session) - matches the existing (protected) callers exactly. Token
+ * surfaces (the contact portal) have no JWT session, so `apiFetch` 401s there;
+ * they should pass their own `fetchBytes` via {@link AttachmentPreviewModalProps},
+ * or simply omit `downloadUrl` on their items so the Download button (and this
+ * fetch) never runs at all.
  */
-async function downloadItem(item: AttachmentPreviewItem) {
+type FetchBytes = (item: AttachmentPreviewItem) => Promise<Response>;
+
+async function defaultFetchBytes(item: AttachmentPreviewItem): Promise<Response> {
+  return apiFetch(item.downloadUrl as string);
+}
+
+/**
+ * A plain `<a href download>` to /download sends no auth header → 401 ("File
+ * wasn't available on site"), so fetch the bytes via `fetchBytes` and save the
+ * resulting blob instead.
+ */
+async function downloadItem(item: AttachmentPreviewItem, fetchBytes: FetchBytes) {
   if (!item.downloadUrl) return;
   try {
-    const resp = await apiFetch(item.downloadUrl);
+    const resp = await fetchBytes(item);
     if (!resp.ok) throw new Error('Download failed');
     const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
@@ -53,7 +68,7 @@ async function downloadItem(item: AttachmentPreviewItem) {
 
 /**
  * One previewable file. `url` is the stable, cacheable CDN URL (for
- * <img>/<video>/<iframe> — no CORS/fetch needed, browser + CDN cache it).
+ * <img>/<video>/<iframe> - no CORS/fetch needed, browser + CDN cache it).
  * `downloadUrl` is the same-origin backend `/download` route, used both for the
  * Download button and for reading Excel bytes (R2 public URLs don't send CORS
  * headers, so xlsx must be fetched same-origin).
@@ -71,6 +86,15 @@ interface AttachmentPreviewModalProps {
   onOpenChange: (open: boolean) => void;
   items: AttachmentPreviewItem[];
   startIndex?: number;
+  /**
+   * Override for fetching attachment bytes (Download button + Excel inline
+   * preview). Defaults to `apiFetch(item.downloadUrl)` - unchanged for every
+   * existing (protected) caller. Pass this on a token-authenticated surface
+   * (no NextAuth JWT session) that has its own way to read the bytes; if no
+   * such path exists, leave `downloadUrl` unset on the item instead - the
+   * Download button then stays hidden rather than shipping one that 401s.
+   */
+  fetchBytes?: FetchBytes;
 }
 
 type Kind = 'image' | 'video' | 'excel' | 'pdf' | 'other';
@@ -93,7 +117,9 @@ export default function AttachmentPreviewModal({
   onOpenChange,
   items,
   startIndex = 0,
+  fetchBytes,
 }: AttachmentPreviewModalProps) {
+  const resolvedFetchBytes = fetchBytes ?? defaultFetchBytes;
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(startIndex);
   const [zoom, setZoom] = useState(1);
@@ -118,7 +144,7 @@ export default function AttachmentPreviewModal({
   }, []);
 
   // Editable zoom percentage. Keep a text draft so the user can type freely,
-  // committing (clamped 25–500%) on Enter/blur.
+  // committing (clamped 25 - 500%) on Enter/blur.
   const [zoomText, setZoomText] = useState('100');
   useEffect(() => {
     setZoomText(String(Math.round(zoom * 100)));
@@ -227,7 +253,7 @@ export default function AttachmentPreviewModal({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => downloadItem(activeItem)}
+                onClick={() => downloadItem(activeItem, resolvedFetchBytes)}
               >
                 <Download className="size-4 mr-1" />
                 Download
@@ -250,6 +276,7 @@ export default function AttachmentPreviewModal({
                     isActive={i === current}
                     zoom={i === current ? zoom : 1}
                     onWheelZoom={zoomBy}
+                    fetchBytes={resolvedFetchBytes}
                   />
                 </div>
               </CarouselItem>
@@ -270,24 +297,26 @@ export default function AttachmentPreviewModal({
 /**
  * Images always render (cheap; native `loading="lazy"` defers off-screen slides
  * so only the visible one hits the network). Heavy kinds (video/pdf/excel) mount
- * ONLY when their slide is active — at most one heavy element alive at a time.
+ * ONLY when their slide is active - at most one heavy element alive at a time.
  */
 function PreviewSlide({
   item,
   isActive,
   zoom,
   onWheelZoom,
+  fetchBytes,
 }: {
   item: AttachmentPreviewItem;
   isActive: boolean;
   zoom: number;
   onWheelZoom: (factor: number) => void;
+  fetchBytes: FetchBytes;
 }) {
   const kind = kindOf(item.name);
   // <img>/<video>/<iframe> can't send an auth header, so they can only render a
   // public CDN url. Without one (e.g. an attachment missing its stored CDN
-  // path), fall back to download rather than a broken element. Excel is exempt —
-  // it reads bytes via the authenticated same-origin /download route.
+  // path), fall back to download rather than a broken element. Excel is exempt
+  // it reads bytes via fetchBytes.
   const hasCdn = item.url.startsWith('http');
 
   if (kind === 'image') {
@@ -309,7 +338,7 @@ function PreviewSlide({
         className="my-auto max-h-[78vh] w-auto max-w-full object-contain transition-transform"
       />
     ) : (
-      <PreviewFallback item={item} reason="This attachment has no previewable URL." />
+      <PreviewFallback item={item} reason="This attachment has no previewable URL." fetchBytes={fetchBytes} />
     );
   }
 
@@ -324,7 +353,7 @@ function PreviewSlide({
         className="max-h-[78vh] w-auto"
       />
     ) : (
-      <PreviewFallback item={item} reason="This attachment has no previewable URL." />
+      <PreviewFallback item={item} reason="This attachment has no previewable URL." fetchBytes={fetchBytes} />
     );
   }
 
@@ -336,32 +365,34 @@ function PreviewSlide({
         className="h-[78vh] w-full rounded border bg-white"
       />
     ) : (
-      <PreviewFallback item={item} reason="This attachment has no previewable URL." />
+      <PreviewFallback item={item} reason="This attachment has no previewable URL." fetchBytes={fetchBytes} />
     );
   }
 
   if (kind === 'excel') {
-    return <ExcelSlide item={item} />;
+    return <ExcelSlide item={item} fetchBytes={fetchBytes} />;
   }
 
   return (
-    <PreviewFallback item={item} reason="No inline preview for this file type." />
+    <PreviewFallback item={item} reason="No inline preview for this file type." fetchBytes={fetchBytes} />
   );
 }
 
 function PreviewFallback({
   item,
   reason,
+  fetchBytes,
 }: {
   item: AttachmentPreviewItem;
   reason: string;
+  fetchBytes: FetchBytes;
 }) {
   return (
     <div className="my-auto flex flex-col items-center gap-3 py-12 text-center">
       <FileQuestion className="size-10 text-muted-foreground/50" />
       <p className="text-sm text-muted-foreground">{reason}</p>
       {item.downloadUrl && (
-        <Button variant="outline" size="sm" onClick={() => downloadItem(item)}>
+        <Button variant="outline" size="sm" onClick={() => downloadItem(item, fetchBytes)}>
           <Download className="size-4 mr-1" />
           Download to view
         </Button>
@@ -381,7 +412,7 @@ function SlideSpinner() {
 const MAX_ROWS = 200;
 const MAX_COLS = 40;
 
-function ExcelSlide({ item }: { item: AttachmentPreviewItem }) {
+function ExcelSlide({ item, fetchBytes }: { item: AttachmentPreviewItem; fetchBytes: FetchBytes }) {
   const wbRef = useRef<import('xlsx').WorkBook | null>(null);
   const xlsxRef = useRef<typeof import('xlsx') | null>(null);
   const [loading, setLoading] = useState(true);
@@ -420,8 +451,9 @@ function ExcelSlide({ item }: { item: AttachmentPreviewItem }) {
         setLoading(true);
         setError(null);
         if (!item.downloadUrl) throw new Error('No source available to load this file.');
-        // R2 public URLs send no CORS headers → read bytes same-origin.
-        const resp = await apiFetch(item.downloadUrl);
+        // R2 public URLs send no CORS headers → callers read bytes via fetchBytes
+        // (same-origin /download by default, or a caller-supplied override).
+        const resp = await fetchBytes(item);
         if (!resp.ok) throw new Error('Failed to load spreadsheet.');
         const buf = await resp.arrayBuffer();
         const XLSX = await import('xlsx');
@@ -453,7 +485,7 @@ function ExcelSlide({ item }: { item: AttachmentPreviewItem }) {
         <FileQuestion className="size-10 text-muted-foreground/50" />
         <p className="text-sm text-muted-foreground">{error}</p>
         {item.downloadUrl && (
-          <Button variant="outline" size="sm" onClick={() => downloadItem(item)}>
+          <Button variant="outline" size="sm" onClick={() => downloadItem(item, fetchBytes)}>
             <Download className="size-4 mr-1" />
             Download instead
           </Button>

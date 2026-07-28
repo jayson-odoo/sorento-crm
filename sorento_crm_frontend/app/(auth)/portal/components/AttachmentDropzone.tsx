@@ -1,8 +1,18 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Paperclip, Upload, X, Clipboard, ExternalLink } from 'lucide-react';
+import { Paperclip, Upload, X, Clipboard, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   Dialog,
   DialogContent,
@@ -10,6 +20,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 
 function isTextFile(name?: string | null, type?: string | null): boolean {
   if (type?.startsWith('text/')) return true;
@@ -58,6 +71,33 @@ export function AttachmentDropzone({
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const [unlinkTarget, setUnlinkTarget] = useState<PortalAttachment | null>(null);
+  const [unlinking, setUnlinking] = useState(false);
+
+  // In-place preview only - nothing in the portal opens a new tab. Scoped to
+  // the full attachment list here; the banner's staff-only carousel builds its
+  // own item list from the same shape.
+  const previewItems = useMemo<AttachmentPreviewItem[]>(
+    () =>
+      attachments.map((a) => ({
+        id: a.link_id,
+        name: a.filename || 'Attachment',
+        url: a.url ?? '',
+        sizeBytes: a.size,
+      })),
+    [attachments],
+  );
+
+  const openPreview = useCallback(
+    (linkId: string) => {
+      const idx = attachments.findIndex((a) => a.link_id === linkId);
+      setPreviewIndex(idx >= 0 ? idx : 0);
+      setPreviewOpen(true);
+    },
+    [attachments],
+  );
 
   const addFiles = useCallback(
     async (files: File[]) => {
@@ -113,7 +153,7 @@ export function AttachmentDropzone({
     if (!submissionId && !onPendingFilesChange) return;
     const onPaste = (e: ClipboardEvent) => {
       if (!e.clipboardData) return;
-      // Skip when a Radix dialog is open — the dialog owns the paste (e.g. AI Extract).
+      // Skip when a Radix dialog is open - the dialog owns the paste (e.g. AI Extract).
       if (typeof document !== 'undefined' &&
           document.querySelector('[role="dialog"][data-state="open"]')) {
         return;
@@ -145,7 +185,7 @@ export function AttachmentDropzone({
       }
       // No file on the clipboard but there is text → save the paste as a .txt
       // file so it flows through the same upload path. (Only reached when focus
-      // is NOT in an editable field — see guard above.)
+      // is NOT in an editable field - see guard above.)
       if (!files.length) {
         const text = e.clipboardData.getData('text/plain');
         if (text && text.trim()) {
@@ -162,7 +202,7 @@ export function AttachmentDropzone({
     return () => window.removeEventListener('paste', onPaste);
   }, [addFiles, disabled, submissionId, onPendingFilesChange]);
 
-  // Mobile: explicit Paste button — iOS/Android Chrome don't fire `paste` reliably
+  // Mobile: explicit Paste button - iOS/Android Chrome don't fire `paste` reliably
   // without a focused input, so the Async Clipboard API is the path that works.
   const handleClipboardPaste = useCallback(async () => {
     if (typeof navigator === 'undefined' || !navigator.clipboard) {
@@ -190,7 +230,7 @@ export function AttachmentDropzone({
           files.push(new File([blob], `pasted-${ts}.${ext}`, { type: imageType }));
           continue;
         }
-        // No image — fall back to pasted text saved as a .txt file.
+        // No image - fall back to pasted text saved as a .txt file.
         if (item.types.includes('text/plain')) {
           const blob = await item.getType('text/plain');
           const text = (await blob.text()).trim();
@@ -209,17 +249,19 @@ export function AttachmentDropzone({
     }
   }, [addFiles]);
 
-  const handleRemove = useCallback(
-    async (linkId: string) => {
-      try {
-        await deleteAttachment(linkId);
-        onChange(attachments.filter((a) => a.link_id !== linkId));
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Failed to remove attachment.');
-      }
-    },
-    [attachments, onChange]
-  );
+  const confirmRemove = useCallback(async () => {
+    if (!unlinkTarget) return;
+    setUnlinking(true);
+    try {
+      await deleteAttachment(unlinkTarget.link_id);
+      onChange(attachments.filter((a) => a.link_id !== unlinkTarget.link_id));
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to remove attachment.');
+    } finally {
+      setUnlinking(false);
+      setUnlinkTarget(null);
+    }
+  }, [attachments, onChange, unlinkTarget]);
 
   return (
     <div className="space-y-3">
@@ -285,7 +327,8 @@ export function AttachmentDropzone({
               key={a.link_id}
               attachment={a}
               disabled={disabled}
-              onRemove={() => handleRemove(a.link_id)}
+              onView={() => openPreview(a.link_id)}
+              onRemove={() => setUnlinkTarget(a)}
             />
           ))}
           {(pendingFiles ?? []).map((file, idx) => (
@@ -302,75 +345,127 @@ export function AttachmentDropzone({
           ))}
         </ul>
       )}
+
+      <AttachmentPreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        items={previewItems}
+        startIndex={previewIndex}
+      />
+
+      <AlertDialog
+        open={!!unlinkTarget}
+        onOpenChange={(o) => {
+          if (!o) setUnlinkTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this attachment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone.
+              {unlinkTarget?.filename ? ` "${unlinkTarget.filename}" will be removed.` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={unlinking}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmRemove}
+              disabled={unlinking}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {unlinking ? 'Removing...' : 'Remove'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
+}
+
+/** 'contact' → this is the contact's own upload ("you"); 'staff' → uploaded by
+ * a CRM user; anything else (legacy rows with no uploader_kind) → unknown. */
+function uploaderLabel(attachment: PortalAttachment): string | null {
+  const name = (attachment.uploaded_by_name ?? '').trim();
+  if (name) return name;
+  if (attachment.uploaded_by_role === 'unknown') return 'Unknown';
+  return null;
 }
 
 function UploadedRow({
   attachment,
   disabled,
+  onView,
   onRemove,
 }: {
   attachment: PortalAttachment;
   disabled?: boolean;
+  onView: () => void;
   onRemove: () => void;
 }) {
   const isImage = isImageAttachment(attachment);
   const isVideo = isVideoAttachment(attachment);
   const url = attachment.url ?? null;
+  // Staff-uploaded rows can't be unlinked by the contact (server-enforced too).
+  const canUnlink = attachment.can_unlink !== false;
+  const uploader = uploaderLabel(attachment);
   return (
     <li className="flex items-center gap-3 rounded-md border border-border px-3 py-2">
-      <div className="shrink-0">
+      <button
+        type="button"
+        onClick={onView}
+        className="shrink-0"
+        aria-label={`Preview ${attachment.filename ?? 'attachment'}`}
+      >
         {isImage && url ? (
-          <a href={url} target="_blank" rel="noopener noreferrer">
-            <img
-              src={url}
-              alt={attachment.filename ?? 'Attachment preview'}
-              className="h-12 w-12 rounded object-cover border border-border"
-            />
-          </a>
+          <img
+            src={url}
+            alt={attachment.filename ?? 'Attachment preview'}
+            className="h-12 w-12 rounded object-cover border border-border"
+          />
         ) : isVideo && url ? (
-          <a href={url} target="_blank" rel="noopener noreferrer">
-            <video
-              src={url}
-              muted
-              playsInline
-              preload="metadata"
-              className="h-12 w-12 rounded object-cover border border-border"
-            />
-          </a>
+          <video
+            src={url}
+            muted
+            playsInline
+            preload="metadata"
+            className="h-12 w-12 rounded object-cover border border-border"
+          />
         ) : (
-          <FileThumb />
+          <FileThumb interactive />
         )}
-      </div>
+      </button>
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium" title={attachment.filename ?? undefined}>
           {attachment.filename || 'Attachment'}
         </p>
-        {attachment.size != null && (
-          <p className="text-xs text-muted-foreground">
-            {(attachment.size / 1024).toFixed(1)} KB
-          </p>
-        )}
+        <div className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+          {attachment.size != null && <span>{(attachment.size / 1024).toFixed(1)} KB</span>}
+          {uploader && <span>By {uploader}</span>}
+        </div>
       </div>
       <div className="flex items-center gap-1 shrink-0">
-        {url && (
-          <Button asChild variant="ghost" size="sm">
-            <a href={url} target="_blank" rel="noopener noreferrer" aria-label="View attachment">
-              <ExternalLink className="h-4 w-4" />
-            </a>
-          </Button>
-        )}
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          onClick={onRemove}
-          disabled={disabled}
-          aria-label="Remove attachment"
+          onClick={onView}
+          aria-label="View attachment"
         >
-          <X className="h-4 w-4" />
+          <Eye className="h-4 w-4" />
         </Button>
+        {canUnlink && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onRemove}
+            disabled={disabled}
+            aria-label="Remove attachment"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        )}
       </div>
     </li>
   );
@@ -385,6 +480,11 @@ function PendingRow({
   disabled?: boolean;
   onRemove: () => void;
 }) {
+  // Not-yet-uploaded files only: these are local blob: URLs (no server round
+  // trip), so opening one in a new tab is a local preview, not the "portal
+  // opens a new tab against the server" case this slice targets - the shared
+  // AttachmentPreviewModal only renders http(s) CDN urls, and a blob: url
+  // would just show its "no previewable URL" fallback instead of the image.
   const previewUrl = useMemo(() => {
     if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) return null;
     return URL.createObjectURL(file);

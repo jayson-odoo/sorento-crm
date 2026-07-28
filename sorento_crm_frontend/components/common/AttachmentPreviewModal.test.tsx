@@ -150,4 +150,67 @@ describe('AttachmentPreviewModal', () => {
     await waitFor(() => expect(screen.getByText('Widget')).toBeTruthy());
     expect(screen.getByText('Qty')).toBeTruthy();
   });
+
+  // fetchBytes override (new optional prop) - token-authenticated surfaces
+  // (e.g. the contact portal) have no NextAuth JWT session, so apiFetch would
+  // 401 there. Existing (protected) callers omit the prop and must keep using
+  // apiFetch exactly as before (covered above).
+  describe('fetchBytes override', () => {
+    it('uses the custom fetchBytes for the Excel slide instead of apiFetch', async () => {
+      vi.doMock('xlsx', () => ({
+        read: () => ({ SheetNames: ['Sheet1'], Sheets: { Sheet1: {} } }),
+        utils: {
+          sheet_to_json: () => [
+            ['Name', 'Qty'],
+            ['Widget', '5'],
+          ],
+        },
+      }));
+      const customFetchBytes = vi.fn().mockResolvedValue({
+        ok: true,
+        arrayBuffer: async () => new ArrayBuffer(8),
+      });
+      const xlsx: AttachmentPreviewItem = {
+        id: 'e',
+        name: 'list.xlsx',
+        url: 'https://cdn.example.com/list.xlsx',
+        downloadUrl: '/portal/attachments/e/download',
+      };
+      render(
+        <AttachmentPreviewModal
+          open
+          onOpenChange={() => {}}
+          items={[xlsx]}
+          fetchBytes={customFetchBytes}
+        />,
+      );
+      await waitFor(() => expect(customFetchBytes).toHaveBeenCalledWith(xlsx));
+      await waitFor(() => expect(screen.getByText('Widget')).toBeTruthy());
+      expect(apiFetchMock).not.toHaveBeenCalled();
+    });
+
+    it('uses the custom fetchBytes for the Download button instead of apiFetch', async () => {
+      const customFetchBytes = vi.fn().mockResolvedValue({
+        ok: true,
+        blob: async () => new Blob(['x']),
+      });
+      render(
+        <AttachmentPreviewModal
+          open
+          onOpenChange={() => {}}
+          items={[img]}
+          fetchBytes={customFetchBytes}
+        />,
+      );
+      const createObjectURL = vi.fn().mockReturnValue('blob:mock');
+      const revokeObjectURL = vi.fn();
+      (URL as unknown as { createObjectURL: unknown }).createObjectURL = createObjectURL;
+      (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = revokeObjectURL;
+
+      screen.getByRole('button', { name: /download/i }).click();
+
+      await waitFor(() => expect(customFetchBytes).toHaveBeenCalledWith(img));
+      expect(apiFetchMock).not.toHaveBeenCalled();
+    });
+  });
 });

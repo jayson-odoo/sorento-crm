@@ -5,11 +5,13 @@ import {
   BetweenHorizontalStart,
   Coffee,
   CreditCard,
+  Download,
   FileText,
   Globe,
   Moon,
   Settings,
   Shield,
+  Upload,
   User,
   Users,
 } from 'lucide-react';
@@ -33,9 +35,20 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
+import { useUploadManager } from '@/components/upload-activity/UploadManagerContext';
+import { useUploadActivity } from '@/components/upload-activity/useUploadActivity';
+import { useMyDownloads } from '@/components/my-downloads/MyDownloadsContext';
 
 export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
   const { data: session } = useSession();
+  // The topbar upload / download icons are desktop-only, so on a phone these two
+  // drawers had NO reachable entry point at all. This menu is the fallback (and a
+  // second discoverable path on desktop). Both drawers are mounted once at the
+  // layout level and opened through their contexts.
+  const { setDrawerOpen } = useUploadManager();
+  const { badgeCount: uploadBadgeCount } = useUploadActivity();
+  const { setOpen: setMyDownloadsOpen, badgeCount: downloadBadgeCount } =
+    useMyDownloads();
   const { avatarSrc: headerAvatarSrc, displayName, displayEmail } =
     useAccountProfileForHeader();
   const { changeLanguage, language } = useLanguage();
@@ -97,6 +110,32 @@ export function UserDropdownMenu({ trigger }: { trigger: ReactNode }) {
             <User />
             My profile
           </Link>
+        </DropdownMenuItem>
+
+        <DropdownMenuItem
+          className="flex items-center gap-2"
+          onClick={() => setMyDownloadsOpen(true)}
+        >
+          <Download />
+          <span className="flex-1">My downloads</span>
+          {downloadBadgeCount > 0 && (
+            <Badge variant="primary" appearance="light" size="sm">
+              {downloadBadgeCount > 99 ? '99+' : downloadBadgeCount}
+            </Badge>
+          )}
+        </DropdownMenuItem>
+
+        <DropdownMenuItem
+          className="flex items-center gap-2"
+          onClick={() => setDrawerOpen(true)}
+        >
+          <Upload />
+          <span className="flex-1">Upload activity</span>
+          {uploadBadgeCount > 0 && (
+            <Badge variant="destructive" appearance="light" size="sm">
+              {uploadBadgeCount > 99 ? '99+' : uploadBadgeCount}
+            </Badge>
+          )}
         </DropdownMenuItem>
 
         {/* My Account Submenu */}

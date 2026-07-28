@@ -9,6 +9,27 @@ import uuid
 
 # Forward references for relationships
 from typing import TYPE_CHECKING
+
+
+def _contact_display_name(contact) -> "str | None":
+    """Freeform `name`, else first + last. Same precedence as
+    requestor_options_service.contact_display_name (one definition of the
+    requestor's human name across picker, write path and response)."""
+    if contact is None:
+        return None
+    name = (
+        (getattr(contact, "name", None) or "").strip()
+        or " ".join(
+            p
+            for p in [
+                (getattr(contact, "first_name", None) or "").strip(),
+                (getattr(contact, "last_name", None) or "").strip(),
+            ]
+            if p
+        ).strip()
+    )
+    return name or None
+
 if TYPE_CHECKING:
     from app.models.product import Product
     from app.models.inventory import Warehouse, StorageZone
@@ -287,7 +308,7 @@ class PickingLine(Base, CompanyScopedMixin):
 
 
 class PurchaseOrder(Base, CompanyScopedMixin):
-    """SCM purchase order (supply / on-order source). Public core record — survives
+    """SCM purchase order (supply / on-order source). Public core record - survives
     module uninstall. Sits with suppliers / PR in the procurement domain."""
     __tablename__ = "purchase_orders"
 
@@ -318,7 +339,7 @@ class PurchaseOrder(Base, CompanyScopedMixin):
 
 
 class PurchaseOrderLine(Base, CompanyScopedMixin):
-    """Open PO line — feeds on-order / net-position views by product×warehouse."""
+    """Open PO line - feeds on-order / net-position views by product×warehouse."""
     __tablename__ = "purchase_order_lines"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -353,12 +374,33 @@ class PurchaseOrderLine(Base, CompanyScopedMixin):
 class StockInquiry(Base):
     """Stock inquiry model. Set __audit_track__ = True for automatic audit logging of changes."""
     __tablename__ = "stock_inquiries"
+    # NOTE: `salesperson_contact_id` (the routing key, below) is the requestor
+    # the salesman the inquiry is FOR. `contact_id` stays the SUBMITTER, who owns
+    # the conversation and receives every update.
     __audit_track__ = True
     __audit_entity_type__ = "stock_inquiry"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     inquiry_number = Column(String(50), nullable=True)
+    # Display label (what was submitted); kept for PDFs, list columns and search.
     salesperson = Column(Text, nullable=True)
+    # Requestor FK - the CS pin lookup key. TEXT to match respond_contacts.id.
+    salesperson_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    # lazy="joined": the display name is read on every list row, so resolve it in
+    # the same SELECT instead of one extra query per row.
+    salesperson_contact = relationship(
+        "RespondContact", foreign_keys=[salesperson_contact_id], lazy="joined"
+    )
+
+    @property
+    def salesperson_contact_name(self) -> "str | None":
+        """Requestor display name resolved LIVE from the FK, so a contact rename
+        fixes every screen with no backfill. Read-only; the `salesperson` text
+        column remains the point-in-time record and the fallback once the FK is
+        cleared."""
+        return _contact_display_name(self.salesperson_contact)
     product_code = Column(Text, nullable=True)
     item_description = Column(Text, nullable=True)
     project_customer = Column(Text, nullable=True)
@@ -420,7 +462,23 @@ class PurchaseRequestHeader(Base):
     expected_delivery_date = Column(Date, nullable=True)
     expected_po_date = Column(Date, nullable=True)
     expected_po_date_text = Column(Text, nullable=True)
+    # Display label (what was submitted); kept for PDFs, list columns and search.
     requested_by = Column(Text, nullable=True)
+    # Requestor FK - the CS pin lookup key, so a form submitted ON BEHALF OF
+    # someone routes to THEIR pinned CS. `contact_id` stays the submitter, who
+    # keeps receiving every update. TEXT to match respond_contacts.id.
+    requested_by_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    requested_by_contact = relationship(
+        "RespondContact", foreign_keys=[requested_by_contact_id], lazy="joined"
+    )
+
+    @property
+    def requested_by_contact_name(self) -> "str | None":
+        """Requestor display name resolved LIVE from the FK (see
+        StockInquiry.salesperson_contact_name)."""
+        return _contact_display_name(self.requested_by_contact)
     requested_at = Column(Date, nullable=True)  # DEPRECATED — superseded by submitted_at (top date) + request_date (footer date)
     submitted_at = Column(DateTime(timezone=False), nullable=True)  # auto-stamped on every submit (incl. resubmit); top "Date" on the document
     status = Column(String(50), default="draft", nullable=False)

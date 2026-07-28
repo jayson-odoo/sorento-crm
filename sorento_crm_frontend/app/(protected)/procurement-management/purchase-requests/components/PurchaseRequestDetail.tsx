@@ -46,12 +46,14 @@ import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-manage
 import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
+import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
+import { useReassignSLATracking } from '@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTeamPendingSLA';
 import { RejectionReasonBanner } from '@/components/common/RejectionReasonBanner';
 import { VoidBanner } from '@/components/common/VoidBanner';
 import { VoidDialog } from '@/components/common/VoidDialog';
 import { useFormVoid } from '@/hooks/useFormVoid';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
-import { ArrowUpCircle, ThumbsUp, ThumbsDown, Ban } from 'lucide-react';
+import { ArrowUpCircle, ThumbsUp, ThumbsDown, Ban, UserRoundCog } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
 import {
   AlertDialog,
@@ -101,11 +103,14 @@ export default function PurchaseRequestDetail({
   const canProcess = useHasPermission('procurement.purchase_requests.process');
   const canClose = useHasPermission('procurement.purchase_requests.close');
   const canVoid = useHasPermission('procurement.purchase_requests.void');
+  const canReassign = useHasPermission('sla_management.conversation_sla_tracking.reassign');
+  const reassignMutation = useReassignSLATracking();
+  const [reassignOpen, setReassignOpen] = useState(false);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [rejecting, setRejecting] = useState(false);
-  // In-system approver decision (Approve / Reject) — same behaviour as the email link.
+  // In-system approver decision (Approve / Reject) - same behaviour as the email link.
   const [approving, setApproving] = useState(false);
   const [decisionRejectOpen, setDecisionRejectOpen] = useState(false);
   const [decisionRejectReason, setDecisionRejectReason] = useState('');
@@ -125,25 +130,25 @@ export default function PurchaseRequestDetail({
   const requestTypeForNav = basePath.includes('sponsorship-forms')
     ? 'sponsorship_form'
     : 'purchase_request';
-  // Active form-SLA stage tracker for this form — enables the in-form Escalate button.
+  // Active form-SLA stage tracker for this form - enables the in-form Escalate button.
   const { data: slaTrackers } = useQuery({
     // Key on the request's updated_at so the active tracker (and the escalation
-    // banner) refetches the moment a resolve/approve/process bumps the entity —
+    // banner) refetches the moment a resolve/approve/process bumps the entity
     // the stage changes, the banner must clear without a manual refresh.
     queryKey: ['form-sla-trackers', requestTypeForNav, requestId, request?.updated_at],
     queryFn: () => getFormSLATrackers(requestTypeForNav, requestId),
     enabled: !!isValidId,
   });
   const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
-  // Handling-lock ("I'm handling this") — live off the form-SLA handling tracker query.
+  // Handling-lock ("I'm handling this") - live off the form-SLA handling tracker query.
   // Gate on the ACTIVE tracker's form type (purchase_request vs sponsorship_form), not a
-  // hardcoded name — this component serves both.
+  // hardcoded name - this component serves both.
   const handlingLock = useHandlingLock({
     sourceEntityType: requestTypeForNav,
     sourceEntityId: isValidId ? requestId : null,
     entityKey: request?.updated_at,
   });
-  // A voided form is fully read-only — every business CTA is suppressed. Folding
+  // A voided form is fully read-only - every business CTA is suppressed. Folding
   // it into businessCtasEnabled kills all the handling-gated CTAs at once; the
   // few ungated actions (Edit / Delete) are guarded on !isVoided individually.
   const isVoided = (request?.status ?? '').trim().toLowerCase() === 'voided';
@@ -330,7 +335,7 @@ export default function PurchaseRequestDetail({
   // "Change to pending approval" + "Reject" only when the salesperson has
   // submitted from the portal (status='submitted') AND no approval decision has
   // been recorded yet. Once rejected, only the salesperson re-submits via the
-  // portal — reviewer cannot bypass that loop by moving straight to pending.
+  // portal - reviewer cannot bypass that loop by moving straight to pending.
   const showPrimaryChangeToPending =
     isSubmittedLifecycle &&
     !isApprovedStatus &&
@@ -474,6 +479,17 @@ export default function PurchaseRequestDetail({
               </DropdownMenuItem>
             )}
             <SlaExtendMenuItem activeTracker={activeTracker} onSelect={() => setExtendOpen(true)} />
+            {canReassign && activeTracker && !isVoided && (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  setReassignOpen(true);
+                }}
+              >
+                <UserRoundCog className="size-4" />
+                Reassign
+              </DropdownMenuItem>
+            )}
             <HandlingLockReleaseMenuItem
               state={handlingLock.state}
               onRelease={handlingLock.release}
@@ -825,7 +841,7 @@ export default function PurchaseRequestDetail({
           // BE emits `rejected_by_name` / `rejected_by_wa_phone` from the new
           // `rejected_by_id` column, and already applies the legacy `approved_by`
           // fallback server-side WITH a bare-UUID guard (HIST-3). Do NOT re-add an
-          // unguarded `?? request.approved_by` here — that would leak a raw UUID into
+          // unguarded `?? request.approved_by` here - that would leak a raw UUID into
           // the UI when approved_by holds an id. WHEN sourced from `approved_at`.
           rejectedByName={(request as { rejected_by_name?: string | null }).rejected_by_name ?? undefined}
           rejectedByWaPhone={(request as { rejected_by_wa_phone?: string | null }).rejected_by_wa_phone ?? undefined}
@@ -1367,7 +1383,7 @@ export default function PurchaseRequestDetail({
                   try {
                     const res = await escalateFormTracking(activeTracker.id, escalateReason.trim());
                     queryClient.invalidateQueries({ queryKey: ['form-sla-trackers', requestTypeForNav, requestId] });
-                    handlingLock.refresh(); // lock banner keys on a separate query — refetch so it appears without reload
+                    handlingLock.refresh(); // lock banner keys on a separate query - refetch so it appears without reload
                     toast.success(`Escalated to tier ${res.current_tier}`);
                     setEscalateOpen(false);
                   } catch (err) {
@@ -1393,6 +1409,28 @@ export default function PurchaseRequestDetail({
               queryKey: ['form-sla-trackers', requestTypeForNav, requestId],
             })
           }
+        />
+
+        <ReassignDialog
+          open={reassignOpen}
+          onOpenChange={setReassignOpen}
+          taskLabel={`${typeLabel}${request.request_number ? ` · ${request.request_number}` : ''}`}
+          submitting={reassignMutation.isPending}
+          onConfirm={(userId) => {
+            if (!activeTracker) return;
+            reassignMutation.mutate(
+              { id: activeTracker.id, userId },
+              {
+                onSuccess: () => {
+                  queryClient.invalidateQueries({
+                    queryKey: ['form-sla-trackers', requestTypeForNav, requestId],
+                  });
+                  handlingLock.refresh(); // lock banner keys on a separate query - refetch so it appears without reload
+                  setReassignOpen(false);
+                },
+              },
+            );
+          }}
         />
 
         <AlertDialog open={processDialogOpen} onOpenChange={setProcessDialogOpen}>

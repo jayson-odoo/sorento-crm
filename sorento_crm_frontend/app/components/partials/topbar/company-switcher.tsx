@@ -19,6 +19,10 @@ import { useCompany } from '@/app/providers/CompanyProvider';
  * superadmin/multi-grant users see the full switchable list. Single-grant users
  * still see which company they are in, but as a read-only badge (nothing to
  * switch to). Zero grants / still loading renders nothing.
+ *
+ * Both shells collapse to icon + code on phones: the full name (+ chevron) costs
+ * ~110px, which pushed the bell / avatar off the right edge of a 375px header
+ * with no way to reach them. CSS-only, so there is no hydration flip.
  */
 export function CompanySwitcher() {
   const { grants, activeCompany, setActiveCompany } = useCompany();
@@ -31,12 +35,12 @@ export function CompanySwitcher() {
   if (grants.length <= 1) {
     return (
       <div
-        className="inline-flex h-9 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium text-accent-foreground"
+        className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border border-input bg-background px-2 text-sm font-medium text-accent-foreground sm:gap-2 sm:px-3"
         title={`Active company: ${activeCompany.name}`}
         data-testid="company-indicator"
       >
         <Building2 className="size-4 shrink-0 text-muted-foreground" />
-        <span className="truncate max-w-[120px] text-sm font-medium">
+        <span className="hidden truncate max-w-[120px] text-sm font-medium sm:inline">
           {activeCompany.name}
         </span>
         <Badge variant="secondary" size="sm" className="font-mono shrink-0">
@@ -57,15 +61,17 @@ export function CompanySwitcher() {
       <DropdownMenuTrigger asChild>
         <Button
           variant="outline"
-          className="h-9 gap-2 px-3"
+          className="h-9 shrink-0 gap-1.5 px-2 sm:gap-2 sm:px-3"
           title="Switch active company"
         >
           <Building2 className="size-4 shrink-0 text-muted-foreground" />
-          <span className="truncate max-w-[120px]">{activeCompany.name}</span>
+          <span className="hidden sm:inline truncate max-w-[120px]">
+            {activeCompany.name}
+          </span>
           <Badge variant="secondary" size="sm" className="font-mono shrink-0">
             {activeCompany.code}
           </Badge>
-          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+          <ChevronDown className="hidden sm:inline size-3.5 shrink-0 text-muted-foreground" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-[260px]" side="bottom" align="end">

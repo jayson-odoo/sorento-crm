@@ -438,7 +438,7 @@ class PickingHeaderBase(BaseModel):
 
     # source_entity_id is physically a uuid column on picking_headers (the model
     # declares String, but the live column is uuid), so SQLAlchemy hands back a
-    # UUID object that strict str validation rejects — coerce like the user ids.
+    # UUID object that strict str validation rejects - coerce like the user ids.
     @field_validator(
         "picked_by_user_id", "inspected_by_user_id", "source_entity_id", mode="before"
     )
@@ -527,6 +527,11 @@ def _coerce_scope_id_to_string(v: object) -> Optional[str]:
 
 class StockInquiryBase(BaseModel):
     salesperson: Optional[str] = None
+    # Requestor FK (the salesman this inquiry is FOR) - drives CS pin routing.
+    # `contact_id` stays the submitter. The resolved display name is a READ-ONLY
+    # derived field and lives on the response schemas only: on a create/update
+    # base it would ride into `StockInquiry(**data)` and 500 the whole route.
+    salesperson_contact_id: Optional[str] = None
     product_code: Optional[str] = None
     item_description: Optional[str] = None
     project_customer: Optional[str] = None
@@ -585,6 +590,7 @@ class StockInquiryCreate(StockInquiryBase):
 
 class StockInquiryUpdate(BaseModel):
     salesperson: Optional[str] = None
+    salesperson_contact_id: Optional[str] = None
     product_code: Optional[str] = None
     item_description: Optional[str] = None
     project_customer: Optional[str] = None
@@ -634,6 +640,13 @@ class StockInquiryAttachmentResponse(BaseModel):
     file_size_bytes: Optional[int] = None
     uploaded_at: Optional[datetime] = None
     link_type: Optional[str] = None
+    # Uploader attribution (UAC B2/B5) - omitting these here silently drops what
+    # serialize_link computes and the panel renders "Unknown".
+    mime_type: Optional[str] = None
+    uploader_kind: Optional[str] = None
+    uploaded_by_name: Optional[str] = None
+    uploaded_by_role: Optional[str] = None
+    can_unlink: Optional[bool] = None
 
 
 class StockInquiryRejectReopenRequest(BaseModel):
@@ -645,6 +658,9 @@ class StockInquiryRejectReopenRequest(BaseModel):
 
 class StockInquiryResponse(StockInquiryBase):
     id: str
+    # Requestor display name, resolved live from the FK so a contact rename
+    # fixes every screen with no backfill. Read-only, response-only.
+    salesperson_contact_name: Optional[str] = None
     system_id: Optional[str] = None
     form_type: Optional[str] = None
     inquiry_number: Optional[str] = None
@@ -721,6 +737,11 @@ class PurchaseRequestHeaderBase(BaseModel):
     expected_po_date: Optional[date] = None
     expected_po_date_text: Optional[str] = None
     requested_by: Optional[str] = None
+    # Requestor FK (the person the request is FOR) - drives CS pin routing.
+    # `contact_id` stays the submitter, who keeps receiving every update. The
+    # resolved display name is a READ-ONLY derived field and lives on the
+    # response schemas only (see StockInquiryBase for why it must not sit here).
+    requested_by_contact_id: Optional[str] = None
     requested_at: Optional[date] = None  # DEPRECATED — see submitted_at + request_date
     submitted_at: Optional[datetime] = None  # auto-stamped on submit; top "Date" on the document (read-only)
     status: Optional[str] = None
@@ -778,6 +799,7 @@ class PurchaseRequestHeaderUpdate(BaseModel):
     expected_po_date: Optional[date] = None
     expected_po_date_text: Optional[str] = None
     requested_by: Optional[str] = None
+    requested_by_contact_id: Optional[str] = None
     requested_at: Optional[date] = None
     status: Optional[str] = None
     contact_id: Optional[str] = None
@@ -816,6 +838,8 @@ class PurchaseRequestUpdateAndReply(PurchaseRequestHeaderUpdate):
 class PurchaseRequestHeaderListResponse(PurchaseRequestHeaderBase):
     """Response for list endpoint (no lines)."""
     id: str
+    # Requestor display name, resolved live from the FK (read-only, response-only).
+    requested_by_contact_name: Optional[str] = None
     request_number: Optional[str] = None
     view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
@@ -840,6 +864,13 @@ class PurchaseRequestAttachmentResponse(BaseModel):
     file_size_bytes: Optional[int] = None
     uploaded_at: Optional[datetime] = None
     link_type: Optional[str] = None
+    # Uploader attribution (UAC B2/B5) - omitting these here silently drops what
+    # serialize_link computes and the panel renders "Unknown".
+    mime_type: Optional[str] = None
+    uploader_kind: Optional[str] = None
+    uploaded_by_name: Optional[str] = None
+    uploaded_by_role: Optional[str] = None
+    can_unlink: Optional[bool] = None
 
 
 class PurchaseRequestAttachmentLinkRequest(BaseModel):
@@ -848,6 +879,8 @@ class PurchaseRequestAttachmentLinkRequest(BaseModel):
 
 class PurchaseRequestHeaderResponse(PurchaseRequestHeaderBase):
     id: str
+    # Requestor display name, resolved live from the FK (read-only, response-only).
+    requested_by_contact_name: Optional[str] = None
     request_number: Optional[str] = None
     view_url: Optional[str] = None
     respond_inbox_url: Optional[str] = None
@@ -933,6 +966,8 @@ class PublicApprovalSummaryResponse(BaseModel):
     sales_type: Optional[str] = None  # PR sales type (project/cash_sales); null for SF
     sponsor_subject_other: Optional[str] = None  # sponsorship form: free-text when 'others'
     requested_by: Optional[str] = None
+    requested_by_contact_id: Optional[str] = None
+    requested_by_contact_name: Optional[str] = None
     request_date: Optional[date] = None
     submitted_at: Optional[datetime] = None  # top "Date" on the document (auto-stamped on submit)
     created_at: Optional[datetime] = None

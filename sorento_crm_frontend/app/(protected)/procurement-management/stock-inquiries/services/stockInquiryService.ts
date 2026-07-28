@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type {
   StockInquiry,
   StockInquiryFormData,
@@ -168,6 +169,46 @@ export async function deleteStockInquiryAttachment(linkId: string): Promise<void
       .json()
       .catch(() => ({ message: 'Failed to unlink attachment' }));
     throw new Error(error.detail || error.message || 'Failed to unlink attachment');
+  }
+}
+
+export interface ResponseAttachmentUploadResult {
+  link_id: string;
+  attachment_id: string;
+  filename: string;
+  size: number;
+  url: string;
+  content_type: string;
+}
+
+/**
+ * Upload ONE file as a staff "purchasing response" attachment (its own
+ * `response_attachment` type/quota, separate from the contact's own uploads).
+ * Called once per file - loop for multiple.
+ */
+export async function uploadStockInquiryResponseAttachment(
+  inquiryId: string,
+  file: File,
+): Promise<ResponseAttachmentUploadResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${inquiryId}/response-attachments`,
+    { method: 'POST', body: formData },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to upload attachment'));
+  }
+  return response.json();
+}
+
+export async function deleteStockInquiryResponseAttachment(linkId: string): Promise<void> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/response-attachments/${linkId}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to unlink attachment'));
   }
 }
 

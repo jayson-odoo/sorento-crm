@@ -116,6 +116,7 @@ class MarketSegmentService:
         description: Optional[str] = None,
         is_active: bool = True,
         sort_order: Optional[int] = None,
+        is_requestor_selectable: bool = False,
     ) -> MarketSegment:
         code = (code or "").strip().lower()
         name = (name or "").strip()
@@ -129,6 +130,7 @@ class MarketSegmentService:
             description=description,
             is_active=is_active,
             sort_order=sort_order,
+            is_requestor_selectable=is_requestor_selectable,
         )
         self.db.add(seg)
         self.db.commit()
@@ -143,6 +145,7 @@ class MarketSegmentService:
         description: Optional[str] = None,
         is_active: Optional[bool] = None,
         sort_order: Optional[int] = None,
+        is_requestor_selectable: Optional[bool] = None,
     ) -> MarketSegment:
         seg = self.get_segment(code)
         if seg is None:
@@ -157,6 +160,8 @@ class MarketSegmentService:
             seg.is_active = is_active
         if sort_order is not None:
             seg.sort_order = sort_order
+        if is_requestor_selectable is not None:
+            seg.is_requestor_selectable = is_requestor_selectable
         self.db.commit()
         self.db.refresh(seg)
         return seg

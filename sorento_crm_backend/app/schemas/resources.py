@@ -48,6 +48,9 @@ class AttachmentTypeBase(BaseModel):
     description: Optional[str] = None
     allowed_extensions: str
     max_file_size_mb: int = 10
+    # Max attachments of this type per entity row. NULL = unlimited. Enforced by
+    # the portal upload quota check; admin-editable (was DB-only until 2026-07-28).
+    max_count_per_entity: Optional[int] = None
     supports_field_linkage: bool = False
 
 
@@ -60,6 +63,7 @@ class AttachmentTypeUpdate(BaseModel):
     description: Optional[str] = None
     allowed_extensions: Optional[str] = None
     max_file_size_mb: Optional[int] = None
+    max_count_per_entity: Optional[int] = None
     supports_field_linkage: Optional[bool] = None
 
 
@@ -159,7 +163,7 @@ class AttachmentUpdate(BaseModel):
     access_levels: Optional[list[str]] = None
     sort_order: Optional[int] = None
     # The user-facing, RENAMEABLE name. This is what rename edits, what the UI shows, what the
-    # download Content-Disposition and the n8n webhook use. Editing it is DB-only — the object
+    # download Content-Disposition and the n8n webhook use. Editing it is DB-only - the object
     # key is uuid-segregated and derived from the IMMUTABLE original_filename, so the object
     # never moves. original_filename is intentionally NOT updatable here.
     # See PLAN-attachment-key-uuid-segregation.md.

@@ -1,7 +1,7 @@
 """Stock inquiries API routes."""
 import logging
 
-from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body, Response
+from fastapi import APIRouter, Depends, Query, HTTPException, status, Request, Body, Response, File, UploadFile
 from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
@@ -228,6 +228,56 @@ async def link_attachment_to_stock_inquiry(
             created_by=created_by,
         )
         return {"message": "Attachment linked successfully", "link_id": link.id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{inquiry_id}/response-attachments", status_code=status.HTTP_201_CREATED)
+async def upload_stock_inquiry_response_attachment(
+    inquiry_id: str,
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Upload a staff response attachment onto the stock inquiry, staged in the
+    "Edit purchasing response" modal alongside the reply text. Uses the
+    response_attachment type (its own quota, independent of the contact's
+    portal_submission cap - UAC C4/D9) and stamps uploader_kind='user'."""
+    try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
+        service = StockInquiryService(db)
+        inquiry = service.get_inquiry(inquiry_id)
+        contents = await file.read()
+        from app.services.entity_attachment_service import create_response_attachment
+
+        return create_response_attachment(
+            db,
+            entity_type="stock_inquiry",
+            entity_id=str(inquiry.id),
+            contents=contents,
+            filename=file.filename,
+            content_type=file.content_type,
+            uploaded_by=(current_user or {}).get("id"),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.delete("/response-attachments/{link_id}", status_code=status.HTTP_200_OK)
+async def delete_stock_inquiry_response_attachment(
+    link_id: str,
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Hard-unlink a staff-uploaded response attachment from a stock inquiry (UAC F4)."""
+    try:
+        service = StockInquiryService(db)
+        service.delete_inquiry_attachment(link_id)
+        return {"message": "Attachment unlinked successfully"}
     except HTTPException:
         raise
     except Exception as e:
