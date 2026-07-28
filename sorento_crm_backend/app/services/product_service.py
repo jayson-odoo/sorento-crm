@@ -991,7 +991,13 @@ class ProductService:
         return {"message": f"Deleted {deleted} product(s)", "deleted_count": deleted}
 
     def _get_default_uom_id(self) -> str:
-        """Return a default UOM id for bulk import (e.g. EA or first available)."""
+        """Return the default UOM id for bulk import: EA, created if missing.
+
+        This used to fall back to ``UnitOfMeasure.first()`` when EA did not exist,
+        which handed every UOM-less product whatever row Postgres returned first
+        (Liter, on the Sorento data). Creating EA is deterministic and is what the
+        rows actually mean; the operator never asked for a UOM, the schema did.
+        """
         uom = (
             self.db.query(UnitOfMeasure)
             .filter(UnitOfMeasure.uom_code.ilike("ea"))
@@ -999,10 +1005,15 @@ class ProductService:
         )
         if uom:
             return uom.id
-        uom = self.db.query(UnitOfMeasure).first()
-        if not uom:
-            raise ValueError("No unit of measure found. Create at least one UOM (e.g. EA) for product import.")
-        return uom.id
+        created = UnitOfMeasure(
+            id=str(uuid.uuid4()),
+            uom_code=self.DEFAULT_UOM_CODE,
+            uom_name=self.DEFAULT_UOM_NAME,
+            description=self.AUTO_CREATED_NOTE,
+        )
+        self.db.add(created)
+        self.db.commit()
+        return created.id
 
     def _resolve_category_id(self, item_group: Optional[str]) -> Optional[str]:
         """Resolve category by item_group (match category_code or category_name)."""
@@ -1040,6 +1051,48 @@ class ProductService:
 
     BULK_IMPORT_CHUNK_SIZE = 500  # Commit every N rows; fewer round-trips
     _BULK_FETCH_CODES_BATCH = 5000  # Max product_codes per IN query
+
+    # Auto-created master data (Item Group -> category, Item Brand -> brand,
+    # UOM column -> unit of measure). The code columns are VARCHAR(50), so a
+    # longer source value is a row error rather than a silent truncation that
+    # would collide with a different value later.
+    REF_CODE_MAX_LEN = 50
+    DEFAULT_UOM_CODE = "EA"
+    DEFAULT_UOM_NAME = "Each"
+    AUTO_CREATED_NOTE = "Auto-created by product import"
+
+    @staticmethod
+    def _row_uom_value(row: dict) -> Optional[str]:
+        """The optional UOM column of a product-import row.
+
+        The stock item list export has no UOM column at all; other exports label
+        it UOM / Unit / Unit of Measure / UOM Code.
+        """
+        for key in (
+            "uom",
+            "UOM",
+            "uom_code",
+            "UOM Code",
+            "unit",
+            "Unit",
+            "unit_of_measure",
+            "Unit of Measure",
+        ):
+            value = row.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return None
+
+    def _build_uom_map(self) -> dict:
+        """Build uom value -> uom_id map from all UOMs (code and name, case-insensitive)."""
+        rows = self.db.query(UnitOfMeasure.id, UnitOfMeasure.uom_code, UnitOfMeasure.uom_name).all()
+        m = {}
+        for id_, code, name in rows:
+            if code:
+                m[str(code).strip().lower()] = id_
+            if name:
+                m[str(name).strip().lower()] = id_
+        return m
 
     def _build_category_map(self) -> dict:
         """Build item_group -> category_id map from all categories (code and name, case-insensitive)."""
@@ -1185,9 +1238,12 @@ class ProductService:
     ) -> dict:
         """
         Bulk import products from Excel-style rows.
-        Expects each row: product_code, product_name?, description?, item_group?, item_brand?, list_price?, is_active?
-        item_group is matched to category (code or name); item_brand to brand (code or name).
-        Creates or updates by product_code. Uses default UOM for new products.
+        Expects each row: product_code, product_name?, description?, item_group?, item_brand?, list_price?, is_active?, uom?
+        item_group is matched to category (code or name); item_brand to brand (code or name);
+        the optional uom column to a unit of measure (code or name).
+        A value that matches nothing is CREATED (code = name = the raw value) so a
+        fresh stock item list imports without anyone hand-building master data first.
+        Creates or updates by product_code. Rows with no uom column use the default UOM.
         On update, if the product has no product_suppliers row with standard_lead_time_days set, applies the same default supplier/lead time as new products.
         Optimized: pre-loads categories, brands, and existing products to avoid per-row queries.
         on_progress: optional callback(processed, successful, failed, skipped) called at chunk boundaries for real-time UI.
@@ -1217,6 +1273,66 @@ class ProductService:
         # One-time lookups (3 queries total instead of 3 per row)
         category_map = self._build_category_map()
         brand_map = self._build_brand_map()
+        uom_map = self._build_uom_map()
+        ref_counts = {"categories": 0, "brands": 0, "uoms": 0}
+
+        class _RefTooLong(ValueError):
+            """A source value that does not fit the code column."""
+
+        def ensure_reference(kind: str, raw_value: str) -> str:
+            """Resolve a master-data value, creating the row when it is unknown.
+
+            Committed immediately: a later row failing and rolling back its
+            transaction must not take an already-referenced category/brand/UOM
+            with it (the surviving rows would then point at a vanished id).
+            """
+            value = str(raw_value).strip()
+            lookup = {"category": category_map, "brand": brand_map, "uom": uom_map}[kind]
+            existing_id = lookup.get(value.lower())
+            if existing_id:
+                return existing_id
+            if len(value) > self.REF_CODE_MAX_LEN:
+                raise _RefTooLong(
+                    f"{kind} '{value}' is {len(value)} characters; the code column holds "
+                    f"{self.REF_CODE_MAX_LEN}"
+                )
+            new_id = str(uuid.uuid4())
+            if kind == "category":
+                self.db.add(
+                    ProductCategory(
+                        id=new_id,
+                        category_code=value,
+                        category_name=value,
+                        description=self.AUTO_CREATED_NOTE,
+                        created_by=user_id,
+                    )
+                )
+                ref_counts["categories"] += 1
+            elif kind == "brand":
+                self.db.add(
+                    Brand(
+                        id=new_id,
+                        brand_code=value,
+                        brand_name=value,
+                        description=self.AUTO_CREATED_NOTE,
+                        created_by=user_id,
+                    )
+                )
+                ref_counts["brands"] += 1
+            else:
+                self.db.add(
+                    UnitOfMeasure(
+                        id=new_id,
+                        uom_code=value,
+                        uom_name=value,
+                        description=self.AUTO_CREATED_NOTE,
+                    )
+                )
+                ref_counts["uoms"] += 1
+            self.db.commit()
+            lookup[value.lower()] = new_id
+            return new_id
+
         all_codes = []
         for row in products_data:
             code = (row.get("product_code") or row.get("Product Code") or row.get("Item Code") or "").strip()
@@ -1307,22 +1423,8 @@ class ProductService:
                 if raw_active is not None and str(raw_active).strip().upper() in ("F", "FALSE", "0", "N", "NO"):
                     is_active = False
 
-                category_id = None
-                if item_group:
-                    category_id = category_map.get(str(item_group).strip().lower())
-                if item_group and not category_id:
-                    msg = f"no category found for item_group '{item_group}'"
-                    errors.append(f"Row {idx} ({product_code}): {msg}")
-                    outcome.skip(
-                        row=idx,
-                        code=_oc.MISSING_REQUIRED_FIELD,
-                        message=msg,
-                        value=str(item_group),
-                        identity=_row_identity(row, product_code),
-                    )
-                    continue
-                if not category_id:
-                    msg = "item_group is required and must match a category"
+                if not item_group:
+                    msg = "item_group is required"
                     errors.append(f"Row {idx} ({product_code}): {msg}")
                     outcome.skip(
                         row=idx,
@@ -1333,17 +1435,21 @@ class ProductService:
                     )
                     continue
 
-                brand_id = None
-                if item_brand:
-                    brand_id = brand_map.get(str(item_brand).strip().lower())
-                if item_brand and not brand_id:
-                    msg = f"no brand found for item_brand '{item_brand}'"
+                # Unknown references are created rather than rejected.
+                try:
+                    category_id = ensure_reference("category", item_group)
+                    brand_id = ensure_reference("brand", item_brand) if item_brand else None
+                    row_uom = self._row_uom_value(row)
+                    uom_id = ensure_reference("uom", row_uom) if row_uom else default_uom_id
+                except _RefTooLong as too_long:
+                    self.db.rollback()
+                    msg = str(too_long)
                     errors.append(f"Row {idx} ({product_code}): {msg}")
                     outcome.skip(
                         row=idx,
                         code=_oc.MISSING_REQUIRED_FIELD,
                         message=msg,
-                        value=str(item_brand),
+                        value=product_code,
                         identity=_row_identity(row, product_code),
                     )
                     continue
@@ -1362,6 +1468,10 @@ class ProductService:
                     existing.description = description or None
                     existing.category_id = category_id
                     existing.brand_id = brand_id
+                    # Only a file that actually carries UOM re-points an existing
+                    # product; the default must not overwrite a curated value.
+                    if row_uom:
+                        existing.base_uom_id = uom_id
                     existing.list_price = list_price
                     existing.is_active = is_active
                     existing.is_discontinued = discontinued
@@ -1394,7 +1504,7 @@ class ProductService:
                         description=description or None,
                         category_id=category_id,
                         brand_id=brand_id,
-                        base_uom_id=default_uom_id,
+                        base_uom_id=uom_id,
                         list_price=list_price,
                         is_active=is_active,
                         is_discontinued=discontinued,
@@ -1448,7 +1558,14 @@ class ProductService:
                 .all()
             )
             self._bulk_publish_product_embedding_events(touched, user_id)
-        return {"created": created, "updated": updated, "errors": errors}
+        return {
+            "created": created,
+            "updated": updated,
+            "errors": errors,
+            "created_categories": ref_counts["categories"],
+            "created_brands": ref_counts["brands"],
+            "created_uoms": ref_counts["uoms"],
+        }
 
     def validate_products_import(self, products_data: List[dict]) -> dict:
         """
@@ -1461,6 +1578,25 @@ class ProductService:
         would_update = 0
         category_map = self._build_category_map()
         brand_map = self._build_brand_map()
+        uom_map = self._build_uom_map()
+        # Unknown references are created by the import, so they are previewed as
+        # warnings ("will be created"), never as errors that block the upload.
+        new_refs: dict = {"category": {}, "brand": {}, "uom": {}}
+
+        def preview_reference(kind: str, raw_value: str) -> Optional[str]:
+            """None when the value is fine (known or newly previewed); otherwise the error."""
+            value = str(raw_value).strip()
+            lookup = {"category": category_map, "brand": brand_map, "uom": uom_map}[kind]
+            if value.lower() in lookup or value.lower() in new_refs[kind]:
+                return None
+            if len(value) > self.REF_CODE_MAX_LEN:
+                return (
+                    f"{kind} '{value}' is {len(value)} characters; the code column holds "
+                    f"{self.REF_CODE_MAX_LEN}"
+                )
+            new_refs[kind][value.lower()] = value
+            return None
+
         all_codes = []
         for row in products_data:
             code = (row.get("product_code") or row.get("Product Code") or row.get("Item Code") or "").strip()
@@ -1493,21 +1629,18 @@ class ProductService:
                     )
                     continue
 
-                category_id = None
-                if item_group:
-                    category_id = category_map.get(str(item_group).strip().lower())
-                if item_group and not category_id:
-                    errors.append(f"Row {idx} ({product_code}): no category found for item_group '{item_group}'")
-                    continue
-                if not category_id:
-                    errors.append(f"Row {idx} ({product_code}): item_group is required and must match a category")
+                if not item_group:
+                    errors.append(f"Row {idx} ({product_code}): item_group is required")
                     continue
 
-                brand_id = None
-                if item_brand:
-                    brand_id = brand_map.get(str(item_brand).strip().lower())
-                if item_brand and not brand_id:
-                    errors.append(f"Row {idx} ({product_code}): no brand found for item_brand '{item_brand}'")
+                too_long = preview_reference("category", item_group)
+                if not too_long and item_brand:
+                    too_long = preview_reference("brand", item_brand)
+                row_uom = self._row_uom_value(row)
+                if not too_long and row_uom:
+                    too_long = preview_reference("uom", row_uom)
+                if too_long:
+                    errors.append(f"Row {idx} ({product_code}): {too_long}")
                     continue
 
                 existing = existing_by_code.get(product_code)
@@ -1518,6 +1651,14 @@ class ProductService:
             except Exception as e:
                 errors.append(f"Row {idx} ({row.get('product_code', '')}): {str(e)}")
 
+        for kind, label in (("category", "categories"), ("brand", "brands"), ("uom", "units of measure")):
+            values = sorted(new_refs[kind].values())
+            if not values:
+                continue
+            shown = ", ".join(values[:20])
+            more = f" (+{len(values) - 20} more)" if len(values) > 20 else ""
+            warnings.append(f"{len(values)} new {label} will be created: {shown}{more}")
+
         return {
             "valid": len(errors) == 0,
             "errors": errors,
@@ -1527,6 +1668,9 @@ class ProductService:
                 "would_create": would_create,
                 "would_update": would_update,
                 "error_count": len(errors),
+                "new_categories": len(new_refs["category"]),
+                "new_brands": len(new_refs["brand"]),
+                "new_uoms": len(new_refs["uom"]),
             },
         }
 
