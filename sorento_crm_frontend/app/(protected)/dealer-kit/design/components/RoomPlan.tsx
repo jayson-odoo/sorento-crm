@@ -468,16 +468,29 @@ export function RoomPlan({
           const length = Math.hypot(wallEnd.x - wallStart.x, wallEnd.y - wallStart.y) || 1;
           const unitX = (wallEnd.x - wallStart.x) / length;
           const unitY = (wallEnd.y - wallStart.y) / length;
-          // Half the footprint along the wall, plus a little, so the chip sits
-          // in the gap it is measuring rather than on the product.
-          const reach = (Math.abs(unitX) * selected.width + Math.abs(unitY) * selected.width) / 2 + 200;
+          // How far the footprint itself reaches along the wall, measured from
+          // its corners so a rotated box is handled too, plus a small gap. The
+          // chips are then ANCHORED at their inner edge rather than centred:
+          // centring put a four-digit number straight over the product label.
+          const projected = corners.map(
+            (corner) => (corner.x - centre.x) * unitX + (corner.y - centre.y) * unitY,
+          );
+          const reach = Math.max(...projected) + 120;
+          const horizontal = Math.abs(unitX) >= Math.abs(unitY);
+          // Anchored by which way the chip is offset ON SCREEN, not by the
+          // wall's index. The bottom wall runs right-to-left, so anchoring off
+          // "is this wall horizontal" alone put both chips back over the label.
+          const anchorFor = (direction: number): 'start' | 'end' | 'middle' => {
+            if (!horizontal) return 'middle';
+            return direction < 0 ? 'end' : 'start';
+          };
 
           return (
             <g className="pointer-events-none" data-dk-clearance>
               <text
                 x={centre.x - unitX * reach}
                 y={centre.y - unitY * reach}
-                textAnchor="middle"
+                textAnchor={anchorFor(-unitX)}
                 dominantBaseline="middle"
                 className="fill-primary"
                 style={{ fontSize: 130 }}
@@ -487,7 +500,7 @@ export function RoomPlan({
               <text
                 x={centre.x + unitX * reach}
                 y={centre.y + unitY * reach}
-                textAnchor="middle"
+                textAnchor={anchorFor(unitX)}
                 dominantBaseline="middle"
                 className="fill-primary"
                 style={{ fontSize: 130 }}
@@ -519,7 +532,10 @@ export function RoomPlan({
           return (
             <foreignObject
               x={clampedX}
-              y={top - height - 100}
+              // Clear of the clearance chip that sits above a box standing on a
+              // vertical wall, which is 120mm off the footprint plus its own
+              // line height.
+              y={top - height - 480}
               width={width}
               height={height}
               data-dk-box-toolbar
