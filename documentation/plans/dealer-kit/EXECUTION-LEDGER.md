@@ -638,6 +638,40 @@ creates.
 
 ---
 
+## S5 - Test feedback, then IKEA parity (2026-07-30)
+
+**Trigger:** first hands-on test by the user (ten issues, eleven screenshots), then a request to
+study IKEA's space planner and mimic it.
+
+**Round 1 - the ten issues.** Server-side search and paging on `/master-data/products/select`
+(it returned the first 100 active rows with no way to ask for more, so a search for a code shared
+by 998 products answered "no products match"); an unmounted duplicate of that route was deleted,
+because an earlier fix had landed in the dead file. Full screen for the page builder and the room
+designer. A route from a catalogue into the designer and back. A hand-pick list that scrolls
+(`max-h` on a Radix ScrollArea cannot). Draggable wall faces. Two bugs found while verifying:
+the drag baseline lived in state so every pointermove inside one React batch re-applied the same
+delta, and the viewBox rescaled as the room grew, so a 60px drag moved a wall 3.7 metres. Corner
+drags were affected by the second one too.
+
+**Round 2 - IKEA.** Drove `ikea.com/addon-app/space` with Playwright and wrote
+`IKEA-SPACE-PLANNER-STUDY.md` (43 screenshots). Shipped the top of its recommendation list:
+click a wall length to type it exactly, products that magnet to the nearest wall and take their
+orientation from it, live clearance chips either side of the selection, undo/redo as whole
+snapshots (with the server line count reconciled so the room and the selection cannot disagree),
+an on-canvas rotate/duplicate/remove toolbar, and a ceiling height that gives the 3D view real
+walls which drop away as you orbit.
+
+**Verified:** 126 vitest · 30 Playwright (both dealer-kit specs, against a prod build) ·
+27 pytest for the touched endpoints · every fix exercised in a real browser.
+
+**Gate adds:** a typed wall length is applied exactly, never snapped · a wall drag lands where
+the cursor did, asserted with several pointermoves because that is what the bug needed · a
+product wider than the wall is left alone rather than jammed · undo restores a deleted line on
+the server too · the picker's request shape is pinned (search term travels, page index becomes a
+real offset) · a dropdown never carries cost or invoice price.
+
+---
+
 ## Standing constraints (violating any of these fails the gate)
 
 - Tests are **Postgres only**. No sqlite. Committing tests use a private `zzt_` schema.
