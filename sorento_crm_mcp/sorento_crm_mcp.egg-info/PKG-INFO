@@ -4,7 +4,7 @@ Version: 0.1.0
 Summary: Read-only MCP server proxying Sorento CRM /api/v1 GET APIs for n8n and agents
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
-Requires-Dist: mcp>=1.2.0
+Requires-Dist: mcp<2,>=1.2.0
 Requires-Dist: httpx>=0.27.0
 Requires-Dist: pydantic-settings>=2.0.0
 Requires-Dist: uvicorn>=0.30.0
