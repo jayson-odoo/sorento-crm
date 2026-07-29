@@ -158,6 +158,50 @@ test.describe('Dealer Kit room designer', () => {
     await expect(page.getByText('3000 mm').first()).toBeVisible();
   });
 
+  test('a dragged wall follows the cursor instead of running away', async ({ page }) => {
+    await openDesigner(page);
+
+    const plan = page.locator('[data-dk-room-plan]');
+    await expect(plan).toBeVisible({ timeout: 20_000 });
+    const wall = page.locator('[data-dk-room-wall="1"]');
+    await expect(wall).toBeAttached({ timeout: 20_000 });
+
+    // Millimetres per screen pixel, read off the SVG itself. Asserting a raw mm
+    // figure would only be true at one window size.
+    const viewBox = (await plan.getAttribute('viewBox')) ?? '';
+    const planBox = (await plan.boundingBox())!;
+    const mmPerPx = Number(viewBox.split(' ')[2]) / planBox.width;
+
+    const lengths = async () =>
+      (await page.locator('[data-dk-room-plan] text').allTextContents())
+        .filter((text) => text.endsWith(' mm'))
+        .map((text) => Number(text.replace(' mm', '')));
+
+    const before = (await lengths())[0];
+    const wallBox = (await wall.boundingBox())!;
+    const fromX = wallBox.x + wallBox.width / 2;
+    const fromY = wallBox.y + wallBox.height / 2;
+    const dragPx = 60;
+
+    await page.mouse.move(fromX, fromY);
+    await page.mouse.down();
+    // In several steps ON PURPOSE. The bug this guards only appeared with more
+    // than one pointermove: each move re-measured against an already-moved
+    // room, so a 60px drag came out as several metres.
+    await page.mouse.move(fromX + dragPx / 3, fromY, { steps: 5 });
+    await page.mouse.move(fromX + (dragPx * 2) / 3, fromY, { steps: 5 });
+    await page.mouse.move(fromX + dragPx, fromY, { steps: 5 });
+    await page.mouse.up();
+
+    const after = (await lengths())[0];
+    const expected = before + dragPx * mmPerPx;
+
+    expect(after).not.toBe(before);
+    // Generous but nowhere near the failure: amplification overshot by 5x-10x,
+    // while an honest drag lands within a grid step or two of the cursor.
+    expect(Math.abs(after - expected)).toBeLessThan(Math.max(200, expected * 0.15));
+  });
+
   test('a design the server no longer has does not brick the designer', async ({ page }) => {
     await openDesigner(page);
 

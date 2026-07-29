@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { Metadata } from 'next';
 
 import {
@@ -42,7 +43,12 @@ export default function DealerKitDesignPage() {
         </ToolbarHeading>
       </Toolbar>
 
-      <RoomDesigner />
+      {/* RoomDesigner reads ?from=, so it needs a boundary: useSearchParams
+          forces client rendering and `next build` fails on a statically
+          rendered page without one. */}
+      <Suspense fallback={null}>
+        <RoomDesigner />
+      </Suspense>
     </Container>
   );
 }

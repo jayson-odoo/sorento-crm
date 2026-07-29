@@ -2,10 +2,26 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Box as BoxIcon, Check, Plus, RotateCw, Trash2 } from 'lucide-react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import {
+  AlertTriangle,
+  ArrowLeft,
+  Box as BoxIcon,
+  Check,
+  Plus,
+  RotateCw,
+  Trash2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Alert,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
+} from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,7 +34,7 @@ import {
   boxesOverlap,
   type Point,
 } from '@/lib/dealer-kit/roomGeometry';
-import { listPickerProducts } from '../../services/productPickerService';
+import { PICKER_PAGE_SIZE, listPickerProducts } from '../../services/productPickerService';
 import {
   createSelection,
   getSelection,
@@ -35,6 +51,7 @@ import {
   removeBox,
   type PlacedBox,
 } from '@/lib/dealer-kit/roomBoxes';
+import { FocusShell, FocusToggle } from '../../components/FocusMode';
 import { RoomPlan } from './RoomPlan';
 import { RoomScene } from './RoomScene';
 
@@ -76,16 +93,32 @@ export function RoomDesigner() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [productToAdd, setProductToAdd] = useState('');
   const [dirty, setDirty] = useState(false);
+  const [focus, setFocus] = useState(false);
+
+  /**
+   * The catalogue we were sent from, if any.
+   *
+   * Validated as an id shape before it is put back into a URL: a query
+   * parameter is caller-controlled, and interpolating it unchecked into an
+   * href is how a link ends up pointing somewhere it should not.
+   */
+  const searchParams = useSearchParams();
+  const fromParam = searchParams.get('from');
+  const cameFrom =
+    fromParam && /^[0-9a-fA-F-]{36}$/.test(fromParam) ? fromParam : null;
   const hydrated = useRef(false);
 
   useEffect(() => {
     setSelectionId(window.localStorage.getItem(LAST_SELECTION_KEY));
   }, []);
 
-  const { data: products = [], isLoading: productsLoading } = useQuery({
-    queryKey: ['dealer-kit', 'picker-products'],
-    queryFn: listPickerProducts,
-  });
+  /**
+   * Remembered so a chosen product survives the list being replaced by the next
+   * search, and so Add knows what was picked without re-querying.
+   */
+  const [chosen, setChosen] = useState<{ id: string; code: string; name: string } | null>(null);
+  /** Everything the picker has fetched this session, so onChange can resolve an id. */
+  const seenProducts = useRef(new Map<string, { code: string; name: string }>());
 
   const {
     data: selection,
@@ -162,13 +195,12 @@ export function RoomDesigner() {
   });
 
   const addProduct = useCallback(() => {
-    const product = products.find((candidate) => candidate.id === productToAdd);
-    if (!product) return;
-
-    const line = selection?.lines.find((row) => row.productId === product.id);
-    lineMutation.mutate({ productId: product.id, quantity: (line?.quantity ?? 0) + 1 });
+    if (!chosen) return;
+    const line = selection?.lines.find((row) => row.productId === chosen.id);
+    lineMutation.mutate({ productId: chosen.id, quantity: (line?.quantity ?? 0) + 1 });
     setProductToAdd('');
-  }, [productToAdd, products, selection, lineMutation]);
+    setChosen(null);
+  }, [chosen, selection, lineMutation]);
 
   const moveBox = useCallback(
     (boxId: string, x: number, y: number) => {
@@ -261,7 +293,8 @@ export function RoomDesigner() {
   const busy = lineMutation.isPending || roomMutation.isPending;
 
   return (
-    <div className="flex flex-col gap-4 lg:flex-row">
+    <FocusShell active={focus} onExit={() => setFocus(false)}>
+    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
       <div className="min-w-0 flex-1">
         <Card>
           <CardHeader className="flex flex-col gap-3 pb-3 sm:flex-row sm:items-center sm:justify-between">
@@ -270,6 +303,18 @@ export function RoomDesigner() {
               {dirty && (
                 <span className="text-xs text-muted-foreground">Unsaved changes</span>
               )}
+              {cameFrom && (
+                // Arriving from a catalogue means there is somewhere to go back
+                // to. Without this the only way back is the sidebar, which
+                // loses which catalogue you were reading.
+                <Button size="sm" variant="outline" asChild>
+                  <Link href={`/dealer-kit/pages/${cameFrom}`}>
+                    <ArrowLeft className="size-4" />
+                    Back to catalogue
+                  </Link>
+                </Button>
+              )}
+              <FocusToggle active={focus} onToggle={setFocus} label="room" />
               <Button size="sm" variant="outline" onClick={startFresh} disabled={busy}>
                 <Plus className="size-4" />
                 New design
@@ -329,12 +374,43 @@ export function RoomDesigner() {
                 <SearchableSelect
                   id="dk-design-add-product"
                   value={productToAdd}
-                  onChange={setProductToAdd}
-                  options={products.map((product) => ({
-                    value: product.id,
-                    label: `${product.code} · ${product.name}`,
-                  }))}
-                  placeholder={productsLoading ? 'Loading products' : 'Add a product'}
+                  onChange={(id) => {
+                    setProductToAdd(id);
+                    const seen = seenProducts.current.get(id);
+                    setChosen(seen ? { id, ...seen } : null);
+                  }}
+                  // Server-searched and paged. Static mode would cap the picker
+                  // at one page of a 22,000-product catalogue.
+                  fetchOptions={async (query, pageIndex) => {
+                    const rows = await listPickerProducts(query, pageIndex);
+                    for (const product of rows) {
+                      seenProducts.current.set(product.id, {
+                        code: product.code,
+                        name: product.name,
+                      });
+                    }
+                    return rows.map((product) => ({
+                      value: product.id,
+                      label: product.code,
+                      description: product.name,
+                    }));
+                  }}
+                  paginated
+                  pageSize={PICKER_PAGE_SIZE}
+                  selectedOption={
+                    chosen
+                      ? { value: chosen.id, label: chosen.code, description: chosen.name }
+                      : undefined
+                  }
+                  renderOption={(option) => (
+                    <span className="min-w-0">
+                      <span className="block truncate font-mono text-xs">{option.label}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {option.description}
+                      </span>
+                    </span>
+                  )}
+                  placeholder="Search products"
                 />
               </div>
               <Button
@@ -363,6 +439,7 @@ export function RoomDesigner() {
               <SelectionRow
                 key={line.lineId}
                 line={line}
+                currency={selection?.currency ?? 'MYR'}
                 selected={placed.some(
                   (box) => box.productId === line.productId && box.id === selectedId,
                 )}
@@ -391,28 +468,39 @@ export function RoomDesigner() {
 
             {estimatedNames.length > 0 && (
               <Alert>
-                <AlertTriangle className="size-4" />
-                <AlertTitle className="text-xs">Sizes are estimated</AlertTitle>
-                <AlertDescription className="text-xs">
-                  {/* Naming them matters: "one product" leaves the user hunting
-                      for which box is the lie (AC-V2). */}
-                  {estimatedNames.join(', ')} {estimatedNames.length === 1 ? 'is' : 'are'} drawn
-                  at a default size because the catalogue has no dimensions.
-                </AlertDescription>
+                <AlertIcon>
+                  <AlertTriangle />
+                </AlertIcon>
+                {/* Title and description MUST share one AlertContent: the shared
+                    Alert is a horizontal flex, so as bare siblings they become
+                    two narrow columns and every word wraps. */}
+                <AlertContent>
+                  <AlertTitle className="text-xs">Sizes are estimated</AlertTitle>
+                  <AlertDescription className="text-xs">
+                    {/* Naming them matters: "one product" leaves the user hunting
+                        for which box is the lie (AC-V2). */}
+                    {estimatedNames.join(', ')} {estimatedNames.length === 1 ? 'is' : 'are'}{' '}
+                    drawn at a default size because the catalogue has no dimensions.
+                  </AlertDescription>
+                </AlertContent>
               </Alert>
             )}
 
             {selection && selection.unavailableCount > 0 && (
-              <Alert variant="destructive">
-                <AlertTriangle className="size-4" />
-                <AlertTitle className="text-xs">
-                  {selection.unavailableCount} product
-                  {selection.unavailableCount === 1 ? '' : 's'} cannot be ordered
-                </AlertTitle>
-                <AlertDescription className="text-xs">
-                  They stay in the design so you can see what changed, and they are left out of
-                  the total.
-                </AlertDescription>
+              <Alert variant="destructive" appearance="light">
+                <AlertIcon>
+                  <AlertTriangle />
+                </AlertIcon>
+                <AlertContent>
+                  <AlertTitle className="text-xs">
+                    {selection.unavailableCount} product
+                    {selection.unavailableCount === 1 ? '' : 's'} cannot be ordered
+                  </AlertTitle>
+                  <AlertDescription className="text-xs">
+                    They stay in the design so you can see what changed, and they are left out
+                    of the total.
+                  </AlertDescription>
+                </AlertContent>
               </Alert>
             )}
 
@@ -438,6 +526,7 @@ export function RoomDesigner() {
         </Card>
       </aside>
     </div>
+    </FocusShell>
   );
 }
 
@@ -446,11 +535,14 @@ function SelectionRow({
   selected,
   clashing,
   onSelect,
+  currency,
 }: {
   line: SelectionLine;
   selected: boolean;
   clashing: boolean;
   onSelect: () => void;
+  /** Prices are never printed bare: "1020.00" is not a price, it is a number. */
+  currency: string;
 }) {
   return (
     <button
@@ -470,7 +562,7 @@ function SelectionRow({
           {line.dimensionsMm
             ? `${line.dimensionsMm.length} x ${line.dimensionsMm.width} x ${line.dimensionsMm.height} mm`
             : 'No dimensions in the catalogue'}
-          {line.lineTotal ? ` · ${line.lineTotal}` : ''}
+          {line.lineTotal ? ` · ${currency} ${line.lineTotal}` : ''}
         </span>
       </span>
       <span className="flex shrink-0 gap-1">

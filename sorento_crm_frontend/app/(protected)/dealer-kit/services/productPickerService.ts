@@ -32,8 +32,28 @@ interface ProductSelectRow {
   is_discontinued?: boolean | null;
 }
 
-export async function listPickerProducts(): Promise<PickerProduct[]> {
-  const response = await apiFetch('/api/v1/master-data/products/select');
+/** Page size for every picker. Matches SearchableSelect's default. */
+export const PICKER_PAGE_SIZE = 50;
+
+/**
+ * Search and page on the SERVER.
+ *
+ * The catalogue has over 22,000 active products. Loading one page and filtering
+ * it in the browser meant a search for a code that exists 998 times answered
+ * "no products match" - the term never left the client.
+ */
+export async function listPickerProducts(
+  query = '',
+  pageIndex = 0,
+  pageSize = PICKER_PAGE_SIZE,
+): Promise<PickerProduct[]> {
+  const params = new URLSearchParams({
+    limit: String(pageSize),
+    offset: String(pageIndex * pageSize),
+  });
+  if (query.trim()) params.set('query', query.trim());
+
+  const response = await apiFetch(`/api/v1/master-data/products/select?${params.toString()}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Could not load products'));
 
   const body = (await response.json()) as { data?: ProductSelectRow[] } | ProductSelectRow[];

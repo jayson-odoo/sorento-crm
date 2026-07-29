@@ -274,10 +274,19 @@ export function BlockInspector({
               />
             </Field>
 
-            <div className="grid grid-cols-3 gap-2">
+            {/* Rows, not three columns. At the inspector's width a 3-column grid
+                gives each label ~75px, so "desktop cols" wrapped to two lines
+                while "tablet cols" did not - the labels misaligned and the
+                inputs sat at different heights. */}
+            <div className="flex flex-col gap-2">
               {(['desktop', 'tablet', 'mobile'] as const).map((breakpoint) => (
-                <Field key={breakpoint} label={`${breakpoint} cols`}>
+                <div key={breakpoint} className="flex items-center justify-between gap-3">
+                  <Label className="text-xs capitalize" htmlFor={`dk-cols-${breakpoint}`}>
+                    {breakpoint}
+                  </Label>
                   <Input
+                    id={`dk-cols-${breakpoint}`}
+                    className="w-20"
                     type="number"
                     min={1}
                     max={8}
@@ -293,7 +302,7 @@ export function BlockInspector({
                       })
                     }
                   />
-                </Field>
+                </div>
               ))}
             </div>
 

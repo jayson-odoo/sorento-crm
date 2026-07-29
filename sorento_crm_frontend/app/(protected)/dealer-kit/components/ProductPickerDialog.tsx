@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Check, Minus, Package, Search } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -19,9 +19,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RuleBuilder } from '@/components/rule-builder/RuleBuilder';
 import type { RuleGroup } from '@/components/rule-builder/types';
 import { cn } from '@/lib/utils';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { Skeleton } from '@/components/ui/skeleton';
-import { listPickerProducts, type PickerProduct } from '../services/productPickerService';
+import {
+  PICKER_PAGE_SIZE,
+  listPickerProducts,
+  type PickerProduct,
+} from '../services/productPickerService';
 
 /**
  * Choosing what goes in a collection.
@@ -135,10 +139,36 @@ export function ProductPickerDialog({
     setDraft(value);
   }
 
-  const { data: products = [], isLoading } = useQuery({
-    queryKey: ['dealer-kit', 'picker-products'],
-    queryFn: listPickerProducts,
+  /**
+   * Search on the SERVER, a page at a time.
+   *
+   * This used to load one page and filter it in the browser, so with 22,000
+   * active products a search for a code that exists 998 times answered "no
+   * products match". Debounced so typing does not fire a request per keystroke.
+   */
+  const [debounced, setDebounced] = useState('');
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(search), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const {
+    data: pages,
+    isLoading,
+    isFetching,
+    hasNextPage,
+    fetchNextPage,
+  } = useInfiniteQuery({
+    queryKey: ['dealer-kit', 'picker-products', debounced],
+    queryFn: ({ pageParam = 0 }) => listPickerProducts(debounced, pageParam as number),
+    initialPageParam: 0,
+    // A full page means there may be another; a short one means this is the end.
+    getNextPageParam: (last: PickerProduct[], all) =>
+      last.length < PICKER_PAGE_SIZE ? undefined : all.length,
+    enabled: open,
   });
+
+  const products = useMemo(() => (pages?.pages ?? []).flat(), [pages]);
 
   // Rule matches are resolved server-side after saving, so the live count here
   // reflects hand-picked products only. Saying so beats implying the rule has
@@ -151,15 +181,8 @@ export function ProductPickerDialog({
     return Array.from(new Set(ordered)).filter((id) => !excluded.has(id));
   }, [matchedByRule, draft.pinnedProductIds, draft.excludedProductIds]);
 
-  const visible = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    if (!needle) return products;
-    return products.filter(
-      (product) =>
-        product.name.toLowerCase().includes(needle) ||
-        product.code.toLowerCase().includes(needle),
-    );
-  }, [products, search]);
+  // No client-side filtering: the server already answered this search.
+  const visible = products;
 
   const stateOf = (product: PickerProduct): 'in' | 'out' | 'rule' => {
     if (draft.excludedProductIds.includes(product.id)) return 'out';
@@ -229,7 +252,10 @@ export function ProductPickerDialog({
               />
             </div>
 
-            <ScrollArea className="max-h-72">
+            {/* h-, not max-h-: a Radix ScrollArea with only a max height never
+                scrolls - the content simply overflows and the rows below the
+                fold become unreachable. */}
+            <ScrollArea className="h-72">
               <div className="flex flex-col gap-1.5 pe-3">
                 {isLoading &&
                   [0, 1, 2, 3].map((row) => <Skeleton key={row} className="h-12 w-full" />)}
@@ -246,6 +272,17 @@ export function ProductPickerDialog({
                     onToggle={() => toggle(product)}
                   />
                 ))}
+                {hasNextPage && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-1"
+                    disabled={isFetching}
+                    onClick={() => fetchNextPage()}
+                  >
+                    {isFetching ? 'Loading' : 'Load more products'}
+                  </Button>
+                )}
               </div>
             </ScrollArea>
           </TabsContent>

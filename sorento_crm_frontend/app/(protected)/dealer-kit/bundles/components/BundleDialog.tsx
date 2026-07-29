@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Plus, X } from 'lucide-react';
 
@@ -18,7 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { createBundle } from '../../services/catalogueService';
-import { listPickerProducts } from '../../services/productPickerService';
+import { PICKER_PAGE_SIZE, listPickerProducts } from '../../services/productPickerService';
 
 /**
  * Building a bundle: a name, one price, and the products it contains.
@@ -47,15 +47,14 @@ export function BundleDialog({
   ]);
   const [saving, setSaving] = useState(false);
 
-  const { data: products = [] } = useQuery({
-    queryKey: ['dealer-kit', 'picker-products'],
-    queryFn: listPickerProducts,
-  });
-
-  const options = products.map((product) => ({
-    value: product.id,
-    label: `${product.code} · ${product.name}`,
-  }));
+  /**
+   * Labels for products we have already seen in a dropdown.
+   *
+   * The picker is server-searched, so the page holding a chosen product is
+   * usually gone by the time the row re-renders. Without this the field falls
+   * back to showing an id, which is exactly what the UI must never show.
+   */
+  const seenProducts = useRef(new Map<string, { code: string; name: string }>());
 
   const usable = components.filter((component) => component.productId);
   const canSave = Boolean(name.trim()) && Number(price) >= 0 && price !== '' && usable.length > 0;
@@ -143,7 +142,43 @@ export function BundleDialog({
                       ),
                     )
                   }
-                  options={options}
+                  // Server-searched and paged: a static option list capped
+                  // this picker at one page of a 22,000-product catalogue, so
+                  // most products could not be found at all.
+                  fetchOptions={async (query, pageIndex) => {
+                    const rows = await listPickerProducts(query, pageIndex);
+                    for (const product of rows) {
+                      seenProducts.current.set(product.id, {
+                        code: product.code,
+                        name: product.name,
+                      });
+                    }
+                    return rows.map((product) => ({
+                      value: product.id,
+                      label: product.code,
+                      description: product.name,
+                    }));
+                  }}
+                  paginated
+                  pageSize={PICKER_PAGE_SIZE}
+                  selectedOption={(() => {
+                    const seen = seenProducts.current.get(component.productId);
+                    return seen
+                      ? {
+                          value: component.productId,
+                          label: seen.code,
+                          description: seen.name,
+                        }
+                      : undefined;
+                  })()}
+                  renderOption={(option) => (
+                    <span className="min-w-0">
+                      <span className="block truncate font-mono text-xs">{option.label}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {option.description}
+                      </span>
+                    </span>
+                  )}
                   placeholder="Pick a product"
                 />
               </div>

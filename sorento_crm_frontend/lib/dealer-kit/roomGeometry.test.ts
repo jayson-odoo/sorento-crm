@@ -6,6 +6,7 @@ import {
   boxesOverlap,
   clampBoxIntoRoom,
   isPointInside,
+  moveWall,
   roomBounds,
   snapToGrid,
   type Box,
@@ -181,5 +182,57 @@ describe('roomBounds', () => {
 
   it('survives an empty outline without throwing', () => {
     expect(roomBounds([])).toEqual({ minX: 0, minY: 0, maxX: 0, maxY: 0 });
+  });
+});
+
+describe('moveWall', () => {
+  it('moves both ends of the wall and leaves the others alone', () => {
+    // Drag the top wall (0,0)-(4000,0) down by 500.
+    const moved = moveWall(ROOM, 0, 0, 500);
+    expect(moved[0]).toEqual({ x: 0, y: 500 });
+    expect(moved[1]).toEqual({ x: 4000, y: 500 });
+    expect(moved[2]).toEqual(ROOM[2]);
+    expect(moved[3]).toEqual(ROOM[3]);
+  });
+
+  it('ignores the part of the drag along the wall', () => {
+    // Sliding a wall sideways along itself changes nothing about the room, but
+    // would drag its neighbours out of square if it were applied.
+    const moved = moveWall(ROOM, 0, 1200, 0);
+    expect(moved).toEqual(ROOM);
+  });
+
+  it('keeps the wall parallel to itself on a diagonal drag', () => {
+    const moved = moveWall(ROOM, 0, 900, 400);
+    // Only the perpendicular component (400 down) survives.
+    expect(moved[0].y).toBe(400);
+    expect(moved[1].y).toBe(400);
+    expect(moved[0].x).toBe(0);
+    expect(moved[1].x).toBe(4000);
+  });
+
+  it('snaps the moved wall to the grid', () => {
+    const moved = moveWall(ROOM, 0, 0, 137);
+    expect(moved[0].y % 50).toBe(0);
+  });
+
+  it('shrinks the room when a wall is dragged inward', () => {
+    const before = areaSquareMetres(ROOM);
+    const after = areaSquareMetres(moveWall(ROOM, 0, 0, 1000));
+    expect(after).toBeLessThan(before);
+    expect(after).toBeCloseTo(8, 5);
+  });
+
+  it('works on a wall of a concave room', () => {
+    const moved = moveWall(L_ROOM, 3, 500, 0);
+    expect(moved).not.toEqual(L_ROOM);
+    expect(moved.length).toBe(L_ROOM.length);
+  });
+
+  it('leaves a degenerate outline alone', () => {
+    expect(moveWall([{ x: 0, y: 0 }], 0, 10, 10)).toEqual([{ x: 0, y: 0 }]);
+    // A zero-length wall has no direction to be perpendicular to.
+    const degenerate = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 100, y: 100 }];
+    expect(moveWall(degenerate, 0, 10, 10)).toEqual(degenerate);
   });
 });

@@ -215,3 +215,51 @@ export function clampBoxIntoRoom(box: Box, outline: Point[]): Box {
 
   return { ...box, x: box.x + dx, y: box.y + dy };
 }
+
+/**
+ * Move a whole WALL, keeping it parallel to itself.
+ *
+ * Dragging corners alone makes the common edit hard: "this wall is 200mm too far
+ * out" means moving two corners by hand and hoping the wall stayed straight.
+ * Dragging the wall itself is what a person actually means, and it is the
+ * interaction every floor-plan tool has.
+ *
+ * Both endpoints move by the component of the drag PERPENDICULAR to the wall.
+ * Sliding a wall along its own length would change nothing about the room while
+ * silently dragging its neighbours out of square, so that component is dropped.
+ */
+export function moveWall(
+  outline: Point[],
+  wallIndex: number,
+  deltaX: number,
+  deltaY: number,
+  grid: number = DEFAULT_GRID_MM,
+): Point[] {
+  if (outline.length < 3) return outline;
+
+  const start = outline[wallIndex];
+  const end = outline[(wallIndex + 1) % outline.length];
+
+  const alongX = end.x - start.x;
+  const alongY = end.y - start.y;
+  const length = Math.hypot(alongX, alongY);
+  if (length === 0) return outline;
+
+  // Unit normal to the wall.
+  const normalX = -alongY / length;
+  const normalY = alongX / length;
+
+  // How far the drag went along that normal.
+  const distance = deltaX * normalX + deltaY * normalY;
+  const shiftX = normalX * distance;
+  const shiftY = normalY * distance;
+
+  const nextIndex = (wallIndex + 1) % outline.length;
+  return outline.map((point, index) => {
+    if (index !== wallIndex && index !== nextIndex) return point;
+    return {
+      x: snapToGrid(point.x + shiftX, grid),
+      y: snapToGrid(point.y + shiftY, grid),
+    };
+  });
+}

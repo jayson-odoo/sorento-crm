@@ -7,6 +7,7 @@ import {
   DEFAULT_GRID_MM,
   areaSquareMetres,
   boxCorners,
+  moveWall,
   roomBounds,
   snapToGrid,
   type Box,
@@ -34,6 +35,17 @@ import {
  */
 const PADDING_MM = 1000;
 
+/** The viewBox that shows the whole outline with breathing room, in millimetres. */
+function viewBoxFor(outline: Point[]) {
+  const raw = roomBounds(outline);
+  return {
+    minX: raw.minX - PADDING_MM,
+    minY: raw.minY - PADDING_MM,
+    width: Math.max(1000, raw.maxX - raw.minX + PADDING_MM * 2),
+    height: Math.max(1000, raw.maxY - raw.minY + PADDING_MM * 2),
+  };
+}
+
 export interface RoomPlanProps {
   outline: Point[];
   boxes: (Box & { id: string; label: string })[];
@@ -56,18 +68,41 @@ export function RoomPlan({
 }: RoomPlanProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [dragging, setDragging] = useState<
-    { kind: 'corner'; index: number } | { kind: 'box'; id: string } | null
+    | { kind: 'corner'; index: number }
+    | { kind: 'box'; id: string }
+    | { kind: 'wall'; index: number }
+    | null
   >(null);
 
-  const bounds = useMemo(() => {
-    const raw = roomBounds(outline);
-    return {
-      minX: raw.minX - PADDING_MM,
-      minY: raw.minY - PADDING_MM,
-      width: Math.max(1000, raw.maxX - raw.minX + PADDING_MM * 2),
-      height: Math.max(1000, raw.maxY - raw.minY + PADDING_MM * 2),
-    };
-  }, [outline]);
+  /**
+   * Where a wall drag began, and the outline it began from.
+   *
+   * A ref, not state, and deliberately so. Moving a wall is a RELATIVE gesture,
+   * so it needs a fixed origin; keeping that origin in state meant every
+   * pointermove within one React batch still saw the previous origin and
+   * re-applied the same delta. A 60px drag came out as 7 metres.
+   *
+   * Anchoring to the outline as it was at pointerdown also makes the drag
+   * idempotent: the same cursor position always yields the same wall, however
+   * many move events arrived on the way there.
+   */
+  const wallDragOrigin = useRef<{ x: number; y: number; outline: Point[] } | null>(null);
+
+  const liveBounds = useMemo(() => viewBoxFor(outline), [outline]);
+
+  /**
+   * The viewBox is FROZEN for the duration of a drag.
+   *
+   * Otherwise the drag chases itself: growing the room grows the bounds, the
+   * bounds set the millimetres-per-pixel scale, and the same cursor position
+   * then means MORE millimetres than it did a frame ago. Pulling a wall 60px
+   * moved it 3.7 metres instead of 0.7, and a corner ran away from the pointer.
+   *
+   * The cost is that a room dragged past the frozen edge is briefly clipped;
+   * the padding covers ordinary gestures, and the scale settles on drop.
+   */
+  const frozenBounds = useRef<ReturnType<typeof viewBoxFor> | null>(null);
+  const bounds = dragging ? (frozenBounds.current ?? liveBounds) : liveBounds;
 
   /** Screen point -> millimetres, via the SVG's own transform. */
   const toMillimetres = useCallback((event: React.PointerEvent): Point | null => {
@@ -99,6 +134,23 @@ export function RoomPlan({
         return;
       }
 
+      if (dragging.kind === 'wall') {
+        // Always measured from the gesture's origin against the outline as it
+        // was then. Measuring against the CURRENT outline would fold each move
+        // into the next and run the wall away from the cursor.
+        const origin = wallDragOrigin.current;
+        if (!origin) return;
+        onOutlineChange(
+          moveWall(
+            origin.outline,
+            dragging.index,
+            position.x - origin.x,
+            position.y - origin.y,
+          ),
+        );
+        return;
+      }
+
       const box = boxes.find((candidate) => candidate.id === dragging.id);
       if (box && onMoveBox) {
         // Drag by the centre: grabbing a corner makes a unit jump on pickup.
@@ -106,6 +158,22 @@ export function RoomPlan({
       }
     },
     [dragging, outline, boxes, onOutlineChange, onMoveBox, toMillimetres],
+  );
+
+  const endDrag = useCallback(() => {
+    setDragging(null);
+    wallDragOrigin.current = null;
+    frozenBounds.current = null;
+  }, []);
+
+  /** Freeze the scale, then start the gesture. Order matters: the first
+      pointermove already needs the frozen viewBox. */
+  const beginDrag = useCallback(
+    (next: NonNullable<typeof dragging>) => {
+      frozenBounds.current = viewBoxFor(outline);
+      setDragging(next);
+    },
+    [outline],
   );
 
   const area = areaSquareMetres(outline);
@@ -130,8 +198,8 @@ export function RoomPlan({
         className="h-full w-full touch-none"
         style={{ aspectRatio: `${bounds.width} / ${bounds.height}` }}
         onPointerMove={handleMove}
-        onPointerUp={() => setDragging(null)}
-        onPointerLeave={() => setDragging(null)}
+        onPointerUp={endDrag}
+        onPointerLeave={endDrag}
         data-dk-room-plan
       >
         <defs>
@@ -197,16 +265,23 @@ export function RoomPlan({
             // the label never sits on top of the line it measures.
             const midX = (point.x + next.x) / 2;
             const midY = (point.y + next.y) / 2;
-            const offsetX = midX < centroid.x ? -180 : 180;
-            const offsetY = midY < centroid.y ? -180 : 180;
             const horizontal = Math.abs(next.x - point.x) >= Math.abs(next.y - point.y);
+            const outward = horizontal
+              ? (midY < centroid.y ? -1 : 1)
+              : (midX < centroid.x ? -1 : 1);
+
+            // A vertical wall's label is set BESIDE the wall and anchored at its
+            // near edge. Centring it on a point 180mm away is not enough: the
+            // text is over a metre wide at this scale, so half of it lands back
+            // on the wall it measures.
+            const gap = 140;
 
             return (
               <text
                 key={`wall-${index}`}
-                x={midX + (horizontal ? 0 : offsetX)}
-                y={midY + (horizontal ? offsetY : 0)}
-                textAnchor="middle"
+                x={midX + (horizontal ? 0 : outward * gap)}
+                y={midY + (horizontal ? outward * 260 : 0)}
+                textAnchor={horizontal ? 'middle' : outward < 0 ? 'end' : 'start'}
                 dominantBaseline="middle"
                 className="fill-muted-foreground"
                 style={{ fontSize: 150 }}
@@ -229,7 +304,7 @@ export function RoomPlan({
               onPointerDown={(event) => {
                 event.stopPropagation();
                 onSelectBox?.(box.id);
-                setDragging({ kind: 'box', id: box.id });
+                beginDrag({ kind: 'box', id: box.id });
               }}
               className="cursor-move"
               data-dk-plan-box={box.id}
@@ -268,6 +343,35 @@ export function RoomPlan({
           );
         })}
 
+        {/* A fat invisible line over each wall. Dragging a wall is what somebody
+            means by "this wall is 200mm too far out"; doing it by moving two
+            corners is fiddly and lets the wall go out of square. */}
+        {outline.length >= 3 &&
+          outline.map((point, index) => {
+            const next = outline[(index + 1) % outline.length];
+            const horizontal = Math.abs(next.x - point.x) >= Math.abs(next.y - point.y);
+            return (
+              <line
+                key={`wall-handle-${index}`}
+                x1={point.x}
+                y1={point.y}
+                x2={next.x}
+                y2={next.y}
+                stroke="transparent"
+                strokeWidth={160}
+                className={horizontal ? 'cursor-ns-resize' : 'cursor-ew-resize'}
+                data-dk-room-wall={index}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                  const start = toMillimetres(event);
+                  if (!start) return;
+                  wallDragOrigin.current = { x: start.x, y: start.y, outline };
+                  beginDrag({ kind: 'wall', index });
+                }}
+              />
+            );
+          })}
+
         {outline.map((point, index) => (
           <circle
             key={`${point.x}-${point.y}-${index}`}
@@ -278,7 +382,7 @@ export function RoomPlan({
             strokeWidth={20}
             onPointerDown={(event) => {
               event.stopPropagation();
-              setDragging({ kind: 'corner', index });
+              beginDrag({ kind: 'corner', index });
             }}
             data-dk-room-corner={index}
           />

@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import Link from 'next/link';
 import {
   AlertCircle,
+  Box,
   CloudUpload,
   ExternalLink,
   FileDown,
@@ -176,6 +178,15 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
                 </a>
               </Button>
             )}
+            {/* The journey is catalogue -> room, and until now there was no way
+                to make that move: you had to go back to the sidebar and start
+                the designer cold, having just chosen the products. */}
+            <Button variant="outline" size="sm" asChild>
+              <Link href={`/dealer-kit/design?from=${pageId}`}>
+                <Box className="size-4" />
+                Design a room
+              </Link>
+            </Button>
             <Button variant="outline" size="sm" onClick={() => setShowHistory((open) => !open)}>
               <History className="size-4" />
               History

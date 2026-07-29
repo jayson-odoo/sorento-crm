@@ -57,6 +57,7 @@ import {
 } from '@/lib/dealer-kit/types';
 
 import { BuilderCanvas } from './BuilderCanvas';
+import { FocusShell, FocusToggle } from './FocusMode';
 import { PaperCanvas } from './PaperCanvas';
 
 /** Desktop / tablet / mobile, plus paper - the one view allowed to draw page breaks. */
@@ -129,6 +130,7 @@ export interface PageEditorProps {
 export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<CanvasMode>('desktop');
+  const [focus, setFocus] = useState(false);
   const [activeSectionId, setActiveSectionId] = useState<string | null>(
     doc.sections[0]?.id ?? null,
   );
@@ -454,7 +456,8 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
   }, [activeSection, breakpoint, updateSection]);
 
   return (
-    <div className="flex flex-col gap-4 lg:flex-row">
+    <FocusShell active={focus} onExit={() => setFocus(false)}>
+    <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
       <aside className="w-full shrink-0 lg:w-56">
         <Card>
           <CardHeader className="pb-3">
@@ -543,6 +546,8 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
                   Follow desktop again
                 </Button>
               )}
+
+              <FocusToggle active={focus} onToggle={setFocus} label="canvas" />
 
               <Tabs value={mode} onValueChange={(value) => setMode(value as CanvasMode)}>
                 <TabsList>
@@ -650,5 +655,6 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
         description={`This removes the ${pendingDelete?.type ?? ''} block from this section. This action cannot be undone.`}
       />
     </div>
+    </FocusShell>
   );
 }
