@@ -202,6 +202,67 @@ test.describe('Dealer Kit room designer', () => {
     expect(Math.abs(after - expected)).toBeLessThan(Math.max(200, expected * 0.15));
   });
 
+  test('typing a wall length makes the wall exactly that long', async ({ page }) => {
+    await openDesigner(page);
+
+    // The trust-builder: a dealer arrives with a tape measure, and 3050 has to
+    // mean 3050 rather than "about 3050 after a snap".
+    const label = page.locator('[data-dk-wall-label="0"]');
+    await expect(label).toBeAttached({ timeout: 20_000 });
+    await label.dispatchEvent('pointerdown', { bubbles: true });
+
+    const input = page.locator('[data-dk-wall-input="0"]');
+    await expect(input).toBeVisible({ timeout: 10_000 });
+    await input.fill('3050');
+    await input.press('Enter');
+
+    await expect(page.locator('[data-dk-room-plan] text').first()).toHaveText('3050 mm');
+  });
+
+  test('a product dragged at a wall backs onto it, and undo puts it back', async ({ page }) => {
+    await openDesigner(page);
+
+    const combobox = page.getByRole('combobox').first();
+    await openTrigger(combobox);
+    const option = page.getByRole('option').first();
+    await expect(option).toBeVisible({ timeout: 20_000 });
+    await option.dispatchEvent('click');
+    await tap(page, page.getByRole('button', { name: /add product to room/i }));
+
+    const box = page.locator('[data-dk-plan-box]').first();
+    await expect(box).toBeVisible({ timeout: 30_000 });
+    await box.click();
+
+    const points = () => page.locator('[data-dk-plan-box] polygon').first().getAttribute('points');
+    const before = await points();
+
+    const plan = page.locator('[data-dk-room-plan]');
+    const planBox = (await plan.boundingBox())!;
+    const boxBox = (await box.boundingBox())!;
+    await page.mouse.move(boxBox.x + boxBox.width / 2, boxBox.y + boxBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(planBox.x + 40, planBox.y + planBox.height / 2, { steps: 10 });
+    await page.mouse.up();
+
+    // Flush against the left wall: the room starts at x=0, so the footprint's
+    // leftmost corner has to land there rather than merely near it.
+    await expect
+      .poll(async () => {
+        const xs = ((await points()) ?? '')
+          .split(' ')
+          .map((pair) => Number(pair.split(',')[0]));
+        return Math.min(...xs);
+      }, { timeout: 10_000 })
+      .toBe(0);
+
+    // Clearance chips only exist once something is against a wall - they are
+    // the "will the next one fit" answer.
+    await expect(page.locator('[data-dk-clearance] text').first()).toBeVisible();
+
+    await page.getByRole('button', { name: 'Undo' }).click();
+    await expect.poll(points, { timeout: 10_000 }).toBe(before);
+  });
+
   test('a design the server no longer has does not brick the designer', async ({ page }) => {
     await openDesigner(page);
 

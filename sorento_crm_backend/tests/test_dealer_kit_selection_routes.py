@@ -172,6 +172,45 @@ def test_a_selection_round_trips_with_lines_and_a_room(api):
     assert reopened.json()["room"]["placements"][0]["rotation"] == 90
 
 
+def test_a_ceiling_height_round_trips(api):
+    """The one vertical number the room has.
+
+    Without it the 3D view is a floor plan floating in space, and every design
+    silently assumes the same ceiling. It is optional on purpose: a design saved
+    before this existed must still load rather than 422.
+    """
+    db, _as = api
+    _as(_OWNER_ID)
+    client = TestClient(app)
+
+    created = client.post("/api/v1/dealer-kit/selections", json={"name": "ZZT ceiling"})
+    selection_id = created.json()["id"]
+    square = [
+        {"x": 0, "y": 0},
+        {"x": 3000, "y": 0},
+        {"x": 3000, "y": 3000},
+        {"x": 0, "y": 3000},
+    ]
+
+    saved = client.put(
+        f"/api/v1/dealer-kit/selections/{selection_id}/room",
+        json={"outline": square, "placements": [], "ceilingHeightMm": 2700},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["room"]["ceilingHeightMm"] == 2700
+
+    reopened = client.get(f"/api/v1/dealer-kit/selections/{selection_id}")
+    assert reopened.json()["room"]["ceilingHeightMm"] == 2700
+
+    # Omitted entirely: still a valid save, and the height simply is not set.
+    without = client.put(
+        f"/api/v1/dealer-kit/selections/{selection_id}/room",
+        json={"outline": square, "placements": []},
+    )
+    assert without.status_code == 200, without.text
+    assert without.json()["room"]["ceilingHeightMm"] is None
+
+
 def test_another_user_cannot_read_or_change_someone_elses_selection(api):
     db, _as = api
     _as(_OWNER_ID)

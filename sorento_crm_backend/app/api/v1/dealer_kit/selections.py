@@ -176,7 +176,13 @@ def save_room(
 ):
     selection = _owned(db, selection_id, user)
     selection_service.save_room(
-        db, selection, {"outline": payload.outline, "placements": payload.placements}
+        db,
+        selection,
+        {
+            "outline": payload.outline,
+            "placements": payload.placements,
+            "ceilingHeightMm": payload.ceiling_height_mm,
+        },
     )
     db.commit()
     db.refresh(selection)

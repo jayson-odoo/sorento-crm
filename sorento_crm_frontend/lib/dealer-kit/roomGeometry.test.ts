@@ -7,6 +7,7 @@ import {
   clampBoxIntoRoom,
   isPointInside,
   moveWall,
+  setWallLength,
   roomBounds,
   snapToGrid,
   type Box,
@@ -234,5 +235,53 @@ describe('moveWall', () => {
     // A zero-length wall has no direction to be perpendicular to.
     const degenerate = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 100, y: 100 }];
     expect(moveWall(degenerate, 0, 10, 10)).toEqual(degenerate);
+  });
+});
+
+describe('setWallLength', () => {
+  const room: Point[] = [
+    { x: 0, y: 0 },
+    { x: 4000, y: 0 },
+    { x: 4000, y: 3000 },
+    { x: 0, y: 3000 },
+  ];
+
+  it('makes a wall exactly the length that was typed', () => {
+    // The whole point of typing a number instead of dragging: 3050 must mean
+    // 3050, not "about 3050".
+    const next = setWallLength(room, 0, 3050);
+    const length = Math.hypot(next[1].x - next[0].x, next[1].y - next[0].y);
+
+    expect(length).toBe(3050);
+  });
+
+  it('moves the far end and leaves the near end where it was', () => {
+    const next = setWallLength(room, 0, 3000);
+
+    expect(next[0]).toEqual({ x: 0, y: 0 });
+    expect(next[1]).toEqual({ x: 3000, y: 0 });
+    // The wall opposite comes with it, so the room stays a rectangle.
+    expect(next[2]).toEqual({ x: 3000, y: 3000 });
+    expect(next[3]).toEqual({ x: 0, y: 3000 });
+  });
+
+  it('lengthens as readily as it shortens', () => {
+    const next = setWallLength(room, 1, 5000);
+    const length = Math.hypot(next[2].x - next[1].x, next[2].y - next[1].y);
+
+    expect(length).toBe(5000);
+  });
+
+  it('refuses a length that would not be a room', () => {
+    // A typo of 0 or a negative should leave the room alone rather than fold it
+    // inside out, which is not recoverable by dragging.
+    expect(setWallLength(room, 0, 0)).toBe(room);
+    expect(setWallLength(room, 0, -500)).toBe(room);
+    expect(setWallLength(room, 0, Number.NaN)).toBe(room);
+  });
+
+  it('leaves a degenerate outline alone', () => {
+    expect(setWallLength([], 0, 1000)).toEqual([]);
+    expect(setWallLength([{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }], 0, 1000)).toHaveLength(3);
   });
 });

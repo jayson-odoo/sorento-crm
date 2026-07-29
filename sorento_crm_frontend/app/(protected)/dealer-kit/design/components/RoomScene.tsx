@@ -60,16 +60,22 @@ function labelTexture(text: string): THREE.Texture {
   return texture;
 }
 
+/** A ceiling nobody typed. Standard Malaysian residential floor-to-ceiling. */
+export const DEFAULT_CEILING_MM = 2700;
+
 export function RoomScene({
   outline,
   boxes,
   selectedBoxId,
   onSelectBox,
+  ceilingHeightMm = DEFAULT_CEILING_MM,
 }: {
   outline: Point[];
   boxes: SceneBox[];
   selectedBoxId?: string | null;
   onSelectBox?: (boxId: string) => void;
+  /** Wall height. The only vertical measurement the room itself has. */
+  ceilingHeightMm?: number;
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const pickRef = useRef<(boxId: string) => void>(() => {});
@@ -114,6 +120,9 @@ export function RoomScene({
     sun.position.set(5, 10, 5);
     scene.add(sun);
 
+    const pickable: THREE.Object3D[] = [];
+    const disposables: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[] = [];
+
     // Floor from the room polygon. A Shape is drawn in XY, so it is laid flat.
     if (outline.length >= 3) {
       const shape = new THREE.Shape();
@@ -131,8 +140,55 @@ export function RoomScene({
       scene.add(floor);
     }
 
-    const pickable: THREE.Object3D[] = [];
-    const disposables: (THREE.BufferGeometry | THREE.Material | THREE.Texture)[] = [];
+    /**
+     * Walls, and the trick that makes them usable.
+     *
+     * A room with four solid walls seen from outside is a box you cannot look
+     * into, so every wall facing roughly toward the camera is hidden each
+     * frame. That is what the planner we studied does, and it is why its 3D
+     * view reads as a room rather than a crate. One plane per wall, no
+     * thickness: thickness is a number nobody would type and would only show up
+     * as a shadow line.
+     */
+    const wallMeshes: { mesh: THREE.Mesh; normal: THREE.Vector3 }[] = [];
+    const wallHeight = Math.max(1, ceilingHeightMm) * MM_TO_M;
+    if (outline.length >= 3) {
+      for (let index = 0; index < outline.length; index += 1) {
+        const start = outline[index];
+        const end = outline[(index + 1) % outline.length];
+        const runX = (end.x - start.x) * MM_TO_M;
+        const runZ = (end.y - start.y) * MM_TO_M;
+        const length = Math.hypot(runX, runZ);
+        if (length < 0.01) continue;
+
+        const geometry = new THREE.PlaneGeometry(length, wallHeight);
+        const material = new THREE.MeshStandardMaterial({
+          color: '#f8fafc',
+          side: THREE.DoubleSide,
+          roughness: 0.9,
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(
+          ((start.x + end.x) / 2) * MM_TO_M,
+          wallHeight / 2,
+          ((start.y + end.y) / 2) * MM_TO_M,
+        );
+        mesh.rotation.y = -Math.atan2(runZ, runX);
+        // The inward normal, decided by pointing it at the room's middle rather
+        // than by assuming a winding direction. A user who drags their corners
+        // anticlockwise has still drawn a room, and getting this backwards hides
+        // exactly the wrong walls - which looks like a broken renderer.
+        const normal = new THREE.Vector3(runZ / length, 0, -runX / length);
+        const toCentre = new THREE.Vector3(centre.x, 0, centre.z).sub(
+          new THREE.Vector3(mesh.position.x, 0, mesh.position.z),
+        );
+        if (normal.dot(toCentre) < 0) normal.negate();
+        scene.add(mesh);
+        wallMeshes.push({ mesh, normal });
+        disposables.push(geometry, material);
+      }
+    }
+
 
     for (const box of boxes) {
       const boxWidth = box.width * MM_TO_M;
@@ -188,9 +244,18 @@ export function RoomScene({
     renderer.domElement.addEventListener('click', handleClick);
 
     let frame = 0;
+    const toWall = new THREE.Vector3();
     const animate = () => {
       frame = requestAnimationFrame(animate);
       controls.update();
+      // A wall whose inside faces away from the camera is between you and the
+      // room, so it comes down for this frame.
+      for (const wall of wallMeshes) {
+        toWall.copy(wall.mesh.position).sub(camera.position).setY(0).normalize();
+        // Inward normal pointing the same way as the view means the room is
+        // BEHIND this wall: it is in the way, so it goes.
+        wall.mesh.visible = wall.normal.dot(toWall) <= 0;
+      }
       renderer.render(scene, camera);
     };
     animate();
@@ -215,7 +280,7 @@ export function RoomScene({
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
     };
-  }, [outline, boxes, selectedBoxId]);
+  }, [outline, boxes, selectedBoxId, ceilingHeightMm]);
 
   return (
     <div

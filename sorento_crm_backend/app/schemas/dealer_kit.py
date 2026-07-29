@@ -280,6 +280,12 @@ class RoomWrite(BaseModel):
 
     outline: list[dict] = Field(default_factory=list)
     placements: list[dict] = Field(default_factory=list)
+    # The one vertical number the room has. Ceiling height is what makes the 3D
+    # view a room rather than a floor plan floating in space, and it is the only
+    # Z measurement a dealer knows offhand - wall thickness is not asked for.
+    ceiling_height_mm: Optional[float] = Field(
+        default=None, validation_alias="ceilingHeightMm", serialization_alias="ceilingHeightMm"
+    )
 
 
 class SelectionLineOut(BaseModel):

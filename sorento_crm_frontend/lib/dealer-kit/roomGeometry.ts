@@ -263,3 +263,41 @@ export function moveWall(
     };
   });
 }
+
+/**
+ * Give a wall an exact length, by moving its far end.
+ *
+ * Typing a number is how a dealer transfers a tape measure into the plan, and
+ * it has to mean what it says: 3050 becomes 3050, not "about 3050" after a
+ * snap. So this deliberately does NOT round to the grid - the grid exists to
+ * make dragging forgiving, and a typed number needs no forgiving.
+ *
+ * The near end stays put and the wall that follows comes along, which keeps a
+ * rectangle a rectangle. Anything that would not be a room - zero, negative, a
+ * typo that parsed to NaN - leaves the outline untouched, because a folded
+ * outline cannot be dragged back into shape.
+ */
+export function setWallLength(outline: Point[], wallIndex: number, lengthMm: number): Point[] {
+  if (outline.length < 3) return outline;
+  if (!Number.isFinite(lengthMm) || lengthMm <= 0) return outline;
+
+  const start = outline[wallIndex];
+  const end = outline[(wallIndex + 1) % outline.length];
+  const currentLength = Math.hypot(end.x - start.x, end.y - start.y);
+  if (currentLength < EPSILON) return outline;
+
+  const unitX = (end.x - start.x) / currentLength;
+  const unitY = (end.y - start.y) / currentLength;
+  const shift = lengthMm - currentLength;
+
+  // The far end of THIS wall is the near end of the next one, so moving the
+  // next wall bodily along this wall's direction is the same edit - and it is
+  // the edit that keeps the corners square.
+  const nextIndex = (wallIndex + 1) % outline.length;
+  const afterIndex = (wallIndex + 2) % outline.length;
+
+  return outline.map((point, index) => {
+    if (index !== nextIndex && index !== afterIndex) return point;
+    return { x: point.x + unitX * shift, y: point.y + unitY * shift };
+  });
+}

@@ -10,8 +10,10 @@ import {
   Box as BoxIcon,
   Check,
   Plus,
+  Redo2,
   RotateCw,
   Trash2,
+  Undo2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -26,6 +28,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -45,6 +49,15 @@ import {
   type SelectionLine,
 } from '../../services/selectionService';
 import {
+  canRedo,
+  canUndo,
+  newHistory,
+  pushHistory,
+  redo,
+  undo,
+  type History,
+} from '@/lib/dealer-kit/history';
+import {
   boxesForSelection,
   placementsOf,
   quantityOf,
@@ -53,7 +66,7 @@ import {
 } from '@/lib/dealer-kit/roomBoxes';
 import { FocusShell, FocusToggle } from '../../components/FocusMode';
 import { RoomPlan } from './RoomPlan';
-import { RoomScene } from './RoomScene';
+import { DEFAULT_CEILING_MM, RoomScene } from './RoomScene';
 
 /**
  * The room designer: pick products, shape the room, place them, confirm.
@@ -82,6 +95,12 @@ const STARTING_ROOM: Point[] = [
   { x: 0, y: 3000 },
 ];
 
+/** Everything an undo step has to restore: the room, and what stands in it. */
+interface RoomSnapshot {
+  outline: Point[];
+  placed: PlacedBox[];
+}
+
 /** Where this design is remembered between visits, so a reload is not a restart. */
 const LAST_SELECTION_KEY = 'dealer-kit:last-selection';
 
@@ -94,6 +113,26 @@ export function RoomDesigner() {
   const [productToAdd, setProductToAdd] = useState('');
   const [dirty, setDirty] = useState(false);
   const [focus, setFocus] = useState(false);
+  /**
+   * Floor to ceiling, in millimetres.
+   *
+   * The only vertical number the room has. Wall thickness is deliberately not
+   * asked for: nobody knows it offhand, and at this scale it would show up as a
+   * shadow line and nothing else.
+   */
+  const [ceilingHeightMm, setCeilingHeightMm] = useState(DEFAULT_CEILING_MM);
+
+  /**
+   * Undo, as whole snapshots of the room.
+   *
+   * Entries are self-contained on purpose (see lib/dealer-kit/history): the
+   * planner we studied stores something cleverer and undoing a fresh addition
+   * crashes it outright. One entry per GESTURE, not per frame - a drag emits a
+   * state every pointermove.
+   */
+  const [history, setHistory] = useState<History<RoomSnapshot>>(() =>
+    newHistory({ outline: STARTING_ROOM, placed: [] }),
+  );
 
   /**
    * The catalogue we were sent from, if any.
@@ -157,6 +196,7 @@ export function RoomDesigner() {
     setPlaced((current) => boxesForSelection(selection, current));
     if (!hydrated.current && selection.room?.outline?.length) {
       setOutline(selection.room.outline);
+      if (selection.room.ceilingHeightMm) setCeilingHeightMm(selection.room.ceilingHeightMm);
       hydrated.current = true;
     }
   }, [selection]);
@@ -203,14 +243,16 @@ export function RoomDesigner() {
   }, [chosen, selection, lineMutation]);
 
   const moveBox = useCallback(
-    (boxId: string, x: number, y: number) => {
+    (boxId: string, x: number, y: number, rotation: number) => {
       setDirty(true);
       setPlaced((current) =>
         current.map((box) => {
           if (box.id !== boxId) return box;
+          // Rotation arrives with the position because backing onto a wall
+          // turns the product: the plan decides orientation, not the user.
           // Tidy rather than refuse: a drop half through a wall is a clear
           // intent the system can simply fix (AC-V4).
-          return clampBoxIntoRoom({ ...box, x, y }, outline) as PlacedBox;
+          return clampBoxIntoRoom({ ...box, x, y, rotation }, outline) as PlacedBox;
         }),
       );
     },
@@ -224,12 +266,13 @@ export function RoomDesigner() {
 
   const rotateSelected = useCallback(() => {
     setDirty(true);
+    setHistory((current) => pushHistory(current, { outline, placed }));
     setPlaced((current) =>
       current.map((box) =>
         box.id === selectedId ? { ...box, rotation: (box.rotation + 90) % 360 } : box,
       ),
     );
-  }, [selectedId]);
+  }, [selectedId, outline, placed]);
 
   const removeSelected = useCallback(() => {
     const box = placed.find((candidate) => candidate.id === selectedId);
@@ -238,6 +281,7 @@ export function RoomDesigner() {
     // Take the clicked copy out locally FIRST, renumbering what is left, then
     // tell the server the new count. Sending only "one fewer" would leave the
     // rebuild deleting the last copy instead of the one they clicked.
+    setHistory((current) => pushHistory(current, { outline, placed }));
     const remaining = removeBox(placed, box.id);
     setPlaced(remaining);
     setSelectedId(null);
@@ -246,7 +290,105 @@ export function RoomDesigner() {
       productId: box.productId,
       quantity: quantityOf(remaining, box.productId),
     });
-  }, [placed, selectedId, lineMutation]);
+  }, [placed, selectedId, lineMutation, outline]);
+
+  /** Record the room as it stands now, as one undoable step. */
+  const commit = useCallback(() => {
+    setHistory((current) => pushHistory(current, { outline, placed }));
+  }, [outline, placed]);
+
+  /**
+   * Restore a snapshot, and tell the server about any product it changes.
+   *
+   * Undoing a delete has to put the LINE back, not just the box: the room is
+   * local but what was chosen lives on the server, and a room showing two
+   * basins against a selection that says one is the kind of disagreement
+   * nobody notices until the quote is wrong. Quantities are pushed one product
+   * at a time and the cache is refreshed once at the end, so two products
+   * changing in the same step cannot overwrite each other's response.
+   */
+  const applySnapshot = useCallback(
+    async (snapshot: RoomSnapshot) => {
+      setOutline(snapshot.outline);
+      setPlaced(snapshot.placed);
+      setSelectedId(null);
+      setDirty(true);
+
+      if (!selection) return;
+      const wanted = new Map<string, number>();
+      for (const box of snapshot.placed) {
+        wanted.set(box.productId, (wanted.get(box.productId) ?? 0) + 1);
+      }
+      for (const line of selection.lines) {
+        if (!wanted.has(line.productId)) wanted.set(line.productId, 0);
+      }
+
+      const changed = [...wanted.entries()].filter(([productId, quantity]) => {
+        const line = selection.lines.find((row) => row.productId === productId);
+        return (line?.quantity ?? 0) !== quantity;
+      });
+      if (changed.length === 0) return;
+
+      try {
+        for (const [productId, quantity] of changed) {
+          await setSelectionLine(selection.id, productId, quantity);
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Could not undo that');
+      } finally {
+        queryClient.invalidateQueries({ queryKey: ['dealer-kit', 'selection', selection.id] });
+      }
+    },
+    [selection, queryClient],
+  );
+
+  const undoStep = useCallback(() => {
+    const next = undo(history);
+    if (next === history) return;
+    setHistory(next);
+    void applySnapshot(next.present);
+  }, [history, applySnapshot]);
+
+  const redoStep = useCallback(() => {
+    const next = redo(history);
+    if (next === history) return;
+    setHistory(next);
+    void applySnapshot(next.present);
+  }, [history, applySnapshot]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      // Never steal Ctrl-Z from a field somebody is typing in.
+      if (target && /^(INPUT|TEXTAREA)$/.test(target.tagName)) return;
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return;
+      event.preventDefault();
+      if (event.shiftKey) redoStep();
+      else undoStep();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [undoStep, redoStep]);
+
+  /**
+   * Another one of the same product, offset so it is visibly a second copy.
+   *
+   * Placement comes from the rebuild, which puts the new copy at its first-guess
+   * position; the user then drags it where it belongs, and the wall magnet does
+   * the orienting.
+   */
+  const duplicateBox = useCallback(
+    (boxId: string) => {
+      const box = placed.find((candidate) => candidate.id === boxId);
+      if (!box) return;
+      commit();
+      lineMutation.mutate({
+        productId: box.productId,
+        quantity: quantityOf(placed, box.productId) + 1,
+      });
+    },
+    [placed, commit, lineMutation],
+  );
 
   /**
    * Put the canvas back to an empty room.
@@ -264,14 +406,18 @@ export function RoomDesigner() {
     setOutline(STARTING_ROOM);
     setSelectedId(null);
     setDirty(false);
+    // A new design starts with no history: undoing into the previous design
+    // would silently resurrect work the user just set aside.
+    setHistory(newHistory({ outline: STARTING_ROOM, placed: [] }));
   }, []);
 
   const save = useCallback(() => {
     roomMutation.mutate({
       outline,
       placements: placementsOf(placed),
+      ceilingHeightMm,
     });
-  }, [outline, placed, roomMutation]);
+  }, [outline, placed, ceilingHeightMm, roomMutation]);
 
   const collisions = useMemo(() => {
     const clashing = new Set<string>();
@@ -314,6 +460,26 @@ export function RoomDesigner() {
                   </Link>
                 </Button>
               )}
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label="Undo"
+                title="Undo (Ctrl+Z)"
+                disabled={!canUndo(history) || busy}
+                onClick={undoStep}
+              >
+                <Undo2 className="size-4" />
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label="Redo"
+                title="Redo (Ctrl+Shift+Z)"
+                disabled={!canRedo(history) || busy}
+                onClick={redoStep}
+              >
+                <Redo2 className="size-4" />
+              </Button>
               <FocusToggle active={focus} onToggle={setFocus} label="room" />
               <Button size="sm" variant="outline" onClick={startFresh} disabled={busy}>
                 <Plus className="size-4" />
@@ -340,10 +506,20 @@ export function RoomDesigner() {
                   onOutlineChange={changeOutline}
                   onMoveBox={moveBox}
                   onSelectBox={setSelectedId}
+                  onRotateBox={(boxId) => {
+                    setSelectedId(boxId);
+                    rotateSelected();
+                  }}
+                  onDuplicateBox={duplicateBox}
+                  onRemoveBox={(boxId) => {
+                    setSelectedId(boxId);
+                    removeSelected();
+                  }}
+                  onCommit={commit}
                 />
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Drag a corner to reshape the room, or drag a product to move it. Everything
-                  snaps to 50mm.
+                  Drag a wall or a corner to reshape the room, or click a wall length to type
+                  it. Products snap against the nearest wall and turn to face the room.
                 </p>
               </TabsContent>
 
@@ -353,9 +529,34 @@ export function RoomDesigner() {
                   boxes={placed}
                   selectedBoxId={selectedId}
                   onSelectBox={setSelectedId}
+                  ceilingHeightMm={ceilingHeightMm}
                 />
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Label htmlFor="dk-ceiling-height" className="text-xs text-muted-foreground">
+                    Ceiling height
+                  </Label>
+                  <Input
+                    id="dk-ceiling-height"
+                    type="number"
+                    min={1000}
+                    max={6000}
+                    step={50}
+                    className="h-8 w-28"
+                    value={ceilingHeightMm}
+                    onChange={(event) => {
+                      const typed = Number(event.target.value);
+                      // Left alone rather than clamped mid-typing: clamping on
+                      // every keystroke fights whoever is deleting a digit.
+                      if (!Number.isFinite(typed)) return;
+                      setCeilingHeightMm(typed);
+                      setDirty(true);
+                    }}
+                  />
+                  <span className="text-xs text-muted-foreground">mm</span>
+                </div>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Drag to orbit, scroll to zoom. Each product is a box at its real size.
+                  Drag to orbit, scroll to zoom. Walls between you and the room drop away as
+                  you turn. Each product is a box at its real size.
                 </p>
               </TabsContent>
             </Tabs>

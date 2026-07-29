@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useMemo, useRef, useState } from 'react';
+import { Copy, RotateCw, Trash2 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import {
@@ -9,10 +10,12 @@ import {
   boxCorners,
   moveWall,
   roomBounds,
+  setWallLength,
   snapToGrid,
   type Box,
   type Point,
 } from '@/lib/dealer-kit/roomGeometry';
+import { clearances, snapToWall, wallUnder } from '@/lib/dealer-kit/roomSnap';
 
 /**
  * The room, from above.
@@ -51,8 +54,14 @@ export interface RoomPlanProps {
   boxes: (Box & { id: string; label: string })[];
   selectedBoxId?: string | null;
   onOutlineChange: (outline: Point[]) => void;
-  onMoveBox?: (boxId: string, x: number, y: number) => void;
+  /** Rotation travels with the position: backing onto a wall turns the box. */
+  onMoveBox?: (boxId: string, x: number, y: number, rotation: number) => void;
   onSelectBox?: (boxId: string) => void;
+  onRotateBox?: (boxId: string) => void;
+  onDuplicateBox?: (boxId: string) => void;
+  onRemoveBox?: (boxId: string) => void;
+  /** Called when a drag or a typed length finishes, so it can be undone as one step. */
+  onCommit?: () => void;
   /** A traced floor plan sits behind the grid as a guide (AC-R4). */
   backgroundUrl?: string | null;
 }
@@ -64,6 +73,10 @@ export function RoomPlan({
   onOutlineChange,
   onMoveBox,
   onSelectBox,
+  onRotateBox,
+  onDuplicateBox,
+  onRemoveBox,
+  onCommit,
   backgroundUrl,
 }: RoomPlanProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -87,6 +100,16 @@ export function RoomPlan({
    * many move events arrived on the way there.
    */
   const wallDragOrigin = useRef<{ x: number; y: number; outline: Point[] } | null>(null);
+
+  /**
+   * The wall whose length is being typed, and what has been typed so far.
+   *
+   * A dealer arrives with a tape measure, not a mouse. Dragging is for shaping;
+   * typing is for transferring a measurement that already exists, and it has to
+   * live ON the wall - a side panel makes you look away from the thing you are
+   * changing.
+   */
+  const [editingWall, setEditingWall] = useState<{ index: number; value: string } | null>(null);
 
   const liveBounds = useMemo(() => viewBoxFor(outline), [outline]);
 
@@ -154,17 +177,26 @@ export function RoomPlan({
       const box = boxes.find((candidate) => candidate.id === dragging.id);
       if (box && onMoveBox) {
         // Drag by the centre: grabbing a corner makes a unit jump on pickup.
-        onMoveBox(dragging.id, x - box.width / 2, y - box.depth / 2);
+        const moved = { ...box, x: x - box.width / 2, y: y - box.depth / 2 };
+        // Wall magnetism. Orientation is never the user's job: a vanity backs
+        // onto a wall, and dragging it toward another wall hops it across and
+        // turns it. There is no rotate handle to leave pointing at a wall.
+        const snapped = snapToWall(moved, outline);
+        const result = snapped?.box ?? moved;
+        onMoveBox(dragging.id, result.x, result.y, result.rotation);
       }
     },
     [dragging, outline, boxes, onOutlineChange, onMoveBox, toMillimetres],
   );
 
   const endDrag = useCallback(() => {
+    // One undo entry per gesture, not per frame: a drag emits a state every
+    // pointermove, and recording each would make Ctrl-Z look broken.
+    if (dragging) onCommit?.();
     setDragging(null);
     wallDragOrigin.current = null;
     frozenBounds.current = null;
-  }, []);
+  }, [dragging, onCommit]);
 
   /** Freeze the scale, then start the gesture. Order matters: the first
       pointermove already needs the frozen viewBox. */
@@ -175,6 +207,37 @@ export function RoomPlan({
     },
     [outline],
   );
+
+  /** Apply a typed wall length, or quietly drop a value that is not a room. */
+  const commitWallLength = useCallback(() => {
+    // Read the state, do not fold the edit into a setState updater: React may
+    // run an updater twice, and applying a length twice moves the wall twice.
+    if (!editingWall) return;
+    const next = setWallLength(outline, editingWall.index, Number(editingWall.value));
+    setEditingWall(null);
+    if (next !== outline) {
+      onOutlineChange(next);
+      onCommit?.();
+    }
+  }, [editingWall, outline, onOutlineChange, onCommit]);
+
+  /**
+   * How much wall is free either side of the selected product.
+   *
+   * This is the number a dealer actually wants: not "where is this thing", but
+   * "will the next one fit beside it". Shown for the selection and live during
+   * a drag, the way a tape measure would be.
+   */
+  const selected = boxes.find((box) => box.id === selectedBoxId) ?? null;
+  const selectedWall = selected ? wallUnder(selected, outline) : null;
+  const gaps = selected
+    ? clearances(
+        selected,
+        boxes.filter((box) => box.id !== selected.id),
+        outline,
+        selectedWall,
+      )
+    : null;
 
   const area = areaSquareMetres(outline);
   /** Only used to decide which side of a wall its label sits on. */
@@ -276,15 +339,60 @@ export function RoomPlan({
             // on the wall it measures.
             const gap = 140;
 
+            const labelX = midX + (horizontal ? 0 : outward * gap);
+            const labelY = midY + (horizontal ? outward * 260 : 0);
+
+            if (editingWall?.index === index) {
+              // An HTML input inside the SVG, so it sits exactly where the
+              // label was. Everything here is in millimetres, same as the plan.
+              const boxWidth = 1300;
+              const boxHeight = 420;
+              return (
+                <foreignObject
+                  key={`wall-${index}`}
+                  x={labelX - (horizontal ? boxWidth / 2 : outward < 0 ? boxWidth : 0)}
+                  y={labelY - boxHeight / 2}
+                  width={boxWidth}
+                  height={boxHeight}
+                >
+                  <input
+                    autoFocus
+                    type="number"
+                    aria-label={`Length of wall ${index + 1} in millimetres`}
+                    data-dk-wall-input={index}
+                    value={editingWall.value}
+                    onChange={(event) =>
+                      setEditingWall({ index, value: event.target.value })
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') commitWallLength();
+                      if (event.key === 'Escape') setEditingWall(null);
+                    }}
+                    // Committing on blur too: clicking away with a number typed
+                    // and having it thrown out is the more annoying half of the
+                    // two possible mistakes.
+                    onBlur={commitWallLength}
+                    style={{ fontSize: 170, height: boxHeight, width: boxWidth }}
+                    className="w-full rounded border-2 border-primary bg-background px-2 text-center text-foreground"
+                  />
+                </foreignObject>
+              );
+            }
+
             return (
               <text
                 key={`wall-${index}`}
-                x={midX + (horizontal ? 0 : outward * gap)}
-                y={midY + (horizontal ? outward * 260 : 0)}
+                x={labelX}
+                y={labelY}
                 textAnchor={horizontal ? 'middle' : outward < 0 ? 'end' : 'start'}
                 dominantBaseline="middle"
-                className="fill-muted-foreground"
+                className="cursor-text fill-muted-foreground hover:fill-primary"
                 style={{ fontSize: 150 }}
+                data-dk-wall-label={index}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                  setEditingWall({ index, value: String(length) });
+                }}
               >
                 {length} mm
               </text>
@@ -342,6 +450,118 @@ export function RoomPlan({
             </g>
           );
         })}
+
+        {/*
+          Clearance chips: the gap left on each side of the selected product,
+          along the wall it stands against. IKEA's planner leans on exactly this
+          instead of collision warnings - the numbers answer "will it fit"
+          before you try, and they update live while dragging.
+        */}
+        {selected && gaps && selectedWall !== null && (() => {
+          const corners = boxCorners(selected);
+          const centre = {
+            x: corners.reduce((total, corner) => total + corner.x, 0) / 4,
+            y: corners.reduce((total, corner) => total + corner.y, 0) / 4,
+          };
+          const wallStart = outline[selectedWall];
+          const wallEnd = outline[(selectedWall + 1) % outline.length];
+          const length = Math.hypot(wallEnd.x - wallStart.x, wallEnd.y - wallStart.y) || 1;
+          const unitX = (wallEnd.x - wallStart.x) / length;
+          const unitY = (wallEnd.y - wallStart.y) / length;
+          // Half the footprint along the wall, plus a little, so the chip sits
+          // in the gap it is measuring rather than on the product.
+          const reach = (Math.abs(unitX) * selected.width + Math.abs(unitY) * selected.width) / 2 + 200;
+
+          return (
+            <g className="pointer-events-none" data-dk-clearance>
+              <text
+                x={centre.x - unitX * reach}
+                y={centre.y - unitY * reach}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                className="fill-primary"
+                style={{ fontSize: 130 }}
+              >
+                {gaps.before} mm
+              </text>
+              <text
+                x={centre.x + unitX * reach}
+                y={centre.y + unitY * reach}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                className="fill-primary"
+                style={{ fontSize: 130 }}
+              >
+                {gaps.after} mm
+              </text>
+            </g>
+          );
+        })()}
+
+        {/*
+          Actions on the thing itself, not in a far-away panel: rotate, copy,
+          remove. Rotate stays a button rather than a handle on purpose - a free
+          rotation handle is how a vanity ends up facing a wall, and the planner
+          we studied ships no free rotation at all.
+        */}
+        {selected && !dragging && (onRotateBox || onDuplicateBox || onRemoveBox) && (() => {
+          const corners = boxCorners(selected);
+          const top = Math.min(...corners.map((corner) => corner.y));
+          const centreX = corners.reduce((total, corner) => total + corner.x, 0) / 4;
+          const width = 1050;
+          const height = 330;
+          // Kept inside the drawing. A toolbar that hangs off the left of the
+          // plan covers the wall it belongs to and clips against the viewBox.
+          const clampedX = Math.min(
+            Math.max(centreX - width / 2, bounds.minX + 60),
+            bounds.minX + bounds.width - width - 60,
+          );
+          return (
+            <foreignObject
+              x={clampedX}
+              y={top - height - 100}
+              width={width}
+              height={height}
+              data-dk-box-toolbar
+            >
+              <div className="flex h-full items-center justify-center gap-1 rounded-md border border-border bg-background px-1 shadow-sm">
+                {onRotateBox && (
+                  <button
+                    type="button"
+                    aria-label="Rotate 90 degrees"
+                    className="rounded p-1 hover:bg-muted"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={() => onRotateBox(selected.id)}
+                  >
+                    <RotateCw style={{ width: 170, height: 170 }} />
+                  </button>
+                )}
+                {onDuplicateBox && (
+                  <button
+                    type="button"
+                    aria-label="Duplicate product"
+                    className="rounded p-1 hover:bg-muted"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={() => onDuplicateBox(selected.id)}
+                  >
+                    <Copy style={{ width: 170, height: 170 }} />
+                  </button>
+                )}
+                {onRemoveBox && (
+                  <button
+                    type="button"
+                    aria-label="Remove product from room"
+                    className="rounded p-1 text-destructive hover:bg-muted"
+                    onPointerDown={(event) => event.stopPropagation()}
+                    onClick={() => onRemoveBox(selected.id)}
+                  >
+                    <Trash2 style={{ width: 170, height: 170 }} />
+                  </button>
+                )}
+              </div>
+            </foreignObject>
+          );
+        })()}
 
         {/* A fat invisible line over each wall. Dragging a wall is what somebody
             means by "this wall is 200mm too far out"; doing it by moving two

@@ -52,6 +52,8 @@ export interface RoomPlacement {
 export interface Room {
   outline: { x: number; y: number }[];
   placements: RoomPlacement[];
+  /** Floor to ceiling, in millimetres. Absent on designs saved before it existed. */
+  ceilingHeightMm?: number | null;
 }
 
 export interface Selection {
