@@ -245,7 +245,10 @@ test.describe('Dealer Kit room designer', () => {
     await openTrigger(combobox);
     const option = page.getByRole('option').first();
     await expect(option).toBeVisible({ timeout: 20_000 });
-    const chosen = ((await option.textContent()) ?? '').split('\u00b7')[0].trim();
+    // The code is the option's first line. Splitting the whole textContent on a
+    // separator does not work: the option renders code and name as two stacked
+    // spans, so its text is the two run together with nothing between them.
+    const chosen = ((await option.locator('span span').first().textContent()) ?? '').trim();
     await option.dispatchEvent('click');
     await tap(page, page.getByRole('button', { name: /add product to room/i }));
 
