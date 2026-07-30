@@ -409,6 +409,12 @@ test.describe('Dealer Kit room designer', () => {
   test('a door can be dragged onto a different wall', async ({ page }) => {
     await openDesigner(page);
 
+    // From a known room: the designer reopens the last design, whose walls may
+    // have been reshaped by an earlier test, and "which wall is nearest" is
+    // only meaningful against a room this test chose.
+    await tap(page, page.getByRole('button', { name: /new design/i }));
+    await expect(page.locator('[data-dk-room-plan]')).toBeVisible({ timeout: 20_000 });
+
     await page.locator('[data-dk-room-wall="0"]').dispatchEvent('pointerdown', { bubbles: true });
     await tap(page, page.getByRole('button', { name: /^door$/i }));
     const opening = page.locator('[data-dk-opening]').first();

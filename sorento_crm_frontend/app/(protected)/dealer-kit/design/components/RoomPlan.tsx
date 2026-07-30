@@ -176,6 +176,16 @@ export function RoomPlan({
    */
   const dragRef = useRef<typeof dragging>(null);
 
+  /**
+   * Where a dragged product WOULD be if nothing stopped it.
+   *
+   * Illegal positions are refused by simply not following the cursor, which is
+   * what the planner we studied does - nothing ever turns red. On its own that
+   * reads as a stuck drag, so the attempted position is drawn as an outline:
+   * the solid body says what you get, the ghost says what you asked for.
+   */
+  const [ghost, setGhost] = useState<Box | null>(null);
+
   const bounds = useMemo(() => {
     const width = fitted.width / view.zoom;
     const height = fitted.height / view.zoom;
@@ -315,6 +325,7 @@ export function RoomPlan({
         // turns it. There is no rotate handle to leave pointing at a wall.
         const snapped = snapToWall(moved, outline);
         const result = snapped?.box ?? moved;
+        setGhost(moved);
         onMoveBox(dragging.id, result.x, result.y, result.rotation);
       }
     },
@@ -338,7 +349,9 @@ export function RoomPlan({
    * fight as soon as the room is bigger than the panel.
    */
   const startPan = useCallback((event: React.PointerEvent) => {
-    if (event.button !== 1 && !event.shiftKey) return false;
+    // Middle, right, or shift-left. Left alone is "grab the thing under the
+    // cursor" and always will be.
+    if (event.button !== 1 && event.button !== 2 && !event.shiftKey) return false;
     event.preventDefault();
     panOrigin.current = {
       x: event.clientX,
@@ -352,6 +365,7 @@ export function RoomPlan({
   const endDrag = useCallback(() => {
     panOrigin.current = null;
     dragRef.current = null;
+    setGhost(null);
     // One undo entry per gesture, not per frame: a drag emits a state every
     // pointermove, and recording each would make Ctrl-Z look broken.
     if (dragging) onCommit?.();
@@ -430,12 +444,36 @@ export function RoomPlan({
         onAuxClick={(event) => event.preventDefault()}
         onWheel={(event) => {
           event.preventDefault();
-          setView((current) => ({
-            ...current,
+          // Zoom toward the CURSOR, not the middle of the panel: zooming to
+          // centre means every zoom is followed by a pan to get back to the
+          // corner you were looking at.
+          const point = toMillimetres(event as unknown as React.PointerEvent);
+          setView((current) => {
             // Clamped: past 8x a 50mm grid square fills the panel, and below
             // half the room is a dot nobody can grab.
-            zoom: Math.min(8, Math.max(0.5, current.zoom * (event.deltaY < 0 ? 1.1 : 1 / 1.1))),
-          }));
+            const zoom = Math.min(
+              8,
+              Math.max(0.5, current.zoom * (event.deltaY < 0 ? 1.1 : 1 / 1.1)),
+            );
+            if (!point || zoom === current.zoom) return { ...current, zoom };
+
+            // Keep the millimetre under the cursor under the cursor: the view
+            // shrinks about the centre, so shift by the share of that shrink
+            // that lies between the centre and the pointer.
+            const factor = 1 / current.zoom - 1 / zoom;
+            const centreX = bounds.minX + bounds.width / 2;
+            const centreY = bounds.minY + bounds.height / 2;
+            return {
+              zoom,
+              panX: current.panX + (point.x - centreX) * factor * current.zoom,
+              panY: current.panY + (point.y - centreY) * factor * current.zoom,
+            };
+          });
+        }}
+        onContextMenu={(event) => {
+          // Right-drag pans, as it does in the planner we studied, so the
+          // browser menu must not open on top of it.
+          event.preventDefault();
         }}
         data-dk-room-plan
       >
@@ -568,6 +606,9 @@ export function RoomPlan({
                 >
                   <input
                     autoFocus
+                    // Pre-selected: the number is being REPLACED, not edited,
+                    // so typing should overwrite it without a select-all first.
+                    onFocus={(event) => event.currentTarget.select()}
                     type="number"
                     aria-label={`Length of wall ${index + 1} in millimetres`}
                     data-dk-wall-input={index}
@@ -636,6 +677,18 @@ export function RoomPlan({
               </g>
             );
           })}
+
+        {ghost && (
+          <polygon
+            points={boxCorners(ghost)
+              .map((corner) => `${corner.x},${corner.y}`)
+              .join(' ')}
+            className="pointer-events-none fill-none stroke-primary/50"
+            strokeWidth={14}
+            strokeDasharray="90 70"
+            data-dk-drag-ghost
+          />
+        )}
 
         {/* Wall handles are painted BEFORE the doors and the products.
             They are 160mm wide so a wall is easy to grab, which means the last

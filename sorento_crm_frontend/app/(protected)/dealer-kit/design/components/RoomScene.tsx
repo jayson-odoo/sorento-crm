@@ -86,6 +86,7 @@ export function RoomScene({
   finishes?: Finishes;
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const refocusRef = useRef<() => void>(() => {});
   const pickRef = useRef<(boxId: string) => void>(() => {});
   pickRef.current = (boxId: string) => onSelectBox?.(boxId);
 
@@ -121,7 +122,20 @@ export function RoomScene({
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.copy(centre);
+    // Zoom toward the cursor, not the orbit target: zooming to centre means
+    // every zoom is followed by an orbit to get back to the corner you were
+    // looking at.
+    controls.zoomToCursor = true;
     controls.update();
+
+    // Refocus: put the camera back where it started. An orbit that has ended up
+    // inside a wall is otherwise unrecoverable without a reload.
+    const refocus = () => {
+      camera.position.set(centre.x + span, span * 0.9, centre.z + span);
+      controls.target.copy(centre);
+      controls.update();
+    };
+    refocusRef.current = refocus;
 
     scene.add(new THREE.AmbientLight(0xffffff, 1.4));
     const sun = new THREE.DirectionalLight(0xffffff, 1.4);
@@ -340,10 +354,20 @@ export function RoomScene({
   }, [outline, boxes, selectedBoxId, ceilingHeightMm, openings, finishes]);
 
   return (
-    <div
-      ref={mountRef}
-      className="h-[420px] w-full overflow-hidden rounded-lg border border-border bg-muted/20"
-      data-dk-room-scene
-    />
+    <div className="relative">
+      <div
+        ref={mountRef}
+        className="h-[420px] w-full overflow-hidden rounded-lg border border-border bg-muted/20"
+        data-dk-room-scene
+      />
+      <button
+        type="button"
+        onClick={() => refocusRef.current()}
+        className="absolute bottom-2 start-2 rounded border border-border bg-background/90 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+        data-dk-scene-refocus
+      >
+        Refocus
+      </button>
+    </div>
   );
 }

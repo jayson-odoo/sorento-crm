@@ -84,10 +84,11 @@ export function FocusShell({
       {/*
         Say how to get out, on the screen, once.
         A mode that covers the entire window and relies on the user guessing a
-        key is a trap; the hint costs one line and removes the guess. It fades
-        out of the way rather than sitting in the work area.
+        key is a trap; the hint costs one line and removes the guess. Bottom
+        right, because top right is where the toolbar lives and a hint that
+        covers Save is worse than no hint.
       */}
-      <div className="pointer-events-none absolute end-3 top-3 z-10 rounded-md bg-foreground/80 px-2 py-1 text-xs text-background shadow-sm">
+      <div className="pointer-events-none absolute bottom-3 end-3 z-10 rounded-md bg-foreground/80 px-2 py-1 text-xs text-background shadow-sm">
         Press Esc to exit full screen
       </div>
       {children}

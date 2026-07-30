@@ -86,7 +86,7 @@ import {
   type PlacedBox,
 } from '@/lib/dealer-kit/roomBoxes';
 import { clearPicks, readPicks } from '@/lib/dealer-kit/cataloguePicks';
-import { FocusShell, FocusToggle } from '../../components/FocusMode';
+import { CollapsiblePanel, FocusShell, FocusToggle } from '../../components/FocusMode';
 import { RoomPlan } from './RoomPlan';
 import { DEFAULT_CEILING_MM, RoomScene } from './RoomScene';
 
@@ -137,6 +137,9 @@ export function RoomDesigner() {
   const [productToAdd, setProductToAdd] = useState('');
   const [dirty, setDirty] = useState(false);
   const [focus, setFocus] = useState(false);
+  /** The products panel folded away. Only offered in full screen, where the
+      canvas is the point and the panel is a third of the window. */
+  const [hideProducts, setHideProducts] = useState(false);
   /**
    * Floor to ceiling, in millimetres.
    *
@@ -224,7 +227,18 @@ export function RoomDesigner() {
   // second copy of the line list.
   useEffect(() => {
     if (!selection) return;
-    setPlaced((current) => boxesForSelection(selection, current));
+    setPlaced((current) => {
+      const next = boxesForSelection(selection, current);
+      if (justAdded.current) {
+        // The last copy of that product is the one just added.
+        const added = [...next].reverse().find((box) => box.productId === justAdded.current);
+        if (added) {
+          setSelectedId(added.id);
+          justAdded.current = null;
+        }
+      }
+      return next;
+    });
     if (!hydrated.current && selection.room?.outline?.length) {
       setOutline(selection.room.outline);
       if (selection.room.ceilingHeightMm) setCeilingHeightMm(selection.room.ceilingHeightMm);
@@ -246,6 +260,8 @@ export function RoomDesigner() {
    * product already in the design is not silently doubled.
    */
   const consumedPicks = useRef(false);
+  /** The product just added, waiting for its box to be rebuilt. */
+  const justAdded = useRef<string | null>(null);
 
   const ensureSelection = useCallback(async (): Promise<string> => {
     if (selectionId) return selectionId;
@@ -310,6 +326,10 @@ export function RoomDesigner() {
   const addProduct = useCallback(() => {
     if (!chosen) return;
     const line = selection?.lines.find((row) => row.productId === chosen.id);
+    // Remembered so the new box can be SELECTED once it exists: an item that
+    // arrives already selected shows its toolbar and its clearances, which is
+    // how somebody finds out either exists.
+    justAdded.current = chosen.id;
     lineMutation.mutate({ productId: chosen.id, quantity: (line?.quantity ?? 0) + 1 });
     setProductToAdd('');
     setChosen(null);
@@ -982,7 +1002,15 @@ export function RoomDesigner() {
         </Card>
       </div>
 
-      <aside className="w-full shrink-0 lg:w-80">
+      <aside
+        className={`w-full shrink-0 ${focus && hideProducts ? 'lg:w-auto' : 'lg:w-80'}`}
+      >
+        <CollapsiblePanel
+          title="Products in this room"
+          collapsed={focus && hideProducts}
+          onToggle={setHideProducts}
+          side="end"
+        >
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm">Products in this room</CardTitle>
@@ -1143,6 +1171,7 @@ export function RoomDesigner() {
             </div>
           </CardContent>
         </Card>
+        </CollapsiblePanel>
       </aside>
     </div>
     </FocusShell>
