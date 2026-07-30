@@ -18,8 +18,8 @@ import {
 import { clearances, snapToWall, wallUnder } from '@/lib/dealer-kit/roomSnap';
 import { floorColor, wallColor, type Finishes } from '@/lib/dealer-kit/finishes';
 import {
-  fitOpening,
   openingEdgeGaps,
+  placeOpeningOnNearestWall,
   wallLengths,
   type Opening,
 } from '@/lib/dealer-kit/roomOpenings';
@@ -278,38 +278,10 @@ export function RoomPlan({
         const opening = openings.find((candidate) => candidate.id === dragging.id);
         if (!opening) return;
 
-        /**
-         * The door goes to whichever wall the pointer is nearest, not only the
-         * one it started on. Dragging a door round a corner is a thing people
-         * do - the plan was right and the wall was wrong - and refusing to
-         * cross meant deleting it and stamping a new one.
-         */
-        let best: { index: number; distance: number; along: number; length: number } | null = null;
-        for (let index = 0; index < outline.length; index += 1) {
-          const start = outline[index];
-          const end = outline[(index + 1) % outline.length];
-          const length = Math.hypot(end.x - start.x, end.y - start.y);
-          if (length < 1e-6) continue;
-          const along =
-            ((position.x - start.x) * (end.x - start.x) +
-              (position.y - start.y) * (end.y - start.y)) /
-            length;
-          const clamped = Math.min(Math.max(along, 0), length);
-          const nearestX = start.x + ((end.x - start.x) / length) * clamped;
-          const nearestY = start.y + ((end.y - start.y) / length) * clamped;
-          const distance = Math.hypot(position.x - nearestX, position.y - nearestY);
-          if (!best || distance < best.distance) best = { index, distance, along, length };
-        }
-        if (!best) return;
-
-        const fitted = fitOpening(
-          {
-            ...opening,
-            wallIndex: best.index,
-            offsetMm: snapToGrid(best.along, DEFAULT_GRID_MM),
-          },
-          best.length,
-        );
+        // The door goes to whichever wall the pointer is nearest, not only the
+        // one it started on. The rule is shared with the 3D view, which drags
+        // openings too and has to land them in exactly the same place.
+        const fitted = placeOpeningOnNearestWall(opening, outline, position);
         // A wall too short for this opening simply does not take it: the door
         // stays where it was rather than being narrowed to fit.
         if (fitted) onMoveOpening?.(opening.id, fitted.offsetMm, fitted.wallIndex);

@@ -562,10 +562,12 @@ test.describe('Dealer Kit room designer', () => {
     // An opening is an ABSENCE - no geometry, nothing on screen to aim at - so
     // the scene publishes where each one currently projects to.
     const scene = page.locator('[data-dk-room-scene]');
-    await expect(scene).toHaveAttribute('data-dk-openings-at', /.+:\d+,\d+/, { timeout: 20_000 });
+    await expect(scene).toHaveAttribute('data-dk-openings-at', /.+:\d+:\d+,\d+/, {
+      timeout: 20_000,
+    });
     const [atX, atY] = ((await scene.getAttribute('data-dk-openings-at')) ?? '')
       .split(';')[0]
-      .split(':')[1]
+      .split(':')[2]
       .split(',')
       .map(Number);
 
@@ -585,6 +587,74 @@ test.describe('Dealer Kit room designer', () => {
     await expect
       .poll(async () => Math.abs((await offset()) - before), { timeout: 15_000 })
       .toBeGreaterThan(300);
+  });
+
+  test('a door dragged across the room in 3D lands on the wall it was taken to', async ({
+    page,
+  }) => {
+    await openDesigner(page);
+
+    // From a known room, for the same reason the plan version of this test
+    // starts from one: "which wall is nearest" only means something against a
+    // room this test chose.
+    await tap(page, page.getByRole('button', { name: /new design/i }));
+    await expect(page.locator('[data-dk-room-plan]')).toBeVisible({ timeout: 20_000 });
+
+    await page.locator('[data-dk-room-wall="0"]').dispatchEvent('pointerdown', { bubbles: true });
+    await tap(page, page.getByRole('button', { name: /^door$/i }));
+    await expect(page.locator('[data-dk-opening]').first()).toBeAttached({ timeout: 10_000 });
+
+    await openTrigger(page.getByRole('tab', { name: /^3d$/i }));
+    const canvas = page.locator('[data-dk-room-scene] canvas');
+    await expect(canvas).toBeVisible({ timeout: 20_000 });
+    const box = (await canvas.boundingBox())!;
+    const scene = page.locator('[data-dk-room-scene]');
+
+    /** The first opening, as the scene currently sees it: wall, and where it projects. */
+    const state = async () => {
+      const raw = ((await scene.getAttribute('data-dk-openings-at')) ?? '').split(';')[0];
+      const [, wall, at] = raw.split(':');
+      const [x, y] = (at ?? '0,0').split(',').map(Number);
+      return { wall: Number(wall), x, y };
+    };
+    await expect(scene).toHaveAttribute('data-dk-openings-at', /.+:\d+:\d+,\d+/, {
+      timeout: 20_000,
+    });
+    const start = await state();
+
+    // Right and toward the viewer, which on this camera is across the room
+    // toward the near-right corner and then down the right-hand wall. Stepped,
+    // and stopped as soon as the door has changed walls, because the exact
+    // pixel where one wall stops being the nearest depends on the camera.
+    await page.mouse.move(box.x + start.x, box.y + start.y);
+    await page.mouse.down();
+    let landed = start.wall;
+    for (let step = 1; step <= 10 && landed === start.wall; step += 1) {
+      await page.mouse.move(box.x + start.x + step * 30, box.y + start.y + step * 22, {
+        steps: 4,
+      });
+      await page.waitForTimeout(90);
+      landed = (await state()).wall;
+    }
+    await page.mouse.up();
+
+    // Dragging a door round a corner is a thing people do, in either view. The
+    // 3D view used to refuse: an opening could only slide along the wall it
+    // started on, so crossing meant going back to the plan.
+    expect(landed).not.toBe(start.wall);
+
+    // And the plan agrees, because there is one room, not two.
+    await openTrigger(page.getByRole('tab', { name: /^plan$/i }));
+    const line = page.locator('[data-dk-opening] line').first();
+    await expect
+      .poll(
+        async () =>
+          Math.abs(
+            Number(await line.getAttribute('y2')) - Number(await line.getAttribute('y1')),
+          ) < 1,
+        { timeout: 15_000 },
+      )
+      .toBe(false);
   });
 
   test('a design the server no longer has does not brick the designer', async ({ page }) => {

@@ -5,7 +5,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 import { roomBounds, type Box, type Point } from '@/lib/dealer-kit/roomGeometry';
-import { openingSpans, wallPanels, type Opening } from '@/lib/dealer-kit/roomOpenings';
+import {
+  openingSpans,
+  placeOpeningOnNearestWall,
+  wallPanels,
+  type Opening,
+} from '@/lib/dealer-kit/roomOpenings';
 import { floorColor, wallColor, type Finishes } from '@/lib/dealer-kit/finishes';
 // One definition of the placeholder size. Two would drift, and the drift would
 // show up as a box that is a different size in the plan than in 3D.
@@ -268,7 +273,15 @@ export function RoomScene({
     const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
     const hitPoint = new THREE.Vector3();
     let dragging: { boxId: string; grabDx: number; grabDz: number } | null = null;
-    let draggingOpening: { openingId: string } | null = null;
+    /**
+     * An opening slides on a horizontal plane at its OWN height, not on the
+     * floor. The pointer grabs a door partway up a wall, so a ray taken down to
+     * the floor lands a metre or so beyond the room - harmless while the door
+     * could only move along the wall it started on, but now that the nearest
+     * wall decides where it lands, that error is enough to hop it round a
+     * corner nobody dragged it round.
+     */
+    let draggingOpening: { openingId: string; plane: THREE.Plane } | null = null;
 
     const setPointer = (event: PointerEvent | MouseEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -287,20 +300,10 @@ export function RoomScene({
       if (typeof boxId === 'string') callbacksRef.current.onSelectBox?.(boxId);
     };
 
-    /** Where a pointer lands along a wall, in millimetres from its start. */
-    const alongWall = (wallIndex: number): number | null => {
-      const shape = dataRef.current.outline;
-      const start = shape[wallIndex];
-      const end = shape[(wallIndex + 1) % shape.length];
-      if (!start || !end) return null;
-      if (!raycaster.ray.intersectPlane(floorPlane, hitPoint)) return null;
-      const runX = end.x - start.x;
-      const runY = end.y - start.y;
-      const length = Math.hypot(runX, runY);
-      if (length < 1e-6) return null;
-      const pointX = hitPoint.x / MM_TO_M;
-      const pointY = hitPoint.z / MM_TO_M;
-      return ((pointX - start.x) * runX + (pointY - start.y) * runY) / length;
+    /** Where the pointer lands on a horizontal plane, in the plan's millimetres. */
+    const pointOn = (plane: THREE.Plane): { x: number; y: number } | null => {
+      if (!raycaster.ray.intersectPlane(plane, hitPoint)) return null;
+      return { x: hitPoint.x / MM_TO_M, y: hitPoint.z / MM_TO_M };
     };
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -309,8 +312,14 @@ export function RoomScene({
 
       const openingHit = raycaster.intersectObjects(handle.openingPickable, false)[0];
       if (openingHit && typeof openingHit.object.userData.openingId === 'string') {
-        draggingOpening = { openingId: openingHit.object.userData.openingId };
-        callbacksRef.current.onSelectOpening?.(draggingOpening.openingId);
+        const openingId = openingHit.object.userData.openingId as string;
+        // The plane through the point actually grabbed, so the door does not
+        // jump when the drag starts.
+        draggingOpening = {
+          openingId,
+          plane: new THREE.Plane(new THREE.Vector3(0, 1, 0), -openingHit.point.y),
+        };
+        callbacksRef.current.onSelectOpening?.(openingId);
         controls.enabled = false;
         renderer.domElement.setPointerCapture(event.pointerId);
         return;
@@ -339,15 +348,16 @@ export function RoomScene({
           (candidate) => candidate.id === draggingOpening!.openingId,
         );
         if (!opening) return;
-        const along = alongWall(opening.wallIndex);
-        // Along its own wall only. Hopping walls belongs to the plan, where
-        // "nearest wall to the pointer" is a question with an obvious answer.
-        if (along !== null) {
-          callbacksRef.current.onMoveOpening?.(
-            opening.id,
-            Math.round(along),
-            opening.wallIndex,
-          );
+        const point = pointOn(draggingOpening.plane);
+        if (!point) return;
+        // Wall hopping, by the SAME rule the plan uses: the opening goes to
+        // whichever wall the pointer is nearest. Dragging a door round a corner
+        // is a thing people do, and the two views must land it in the same
+        // place or the plan and the 3D view start disagreeing about the room.
+        // A wall too short to hold it simply does not take it.
+        const placed = placeOpeningOnNearestWall(opening, dataRef.current.outline, point);
+        if (placed) {
+          callbacksRef.current.onMoveOpening?.(placed.id, placed.offsetMm, placed.wallIndex);
         }
         return;
       }
@@ -427,11 +437,13 @@ export function RoomScene({
       }
 
       // And the same for the openings, which have it worse: a door is a HOLE,
-      // so there is not even a shape on screen to aim at.
+      // so there is not even a shape on screen to aim at. The wall it is
+      // currently in rides along, because that is the thing a drag across the
+      // room changes and nothing on screen states it.
       const openingPoints = handle.openingPickable
         .map((pane) => {
           const at = toScreen(pane.getWorldPosition(worldPoint));
-          return `${pane.userData.openingId}:${at.x},${at.y}`;
+          return `${pane.userData.openingId}:${pane.userData.wallIndex}:${at.x},${at.y}`;
         })
         .join(';');
       if (openingPoints !== lastOpenings) {

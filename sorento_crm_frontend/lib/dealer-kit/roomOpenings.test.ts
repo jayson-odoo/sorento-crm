@@ -18,6 +18,7 @@ import {
   fitOpening,
   openingEdgeGaps,
   openingSpans,
+  placeOpeningOnNearestWall,
   wallPanels,
   type Opening,
 } from './roomOpenings';
@@ -173,5 +174,89 @@ describe('defaults', () => {
     expect(DEFAULT_DOOR.heightMm).toBe(2100);
     expect(DEFAULT_DOOR.sillMm).toBe(0);
     expect(DEFAULT_WINDOW.sillMm).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Dragging a door to a DIFFERENT wall.
+ *
+ * The rule the plan already follows: the door goes to whichever wall the
+ * pointer is nearest, not only the one it started on. Dragging a door round a
+ * corner is a thing people do - the plan was right and the wall was wrong - and
+ * refusing to cross means deleting it and stamping a new one.
+ *
+ * This lives here rather than in the plan component because the 3D view needs
+ * the identical answer: a door dragged across a room in 3D must land on the
+ * same wall, at the same offset, as the same drag in the plan. Two copies of
+ * "nearest wall" would eventually disagree, and the user would be the one to
+ * find out.
+ */
+describe('placeOpeningOnNearestWall', () => {
+  // A 4m x 3m room, corners clockwise from the origin. Wall 0 runs along the
+  // top (y=0), wall 1 down the right, wall 2 back along the bottom, wall 3 up
+  // the left.
+  const room = [
+    { x: 0, y: 0 },
+    { x: 4000, y: 0 },
+    { x: 4000, y: 3000 },
+    { x: 0, y: 3000 },
+  ];
+
+  it('keeps a door on its own wall when the pointer stays near it', () => {
+    const placed = placeOpeningOnNearestWall(door({ wallIndex: 0 }), room, { x: 2500, y: 200 });
+
+    expect(placed?.wallIndex).toBe(0);
+    expect(placed?.offsetMm).toBe(2500);
+  });
+
+  it('hops the door to the wall the pointer is nearest', () => {
+    // Far side of the room, close to the right-hand wall.
+    const placed = placeOpeningOnNearestWall(door({ wallIndex: 0 }), room, { x: 3900, y: 1800 });
+
+    expect(placed?.wallIndex).toBe(1);
+    // Wall 1 runs top to bottom, so the offset is measured down from y=0.
+    expect(placed?.offsetMm).toBe(1800);
+  });
+
+  it('measures the offset along the wall the door landed on, not the old one', () => {
+    // Bottom wall, which runs RIGHT TO LEFT: a point near x=3000 is 1000 from
+    // that wall's start corner, not 3000.
+    const placed = placeOpeningOnNearestWall(door({ wallIndex: 0 }), room, { x: 3000, y: 2900 });
+
+    expect(placed?.wallIndex).toBe(2);
+    expect(placed?.offsetMm).toBe(1000);
+  });
+
+  it('snaps the offset to the grid, so a dragged door lands on a round number', () => {
+    const placed = placeOpeningOnNearestWall(door({ wallIndex: 0 }), room, { x: 2537, y: 100 });
+
+    expect(placed?.offsetMm).toBe(2550);
+  });
+
+  it('keeps the whole opening inside the wall it lands on', () => {
+    // Dragged into the corner: a 900 door centred at 3900 would hang 350 past
+    // the end of a 4000 wall, so it stops at the last offset that fits.
+    const placed = placeOpeningOnNearestWall(door({ wallIndex: 0 }), room, { x: 3900, y: 50 });
+
+    expect(placed?.wallIndex).toBe(0);
+    expect(placed?.offsetMm).toBe(4000 - 450);
+  });
+
+  it('refuses a wall too short to hold the opening', () => {
+    // An alcove: the 600 stub cannot take a 900 door, so the drag is declined
+    // rather than the door being narrowed to something nobody chose.
+    const alcove = [
+      { x: 0, y: 0 },
+      { x: 600, y: 0 },
+      { x: 600, y: 3000 },
+      { x: 0, y: 3000 },
+    ];
+    const placed = placeOpeningOnNearestWall(door({ wallIndex: 1 }), alcove, { x: 300, y: 60 });
+
+    expect(placed).toBeNull();
+  });
+
+  it('has no answer for a room that is not a room', () => {
+    expect(placeOpeningOnNearestWall(door(), [], { x: 0, y: 0 })).toBeNull();
   });
 });

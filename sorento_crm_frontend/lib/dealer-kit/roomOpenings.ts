@@ -11,6 +11,8 @@
  * the width changes.
  */
 
+import { DEFAULT_GRID_MM, snapToGrid } from './roomGeometry';
+
 export type OpeningKind = 'door' | 'window' | 'opening';
 
 export interface Opening {
@@ -175,4 +177,52 @@ export function wallLengths(outline: { x: number; y: number }[]): number[] {
     const next = outline[(index + 1) % outline.length];
     return Math.hypot(next.x - point.x, next.y - point.y);
   });
+}
+
+/**
+ * Where a dragged opening lands: nearest wall, snapped, and made to fit.
+ *
+ * The door goes to whichever wall the pointer is nearest, not only the one it
+ * started on. Dragging a door round a corner is a thing people do - the plan
+ * was right and the wall was wrong - and refusing to cross means deleting it
+ * and stamping a new one.
+ *
+ * This lives here, not in a view, because BOTH views drag openings and they
+ * must agree: the same drag in the plan and in 3D has to land on the same wall
+ * at the same offset. Two copies of "nearest wall" would drift, and the user
+ * would be the one to find out.
+ *
+ * Returns null when no wall can hold the opening - a wall too short is refused
+ * rather than the door being narrowed to a size nobody chose.
+ */
+export function placeOpeningOnNearestWall(
+  opening: Opening,
+  outline: { x: number; y: number }[],
+  point: { x: number; y: number },
+  gridMm: number = DEFAULT_GRID_MM,
+): Opening | null {
+  if (outline.length < 3) return null;
+
+  let best: { index: number; distance: number; along: number; length: number } | null = null;
+  for (let index = 0; index < outline.length; index += 1) {
+    const start = outline[index];
+    const end = outline[(index + 1) % outline.length];
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    if (length < 1e-6) continue;
+    // Distance to the SEGMENT, not the infinite line: past a corner, the wall
+    // you are nearest is the one whose end you are near.
+    const along =
+      ((point.x - start.x) * (end.x - start.x) + (point.y - start.y) * (end.y - start.y)) / length;
+    const clamped = Math.min(Math.max(along, 0), length);
+    const nearestX = start.x + ((end.x - start.x) / length) * clamped;
+    const nearestY = start.y + ((end.y - start.y) / length) * clamped;
+    const distance = Math.hypot(point.x - nearestX, point.y - nearestY);
+    if (!best || distance < best.distance) best = { index, distance, along, length };
+  }
+  if (!best) return null;
+
+  return fitOpening(
+    { ...opening, wallIndex: best.index, offsetMm: snapToGrid(best.along, gridMm) },
+    best.length,
+  );
 }
