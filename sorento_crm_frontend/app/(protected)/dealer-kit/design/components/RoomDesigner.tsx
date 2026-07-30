@@ -85,6 +85,7 @@ import {
   removeBox,
   type PlacedBox,
 } from '@/lib/dealer-kit/roomBoxes';
+import { clearPicks, readPicks } from '@/lib/dealer-kit/cataloguePicks';
 import { FocusShell, FocusToggle } from '../../components/FocusMode';
 import { RoomPlan } from './RoomPlan';
 import { DEFAULT_CEILING_MM, RoomScene } from './RoomScene';
@@ -233,6 +234,19 @@ export function RoomDesigner() {
     }
   }, [selection]);
 
+  /**
+   * Products ticked in a published catalogue, turned into real lines.
+   *
+   * The catalogue is anonymous, so the picks arrive in localStorage rather than
+   * on a Selection. They are consumed ONCE and cleared immediately: a list that
+   * survived would re-add itself every time the designer opened, and the user
+   * would be deleting the same basin forever.
+   *
+   * Quantities are set absolutely (1 each) rather than incremented, so a
+   * product already in the design is not silently doubled.
+   */
+  const consumedPicks = useRef(false);
+
   const ensureSelection = useCallback(async (): Promise<string> => {
     if (selectionId) return selectionId;
     const created = await createSelection();
@@ -241,6 +255,33 @@ export function RoomDesigner() {
     queryClient.setQueryData(['dealer-kit', 'selection', created.id], created);
     return created.id;
   }, [selectionId, queryClient]);
+
+  useEffect(() => {
+    if (consumedPicks.current) return;
+    if (searchParams.get('picks') !== '1') return;
+    const picks = readPicks();
+    if (picks.length === 0) return;
+
+    consumedPicks.current = true;
+    clearPicks();
+
+    void (async () => {
+      try {
+        const id = await ensureSelection();
+        for (const productId of picks) {
+          await setSelectionLine(id, productId, 1);
+        }
+        queryClient.invalidateQueries({ queryKey: ['dealer-kit', 'selection', id] });
+        toast.success(
+          `${picks.length} product${picks.length === 1 ? '' : 's'} added from the catalogue`,
+        );
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : 'Could not add the products you chose',
+        );
+      }
+    })();
+  }, [searchParams, ensureSelection, queryClient]);
 
   const lineMutation = useMutation({
     mutationFn: async ({ productId, quantity }: { productId: string; quantity: number }) => {
@@ -482,12 +523,25 @@ export function RoomDesigner() {
     [selectedWallIndex, outline, openings.length, commit],
   );
 
-  const moveOpening = useCallback((openingId: string, offsetMm: number) => {
-    setDirty(true);
-    setOpenings((current) =>
-      current.map((opening) => (opening.id === openingId ? { ...opening, offsetMm } : opening)),
-    );
-  }, []);
+  const moveOpening = useCallback(
+    (openingId: string, offsetMm: number, wallIndex: number) => {
+      const lengths = wallLengths(outline);
+      setDirty(true);
+      setOpenings((current) =>
+        current.map((opening) => {
+          if (opening.id !== openingId) return opening;
+          // Typed or dragged, it still has to fit the wall it lands on: an
+          // offset past the end would draw a door hanging in space.
+          const fitted = fitOpening(
+            { ...opening, offsetMm, wallIndex },
+            lengths[wallIndex] ?? 0,
+          );
+          return fitted ?? opening;
+        }),
+      );
+    },
+    [outline],
+  );
 
   /** Resize the selected opening, refusing anything its wall cannot hold. */
   const resizeOpening = useCallback(
@@ -813,6 +867,50 @@ export function RoomDesigner() {
                       />
                     </div>
                     <div className="flex flex-col gap-1">
+                      {/* Position as a NUMBER, not only as a drag. The 3D view
+                          has no plan to drag along, and a door 1200 from the
+                          corner is how a builder describes it anyway. */}
+                      <Label htmlFor="dk-opening-offset" className="text-xs">
+                        From corner
+                      </Label>
+                      <Input
+                        id="dk-opening-offset"
+                        type="number"
+                        className="h-8 w-24"
+                        value={Math.round(selectedOpening.offsetMm)}
+                        onChange={(event) =>
+                          moveOpening(
+                            selectedOpening.id,
+                            Number(event.target.value),
+                            selectedOpening.wallIndex,
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label htmlFor="dk-opening-wall" className="text-xs">
+                        Wall
+                      </Label>
+                      <select
+                        id="dk-opening-wall"
+                        className="h-8 w-24 rounded-md border border-border bg-background px-2 text-sm"
+                        value={selectedOpening.wallIndex}
+                        onChange={(event) =>
+                          moveOpening(
+                            selectedOpening.id,
+                            selectedOpening.offsetMm,
+                            Number(event.target.value),
+                          )
+                        }
+                      >
+                        {wallLengths(outline).map((length, index) => (
+                          <option key={index} value={index}>
+                            {index + 1} ({Math.round(length)} mm)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1">
                       <Label htmlFor="dk-opening-sill" className="text-xs">
                         Sill
                       </Label>
@@ -831,9 +929,13 @@ export function RoomDesigner() {
                     </Button>
                   </div>
                 )}
+                {/* The gestures, said once, where they are used. Everything
+                    here was already possible and none of it was discoverable. */}
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Drag a wall or a corner to reshape the room, or click a wall length to type
-                  it. Products snap against the nearest wall and turn to face the room.
+                  Click a wall length to type it. Drag a wall or a corner to reshape the room.
+                  Click a product to select it - its toolbar and the gaps either side of it
+                  appear on the plan. Middle-drag (or shift-drag) to pan, scroll to zoom, and
+                  Fit puts the whole room back in view.
                 </p>
               </TabsContent>
 

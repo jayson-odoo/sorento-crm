@@ -1,6 +1,7 @@
 'use client';
 
-import { ImageOff, Package } from 'lucide-react';
+import { createContext, useContext } from 'react';
+import { Check, ImageOff, Package } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -23,6 +24,29 @@ import type { ResolvedTile, TileField } from '@/lib/dealer-kit/types';
  */
 
 const GAP = 'gap-3';
+
+/**
+ * Ticking products in a published catalogue.
+ *
+ * A context rather than a prop chain because the tiles sit at the bottom of
+ * section -> block -> grid, and threading a callback through every renderer
+ * would put "is this catalogue shoppable" into three components that have no
+ * other reason to know.
+ *
+ * Absent by default: the editor canvas and the PDF render exactly as before.
+ */
+export interface CataloguePicking {
+  picked: string[];
+  onToggle: (productId: string) => void;
+}
+
+const PickingContext = createContext<CataloguePicking | null>(null);
+
+export const CataloguePickingProvider = PickingContext.Provider;
+
+export function useCataloguePicking(): CataloguePicking | null {
+  return useContext(PickingContext);
+}
 
 function fieldSet(fields: TileField[]): Set<TileField> {
   return new Set(fields);
@@ -58,12 +82,37 @@ export function ProductTile({
   fields: TileField[];
 }) {
   const show = fieldSet(fields);
+  const picking = useCataloguePicking();
+  const picked = picking?.picked.includes(tile.productId) ?? false;
 
   return (
     <article
-      className="flex min-w-0 flex-col gap-1.5 rounded-lg border border-border bg-background p-2"
+      className={cn(
+        'relative flex min-w-0 flex-col gap-1.5 rounded-lg border bg-background p-2',
+        picking ? 'cursor-pointer transition-colors hover:border-primary' : '',
+        picked ? 'border-primary ring-1 ring-primary' : 'border-border',
+      )}
       data-dk-tile={tile.productId}
+      data-dk-tile-picked={picked ? 'true' : undefined}
+      // The whole tile is the target, not a small checkbox: on a phone in a
+      // showroom, a 16px box is a miss.
+      onClick={picking ? () => picking.onToggle(tile.productId) : undefined}
+      role={picking ? 'button' : undefined}
+      aria-pressed={picking ? picked : undefined}
     >
+      {picking && (
+        <span
+          className={cn(
+            'absolute end-1 top-1 z-10 flex size-5 items-center justify-center rounded-full border',
+            picked
+              ? 'border-primary bg-primary text-primary-foreground'
+              : 'border-border bg-background/90 text-transparent',
+          )}
+          aria-hidden
+        >
+          <Check className="size-3" />
+        </span>
+      )}
       <TileImage tile={tile} show={show.has('image')} />
 
       {show.has('name') && (

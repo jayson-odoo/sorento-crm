@@ -132,3 +132,88 @@ Our current state: top-down SVG plan (drag corners + wall faces, 50 mm snap, liv
 12. **Category chips alongside search** (G11). We keep server-side text search (better than IKEA) and add a chip row from product categories. A day. Facet buckets can wait.
 
 Skip for now: free-drag rotation handles, first-person camera, photo-real materials, safety-recommendation content, in-store stock — none are load-bearing to the feel.
+
+---
+
+## Second pass: six interactions (2026-07-30)
+
+Observed live via Playwright against the same MY bathroom planner, fresh "Design from scratch" session (no Resume dialog appeared this run - the previous session had been corrupted by the undo crash, see first pass). Screenshots: `/private/tmp/claude-501/-Users-tehjayson-Documents-foundryx-sorento-crm/9e7e8d96-8dab-40b1-898d-199179b36007/scratchpad/ikea2/`. Gestures were injected as real mouse events (left/middle/right down-move-up, wheel with deltaX/deltaY, modifier keys); every claim below was observed unless marked INFERRED.
+
+### 1. Camera / navigation
+
+3D (Furnish mode), tested one gesture at a time from a "Refocus the room" reset:
+
+- **Left-drag on empty canvas = orbit** (yaw + pitch; drag up pitches the camera down so you look up into the ceiling). `d-left-h120.png`, `d-left-v96.png`.
+- **Middle-drag = orbit, identical to left** (same +120 px drag from the same reset produced a pixel-identical view to left-drag: `d-middle-h120.png` == `d-left-h120.png`). Not dolly, not pan.
+- **Right-drag = pan** (truck). With the camera orientation unchanged, the room translates with the mouse (`c-3d-rightdrag.png` vs `c-3d-leftdrag.png`: same wall angles, scene shifted left+down following a -100,+50 drag). No context menu appears on right-drag.
+- **Wheel = zoom** (dolly in/out). **Zoom converges on the CURSOR, not the canvas centre**: same wheel amount with the cursor over the door vs over the right wall ends framed on the door vs on the right wall (`z-wheel-at-door.png` vs `z-wheel-at-right.png`, run in top view where it is unambiguous; the 3D corner test agrees).
+- **Shift+wheel = same zoom** (no alternate axis). **Ctrl+wheel = zoom too** (so trackpad pinch, which browsers deliver as ctrl+wheel, zooms; `z-ctrlwheel.png`). **Horizontal wheel (two-finger sideways scroll) does NOTHING** in 3D (`d-hwheel-only.png` == `d-base.png`).
+- **Reset/refocus exists in two places**: the "View options" caret bottom-left opens a 3-item menu "Refocus the room / Top view / 3D view" (`01-view-options-menu.png`); Refocus restores the default 3/4 framing exactly.
+- **Top view**: NOT fixed - it pans and zooms but never rotates. Left-drag, middle-drag AND right-drag all pan (grab-the-world, plan follows the mouse; `t-leftdrag-center.png`, `t-middledrag.png`, `t-rightdrag.png`); wheel zooms to cursor; the plan stays axis-aligned under every gesture. Dragging the floor of the room pans the camera (does not move the room).
+
+**Copy this:** wheel-zoom-to-cursor in both views plus a one-click "Refocus" reset; in React+SVG the 2D half is a screen-space transform (one afternoon), and in Three.js it is OrbitControls with `zoomToCursor: true` plus a fit-to-bounds helper (a day).
+
+### 2. Selecting and moving a product
+
+- **Select = single click** on the item, no hover-first requirement. Feedback: white outline glow on the mesh, and a **vertical action toolbar fixed to the right edge of the canvas** (NOT anchored to the item - it stays at the same screen spot wherever the item is; it replaces the category icon rail while a selection exists). Buttons top-to-bottom: Selected (hand, acts as header), Information, Modify, Group (disabled until 2+ selected), Duplicate, Delete (`11-product-selected-3d.png`). The right panel simultaneously swaps to "Selected product" (photo, name, price, Safety recommendations, Modify product CTA).
+- **Dismiss** = click empty canvas (or the hidden "Deselect product" a11y button). Esc does NOT deselect. Toolbar reverts to the category rail, panel reverts to the catalog.
+- **Drag** is wall-constrained sliding: the wash-stand slides along its wall keeping orientation; drag toward another wall makes it **hop and auto-rotate** to back against that wall. There is no free-floating state and no rotate handle anywhere.
+- **Live numbers while dragging**: black pill chips on thin measurement lines, updating every frame - distance to nearest obstacle left and right ALONG the wall (e.g. "117 cm" to the door frame, "101 cm" to the right wall) plus a vertical "16 cm" chip below the item (gap to floor). Chips render at the measurement lines in-scene, not in a HUD corner (`13-drag-mid-alongwall.png`).
+- **Into another product**: movement clamps; overlap is impossible. A translucent **ghost wireframe renders at the cursor's attempted position** while the solid body stays at the last legal spot (`28-toilet-into-vanity.png`); release leaves it at the clamp point (it does not snap flush; ours ended 8 cm short: `29-toilet-drop.png`).
+- **Into a wall/door**: same refusal + ghost pattern - dragging the vanity into the door zone clamps it against the door frame with the ghost overlapping the door (`16-drag-into-door.png`, `17-drag-past-door.png`).
+- **Out of the room entirely**: simply refuses - the item stays clamped at the boundary, nothing is deleted, price unchanged (`21-drag-outside-mid.png`).
+- **Nothing ever turns red.** No invalid-state tint exists anywhere in these flows; illegality is communicated purely by the body not following the cursor (plus the ghost showing what you asked for).
+- Quirk worth knowing: an item mounted on a camera-culled (peeled) wall is **hidden and unclickable** while deselected (`23-deselected.png`); it re-renders when its wall faces the camera again, and while selected it renders even on a hidden wall.
+
+**Copy this:** the clamp-plus-ghost drag (solid body never enters illegal space, a wireframe ghost shows the attempted position) - in SVG this is just rendering the unclamped rect at 40% opacity when clamped != attempted, roughly a day on top of our existing drag code.
+
+### 3. Doors and windows
+
+- Doors are **not selectable in Furnish mode** - clicking one there just deselects the current product. All door editing lives in Customise-room mode.
+- In Customise mode, click the door: door highlights blue, a small **horizontal toolbar anchored NEXT TO the door** appears (drag-handle dots / Duplicate / Delete - note doors get an item-anchored toolbar while products get a screen-edge one), and the right panel becomes **Edit Door**: variant gallery (Modern etc., +4 more), Size = Width (90) and Height (210) cm textboxes, then "Position - viewed from inside the room, facing the door": Opening direction (Outside room / Into room) and Handle side (Left / Right) (`32-door-selected.png`, `33-door-panel-scrolled.png`).
+- **There is no numeric offset field in the panel** - but the wall's dimension strip splits into live segments (60 / 90 / 100 summing to the wall length) and **each segment label is clickable, turning into an inline input** (tooltip "Change width"); typing 120 + Enter moved the door to exactly 120 cm from the corner (`38-segment-label-clicked.png`, `40-segment-committed.png`). Segment resolution is 0.1 cm (a drag left it at 109.6).
+- **Drag across a corner onto a different wall: it HOPS.** Dragging the left-wall door down past the corner made it jump onto the bottom wall, landing flush at the corner (segments 0 / 90 / 210), then it slides along the new wall normally (`35-door-drag-at-corner.png`, `36-door-drag-bottom-wall.png`). No refusal, no straddling state, opening arc preserved.
+- **3D drag works too and is wall-constrained**: in Customise 3D the selected door slides along its wall following the horizontal component of the drag; pulling the mouse up/away from the wall does nothing vertical - it never moves in free space (`47-door-3d-drag-mid.png`, `48-door-3d-drag-up.png`). Live corner-distance chips render in-scene in 3D as well, including the "40 cm to ceiling" vertical chip. At the corner in 3D it clamped at 2 cm rather than hopping to the (camera-culled) adjacent wall; 3D hop onto a visible wall NOT TESTED.
+- In Customise mode products render translucent (ghosted) so openings are easy to hit.
+
+**Copy this:** the wall-length label splitting into clickable per-segment inputs when an opening is selected (offset editing with zero extra form fields) - our SVG labels already exist, so segment math + reusing the G1 inline-input pattern is 1-2 days.
+
+### 4. Full screen and chrome
+
+- **No browser-fullscreen affordance exists** (menu contains only Start page / Save / Save as / Share / My designs / Open design code / Start from scratch / Settings / Help / Select store / Log in: `55-menu-open.png`).
+- The real "focus mode" is the **X button at the top-right of the right panel**: it collapses the whole product panel, the canvas expands to full window width, the category icon rail docks to the far right edge, and the price + Summary pill moves to the top-right (`51-panel-closed.png` collapsed vs `53-panel-reopened.png` expanded). Reopen = click any category icon in the rail (the rail is the persistent breadcrumb back into the catalog). Esc does NOT close or reopen the panel; there is no drag handle.
+- The left side has no rail to collapse (Menu and Save are floating pills). In Customise mode the same X collapses the room-tools panel.
+- Camera note: collapsing does not reframe the room automatically beyond the wider viewport; "Refocus the room" is the recovery.
+- The bottom-left caret is the View-options popover (Refocus / Top view / 3D view), i.e. the "how do I get back" affordance lives permanently bottom-left (`52-caret-clicked.png`).
+
+**Copy this:** panel-collapse-as-focus-mode (X on the panel, icon rail stays as the way back, canvas takes the full width) - a flex-width toggle + keeping the rail mounted, half a day in our layout.
+
+### 5. Dimension editing discoverability
+
+Three distinct visual states on the wall-length labels (Customise mode):
+
+- **Rest**: white rounded pill floating outside the wall, bold black number + lighter grey unit ("300 cm"), sitting on a thin dimension line with end ticks. The pill shape + the grey unit are the only rest-state affordances; the labels are canvas-drawn at rest, so the mouse cursor stays a default arrow (measured `cursor: auto` on the canvas; no pointer cursor, no icon).
+- **Hover**: the pill gains a **thick black border** (`41-walllabel-hover.png`). This border is the clickability signal.
+- **Editing (click)**: the pill is replaced by a DOM overlay - a white card containing a **blue-outlined text input** (number selected, grey "cm" suffix inside the field), a black tooltip above ("Change width"), and a small **anchor dot on each side** of the card (`42-walllabel-editing.png`) - INFERRED these dots pick which wall end stays fixed on resize; not exercised. **No stepper arrows, no OK button, no Enter/Esc hint text.** Commit = Enter (verified: door segment 120 applied instantly); cancel = Escape (verified: editor closed, value unchanged). Resolution is 0.1 cm.
+- Same pattern everywhere: wall lengths, door/window corner-distance segments, ceiling height is the one number living in a side panel instead.
+
+**Copy this:** the three-state label (pill -> black-border hover -> inline input with the value pre-selected, Enter/Esc semantics, no chrome) - ours are SVG `<text>`, so pill rect + hover class + `foreignObject` input is about a day including tests.
+
+### 6. The catalogue-to-room path
+
+Timed with rapid screenshots (150 ms / 500 ms / 1200 ms after the card click, `60-add-t150.png` - `62-add-t1200.png`):
+
+- **One click on the card = the item EXISTS in the room already at t~150 ms**, auto-placed against a free wall stretch at correct mounting height, **already selected** (glow + action toolbar + clearance chips visible immediately). There is **no ghost-follow-cursor phase, no cursor change, no placement animation, no toast, and no camera move** - the only motion is the **price ticker counting up** (caught mid-roll at RM 2,401 on the way from 2,389 to 4,778) and the right panel cross-fading from catalog to "Selected product" (briefly blank at t150).
+- The panel header for doors/windows says "Click or drag to add an object in the scene", so drag-from-panel also exists (drag-in NOT TESTED this pass).
+- **Strictly one click = one item.** There is no multi-select or queueing in the catalog; clicking another card adds another item immediately (each add lands selected, replacing the previous selection). Variant thumbnails on the card only swap the card image, not the room.
+- Design extras (toilets) behave identically but add RM 0 and show a "not for sale" note in the panel.
+- "Add to room" from a normal ikea.com product page outside the planner: no such entry point was reachable from this session; IKEA MY product pages link to planners but do not inject items into an open design (INFERRED, not directly testable here).
+
+**Copy this:** click-means-placed with the item arriving pre-selected and the running total animating - auto-place = "first free wall stretch wide enough, else room centre"; in our stack this is a placement heuristic + react-query cache update + a count-up on the total, about a day.
+
+### Corrections / additions to the first pass
+
+- First pass said orbit was left-drag only: middle-drag orbits identically, right-drag pans, and zoom is to-cursor (first pass did not test these).
+- First pass described the wall-length editor as a "stepper input": the current UI shows a plain inline input with side anchor dots and a "Change width" tooltip - no +/- steppers.
+- First pass said door editing shows "live distance labels" only: those labels are themselves editable inputs (offset-by-typing), which is stronger than we recorded.
+- New gotcha: items and doors attached to a camera-culled wall are invisible AND unclickable while deselected; selection keeps them rendered. Any "one scene, two cameras" copy of the wall-peeling trick must decide what to do with wall-mounted items on hidden walls (IKEA hides them, which confused us in testing).

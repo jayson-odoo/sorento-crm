@@ -12,11 +12,15 @@
  */
 
 import { use, useEffect, useState } from 'react';
-import { AlertCircle } from 'lucide-react';
+import Link from 'next/link';
+import { AlertCircle, Box } from 'lucide-react';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { CatalogueRenderer } from '@/app/(protected)/dealer-kit/components/CatalogueRenderer';
+import { CataloguePickingProvider } from '@/app/(protected)/dealer-kit/components/TileGrid';
+import { readPicks, togglePick, writePicks } from '@/lib/dealer-kit/cataloguePicks';
 import {
   CatalogueNotFoundError,
   readPublishedCatalogue,
@@ -36,6 +40,18 @@ export default function PublicCataloguePage({
 }) {
   const { company, slug } = use(params);
   const [status, setStatus] = useState<Status>({ state: 'loading' });
+
+  /**
+   * Products ticked while reading.
+   *
+   * This page is anonymous - it is the link a dealer forwards - so there is no
+   * Selection to write to yet. The picks are kept in this browser and the room
+   * designer turns them into real lines when it opens, which is also where the
+   * login (if any) happens.
+   */
+  const [picked, setPicked] = useState<string[]>([]);
+  useEffect(() => setPicked(readPicks()), []);
+  useEffect(() => writePicks(picked), [picked]);
 
   useEffect(() => {
     let live = true;
@@ -96,13 +112,49 @@ export default function PublicCataloguePage({
   }
 
   return (
-    <main className="min-h-screen bg-background">
-      <CatalogueRenderer
-        name={status.page.name}
-        sections={status.page.doc.sections ?? []}
-        resolvedCollections={status.page.collections}
-        tileTemplates={status.page.tileTemplates}
-      />
+    <main className="min-h-screen bg-background pb-24">
+      <CataloguePickingProvider
+        value={{
+          picked,
+          onToggle: (productId) => setPicked((current) => togglePick(current, productId)),
+        }}
+      >
+        <CatalogueRenderer
+          name={status.page.name}
+          sections={status.page.doc.sections ?? []}
+          resolvedCollections={status.page.collections}
+          tileTemplates={status.page.tileTemplates}
+        />
+      </CataloguePickingProvider>
+
+      {/*
+        The bar appears only once something is ticked. A permanent call to
+        action on a catalogue somebody is still reading is noise; one that shows
+        up the moment they choose is an answer to what they just did.
+      */}
+      {picked.length > 0 && (
+        <div
+          className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 p-3 backdrop-blur"
+          data-dk-picks-bar
+        >
+          <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-2">
+            <span className="text-sm text-foreground">
+              {picked.length} product{picked.length === 1 ? '' : 's'} chosen
+            </span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setPicked([])}>
+                Clear
+              </Button>
+              <Button size="sm" asChild>
+                <Link href="/dealer-kit/design?picks=1">
+                  <Box className="size-4" />
+                  Put them in a room
+                </Link>
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

@@ -379,6 +379,68 @@ test.describe('Dealer Kit room designer', () => {
     await expect.poll(floor, { timeout: 10_000 }).toBe(timberFloor);
   });
 
+  test('the plan can be panned, zoomed and fitted back', async ({ page }) => {
+    await openDesigner(page);
+
+    const plan = page.locator('[data-dk-room-plan]');
+    await expect(plan).toBeVisible({ timeout: 20_000 });
+    const viewBox = () => plan.getAttribute('viewBox');
+    const start = await viewBox();
+
+    const box = (await plan.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.wheel(0, -400);
+    await expect.poll(viewBox, { timeout: 10_000 }).not.toBe(start);
+    const zoomed = await viewBox();
+
+    // Shift-drag pans, for the same reason middle-drag does: the left button is
+    // already "grab the thing under the cursor".
+    await page.keyboard.down('Shift');
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2 + 120, box.y + box.height / 2 + 60, { steps: 8 });
+    await page.mouse.up();
+    await page.keyboard.up('Shift');
+    await expect.poll(viewBox, { timeout: 10_000 }).not.toBe(zoomed);
+
+    await page.locator('[data-dk-reset-view]').click();
+    await expect.poll(viewBox, { timeout: 10_000 }).toBe(start);
+  });
+
+  test('a door can be dragged onto a different wall', async ({ page }) => {
+    await openDesigner(page);
+
+    await page.locator('[data-dk-room-wall="0"]').dispatchEvent('pointerdown', { bubbles: true });
+    await tap(page, page.getByRole('button', { name: /^door$/i }));
+    const opening = page.locator('[data-dk-opening]').first();
+    await expect(opening).toBeAttached({ timeout: 10_000 });
+
+    // Which wall it is on, read off the plan: a door on the top wall is drawn
+    // horizontally, one on a side wall vertically.
+    const isHorizontal = async () => {
+      const line = opening.locator('line').first();
+      const y1 = Number(await line.getAttribute('y1'));
+      const y2 = Number(await line.getAttribute('y2'));
+      return Math.abs(y2 - y1) < 1;
+    };
+    expect(await isHorizontal()).toBe(true);
+
+    const plan = page.locator('[data-dk-room-plan]');
+    const planBox = (await plan.boundingBox())!;
+    // The door's own grab area, not the group's box - the group also contains
+    // the swing arc, whose centre is out in the middle of the room.
+    const openingBox = (await opening.locator('line').first().boundingBox())!;
+    await page.mouse.move(openingBox.x + openingBox.width / 2, openingBox.y + openingBox.height / 2);
+    await page.mouse.down();
+    // Round the corner and down the left-hand side.
+    await page.mouse.move(planBox.x + 60, planBox.y + planBox.height / 2, { steps: 14 });
+    await page.mouse.up();
+
+    // Dragging a door round a corner is a thing people do - the plan was right
+    // and the wall was wrong - and refusing meant deleting it and stamping a
+    // new one.
+    await expect.poll(isHorizontal, { timeout: 10_000 }).toBe(false);
+  });
+
   test('a design the server no longer has does not brick the designer', async ({ page }) => {
     await openDesigner(page);
 

@@ -73,7 +73,8 @@ export interface RoomPlanProps {
   openings?: Opening[];
   selectedOpeningId?: string | null;
   onSelectOpening?: (openingId: string | null) => void;
-  onMoveOpening?: (openingId: string, offsetMm: number) => void;
+  /** An opening can be dragged onto a different wall, so the wall travels too. */
+  onMoveOpening?: (openingId: string, offsetMm: number, wallIndex: number) => void;
   /** Surface finishes, so the plan shows the scheme rather than a blank room. */
   finishes?: Finishes;
   /** Which wall is selected, so "add a door" knows where to put one. */
@@ -150,7 +151,47 @@ export function RoomPlan({
    * the padding covers ordinary gestures, and the scale settles on drop.
    */
   const frozenBounds = useRef<ReturnType<typeof viewBoxFor> | null>(null);
-  const bounds = dragging ? (frozenBounds.current ?? liveBounds) : liveBounds;
+  const fitted = dragging ? (frozenBounds.current ?? liveBounds) : liveBounds;
+
+  /**
+   * Where the user has moved and zoomed the drawing.
+   *
+   * Kept as an offset and a scale ON TOP of the fitted view rather than as an
+   * absolute viewBox, so reshaping the room still re-fits sensibly and "reset"
+   * is just clearing this back to zero and one.
+   */
+  const [view, setView] = useState({ panX: 0, panY: 0, zoom: 1 });
+  const panOrigin = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  /** Read during a pan, where state would be a frame behind. */
+  const viewRef = useRef({ panX: 0, panY: 0, zoom: 1 });
+
+  /**
+   * The gesture in progress, mirrored into a ref.
+   *
+   * State is a render behind: the first pointermove after a pointerdown can
+   * still see the PREVIOUS gesture, and "previous gesture" here meant grabbing
+   * a door and moving the wall it was cut into. The ref is written
+   * synchronously in the same handler, so every move sees what was just
+   * grabbed.
+   */
+  const dragRef = useRef<typeof dragging>(null);
+
+  const bounds = useMemo(() => {
+    const width = fitted.width / view.zoom;
+    const height = fitted.height / view.zoom;
+    return {
+      // Zoom about the middle of the current view, which is what a wheel over a
+      // drawing is expected to do.
+      minX: fitted.minX + (fitted.width - width) / 2 + view.panX,
+      minY: fitted.minY + (fitted.height - height) / 2 + view.panY,
+      width,
+      height,
+    };
+  }, [fitted, view]);
+
+  viewRef.current = view;
+
+  const resetView = useCallback(() => setView({ panX: 0, panY: 0, zoom: 1 }), []);
 
   /** Screen point -> millimetres, via the SVG's own transform. */
   const toMillimetres = useCallback((event: React.PointerEvent): Point | null => {
@@ -167,6 +208,30 @@ export function RoomPlan({
 
   const handleMove = useCallback(
     (event: React.PointerEvent) => {
+      // A gesture with no button held is a gesture whose pointerup was lost -
+      // a pointer that left the window, or a synthetic event. Ending it here
+      // stops a stale drag following the cursor around the plan.
+      if (event.buttons === 0 && (dragRef.current || panOrigin.current)) {
+        dragRef.current = null;
+        panOrigin.current = null;
+        setDragging(null);
+        return;
+      }
+
+      const pan = panOrigin.current;
+      if (pan) {
+        // Millimetres per pixel, from the live viewBox: the drawing should move
+        // exactly with the cursor at any zoom.
+        const svg = svgRef.current;
+        const scale = svg ? bounds.width / (svg.getBoundingClientRect().width || 1) : 1;
+        setView((current) => ({
+          ...current,
+          panX: pan.panX - (event.clientX - pan.x) * scale,
+          panY: pan.panY - (event.clientY - pan.y) * scale,
+        }));
+        return;
+      }
+      const dragging = dragRef.current;
       if (!dragging) return;
       const position = toMillimetres(event);
       if (!position) return;
@@ -201,18 +266,43 @@ export function RoomPlan({
 
       if (dragging.kind === 'opening') {
         const opening = openings.find((candidate) => candidate.id === dragging.id);
-        const wall = opening ? outline[opening.wallIndex] : null;
-        if (!opening || !wall) return;
-        const next = outline[(opening.wallIndex + 1) % outline.length];
-        const length = Math.hypot(next.x - wall.x, next.y - wall.y);
-        if (length < 1e-6) return;
-        // Projected onto the wall: a door slides ALONG its wall and nowhere
-        // else, however the pointer wanders off it.
-        const along =
-          ((position.x - wall.x) * (next.x - wall.x) + (position.y - wall.y) * (next.y - wall.y)) /
-          length;
-        const fitted = fitOpening({ ...opening, offsetMm: snapToGrid(along, DEFAULT_GRID_MM) }, length);
-        if (fitted) onMoveOpening?.(opening.id, fitted.offsetMm);
+        if (!opening) return;
+
+        /**
+         * The door goes to whichever wall the pointer is nearest, not only the
+         * one it started on. Dragging a door round a corner is a thing people
+         * do - the plan was right and the wall was wrong - and refusing to
+         * cross meant deleting it and stamping a new one.
+         */
+        let best: { index: number; distance: number; along: number; length: number } | null = null;
+        for (let index = 0; index < outline.length; index += 1) {
+          const start = outline[index];
+          const end = outline[(index + 1) % outline.length];
+          const length = Math.hypot(end.x - start.x, end.y - start.y);
+          if (length < 1e-6) continue;
+          const along =
+            ((position.x - start.x) * (end.x - start.x) +
+              (position.y - start.y) * (end.y - start.y)) /
+            length;
+          const clamped = Math.min(Math.max(along, 0), length);
+          const nearestX = start.x + ((end.x - start.x) / length) * clamped;
+          const nearestY = start.y + ((end.y - start.y) / length) * clamped;
+          const distance = Math.hypot(position.x - nearestX, position.y - nearestY);
+          if (!best || distance < best.distance) best = { index, distance, along, length };
+        }
+        if (!best) return;
+
+        const fitted = fitOpening(
+          {
+            ...opening,
+            wallIndex: best.index,
+            offsetMm: snapToGrid(best.along, DEFAULT_GRID_MM),
+          },
+          best.length,
+        );
+        // A wall too short for this opening simply does not take it: the door
+        // stays where it was rather than being narrowed to fit.
+        if (fitted) onMoveOpening?.(opening.id, fitted.offsetMm, fitted.wallIndex);
         return;
       }
 
@@ -228,10 +318,40 @@ export function RoomPlan({
         onMoveBox(dragging.id, result.x, result.y, result.rotation);
       }
     },
-    [dragging, outline, boxes, openings, onOutlineChange, onMoveBox, onMoveOpening, toMillimetres],
+    [
+      outline,
+      boxes,
+      openings,
+      bounds.width,
+      onOutlineChange,
+      onMoveBox,
+      onMoveOpening,
+      toMillimetres,
+    ],
   );
 
+  /**
+   * Pan with the middle button (or space-drag), zoom with the wheel.
+   *
+   * The middle button on purpose: left is already "grab the thing under the
+   * cursor", and a planner where you cannot move the paper is a planner you
+   * fight as soon as the room is bigger than the panel.
+   */
+  const startPan = useCallback((event: React.PointerEvent) => {
+    if (event.button !== 1 && !event.shiftKey) return false;
+    event.preventDefault();
+    panOrigin.current = {
+      x: event.clientX,
+      y: event.clientY,
+      panX: viewRef.current.panX,
+      panY: viewRef.current.panY,
+    };
+    return true;
+  }, []);
+
   const endDrag = useCallback(() => {
+    panOrigin.current = null;
+    dragRef.current = null;
     // One undo entry per gesture, not per frame: a drag emits a state every
     // pointermove, and recording each would make Ctrl-Z look broken.
     if (dragging) onCommit?.();
@@ -245,6 +365,7 @@ export function RoomPlan({
   const beginDrag = useCallback(
     (next: NonNullable<typeof dragging>) => {
       frozenBounds.current = viewBoxFor(outline);
+      dragRef.current = next;
       setDragging(next);
     },
     [outline],
@@ -302,9 +423,20 @@ export function RoomPlan({
         viewBox={`${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}`}
         className="h-full w-full touch-none"
         style={{ aspectRatio: `${bounds.width} / ${bounds.height}` }}
+        onPointerDown={startPan}
         onPointerMove={handleMove}
         onPointerUp={endDrag}
         onPointerLeave={endDrag}
+        onAuxClick={(event) => event.preventDefault()}
+        onWheel={(event) => {
+          event.preventDefault();
+          setView((current) => ({
+            ...current,
+            // Clamped: past 8x a 50mm grid square fills the panel, and below
+            // half the room is a dot nobody can grab.
+            zoom: Math.min(8, Math.max(0.5, current.zoom * (event.deltaY < 0 ? 1.1 : 1 / 1.1))),
+          }));
+        }}
         data-dk-room-plan
       >
         <defs>
@@ -458,23 +590,89 @@ export function RoomPlan({
               );
             }
 
+            /**
+             * Drawn as a PILL, not bare text.
+             *
+             * The number was already editable, but nothing said so: plain grey
+             * text beside a wall reads as an annotation, and the first person to
+             * use this asked whether the dimensions could be typed at all. A
+             * bordered chip that lights up under the cursor answers the question
+             * before it is asked.
+             */
+            const label = `${length} mm`;
+            const pillWidth = label.length * 82 + 140;
+            const pillHeight = 260;
+            const pillX = labelX - (horizontal ? pillWidth / 2 : outward < 0 ? pillWidth : 0);
+
             return (
-              <text
+              <g
                 key={`wall-${index}`}
-                x={labelX}
-                y={labelY}
-                textAnchor={horizontal ? 'middle' : outward < 0 ? 'end' : 'start'}
-                dominantBaseline="middle"
-                className="cursor-text fill-muted-foreground hover:fill-primary"
-                style={{ fontSize: 150 }}
+                className="group cursor-pointer"
                 data-dk-wall-label={index}
                 onPointerDown={(event) => {
                   event.stopPropagation();
                   setEditingWall({ index, value: String(length) });
                 }}
               >
-                {length} mm
-              </text>
+                <rect
+                  x={pillX}
+                  y={labelY - pillHeight / 2}
+                  width={pillWidth}
+                  height={pillHeight}
+                  rx={90}
+                  className="fill-background stroke-border group-hover:stroke-primary"
+                  strokeWidth={14}
+                />
+                <text
+                  x={labelX}
+                  y={labelY}
+                  textAnchor={horizontal ? 'middle' : outward < 0 ? 'end' : 'start'}
+                  dominantBaseline="middle"
+                  className="fill-muted-foreground group-hover:fill-primary"
+                  style={{ fontSize: 150 }}
+                >
+                  {label}
+                </text>
+              </g>
+            );
+          })}
+
+        {/* Wall handles are painted BEFORE the doors and the products.
+            They are 160mm wide so a wall is easy to grab, which means the last
+            layer painted wins every shared pixel - and while they sat on top,
+            a door or a vanity standing against a wall could not be grabbed at
+            all. Whatever is IN the wall now takes precedence over the wall. */}
+        {/* A fat invisible line over each wall. Dragging a wall is what somebody
+            means by "this wall is 200mm too far out"; doing it by moving two
+            corners is fiddly and lets the wall go out of square. */}
+        {outline.length >= 3 &&
+          outline.map((point, index) => {
+            const next = outline[(index + 1) % outline.length];
+            const horizontal = Math.abs(next.x - point.x) >= Math.abs(next.y - point.y);
+            return (
+              <line
+                key={`wall-handle-${index}`}
+                x1={point.x}
+                y1={point.y}
+                x2={next.x}
+                y2={next.y}
+                stroke="transparent"
+                strokeWidth={160}
+                className={horizontal ? 'cursor-ns-resize' : 'cursor-ew-resize'}
+                data-dk-room-wall={index}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                  // Selecting on pointerdown, not click: the same gesture that
+                  // drags a wall also chooses it, so "add a door" always has a
+                  // wall to put one on.
+                  onSelectWall?.(index);
+                  onSelectOpening?.(null);
+                  const start = toMillimetres(event);
+                  if (!start) return;
+                  wallDragOrigin.current = { x: start.x, y: start.y, outline };
+                  beginDrag({ kind: 'wall', index });
+                }}
+              />
             );
           })}
 
@@ -519,6 +717,18 @@ export function RoomPlan({
                 beginDrag({ kind: 'opening', id: opening.id });
               }}
             >
+              {/* A fat transparent grab area over the opening, the same trick
+                  the walls use. The door itself is an 8px line on screen and
+                  the swing arc is thinner still; without this you have to hit
+                  the line exactly, and a near miss grabs the wall instead. */}
+              <line
+                x1={a.x}
+                y1={a.y}
+                x2={b.x}
+                y2={b.y}
+                stroke="transparent"
+                strokeWidth={240}
+              />
               {/* The hole itself: the wall is painted out along this stretch. */}
               <line
                 x1={a.x}
@@ -768,39 +978,6 @@ export function RoomPlan({
           );
         })()}
 
-        {/* A fat invisible line over each wall. Dragging a wall is what somebody
-            means by "this wall is 200mm too far out"; doing it by moving two
-            corners is fiddly and lets the wall go out of square. */}
-        {outline.length >= 3 &&
-          outline.map((point, index) => {
-            const next = outline[(index + 1) % outline.length];
-            const horizontal = Math.abs(next.x - point.x) >= Math.abs(next.y - point.y);
-            return (
-              <line
-                key={`wall-handle-${index}`}
-                x1={point.x}
-                y1={point.y}
-                x2={next.x}
-                y2={next.y}
-                stroke="transparent"
-                strokeWidth={160}
-                className={horizontal ? 'cursor-ns-resize' : 'cursor-ew-resize'}
-                data-dk-room-wall={index}
-                onPointerDown={(event) => {
-                  event.stopPropagation();
-                  // Selecting on pointerdown, not click: the same gesture that
-                  // drags a wall also chooses it, so "add a door" always has a
-                  // wall to put one on.
-                  onSelectWall?.(index);
-                  onSelectOpening?.(null);
-                  const start = toMillimetres(event);
-                  if (!start) return;
-                  wallDragOrigin.current = { x: start.x, y: start.y, outline };
-                  beginDrag({ kind: 'wall', index });
-                }}
-              />
-            );
-          })}
 
         {outline.map((point, index) => (
           <circle
@@ -818,6 +995,16 @@ export function RoomPlan({
           />
         ))}
       </svg>
+
+      <button
+        type="button"
+        onClick={resetView}
+        className="absolute bottom-2 start-2 rounded border border-border bg-background/90 px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+        data-dk-reset-view
+        title="Fit the room to the panel"
+      >
+        Fit
+      </button>
 
       <div className="pointer-events-none absolute bottom-2 end-2 rounded bg-background/90 px-2 py-1 text-xs text-muted-foreground">
         {/* Derived, never stored (AC-R5). */}

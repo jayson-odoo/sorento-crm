@@ -57,7 +57,7 @@ import {
 } from '@/lib/dealer-kit/types';
 
 import { BuilderCanvas } from './BuilderCanvas';
-import { FocusShell, FocusToggle } from './FocusMode';
+import { CollapsiblePanel, FocusShell, FocusToggle } from './FocusMode';
 import { PaperCanvas } from './PaperCanvas';
 
 /** Desktop / tablet / mobile, plus paper - the one view allowed to draw page breaks. */
@@ -131,6 +131,14 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<CanvasMode>('desktop');
   const [focus, setFocus] = useState(false);
+  /**
+   * Side panels folded away.
+   *
+   * Only meaningful in full screen: outside it the page scrolls anyway, and a
+   * collapsed panel would just be a missing control.
+   */
+  const [hideLeft, setHideLeft] = useState(false);
+  const [hideRight, setHideRight] = useState(false);
   const [activeSectionId, setActiveSectionId] = useState<string | null>(
     doc.sections[0]?.id ?? null,
   );
@@ -458,7 +466,13 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
   return (
     <FocusShell active={focus} onExit={() => setFocus(false)}>
     <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
-      <aside className="w-full shrink-0 lg:w-56">
+      <aside className={cn('w-full shrink-0', focus && hideLeft ? 'lg:w-auto' : 'lg:w-56')}>
+        <CollapsiblePanel
+          title="Sections and blocks"
+          collapsed={focus && hideLeft}
+          onToggle={setHideLeft}
+          side="start"
+        >
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm">Sections</CardTitle>
@@ -522,6 +536,7 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
             ))}
           </CardContent>
         </Card>
+        </CollapsiblePanel>
       </aside>
 
       <div className="min-w-0 flex-1">
@@ -631,7 +646,13 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
         </Card>
       </div>
 
-      <aside className="w-full shrink-0 lg:w-64">
+      <aside className={cn('w-full shrink-0', focus && hideRight ? 'lg:w-auto' : 'lg:w-64')}>
+        <CollapsiblePanel
+          title="Block settings"
+          collapsed={focus && hideRight}
+          onToggle={setHideRight}
+          side="end"
+        >
         <BlockInspector
           block={mode === 'paper' ? null : selectedBlock}
           selection={selectedBlock ? selections[selectedBlock.id] ?? EMPTY_SELECTION : EMPTY_SELECTION}
@@ -642,6 +663,7 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
             void persistSelection(selectedBlock, next);
           }}
         />
+        </CollapsiblePanel>
       </aside>
 
       <ConfirmDeleteDialog

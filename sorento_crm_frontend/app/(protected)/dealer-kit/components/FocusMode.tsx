@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 
@@ -81,6 +81,83 @@ export function FocusShell({
       className="fixed inset-0 z-50 flex flex-col gap-3 overflow-auto bg-background p-3"
       data-dk-focus-mode
     >
+      {/*
+        Say how to get out, on the screen, once.
+        A mode that covers the entire window and relies on the user guessing a
+        key is a trap; the hint costs one line and removes the guess. It fades
+        out of the way rather than sitting in the work area.
+      */}
+      <div className="pointer-events-none absolute end-3 top-3 z-10 rounded-md bg-foreground/80 px-2 py-1 text-xs text-background shadow-sm">
+        Press Esc to exit full screen
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * A panel that can be folded away.
+ *
+ * Full screen gives the canvas the window; the side panels then take a third of
+ * it straight back. Folding them is what actually makes the room or the page
+ * big, and it has to be reversible in one click from the same place.
+ */
+export function CollapsiblePanel({
+  title,
+  collapsed,
+  onToggle,
+  side,
+  children,
+}: {
+  title: string;
+  collapsed: boolean;
+  onToggle: (next: boolean) => void;
+  /** Which edge it lives on, so the chevron points the right way. */
+  side: 'start' | 'end';
+  children: React.ReactNode;
+}) {
+  if (collapsed) {
+    return (
+      <div className="shrink-0">
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label={`Show ${title}`}
+          aria-expanded={false}
+          title={`Show ${title}`}
+          className="h-9 w-9 p-0"
+          onClick={() => onToggle(false)}
+        >
+          {side === 'start' ? (
+            <ChevronRight className="size-4" />
+          ) : (
+            <ChevronLeft className="size-4" />
+          )}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-w-0">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground">{title}</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label={`Hide ${title}`}
+          aria-expanded
+          title={`Hide ${title}`}
+          className="h-7 w-7 p-0"
+          onClick={() => onToggle(true)}
+        >
+          {side === 'start' ? (
+            <ChevronLeft className="size-4" />
+          ) : (
+            <ChevronRight className="size-4" />
+          )}
+        </Button>
+      </div>
       {children}
     </div>
   );
