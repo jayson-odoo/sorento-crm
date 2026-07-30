@@ -672,6 +672,41 @@ real offset) · a dropdown never carries cost or invoice price.
 
 ---
 
+## S6 - The rest of the IKEA list (2026-07-30)
+
+Built the four items S5 left ranked and unbuilt.
+
+**Doors and windows (G5).** An opening is stored as an offset ALONG a wall, not a position in
+the room, so a wall that moves takes its door with it and a wall that shortens carries it inward
+or cannot hold it. A door wider than its wall is refused, never silently narrowed. Plan draws
+the swing arc; 3D builds the wall from the stretches still solid plus lintel and sill panels,
+which is a boolean cut's picture without rebuilding CSG on every drag.
+
+**Design summary (G10).** POST `/selections/{id}/quote`, owner-only. Unticking a line re-asks
+the SERVER for the subtotal - a frontend that adds up prices is a second price list nobody knows
+they are maintaining. Unticking is not deleting. Unsellable lines are taken off with the reason
+shown. Ordering is stated as not wired rather than implied by a missing button.
+
+**Per-surface finishes (G6).** Six wall and six floor finishes, one surface at a time, stored as
+ids so they can be restyled and so a dropped palette entry still opens. Fixed a real undo bug
+found while verifying: snapshots are taken before a change, so stepping straight into the past
+took back two edits at once.
+
+**Category chips (G11).** The picker browses by category as well as searching, narrowing rather
+than replacing. We keep text search, which the planner we studied does not have at all.
+
+**Verified:** 151 vitest · 33 Playwright (both dealer-kit specs, prod build) · 58 pytest for the
+dealer-kit endpoints · every screen exercised in a real browser.
+
+**Gate adds:** an opening never reaches the line list · a quote's arithmetic happens server-side
+and a change in the figure is provably a request · one undo takes back one edit · a finish is an
+id, not a colour · a category filter composes with the search term.
+
+**Still not built:** ordering from a design (blocked on the Quote decision), photo-real
+materials, first-person camera, free-drag rotation handles - none load-bearing to the feel.
+
+---
+
 ## Standing constraints (violating any of these fails the gate)
 
 - Tests are **Postgres only**. No sqlite. Committing tests use a private `zzt_` schema.
