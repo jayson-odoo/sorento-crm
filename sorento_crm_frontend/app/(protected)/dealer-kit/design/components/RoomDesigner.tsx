@@ -53,6 +53,15 @@ import {
   type SelectionLine,
 } from '../../services/selectionService';
 import {
+  FLOOR_FINISHES,
+  WALL_FINISHES,
+  floorFinishId,
+  setFloorFinish,
+  setWallFinish,
+  wallFinishId,
+  type Finishes,
+} from '@/lib/dealer-kit/finishes';
+import {
   defaultsFor,
   fitOpening,
   fitOpenings,
@@ -112,6 +121,7 @@ interface RoomSnapshot {
   outline: Point[];
   placed: PlacedBox[];
   openings: Opening[];
+  finishes: Finishes;
 }
 
 /** Where this design is remembered between visits, so a reload is not a restart. */
@@ -144,13 +154,15 @@ export function RoomDesigner() {
    * state every pointermove.
    */
   const [history, setHistory] = useState<History<RoomSnapshot>>(() =>
-    newHistory({ outline: STARTING_ROOM, placed: [], openings: [] }),
+    newHistory({ outline: STARTING_ROOM, placed: [], openings: [], finishes: {} }),
   );
 
   /** Doors and windows, and which one (or which wall) is being worked on. */
   const [openings, setOpenings] = useState<Opening[]>([]);
   const [selectedOpeningId, setSelectedOpeningId] = useState<string | null>(null);
   const [selectedWallIndex, setSelectedWallIndex] = useState<number | null>(null);
+  /** What the surfaces look like. Stored as ids, resolved to colour on render. */
+  const [finishes, setFinishes] = useState<Finishes>({});
 
   /**
    * The catalogue we were sent from, if any.
@@ -216,6 +228,7 @@ export function RoomDesigner() {
       setOutline(selection.room.outline);
       if (selection.room.ceilingHeightMm) setCeilingHeightMm(selection.room.ceilingHeightMm);
       setOpenings(selection.room.openings ?? []);
+      setFinishes(selection.room.finishes ?? {});
       hydrated.current = true;
     }
   }, [selection]);
@@ -289,13 +302,13 @@ export function RoomDesigner() {
 
   const rotateSelected = useCallback(() => {
     setDirty(true);
-    setHistory((current) => pushHistory(current, { outline, placed, openings }));
+    setHistory((current) => pushHistory(current, { outline, placed, openings, finishes }));
     setPlaced((current) =>
       current.map((box) =>
         box.id === selectedId ? { ...box, rotation: (box.rotation + 90) % 360 } : box,
       ),
     );
-  }, [selectedId, outline, placed, openings]);
+  }, [selectedId, outline, placed, openings, finishes]);
 
   const removeSelected = useCallback(() => {
     const box = placed.find((candidate) => candidate.id === selectedId);
@@ -304,7 +317,7 @@ export function RoomDesigner() {
     // Take the clicked copy out locally FIRST, renumbering what is left, then
     // tell the server the new count. Sending only "one fewer" would leave the
     // rebuild deleting the last copy instead of the one they clicked.
-    setHistory((current) => pushHistory(current, { outline, placed, openings }));
+    setHistory((current) => pushHistory(current, { outline, placed, openings, finishes }));
     const remaining = removeBox(placed, box.id);
     setPlaced(remaining);
     setSelectedId(null);
@@ -313,12 +326,12 @@ export function RoomDesigner() {
       productId: box.productId,
       quantity: quantityOf(remaining, box.productId),
     });
-  }, [placed, selectedId, lineMutation, outline, openings]);
+  }, [placed, selectedId, lineMutation, outline, openings, finishes]);
 
   /** Record the room as it stands now, as one undoable step. */
   const commit = useCallback(() => {
-    setHistory((current) => pushHistory(current, { outline, placed, openings }));
-  }, [outline, placed, openings]);
+    setHistory((current) => pushHistory(current, { outline, placed, openings, finishes }));
+  }, [outline, placed, openings, finishes]);
 
   /**
    * Restore a snapshot, and tell the server about any product it changes.
@@ -335,6 +348,7 @@ export function RoomDesigner() {
       setOutline(snapshot.outline);
       setPlaced(snapshot.placed);
       setOpenings(snapshot.openings ?? []);
+      setFinishes(snapshot.finishes ?? {});
       setSelectedId(null);
       setSelectedOpeningId(null);
       setDirty(true);
@@ -368,11 +382,27 @@ export function RoomDesigner() {
   );
 
   const undoStep = useCallback(() => {
+    /**
+     * The edit in hand comes off first.
+     *
+     * Snapshots are taken BEFORE a change, so `present` is the room as it was
+     * before whatever the user just did. If the live room has moved on from
+     * it, one undo means "put that back" - stepping into the past instead
+     * would swallow two edits at once, which is what it did until this check
+     * existed. The live state goes onto the redo trail so it can come back.
+     */
+    const live: RoomSnapshot = { outline, placed, openings, finishes };
+    if (JSON.stringify(live) !== JSON.stringify(history.present)) {
+      setHistory({ ...history, future: [live, ...history.future] });
+      void applySnapshot(history.present);
+      return;
+    }
+
     const next = undo(history);
     if (next === history) return;
     setHistory(next);
     void applySnapshot(next.present);
-  }, [history, applySnapshot]);
+  }, [history, applySnapshot, outline, placed, openings, finishes]);
 
   const redoStep = useCallback(() => {
     const next = redo(history);
@@ -499,13 +529,14 @@ export function RoomDesigner() {
     setPlaced([]);
     setOutline(STARTING_ROOM);
     setOpenings([]);
+    setFinishes({});
     setSelectedId(null);
     setSelectedOpeningId(null);
     setSelectedWallIndex(null);
     setDirty(false);
     // A new design starts with no history: undoing into the previous design
     // would silently resurrect work the user just set aside.
-    setHistory(newHistory({ outline: STARTING_ROOM, placed: [], openings: [] }));
+    setHistory(newHistory({ outline: STARTING_ROOM, placed: [], openings: [], finishes: {} }));
   }, []);
 
   const save = useCallback(() => {
@@ -513,9 +544,10 @@ export function RoomDesigner() {
       outline,
       placements: placementsOf(placed),
       openings,
+      finishes,
       ceilingHeightMm,
     });
-  }, [outline, placed, openings, ceilingHeightMm, roomMutation]);
+  }, [outline, placed, openings, finishes, ceilingHeightMm, roomMutation]);
 
   const collisions = useMemo(() => {
     const clashing = new Set<string>();
@@ -633,6 +665,7 @@ export function RoomDesigner() {
                   onMoveOpening={moveOpening}
                   selectedWallIndex={selectedWallIndex}
                   onSelectWall={setSelectedWallIndex}
+                  finishes={finishes}
                 />
 
                 {/*
@@ -675,6 +708,75 @@ export function RoomDesigner() {
                     <Frame className="size-4" />
                     Opening
                   </Button>
+                </div>
+
+                {/*
+                  Finishes are per SURFACE, like the planner we studied: one
+                  wall at a time, and the floor on its own. "Apply to all walls"
+                  is deliberately absent - a bathroom with one feature wall is
+                  the normal case, not the exception.
+                */}
+                <div className="mt-2 space-y-2 rounded-md border border-border p-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="w-24 text-xs text-muted-foreground">Floor</span>
+                    {FLOOR_FINISHES.map((finish) => (
+                      <button
+                        key={finish.id}
+                        type="button"
+                        aria-label={`Floor: ${finish.label}`}
+                        aria-pressed={floorFinishId(finishes) === finish.id}
+                        title={finish.label}
+                        data-dk-floor-finish={finish.id}
+                        className={`size-6 rounded border-2 ${
+                          floorFinishId(finishes) === finish.id
+                            ? 'border-primary'
+                            : 'border-border'
+                        }`}
+                        style={{ backgroundColor: finish.color }}
+                        onClick={() => {
+                          commit();
+                          setFinishes((current) => setFloorFinish(current, finish.id));
+                          setDirty(true);
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="w-24 text-xs text-muted-foreground">
+                      {selectedWallIndex === null
+                        ? 'Wall (pick one)'
+                        : `Wall ${selectedWallIndex + 1}`}
+                    </span>
+                    {WALL_FINISHES.map((finish) => (
+                      <button
+                        key={finish.id}
+                        type="button"
+                        aria-label={`Wall: ${finish.label}`}
+                        aria-pressed={
+                          selectedWallIndex !== null &&
+                          wallFinishId(finishes, selectedWallIndex) === finish.id
+                        }
+                        title={finish.label}
+                        disabled={selectedWallIndex === null}
+                        data-dk-wall-finish-swatch={finish.id}
+                        className={`size-6 rounded border-2 disabled:opacity-40 ${
+                          selectedWallIndex !== null &&
+                          wallFinishId(finishes, selectedWallIndex) === finish.id
+                            ? 'border-primary'
+                            : 'border-border'
+                        }`}
+                        style={{ backgroundColor: finish.color }}
+                        onClick={() => {
+                          if (selectedWallIndex === null) return;
+                          commit();
+                          setFinishes((current) =>
+                            setWallFinish(current, selectedWallIndex, finish.id),
+                          );
+                          setDirty(true);
+                        }}
+                      />
+                    ))}
+                  </div>
                 </div>
 
                 {selectedOpening && (
@@ -743,6 +845,7 @@ export function RoomDesigner() {
                   onSelectBox={setSelectedId}
                   ceilingHeightMm={ceilingHeightMm}
                   openings={openings}
+                  finishes={finishes}
                 />
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Label htmlFor="dk-ceiling-height" className="text-xs text-muted-foreground">

@@ -203,6 +203,7 @@ def save_room(
             "outline": payload.outline,
             "placements": payload.placements,
             "openings": payload.openings,
+            "finishes": payload.finishes,
             "ceilingHeightMm": payload.ceiling_height_mm,
         },
     )

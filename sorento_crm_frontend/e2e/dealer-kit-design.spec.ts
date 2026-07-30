@@ -343,6 +343,42 @@ test.describe('Dealer Kit room designer', () => {
     await expect(page.locator('[data-dk-quote-line]').first()).toBeVisible();
   });
 
+  test('finishes apply per surface, and one undo takes back one edit', async ({ page }) => {
+    await openDesigner(page);
+
+    const floor = () =>
+      page.locator('[data-dk-room-plan] path.stroke-foreground').getAttribute('fill');
+    const wall = () => page.locator('[data-dk-wall-finish="0"]').getAttribute('stroke');
+    await expect(page.locator('[data-dk-room-plan]')).toBeVisible({ timeout: 20_000 });
+
+    const startFloor = await floor();
+    const startWall = await wall();
+
+    await tap(page, page.locator('[data-dk-floor-finish="timber"]'));
+    await expect.poll(floor, { timeout: 10_000 }).not.toBe(startFloor);
+    // The floor is its own surface: changing it leaves the walls alone.
+    expect(await wall()).toBe(startWall);
+
+    await page.locator('[data-dk-room-wall="0"]').dispatchEvent('pointerdown', { bubbles: true });
+    await tap(page, page.locator('[data-dk-wall-finish-swatch="charcoal"]'));
+    await expect.poll(wall, { timeout: 10_000 }).not.toBe(startWall);
+    const timberFloor = await floor();
+
+    // One undo takes back the wall and NOT the floor. Snapshots are taken
+    // before a change, so without care the first undo swallows two edits -
+    // which is exactly what it did until the designer learnt to take the edit
+    // in hand off first.
+    await tap(page, page.getByRole('button', { name: 'Undo' }));
+    await expect.poll(wall, { timeout: 10_000 }).toBe(startWall);
+    expect(await floor()).toBe(timberFloor);
+
+    await tap(page, page.getByRole('button', { name: 'Undo' }));
+    await expect.poll(floor, { timeout: 10_000 }).toBe(startFloor);
+
+    await tap(page, page.getByRole('button', { name: 'Redo' }));
+    await expect.poll(floor, { timeout: 10_000 }).toBe(timberFloor);
+  });
+
   test('a design the server no longer has does not brick the designer', async ({ page }) => {
     await openDesigner(page);
 

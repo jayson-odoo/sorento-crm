@@ -291,6 +291,9 @@ class RoomWrite(BaseModel):
     # side tomorrow) and pinning it here would mean a backend release per
     # drag handle. They are NOT products - no price, never on a quote.
     openings: list[dict] = Field(default_factory=list)
+    # Surface finishes: a floor id and per-wall ids. Ids, never colours - a
+    # stored colour cannot be restyled and would ignore the theme forever.
+    finishes: Optional[dict] = None
 
 
 class QuoteRequest(BaseModel):

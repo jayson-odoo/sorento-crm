@@ -231,6 +231,7 @@ export function DesignSummary() {
                 outline={selection.room.outline}
                 boxes={boxes}
                 openings={selection.room.openings ?? []}
+                finishes={selection.room.finishes ?? undefined}
                 onOutlineChange={() => {}}
               />
             ) : (

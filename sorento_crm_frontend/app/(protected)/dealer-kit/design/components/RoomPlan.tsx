@@ -16,6 +16,7 @@ import {
   type Point,
 } from '@/lib/dealer-kit/roomGeometry';
 import { clearances, snapToWall, wallUnder } from '@/lib/dealer-kit/roomSnap';
+import { floorColor, wallColor, type Finishes } from '@/lib/dealer-kit/finishes';
 import {
   fitOpening,
   openingEdgeGaps,
@@ -73,6 +74,8 @@ export interface RoomPlanProps {
   selectedOpeningId?: string | null;
   onSelectOpening?: (openingId: string | null) => void;
   onMoveOpening?: (openingId: string, offsetMm: number) => void;
+  /** Surface finishes, so the plan shows the scheme rather than a blank room. */
+  finishes?: Finishes;
   /** Which wall is selected, so "add a door" knows where to put one. */
   selectedWallIndex?: number | null;
   onSelectWall?: (wallIndex: number | null) => void;
@@ -95,6 +98,7 @@ export function RoomPlan({
   selectedOpeningId,
   onSelectOpening,
   onMoveOpening,
+  finishes,
   selectedWallIndex,
   onSelectWall,
   backgroundUrl,
@@ -341,13 +345,34 @@ export function RoomPlan({
         />
 
         {path && (
+          // The floor carries its finish, and each wall is stroked in its own:
+          // two schemes should be tellable apart at a glance without opening
+          // anything.
           <path
             d={path}
-            className="fill-background stroke-foreground"
+            fill={floorColor(finishes)}
+            className="stroke-foreground"
             strokeWidth={24}
             strokeLinejoin="round"
           />
         )}
+
+        {outline.length >= 3 &&
+          outline.map((point, index) => {
+            const next = outline[(index + 1) % outline.length];
+            return (
+              <line
+                key={`wall-finish-${index}`}
+                x1={point.x}
+                y1={point.y}
+                x2={next.x}
+                y2={next.y}
+                stroke={wallColor(finishes, index)}
+                strokeWidth={16}
+                data-dk-wall-finish={index}
+              />
+            );
+          })}
 
         {/* The chosen wall, drawn over the outline so it is obvious which one a
             new door would land in. */}

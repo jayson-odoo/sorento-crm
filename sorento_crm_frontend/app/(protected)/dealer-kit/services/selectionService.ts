@@ -24,6 +24,7 @@
  * to the total.
  */
 
+import type { Finishes } from '@/lib/dealer-kit/finishes';
 import type { Opening } from '@/lib/dealer-kit/roomOpenings';
 
 import { apiFetch } from '@/lib/api';
@@ -58,6 +59,8 @@ export interface Room {
   placements: RoomPlacement[];
   /** Doors and windows. Holes in walls, never priced. */
   openings?: Opening[];
+  /** Surface finishes, by id. */
+  finishes?: Finishes | null;
   /** Floor to ceiling, in millimetres. Absent on designs saved before it existed. */
   ceilingHeightMm?: number | null;
 }

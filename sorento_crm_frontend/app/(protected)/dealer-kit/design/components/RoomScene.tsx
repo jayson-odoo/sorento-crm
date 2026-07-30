@@ -6,6 +6,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 import { roomBounds, type Box, type Point } from '@/lib/dealer-kit/roomGeometry';
 import { openingSpans, wallPanels, type Opening } from '@/lib/dealer-kit/roomOpenings';
+import { floorColor, wallColor, type Finishes } from '@/lib/dealer-kit/finishes';
 // One definition of the placeholder size. Two would drift, and the drift would
 // show up as a box that is a different size in the plan than in 3D.
 export { UNKNOWN_SIZE_MM } from '@/lib/dealer-kit/roomBoxes';
@@ -71,6 +72,7 @@ export function RoomScene({
   onSelectBox,
   ceilingHeightMm = DEFAULT_CEILING_MM,
   openings = [],
+  finishes,
 }: {
   outline: Point[];
   boxes: SceneBox[];
@@ -80,6 +82,8 @@ export function RoomScene({
   ceilingHeightMm?: number;
   /** Doors and windows, cut out of the walls they belong to. */
   openings?: Opening[];
+  /** Surface finishes, by id. */
+  finishes?: Finishes;
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const pickRef = useRef<(boxId: string) => void>(() => {});
@@ -138,7 +142,7 @@ export function RoomScene({
 
       const floor = new THREE.Mesh(
         new THREE.ShapeGeometry(shape),
-        new THREE.MeshStandardMaterial({ color: '#e2e8f0', side: THREE.DoubleSide }),
+        new THREE.MeshStandardMaterial({ color: floorColor(finishes), side: THREE.DoubleSide }),
       );
       floor.rotation.x = Math.PI / 2;
       scene.add(floor);
@@ -205,7 +209,7 @@ export function RoomScene({
 
           const pieceGeometry = new THREE.PlaneGeometry(pieceWidth, pieceHeight);
           const pieceMaterial = new THREE.MeshStandardMaterial({
-            color: '#f8fafc',
+            color: wallColor(finishes, index),
             side: THREE.DoubleSide,
             roughness: 0.9,
           });
@@ -333,7 +337,7 @@ export function RoomScene({
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
     };
-  }, [outline, boxes, selectedBoxId, ceilingHeightMm, openings]);
+  }, [outline, boxes, selectedBoxId, ceilingHeightMm, openings, finishes]);
 
   return (
     <div

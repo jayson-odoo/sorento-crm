@@ -407,3 +407,35 @@ def test_the_quote_route_is_owner_only_and_totals_what_is_included(api):
         f"/api/v1/dealer-kit/selections/{selection_id}/quote", json={"excludedProductIds": []}
     )
     assert denied.status_code == 404
+
+
+def test_finishes_round_trip_by_id(api):
+    """Ids, not colours: a stored colour could never be restyled."""
+    db, _as = api
+    _as(_OWNER_ID)
+    client = TestClient(app)
+
+    created = client.post("/api/v1/dealer-kit/selections", json={"name": "ZZT finishes"})
+    selection_id = created.json()["id"]
+    square = [
+        {"x": 0, "y": 0},
+        {"x": 3000, "y": 0},
+        {"x": 3000, "y": 3000},
+        {"x": 0, "y": 3000},
+    ]
+    finishes = {"floor": "timber", "walls": {"0": "charcoal", "2": "sage"}}
+
+    saved = client.put(
+        f"/api/v1/dealer-kit/selections/{selection_id}/room",
+        json={"outline": square, "placements": [], "finishes": finishes},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["room"]["finishes"] == finishes
+
+    # A design saved before finishes existed still opens.
+    older = client.put(
+        f"/api/v1/dealer-kit/selections/{selection_id}/room",
+        json={"outline": square, "placements": []},
+    )
+    assert older.status_code == 200
+    assert older.json()["room"]["finishes"] is None
