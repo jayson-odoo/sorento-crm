@@ -22,6 +22,8 @@
  * to the total.
  */
 
+import type { Opening } from '@/lib/dealer-kit/roomOpenings';
+
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 
@@ -52,6 +54,8 @@ export interface RoomPlacement {
 export interface Room {
   outline: { x: number; y: number }[];
   placements: RoomPlacement[];
+  /** Doors and windows. Holes in walls, never priced. */
+  openings?: Opening[];
   /** Floor to ceiling, in millimetres. Absent on designs saved before it existed. */
   ceilingHeightMm?: number | null;
 }

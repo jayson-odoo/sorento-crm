@@ -263,6 +263,36 @@ test.describe('Dealer Kit room designer', () => {
     await expect.poll(points, { timeout: 10_000 }).toBe(before);
   });
 
+  test('a door is stamped into the chosen wall and survives a save', async ({ page }) => {
+    await openDesigner(page);
+
+    // Openings belong to a WALL, so choosing one comes first. Selecting happens
+    // on pointerdown, the same gesture that drags a wall.
+    const wall = page.locator('[data-dk-room-wall="0"]');
+    await expect(wall).toBeAttached({ timeout: 20_000 });
+    await wall.dispatchEvent('pointerdown', { bubbles: true });
+    await expect(page.locator('[data-dk-wall-selected]')).toBeAttached();
+
+    await tap(page, page.getByRole('button', { name: /^door$/i }));
+    await expect(page.locator('[data-dk-opening-kind="door"]')).toBeAttached({ timeout: 10_000 });
+
+    // A door is not a product: it has no price and no line.
+    await expect(page.getByText(/nothing placed yet/i)).toBeVisible();
+
+    const saved = page.waitForResponse(
+      (response) =>
+        /\/dealer-kit\/selections\/[^/]+\/room$/.test(response.url()) && response.ok(),
+    );
+    await tap(page, page.getByRole('button', { name: /save design/i }));
+    const body = await (await saved).json();
+    expect(body.room.openings).toHaveLength(1);
+    expect(body.room.openings[0].kind).toBe('door');
+    expect(body.lines).toHaveLength(0);
+
+    await page.reload({ waitUntil: 'commit' });
+    await expect(page.locator('[data-dk-opening-kind="door"]')).toBeAttached({ timeout: 30_000 });
+  });
+
   test('a design the server no longer has does not brick the designer', async ({ page }) => {
     await openDesigner(page);
 

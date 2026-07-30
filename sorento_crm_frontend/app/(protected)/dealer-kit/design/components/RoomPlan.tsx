@@ -16,6 +16,12 @@ import {
   type Point,
 } from '@/lib/dealer-kit/roomGeometry';
 import { clearances, snapToWall, wallUnder } from '@/lib/dealer-kit/roomSnap';
+import {
+  fitOpening,
+  openingEdgeGaps,
+  wallLengths,
+  type Opening,
+} from '@/lib/dealer-kit/roomOpenings';
 
 /**
  * The room, from above.
@@ -62,6 +68,14 @@ export interface RoomPlanProps {
   onRemoveBox?: (boxId: string) => void;
   /** Called when a drag or a typed length finishes, so it can be undone as one step. */
   onCommit?: () => void;
+  /** Doors and windows cut into the walls. */
+  openings?: Opening[];
+  selectedOpeningId?: string | null;
+  onSelectOpening?: (openingId: string | null) => void;
+  onMoveOpening?: (openingId: string, offsetMm: number) => void;
+  /** Which wall is selected, so "add a door" knows where to put one. */
+  selectedWallIndex?: number | null;
+  onSelectWall?: (wallIndex: number | null) => void;
   /** A traced floor plan sits behind the grid as a guide (AC-R4). */
   backgroundUrl?: string | null;
 }
@@ -77,6 +91,12 @@ export function RoomPlan({
   onDuplicateBox,
   onRemoveBox,
   onCommit,
+  openings = [],
+  selectedOpeningId,
+  onSelectOpening,
+  onMoveOpening,
+  selectedWallIndex,
+  onSelectWall,
   backgroundUrl,
 }: RoomPlanProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -84,6 +104,7 @@ export function RoomPlan({
     | { kind: 'corner'; index: number }
     | { kind: 'box'; id: string }
     | { kind: 'wall'; index: number }
+    | { kind: 'opening'; id: string }
     | null
   >(null);
 
@@ -174,6 +195,23 @@ export function RoomPlan({
         return;
       }
 
+      if (dragging.kind === 'opening') {
+        const opening = openings.find((candidate) => candidate.id === dragging.id);
+        const wall = opening ? outline[opening.wallIndex] : null;
+        if (!opening || !wall) return;
+        const next = outline[(opening.wallIndex + 1) % outline.length];
+        const length = Math.hypot(next.x - wall.x, next.y - wall.y);
+        if (length < 1e-6) return;
+        // Projected onto the wall: a door slides ALONG its wall and nowhere
+        // else, however the pointer wanders off it.
+        const along =
+          ((position.x - wall.x) * (next.x - wall.x) + (position.y - wall.y) * (next.y - wall.y)) /
+          length;
+        const fitted = fitOpening({ ...opening, offsetMm: snapToGrid(along, DEFAULT_GRID_MM) }, length);
+        if (fitted) onMoveOpening?.(opening.id, fitted.offsetMm);
+        return;
+      }
+
       const box = boxes.find((candidate) => candidate.id === dragging.id);
       if (box && onMoveBox) {
         // Drag by the centre: grabbing a corner makes a unit jump on pickup.
@@ -186,7 +224,7 @@ export function RoomPlan({
         onMoveBox(dragging.id, result.x, result.y, result.rotation);
       }
     },
-    [dragging, outline, boxes, onOutlineChange, onMoveBox, toMillimetres],
+    [dragging, outline, boxes, openings, onOutlineChange, onMoveBox, onMoveOpening, toMillimetres],
   );
 
   const endDrag = useCallback(() => {
@@ -311,6 +349,22 @@ export function RoomPlan({
           />
         )}
 
+        {/* The chosen wall, drawn over the outline so it is obvious which one a
+            new door would land in. */}
+        {selectedWallIndex !== null &&
+          selectedWallIndex !== undefined &&
+          outline[selectedWallIndex] && (
+            <line
+              x1={outline[selectedWallIndex].x}
+              y1={outline[selectedWallIndex].y}
+              x2={outline[(selectedWallIndex + 1) % outline.length].x}
+              y2={outline[(selectedWallIndex + 1) % outline.length].y}
+              className="stroke-primary"
+              strokeWidth={44}
+              data-dk-wall-selected={selectedWallIndex}
+            />
+          )}
+
         {/*
           A wall length beside every wall (AC-R1). Without it a user drags a
           corner and has no idea whether they just made a 3.6m run or a 4.1m
@@ -398,6 +452,116 @@ export function RoomPlan({
               </text>
             );
           })}
+
+        {/*
+          Doors and windows, drawn IN the wall they belong to. A door is shown
+          as a break in the wall line with its swing; a window as a lighter
+          band. Both are dragged along their wall and nowhere else, because
+          that is the only place they can be.
+        */}
+        {openings.map((opening) => {
+          const start = outline[opening.wallIndex];
+          const end = start ? outline[(opening.wallIndex + 1) % outline.length] : null;
+          if (!start || !end) return null;
+          const length = Math.hypot(end.x - start.x, end.y - start.y);
+          if (length < 1e-6) return null;
+
+          const unitX = (end.x - start.x) / length;
+          const unitY = (end.y - start.y) / length;
+          const from = opening.offsetMm - opening.widthMm / 2;
+          const to = opening.offsetMm + opening.widthMm / 2;
+          const a = { x: start.x + unitX * from, y: start.y + unitY * from };
+          const b = { x: start.x + unitX * to, y: start.y + unitY * to };
+          const selected = opening.id === selectedOpeningId;
+          const gaps = selected
+            ? openingEdgeGaps(opening, length, openings)
+            : null;
+          const midX = (a.x + b.x) / 2;
+          const midY = (a.y + b.y) / 2;
+          // Inward normal, used to hang the swing arc and the label inside.
+          const normalX = -unitY;
+          const normalY = unitX;
+
+          return (
+            <g
+              key={opening.id}
+              data-dk-opening={opening.id}
+              data-dk-opening-kind={opening.kind}
+              className="cursor-move"
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                onSelectOpening?.(opening.id);
+                beginDrag({ kind: 'opening', id: opening.id });
+              }}
+            >
+              {/* The hole itself: the wall is painted out along this stretch. */}
+              <line
+                x1={a.x}
+                y1={a.y}
+                x2={b.x}
+                y2={b.y}
+                className="stroke-background"
+                strokeWidth={30}
+              />
+              <line
+                x1={a.x}
+                y1={a.y}
+                x2={b.x}
+                y2={b.y}
+                className={selected ? 'stroke-primary' : 'stroke-muted-foreground'}
+                strokeWidth={selected ? 60 : 40}
+                strokeDasharray={opening.kind === 'window' ? '120 90' : undefined}
+              />
+              {opening.kind === 'door' && (
+                // A quarter arc into the room: the universal drawing convention
+                // for which way a door swings and how much floor it eats.
+                <path
+                  d={`M ${b.x} ${b.y} A ${opening.widthMm} ${opening.widthMm} 0 0 0 ${
+                    b.x + normalX * opening.widthMm
+                  } ${b.y + normalY * opening.widthMm}`}
+                  fill="none"
+                  className="stroke-muted-foreground"
+                  strokeWidth={14}
+                  strokeDasharray="90 70"
+                />
+              )}
+              <text
+                x={midX + normalX * 260}
+                y={midY + normalY * 260}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                className={selected ? 'fill-primary' : 'fill-muted-foreground'}
+                style={{ fontSize: 120 }}
+              >
+                {opening.widthMm} mm
+              </text>
+              {gaps && (
+                <g className="pointer-events-none">
+                  <text
+                    x={a.x - unitX * 120 + normalX * 260}
+                    y={a.y - unitY * 120 + normalY * 260}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    className="fill-primary"
+                    style={{ fontSize: 110 }}
+                  >
+                    {gaps.before}
+                  </text>
+                  <text
+                    x={b.x + unitX * 120 + normalX * 260}
+                    y={b.y + unitY * 120 + normalY * 260}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    className="fill-primary"
+                    style={{ fontSize: 110 }}
+                  >
+                    {gaps.after}
+                  </text>
+                </g>
+              )}
+            </g>
+          );
+        })}
 
         {boxes.map((box) => {
           const corners = boxCorners(box);
@@ -599,6 +763,11 @@ export function RoomPlan({
                 data-dk-room-wall={index}
                 onPointerDown={(event) => {
                   event.stopPropagation();
+                  // Selecting on pointerdown, not click: the same gesture that
+                  // drags a wall also chooses it, so "add a door" always has a
+                  // wall to put one on.
+                  onSelectWall?.(index);
+                  onSelectOpening?.(null);
                   const start = toMillimetres(event);
                   if (!start) return;
                   wallDragOrigin.current = { x: start.x, y: start.y, outline };

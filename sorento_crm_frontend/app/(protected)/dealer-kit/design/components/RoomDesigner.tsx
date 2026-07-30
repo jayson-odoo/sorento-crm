@@ -9,6 +9,9 @@ import {
   ArrowLeft,
   Box as BoxIcon,
   Check,
+  DoorOpen,
+  Frame,
+  PanelTop,
   Plus,
   Redo2,
   RotateCw,
@@ -48,6 +51,14 @@ import {
   type Selection,
   type SelectionLine,
 } from '../../services/selectionService';
+import {
+  defaultsFor,
+  fitOpening,
+  fitOpenings,
+  wallLengths,
+  type Opening,
+  type OpeningKind,
+} from '@/lib/dealer-kit/roomOpenings';
 import {
   canRedo,
   canUndo,
@@ -99,6 +110,7 @@ const STARTING_ROOM: Point[] = [
 interface RoomSnapshot {
   outline: Point[];
   placed: PlacedBox[];
+  openings: Opening[];
 }
 
 /** Where this design is remembered between visits, so a reload is not a restart. */
@@ -131,8 +143,13 @@ export function RoomDesigner() {
    * state every pointermove.
    */
   const [history, setHistory] = useState<History<RoomSnapshot>>(() =>
-    newHistory({ outline: STARTING_ROOM, placed: [] }),
+    newHistory({ outline: STARTING_ROOM, placed: [], openings: [] }),
   );
+
+  /** Doors and windows, and which one (or which wall) is being worked on. */
+  const [openings, setOpenings] = useState<Opening[]>([]);
+  const [selectedOpeningId, setSelectedOpeningId] = useState<string | null>(null);
+  const [selectedWallIndex, setSelectedWallIndex] = useState<number | null>(null);
 
   /**
    * The catalogue we were sent from, if any.
@@ -197,6 +214,7 @@ export function RoomDesigner() {
     if (!hydrated.current && selection.room?.outline?.length) {
       setOutline(selection.room.outline);
       if (selection.room.ceilingHeightMm) setCeilingHeightMm(selection.room.ceilingHeightMm);
+      setOpenings(selection.room.openings ?? []);
       hydrated.current = true;
     }
   }, [selection]);
@@ -261,18 +279,22 @@ export function RoomDesigner() {
 
   const changeOutline = useCallback((next: Point[]) => {
     setOutline(next);
+    // A door belongs to a wall, so a shorter wall either carries its door
+    // inward or cannot hold it at all. Leaving it where it was would draw an
+    // opening hanging in space outside the room.
+    setOpenings((current) => fitOpenings(current, wallLengths(next)));
     setDirty(true);
   }, []);
 
   const rotateSelected = useCallback(() => {
     setDirty(true);
-    setHistory((current) => pushHistory(current, { outline, placed }));
+    setHistory((current) => pushHistory(current, { outline, placed, openings }));
     setPlaced((current) =>
       current.map((box) =>
         box.id === selectedId ? { ...box, rotation: (box.rotation + 90) % 360 } : box,
       ),
     );
-  }, [selectedId, outline, placed]);
+  }, [selectedId, outline, placed, openings]);
 
   const removeSelected = useCallback(() => {
     const box = placed.find((candidate) => candidate.id === selectedId);
@@ -281,7 +303,7 @@ export function RoomDesigner() {
     // Take the clicked copy out locally FIRST, renumbering what is left, then
     // tell the server the new count. Sending only "one fewer" would leave the
     // rebuild deleting the last copy instead of the one they clicked.
-    setHistory((current) => pushHistory(current, { outline, placed }));
+    setHistory((current) => pushHistory(current, { outline, placed, openings }));
     const remaining = removeBox(placed, box.id);
     setPlaced(remaining);
     setSelectedId(null);
@@ -290,12 +312,12 @@ export function RoomDesigner() {
       productId: box.productId,
       quantity: quantityOf(remaining, box.productId),
     });
-  }, [placed, selectedId, lineMutation, outline]);
+  }, [placed, selectedId, lineMutation, outline, openings]);
 
   /** Record the room as it stands now, as one undoable step. */
   const commit = useCallback(() => {
-    setHistory((current) => pushHistory(current, { outline, placed }));
-  }, [outline, placed]);
+    setHistory((current) => pushHistory(current, { outline, placed, openings }));
+  }, [outline, placed, openings]);
 
   /**
    * Restore a snapshot, and tell the server about any product it changes.
@@ -311,7 +333,9 @@ export function RoomDesigner() {
     async (snapshot: RoomSnapshot) => {
       setOutline(snapshot.outline);
       setPlaced(snapshot.placed);
+      setOpenings(snapshot.openings ?? []);
       setSelectedId(null);
+      setSelectedOpeningId(null);
       setDirty(true);
 
       if (!selection) return;
@@ -391,6 +415,75 @@ export function RoomDesigner() {
   );
 
   /**
+   * Stamp a door or window into the selected wall.
+   *
+   * Placed at the middle of the wall at a standard size, because that is
+   * almost always somewhere sensible and moving it is one drag. Refused when
+   * the wall is too short for the opening rather than narrowing it silently -
+   * a size nobody chose is a size somebody orders to.
+   */
+  const addOpening = useCallback(
+    (kind: OpeningKind) => {
+      if (selectedWallIndex === null) {
+        toast.error('Pick a wall first, then add the door or window to it.');
+        return;
+      }
+      const lengths = wallLengths(outline);
+      const length = lengths[selectedWallIndex];
+      const sizes = defaultsFor(kind);
+      const candidate: Opening = {
+        id: `opening-${selectedWallIndex}-${Math.round(length)}-${openings.length + 1}`,
+        kind,
+        wallIndex: selectedWallIndex,
+        offsetMm: length / 2,
+        ...sizes,
+      };
+      const fitted = fitOpening(candidate, length);
+      if (!fitted) {
+        toast.error('That wall is too short for this opening.');
+        return;
+      }
+      commit();
+      setOpenings((current) => [...current, fitted]);
+      setSelectedOpeningId(fitted.id);
+      setDirty(true);
+    },
+    [selectedWallIndex, outline, openings.length, commit],
+  );
+
+  const moveOpening = useCallback((openingId: string, offsetMm: number) => {
+    setDirty(true);
+    setOpenings((current) =>
+      current.map((opening) => (opening.id === openingId ? { ...opening, offsetMm } : opening)),
+    );
+  }, []);
+
+  /** Resize the selected opening, refusing anything its wall cannot hold. */
+  const resizeOpening = useCallback(
+    (patch: Partial<Pick<Opening, 'widthMm' | 'heightMm' | 'sillMm'>>) => {
+      const lengths = wallLengths(outline);
+      commit();
+      setOpenings((current) =>
+        current.map((opening) => {
+          if (opening.id !== selectedOpeningId) return opening;
+          const fitted = fitOpening({ ...opening, ...patch }, lengths[opening.wallIndex] ?? 0);
+          return fitted ?? opening;
+        }),
+      );
+      setDirty(true);
+    },
+    [selectedOpeningId, outline, commit],
+  );
+
+  const removeOpening = useCallback(() => {
+    if (!selectedOpeningId) return;
+    commit();
+    setOpenings((current) => current.filter((opening) => opening.id !== selectedOpeningId));
+    setSelectedOpeningId(null);
+    setDirty(true);
+  }, [selectedOpeningId, commit]);
+
+  /**
    * Put the canvas back to an empty room.
    *
    * The designer reopens the last design so a reload is not a restart, which
@@ -404,20 +497,24 @@ export function RoomDesigner() {
     setSelectionId(null);
     setPlaced([]);
     setOutline(STARTING_ROOM);
+    setOpenings([]);
     setSelectedId(null);
+    setSelectedOpeningId(null);
+    setSelectedWallIndex(null);
     setDirty(false);
     // A new design starts with no history: undoing into the previous design
     // would silently resurrect work the user just set aside.
-    setHistory(newHistory({ outline: STARTING_ROOM, placed: [] }));
+    setHistory(newHistory({ outline: STARTING_ROOM, placed: [], openings: [] }));
   }, []);
 
   const save = useCallback(() => {
     roomMutation.mutate({
       outline,
       placements: placementsOf(placed),
+      openings,
       ceilingHeightMm,
     });
-  }, [outline, placed, ceilingHeightMm, roomMutation]);
+  }, [outline, placed, openings, ceilingHeightMm, roomMutation]);
 
   const collisions = useMemo(() => {
     const clashing = new Set<string>();
@@ -433,6 +530,7 @@ export function RoomDesigner() {
   }, [placed]);
 
   const area = areaSquareMetres(outline);
+  const selectedOpening = openings.find((opening) => opening.id === selectedOpeningId) ?? null;
   const estimated = placed.filter((box) => box.isEstimated);
   const estimatedNames = Array.from(new Set(estimated.map((box) => box.code)));
   const lines = selection?.lines ?? [];
@@ -516,7 +614,108 @@ export function RoomDesigner() {
                     removeSelected();
                   }}
                   onCommit={commit}
+                  openings={openings}
+                  selectedOpeningId={selectedOpeningId}
+                  onSelectOpening={setSelectedOpeningId}
+                  onMoveOpening={moveOpening}
+                  selectedWallIndex={selectedWallIndex}
+                  onSelectWall={setSelectedWallIndex}
                 />
+
+                {/*
+                  Openings are added to a WALL, so the wall comes first. Naming
+                  the chosen wall by its length rather than an index keeps the
+                  panel readable - "the 4000mm wall" is a thing you can see.
+                */}
+                <div className="mt-3 flex flex-wrap items-center gap-2 rounded-md border border-border p-2">
+                  <span className="text-xs text-muted-foreground">
+                    {selectedWallIndex === null
+                      ? 'Click a wall to add a door or window'
+                      : `Wall ${selectedWallIndex + 1} (${Math.round(
+                          wallLengths(outline)[selectedWallIndex] ?? 0,
+                        )} mm)`}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={selectedWallIndex === null}
+                    onClick={() => addOpening('door')}
+                  >
+                    <DoorOpen className="size-4" />
+                    Door
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={selectedWallIndex === null}
+                    onClick={() => addOpening('window')}
+                  >
+                    <PanelTop className="size-4" />
+                    Window
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={selectedWallIndex === null}
+                    onClick={() => addOpening('opening')}
+                  >
+                    <Frame className="size-4" />
+                    Opening
+                  </Button>
+                </div>
+
+                {selectedOpening && (
+                  <div
+                    className="mt-2 flex flex-wrap items-end gap-3 rounded-md border border-border p-2"
+                    data-dk-opening-editor
+                  >
+                    <div className="flex flex-col gap-1">
+                      <Label htmlFor="dk-opening-width" className="text-xs">
+                        Width
+                      </Label>
+                      <Input
+                        id="dk-opening-width"
+                        type="number"
+                        className="h-8 w-24"
+                        value={selectedOpening.widthMm}
+                        onChange={(event) =>
+                          resizeOpening({ widthMm: Number(event.target.value) })
+                        }
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label htmlFor="dk-opening-height" className="text-xs">
+                        Height
+                      </Label>
+                      <Input
+                        id="dk-opening-height"
+                        type="number"
+                        className="h-8 w-24"
+                        value={selectedOpening.heightMm}
+                        onChange={(event) =>
+                          resizeOpening({ heightMm: Number(event.target.value) })
+                        }
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label htmlFor="dk-opening-sill" className="text-xs">
+                        Sill
+                      </Label>
+                      <Input
+                        id="dk-opening-sill"
+                        type="number"
+                        className="h-8 w-24"
+                        value={selectedOpening.sillMm}
+                        onChange={(event) => resizeOpening({ sillMm: Number(event.target.value) })}
+                      />
+                    </div>
+                    <span className="text-xs text-muted-foreground">mm</span>
+                    <Button size="sm" variant="outline" onClick={removeOpening}>
+                      <Trash2 className="size-4" />
+                      Remove
+                    </Button>
+                  </div>
+                )}
                 <p className="mt-2 text-xs text-muted-foreground">
                   Drag a wall or a corner to reshape the room, or click a wall length to type
                   it. Products snap against the nearest wall and turn to face the room.
@@ -530,6 +729,7 @@ export function RoomDesigner() {
                   selectedBoxId={selectedId}
                   onSelectBox={setSelectedId}
                   ceilingHeightMm={ceilingHeightMm}
+                  openings={openings}
                 />
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Label htmlFor="dk-ceiling-height" className="text-xs text-muted-foreground">

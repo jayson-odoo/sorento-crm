@@ -211,6 +211,69 @@ def test_a_ceiling_height_round_trips(api):
     assert without.json()["room"]["ceilingHeightMm"] is None
 
 
+def test_openings_round_trip_and_never_reach_the_quote(api):
+    """Doors and windows are holes in walls, not things anybody buys.
+
+    They have to survive a save unchanged - the shape is the frontend's, and a
+    Pydantic model here would mean a backend release per drag handle - and they
+    must not turn up in the priced line list.
+    """
+    db, _as = api
+    _as(_OWNER_ID)
+    client = TestClient(app)
+
+    created = client.post("/api/v1/dealer-kit/selections", json={"name": "ZZT openings"})
+    selection_id = created.json()["id"]
+    square = [
+        {"x": 0, "y": 0},
+        {"x": 4000, "y": 0},
+        {"x": 4000, "y": 3000},
+        {"x": 0, "y": 3000},
+    ]
+    openings = [
+        {
+            "id": "o1",
+            "kind": "door",
+            "wallIndex": 0,
+            "offsetMm": 1500,
+            "widthMm": 900,
+            "heightMm": 2100,
+            "sillMm": 0,
+        },
+        {
+            "id": "o2",
+            "kind": "window",
+            "wallIndex": 2,
+            "offsetMm": 2000,
+            "widthMm": 1200,
+            "heightMm": 1200,
+            "sillMm": 900,
+        },
+    ]
+
+    saved = client.put(
+        f"/api/v1/dealer-kit/selections/{selection_id}/room",
+        json={"outline": square, "placements": [], "openings": openings},
+    )
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert body["room"]["openings"] == openings
+    # An opening is not a line: nothing was bought by putting a window in a wall.
+    assert body["lines"] == []
+    assert body["total"] in (None, "0.00")
+
+    reopened = client.get(f"/api/v1/dealer-kit/selections/{selection_id}")
+    assert reopened.json()["room"]["openings"][1]["sillMm"] == 900
+
+    # A design saved before openings existed still loads.
+    older = client.put(
+        f"/api/v1/dealer-kit/selections/{selection_id}/room",
+        json={"outline": square, "placements": []},
+    )
+    assert older.status_code == 200, older.text
+    assert older.json()["room"]["openings"] == []
+
+
 def test_another_user_cannot_read_or_change_someone_elses_selection(api):
     db, _as = api
     _as(_OWNER_ID)

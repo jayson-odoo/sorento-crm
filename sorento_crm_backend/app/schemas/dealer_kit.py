@@ -286,6 +286,11 @@ class RoomWrite(BaseModel):
     ceiling_height_mm: Optional[float] = Field(
         default=None, validation_alias="ceilingHeightMm", serialization_alias="ceilingHeightMm"
     )
+    # Doors and windows. Free-form for the same reason placements are: an
+    # opening's shape is a frontend concern (a swing direction today, a handle
+    # side tomorrow) and pinning it here would mean a backend release per
+    # drag handle. They are NOT products - no price, never on a quote.
+    openings: list[dict] = Field(default_factory=list)
 
 
 class SelectionLineOut(BaseModel):

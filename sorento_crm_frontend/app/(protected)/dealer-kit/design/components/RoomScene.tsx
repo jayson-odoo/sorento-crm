@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 import { roomBounds, type Box, type Point } from '@/lib/dealer-kit/roomGeometry';
+import { openingSpans, wallPanels, type Opening } from '@/lib/dealer-kit/roomOpenings';
 // One definition of the placeholder size. Two would drift, and the drift would
 // show up as a box that is a different size in the plan than in 3D.
 export { UNKNOWN_SIZE_MM } from '@/lib/dealer-kit/roomBoxes';
@@ -69,6 +70,7 @@ export function RoomScene({
   selectedBoxId,
   onSelectBox,
   ceilingHeightMm = DEFAULT_CEILING_MM,
+  openings = [],
 }: {
   outline: Point[];
   boxes: SceneBox[];
@@ -76,6 +78,8 @@ export function RoomScene({
   onSelectBox?: (boxId: string) => void;
   /** Wall height. The only vertical measurement the room itself has. */
   ceilingHeightMm?: number;
+  /** Doors and windows, cut out of the walls they belong to. */
+  openings?: Opening[];
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const pickRef = useRef<(boxId: string) => void>(() => {});
@@ -161,16 +165,66 @@ export function RoomScene({
         const length = Math.hypot(runX, runZ);
         if (length < 0.01) continue;
 
-        const geometry = new THREE.PlaneGeometry(length, wallHeight);
-        const material = new THREE.MeshStandardMaterial({
-          color: '#f8fafc',
-          side: THREE.DoubleSide,
-          roughness: 0.9,
-        });
-        const mesh = new THREE.Mesh(geometry, material);
+        /**
+         * The wall as PIECES, not one plane.
+         *
+         * A door is a hole, and cutting a hole in a plane properly means
+         * boolean geometry - slow, fiddly, and rebuilt on every drag. Building
+         * the wall out of the stretches that are still solid, plus the lintel
+         * and sill panels above and below each opening, gives the same picture
+         * for the cost of a few extra planes.
+         */
+        const wallOpenings = openings.filter((opening) => opening.wallIndex === index);
+        const lengthMm = length / MM_TO_M;
+        const pieces: { fromMm: number; toMm: number; bottomMm: number; topMm: number }[] = [];
+
+        for (const span of openingSpans(lengthMm, wallOpenings)) {
+          pieces.push({
+            fromMm: span.start,
+            toMm: span.end,
+            bottomMm: 0,
+            topMm: ceilingHeightMm,
+          });
+        }
+        for (const opening of wallOpenings) {
+          for (const panel of wallPanels(opening, ceilingHeightMm)) {
+            pieces.push({
+              fromMm: opening.offsetMm - opening.widthMm / 2,
+              toMm: opening.offsetMm + opening.widthMm / 2,
+              bottomMm: panel.bottom,
+              topMm: panel.top,
+            });
+          }
+        }
+
+        const wallGroup = new THREE.Group();
+        for (const piece of pieces) {
+          const pieceWidth = (piece.toMm - piece.fromMm) * MM_TO_M;
+          const pieceHeight = (piece.topMm - piece.bottomMm) * MM_TO_M;
+          if (pieceWidth <= 0 || pieceHeight <= 0) continue;
+
+          const pieceGeometry = new THREE.PlaneGeometry(pieceWidth, pieceHeight);
+          const pieceMaterial = new THREE.MeshStandardMaterial({
+            color: '#f8fafc',
+            side: THREE.DoubleSide,
+            roughness: 0.9,
+          });
+          const pieceMesh = new THREE.Mesh(pieceGeometry, pieceMaterial);
+          // Positioned relative to the wall's own centre, then the whole group
+          // is placed and turned once.
+          pieceMesh.position.set(
+            ((piece.fromMm + piece.toMm) / 2 - lengthMm / 2) * MM_TO_M,
+            ((piece.bottomMm + piece.topMm) / 2) * MM_TO_M,
+            0,
+          );
+          wallGroup.add(pieceMesh);
+          disposables.push(pieceGeometry, pieceMaterial);
+        }
+
+        const mesh = wallGroup as unknown as THREE.Mesh;
         mesh.position.set(
           ((start.x + end.x) / 2) * MM_TO_M,
-          wallHeight / 2,
+          0,
           ((start.y + end.y) / 2) * MM_TO_M,
         );
         mesh.rotation.y = -Math.atan2(runZ, runX);
@@ -185,7 +239,6 @@ export function RoomScene({
         if (normal.dot(toCentre) < 0) normal.negate();
         scene.add(mesh);
         wallMeshes.push({ mesh, normal });
-        disposables.push(geometry, material);
       }
     }
 
@@ -280,7 +333,7 @@ export function RoomScene({
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
     };
-  }, [outline, boxes, selectedBoxId, ceilingHeightMm]);
+  }, [outline, boxes, selectedBoxId, ceilingHeightMm, openings]);
 
   return (
     <div
