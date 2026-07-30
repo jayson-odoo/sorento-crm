@@ -468,13 +468,33 @@ test.describe('Dealer Kit room designer', () => {
     await tap(page, page.getByRole('button', { name: /add product to room/i }));
     await expect(page.locator('[data-dk-plan-box]').first()).toBeVisible({ timeout: 30_000 });
 
-    const points = () => page.locator('[data-dk-plan-box] polygon').first().getAttribute('points');
-    const before = await points();
+    /** The placed box's centre in the plan, in millimetres. */
+    const centre = async () => {
+      const points = await page
+        .locator('[data-dk-plan-box] polygon')
+        .first()
+        .getAttribute('points');
+      const corners = (points ?? '')
+        .trim()
+        .split(/\s+/)
+        .map((pair) => pair.split(',').map(Number));
+      const sum = corners.reduce((total, [x, y]) => [total[0] + x, total[1] + y], [0, 0]);
+      return { x: sum[0] / corners.length, y: sum[1] / corners.length };
+    };
+    const before = await centre();
 
     await openTrigger(page.getByRole('tab', { name: /^3d$/i }));
     const canvas = page.locator('[data-dk-room-scene] canvas');
     await expect(canvas).toBeVisible({ timeout: 20_000 });
     const box = (await canvas.boundingBox())!;
+    // Held on to so the drag can be checked for the failure that actually
+    // shipped: the scene used to be rebuilt whenever `boxes` changed, so the
+    // FIRST pointermove of a drag replaced the canvas. The move landed, the
+    // drag then died silently and the camera snapped back to its opening
+    // framing - which read as the view refocusing itself when you touched
+    // anything. If this handle is still connected afterwards, nothing was torn
+    // down mid-gesture.
+    const canvasHandle = (await canvas.elementHandle())!;
 
     // Where the selected product actually is on screen. The scene is a canvas,
     // so there is no element to aim at; it publishes the projected position of
@@ -487,16 +507,84 @@ test.describe('Dealer Kit room designer', () => {
 
     // Dragged across the FLOOR: being told to switch views to move a product
     // you are looking at is what makes a tool feel like a form.
+    //
+    // A SHORT first hop and a long second one, deliberately: a drag that dies
+    // after its first move still moves the product a little, so a test that
+    // only asks "did it move" passes on the broken build. Nearly all of the
+    // distance here is in moves that only a drag which is still alive can see.
     await page.mouse.move(box.x + atX, box.y + atY);
     await page.mouse.down();
-    await page.mouse.move(box.x + atX - 90, box.y + atY + 60, { steps: 10 });
-    await page.waitForTimeout(150);
+    await page.mouse.move(box.x + atX - 6, box.y + atY + 4, { steps: 3 });
+    await page.waitForTimeout(120);
+    await page.mouse.move(box.x + atX - 80, box.y + atY + 50, { steps: 10 });
+    await page.waitForTimeout(120);
     await page.mouse.move(box.x + atX - 150, box.y + atY + 90, { steps: 10 });
+    await page.waitForTimeout(120);
     await page.mouse.up();
 
+    expect(await canvasHandle.evaluate((node) => node.isConnected)).toBe(true);
+
     await openTrigger(page.getByRole('tab', { name: /^plan$/i }));
-    // The plan is the same state seen from above, so the move shows there too.
-    await expect.poll(points, { timeout: 15_000 }).not.toBe(before);
+    // The plan is the same state seen from above, so the move shows there too -
+    // and by a distance only the whole gesture could account for.
+    await expect
+      .poll(
+        async () => {
+          const after = await centre();
+          return Math.hypot(after.x - before.x, after.y - before.y);
+        },
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThan(400);
+  });
+
+  test('a door can be slid along its wall from the 3D view', async ({ page }) => {
+    await openDesigner(page);
+
+    const wall = page.locator('[data-dk-room-wall="0"]');
+    await expect(wall).toBeAttached({ timeout: 20_000 });
+    await wall.dispatchEvent('pointerdown', { bubbles: true });
+    await tap(page, page.getByRole('button', { name: /^door$/i }));
+    const door = page.locator('[data-dk-opening-kind="door"]');
+    await expect(door).toBeAttached({ timeout: 10_000 });
+
+    /** Where the hole starts along its wall, in millimetres. */
+    const offset = async () =>
+      Number(await door.locator('line').nth(1).getAttribute('x1'));
+    const before = await offset();
+
+    await openTrigger(page.getByRole('tab', { name: /^3d$/i }));
+    const canvas = page.locator('[data-dk-room-scene] canvas');
+    await expect(canvas).toBeVisible({ timeout: 20_000 });
+    const box = (await canvas.boundingBox())!;
+    const canvasHandle = (await canvas.elementHandle())!;
+
+    // An opening is an ABSENCE - no geometry, nothing on screen to aim at - so
+    // the scene publishes where each one currently projects to.
+    const scene = page.locator('[data-dk-room-scene]');
+    await expect(scene).toHaveAttribute('data-dk-openings-at', /.+:\d+,\d+/, { timeout: 20_000 });
+    const [atX, atY] = ((await scene.getAttribute('data-dk-openings-at')) ?? '')
+      .split(';')[0]
+      .split(':')[1]
+      .split(',')
+      .map(Number);
+
+    await page.mouse.move(box.x + atX, box.y + atY);
+    await page.mouse.down();
+    await page.mouse.move(box.x + atX + 8, box.y + atY, { steps: 3 });
+    await page.waitForTimeout(120);
+    await page.mouse.move(box.x + atX + 70, box.y + atY + 10, { steps: 10 });
+    await page.waitForTimeout(120);
+    await page.mouse.move(box.x + atX + 130, box.y + atY + 20, { steps: 10 });
+    await page.waitForTimeout(120);
+    await page.mouse.up();
+
+    expect(await canvasHandle.evaluate((node) => node.isConnected)).toBe(true);
+
+    await openTrigger(page.getByRole('tab', { name: /^plan$/i }));
+    await expect
+      .poll(async () => Math.abs((await offset()) - before), { timeout: 15_000 })
+      .toBeGreaterThan(300);
   });
 
   test('a design the server no longer has does not brick the designer', async ({ page }) => {
