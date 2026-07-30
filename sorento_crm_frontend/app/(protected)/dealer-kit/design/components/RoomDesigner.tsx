@@ -1034,6 +1034,7 @@ export function RoomDesigner() {
           collapsed={focus && hideProducts}
           onToggle={setHideProducts}
           side="end"
+          enabled={focus}
         >
         <Card>
           <CardHeader className="pb-3">

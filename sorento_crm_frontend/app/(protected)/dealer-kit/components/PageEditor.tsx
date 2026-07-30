@@ -472,6 +472,7 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
           collapsed={focus && hideLeft}
           onToggle={setHideLeft}
           side="start"
+          enabled={focus}
         >
         <Card>
           <CardHeader className="pb-3">
@@ -652,6 +653,7 @@ export function PageEditor({ pageId, doc, onDocChange }: PageEditorProps) {
           collapsed={focus && hideRight}
           onToggle={setHideRight}
           side="end"
+          enabled={focus}
         >
         <BlockInspector
           block={mode === 'paper' ? null : selectedBlock}

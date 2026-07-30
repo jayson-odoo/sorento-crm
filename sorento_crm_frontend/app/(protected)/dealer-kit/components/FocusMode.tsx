@@ -108,6 +108,7 @@ export function CollapsiblePanel({
   collapsed,
   onToggle,
   side,
+  enabled = true,
   children,
 }: {
   title: string;
@@ -115,8 +116,15 @@ export function CollapsiblePanel({
   onToggle: (next: boolean) => void;
   /** Which edge it lives on, so the chevron points the right way. */
   side: 'start' | 'end';
+  /**
+   * Folding is offered at all. Outside full screen the page scrolls anyway, so
+   * a fold control would only add a second copy of the panel's own title.
+   */
+  enabled?: boolean;
   children: React.ReactNode;
 }) {
+  if (!enabled) return <>{children}</>;
+
   if (collapsed) {
     return (
       <div className="shrink-0">
