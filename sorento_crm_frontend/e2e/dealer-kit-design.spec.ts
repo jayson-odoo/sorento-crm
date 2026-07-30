@@ -209,7 +209,10 @@ test.describe('Dealer Kit room designer', () => {
     // mean 3050 rather than "about 3050 after a snap".
     const label = page.locator('[data-dk-wall-label="0"]');
     await expect(label).toBeAttached({ timeout: 20_000 });
-    await label.dispatchEvent('pointerdown', { bubbles: true });
+    // DOUBLE click: a single click selects the wall (which is how you choose
+    // where a door goes), and opening an input on every click made the number
+    // impossible to simply look at.
+    await label.dispatchEvent('dblclick', { bubbles: true });
 
     const input = page.locator('[data-dk-wall-input="0"]');
     await expect(input).toBeVisible({ timeout: 10_000 });
@@ -452,6 +455,48 @@ test.describe('Dealer Kit room designer', () => {
     // and the wall was wrong - and refusing meant deleting it and stamping a
     // new one.
     await expect.poll(isHorizontal, { timeout: 20_000 }).toBe(false);
+  });
+
+  test('a product can be dragged in the 3D view', async ({ page }) => {
+    await openDesigner(page);
+
+    const combobox = page.getByRole('combobox').first();
+    await openTrigger(combobox);
+    const option = page.getByRole('option').first();
+    await expect(option).toBeVisible({ timeout: 20_000 });
+    await option.dispatchEvent('click');
+    await tap(page, page.getByRole('button', { name: /add product to room/i }));
+    await expect(page.locator('[data-dk-plan-box]').first()).toBeVisible({ timeout: 30_000 });
+
+    const points = () => page.locator('[data-dk-plan-box] polygon').first().getAttribute('points');
+    const before = await points();
+
+    await openTrigger(page.getByRole('tab', { name: /^3d$/i }));
+    const canvas = page.locator('[data-dk-room-scene] canvas');
+    await expect(canvas).toBeVisible({ timeout: 20_000 });
+    const box = (await canvas.boundingBox())!;
+
+    // Where the selected product actually is on screen. The scene is a canvas,
+    // so there is no element to aim at; it publishes the projected position of
+    // the selection for exactly this.
+    const scene = page.locator('[data-dk-room-scene]');
+    await expect(scene).toHaveAttribute('data-dk-selected-at', /\d+,\d+/, { timeout: 20_000 });
+    const [atX, atY] = ((await scene.getAttribute('data-dk-selected-at')) ?? '0,0')
+      .split(',')
+      .map(Number);
+
+    // Dragged across the FLOOR: being told to switch views to move a product
+    // you are looking at is what makes a tool feel like a form.
+    await page.mouse.move(box.x + atX, box.y + atY);
+    await page.mouse.down();
+    await page.mouse.move(box.x + atX - 90, box.y + atY + 60, { steps: 10 });
+    await page.waitForTimeout(150);
+    await page.mouse.move(box.x + atX - 150, box.y + atY + 90, { steps: 10 });
+    await page.mouse.up();
+
+    await openTrigger(page.getByRole('tab', { name: /^plan$/i }));
+    // The plan is the same state seen from above, so the move shows there too.
+    await expect.poll(points, { timeout: 15_000 }).not.toBe(before);
   });
 
   test('a design the server no longer has does not brick the designer', async ({ page }) => {

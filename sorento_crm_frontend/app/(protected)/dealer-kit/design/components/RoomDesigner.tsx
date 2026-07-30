@@ -36,6 +36,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { snapToWall } from '@/lib/dealer-kit/roomSnap';
 import {
   clampBoxIntoRoom,
   areaSquareMetres,
@@ -350,6 +351,25 @@ export function RoomDesigner() {
       );
     },
     [outline],
+  );
+
+  /**
+   * A product dropped in the 3D view gets the same wall magnetism as one
+   * dropped in the plan.
+   *
+   * The plan does the snapping before it reports a position, so without this
+   * the two views would behave differently for the same gesture - and the one
+   * that felt broken would be whichever the user tried second.
+   */
+  const moveBoxSnapped = useCallback(
+    (boxId: string, x: number, y: number, rotation: number) => {
+      const box = placed.find((candidate) => candidate.id === boxId);
+      if (!box) return;
+      const snapped = snapToWall({ ...box, x, y, rotation }, outline);
+      const result = snapped?.box ?? { x, y, rotation };
+      moveBox(boxId, result.x, result.y, result.rotation);
+    },
+    [placed, outline, moveBox],
   );
 
   const changeOutline = useCallback((next: Point[]) => {
@@ -968,6 +988,10 @@ export function RoomDesigner() {
                   ceilingHeightMm={ceilingHeightMm}
                   openings={openings}
                   finishes={finishes}
+                  onMoveBox={moveBoxSnapped}
+                  onMoveOpening={moveOpening}
+                  onSelectOpening={setSelectedOpeningId}
+                  onCommit={commit}
                 />
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <Label htmlFor="dk-ceiling-height" className="text-xs text-muted-foreground">

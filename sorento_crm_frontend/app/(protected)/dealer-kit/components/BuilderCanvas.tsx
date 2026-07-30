@@ -15,6 +15,7 @@ import {
   type Breakpoint,
 } from '@/lib/dealer-kit/deriveLayout';
 import type { Block } from '@/lib/dealer-kit/types';
+import { ROW_GAP_PX, ROW_HEIGHT_PX, rowsForHeight } from '@/lib/dealer-kit/gridMetrics';
 
 import { BlockChrome } from './BlockChrome';
 import type { ResolvedBinding } from './BlockPreview';
@@ -38,21 +39,15 @@ import 'react-resizable/css/styles.css';
  * wrong here because v2 ships its own.
  */
 
-/** Grid row unit in px. Small, so content-driven heights land close to their true size. */
-const ROW_HEIGHT = 24;
-/** Vertical gap between grid items, in px. Must match `gridConfig.margin[1]`. */
-const ROW_GAP = 12;
-
 /**
- * Rows needed to show `heightPx` without clipping.
+ * Row unit and gap come from ONE module shared with the published renderer.
  *
- * N rows span `N * ROW_HEIGHT + (N - 1) * ROW_GAP`, so invert that rather than
- * dividing by ROW_HEIGHT alone - ignoring the gaps over-counts rows and every
- * block drifts taller than its content.
+ * They lay the same blocks out with different engines, and while each kept its
+ * own constant they disagreed: 24px here, 28px there, so a layout that looked
+ * right in the builder overlapped once published.
  */
-function rowsForHeight(heightPx: number): number {
-  return Math.max(1, Math.ceil((heightPx + ROW_GAP) / (ROW_HEIGHT + ROW_GAP)));
-}
+const ROW_HEIGHT = ROW_HEIGHT_PX;
+const ROW_GAP = ROW_GAP_PX;
 
 export interface BuilderCanvasProps {
   blocks: Block[];

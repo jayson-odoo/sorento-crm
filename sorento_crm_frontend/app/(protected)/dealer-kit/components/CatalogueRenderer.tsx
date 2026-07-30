@@ -2,6 +2,7 @@
 
 import { BREAKPOINT_MIN_WIDTH } from '@/lib/dealer-kit/deriveLayout';
 import { cn } from '@/lib/utils';
+import { ROW_GAP_PX, ROW_HEIGHT_PX } from '@/lib/dealer-kit/gridMetrics';
 import type {
   Block,
   BlockLayout,
@@ -28,8 +29,9 @@ import { BlockPreview } from './BlockPreview';
  * no JavaScript at all, which is what makes it safe to print.
  */
 
-const ROW_HEIGHT_PX = 28;
-const ROW_GAP_PX = 12;
+// Shared with the builder canvas: see lib/dealer-kit/gridMetrics. These two
+// numbers ARE the contract between what a designer arranges and what a reader
+// receives.
 
 const PADDING_Y: Record<string, string> = {
   none: 'py-0',
@@ -44,7 +46,15 @@ const LAYOUT_CSS = `
 .dk-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  grid-auto-rows: ${ROW_HEIGHT_PX}px;
+  /*
+    Rows GROW to their content. A block's row count was measured in the builder
+    at the builder's width; the published page is a different width, so a tile
+    with a square image is a different height - and with fixed rows the extra
+    height spilled out of the block and ran into the one below it. Growing the
+    row moves what follows down instead, which is the difference between a
+    catalogue that reads and one that overlaps.
+  */
+  grid-auto-rows: minmax(${ROW_HEIGHT_PX}px, auto);
   gap: ${ROW_GAP_PX}px;
 }
 .dk-block {

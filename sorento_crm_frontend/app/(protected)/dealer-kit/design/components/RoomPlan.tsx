@@ -435,7 +435,10 @@ export function RoomPlan({
       <svg
         ref={svgRef}
         viewBox={`${bounds.minX} ${bounds.minY} ${bounds.width} ${bounds.height}`}
-        className="h-full w-full touch-none"
+        // select-none: dragging across the drawing was highlighting every
+        // label it passed, which looks like a broken drag and leaves blue text
+        // behind on drop.
+        className="h-full w-full touch-none select-none"
         style={{ aspectRatio: `${bounds.width} / ${bounds.height}` }}
         onPointerDown={startPan}
         onPointerMove={handleMove}
@@ -651,6 +654,14 @@ export function RoomPlan({
                 className="group cursor-pointer"
                 data-dk-wall-label={index}
                 onPointerDown={(event) => {
+                  // Selecting the wall, not editing it: a single click that
+                  // opened an input made the number impossible to just look at,
+                  // and the same click is how you choose a wall to put a door
+                  // in.
+                  event.stopPropagation();
+                  onSelectWall?.(index);
+                }}
+                onDoubleClick={(event) => {
                   event.stopPropagation();
                   setEditingWall({ index, value: String(length) });
                 }}
@@ -973,57 +984,81 @@ export function RoomPlan({
           const corners = boxCorners(selected);
           const top = Math.min(...corners.map((corner) => corner.y));
           const centreX = corners.reduce((total, corner) => total + corner.x, 0) / 4;
-          const width = 1050;
-          const height = 330;
-          // Kept inside the drawing. A toolbar that hangs off the left of the
-          // plan covers the wall it belongs to and clips against the viewBox.
+          /**
+           * Sized in SCREEN pixels, placed in millimetres.
+           *
+           * A toolbar measured in millimetres is a toolbar that grows when you
+           * zoom out and shrinks to nothing when you zoom in - it drifted a
+           * long way from its product and looked like a floating panel. Fixing
+           * its size on screen and converting to millimetres for placement
+           * keeps it the same size at every zoom and always the same short
+           * distance above the thing it belongs to.
+           */
+          const mmPerPx = bounds.width / (svgRef.current?.getBoundingClientRect().width || 1);
+          const width = 108 * mmPerPx;
+          const height = 34 * mmPerPx;
+          // Kept inside the drawing, but only just: it should read as attached
+          // to the product, not parked at the edge of the panel.
           const clampedX = Math.min(
-            Math.max(centreX - width / 2, bounds.minX + 60),
-            bounds.minX + bounds.width - width - 60,
+            Math.max(centreX - width / 2, bounds.minX + 20 * mmPerPx),
+            bounds.minX + bounds.width - width - 20 * mmPerPx,
           );
+          const gap = 10 * mmPerPx;
+          // Above by default, below when the product is near the top edge and
+          // the toolbar would fall outside the drawing.
+          const aboveY = top - height - gap;
+          const bottom = Math.max(...corners.map((corner) => corner.y));
+          const y = aboveY < bounds.minY ? bottom + gap : aboveY;
           return (
             <foreignObject
               x={clampedX}
-              // Clear of the clearance chip that sits above a box standing on a
-              // vertical wall, which is 120mm off the footprint plus its own
-              // line height.
-              y={top - height - 480}
+              y={y}
               width={width}
               height={height}
               data-dk-box-toolbar
             >
-              <div className="flex h-full items-center justify-center gap-1 rounded-md border border-border bg-background px-1 shadow-sm">
+              <div
+                className="flex h-full w-full items-center justify-center border border-border bg-background/95 shadow-sm"
+                // Inside a foreignObject one CSS pixel IS one user unit, and a
+                // user unit here is a millimetre - so every size is written in
+                // millimetres-per-screen-pixel to come out the intended size on
+                // screen at any zoom.
+                style={{ gap: 2 * mmPerPx, borderRadius: 6 * mmPerPx, padding: 3 * mmPerPx }}
+              >
                 {onRotateBox && (
                   <button
                     type="button"
                     aria-label="Rotate 90 degrees"
-                    className="rounded p-1 hover:bg-muted"
+                    className="flex items-center justify-center hover:bg-muted"
+                    style={{ padding: 3 * mmPerPx, borderRadius: 4 * mmPerPx }}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => onRotateBox(selected.id)}
                   >
-                    <RotateCw style={{ width: 170, height: 170 }} />
+                    <RotateCw style={{ width: 16 * mmPerPx, height: 16 * mmPerPx }} />
                   </button>
                 )}
                 {onDuplicateBox && (
                   <button
                     type="button"
                     aria-label="Duplicate product"
-                    className="rounded p-1 hover:bg-muted"
+                    className="flex items-center justify-center hover:bg-muted"
+                    style={{ padding: 3 * mmPerPx, borderRadius: 4 * mmPerPx }}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => onDuplicateBox(selected.id)}
                   >
-                    <Copy style={{ width: 170, height: 170 }} />
+                    <Copy style={{ width: 16 * mmPerPx, height: 16 * mmPerPx }} />
                   </button>
                 )}
                 {onRemoveBox && (
                   <button
                     type="button"
                     aria-label="Remove product from room"
-                    className="rounded p-1 text-destructive hover:bg-muted"
+                    className="flex items-center justify-center text-destructive hover:bg-muted"
+                    style={{ padding: 3 * mmPerPx, borderRadius: 4 * mmPerPx }}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={() => onRemoveBox(selected.id)}
                   >
-                    <Trash2 style={{ width: 170, height: 170 }} />
+                    <Trash2 style={{ width: 16 * mmPerPx, height: 16 * mmPerPx }} />
                   </button>
                 )}
               </div>

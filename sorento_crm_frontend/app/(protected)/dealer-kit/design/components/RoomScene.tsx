@@ -70,6 +70,10 @@ export function RoomScene({
   boxes,
   selectedBoxId,
   onSelectBox,
+  onMoveBox,
+  onCommit,
+  onMoveOpening,
+  onSelectOpening,
   ceilingHeightMm = DEFAULT_CEILING_MM,
   openings = [],
   finishes,
@@ -78,6 +82,13 @@ export function RoomScene({
   boxes: SceneBox[];
   selectedBoxId?: string | null;
   onSelectBox?: (boxId: string) => void;
+  /** Dragging a product across the floor, in the same shape the plan uses. */
+  onMoveBox?: (boxId: string, x: number, y: number, rotation: number) => void;
+  /** End of a drag, so it becomes one undo step. */
+  onCommit?: () => void;
+  /** Sliding a door or window along its wall, from the 3D view. */
+  onMoveOpening?: (openingId: string, offsetMm: number, wallIndex: number) => void;
+  onSelectOpening?: (openingId: string) => void;
   /** Wall height. The only vertical measurement the room itself has. */
   ceilingHeightMm?: number;
   /** Doors and windows, cut out of the walls they belong to. */
@@ -87,8 +98,24 @@ export function RoomScene({
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const refocusRef = useRef<() => void>(() => {});
+  const moveRef = useRef<(boxId: string, x: number, y: number, rotation: number) => void>(
+    () => {},
+  );
+  const commitRef = useRef<() => void>(() => {});
+  const moveOpeningRef = useRef<
+    (openingId: string, offsetMm: number, wallIndex: number) => void
+  >(() => {});
+  const selectOpeningRef = useRef<(openingId: string) => void>(() => {});
   const pickRef = useRef<(boxId: string) => void>(() => {});
   pickRef.current = (boxId: string) => onSelectBox?.(boxId);
+  // Refs, not deps: the scene is built once per data change, and putting these
+  // callbacks in the effect's dependency list would tear the whole scene down
+  // on every render of the parent.
+  moveRef.current = (boxId, x, y, rotation) => onMoveBox?.(boxId, x, y, rotation);
+  commitRef.current = () => onCommit?.();
+  moveOpeningRef.current = (openingId, offsetMm, wallIndex) =>
+    onMoveOpening?.(openingId, offsetMm, wallIndex);
+  selectOpeningRef.current = (openingId) => onSelectOpening?.(openingId);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -173,6 +200,7 @@ export function RoomScene({
      * as a shadow line.
      */
     const wallMeshes: { mesh: THREE.Mesh; normal: THREE.Vector3 }[] = [];
+    const openingPickable: THREE.Object3D[] = [];
     const wallHeight = Math.max(1, ceilingHeightMm) * MM_TO_M;
     if (outline.length >= 3) {
       for (let index = 0; index < outline.length; index += 1) {
@@ -239,6 +267,39 @@ export function RoomScene({
           disposables.push(pieceGeometry, pieceMaterial);
         }
 
+        /**
+         * An invisible pane filling each hole, so a door can be grabbed in 3D.
+         *
+         * The opening itself is an absence - there is no geometry to click -
+         * and being told to switch to the plan to move a door you are looking
+         * at is exactly the kind of thing that makes a tool feel like a form.
+         */
+        for (const opening of wallOpenings) {
+          const sill = Math.max(0, Math.min(opening.sillMm, ceilingHeightMm));
+          const head = Math.min(sill + opening.heightMm, ceilingHeightMm);
+          const paneGeometry = new THREE.PlaneGeometry(
+            opening.widthMm * MM_TO_M,
+            Math.max(1, head - sill) * MM_TO_M,
+          );
+          const paneMaterial = new THREE.MeshBasicMaterial({
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+          });
+          const pane = new THREE.Mesh(paneGeometry, paneMaterial);
+          pane.position.set(
+            (opening.offsetMm - lengthMm / 2) * MM_TO_M,
+            ((sill + head) / 2) * MM_TO_M,
+            0,
+          );
+          pane.userData.openingId = opening.id;
+          pane.userData.wallIndex = index;
+          wallGroup.add(pane);
+          openingPickable.push(pane);
+          disposables.push(paneGeometry, paneMaterial);
+        }
+
         const mesh = wallGroup as unknown as THREE.Mesh;
         mesh.position.set(
           ((start.x + end.x) / 2) * MM_TO_M,
@@ -301,24 +362,161 @@ export function RoomScene({
       disposables.push(geometry, plain, faced, texture, outlineMesh.geometry, outlineMesh.material as THREE.Material);
     }
 
+    /**
+     * Dragging in 3D.
+     *
+     * The plan is the precise tool, but a customer looking at the 3D view and
+     * saying "put the basin over there" should not have to be told to switch
+     * views first. So a product is dragged along the FLOOR plane: the pointer
+     * ray is intersected with y=0 and the hit point becomes the new position,
+     * which the plan then snaps to a wall exactly as it does for a plan drag.
+     * Orbit is disabled while a product is under the pointer, or the camera
+     * would spin instead.
+     */
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    const handleClick = (event: MouseEvent) => {
+    const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const hitPoint = new THREE.Vector3();
+    let dragging: { boxId: string; grabDx: number; grabDz: number } | null = null;
+    let draggingOpening: { openingId: string } | null = null;
+
+    const setPointer = (event: PointerEvent | MouseEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
+    };
+
+    const handleClick = (event: MouseEvent) => {
+      setPointer(event);
       const hit = raycaster.intersectObjects(pickable, false)[0];
       const boxId = hit?.object.userData.boxId;
       if (typeof boxId === 'string') pickRef.current(boxId);
     };
+
+    /** Where a pointer lands along a wall, in millimetres from its start. */
+    const alongWall = (wallIndex: number): number | null => {
+      const start = outline[wallIndex];
+      const end = outline[(wallIndex + 1) % outline.length];
+      if (!start || !end) return null;
+      if (!raycaster.ray.intersectPlane(floorPlane, hitPoint)) return null;
+      const runX = end.x - start.x;
+      const runY = end.y - start.y;
+      const length = Math.hypot(runX, runY);
+      if (length < 1e-6) return null;
+      const pointX = hitPoint.x / MM_TO_M;
+      const pointY = hitPoint.z / MM_TO_M;
+      return ((pointX - start.x) * runX + (pointY - start.y) * runY) / length;
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      setPointer(event);
+
+      const openingHit = raycaster.intersectObjects(openingPickable, false)[0];
+      if (openingHit && typeof openingHit.object.userData.openingId === 'string') {
+        draggingOpening = { openingId: openingHit.object.userData.openingId };
+        selectOpeningRef.current(draggingOpening.openingId);
+        controls.enabled = false;
+        renderer.domElement.setPointerCapture(event.pointerId);
+        return;
+      }
+
+      const hit = raycaster.intersectObjects(pickable, false)[0];
+      const boxId = hit?.object.userData.boxId;
+      if (typeof boxId !== 'string') return;
+      if (!raycaster.ray.intersectPlane(floorPlane, hitPoint)) return;
+
+      // Grab OFFSET, not centre: picking a product by its edge should not make
+      // it jump so its middle is under the cursor.
+      dragging = {
+        boxId,
+        grabDx: hit.object.position.x - hitPoint.x,
+        grabDz: hit.object.position.z - hitPoint.z,
+      };
+      controls.enabled = false;
+      renderer.domElement.setPointerCapture(event.pointerId);
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (draggingOpening) {
+        setPointer(event);
+        const opening = openings.find(
+          (candidate) => candidate.id === draggingOpening!.openingId,
+        );
+        if (!opening) return;
+        const along = alongWall(opening.wallIndex);
+        // Along its own wall only. Hopping walls belongs to the plan, where
+        // "nearest wall to the pointer" is a question with an obvious answer.
+        if (along !== null) {
+          moveOpeningRef.current(opening.id, Math.round(along), opening.wallIndex);
+        }
+        return;
+      }
+
+      if (!dragging) return;
+      setPointer(event);
+      if (!raycaster.ray.intersectPlane(floorPlane, hitPoint)) return;
+      const box = boxes.find((candidate) => candidate.id === dragging!.boxId);
+      if (!box) return;
+      // Back to millimetres, and back to the box's near corner, which is the
+      // co-ordinate the rest of the designer speaks.
+      moveRef.current(
+        dragging.boxId,
+        (hitPoint.x + dragging.grabDx) / MM_TO_M - box.width / 2,
+        (hitPoint.z + dragging.grabDz) / MM_TO_M - box.depth / 2,
+        box.rotation,
+      );
+    };
+
+    const endPointer = (event: PointerEvent) => {
+      if (!dragging && !draggingOpening) return;
+      dragging = null;
+      draggingOpening = null;
+      controls.enabled = true;
+      if (renderer.domElement.hasPointerCapture(event.pointerId)) {
+        renderer.domElement.releasePointerCapture(event.pointerId);
+      }
+      commitRef.current();
+    };
+
     renderer.domElement.addEventListener('click', handleClick);
+    renderer.domElement.addEventListener('pointerdown', handlePointerDown);
+    renderer.domElement.addEventListener('pointermove', handlePointerMove);
+    renderer.domElement.addEventListener('pointerup', endPointer);
+    renderer.domElement.addEventListener('pointercancel', endPointer);
 
     let frame = 0;
     const toWall = new THREE.Vector3();
+    const projected = new THREE.Vector3();
+    let lastProjection = '';
     const animate = () => {
       frame = requestAnimationFrame(animate);
       controls.update();
+
+      /**
+       * Where the selected product currently is ON SCREEN.
+       *
+       * Published as an attribute because nothing else can answer it from
+       * outside: the scene is a canvas, so a test (or anything else driving the
+       * page) has no element to aim at. Written only when it changes.
+       */
+      const selectedMesh = pickable.find((node) => node.userData.boxId === selectedBoxId);
+      if (selectedMesh) {
+        projected.copy(selectedMesh.position).project(camera);
+        const rect = renderer.domElement.getBoundingClientRect();
+        const value = `${Math.round(((projected.x + 1) / 2) * rect.width)},${Math.round(
+          ((1 - projected.y) / 2) * rect.height,
+        )}`;
+        if (value !== lastProjection) {
+          lastProjection = value;
+          mount.setAttribute('data-dk-selected-at', value);
+        }
+      } else if (lastProjection) {
+        lastProjection = '';
+        mount.removeAttribute('data-dk-selected-at');
+      }
+
       // A wall whose inside faces away from the camera is between you and the
       // room, so it comes down for this frame.
       for (const wall of wallMeshes) {
@@ -346,6 +544,10 @@ export function RoomScene({
       cancelAnimationFrame(frame);
       observer.disconnect();
       renderer.domElement.removeEventListener('click', handleClick);
+      renderer.domElement.removeEventListener('pointerdown', handlePointerDown);
+      renderer.domElement.removeEventListener('pointermove', handlePointerMove);
+      renderer.domElement.removeEventListener('pointerup', endPointer);
+      renderer.domElement.removeEventListener('pointercancel', endPointer);
       controls.dispose();
       for (const item of disposables) item.dispose();
       renderer.dispose();
