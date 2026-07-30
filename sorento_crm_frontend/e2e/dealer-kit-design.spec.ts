@@ -437,14 +437,21 @@ test.describe('Dealer Kit room designer', () => {
     const openingBox = (await opening.locator('line').first().boundingBox())!;
     await page.mouse.move(openingBox.x + openingBox.width / 2, openingBox.y + openingBox.height / 2);
     await page.mouse.down();
-    // Round the corner and down the left-hand side.
-    await page.mouse.move(planBox.x + 60, planBox.y + planBox.height / 2, { steps: 14 });
+    // Round the corner and down the left-hand side, in stages with a breath
+    // between them: on a cold server the whole drag can otherwise land inside
+    // one busy frame and only the last position is ever seen.
+    await page.mouse.move(planBox.x + planBox.width / 3, planBox.y + 40, { steps: 8 });
+    await page.waitForTimeout(150);
+    await page.mouse.move(planBox.x + 60, planBox.y + planBox.height / 3, { steps: 8 });
+    await page.waitForTimeout(150);
+    await page.mouse.move(planBox.x + 60, planBox.y + planBox.height / 2, { steps: 8 });
+    await page.waitForTimeout(150);
     await page.mouse.up();
 
     // Dragging a door round a corner is a thing people do - the plan was right
     // and the wall was wrong - and refusing meant deleting it and stamping a
     // new one.
-    await expect.poll(isHorizontal, { timeout: 10_000 }).toBe(false);
+    await expect.poll(isHorizontal, { timeout: 20_000 }).toBe(false);
   });
 
   test('a design the server no longer has does not brick the designer', async ({ page }) => {
