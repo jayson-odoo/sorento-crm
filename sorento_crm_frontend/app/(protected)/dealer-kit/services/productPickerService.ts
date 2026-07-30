@@ -46,12 +46,16 @@ export async function listPickerProducts(
   query = '',
   pageIndex = 0,
   pageSize = PICKER_PAGE_SIZE,
+  categoryId = '',
 ): Promise<PickerProduct[]> {
   const params = new URLSearchParams({
     limit: String(pageSize),
     offset: String(pageIndex * pageSize),
   });
   if (query.trim()) params.set('query', query.trim());
+  // Narrows, never replaces: a category plus a term means "search inside this
+  // category", which is how somebody finds one basin among four hundred.
+  if (categoryId) params.set('category_id', categoryId);
 
   const response = await apiFetch(`/api/v1/master-data/products/select?${params.toString()}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Could not load products'));
@@ -70,4 +74,29 @@ export async function listPickerProducts(
     price: row.list_price == null ? '' : `MYR ${Number(row.list_price).toFixed(2)}`,
     isDiscontinued: Boolean(row.is_discontinued),
   }));
+}
+
+export interface PickerCategory {
+  id: string;
+  name: string;
+}
+
+/**
+ * Categories, for the chip row above the picker.
+ *
+ * The chips are the browse half of finding a product; the search box is the
+ * other. The planner we studied has only the first and no text search at all,
+ * which is why finding a known code there means paging "show more" twelve at a
+ * time.
+ */
+export async function listPickerCategories(): Promise<PickerCategory[]> {
+  const response = await apiFetch('/api/v1/master-data/product-categories/select');
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not load categories'));
+  }
+  const body = (await response.json()) as
+    | { data?: { id: string; category_name: string }[] }
+    | { id: string; category_name: string }[];
+  const rows = Array.isArray(body) ? body : (body.data ?? []);
+  return rows.map((row) => ({ id: row.id, name: row.category_name }));
 }

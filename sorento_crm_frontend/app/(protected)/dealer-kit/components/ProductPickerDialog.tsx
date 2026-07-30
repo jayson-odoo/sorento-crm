@@ -19,10 +19,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RuleBuilder } from '@/components/rule-builder/RuleBuilder';
 import type { RuleGroup } from '@/components/rule-builder/types';
 import { cn } from '@/lib/utils';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   PICKER_PAGE_SIZE,
+  listPickerCategories,
   listPickerProducts,
   type PickerProduct,
 } from '../services/productPickerService';
@@ -146,6 +147,15 @@ export function ProductPickerDialog({
    * active products a search for a code that exists 998 times answered "no
    * products match". Debounced so typing does not fire a request per keystroke.
    */
+  /** The category chip in effect, or '' for the whole catalogue. */
+  const [categoryId, setCategoryId] = useState('');
+  const { data: categories = [] } = useQuery({
+    queryKey: ['dealer-kit', 'picker-categories'],
+    queryFn: listPickerCategories,
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+  });
+
   const [debounced, setDebounced] = useState('');
   useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(search), 300);
@@ -159,8 +169,9 @@ export function ProductPickerDialog({
     hasNextPage,
     fetchNextPage,
   } = useInfiniteQuery({
-    queryKey: ['dealer-kit', 'picker-products', debounced],
-    queryFn: ({ pageParam = 0 }) => listPickerProducts(debounced, pageParam as number),
+    queryKey: ['dealer-kit', 'picker-products', debounced, categoryId],
+    queryFn: ({ pageParam = 0 }) =>
+      listPickerProducts(debounced, pageParam as number, PICKER_PAGE_SIZE, categoryId),
     initialPageParam: 0,
     // A full page means there may be another; a short one means this is the end.
     getNextPageParam: (last: PickerProduct[], all) =>
@@ -251,6 +262,35 @@ export function ProductPickerDialog({
                 onChange={(event) => setSearch(event.target.value)}
               />
             </div>
+
+            {/* Browse by category alongside the search box. Chips scroll rather
+                than wrap into a wall: there are hundreds of categories, and a
+                picker that pushes the product list off screen has traded one
+                problem for another. */}
+            {categories.length > 0 && (
+              <div className="flex gap-1 overflow-x-auto pb-1" data-dk-category-chips>
+                <Button
+                  size="sm"
+                  variant={categoryId === '' ? 'primary' : 'outline'}
+                  className="shrink-0"
+                  onClick={() => setCategoryId('')}
+                >
+                  All
+                </Button>
+                {categories.map((category) => (
+                  <Button
+                    key={category.id}
+                    size="sm"
+                    variant={categoryId === category.id ? 'primary' : 'outline'}
+                    className="shrink-0"
+                    data-dk-category-chip={category.id}
+                    onClick={() => setCategoryId(category.id === categoryId ? '' : category.id)}
+                  >
+                    {category.name}
+                  </Button>
+                ))}
+              </div>
+            )}
 
             {/* h-, not max-h-: a Radix ScrollArea with only a max height never
                 scrolls - the content simply overflows and the rows below the

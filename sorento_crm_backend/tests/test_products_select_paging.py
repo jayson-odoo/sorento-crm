@@ -263,3 +263,55 @@ def test_inactive_products_never_appear(api):
 
     found = _codes(client.get("/api/v1/master-data/products/select", params={"query": _STEM}))
     assert found == [f"{_STEM}-000"]
+
+
+def test_a_category_narrows_the_list_and_composes_with_the_search(api):
+    """Category is what turns a 22,000-product dropdown into a browsable one.
+
+    It has to NARROW rather than replace: picking a category and then typing
+    must search inside that category, not across the catalogue again.
+    """
+    db = api
+    from app.models.product import Product, ProductCategory
+
+    _products(db, 3)
+    mine = db.query(Product).filter(Product.product_code.like(f"{_STEM}%")).all()
+    category_id = mine[0].category_id
+
+    other_category = ProductCategory(
+        category_code=f"{_STEM}OTH", category_name=f"ZZT other {_STEM}"
+    )
+    db.add(other_category)
+    db.flush()
+    db.query(Product).filter(Product.product_code == f"{_STEM}-002").update(
+        {"category_id": other_category.id}
+    )
+    db.flush()
+
+    client = TestClient(app)
+
+    narrowed = _codes(
+        client.get(
+            "/api/v1/master-data/products/select",
+            params={"query": _STEM, "category_id": category_id},
+        )
+    )
+    assert narrowed == [f"{_STEM}-000", f"{_STEM}-001"]
+
+    # Composed with a search term, not replaced by it.
+    both = _codes(
+        client.get(
+            "/api/v1/master-data/products/select",
+            params={"query": f"{_STEM}-001", "category_id": category_id},
+        )
+    )
+    assert both == [f"{_STEM}-001"]
+
+    # A category with nothing in it is an empty list, not everything.
+    empty = _codes(
+        client.get(
+            "/api/v1/master-data/products/select",
+            params={"query": _STEM, "category_id": str(uuid.uuid4())},
+        )
+    )
+    assert empty == []

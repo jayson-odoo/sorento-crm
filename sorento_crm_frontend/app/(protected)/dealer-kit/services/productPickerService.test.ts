@@ -83,6 +83,20 @@ describe('listPickerProducts', () => {
     expect(params.get('offset')).toBe('20');
   });
 
+  it('sends a category id when one is chosen, and omits it when not', async () => {
+    respondWith([]);
+    await listPickerProducts('800', 0, PICKER_PAGE_SIZE, 'cat-1');
+    const params = requestedParams();
+    // Narrows, never replaces: the search term travels with it.
+    expect(params.get('category_id')).toBe('cat-1');
+    expect(params.get('query')).toBe('800');
+
+    fetchMock.mockReset();
+    respondWith([]);
+    await listPickerProducts('800');
+    expect(requestedParams().has('category_id')).toBe(false);
+  });
+
   it('maps a row to what a picker shows, and never leaks an id as a label', async () => {
     respondWith([
       {

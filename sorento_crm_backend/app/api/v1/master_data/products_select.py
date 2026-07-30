@@ -18,6 +18,7 @@ DEFAULT_LIMIT = 100
 @router.get("/select")
 async def get_products_select(
     query: Optional[str] = Query(None),
+    category_id: Optional[str] = Query(None),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=200),
     offset: int = Query(0, ge=0),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -50,6 +51,12 @@ async def get_products_select(
                     Product.product_name.ilike(needle)
                 )
             )
+
+        if category_id:
+            # Narrowing by category is what turns a 22,000-product dropdown
+            # into a browsable one. It composes with the search term rather
+            # than replacing it: "basins, containing 800".
+            q = q.filter(Product.category_id == category_id)
 
         products = q.order_by(Product.product_code).offset(offset).limit(limit).all()
 
