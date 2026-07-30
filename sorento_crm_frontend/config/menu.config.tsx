@@ -428,6 +428,10 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Room Designer',
         path: '/dealer-kit/design',
       },
+      {
+        title: 'Design Summary',
+        path: '/dealer-kit/design/summary',
+      },
     ],
   },
   {

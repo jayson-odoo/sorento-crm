@@ -371,3 +371,39 @@ def test_deleting_a_selection_leaves_the_product_alone(api):
     from app.models.product import Product
 
     assert db.query(Product).filter(Product.id == product.id).first() is not None
+
+
+def test_the_quote_route_is_owner_only_and_totals_what_is_included(api):
+    """Same ownership rule as everything else here: a guessed id is a 404, not
+    somebody else's figure."""
+    db, _as = api
+    _as(_OWNER_ID)
+    client = TestClient(app)
+
+    product = _product(db)
+    created = client.post("/api/v1/dealer-kit/selections", json={"name": "ZZT quote route"})
+    selection_id = created.json()["id"]
+    client.post(
+        f"/api/v1/dealer-kit/selections/{selection_id}/lines",
+        json={"productId": product.id, "quantity": 2},
+    )
+
+    quoted = client.post(
+        f"/api/v1/dealer-kit/selections/{selection_id}/quote", json={"excludedProductIds": []}
+    )
+    assert quoted.status_code == 200, quoted.text
+    assert quoted.json()["subtotal"] == "500.00"
+
+    without = client.post(
+        f"/api/v1/dealer-kit/selections/{selection_id}/quote",
+        json={"excludedProductIds": [product.id]},
+    )
+    assert without.json()["subtotal"] == "0.00"
+    # camelCase on the wire, like every other dealer-kit response.
+    assert without.json()["excludedCount"] == 1
+
+    _as(_OTHER_ID)
+    denied = client.post(
+        f"/api/v1/dealer-kit/selections/{selection_id}/quote", json={"excludedProductIds": []}
+    )
+    assert denied.status_code == 404

@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.schemas.dealer_kit import (
+    QuoteOut,
+    QuoteRequest,
     RoomWrite,
     SelectionCreate,
     SelectionLineWrite,
@@ -165,6 +167,25 @@ def delete_line(
     db.commit()
     db.refresh(selection)
     return _out(db, selection, user)
+
+
+@router.post("/selections/{selection_id}/quote", response_model=QuoteOut)
+def quote_selection(
+    selection_id: str,
+    payload: QuoteRequest,
+    db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    """The design as a figure, with lines the dealer left off it.
+
+    A POST because it carries a body, not because it changes anything: nothing
+    is written, and asking twice gives the same answer. The arithmetic lives in
+    the service so the browser never adds up prices of its own.
+    """
+    selection = _owned(db, selection_id, user)
+    return selection_service.quote_selection(
+        db, selection, _viewer(user), excluded_product_ids=payload.excluded_product_ids
+    )
 
 
 @router.put("/selections/{selection_id}/room", response_model=SelectionOut)

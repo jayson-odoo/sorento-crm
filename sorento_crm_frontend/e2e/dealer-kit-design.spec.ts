@@ -293,6 +293,56 @@ test.describe('Dealer Kit room designer', () => {
     await expect(page.locator('[data-dk-opening-kind="door"]')).toBeAttached({ timeout: 30_000 });
   });
 
+  test('the summary prices the design and re-asks the server when a line comes off', async ({
+    page,
+  }) => {
+    await openDesigner(page);
+
+    const combobox = page.getByRole('combobox').first();
+    await openTrigger(combobox);
+    const option = page.getByRole('option').first();
+    await expect(option).toBeVisible({ timeout: 20_000 });
+    await option.dispatchEvent('click');
+    await tap(page, page.getByRole('button', { name: /add product to room/i }));
+    await expect(page.locator('[data-dk-plan-box]').first()).toBeVisible({ timeout: 30_000 });
+
+    const summaryLink = page.getByRole('link', { name: /^summary$/i });
+    await expect(summaryLink).toBeVisible({ timeout: 10_000 });
+    const href = await summaryLink.getAttribute('href');
+    await page.goto(href!, { waitUntil: 'commit' });
+
+    await expect(page.locator('[data-dk-quote-line]').first()).toBeVisible({ timeout: 30_000 });
+    const subtotal = page.locator('[data-dk-quote-subtotal]');
+    const before = (await subtotal.innerText()).trim();
+
+    // Unticking must produce a REQUEST. If the figure changed without one, the
+    // browser did the arithmetic - which is the thing this screen must never do.
+    const requoted = page.waitForRequest((request) => /\/quote$/.test(request.url()));
+    const tickable = page.locator('[data-dk-quote-line] button[role=checkbox]:not([disabled])');
+    const count = await tickable.count();
+    if (count === 0) {
+      // Everything in this design is unsellable, so there is nothing to untick
+      // and nothing to assert beyond the page having rendered.
+      expect(before).toContain('0.00');
+      return;
+    }
+    await tickable.first().click();
+    await requoted;
+
+    // The observable is the line coming OFF, not the figure moving: whichever
+    // product the picker offered first may be priced at zero, and asserting on
+    // the number would then be asserting on the catalogue.
+    await expect(tickable.first()).toHaveAttribute('data-state', 'unchecked', {
+      timeout: 15_000,
+    });
+    if (!before.endsWith('0.00')) {
+      await expect(subtotal).not.toHaveText(before, { timeout: 15_000 });
+    }
+
+    // And the line is still on the page: unticking is not deleting.
+    await expect(page.locator('[data-dk-quote-line]').first()).toBeVisible();
+  });
+
   test('a design the server no longer has does not brick the designer', async ({ page }) => {
     await openDesigner(page);
 

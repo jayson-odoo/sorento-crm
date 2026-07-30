@@ -293,6 +293,20 @@ class RoomWrite(BaseModel):
     openings: list[dict] = Field(default_factory=list)
 
 
+class QuoteRequest(BaseModel):
+    """Which products the dealer is leaving OFF this quote.
+
+    Product ids, not line ids: the caller is saying "not the mirror", and the
+    line id is an implementation detail that changes when a quantity does.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    excluded_product_ids: list[str] = Field(
+        default_factory=list, validation_alias="excludedProductIds"
+    )
+
+
 class SelectionLineOut(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -309,6 +323,32 @@ class SelectionLineOut(BaseModel):
     unavailable_reason: Optional[str] = Field(
         default=None, serialization_alias="unavailableReason"
     )
+
+
+class QuoteLineOut(SelectionLineOut):
+    """A quote line: a selection line plus whether it is on this quote."""
+
+    included: bool = True
+
+
+class QuoteOut(BaseModel):
+    """What the design comes to, for the lines the dealer kept.
+
+    Serialised through a model like every other dealer-kit response so the
+    frontend reads camelCase everywhere. Returning the service dict raw is what
+    made the first version of this screen show a priced row with no product
+    code on it.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    name: Optional[str] = None
+    currency: str = "MYR"
+    lines: list[QuoteLineOut] = Field(default_factory=list)
+    subtotal: str = "0.00"
+    total: Optional[str] = None
+    excluded_count: int = Field(default=0, serialization_alias="excludedCount")
 
 
 class SelectionOut(BaseModel):

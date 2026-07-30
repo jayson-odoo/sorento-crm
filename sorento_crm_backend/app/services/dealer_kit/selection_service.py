@@ -224,6 +224,50 @@ def resolve_selection(
     }
 
 
+def quote_selection(
+    db: Session,
+    selection: Selection,
+    viewer: ViewerContext = ANONYMOUS,
+    excluded_product_ids: Optional[list[str]] = None,
+) -> dict:
+    """The Selection as a figure somebody can hand to a customer.
+
+    The subtotal is computed HERE, not in the browser. The summary screen lets a
+    dealer take lines out before quoting, so the number has to move - and a
+    frontend that adds up prices is a second price list nobody knows they are
+    maintaining, which is the one the customer ends up seeing.
+
+    Excluding is not deleting: the line stays in the design and comes back
+    marked, because the dealer is answering "what do I quote today", not "what
+    did we choose". A line that cannot be sold at all is excluded for them and
+    says why, rather than vanishing and leaving the total unexplained.
+    """
+    excluded = set(excluded_product_ids or [])
+    resolved = resolve_selection(db, selection, viewer)
+
+    subtotal = Decimal("0")
+    lines: list[dict] = []
+    excluded_count = 0
+
+    for line in resolved["lines"]:
+        included = line["is_available"] and line["product_id"] not in excluded
+        if not included:
+            excluded_count += 1
+        elif line["line_total"] is not None:
+            subtotal += Decimal(line["line_total"])
+        lines.append({**line, "included": included})
+
+    return {
+        "id": selection.id,
+        "name": selection.name,
+        "currency": resolved["currency"],
+        "lines": lines,
+        "subtotal": _money(subtotal),
+        "total": resolved["total"],
+        "excluded_count": excluded_count,
+    }
+
+
 def _missing_line(line: SelectionLine) -> dict:
     return {
         "line_id": line.id,

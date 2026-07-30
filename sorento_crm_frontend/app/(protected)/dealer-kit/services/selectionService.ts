@@ -15,7 +15,9 @@
  *            { productId, quantity }  (ABSOLUTE, 0 removes)       -> Selection
  *   DELETE /api/v1/dealer-kit/selections/{id}/lines/{productId}   -> Selection
  *   PUT    /api/v1/dealer-kit/selections/{id}/room
- *            { outline, placements }                              -> Selection
+ *            { outline, placements, openings, ceilingHeightMm }   -> Selection
+ *   POST   /api/v1/dealer-kit/selections/{id}/quote
+ *            { excludedProductIds }                               -> Quote
  *
  * Every mutation returns the WHOLE selection, so the client never has to merge
  * a partial response into local state and never has to guess what a write did
@@ -127,4 +129,40 @@ export async function saveRoom(selectionId: string, room: Room): Promise<Selecti
     body: JSON.stringify(room),
   });
   return read(response, 'Could not save the room');
+}
+
+export interface QuoteLine extends SelectionLine {
+  /** False when the dealer left it off, or when it cannot be sold at all. */
+  included: boolean;
+}
+
+export interface Quote {
+  id: string;
+  name: string | null;
+  currency: string;
+  lines: QuoteLine[];
+  /** What the included lines come to. Computed by the SERVER, never here. */
+  subtotal: string;
+  /** Everything available, for comparison. */
+  total: string | null;
+  excludedCount: number;
+}
+
+/**
+ * The design as a figure somebody can hand to a customer.
+ *
+ * A POST because it carries a body, not because it writes: the excluded list
+ * is a question, and asking twice gives the same answer.
+ */
+export async function getQuote(
+  selectionId: string,
+  excludedProductIds: string[] = [],
+): Promise<Quote> {
+  const response = await apiFetch(`${BASE}/${selectionId}/quote`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ excludedProductIds }),
+  });
+  if (!response.ok) throw new Error(await extractApiError(response, 'Could not build the quote'));
+  return response.json();
 }

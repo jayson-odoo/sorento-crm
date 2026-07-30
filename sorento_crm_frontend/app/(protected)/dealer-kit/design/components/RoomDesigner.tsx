@@ -13,6 +13,7 @@ import {
   Frame,
   PanelTop,
   Plus,
+  ReceiptText,
   Redo2,
   RotateCw,
   Trash2,
@@ -582,6 +583,18 @@ export function RoomDesigner() {
               <Button size="sm" variant="outline" onClick={startFresh} disabled={busy}>
                 <Plus className="size-4" />
                 New design
+              </Button>
+              <Button size="sm" variant="outline" asChild disabled={!selectionId}>
+                <Link
+                  href={
+                    selectionId
+                      ? `/dealer-kit/design/summary?selection=${selectionId}`
+                      : '/dealer-kit/design/summary'
+                  }
+                >
+                  <ReceiptText className="size-4" />
+                  Summary
+                </Link>
               </Button>
               <Button size="sm" variant={dirty ? 'primary' : 'outline'} onClick={save} disabled={busy}>
                 <Check className="size-4" />
