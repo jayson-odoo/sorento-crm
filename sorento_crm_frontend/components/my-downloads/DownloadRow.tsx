@@ -20,6 +20,9 @@ import { fetchDownloadUrl, type MyDownload } from '@/services/myDownloadsService
 
 export const KIND_LABEL: Record<string, string> = {
   complaint_pdf: 'Complaint PDF',
+  // Named after the document itself - the form is headed PRODUCT INQUIRY FORM -
+  // while the entity key stays stock_inquiry.
+  stock_inquiry_pdf: 'Product Inquiry PDF',
   chat_history_export: 'Chat History CSV',
   promotions_pdf: 'Promotions PDF',
 };

@@ -112,6 +112,7 @@ const useStockInquiryMock = vi.fn();
 const updateInquiryMutateAsync = vi.fn().mockResolvedValue({});
 const updateAndReplyMutateAsync = vi.fn().mockResolvedValue({});
 const uploadResponseAttachmentsMutateAsync = vi.fn();
+const exportPdfMutate = vi.fn();
 
 vi.mock('../hooks/useStockInquiries', () => ({
   useStockInquiry: (...a: unknown[]) => useStockInquiryMock(...a),
@@ -127,6 +128,7 @@ vi.mock('../hooks/useStockInquiries', () => ({
     isPending: false,
   }),
   useDeleteStockInquiry: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useExportStockInquiryPdf: () => ({ mutate: exportPdfMutate, isPending: false }),
 }));
 
 import StockInquiryDetail from './StockInquiryDetail';
@@ -301,5 +303,27 @@ describe('StockInquiryDetail - Reassign gear-menu item', () => {
       expect.objectContaining({ queryKey: ['form-sla-trackers', 'stock_inquiry', 'si-1'] }),
     );
     expect(handlingLockRefresh).toHaveBeenCalled();
+  });
+});
+
+describe('ProductInquiryDetail - Print / Download PDF gear-menu item', () => {
+  it('queues the export for this inquiry', async () => {
+    renderPage();
+
+    await openGearMenu();
+    fireEvent.click(await screen.findByText('Print / Download PDF'));
+
+    expect(exportPdfMutate).toHaveBeenCalledWith('si-1');
+  });
+
+  it('is offered on a voided inquiry (printing a closed record stays allowed)', async () => {
+    useStockInquiryMock.mockReturnValue({
+      data: inquiry({ status: 'voided' }),
+      isLoading: false,
+    });
+    renderPage();
+
+    await openGearMenu();
+    expect(await screen.findByText('Print / Download PDF')).toBeTruthy();
   });
 });

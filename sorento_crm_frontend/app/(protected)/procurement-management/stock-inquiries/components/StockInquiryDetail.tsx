@@ -3,7 +3,7 @@
 import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Edit, Trash2, FileDown, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle, Ban, UserRoundCog } from 'lucide-react';
+import { Edit, Trash2, FileDown, Printer, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle, Ban, UserRoundCog } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
@@ -48,6 +48,7 @@ import {
   usePurchasingRejectStockInquiry,
   useReopenStockInquiry,
   useUploadStockInquiryResponseAttachments,
+  useExportStockInquiryPdf,
 } from '../hooks/useStockInquiries';
 import { getOrCreateStockInquiryViewLink } from '../services/stockInquiryService';
 import { toast } from 'sonner';
@@ -57,6 +58,7 @@ import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
 import StockInquiryNavigation from './StockInquiryNavigation';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloadsButton';
 import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
 import StockInquiryConversationPanel from './StockInquiryConversationPanel';
 import { STOCK_INQUIRY_STATUS_LABELS } from '../types/stockInquiry.types';
@@ -83,6 +85,7 @@ export default function StockInquiryDetail({
   const purchasingRejectMutation = usePurchasingRejectStockInquiry();
   const reopenMutation = useReopenStockInquiry();
   const uploadResponseAttachmentsMutation = useUploadStockInquiryResponseAttachments();
+  const exportPdfMutation = useExportStockInquiryPdf();
   const reassignMutation = useReassignSLATracking();
   const canReassign = useHasPermission('sla_management.conversation_sla_tracking.reassign');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -399,6 +402,12 @@ export default function StockInquiryDetail({
                 : 'Reopen to pending project sales'}
             </Button>
           )}
+          <EntityDownloadsButton
+            entityType="stock_inquiry"
+            entityId={inquiryId}
+            label={inquiry.inquiry_number ?? undefined}
+            className="h-8 border border-border"
+          />
           <DetailActionsMenu ariaLabel="Stock inquiry actions">
             {!isVoided && (
               <DropdownMenuItem
@@ -504,6 +513,17 @@ export default function StockInquiryDetail({
                     : 'Update & Reply'}
                 </DropdownMenuItem>
               )}
+            <DropdownMenuItem
+              data-guide-target="procurement.stock-inquiries.download-pdf"
+              disabled={exportPdfMutation.isPending}
+              onSelect={(e) => {
+                e.preventDefault();
+                exportPdfMutation.mutate(inquiryId);
+              }}
+            >
+              <Printer className="size-4" />
+              {exportPdfMutation.isPending ? 'Preparing…' : 'Print / Download PDF'}
+            </DropdownMenuItem>
             <DropdownMenuItem
               onClick={handleExportExcel}
               disabled={exporting}

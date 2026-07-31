@@ -40,6 +40,8 @@ export interface StockInquiry {
   assigned_to_id?: string | null;
   assigned_to_name?: string | null;
   handled_by_name?: string | null;
+  /** PDF exports the CURRENT user has taken of this record (list path only). */
+  print_count?: number | null;
   attachments?: StockInquiryAttachment[];
   created_at: Date;
   updated_at: Date;

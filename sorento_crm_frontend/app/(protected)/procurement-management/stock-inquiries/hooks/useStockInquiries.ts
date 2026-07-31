@@ -25,6 +25,7 @@ import {
   purchasingRejectStockInquiry,
   reopenStockInquiry,
   getStockInquiryConversation,
+  exportStockInquiryPdf,
   type ResponseAttachmentUploadResult,
 } from '../services/stockInquiryService';
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
@@ -306,6 +307,28 @@ export function useReopenStockInquiry() {
       toast.success('Reopened to pending project sales');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to reopen'),
+  });
+}
+
+/**
+ * Queue the printable Stock Inquiry Form PDF. The render happens on the worker,
+ * so success only means "queued" - invalidate the downloads feeds (drawer + the
+ * per-entity chip) and the list, whose Print Count column just changed.
+ */
+export function useExportStockInquiryPdf() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => exportStockInquiryPdf(id),
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['my-downloads'] });
+      queryClient.invalidateQueries({
+        queryKey: ['entity-downloads', 'stock_inquiry', id],
+      });
+      queryClient.invalidateQueries({ queryKey: ['stock-inquiries'] });
+      toast.success('Preparing PDF… it will appear in My Downloads.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to start PDF export'),
   });
 }
 
