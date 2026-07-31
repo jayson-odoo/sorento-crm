@@ -78,6 +78,73 @@ def overwrite_for_contact(
     return state
 
 
+_REFERENCED_STATE_SQL = """
+WITH anchor AS (
+    SELECT turn_id
+    FROM   chat_histories
+    WHERE  contact_id = :cid
+      AND  message_id = :mid
+    ORDER BY sent_at DESC, id DESC
+    LIMIT 1
+)
+SELECT ch.state_trace -> 'after' AS after_state
+FROM   chat_histories ch
+JOIN   anchor a ON a.turn_id IS NOT NULL AND ch.turn_id = a.turn_id
+WHERE  ch.contact_id = :cid
+  AND  ch.type = 'incoming'
+  AND  ch.state_trace IS NOT NULL
+ORDER BY ch.sent_at DESC, ch.id DESC
+LIMIT 1
+"""
+
+
+def get_referenced_state(
+    db: Session,
+    *,
+    respond_io_id: str,
+    message_id: str,
+) -> dict[str, Any] | None:
+    """Return a 4-key projection of the quoted turn's post-turn conversation state.
+
+    Resolution: the chat-history row with this (contact, message_id) identifies a TURN
+    via `turn_id`; that turn's INCOMING row carries `state_trace`, whose `after` member
+    is the state the turn wrote. Returns None on any miss so the caller degrades to the
+    immediately-previous state rather than to a stateless baseline.
+
+    Deliberately a PROJECTION, never the raw trace: `before` / `parser_raw` /
+    `parser_applied` stay internal, and `last_result_set` / `selection_context` /
+    `response` / `access_levels` / `routing` are withheld. Two of those exclusions are
+    safety properties, not tidiness: `selection_context` without `last_result_set`
+    would resolve a bare pick against the wrong roster (wrong-member assign), and
+    `access_levels` must never be re-granted by quoting an older turn.
+    """
+    row = db.execute(
+        text(_REFERENCED_STATE_SQL),
+        {"cid": respond_io_id, "mid": message_id},
+    ).first()
+    if row is None:
+        return None
+    raw = row.after_state
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return None
+    # `after: null` means the turn wrote no state (no-access refusal, LLM fallback).
+    # That is a MISS, never `{}` — an empty baseline would WIPE continuity, which is
+    # strictly worse than the pre-pointer behaviour.
+    if not isinstance(raw, dict):
+        return None
+    # All four keys are ALWAYS present when non-None: the n8n rebase uses object
+    # spread, whose semantics are only exact when `undefined` can never appear.
+    return {
+        "domain_hint": raw.get("domain_hint"),
+        "intent_hint": raw.get("intent_hint"),
+        "entities": raw["entities"] if isinstance(raw.get("entities"), list) else [],
+        "dym_offer": raw["dym_offer"] if isinstance(raw.get("dym_offer"), dict) else None,
+    }
+
+
 def get_referenced_result_set(
     db: Session,
     *,
