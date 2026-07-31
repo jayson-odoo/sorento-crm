@@ -74,6 +74,7 @@ async def get_stock_inquiries(
             contact_id=None,
             space_id=None,
             statuses=statuses,
+            viewer_user_id=(current_user or {}).get("id"),
         )
         return result
     except Exception as e:
@@ -305,6 +306,61 @@ async def get_or_create_stock_inquiry_view_link(
         base = ((data.base_url if data else None) or getattr(app_settings, "frontend_base_url", "") or "").rstrip("/")
         view_url = f"{base}/view/stock-inquiry?token={token}" if base else f"/view/stock-inquiry?token={token}"
         return ViewLinkResponse(view_token=token, view_url=view_url)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+@router.post("/{inquiry_id}/export/pdf")
+async def export_stock_inquiry_pdf(
+    inquiry_id: str,
+    current_user: dict = Depends(require_permission("procurement.stock_inquiries.view")),
+    db: Session = Depends(get_db),
+):
+    """Queue an async PDF export of the PRODUCT INQUIRY FORM (printable copy).
+
+    The document keeps the form's own heading, which is what the detail page has
+    always rendered, so the file is named ``product-inquiry-<number>.pdf``.
+
+    Creates a UserDownload row and enqueues generation; the result appears in the
+    My Downloads drawer. Decoupled from the request path so a slow/failed render
+    (attachments are downloaded and embedded) never blocks the caller. Mirrors
+    POST /complaints-management/complaints/{id}/export/pdf.
+    """
+    from app.schemas.download import DownloadResponse
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_stock_inquiry_pdf
+
+    try:
+        validate_uuid_path(inquiry_id, resource="Stock Inquiry")
+        service = StockInquiryService(db)
+        inquiry = service.get_inquiry(inquiry_id)  # 404 if missing
+
+        number = getattr(inquiry, "inquiry_number", None) or inquiry_id
+        download = DownloadService(db).create(
+            user_id=str(current_user["id"]),
+            kind="stock_inquiry_pdf",
+            source_entity_type="stock_inquiry",
+            source_entity_id=str(inquiry_id),
+            filename=f"product-inquiry-{number}.pdf",
+        )
+        try:
+            enqueue_job(
+                generate_stock_inquiry_pdf,
+                str(download.id),
+                str(inquiry_id),
+                str(current_user["id"]),
+                queue_name="imports",
+                job_timeout=600,
+            )
+        except Exception as e:
+            # Enqueue failed (e.g. Redis down): mark the row failed so the drawer shows it.
+            DownloadService(db).mark_failed(str(download.id), f"Could not queue PDF generation: {e}")
+            raise handle_internal_error("Could not queue PDF generation. Please try again.")
+
+        return DownloadResponse.model_validate(DownloadService(db).get(str(download.id)))
     except HTTPException:
         raise
     except Exception as e:

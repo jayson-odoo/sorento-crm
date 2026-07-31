@@ -359,6 +359,35 @@ export interface RespondConversationResponse {
   contact?: { name?: string | null; phone?: string | null } | null;
 }
 
+export interface StockInquiryExportDownload {
+  id: string;
+  kind: string;
+  status: string;
+  filename?: string | null;
+}
+
+/**
+ * Queue a printable Stock Inquiry Form PDF (details + embedded attachments).
+ *
+ * Contract:
+ *   POST /api/v1/procurement/stock-inquiries/{id}/export/pdf
+ *   Auth: `procurement.stock_inquiries.view`
+ *   202-ish 200: { id, kind: 'stock_inquiry_pdf', status: 'pending', filename }
+ *   The PDF is rendered by the RQ worker and surfaces in My Downloads.
+ */
+export async function exportStockInquiryPdf(
+  id: string,
+): Promise<StockInquiryExportDownload> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${id}/export/pdf`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to start PDF export'));
+  }
+  return response.json();
+}
+
 export async function getStockInquiryConversation(
   inquiryId: string,
   params?: { limit?: number; cursor?: string },

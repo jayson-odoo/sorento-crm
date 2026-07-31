@@ -2724,8 +2724,14 @@ class StockInquiryService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         statuses: Optional[List[str]] = None,
+        viewer_user_id: Optional[str] = None,
     ):
-        """List stock inquiries."""
+        """List stock inquiries.
+
+        ``viewer_user_id`` drives the Print Count column: how many PDF exports the
+        CURRENT user has taken of each row (their own downloads only, batched into
+        one grouped query - never an N+1 count per row).
+        """
         q = self._build_list_query(
             query=query,
             sort_field=sort_field,
@@ -2739,6 +2745,7 @@ class StockInquiryService:
         offset = (page - 1) * limit
         inquiries = q.offset(offset).limit(limit).all()
         self._attach_sla_handlers(inquiries)
+        self._attach_print_counts(inquiries, viewer_user_id)
 
         from app.schemas.common import PaginationResponse
 
@@ -2747,6 +2754,24 @@ class StockInquiryService:
             "pagination": PaginationResponse(total=total, page=page, limit=limit),
             "empty": total == 0
         }
+
+    def _attach_print_counts(self, items, viewer_user_id: Optional[str]) -> None:
+        """Set `print_count` on each inquiry: how many PDF exports the viewing user
+        has taken of that record. One grouped query for the page. With no viewer
+        (e.g. an API-key principal) every row reads 0 rather than another user's count.
+        """
+        if not items:
+            return
+        counts: dict = {}
+        if viewer_user_id:
+            from app.services.download_service import DownloadService
+            counts = DownloadService(self.db).count_map_for_user(
+                str(viewer_user_id),
+                "stock_inquiry",
+                [str(getattr(i, "id", "")) for i in items if getattr(i, "id", None)],
+            )
+        for it in items:
+            setattr(it, "print_count", int(counts.get(str(it.id), 0)))
 
     def _attach_sla_handlers(self, items) -> None:
         """Set `assigned_to_id` / `assigned_to_name` (the SLA assignee - who the
@@ -3730,7 +3755,11 @@ class StockInquiryService:
         ": " is the body separator. Mirrors complaint reply normalization.
         """
         s = (raw or "").strip()
-        if not s.startswith("There is a response to your stock inquiry"):
+        # Both spellings: the module was renamed Stock Inquiry -> Stock Inquiry, and
+        # rows written before that carry the old preamble.
+        if not s.startswith(
+            ("There is a response to your stock inquiry", "There is a response to your stock inquiry")
+        ):
             return s
         idx = s.rfind(": ")
         return s[idx + 2 :].strip() if idx != -1 else s

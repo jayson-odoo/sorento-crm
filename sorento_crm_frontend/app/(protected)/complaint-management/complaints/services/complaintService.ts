@@ -1,5 +1,5 @@
 import { apiFetch } from '@/lib/api';
-import { extractApiError } from '@/lib/api-client';
+import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   Complaint,
   ComplaintFormData,
@@ -13,6 +13,11 @@ import type {
 export type ComplaintsListParams = DataGridApiFetchParams & {
   assigned_to?: string;
   status?: string;
+  /** Match complaints whose root cause is ANY of these ids (list filter + the
+   *  linked-complaints grid on a root cause detail page). */
+  root_cause_ids?: string[];
+  /** Same, for resolutions. */
+  resolution_ids?: string[];
 };
 
 /**
@@ -32,20 +37,25 @@ export type ComplaintsListParams = DataGridApiFetchParams & {
 export const COMPLAINT_NEIGHBOURS_PATH =
   '/api/v1/complaints-management/complaints/neighbours';
 
+/** Serialize the list filters the same way for the list GET and the neighbours GET,
+ *  so the backend can never see a different filter set for the two. */
+export function complaintListExtraParams(params: ComplaintsListParams) {
+  return {
+    assigned_to: params.assigned_to,
+    status: params.status,
+    root_cause_ids: params.root_cause_ids?.length
+      ? params.root_cause_ids.join(',')
+      : undefined,
+    resolution_ids: params.resolution_ids?.length
+      ? params.resolution_ids.join(',')
+      : undefined,
+  };
+}
+
 export async function getComplaints(
   params: ComplaintsListParams,
 ): Promise<DataGridApiResponse<Complaint>> {
-  const { pageIndex, pageSize, sorting, searchQuery, assigned_to, status } = params;
-  const sortField = sorting?.[0]?.id || '';
-  const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
-  const queryParams = new URLSearchParams({
-    page: String(pageIndex + 1),
-    limit: String(pageSize),
-    ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
-    ...(searchQuery ? { query: searchQuery } : {}),
-    ...(assigned_to ? { assigned_to } : {}),
-    ...(status ? { status } : {}),
-  });
+  const queryParams = buildDataGridParams(params, complaintListExtraParams(params));
   const response = await apiFetch(
     `/api/v1/complaints-management/complaints?${queryParams.toString()}`,
   );

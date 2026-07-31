@@ -7,6 +7,7 @@ import {
 } from '@/hooks/useRecordNeighbours';
 import {
   COMPLAINT_NEIGHBOURS_PATH,
+  complaintListExtraParams,
   type ComplaintsListParams,
 } from '../services/complaintService';
 import {
@@ -44,10 +45,10 @@ export function useComplaintNeighbours(
   complaintId: string | null,
   listParams: ComplaintsListParams,
 ): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    assigned_to: listParams.assigned_to,
-    status: listParams.status,
-  });
+  const params = buildDataGridParams(
+    listParams,
+    complaintListExtraParams(listParams),
+  );
   return useRecordNeighbours(COMPLAINT_NEIGHBOURS_PATH, complaintId, params);
 }
 
@@ -61,6 +62,9 @@ export function useComplaints(params: ComplaintsListParams) {
       params.searchQuery,
       params.assigned_to,
       params.status,
+      // Join, not the array: a fresh array literal each render would be a new key.
+      params.root_cause_ids?.join(',') ?? '',
+      params.resolution_ids?.join(',') ?? '',
     ],
     queryFn: () => getComplaints(params),
     staleTime: Infinity,

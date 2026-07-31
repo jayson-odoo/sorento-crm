@@ -1,11 +1,15 @@
 """Service for user downloads (async-generated exports surfaced in My Downloads)."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Sequence
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.download import DownloadStatus, UserDownload
+
+# How long a row may sit pending/processing before the drawer calls it failed.
+# Export enqueues use job_timeout=600s, so this leaves ample headroom.
+_STALE_AFTER = timedelta(minutes=20)
 
 
 def _utc_naive_now() -> datetime:
@@ -48,7 +52,49 @@ class DownloadService:
             .first()
         )
 
+    def fail_stale(self, user_id: str) -> int:
+        """Flip the user's long-stuck pending/processing rows to 'failed'.
+
+        A row is only moved off 'pending' by the RQ task itself, so a job that
+        never reaches the task body leaves the drawer spinning "Queued" forever.
+        That is not hypothetical: a worker booted from a different worktree drained
+        this stack's queues and died in ``import_attribute`` before the task ran,
+        stranding every row it touched.
+
+        The cutoff is comfortably past the 600s ``job_timeout`` used by the export
+        enqueues, so a slow-but-alive job is never killed by this. Best-effort:
+        a failure here must not break listing the downloads.
+        """
+        cutoff = _utc_naive_now() - _STALE_AFTER
+        try:
+            stale = (
+                self.db.query(UserDownload)
+                .filter(
+                    UserDownload.user_id == str(user_id),
+                    UserDownload.status.in_(
+                        [DownloadStatus.PENDING.value, DownloadStatus.PROCESSING.value]
+                    ),
+                    UserDownload.created_at < cutoff,
+                )
+                .all()
+            )
+            for row in stale:
+                row.status = DownloadStatus.FAILED.value
+                row.error = (
+                    "Generation never completed - the job did not run to completion. "
+                    "Please try again."
+                )
+            if stale:
+                self.db.commit()
+            return len(stale)
+        except Exception:  # noqa: BLE001 - never break the drawer over a sweep
+            self.db.rollback()
+            return 0
+
     def list_for_user(self, user_id: str, limit: int = 50) -> List[UserDownload]:
+        # Sweep on read: the drawer polls this, so a dead job surfaces as failed
+        # instead of spinning indefinitely.
+        self.fail_stale(user_id)
         return (
             self.db.query(UserDownload)
             .filter(UserDownload.user_id == str(user_id))
@@ -65,6 +111,7 @@ class DownloadService:
         limit: int = 50,
     ) -> List[UserDownload]:
         """The current user's downloads tied to one source entity (newest first)."""
+        self.fail_stale(user_id)
         return (
             self.db.query(UserDownload)
             .filter(
