@@ -383,6 +383,8 @@ class ComplaintService:
         sort_dir: str = "asc",
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
+        root_cause_ids: Optional[List[str]] = None,
+        resolution_ids: Optional[List[str]] = None,
     ):
         """Build the filtered + sorted complaints query shared by ``list_complaints``
         and ``neighbours`` so the two can never drift.
@@ -432,6 +434,15 @@ class ComplaintService:
         space_filter = (space_id or "").strip()
         if space_filter:
             q = q.filter(Complaint.space_id == space_filter)
+        # Root cause / resolution: OR within each field (multi-select), AND across the
+        # two. Also the query behind the "linked complaints" grid on a root cause /
+        # resolution detail page, so both surfaces share one code path.
+        rc_ids = [str(i).strip() for i in (root_cause_ids or []) if str(i).strip()]
+        if rc_ids:
+            q = q.filter(Complaint.root_cause_id.in_(rc_ids))
+        res_ids = [str(i).strip() for i in (resolution_ids or []) if str(i).strip()]
+        if res_ids:
+            q = q.filter(Complaint.resolution_id.in_(res_ids))
 
         sort_map = {
             "complaint_date": Complaint.complaint_date,
@@ -649,6 +660,8 @@ class ComplaintService:
         sort_dir: str = "asc",
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
+        root_cause_ids: Optional[List[str]] = None,
+        resolution_ids: Optional[List[str]] = None,
     ) -> dict:
         """Resolve prev/next neighbours for ``complaint_id`` within the active list
         query.
@@ -671,6 +684,8 @@ class ComplaintService:
             sort_dir=sort_dir,
             contact_id=contact_id,
             space_id=space_id,
+            root_cause_ids=root_cause_ids,
+            resolution_ids=resolution_ids,
         )
         result = compute_neighbours(_ordered_ids(filtered_q), complaint_id)
         if result["index"] is not None:
@@ -693,10 +708,14 @@ class ComplaintService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         viewer_user_id: Optional[str] = None,
+        root_cause_ids: Optional[List[str]] = None,
+        resolution_ids: Optional[List[str]] = None,
     ):
         """List complaints. assigned_to filters by respond_user_id (assignee). status filters by complaint status.
 
         contact_id/space_id scope the result set to a single Respond.io contact/space (used by external callers).
+        root_cause_ids/resolution_ids match ANY of the given ids per field (the list
+        page's multi-selects, and the linked-complaints grid on a master-data detail page).
         """
         q = self._build_list_query(
             query=query,
@@ -706,6 +725,8 @@ class ComplaintService:
             sort_dir=sort_dir,
             contact_id=contact_id,
             space_id=space_id,
+            root_cause_ids=root_cause_ids,
+            resolution_ids=resolution_ids,
         )
 
         from sqlalchemy.orm import joinedload
