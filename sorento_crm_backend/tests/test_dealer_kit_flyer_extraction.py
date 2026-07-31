@@ -111,11 +111,24 @@ class TestCards:
         assert card.list_price == pytest.approx(442)
         assert card.offer_price == pytest.approx(299)
 
-    def test_prices_are_read_for_the_report_only(self, reading: FlyerReading) -> None:
-        # Stated as a test because it is the rule most likely to be broken by a
-        # well-meaning change: a reading is a REPORT of what the paper says. It
-        # is compared against the system's own prices, and never written into a
-        # page document, where it would freeze one price for every audience.
+    def test_reading_a_price_is_lossy_and_the_promotion_is_the_truth(
+        self, reading: FlyerReading
+    ) -> None:
+        # SRTWC286-SH prints "SP RM 599" on page 4, but the figure sits outside
+        # the card's column band, so this module reads "SP", "RM" and no number.
+        # Pinned as a test because it is the evidence for a decision: a brochure
+        # takes its offer price from the promotion it is linked to, and a
+        # difference between print and promotion is far more likely to be one of
+        # these misses than a real discrepancy.
+        card = _card(reading, "SRTWC286-SH")
+
+        assert card.list_price == pytest.approx(1260)
+        assert card.offer_price is None
+        assert "SP" in card.lines
+
+    def test_a_reading_is_never_a_document(self, reading: FlyerReading) -> None:
+        # A price baked into a page document freezes one number for every
+        # audience.
         assert not hasattr(reading, "doc")
         assert not hasattr(reading.pages[0], "doc")
 

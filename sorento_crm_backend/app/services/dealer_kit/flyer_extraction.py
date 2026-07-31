@@ -10,12 +10,23 @@ Matching a code to a product, suggesting a near miss, seeding a version: all of
 that is the next slice. Keeping them apart is what makes this one exhaustively
 testable against the real document rather than a synthetic one.
 
-**A reading is a report, never a document.** Prices are read so they can be
-compared against what the system itself charges, which is a free audit of what
-was promised to dealers in a document already in their hands. They are never
-carried into a page document: a baked price freezes one number for every
-audience and breaks the rule that one published page serves staff, dealers and
-consumers at the price each is allowed to see.
+**Prices read here are a reading aid, and nothing more.** The offer price a
+brochure shows comes from the PROMOTION the brochure is linked to, never from
+this module, for two reasons. The promotion is the system's own record of what
+was offered, to whom, between which dates. And reading prices off a page is
+demonstrably lossy: 1,081 cards in the real flyer yield a list price but only
+660 an offer price, because the typesetter sets the figure wherever the artwork
+leaves room. `SRTWC286-SH` prints "SP RM 599" in a place this module's column
+band does not reach, so it reads `SP` and `RM` and no number at all.
+
+That is exactly why a price found here is never compared against the promotion
+as though a difference meant something: most differences would be this module's
+own misses. The numbers exist so the review screen can show a human what the
+card said, beside the product it matched.
+
+A reading is never a document either. A price baked into a page document freezes
+one number for every audience and breaks the rule that one published page serves
+staff, dealers and consumers at the price each is allowed to see.
 
 The layout is regular enough to exploit. A product card is a code, with its
 name, price and size printed in a narrow column directly beneath it, and its

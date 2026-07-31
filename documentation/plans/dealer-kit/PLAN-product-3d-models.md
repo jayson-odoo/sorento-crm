@@ -1,8 +1,9 @@
 # PLAN — Real product models in 3D, generated from product photos (S8)
 
-**Status:** Pre-code. Phase 0 written, approach chosen, awaiting the plan grill.
+**Status:** Grilled 2026-07-31. Blocked on S7.0 until a human has chosen each product's image.
 **Companion UAC:** `product-3d-models-acceptance-criteria.md`
-**Depends on:** S4 room designer (the renderer that currently draws boxes).
+**Depends on:** S4 room designer (the renderer that currently draws boxes), and **S7.0**
+(the brochure image flag) for its source image.
 
 ---
 
@@ -21,8 +22,17 @@ Two separate gaps sit underneath this, and only one of them is about models:
    **31 photos and no dimensions**. So even a perfect mesh has nothing to scale to.
 
 A mesh with no dimensions is a shape floating at an invented size, which is a worse lie
-than an honest box. The flyer seeding slice (S7) recovers dimensions for 367 codes and is
+than an honest box. The flyer seeding slice (S7) recovers dimensions for 425 codes and is
 the natural companion to this work.
+
+**And a third gap, found while grilling: nobody has said which photo is the product.**
+`product_attachments.is_primary` is `false` on all 1,087 photo rows behind the flyer's
+products. `SRTWC286-SH` has 31 linked images including `98. BLANK PAGE_PG93.jpg` and two
+other products' photographs. Filenames would identify the right image for 509 of 535
+codes, and inference was **rejected as too dangerous**: a generator fed the wrong picture
+produces a confident, expensive model of the wrong product, and nobody would know until a
+customer saw it in their bathroom. So this slice consumes the flag a human sets in S7.0,
+and generates nothing for a product that has no chosen image.
 
 ## Decision
 
@@ -45,8 +55,9 @@ The caveats stand and are designed around rather than argued with:
 Two actors, two entry points.
 
 **Marketing, curating.** From a product's detail page, or from a collection in bulk:
-**Generate 3D model**. The system already knows which photo is primary. One decision:
-generate, or not. It returns to a queue: models come back minutes later, and the queue
+**Generate 3D model**. The photo used is the one somebody chose as the brochure image in
+S7.0, shown right there so the choice is visible before anything is spent. A product with
+no chosen image cannot be generated, and says so. One decision: generate, or not. It returns to a queue: models come back minutes later, and the queue
 shows each one turning on a turntable next to its photo. One decision per model: **approve**
 or **reject and try another photo**. An approved model is what dealers see. A rejected one
 never was.
@@ -103,6 +114,9 @@ session, and a product still renders as its box while its model is in flight. Th
 never blocked on a download.
 
 ## Slices
+
+**S8.0 — Blocked on S7.0.** No generation is built until a human can say which image is
+the product. Everything below assumes that flag exists.
 
 **S8.1 — Schema, attachment type, permission.** Migration, `product_model`, `3D Model`
 type, `dealer_kit.model.generate` and `dealer_kit.model.approve` slugs with the grant
