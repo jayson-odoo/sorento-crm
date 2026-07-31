@@ -689,6 +689,9 @@ class StockInquiryResponse(StockInquiryBase):
     voided_at: Optional[datetime] = None
     voided_by_name: Optional[str] = None
     voided_by_wa_phone: Optional[str] = None
+    # How many PDF exports the VIEWING user has taken of this record (list path only;
+    # 0 on the detail path, which does not batch the count).
+    print_count: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     attachments: Optional[List[StockInquiryAttachmentResponse]] = []
