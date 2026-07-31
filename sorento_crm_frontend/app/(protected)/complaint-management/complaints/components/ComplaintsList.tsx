@@ -26,6 +26,9 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { useComplaintRootCausesSelect } from '../../complaint-root-causes/hooks/useComplaintRootCauses';
+import { useComplaintResolutionsSelect } from '../../complaint-resolutions/hooks/useComplaintResolutions';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { getUsersSelect } from '@/services/userSelectService';
@@ -49,12 +52,21 @@ export default function ComplaintsList() {
   const [searchQuery, setSearchQuery] = useState('');
   const [assignedToFilter, setAssignedToFilter] = useState<string>('__all__');
   const [statusFilter, setStatusFilter] = useState<string>('__all__');
+  const [rootCauseFilter, setRootCauseFilter] = useState<string[]>([]);
+  const [resolutionFilter, setResolutionFilter] = useState<string[]>([]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, [searchQuery, assignedToFilter, statusFilter]);
+    // Joined, not the arrays: a new array identity each render would loop this effect.
+  }, [
+    searchQuery,
+    assignedToFilter,
+    statusFilter,
+    rootCauseFilter.join(','),
+    resolutionFilter.join(','),
+  ]);
 
   const { data, isLoading, refetch, isFetching } = useComplaints({
     pageIndex: pagination.pageIndex,
@@ -67,6 +79,8 @@ export default function ComplaintsList() {
         : undefined,
     status:
       statusFilter && statusFilter !== '__all__' ? statusFilter : undefined,
+    root_cause_ids: rootCauseFilter.length ? rootCauseFilter : undefined,
+    resolution_ids: resolutionFilter.length ? resolutionFilter : undefined,
   });
 
   const { data: respondSyncedUsers = [] } = useQuery({
@@ -75,9 +89,15 @@ export default function ComplaintsList() {
     staleTime: 60_000,
   });
   const assigneeOptions = respondSyncedUsers.filter((u) => u.respond_user_id);
+  // Active-only master data, the same source the complaint form's pickers use.
+  const { data: rootCauseOptions = [] } = useComplaintRootCausesSelect();
+  const { data: resolutionOptions = [] } = useComplaintResolutionsSelect();
 
   const filtersActiveCount =
-    (assignedToFilter !== '__all__' ? 1 : 0) + (statusFilter !== '__all__' ? 1 : 0);
+    (assignedToFilter !== '__all__' ? 1 : 0) +
+    (statusFilter !== '__all__' ? 1 : 0) +
+    (rootCauseFilter.length ? 1 : 0) +
+    (resolutionFilter.length ? 1 : 0);
 
   const handleRowClick = (row: Complaint) => {
     const complaintId = row.id;
@@ -97,6 +117,12 @@ export default function ComplaintsList() {
             : undefined,
         status:
           statusFilter && statusFilter !== '__all__' ? statusFilter : undefined,
+        root_cause_ids: rootCauseFilter.length
+          ? rootCauseFilter.join(',')
+          : undefined,
+        resolution_ids: resolutionFilter.length
+          ? resolutionFilter.join(',')
+          : undefined,
       },
     );
     const qs = search ? `?${search}` : '';
@@ -387,6 +413,32 @@ export default function ComplaintsList() {
                       triggerClassName="mt-1"
                     />
                   </div>
+                  <div>
+                    <Label>Root cause</Label>
+                    <SearchableMultiSelect
+                      value={rootCauseFilter}
+                      onChange={setRootCauseFilter}
+                      options={rootCauseOptions.map((rc) => ({
+                        value: rc.id,
+                        label: rc.name,
+                      }))}
+                      placeholder="All root causes"
+                      triggerClassName="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label>Resolution</Label>
+                    <SearchableMultiSelect
+                      value={resolutionFilter}
+                      onChange={setResolutionFilter}
+                      options={resolutionOptions.map((r) => ({
+                        value: r.id,
+                        label: r.name,
+                      }))}
+                      placeholder="All resolutions"
+                      triggerClassName="mt-1"
+                    />
+                  </div>
                   {filtersActiveCount > 0 && (
                     <div className="flex justify-end">
                       <Button
@@ -395,6 +447,8 @@ export default function ComplaintsList() {
                         onClick={() => {
                           setAssignedToFilter('__all__');
                           setStatusFilter('__all__');
+                          setRootCauseFilter([]);
+                          setResolutionFilter([]);
                         }}
                       >
                         Clear filters
