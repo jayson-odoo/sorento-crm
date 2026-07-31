@@ -74,3 +74,30 @@ describe('DownloadRow', () => {
     expect(screen.getAllByText('Promotions PDF').length).toBeGreaterThan(0);
   });
 });
+
+describe('DownloadRow timestamp', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders a naive-UTC created_at in Malaysia time (UTC+8)', () => {
+    // The API serializes created_at as naive UTC - no trailing Z - and only the
+    // string path of formatDateTimeInMalaysia appends it. Wrapping the value in
+    // new Date() first makes the browser read it as local time, printing the UTC
+    // digits 8 hours early (03:18 instead of 11:18).
+    render(<DownloadRow row={row({ created_at: '2026-07-31T03:18:00' })} />);
+
+    expect(screen.getByText(/31\/07\/2026, 11:18 am/)).toBeInTheDocument();
+  });
+
+  it('still handles an explicitly UTC-marked created_at', () => {
+    render(<DownloadRow row={row({ created_at: '2026-07-31T03:18:00Z' })} />);
+
+    expect(screen.getByText(/31\/07\/2026, 11:18 am/)).toBeInTheDocument();
+  });
+
+  it('renders no timestamp when created_at is absent', () => {
+    render(<DownloadRow row={row({ created_at: undefined })} />);
+    expect(screen.queryByText(/2026/)).toBeNull();
+  });
+});
