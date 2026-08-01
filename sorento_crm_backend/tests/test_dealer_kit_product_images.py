@@ -64,7 +64,7 @@ def _product(db):
 
 
 def _image(db, product, *, access_levels, is_primary=False, sort_order=0, thumb=None,
-           mime="image/jpeg", suffix="jpg"):
+           mime="image/jpeg", suffix="jpg", deleted=False):
     from app.models.product import ProductAttachment
     from app.models.resources import Attachment
 
@@ -78,6 +78,7 @@ def _image(db, product, *, access_levels, is_primary=False, sort_order=0, thumb=
         mime_type=mime,
         storage_provider="s3",
         company_id=SORENTO,
+        is_deleted=deleted,
     )
     db.add(attachment)
     db.flush()
@@ -211,6 +212,31 @@ def test_a_pdf_attached_to_a_product_is_never_its_photo():
         )
 
         assert product_images.primary_image_urls(db, [product], CONSUMER) == {}
+
+
+def test_a_deleted_photo_is_never_a_tile_image():
+    from app.services.dealer_kit import product_images
+
+    with pg_session() as db, company_scope(db, SCOPE):
+        product = _product(db)
+        # 611 of the 2,924 live product-to-image links point at an attachment
+        # deleted in Resource Management. Signing a URL for a file the system
+        # considers deleted is the catalogue disagreeing with the file manager.
+        _image(db, product, access_levels=["end_user"], is_primary=True, deleted=True)
+
+        assert product_images.primary_image_urls(db, [product], CONSUMER) == {}
+
+
+def test_a_live_photo_wins_over_a_deleted_one_marked_primary():
+    from app.services.dealer_kit import product_images
+
+    with pg_session() as db, company_scope(db, SCOPE):
+        product = _product(db)
+        _image(db, product, access_levels=["end_user"], is_primary=True, deleted=True)
+        live = _image(db, product, access_levels=["end_user"], sort_order=5)
+
+        url = product_images.primary_image_urls(db, [product], CONSUMER)[product.id]
+        assert live.original_filename.split(".")[0] in url
 
 
 def test_a_photo_wins_over_a_pdf_marked_primary():

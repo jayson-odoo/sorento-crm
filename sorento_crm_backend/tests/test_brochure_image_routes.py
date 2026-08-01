@@ -110,8 +110,8 @@ def _product(db: Session, code: str | None = None):
     return product
 
 
-def _attach(db: Session, product, filename: str, mime: str = "image/jpeg"):
-    from app.models.product import ProductAttachment
+def _unlinked_attachment(db: Session, filename: str, mime: str = "image/jpeg"):
+    """A file with no product link yet, as the n8n intake sees one."""
     from app.models.resources import Attachment
 
     attachment = Attachment(
@@ -124,6 +124,13 @@ def _attach(db: Session, product, filename: str, mime: str = "image/jpeg"):
     )
     db.add(attachment)
     db.flush()
+    return attachment
+
+
+def _attach(db: Session, product, filename: str, mime: str = "image/jpeg"):
+    from app.models.product import ProductAttachment
+
+    attachment = _unlinked_attachment(db, filename, mime)
     link = ProductAttachment(
         id=str(uuid.uuid4()),
         product_id=product.id,
@@ -319,6 +326,227 @@ def test_clearing_leaves_the_product_with_no_chosen_image(api):
         _BASE, params={"only_unset": "false", "query": product.product_code}
     ).json()
     assert _row(listed, product.id)["chosenAttachmentId"] is None
+
+
+def _other_company(db: Session) -> str:
+    """A real second company, so out-of-scope is constructed rather than mocked."""
+    from app.models.company import Company
+
+    stem = uuid.uuid4().hex[:6]
+    company = Company(
+        id=str(uuid.uuid4()), name=f"ZZT Other {stem}", code=f"ZZT{stem}", is_active=True
+    )
+    db.add(company)
+    db.flush()
+    return company.id
+
+
+def test_another_companys_product_is_not_found(api):
+    """AC-B2. The request is answered by the scope filter, not by a mock."""
+    db, _as = api
+    _as(_EDITOR_ID)
+    client = TestClient(app)
+    elsewhere = _other_company(db)
+    product = _product(db)
+    product.company_id = elsewhere
+    link = _attach(db, product, "a.jpg")
+    link.company_id = elsewhere
+    db.flush()
+
+    response = client.put(f"{_BASE}/{product.id}", json={"attachment_id": link.attachment_id})
+
+    # 404, never 403: a 403 tells a non-owner the row exists.
+    assert response.status_code == 404, response.text
+    assert response.json()["message"] == "Product not found"
+
+
+def test_another_companys_product_is_not_listed(api):
+    db, _as = api
+    _as(_EDITOR_ID)
+    client = TestClient(app)
+    elsewhere = _other_company(db)
+    product = _product(db)
+    product.company_id = elsewhere
+    link = _attach(db, product, "a.jpg")
+    link.company_id = elsewhere
+    db.flush()
+
+    body = client.get(
+        _BASE, params={"only_unset": "false", "query": product.product_code}
+    ).json()
+
+    assert body["items"] == []
+    assert body["total"] == 0
+
+
+def test_another_companys_product_cannot_be_cleared(api):
+    db, _as = api
+    _as(_EDITOR_ID)
+    client = TestClient(app)
+    elsewhere = _other_company(db)
+    product = _product(db)
+    product.company_id = elsewhere
+    db.flush()
+
+    response = client.delete(f"{_BASE}/{product.id}")
+
+    assert response.status_code == 404, response.text
+    assert response.json()["message"] == "Product not found"
+
+
+def test_a_malformed_promotion_filter_is_refused(api):
+    db, _as = api
+    _as(_EDITOR_ID)
+    client = TestClient(app)
+
+    response = client.get(_BASE, params={"only_unset": "false", "promotion_id": "abc"})
+
+    # Compared against a UUID column unvalidated, this reached psycopg as a
+    # DataError: an unhandled 500 that also left the session in a failed
+    # transaction. Every id on this router is validated; so is this one.
+    assert response.status_code == 422, response.text
+
+
+# --- The other two write paths ------------------------------------------------
+#
+# `is_primary` predates the picker and two older endpoints still write it: the
+# generic attachment PUT and the n8n link POST. Both used to setattr the flag and
+# commit, which meant (a) a second primary hit the partial unique index and the
+# IntegrityError escaped as a 500 carrying a raw constraint message, and (b) a
+# PDF could carry the flag, after which the picker reports no chosen image for a
+# product whose database row says otherwise. Both now funnel through the same
+# service as the picker, so there is ONE way to set this flag.
+
+_ATTACHMENTS = "/api/v1/master-data/product-attachments"
+_EXTERNAL = "/api/v1/external/product-attachments/"
+
+
+def _primaries(db, product_id: str) -> list[str]:
+    from app.models.product import ProductAttachment
+
+    db.expire_all()
+    return [
+        link.attachment_id
+        for link in db.query(ProductAttachment).filter_by(product_id=product_id).all()
+        if link.is_primary
+    ]
+
+
+def test_the_attachment_put_moves_the_choice_instead_of_colliding(api):
+    db, _as = api
+    _as(_EDITOR_ID)
+    client = TestClient(app)
+    product = _product(db)
+    first = _attach(db, product, "a.jpg")
+    second = _attach(db, product, "b.jpg")
+    client.put(f"{_BASE}/{product.id}", json={"attachment_id": first.attachment_id})
+
+    response = client.put(f"{_ATTACHMENTS}/{second.id}", json={"is_primary": True})
+
+    # 200, not the 500 the unique index produced when this path set a second
+    # primary without clearing the first.
+    assert response.status_code == 200, response.text
+    assert _primaries(db, product.id) == [second.attachment_id]
+
+
+def test_the_attachment_put_cannot_make_a_spec_sheet_the_photo(api):
+    db, _as = api
+    _as(_EDITOR_ID)
+    client = TestClient(app)
+    product = _product(db)
+    spec = _attach(db, product, "spec.pdf", mime="application/pdf")
+
+    response = client.put(f"{_ATTACHMENTS}/{spec.id}", json={"is_primary": True})
+
+    assert response.status_code == 400, response.text
+    # The picker would report this product as having no chosen image while the
+    # database said it had one.
+    assert _primaries(db, product.id) == []
+
+
+def test_the_attachment_put_can_clear_the_choice(api):
+    db, _as = api
+    _as(_EDITOR_ID)
+    client = TestClient(app)
+    product = _product(db)
+    link = _attach(db, product, "a.jpg")
+    client.put(f"{_BASE}/{product.id}", json={"attachment_id": link.attachment_id})
+
+    response = client.put(f"{_ATTACHMENTS}/{link.id}", json={"is_primary": False})
+
+    assert response.status_code == 200, response.text
+    assert _primaries(db, product.id) == []
+
+
+def _external_link(client, attachment_id: str, product_code: str, is_primary: bool):
+    from tests._external_auth import external_permissions_granted
+
+    with external_permissions_granted():
+        return client.post(
+            _EXTERNAL,
+            json={
+                "attachment_id": attachment_id,
+                "product_code": product_code,
+                "is_primary": is_primary,
+            },
+        )
+
+
+@pytest.fixture
+def as_integration(api):
+    """The n8n principal, on the same session as the rest of these tests."""
+    from app.dependencies import get_external_api_user
+
+    db, _as = api
+    _as(_EDITOR_ID)
+    app.dependency_overrides[get_external_api_user] = lambda: {
+        "id": _EDITOR_ID,
+        "email": "zzt-n8n@test.com",
+    }
+    return db, _as
+
+
+def test_the_n8n_link_moves_the_choice_instead_of_colliding(as_integration):
+    db, _as = as_integration
+    client = TestClient(app)
+    product = _product(db)
+    first = _attach(db, product, "a.jpg")
+    client.put(f"{_BASE}/{product.id}", json={"attachment_id": first.attachment_id})
+
+    # A brand new link arriving with the flag set: the previous choice has to be
+    # cleared in the same transaction or the unique index rejects the insert.
+    incoming = _unlinked_attachment(db, "b.jpg")
+    response = _external_link(client, incoming.id, product.product_code, True)
+
+    assert response.status_code == 200, response.text
+    assert _primaries(db, product.id) == [incoming.id]
+
+
+def test_the_n8n_link_reposted_moves_the_choice(as_integration):
+    db, _as = as_integration
+    client = TestClient(app)
+    product = _product(db)
+    first = _attach(db, product, "a.jpg")
+    second = _attach(db, product, "b.jpg")
+    client.put(f"{_BASE}/{product.id}", json={"attachment_id": first.attachment_id})
+
+    # The replace-an-attachment flow re-posts a link that already exists.
+    response = _external_link(client, second.attachment_id, product.product_code, True)
+
+    assert response.status_code == 200, response.text
+    assert _primaries(db, product.id) == [second.attachment_id]
+
+
+def test_the_n8n_link_cannot_make_a_spec_sheet_the_photo(as_integration):
+    db, _as = as_integration
+    client = TestClient(app)
+    product = _product(db)
+    spec = _attach(db, product, "spec.pdf", mime="application/pdf")
+
+    response = _external_link(client, spec.attachment_id, product.product_code, True)
+
+    assert response.status_code == 400, response.text
+    assert _primaries(db, product.id) == []
 
 
 def test_a_caller_without_the_permission_is_refused(api):

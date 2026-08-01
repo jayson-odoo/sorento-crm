@@ -19,6 +19,7 @@ because a wrong photo is a wrong product in front of a customer.
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 
 import pytest
 
@@ -53,7 +54,7 @@ def _reference_rows(db):
     return category.id, uom.id
 
 
-def _product(db, code: str | None = None) -> Product:
+def _product(db, code: str | None = None, company_id: str | None = None) -> Product:
     category_id, uom_id = _reference_rows(db)
     product = Product(
         id=str(uuid.uuid4()),
@@ -62,19 +63,45 @@ def _product(db, code: str | None = None) -> Product:
         category_id=category_id,
         base_uom_id=uom_id,
         list_price=100,
+        # Left unset, the scope layer stamps the incumbent company. An explicit
+        # one is how a genuinely other-company row is built.
+        company_id=company_id,
     )
     db.add(product)
     db.flush()
     return product
 
 
-def _attach(db, product: Product, filename: str, mime: str = "image/jpeg") -> ProductAttachment:
+def _other_company(db) -> str:
+    """A second company, so out-of-scope can be constructed rather than mocked."""
+    from app.models.company import Company
+
+    company = Company(
+        id=str(uuid.uuid4()),
+        name=unique_code("Other Co"),
+        code=unique_code("OC")[:20],
+        is_active=True,
+    )
+    db.add(company)
+    db.flush()
+    return company.id
+
+
+def _attach(
+    db,
+    product: Product,
+    filename: str,
+    mime: str = "image/jpeg",
+    deleted: bool = False,
+    company_id: str | None = None,
+) -> ProductAttachment:
     attachment = Attachment(
         id=str(uuid.uuid4()),
         original_filename=filename,
         stored_filename=filename,
         file_path=f"product/{filename}",
         mime_type=mime,
+        is_deleted=deleted,
     )
     db.add(attachment)
     db.flush()
@@ -82,10 +109,60 @@ def _attach(db, product: Product, filename: str, mime: str = "image/jpeg") -> Pr
         id=str(uuid.uuid4()),
         product_id=product.id,
         attachment_id=attachment.id,
+        company_id=company_id,
     )
     db.add(link)
     db.flush()
     return link
+
+
+def _promotion(db, products) -> str:
+    """A promotion holding the given products, the way a flyer's is built."""
+    from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
+
+    promotion = Promotion(id=str(uuid.uuid4()), description=unique_code("promo"))
+    db.add(promotion)
+    db.flush()
+    group = PromotionGroup(promotion_id=promotion.id, group_name=unique_code("grp"))
+    db.add(group)
+    db.flush()
+    for product in products:
+        db.add(
+            PromotionProduct(
+                id=str(uuid.uuid4()),
+                promotion_id=promotion.id,
+                promotion_group_id=group.id,
+                product_id=product.id,
+            )
+        )
+    db.flush()
+    return promotion.id
+
+
+@contextmanager
+def _rows_read(db):
+    """How many rows each statement touching the product tables returned.
+
+    The point of the measurement: the default screen state has no filter, so
+    "materialise the filtered set and page it in Python" means reading all
+    22,805 products and every image link on every keystroke of a debounced
+    search. A statement that returns more rows than the page is that defect,
+    whatever the response happens to look like.
+    """
+    from sqlalchemy import event
+
+    counts: list[int] = []
+    engine = db.connection().engine
+
+    def _record(conn, cursor, statement, parameters, context, executemany):  # noqa: ANN001
+        if "products" in statement or "product_attachments" in statement:
+            counts.append(max(cursor.rowcount, 0))
+
+    event.listen(engine, "after_cursor_execute", _record)
+    try:
+        yield counts
+    finally:
+        event.remove(engine, "after_cursor_execute", _record)
 
 
 class TestSetting:
@@ -170,7 +247,87 @@ class TestSetting:
         with pytest.raises(AppException) as raised:
             set_brochure_image(db, product.id, spec.attachment_id)
 
-        assert raised.value.status_code in (400, 404)
+        # 400 exactly, not "400 or 404": an implementation that refused
+        # everything with a 404 would satisfy the looser assertion while
+        # telling the user the file does not exist rather than that it is the
+        # wrong kind of file.
+        assert raised.value.status_code == 400
+
+    def test_a_deleted_photo_cannot_be_chosen(self, db) -> None:
+        # 611 of the 2,924 live product-to-image links point at an attachment
+        # somebody deleted in Resource Management. The product's own
+        # attachments tab already hides those, so accepting one here would have
+        # two surfaces of the same feature disagree about what exists - and the
+        # catalogue tile would sign a URL for a file the system calls deleted.
+        product = _product(db)
+        gone = _attach(db, product, "gone.jpg", deleted=True)
+
+        with pytest.raises(AppException) as raised:
+            set_brochure_image(db, product.id, gone.attachment_id)
+
+        assert raised.value.status_code == 404
+
+    def test_a_choice_deleted_afterwards_cannot_be_re_chosen(self, db) -> None:
+        # The picker offers what it offers; the deletion can happen after the
+        # click. Re-confirming a since-deleted choice must fail the same way.
+        product = _product(db)
+        link = _attach(db, product, "a.jpg")
+        set_brochure_image(db, product.id, link.attachment_id)
+
+        db.query(Attachment).filter(Attachment.id == link.attachment_id).update(
+            {Attachment.is_deleted: True}
+        )
+        db.flush()
+
+        with pytest.raises(AppException) as raised:
+            set_brochure_image(db, product.id, link.attachment_id)
+
+        assert raised.value.status_code == 404
+
+
+class TestAnotherCompanysProduct:
+    """AC-B2. Out of scope answers 404, never 403.
+
+    Built out of a real second company and the ordinary scope filter
+    (`do_orm_execute`), not a patched query: the point is that the isolation
+    layer produces the 404, and a mocked one would prove only that the mock was
+    called.
+    """
+
+    def test_it_cannot_be_given_a_brochure_image(self, db) -> None:
+        elsewhere = _other_company(db)
+        product = _product(db, company_id=elsewhere)
+        link = _attach(db, product, "a.jpg", company_id=elsewhere)
+
+        with pytest.raises(AppException) as raised:
+            set_brochure_image(db, product.id, link.attachment_id)
+
+        # 403 would confirm the row exists to somebody who may not know it does.
+        assert raised.value.status_code == 404
+
+    def test_its_choice_cannot_be_cleared(self, db) -> None:
+        from app.services.brochure_image_service import clear_brochure_image
+
+        elsewhere = _other_company(db)
+        product = _product(db, company_id=elsewhere)
+
+        with pytest.raises(AppException) as raised:
+            clear_brochure_image(db, product.id)
+
+        assert raised.value.status_code == 404
+
+    def test_it_is_not_listed_or_counted(self, db) -> None:
+        elsewhere = _other_company(db)
+        product = _product(db, company_id=elsewhere)
+        _attach(db, product, "a.jpg", company_id=elsewhere)
+
+        result = list_brochure_images(db, product_ids=[product.id], only_unset=False)
+
+        assert result["items"] == []
+        assert result["total"] == 0
+        # Counted as outstanding work, it would tell this company to photograph
+        # a product it does not sell.
+        assert result["remaining"] == 0
 
 
 class TestTheDatabaseEnforcesIt:
@@ -226,6 +383,37 @@ class TestListing:
         row = next(item for item in result["items"] if item["productId"] == product.id)
         assert [candidate["filename"] for candidate in row["candidates"]] == ["a.jpg"]
 
+    def test_a_deleted_photo_is_not_offered(self, db) -> None:
+        # A photo deleted in Resource Management is gone everywhere or it is
+        # gone nowhere. 20% of the live links point at one.
+        product = _product(db)
+        _attach(db, product, "a.jpg")
+        _attach(db, product, "gone.jpg", deleted=True)
+
+        result = list_brochure_images(db, product_ids=[product.id], only_unset=False)
+
+        row = next(item for item in result["items"] if item["productId"] == product.id)
+        assert [candidate["filename"] for candidate in row["candidates"]] == ["a.jpg"]
+
+    def test_a_choice_deleted_afterwards_is_no_longer_the_choice(self, db) -> None:
+        # Otherwise the screen reports the product as done while the tile has no
+        # image the system will serve, and the work never resurfaces.
+        product = _product(db)
+        link = _attach(db, product, "a.jpg")
+        _attach(db, product, "b.jpg")
+        set_brochure_image(db, product.id, link.attachment_id)
+
+        db.query(Attachment).filter(Attachment.id == link.attachment_id).update(
+            {Attachment.is_deleted: True}
+        )
+        db.flush()
+
+        result = list_brochure_images(db, product_ids=[product.id], only_unset=False)
+
+        row = next(item for item in result["items"] if item["productId"] == product.id)
+        assert row["chosenAttachmentId"] is None
+        assert result["remaining"] == 1
+
     def test_a_product_with_no_photo_still_appears(self, db) -> None:
         # 465 of the flyer's codes are in this state, and the answer is a photo
         # shoot rather than a click. Dropping them from the list would hide the
@@ -276,6 +464,48 @@ class TestListing:
         row = next(item for item in result["items"] if item["productId"] == product.id)
         assert row["chosenAttachmentId"] == link.attachment_id
 
+    def test_a_promotion_narrows_the_set_to_its_products(self, db) -> None:
+        # The headline capability: a whole A3 flyer in one sitting rather than a
+        # hunt through 22,805 products.
+        inside = _product(db)
+        outside = _product(db)
+        _attach(db, inside, "a.jpg")
+        _attach(db, outside, "b.jpg")
+        promotion_id = _promotion(db, [inside])
+
+        result = list_brochure_images(db, promotion_id=promotion_id, only_unset=False)
+
+        assert [item["productId"] for item in result["items"]] == [inside.id]
+        assert result["total"] == 1
+
+    def test_an_unknown_promotion_matches_nothing(self, db) -> None:
+        # Not "everything": an unfiltered 22,805-row answer to a filter the user
+        # did ask for reads as though the filter worked.
+        product = _product(db)
+        _attach(db, product, "a.jpg")
+
+        result = list_brochure_images(
+            db, promotion_id=str(uuid.uuid4()), only_unset=False
+        )
+
+        assert result["items"] == []
+        assert result["total"] == 0
+        assert result["remaining"] == 0
+
+    def test_a_promotion_and_a_search_narrow_together(self, db) -> None:
+        wanted = _product(db, code=unique_code("WANTED"))
+        sibling = _product(db, code=unique_code("OTHER"))
+        _attach(db, wanted, "a.jpg")
+        _attach(db, sibling, "b.jpg")
+        promotion_id = _promotion(db, [wanted, sibling])
+
+        result = list_brochure_images(
+            db, promotion_id=promotion_id, only_unset=False, query="WANTED"
+        )
+
+        assert [item["productId"] for item in result["items"]] == [wanted.id]
+        assert result["total"] == 1
+
     def test_a_search_matches_the_product_code(self, db) -> None:
         wanted = _product(db, code=unique_code("WANTED"))
         other = _product(db, code=unique_code("OTHER"))
@@ -287,3 +517,97 @@ class TestListing:
         )
 
         assert [item["productId"] for item in result["items"]] == [wanted.id]
+
+
+class TestPaging:
+    """The counts describe the whole filtered set; only the page is read."""
+
+    def _batch(self, db, count: int, chosen: int = 0):
+        stem = unique_code("PAGE")
+        products = [_product(db, code=f"{stem}-{index:02d}") for index in range(count)]
+        for index, product in enumerate(products):
+            link = _attach(db, product, "a.jpg")
+            if index < chosen:
+                set_brochure_image(db, product.id, link.attachment_id)
+        return products
+
+    def test_a_page_is_the_size_asked_for_and_the_counts_are_of_everything(self, db) -> None:
+        products = self._batch(db, 5, chosen=2)
+
+        result = list_brochure_images(
+            db, product_ids=[p.id for p in products], only_unset=False, limit=2
+        )
+
+        assert len(result["items"]) == 2
+        assert result["total"] == 5
+        assert result["remaining"] == 3
+        assert result["shown"] == 5
+
+    def test_only_unset_shows_only_the_outstanding_ones_and_says_how_many(self, db) -> None:
+        products = self._batch(db, 5, chosen=2)
+
+        result = list_brochure_images(
+            db, product_ids=[p.id for p in products], only_unset=True, limit=2
+        )
+
+        assert len(result["items"]) == 2
+        assert result["total"] == 5
+        assert result["remaining"] == 3
+        # `shown` is what the user is paging through, not the page.
+        assert result["shown"] == 3
+        assert all(item["chosenAttachmentId"] is None for item in result["items"])
+
+    def test_the_second_page_continues_where_the_first_stopped(self, db) -> None:
+        products = self._batch(db, 5)
+        by_code = [p.id for p in sorted(products, key=lambda p: p.product_code)]
+
+        first = list_brochure_images(
+            db, product_ids=by_code, only_unset=False, limit=2, page=1
+        )
+        second = list_brochure_images(
+            db, product_ids=by_code, only_unset=False, limit=2, page=2
+        )
+
+        assert [item["productId"] for item in first["items"]] == by_code[:2]
+        assert [item["productId"] for item in second["items"]] == by_code[2:4]
+
+    def test_a_page_past_the_end_is_empty_not_an_error(self, db) -> None:
+        products = self._batch(db, 3)
+
+        result = list_brochure_images(
+            db, product_ids=[p.id for p in products], only_unset=False, limit=2, page=9
+        )
+
+        assert result["items"] == []
+        assert result["total"] == 3
+
+    def test_only_the_page_is_read_out_of_the_database(self, db) -> None:
+        # The defect: `.all()` on the filtered product set, then paging and both
+        # counts in Python. With no filter that is 22,805 products and every
+        # image link, on every keystroke of a 300ms-debounced search.
+        products = self._batch(db, 12)
+
+        with _rows_read(db) as rows:
+            result = list_brochure_images(
+                db, product_ids=[p.id for p in products], only_unset=False, limit=3
+            )
+
+        assert len(result["items"]) == 3
+        assert result["total"] == 12
+        # One image each, so the page's candidate rows number 3 as well. Any
+        # statement returning more than that read products off the page.
+        assert max(rows) <= 3, f"a statement returned {max(rows)} rows for a page of 3"
+
+    def test_only_the_page_is_read_when_hiding_the_done_ones(self, db) -> None:
+        # `only_unset` is the default screen state, and it used to be applied in
+        # Python after everything had already been loaded.
+        products = self._batch(db, 12, chosen=6)
+
+        with _rows_read(db) as rows:
+            result = list_brochure_images(
+                db, product_ids=[p.id for p in products], only_unset=True, limit=3
+            )
+
+        assert len(result["items"]) == 3
+        assert result["remaining"] == 6
+        assert max(rows) <= 3, f"a statement returned {max(rows)} rows for a page of 3"

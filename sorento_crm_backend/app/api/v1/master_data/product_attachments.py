@@ -3,6 +3,10 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
+# Two lines on purpose: tests/test_uuid_path_sweep.py asserts the
+# `validate_uuid_path` import verbatim, so folding UUID_PATTERN into it would
+# make this router read as unguarded to that sweep.
+from app.services.uuid_path_param import UUID_PATTERN
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import (
     get_current_user,
@@ -45,6 +49,11 @@ router = APIRouter()
 async def list_brochure_images(
     promotion_id: Optional[str] = Query(
         None,
+        # Validated here rather than in the service: compared against a UUID
+        # column raw, a malformed value reached psycopg as a DataError - an
+        # unhandled 500 that also left the session in a failed transaction.
+        # Every other id on this router is validated too.
+        pattern=UUID_PATTERN,
         description="Narrow to the products in one promotion, so a whole flyer is one sitting.",
     ),
     only_unset: bool = Query(True, description="Hide products whose image is already chosen."),

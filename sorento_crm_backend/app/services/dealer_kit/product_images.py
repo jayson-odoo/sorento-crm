@@ -71,6 +71,12 @@ def primary_image_urls(
         # product - the live data holds 532 PDFs and a couple of videos - and a
         # spec sheet rendered as the product photo is worse than no photo.
         .filter(Attachment.mime_type.ilike("image/%"))
+        # Deleted in Resource Management is deleted on the tile too. 611 of the
+        # 2,924 live product-to-image links point at a soft-deleted attachment,
+        # and signing a URL for one is the catalogue disagreeing with the file
+        # manager about what exists. The picker filters the same way, so the two
+        # surfaces of this feature cannot drift.
+        .filter(Attachment.is_deleted.is_(False))
         .order_by(
             ProductAttachment.product_id,
             # Someone deliberately marked one as primary; ordering must not

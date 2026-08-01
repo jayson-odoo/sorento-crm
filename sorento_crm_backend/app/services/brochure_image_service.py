@@ -67,9 +67,18 @@ def set_brochure_image(
 
     link = (
         db.query(ProductAttachment)
+        .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
         .filter(
             ProductAttachment.product_id == product_id,
             ProductAttachment.attachment_id == attachment_id,
+            # A file deleted in Resource Management is gone everywhere or gone
+            # nowhere. 611 of the 2,924 live product-to-image links point at a
+            # deleted attachment, the product's own attachments tab already
+            # hides them, and a tile must never sign a URL for a file the
+            # system considers deleted. Filtered HERE and not only in the
+            # candidate list, so a choice deleted after it was made cannot be
+            # re-confirmed either.
+            Attachment.is_deleted.is_(False),
         )
         .first()
     )
@@ -152,7 +161,10 @@ def list_brochure_images(
         promoted = (
             db.query(PromotionProduct.product_id)
             .filter(PromotionProduct.promotion_id == promotion_id)
-            .subquery()
+            # scalar_subquery, not subquery: the latter is coerced with a warning
+            # and the coercion is the kind of thing that changes between
+            # SQLAlchemy releases.
+            .scalar_subquery()
         )
         products = products.filter(Product.id.in_(promoted))
     if query:
@@ -161,22 +173,65 @@ def list_brochure_images(
             or_(Product.product_code.ilike(needle), Product.product_name.ilike(needle))
         )
 
-    # Which products have a chosen image, resolved for the WHOLE filtered set
-    # rather than per row: `remaining` is the number the screen leads with, and
-    # a per-row lookup would make it cost a query per product.
-    candidate_rows = (
-        db.query(ProductAttachment, Attachment)
+    # Whether a product already has a chosen image, as a correlated EXISTS
+    # rather than rows in Python. It answers BOTH counts and the `only_unset`
+    # filter in one pass, and the default screen state has no filter at all -
+    # loading the filtered set to page it here meant reading all 22,805 products
+    # and every image link on every keystroke of a debounced search.
+    #
+    # The conditions mirror the candidate query below exactly. If they drifted,
+    # the screen would count a product as done and then list no chosen image for
+    # it, or the other way round.
+    chosen_exists = (
+        db.query(ProductAttachment.id)
         .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
-        .filter(ProductAttachment.product_id.in_(products.with_entities(Product.id).subquery()))
-        .filter(Attachment.mime_type.ilike("image/%"))
-        .order_by(
-            ProductAttachment.product_id,
-            (ProductAttachment.is_primary.is_(True)).desc(),
-            ProductAttachment.sort_order.nullslast(),
-            ProductAttachment.created_at,
+        .filter(
+            ProductAttachment.product_id == Product.id,
+            ProductAttachment.is_primary.is_(True),
+            Attachment.mime_type.ilike("image/%"),
+            Attachment.is_deleted.is_(False),
         )
+        .exists()
+    )
+
+    # Both numbers the screen leads with, in one statement. FILTER is Postgres's
+    # conditional aggregate, and Postgres is the only substrate here.
+    total, remaining = products.with_entities(
+        func.count(Product.id),
+        func.count(Product.id).filter(~chosen_exists),
+    ).one()
+
+    visible = products.filter(~chosen_exists) if only_unset else products
+    window = (
+        visible.order_by(Product.product_code)
+        .offset((page - 1) * limit)
+        .limit(limit)
         .all()
     )
+
+    # Candidates for the WINDOW only. A product with 31 candidates is real, and
+    # fetching them for every product in the filtered set is the same defect as
+    # fetching every product.
+    window_ids = [product.id for product in window]
+    candidate_rows: list[tuple[ProductAttachment, Attachment]] = []
+    if window_ids:
+        candidate_rows = (
+            db.query(ProductAttachment, Attachment)
+            .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+            .filter(ProductAttachment.product_id.in_(window_ids))
+            .filter(Attachment.mime_type.ilike("image/%"))
+            # Deleted in Resource Management is deleted here too - see
+            # set_brochure_image. Offering one would let a human pick a file the
+            # product's own attachments tab says does not exist.
+            .filter(Attachment.is_deleted.is_(False))
+            .order_by(
+                ProductAttachment.product_id,
+                (ProductAttachment.is_primary.is_(True)).desc(),
+                ProductAttachment.sort_order.nullslast(),
+                ProductAttachment.created_at,
+            )
+            .all()
+        )
 
     by_product: dict[str, list[tuple[ProductAttachment, Attachment]]] = {}
     for link, attachment in candidate_rows:
@@ -189,15 +244,9 @@ def list_brochure_images(
         for product_id, rows in by_product.items()
     }
 
-    all_products = products.order_by(Product.product_code).all()
-    if only_unset:
-        visible = [p for p in all_products if not chosen_of.get(p.id)]
-    else:
-        visible = all_products
-
-    total = len(all_products)
-    remaining = sum(1 for p in all_products if not chosen_of.get(p.id))
-    window = visible[(page - 1) * limit : (page - 1) * limit + limit]
+    # What the user is paging through, which is the filtered set unless the
+    # already-done ones are hidden.
+    shown = remaining if only_unset else total
 
     return {
         "items": [
@@ -223,7 +272,7 @@ def list_brochure_images(
         ],
         "total": total,
         "remaining": remaining,
-        "shown": len(visible),
+        "shown": shown,
     }
 
 
