@@ -231,6 +231,10 @@ describe('ProductAttachmentsTab brochure image control', () => {
     expect(clearBrochureImage).not.toHaveBeenCalled();
     const dialog = await screen.findByRole('alertdialog');
     expect(within(dialog).getByText('Clear brochure image?')).toBeInTheDocument();
+    // What happens next, not how the tile picks a photo when nothing is chosen.
+    expect(within(dialog).queryByText(/linked first/i)).toBeNull();
+    expect(within(dialog).queryByText(/catalogue tile/i)).toBeNull();
+    expect(within(dialog).getByText(/stays attached/i)).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Clear' }));
     await waitFor(() => expect(clearBrochureImage).toHaveBeenCalledWith(PRODUCT_ID));

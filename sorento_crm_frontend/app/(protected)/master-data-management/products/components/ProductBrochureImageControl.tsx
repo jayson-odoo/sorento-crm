@@ -110,8 +110,7 @@ export default function ProductBrochureImageControl({
           <AlertDialogHeader>
             <AlertDialogTitle>Clear brochure image?</AlertDialogTitle>
             <AlertDialogDescription>
-              Catalogue tiles for this product fall back to whichever photo was linked
-              first until someone chooses again. The file itself stays attached.
+              The file stays attached. Choose another photo when you are ready.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -18,9 +18,9 @@
  * bill. Even a product with exactly one candidate takes a click.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -31,12 +31,12 @@ import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { TriangleAlert, Check, ImageOff } from 'lucide-react';
 
+import { BROCHURE_IMAGE_PAGE_SIZE, PROMOTION_PAGE_SIZE } from '../../services/brochureImageService';
 import {
-  BROCHURE_IMAGE_PAGE_SIZE,
-  PROMOTION_PAGE_SIZE,
-  listBrochureImagePromotionOptions,
-} from '../../services/brochureImageService';
-import { useBrochureImagesQuery, useSetBrochureImage } from '../hooks/useBrochureImages';
+  useBrochureImagePromotionOptions,
+  useBrochureImagesQuery,
+  useSetBrochureImage,
+} from '../hooks/useBrochureImages';
 
 export function BrochureImagePicker() {
   const [promotionId, setPromotionId] = useState('');
@@ -45,9 +45,7 @@ export function BrochureImagePicker() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
 
-  // Keeps the trigger showing a promotion's description once the fetched page
-  // no longer contains it, so the filter never falls back to showing an id.
-  const seenPromotions = useRef(new Map<string, SearchableSelectOption>());
+  const promotionOptions = useBrochureImagePromotionOptions();
 
   // Debounced so typing a product code is one request, not one per keystroke.
   useEffect(() => {
@@ -91,7 +89,12 @@ export function BrochureImagePicker() {
   const total = query.data?.total ?? 0;
   const remaining = query.data?.remaining ?? 0;
   const withoutCandidates = rows.filter((row) => row.candidates.length === 0).length;
-  const pageCount = Math.max(1, Math.ceil(total / BROCHURE_IMAGE_PAGE_SIZE));
+  // `shown`, not `total`: `total` counts everything matching the filter, while
+  // the "only products still without an image" switch means only `shown` of them
+  // can appear. Paging over `total` offers pages that hold nothing - a
+  // 998-product promotion with 900 answered would advertise 40 pages for 4.
+  const listable = query.data?.shown ?? 0;
+  const pageCount = Math.max(1, Math.ceil(listable / BROCHURE_IMAGE_PAGE_SIZE));
 
   const choose = (productId: string, attachmentId: string, isChosen: boolean) => {
     // Idempotent, not a toggle: clicking the chosen one again leaves it chosen
@@ -117,14 +120,10 @@ export function BrochureImagePicker() {
                 // Server-searched and paged: there are hundreds of promotions,
                 // so a static option list would cap the filter at one page and
                 // hide the rest without saying so.
-                fetchOptions={async (query, pageIndex) => {
-                  const options = await listBrochureImagePromotionOptions(query, pageIndex);
-                  for (const option of options) seenPromotions.current.set(option.value, option);
-                  return options;
-                }}
+                fetchOptions={promotionOptions.fetchOptions}
                 paginated
                 pageSize={PROMOTION_PAGE_SIZE}
-                selectedOption={seenPromotions.current.get(promotionId)}
+                selectedOption={promotionOptions.optionFor(promotionId)}
                 placeholder="Every product"
                 clearable
                 className="w-full sm:w-72"
@@ -161,9 +160,14 @@ export function BrochureImagePicker() {
           <AlertIcon>
             <TriangleAlert />
           </AlertIcon>
+          {/* Scoped to the page in the wording, because that is all it counts.
+              Unqualified, page 1 of the flyer reads "25 products have no photo"
+              when the figure across the filter is 465. */}
           <AlertTitle>
-            {withoutCandidates} product{withoutCandidates === 1 ? ' has' : 's have'} no photo
-            to choose from. Those need a photo shoot, not a click.
+            {withoutCandidates === 1
+              ? '1 product on this page has'
+              : `${withoutCandidates} products on this page have`}{' '}
+            no photo to choose from. Attach a photo first.
           </AlertTitle>
         </Alert>
       )}
@@ -210,8 +214,7 @@ export function BrochureImagePicker() {
             <Check className="size-8 text-muted-foreground" />
             <div className="text-base font-medium">Every product here has a brochure image</div>
             <p className="max-w-md text-sm text-muted-foreground">
-              Catalogue tiles and generated 3D models will use the photo chosen here. Turn off
-              the filter above to review or change one.
+              Turn off the filter above to review or change one.
             </p>
           </CardContent>
         </Card>

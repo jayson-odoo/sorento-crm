@@ -20,16 +20,26 @@ vi.mock('../../services/brochureImageService', () => ({
   BROCHURE_IMAGE_PAGE_SIZE: 25,
   PROMOTION_PAGE_SIZE: 50,
   listBrochureImages: vi.fn(),
-  setBrochureImage: vi.fn(),
-  clearBrochureImage: vi.fn(),
   listBrochureImagePromotionOptions: vi.fn(),
 }));
 
+// Setting the flag is product master data; this screen is the second caller of
+// the one service, not a second copy of it.
+vi.mock(
+  '@/app/(protected)/master-data-management/products/services/productBrochureImageService',
+  () => ({
+    setBrochureImage: vi.fn(),
+    clearBrochureImage: vi.fn(),
+  }),
+);
+
 import {
   clearBrochureImage,
+  setBrochureImage,
+} from '@/app/(protected)/master-data-management/products/services/productBrochureImageService';
+import {
   listBrochureImages,
   listBrochureImagePromotionOptions,
-  setBrochureImage,
 } from '../../services/brochureImageService';
 import type {
   BrochureImageCandidate,
@@ -153,6 +163,45 @@ describe('BrochureImagePicker', () => {
     await waitFor(() => expect(container.querySelector('[data-dk-bi-empty]')).not.toBeNull());
   });
 
+  it('tells the user what to do next instead of how the system works', async () => {
+    mockList.mockResolvedValue(page([]));
+
+    const { container } = renderPicker();
+
+    await waitFor(() => expect(container.querySelector('[data-dk-bi-empty]')).not.toBeNull());
+    // The next step, yes; what the choice is wired into downstream, no.
+    expect(screen.getByText(/turn off the filter/i)).toBeInTheDocument();
+    expect(screen.queryByText(/3D model/i)).toBeNull();
+    expect(screen.queryByText(/catalogue tile/i)).toBeNull();
+  });
+
+  it('tells the user what to do about a product with no photo', async () => {
+    mockList.mockResolvedValue(page([NO_CANDIDATE_ROW, MESSY_ROW]));
+
+    renderPicker();
+
+    await screen.findByText('SRT2210-2');
+    expect(screen.queryByText(/photo shoot/i)).toBeNull();
+    expect(screen.getByText(/attach a photo/i)).toBeInTheDocument();
+  });
+
+  it('says the no-photo count is the page it counted, not the whole filter', async () => {
+    // The banner can only count the rows it has. Across the filter the real
+    // figure is 465, so an unqualified "1 product has no photo" on page 1 is a
+    // number somebody would plan a photo shoot around.
+    mockList.mockResolvedValue({
+      items: [NO_CANDIDATE_ROW, MESSY_ROW],
+      total: 998,
+      remaining: 465,
+      shown: 465,
+    });
+
+    renderPicker();
+
+    await screen.findByText('SRT2210-2');
+    expect(screen.getByText(/1 product on this page has no photo/i)).toBeInTheDocument();
+  });
+
   it('renders a row per product with every candidate filename shown', async () => {
     mockList.mockResolvedValue(page([MESSY_ROW]));
 
@@ -227,20 +276,78 @@ describe('BrochureImagePicker', () => {
     expect(vi.mocked(clearBrochureImage)).not.toHaveBeenCalled();
   });
 
-  it('shows the clicked candidate as chosen before the list refetches', async () => {
-    mockList.mockResolvedValue(page([SINGLE_CANDIDATE_ROW]));
+  it('keeps an answered product where it is, though the server would drop it', async () => {
+    // What the server really does with only_unset on: the answered product is
+    // gone from the next page. Letting that reach the list slides every row
+    // below it up by a card mid-click-sequence, so the next click lands on a
+    // product the user was not looking at - the exact way a wrong photo ends up
+    // in front of a customer.
+    mockList.mockResolvedValueOnce(page([SINGLE_CANDIDATE_ROW, MESSY_ROW]));
+    mockList.mockResolvedValue(page([MESSY_ROW]));
     mockSet.mockResolvedValue({ productId: 'p-2', chosenAttachmentId: 'att-30' });
 
-    renderPicker();
+    const { container } = renderPicker();
     await screen.findByText('SRTSCBD320');
 
     await act(async () => {
       fireEvent.click(tile('SRTSCBD320.jpg'));
     });
 
+    await waitFor(() => expect(mockSet).toHaveBeenCalledWith('p-2', 'att-30'));
+    // Long enough for a refetch to land, if one were ever fired.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+
+    expect(tile('SRTSCBD320.jpg')).toHaveAttribute('aria-pressed', 'true');
+    expect(
+      Array.from(container.querySelectorAll('[data-dk-bi-row]')).map((row) =>
+        row.getAttribute('data-dk-bi-row'),
+      ),
+    ).toEqual(['SRTSCBD320', 'SRTWC286-SH']);
+  });
+
+  it('counts down what is left as each product is answered', async () => {
+    mockList.mockResolvedValue({
+      items: [SINGLE_CANDIDATE_ROW],
+      total: 998,
+      remaining: 98,
+      shown: 98,
+    });
+    mockSet.mockResolvedValue({ productId: 'p-2', chosenAttachmentId: 'att-30' });
+
+    const { container } = renderPicker();
+    await screen.findByText('SRTSCBD320');
+
+    await act(async () => {
+      fireEvent.click(tile('SRTSCBD320.jpg'));
+    });
+
+    // Holding the row still must not also freeze the number beside it, or the
+    // header reads the same after an hour of work.
     await waitFor(() =>
-      expect(tile('SRTSCBD320.jpg')).toHaveAttribute('aria-pressed', 'true'),
+      expect(
+        container.querySelector('[data-dk-bi-remaining]')?.textContent?.replace(/\s+/g, ' '),
+      ).toBe('97 of 998 still to choose'),
     );
+  });
+
+  it('offers only the pages it can actually list', async () => {
+    // The A3 flyer promotion: 998 products, 900 of them already answered. The
+    // server reports total 998 but can only list the 98 still unanswered, so a
+    // pager built on `total` invites 36 clicks onto pages that hold nothing.
+    const rows = Array.from({ length: 25 }, (_, index) => ({
+      ...SINGLE_CANDIDATE_ROW,
+      productId: `p-${index}`,
+      productCode: `SRT-${index}`,
+      candidates: [candidate(100 + index, `SRT-${index}.jpg`)],
+    }));
+    mockList.mockResolvedValue({ items: rows, total: 998, remaining: 98, shown: 98 });
+
+    const { container } = renderPicker();
+
+    await screen.findByText('SRT-0');
+    expect(container.querySelector('[data-dk-bi-pager] span')?.textContent).toBe('Page 1 of 4');
   });
 
   it('asks the server for only the products still without an image by default', async () => {

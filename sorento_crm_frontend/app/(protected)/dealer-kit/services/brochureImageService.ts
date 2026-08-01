@@ -42,10 +42,14 @@
  *     is not linked to it. Never 403: a non-owner must not learn the row exists.
  *
  * DELETE /api/v1/master-data/product-attachments/brochure-images/{productId}
- * 204. Puts the product back to having no chosen image. Nothing in this screen
- *      calls it, deliberately: clicking a candidate is idempotent rather than a
- *      toggle, so a product can never be left with nothing chosen by accident.
+ * 204. Puts the product back to having no chosen image.
  * ```
+ *
+ * The two writes live in
+ * `master-data-management/products/services/productBrochureImageService`, the
+ * single home for them, and this module only lists. Nothing on this screen
+ * clears: clicking a candidate is idempotent rather than a toggle, so a product
+ * can never be left with nothing chosen by accident.
  *
  * ## Invariants the backend owns
  *
@@ -67,6 +71,7 @@
  *   scanned quickly.
  */
 
+import { getPromotions } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
@@ -146,39 +151,6 @@ export async function listBrochureImages(
   };
 }
 
-export interface BrochureImageChoice {
-  productId: string;
-  chosenAttachmentId: string | null;
-}
-
-export async function setBrochureImage(
-  productId: string,
-  attachmentId: string,
-): Promise<BrochureImageChoice> {
-  const response = await apiFetch(`${BASE}/${productId}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ attachment_id: attachmentId }),
-  });
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Could not save the brochure image'));
-  }
-  return (await response.json()) as BrochureImageChoice;
-}
-
-export async function clearBrochureImage(productId: string): Promise<void> {
-  const response = await apiFetch(`${BASE}/${productId}`, { method: 'DELETE' });
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Could not clear the brochure image'));
-  }
-}
-
-interface PromotionSelectRow {
-  id: string;
-  description?: string | null;
-  products_count?: number | null;
-}
-
 /** Page size for the promotion filter. Matches SearchableSelect's default. */
 export const PROMOTION_PAGE_SIZE = 50;
 
@@ -187,26 +159,23 @@ export const PROMOTION_PAGE_SIZE = 50;
  *
  * There are hundreds of them, so a static option list would cap the filter at
  * whatever one page happened to return and quietly hide the rest.
+ *
+ * Delegates to the promotions service instead of composing the same
+ * page/limit/query string a second time: a duplicate is a place for the two to
+ * disagree about what "search" means.
  */
 export async function listBrochureImagePromotionOptions(
   query = '',
   pageIndex = 0,
 ): Promise<SearchableSelectOption[]> {
-  const search = new URLSearchParams({
-    page: String(pageIndex + 1),
-    limit: String(PROMOTION_PAGE_SIZE),
+  const response = await getPromotions({
+    pageIndex,
+    pageSize: PROMOTION_PAGE_SIZE,
+    sorting: [],
+    searchQuery: query.trim(),
   });
-  if (query.trim()) search.set('query', query.trim());
 
-  const response = await apiFetch(`/api/v1/marketing/promotions?${search.toString()}`);
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Could not load promotions'));
-  }
-
-  const body = (await response.json()) as { data?: PromotionSelectRow[] } | PromotionSelectRow[];
-  const rows = Array.isArray(body) ? body : (body.data ?? []);
-
-  return rows.map((row) => ({
+  return (response.data ?? []).map((row) => ({
     value: row.id,
     // Never the id: a promotion without a description reads as "Untitled
     // promotion" rather than exposing a uuid in the trigger.
