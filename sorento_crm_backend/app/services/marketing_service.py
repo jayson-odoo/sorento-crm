@@ -19,6 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from typing import Any, Optional
 from decimal import Decimal
 
+from app.services import promotion_window
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, PromotionAttachment, CampaignType, MarketingCampaign
 from app.models.product import Product, ProductCategory, Brand
 from app.models.resources import Attachment, AttachmentType
@@ -57,23 +58,16 @@ def _promotion_stored_boundary_date(dt: datetime | date) -> date:
 def _promotion_active_clause(today: date):
     """SQLAlchemy clause: parent Promotion is currently active.
 
-    Active = Promotion.is_active True AND (no date window at all OR today falls
-    within [start_date, end_date]). Mirrors the definition in
-    PromotionService.list_promotions so products/attachments active-first
-    fallback stays consistent with the promotions list.
+    Active = ``is_active`` on, AND today inside whatever bounds are set, with a
+    blank bound meaning unbounded on that side.
+
+    Delegated so this module and the Dealer Kit's pricing cannot answer one
+    commercial question two ways. They used to: this clause accepted only a
+    promotion with NO dates or one whose start AND end bracket today, so an offer
+    with a start date and a blank end was never active here while being live for
+    pricing. See ``app/services/promotion_window``.
     """
-    no_window = and_(
-        Promotion.start_date.is_(None),
-        Promotion.end_date.is_(None),
-    )
-    within_window = and_(
-        Promotion.start_date <= today,
-        Promotion.end_date >= today,
-    )
-    return and_(
-        Promotion.is_active.is_(True),
-        or_(no_window, within_window),
-    )
+    return promotion_window.live_clause(today)
 
 
 def _promotion_is_expired(promotion, today: date) -> bool:
@@ -86,13 +80,9 @@ def _promotion_is_expired(promotion, today: date) -> bool:
     """
     if promotion is None:
         return True
-    no_window = promotion.start_date is None and promotion.end_date is None
-    within_window = (
-        promotion.start_date is not None
-        and promotion.end_date is not None
-        and promotion.start_date <= today <= promotion.end_date
+    return not promotion_window.is_live(
+        promotion.is_active, promotion.start_date, promotion.end_date, today
     )
-    return not (bool(promotion.is_active) and (no_window or within_window))
 
 
 def _resolve_promotion_id_for_filter(db: Session, raw: Optional[str]) -> Optional[str]:
