@@ -45,6 +45,7 @@ def _tile_out(tile: dict) -> dict:
         "productCode": tile["product_code"],
         "productName": tile["product_name"],
         "price": tile["price"],
+        "offerPrice": tile["offer_price"],
         "invoicePrice": tile["invoice_price"],
         "imageUrl": tile["image_url"],
         "dimensions": tile["dimensions"],
@@ -113,7 +114,17 @@ def read_published_page(company_code: str, slug: str, db: Session = Depends(get_
                     db.query(Collection).filter(Collection.id == collection_id).first()
                 )
                 collections[collection_id] = (
-                    collection_service.resolve_tiles(db, row, ANONYMOUS, candidates)
+                    collection_service.resolve_tiles(
+                        db,
+                        row,
+                        ANONYMOUS,
+                        candidates,
+                        # The page's own promotion prices every tile on it.
+                        # Whether it applies to the reader in front of us is
+                        # decided per viewer, and an anonymous reader is a
+                        # consumer - so a trade offer never reaches them.
+                        promotion_id=live["promotion_id"],
+                    )
                     if row is not None
                     else []
                 )

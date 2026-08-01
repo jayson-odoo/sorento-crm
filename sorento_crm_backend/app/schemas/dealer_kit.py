@@ -195,8 +195,10 @@ class CollectionOut(BaseModel):
 
 
 class TileOut(BaseModel):
-    """One resolved tile. `price` / `invoice_price` are strings the server has
-    already decided this viewer may see; null means absent, not hidden."""
+    """One resolved tile. `price` / `offer_price` / `invoice_price` are strings
+    the server has already decided this viewer may see; null means absent, not
+    hidden. The promotion's id is deliberately not here: naming an offer to a
+    reader who cannot have it is the same leak as sending its figure."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -204,6 +206,10 @@ class TileOut(BaseModel):
     product_code: str = Field(serialization_alias="productCode")
     product_name: str = Field(serialization_alias="productName")
     price: Optional[str] = None
+    # What the page's promotion charges THIS reader, when one applies to them.
+    # Sent beside `price`, not instead of it, so the tile can strike the list
+    # price through and show the saving (ADR 0008).
+    offer_price: Optional[str] = Field(default=None, serialization_alias="offerPrice")
     invoice_price: Optional[str] = Field(default=None, serialization_alias="invoicePrice")
     image_url: Optional[str] = Field(default=None, serialization_alias="imageUrl")
     dimensions: Optional[str] = None
@@ -360,6 +366,9 @@ class SelectionLineOut(BaseModel):
     product_name: str = Field(serialization_alias="productName")
     quantity: float
     price: Optional[str] = None
+    # The promotion's price for this reader, when one reaches them. `line_total`
+    # already reflects it, so the browser never multiplies anything (ADR 0008).
+    offer_price: Optional[str] = Field(default=None, serialization_alias="offerPrice")
     invoice_price: Optional[str] = Field(default=None, serialization_alias="invoicePrice")
     line_total: Optional[str] = Field(default=None, serialization_alias="lineTotal")
     dimensions_mm: Optional[dict] = Field(default=None, serialization_alias="dimensionsMm")

@@ -98,7 +98,19 @@ def read_print_payload(
                     db.query(Collection).filter(Collection.id == collection_id).first()
                 )
                 resolved[collection_id] = (
-                    collection_service.resolve_tiles(db, row, viewer, candidates)
+                    collection_service.resolve_tiles(
+                        db,
+                        row,
+                        viewer,
+                        candidates,
+                        # Read from the page NOW rather than snapshotted at
+                        # enqueue, like every other price here: the document
+                        # never stores a figure (AC-G1), so a promotion that
+                        # ended while this sat in the queue must print as list
+                        # prices. What IS pinned is the version, because that is
+                        # the content somebody asked to export.
+                        promotion_id=page.promotion_id,
+                    )
                     if row is not None
                     else []
                 )
@@ -122,6 +134,7 @@ def read_print_payload(
                     "productCode": tile["product_code"],
                     "productName": tile["product_name"],
                     "price": tile["price"],
+                    "offerPrice": tile["offer_price"],
                     "invoicePrice": tile["invoice_price"],
                     "imageUrl": tile["image_url"],
                     "dimensions": tile["dimensions"],

@@ -30,11 +30,31 @@ _CENTS = Decimal("0.01")
 @dataclass(frozen=True)
 class BundleComponentInput:
     """One component going in. ``key`` is whatever the caller uses to identify a
-    line (a product id, a row id); it is echoed back untouched."""
+    line (a product id, a row id); it is echoed back untouched.
+
+    ``offer_price`` is what THIS reader pays when a promotion prices the
+    component (ADR 0008), resolved by the caller through ``resolve_prices``. It
+    sits ALONGSIDE ``list_price`` rather than replacing it because the two
+    answer different questions: the split follows what is paid, and the bundle's
+    saving against list needs the list price to still be here. Pre-mixing them
+    into one field would destroy the second answer.
+    """
 
     key: str
     list_price: Optional[Decimal]
     quantity: int = 1
+    offer_price: Optional[Decimal] = None
+
+    @property
+    def payable_price(self) -> Optional[Decimal]:
+        """What the reader pays: the offer when there is one, else the list.
+
+        ``is not None`` rather than ``or``: a promotion may genuinely price a
+        component at zero - a free accessory inside a bundle - and ``or`` would
+        silently put the list price back, allocating money to a line the
+        customer is not paying for.
+        """
+        return self.offer_price if self.offer_price is not None else self.list_price
 
 
 @dataclass(frozen=True)
@@ -69,8 +89,12 @@ def allocate_bundle_price(
     total_cents = _to_cents(bundle_price)
 
     # Weight is unit price x quantity. Two of the same tap weigh twice one.
+    #
+    # The unit price is what the READER PAYS, not the list price: weighting a
+    # bundle a dealer buys on promotion as though nothing were discounted puts
+    # the allocation on a price nobody in this conversation is using.
     weights = [
-        _to_cents(component.list_price or Decimal("0")) * component.quantity
+        _to_cents(component.payable_price or Decimal("0")) * component.quantity
         for component in components
     ]
     total_weight = sum(weights)

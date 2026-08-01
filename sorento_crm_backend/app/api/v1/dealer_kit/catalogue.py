@@ -157,10 +157,21 @@ def resolve_collection(
     # An authenticated CRM principal is staff. The public renderer never reaches
     # this route - it resolves anonymously through the public router.
     viewer = ViewerContext(is_staff=True, show_invoice_price=show_invoice_price)
+    # From the page this collection belongs to, when it belongs to one. A
+    # library collection is previewed at list prices because no brochure is
+    # quoting it yet, and staff hold no trade access code, so this preview shows
+    # what a consumer would be quoted (ADR 0008: previewing AS a dealer is what
+    # changes that, and it changes the codes, not the staff flag).
+    promotion_id = collection_service.promotion_for(db, row)
     return ResolvedCollectionOut(
         collection_id=row.id,
         name=row.name,
-        tiles=[TileOut(**tile) for tile in collection_service.resolve_tiles(db, row, viewer)],
+        tiles=[
+            TileOut(**tile)
+            for tile in collection_service.resolve_tiles(
+                db, row, viewer, promotion_id=promotion_id
+            )
+        ],
     )
 
 

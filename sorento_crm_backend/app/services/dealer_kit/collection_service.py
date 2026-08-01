@@ -27,7 +27,7 @@ from app.models.product import Product
 from app.rule_engine.evaluator import collect_fact_keys, evaluate
 from app.services.dealer_kit.collection_membership import assemble_members
 from app.services.dealer_kit.product_facts import product_facts
-from app.services.dealer_kit import product_images
+from app.services.dealer_kit import pricing, product_images
 from app.services.dealer_kit.viewer import ANONYMOUS, ViewerContext
 from app.services.error_handler import AppException
 
@@ -243,35 +243,66 @@ def sellable_products(db: Session) -> list[Product]:
     return _sellable_products(db)
 
 
+def promotion_for(db: Session, collection: Collection) -> Optional[str]:
+    """Which promotion prices this collection's tiles, if any.
+
+    The PAGE carries the binding, never the collection: which offer a brochure
+    quotes is one editorial decision made once (PLAN D5), and a collection
+    reused on two pages must price differently on each. A library collection
+    belongs to no page and therefore has no offer, which is list prices - a
+    normal state, not a defect (D6).
+    """
+    if not collection.page_id:
+        return None
+
+    from app.models.dealer_kit import Page
+
+    return db.query(Page.promotion_id).filter(Page.id == collection.page_id).scalar()
+
+
 def resolve_tiles(
     db: Session,
     collection: Collection,
     viewer: ViewerContext = ANONYMOUS,
     candidates: Optional[list[Product]] = None,
+    promotion_id: Optional[str] = None,
 ) -> list[dict]:
-    """Members as tiles, with prices and photos decided for THIS viewer."""
+    """Members as tiles, with prices and photos decided for THIS viewer.
+
+    Every figure comes from ``resolve_prices`` (ADR 0008). This module reads no
+    price column of its own and does no money arithmetic: it formats what it is
+    handed, once, at the edge.
+    """
     members = resolve_members(db, collection, candidates)
-    # One query for the whole grid. Resolving per tile turns a forty-product
-    # page into forty round trips.
+    # One query for the whole grid, for both of these. Resolving per tile turns
+    # a forty-product page into forty round trips.
     images = product_images.primary_image_urls(db, members, viewer)
+    prices = pricing.resolve_prices(db, members, viewer, promotion_id)
 
     tiles = []
     for product in members:
-        currency = product.currency or "MYR"
+        price = prices[product.id]
+        currency = price.currency
         tiles.append(
             {
                 "product_id": product.id,
                 "product_code": product.product_code,
                 "product_name": product.product_name,
-                "price": _money(product.list_price, currency),
+                "price": _money(price.list_price, currency),
+                # Reported BESIDE the list price, not instead of it: the tile
+                # strikes the list price through, and a tile handed only the
+                # offer could not show what the reader is saving. None when no
+                # offer applies to THIS reader, which is also how a promotion
+                # they may not see reaches them: not at all (AC-G7). The
+                # promotion's id is deliberately not on the tile - it would name
+                # an offer to somebody who cannot have it, and a uuid has no
+                # business on a screen.
+                "offer_price": _money(price.offer_price, currency),
                 # Absent unless the document says show it AND the viewer may see
-                # it. Both gates, ANDed, and the losing case omits the number
-                # entirely rather than sending it to be hidden (AC-G6, AC-G7).
-                "invoice_price": (
-                    _money(product.invoice_price, currency)
-                    if viewer.invoice_price_visible
-                    else None
-                ),
+                # it. Both gates are ANDed inside `resolve_prices`, and the
+                # losing case omits the number entirely rather than sending it
+                # to be hidden (AC-G6, AC-G7).
+                "invoice_price": _money(price.invoice_price, currency),
                 # Photos are viewer-gated exactly as prices are: trade imagery
                 # is tagged `dealer` and must not reach a consumer. Absent when
                 # there is no permitted photo, so the tile shows its no-image

@@ -361,4 +361,10 @@ def published_doc(db: Session, slug: str) -> dict:
         "slug": page.slug,
         "version": row.version.version,
         "doc": row.version.doc,
+        # Which offer prices this reader's tiles (ADR 0008). It comes from the
+        # PAGE and not the version: the document holds bindings and never a
+        # price, so an offer that ends does not require republishing - and one
+        # that starts reaches the already-published page immediately. Null is
+        # list prices only, which is a normal state (PLAN D6).
+        "promotion_id": page.promotion_id,
     }

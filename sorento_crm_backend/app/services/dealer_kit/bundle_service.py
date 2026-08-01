@@ -22,10 +22,12 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.dealer_kit import Bundle, BundleComponent
 from app.models.product import Product
+from app.services.dealer_kit import pricing
 from app.services.dealer_kit.bundle_pricing import (
     BundleComponentInput,
     allocate_bundle_price,
 )
+from app.services.dealer_kit.viewer import ANONYMOUS, ViewerContext
 from app.services.error_handler import AppException
 
 
@@ -96,8 +98,20 @@ def _money(value: Optional[Decimal], currency: str = "MYR") -> str:
     return f"{currency} {Decimal(value or 0):,.2f}"
 
 
-def resolve_bundle(db: Session, bundle_id: str) -> dict:
-    """A bundle as rendered: one priced heading, components beneath (AC-F12)."""
+def resolve_bundle(
+    db: Session,
+    bundle_id: str,
+    viewer: ViewerContext = ANONYMOUS,
+    promotion_id: Optional[str] = None,
+) -> dict:
+    """A bundle as rendered: one priced heading, components beneath (AC-F12).
+
+    ``promotion_id`` comes from the PAGE showing the bundle, exactly as it does
+    for a tile: a bundle is not a page and carries no offer of its own. Nothing
+    here reads a price column - the component figures come from
+    ``resolve_prices`` (ADR 0008), so a dealer's promotional bundle is split
+    across the prices the dealer is actually paying.
+    """
     bundle = _require(db, bundle_id)
 
     product_ids = [component.product_id for component in bundle.components]
@@ -110,6 +124,9 @@ def resolve_bundle(db: Session, bundle_id: str) -> dict:
         else {}
     )
 
+    # One query for the whole bundle, never one per component.
+    prices = pricing.resolve_prices(db, products.values(), viewer, promotion_id)
+
     allocation = {
         line.key: line.allocated
         for line in allocate_bundle_price(
@@ -117,10 +134,17 @@ def resolve_bundle(db: Session, bundle_id: str) -> dict:
             [
                 BundleComponentInput(
                     key=component.product_id,
+                    # A component whose product is out of this company's scope
+                    # has no price view at all, which weighs as nothing rather
+                    # than dropping the line.
                     list_price=(
-                        Decimal(products[component.product_id].list_price)
-                        if component.product_id in products
-                        and products[component.product_id].list_price is not None
+                        prices[component.product_id].list_price
+                        if component.product_id in prices
+                        else None
+                    ),
+                    offer_price=(
+                        prices[component.product_id].offer_price
+                        if component.product_id in prices
                         else None
                     ),
                     quantity=int(component.quantity or 1),

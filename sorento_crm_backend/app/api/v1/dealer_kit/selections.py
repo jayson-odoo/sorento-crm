@@ -75,7 +75,15 @@ def _viewer(user: dict | None) -> ViewerContext:
 
 
 def _out(db: Session, selection, user: dict | None) -> SelectionOut:
-    resolved = selection_service.resolve_selection(db, selection, _viewer(user))
+    # The brochure the design came from prices it (ADR 0008). Without this the
+    # quote would read list prices while the page the dealer built it on showed
+    # the offer, and the customer would be told two numbers for one product.
+    resolved = selection_service.resolve_selection(
+        db,
+        selection,
+        _viewer(user),
+        promotion_id=selection_service.promotion_for(db, selection),
+    )
     return SelectionOut(
         **resolved,
         room=selection.room_json,
@@ -184,7 +192,11 @@ def quote_selection(
     """
     selection = _owned(db, selection_id, user)
     return selection_service.quote_selection(
-        db, selection, _viewer(user), excluded_product_ids=payload.excluded_product_ids
+        db,
+        selection,
+        _viewer(user),
+        excluded_product_ids=payload.excluded_product_ids,
+        promotion_id=selection_service.promotion_for(db, selection),
     )
 
 

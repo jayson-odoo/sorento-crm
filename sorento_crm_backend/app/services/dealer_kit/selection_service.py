@@ -19,8 +19,9 @@ from typing import Optional, Sequence
 
 from sqlalchemy.orm import Session
 
-from app.models.dealer_kit import Selection, SelectionLine
+from app.models.dealer_kit import Page, Selection, SelectionLine
 from app.models.product import Product
+from app.services.dealer_kit import pricing
 from app.services.dealer_kit.viewer import ANONYMOUS, ViewerContext
 from app.services.error_handler import AppException
 
@@ -165,15 +166,47 @@ def _find_line(db: Session, selection: Selection, product_id: str) -> Optional[S
     )
 
 
-def resolve_selection(
-    db: Session, selection: Selection, viewer: ViewerContext = ANONYMOUS
-) -> dict:
-    """The Selection as this viewer may see it, with a total they can trust."""
+def promotion_for(db: Session, selection: Selection) -> Optional[str]:
+    """Which promotion prices this design: the one on the page it came from.
+
+    A dealer who built this from a brochure must be quoted the brochure's offer.
+    If the quote priced at list while the page showed the promotion, two screens
+    would name two prices for one product in front of the same customer, which
+    is the failure ADR 0008 exists to prevent.
+
+    A designer opened cold has no source page and therefore no offer. That is a
+    normal way to start, not a defect.
+    """
+    if not selection.source_page_id:
+        return None
+
+    return db.query(Page.promotion_id).filter(Page.id == selection.source_page_id).scalar()
+
+
+def _resolve_lines(
+    db: Session,
+    selection: Selection,
+    viewer: ViewerContext,
+    promotion_id: Optional[str],
+) -> tuple[list[tuple[dict, Optional[Decimal]]], str]:
+    """Each line as the reader sees it, paired with what it adds to a total.
+
+    The Decimal is carried BESIDE the serialisable line rather than parsed back
+    out of it. ``quote_selection`` used to re-read its own formatted string to
+    build a subtotal, which is money arithmetic performed on presentation: one
+    thousands separator away from a wrong number, and a second place that
+    decides what a line is worth. Formatting happens once, at the edge, and
+    everything upstream of it is Decimal (ADR 0008 rule 3).
+
+    ``None`` for the amount means the line contributes nothing - it is missing
+    or cannot be sold - which is not the same as contributing zero.
+    """
     lines = list_lines(db, selection)
     products = _products_by_id(db, [line.product_id for line in lines])
+    # One query for the whole quote, never one per line.
+    prices = pricing.resolve_prices(db, products.values(), viewer, promotion_id)
 
-    resolved: list[dict] = []
-    total = Decimal("0")
+    resolved: list[tuple[dict, Optional[Decimal]]] = []
     currency = "MYR"
 
     for line in lines:
@@ -181,46 +214,71 @@ def resolve_selection(
         if product is None:
             # The FK is RESTRICT, so this means the row was removed out of band.
             # Say so rather than dropping the line the user is looking at.
-            resolved.append(_missing_line(line))
+            resolved.append((_missing_line(line), None))
             continue
 
-        currency = product.currency or currency
+        price = prices[product.id]
+        currency = price.currency
         available = bool(product.is_active) and not bool(product.is_discontinued)
         quantity = line.quantity or Decimal("0")
-        price = product.list_price
 
-        if available and price is not None:
-            total += Decimal(str(price)) * quantity
+        # What the customer actually pays. `is not None` and not `or`, so a
+        # promotion that prices something at zero stays at zero rather than
+        # quietly reverting to the list price.
+        payable = price.offer_price if price.offer_price is not None else price.list_price
+        line_total = payable * quantity if payable is not None else None
 
         resolved.append(
-            {
-                "line_id": line.id,
-                "product_id": product.id,
-                "product_code": product.product_code,
-                "product_name": product.product_name,
-                "quantity": float(quantity),
-                "price": _money(price),
-                # Both gates, ANDed, and the losing case omits the number rather
-                # than sending it to be hidden (AC-G6, AC-G7).
-                "invoice_price": (
-                    _money(product.invoice_price) if viewer.invoice_price_visible else None
-                ),
-                "line_total": _money(
-                    Decimal(str(price)) * quantity if price is not None else None
-                ),
-                "dimensions_mm": _dimensions_mm(product),
-                "is_available": available,
-                "unavailable_reason": None if available else _reason(product),
-            }
+            (
+                {
+                    "line_id": line.id,
+                    "product_id": product.id,
+                    "product_code": product.product_code,
+                    "product_name": product.product_name,
+                    "quantity": float(quantity),
+                    "price": _money(price.list_price),
+                    # Beside the list price, so the quote can show the saving.
+                    # None when no offer reaches THIS reader, which is also how
+                    # an offer they may not see is delivered: not at all.
+                    "offer_price": _money(price.offer_price),
+                    # Both gates ANDed inside `resolve_prices`, and the losing
+                    # case omits the number rather than sending it to be hidden
+                    # (AC-G6, AC-G7).
+                    "invoice_price": _money(price.invoice_price),
+                    "line_total": _money(line_total),
+                    "dimensions_mm": _dimensions_mm(product),
+                    "is_available": available,
+                    "unavailable_reason": None if available else _reason(product),
+                },
+                line_total if available else None,
+            )
         )
+
+    return resolved, currency
+
+
+def _sum(amounts) -> Decimal:
+    """Decimal addition, seeded with a Decimal so an empty quote is 0.00."""
+    return sum((amount for amount in amounts if amount is not None), Decimal("0"))
+
+
+def resolve_selection(
+    db: Session,
+    selection: Selection,
+    viewer: ViewerContext = ANONYMOUS,
+    promotion_id: Optional[str] = None,
+) -> dict:
+    """The Selection as this viewer may see it, with a total they can trust."""
+    resolved, currency = _resolve_lines(db, selection, viewer, promotion_id)
+    lines = [line for line, _ in resolved]
 
     return {
         "id": selection.id,
         "name": selection.name,
         "currency": currency,
-        "lines": resolved,
-        "total": _money(total),
-        "unavailable_count": sum(1 for line in resolved if not line["is_available"]),
+        "lines": lines,
+        "total": _money(_sum(amount for _, amount in resolved)),
+        "unavailable_count": sum(1 for line in lines if not line["is_available"]),
     }
 
 
@@ -229,6 +287,7 @@ def quote_selection(
     selection: Selection,
     viewer: ViewerContext = ANONYMOUS,
     excluded_product_ids: Optional[list[str]] = None,
+    promotion_id: Optional[str] = None,
 ) -> dict:
     """The Selection as a figure somebody can hand to a customer.
 
@@ -243,27 +302,29 @@ def quote_selection(
     says why, rather than vanishing and leaving the total unexplained.
     """
     excluded = set(excluded_product_ids or [])
-    resolved = resolve_selection(db, selection, viewer)
+    resolved, currency = _resolve_lines(db, selection, viewer, promotion_id)
 
     subtotal = Decimal("0")
     lines: list[dict] = []
     excluded_count = 0
 
-    for line in resolved["lines"]:
+    for line, amount in resolved:
         included = line["is_available"] and line["product_id"] not in excluded
         if not included:
             excluded_count += 1
-        elif line["line_total"] is not None:
-            subtotal += Decimal(line["line_total"])
+        elif amount is not None:
+            subtotal += amount
         lines.append({**line, "included": included})
 
     return {
         "id": selection.id,
         "name": selection.name,
-        "currency": resolved["currency"],
+        "currency": currency,
         "lines": lines,
         "subtotal": _money(subtotal),
-        "total": resolved["total"],
+        # The whole design, including what was left off this quote, so the
+        # dealer can see what the number moved from.
+        "total": _money(_sum(amount for _, amount in resolved)),
         "excluded_count": excluded_count,
     }
 
@@ -276,6 +337,7 @@ def _missing_line(line: SelectionLine) -> dict:
         "product_name": "Product no longer in the catalogue",
         "quantity": float(line.quantity or 0),
         "price": None,
+        "offer_price": None,
         "invoice_price": None,
         "line_total": None,
         "dimensions_mm": None,

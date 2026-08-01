@@ -1,6 +1,9 @@
 # PLAN — Seed a Dealer Kit catalogue from the printed flyer (S7)
 
 **Status:** Grilled 2026-07-31. Decisions below are settled; S7.1 is built and green.
+S7.2 is built and green: `page.promotion_id` (migration 315), `resolve_prices` (ADR 0008),
+and all four money surfaces migrated onto it - tile, quote line, bundle allocation, public
+and print payloads.
 **Companion UAC:** `flyer-seeding-acceptance-criteria.md`
 **Input artefact:** `_SORENTO A3 FLYER 2025-2026_compressed.pdf` (36 pages, A3 portrait, vector).
 **Depends on:** S1 builder core, S2 collections.
