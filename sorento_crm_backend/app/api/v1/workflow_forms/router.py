@@ -153,6 +153,11 @@ def update_definition(
         derives_status_from_lines=body.derives_status_from_lines,
         derived_open_status_key=body.derived_open_status_key,
         derived_resolved_status_key=body.derived_resolved_status_key,
+        # Opening a form to the portal is a definition edit for the same reason: the
+        # door and the party-kind narrowing are one decision, and a separate endpoint
+        # would let half of it be saved.
+        portal_submittable=body.portal_submittable,
+        portal_party_kinds=body.portal_party_kinds,
     )
     return svc._def_out(d)
 

@@ -25,6 +25,12 @@ class WorkflowFormDefinitionUpdate(BaseModel):
     derives_status_from_lines: Optional[bool] = None
     derived_open_status_key: Optional[str] = Field(None, max_length=64)
     derived_resolved_status_key: Optional[str] = Field(None, max_length=64)
+    # Portal submittability (F2b). Two fields, one meaning each: the boolean is the door
+    # and the list narrows who may walk through it, where an EMPTY list means no
+    # narrowing. Sending `[]` therefore opens the form to every contact, which is only
+    # safe because it takes `portal_submittable=true` to reach the list at all.
+    portal_submittable: Optional[bool] = None
+    portal_party_kinds: Optional[List[str]] = None
 
 
 class WorkflowFormVersionOut(BaseModel):
@@ -61,6 +67,10 @@ class WorkflowFormDefinitionOut(BaseModel):
     derives_status_from_lines: bool = False
     derived_open_status_key: Optional[str] = None
     derived_resolved_status_key: Optional[str] = None
+    # Closed, with no narrowing, on every definition that never opted in. Reported so
+    # the builder shows the stance instead of guessing at it.
+    portal_submittable: bool = False
+    portal_party_kinds: List[str] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

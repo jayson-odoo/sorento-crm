@@ -147,7 +147,16 @@ def _raise_problems(problems: Sequence[str], code: str, lead: str) -> None:
 # smuggled in as a refactor.
 
 
-def user_role_ids(db: Session, user_id: str) -> Set[str]:
+def user_role_ids(db: Session, user_id: Optional[str]) -> Set[str]:
+    """The roles a mover holds, or none at all when there is no mover.
+
+    None is a real caller now: a portal edit is made by a contact, who holds no roles.
+    Returned early rather than queried, because ``user_id == None`` compiles to
+    ``user_id IS NULL`` and would match every assignment row an orphaned import left
+    behind.
+    """
+    if not user_id:
+        return set()
     rows = db.query(UserRoleAssignment.role_id).filter(UserRoleAssignment.user_id == user_id).all()
     return {r[0] for r in rows}
 
@@ -280,6 +289,11 @@ class WorkflowFormsService:
             "derived_resolved_status_key": getattr(
                 d, "derived_resolved_status_key", None
             ),
+            # Same reason as the derivation trio: this dict is built by hand, so the
+            # builder's portal toggle would read as off however it was saved if the two
+            # columns were merely inherited by the response model.
+            "portal_submittable": bool(getattr(d, "portal_submittable", False)),
+            "portal_party_kinds": list(getattr(d, "portal_party_kinds", None) or []),
         }
 
     def get_definition(self, definition_id: str) -> WorkflowFormDefinition:
@@ -329,6 +343,8 @@ class WorkflowFormsService:
         derives_status_from_lines: Optional[bool] = None,
         derived_open_status_key: Optional[str] = None,
         derived_resolved_status_key: Optional[str] = None,
+        portal_submittable: Optional[bool] = None,
+        portal_party_kinds: Optional[List[str]] = None,
     ) -> WorkflowFormDefinition:
         d = self.get_definition(definition_id)
         if name is not None:
@@ -340,6 +356,23 @@ class WorkflowFormsService:
         if draft_schema is not None:
             _assert_document_shape(draft_schema)
             setattr(d, "draft_schema", draft_schema)
+        if portal_submittable is not None:
+            setattr(d, "portal_submittable", bool(portal_submittable))
+        if portal_party_kinds is not None:
+            # Normalised on the way in so the overlap the gate performs is a plain set
+            # intersection: contact_access_types.code is lowercase, and a stray "Dealer"
+            # here would narrow the form to nobody while looking correct in the builder.
+            setattr(
+                d,
+                "portal_party_kinds",
+                sorted(
+                    {
+                        str(kind).strip().lower()
+                        for kind in portal_party_kinds
+                        if str(kind).strip()
+                    }
+                ),
+            )
         derivation_fields = (
             "derives_status_from_lines",
             "derived_open_status_key",
@@ -704,8 +737,26 @@ class WorkflowFormsService:
         definition_id: str,
         header_data: Dict[str, Any],
         lines: List[Dict[str, Any]],
-        user_id: str,
+        user_id: Optional[str] = None,
+        *,
+        respondent_contact_id: Optional[str] = None,
+        source_entity_type: Optional[str] = None,
+        source_entity_id: Optional[str] = None,
+        respond_inbox_url: Optional[str] = None,
     ) -> WorkflowSubmission:
+        """Create a submission against the definition's PUBLISHED version.
+
+        One creation path for both origins. ``user_id`` is None for a portal filing and
+        the four keyword arguments are None for an internal one, and neither may be
+        inferred from the other: stamping a service account on a customer's filing would
+        put a real person's name on it in the audit trail, and stamping a contact on a
+        staff filing would attribute it to whoever the form happens to be about.
+
+        The portal goes through here rather than building its row directly, which is
+        what buys it F0 answer validation, the publish gate, the version pin and the
+        ``submission_created`` SLA emit - all of which a hand-rolled insert skips, for
+        exactly the submissions nobody at Sorento typed.
+        """
         d = self.get_definition(definition_id)
         v = self._published_version(d)
         schema = _as_schema_dict(getattr(v, "schema", None))
@@ -727,6 +778,12 @@ class WorkflowFormsService:
             status_id=status.id,
             header_data=clean,
             created_by_user_id=user_id,
+            respondent_contact_id=respondent_contact_id,
+            source_entity_type=source_entity_type,
+            source_entity_id=source_entity_id,
+            # In the creating INSERT, so the admin chat panel has a link the first time
+            # anyone opens the row. Never backfilled and never taken from the payload.
+            respond_inbox_url=respond_inbox_url,
         )
         self.db.add(sub)
         self.db.flush()
@@ -801,8 +858,14 @@ class WorkflowFormsService:
         submission_id: str,
         header_data: Optional[Dict[str, Any]],
         lines: Optional[List[Dict[str, Any]]],
-        user_id: str,
+        user_id: Optional[str] = None,
     ) -> WorkflowSubmission:
+        """Replace a submission's answers, and optionally its lines.
+
+        ``user_id`` is None for a portal edit: nobody logged in, so
+        ``updated_by_user_id`` stays NULL rather than naming a service account, and the
+        role gate reads an empty role set (which the default-open policy allows).
+        """
         s = self.get_submission(submission_id)
         v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == s.version_id).first()
         if not v:

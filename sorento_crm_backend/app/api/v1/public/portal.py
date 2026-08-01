@@ -729,6 +729,113 @@ def portal_submit(
     )
 
 
+# ---------- Workflow form submissions (F2b) ----------
+#
+# Here rather than under app/api/v1/workflow_forms/, which carries the JWT dependency:
+# a contact holds a portal token and no login, so those routes could never be reached
+# from the portal - and an unreachable surface is what invites a second token scheme.
+# Separate paths from /submissions/{kind} above, which is the four bespoke forms and is
+# keyed by a fixed SUPPORTED_TYPES enum; a workflow form is keyed by definition id.
+
+
+class WorkflowSubmissionPayload(BaseModel):
+    """A contact's answers, and the rows they filed under the form's repeaters.
+
+    ``header_data`` is validated against the frozen published schema server-side, which
+    drops unknown keys - so nothing here can reach a column. That is what stops a
+    payload naming ``respond_inbox_url`` from blanking or redirecting the admin's chat
+    link.
+    """
+
+    header_data: dict = Field(default_factory=dict)
+    # None, not []: on an update an omitted `lines` must leave the existing rows alone,
+    # where an empty list means "delete them all". Defaulting to [] would make every
+    # header-only edit silently wipe the repeater rows the contact filed.
+    lines: Optional[list[dict]] = None
+    # What this form is ABOUT (the order a warranty claim is filed from, say). Optional,
+    # and only ever set at creation: it is provenance, not an editable answer.
+    source_entity_type: Optional[str] = None
+    source_entity_id: Optional[str] = None
+
+
+def _workflow_portal(db: Session):
+    from app.services.workflow_submission_portal import (
+        WorkflowSubmissionPortalService,
+    )
+
+    return WorkflowSubmissionPortalService(db)
+
+
+@router.get("/workflow-forms")
+def portal_list_workflow_forms(
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """The forms THIS contact may file: portal-open, published, and matching their kind."""
+    return {"items": _workflow_portal(db).list_definitions(token)}
+
+
+@router.get("/workflow-forms/{definition_id}")
+def portal_get_workflow_form(
+    definition_id: str = Path(...),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """The published document to render, behind the same gate as the create."""
+    return _workflow_portal(db).get_definition_schema(token, definition_id)
+
+
+@router.get("/workflow-submissions")
+def portal_list_workflow_submissions(
+    definition_id: Optional[str] = Query(None),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    return {"items": _workflow_portal(db).list_submissions(token, definition_id)}
+
+
+@router.get("/workflow-submissions/{submission_id}")
+def portal_get_workflow_submission(
+    submission_id: str = Path(...),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    return _workflow_portal(db).get_submission(token, submission_id)
+
+
+@router.post("/workflow-forms/{definition_id}/submissions", status_code=201)
+def portal_create_workflow_submission(
+    payload: WorkflowSubmissionPayload,
+    definition_id: str = Path(...),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    service = _workflow_portal(db)
+    submission = service.create_submission(
+        token,
+        definition_id,
+        payload.header_data,
+        payload.lines,
+        source_entity_type=payload.source_entity_type,
+        source_entity_id=payload.source_entity_id,
+    )
+    return service.get_submission(token, str(submission.id))
+
+
+@router.put("/workflow-submissions/{submission_id}")
+def portal_update_workflow_submission(
+    payload: WorkflowSubmissionPayload,
+    submission_id: str = Path(...),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    service = _workflow_portal(db)
+    submission = service.update_submission(
+        token, submission_id, payload.header_data, payload.lines
+    )
+    return service.get_submission(token, str(submission.id))
+
+
 # ---------- Attachments ----------
 
 

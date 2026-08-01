@@ -119,6 +119,13 @@ def emit_submission_event(
     header's move - which is what ``resolved_by`` would then record - is a lie plausible
     enough to be believed (AC-F1a-29).
 
+    The respondent contact is read off the submission HERE rather than taken as a kwarg,
+    so no caller can forget it. It is what populates
+    ``conversation_sla_tracking.respond_contact_id`` - the field the WhatsApp channel and
+    the CS pin lookup both key on - and without it a portal submission spawns a tracker
+    with a deadline and no way to reply to whoever filed it. NULL for an internal
+    submission, which legitimately has no contact.
+
     The import is local, mirroring every other form service's call site: the SLA module
     pulls in the notification stack, and it is also what makes the emit patchable in a
     test that has to prove a failing emit does not break the move.
@@ -135,6 +142,8 @@ def emit_submission_event(
             WORKFLOW_SUBMISSION_ENTITY_TYPE,
             submission_id,
             event,
+            contact_id=str(getattr(submission, "respondent_contact_id", "") or "")
+            or None,
             actor_user_id=actor_user_id,
             # Scopes the config set to this form. One type covers every definition, so
             # without it a stage seeded for an RMA form would also clock a survey.

@@ -12,7 +12,7 @@ import uuid
 from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 
 from app.database import Base
 
@@ -54,6 +54,24 @@ class WorkflowFormDefinition(Base):
     # be terminal.
     derived_open_status_key = Column(String(64), nullable=True)
     derived_resolved_status_key = Column(String(64), nullable=True)
+
+    # ---- portal submittability (F2b), two columns with one meaning each ----
+    # The DOOR. Default closed, with a server default because the ALTER that adds this
+    # column backfills definitions that already exist and a Python-side default never
+    # runs for them. Every other gate in this codebase fails open; this is the one place
+    # where that would hand a customer a form nobody meant them to see.
+    portal_submittable = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
+    # The NARROWING, matched as a set OVERLAP against the contact's
+    # contact_access_types. Empty means no narrowing, which is safe only because the
+    # boolean above is the door: reaching this list at all took a deliberate flip.
+    # Folding the two into one column would make "open to everyone" unexpressible
+    # without a magic sentinel, and would flip the natural empty-list reading to
+    # fail-open on exactly the column this gate exists to protect.
+    portal_party_kinds = Column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb"), default=list
+    )
 
     versions = relationship(
         "WorkflowFormVersion",
@@ -151,6 +169,26 @@ class WorkflowSubmission(Base):
         String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
+    # ---- filed from the portal by a CONTACT (F2b) ----
+    # Text, never uuid: respond_contacts.id is a TEXT column, and a uuid column cannot
+    # hold a foreign key to a text one. Same trap as users.id above. Nullable, because
+    # every submission a logged-in user files has no respondent contact at all, and
+    # SET NULL so deleting a contact does not delete the form they filed.
+    respondent_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    # What SPAWNED this submission (an order, a service job, a contact), which is the
+    # opposite referent to the same pair on conversation_sla_tracking. Kept anyway:
+    # ADR-0009 already establishes this pair as the repo's polymorphic idiom.
+    # String, not uuid: a polymorphic pointer cannot assume every target table has a
+    # uuid primary key, and respond_contacts / users are keyed by text.
+    source_entity_type = Column(String(64), nullable=True)
+    source_entity_id = Column(String(128), nullable=True)
+    # Written in the creating INSERT, never later and never from a payload: the admin
+    # chat panel reads this column when it opens the submission, and a row that starts
+    # NULL renders an empty conversation with no error anywhere.
+    respond_inbox_url = Column(Text, nullable=True)
+
     definition = relationship("WorkflowFormDefinition")
     version = relationship("WorkflowFormVersion", back_populates="submissions")
     status = relationship("Status", foreign_keys=[status_id])
@@ -169,6 +207,20 @@ class WorkflowSubmission(Base):
 
     __table_args__ = (
         Index("ix_workflow_submissions_definition_created", "definition_id", "created_at"),
+        # The portal listing is "my submissions, newest first", so the sort column
+        # belongs in the index alongside the contact.
+        Index(
+            "ix_workflow_submissions_respondent_created",
+            "respondent_contact_id",
+            "created_at",
+        ),
+        # "Which forms did this order spawn" is the only way the polymorphic pointer is
+        # ever read, so both halves are indexed together.
+        Index(
+            "ix_workflow_submissions_source_entity",
+            "source_entity_type",
+            "source_entity_id",
+        ),
     )
 
     # The frontend may not render UUIDs, so a serializer built straight off the ORM row

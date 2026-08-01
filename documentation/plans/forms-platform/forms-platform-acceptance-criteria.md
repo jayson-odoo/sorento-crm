@@ -525,6 +525,10 @@ multi-company work is landing elsewhere. Do not add one here on a guess.
 - **AC-F2b-1** `[BE][MIG]` Given a submission may come from a contact rather than a user, Then it carries
   `respondent_contact_id` to `respond_contacts`, plus `source_entity_type` / `source_entity_id` so a submission
   can point back at whatever spawned it.
+  **`respondent_contact_id` MUST be `String`, not `UUID`.** Verified: `respond_contacts.id` is a **TEXT** column
+  (so is `portal_tokens.contact_id`), and a `uuid` column cannot hold a foreign key to a `text` one. Every
+  existing FK into that table is a string for the same reason. This is the identical trap as `users.id`
+  (AC-F1-16), and the instinct to match the other uuid FKs on `workflow_submissions` is what springs it.
 - **AC-F2b-2** `[BE]` Given not every form is public, Then a **definition declares** whether it is
   portal-submittable and by which party kind. Default closed: a form is internal until someone says otherwise.
   This is the one place in the forms platform where fail-open would expose data.
@@ -536,6 +540,97 @@ multi-company work is landing elsewhere. Do not add one here on a guess.
   interchangeable and confusing them is a documented recurring bug.
 - **AC-F2b-5** `[BE]` Given the portal already carries the four bespoke forms, Then a submission's portal
   surface reuses `PortalToken` + OTP rather than adding a second token scheme.
+
+### F2b corrections - after the red suite (2026-08-01)
+
+**AC-F2b-2 resolved: the gate is TWO columns, not one.** "By which party kind" does not survive contact with the
+portal as a scalar. `PortalToken` carries only `contact_id` and `space_id`, so the only classification reachable
+for the asker is a many-to-many (`contact_access_types`), and the match is a set **overlap**, not an equality.
+
+- **AC-F2b-6** `[BE][MIG]` `portal_submittable` (boolean, NOT NULL, **server default false**) is the door;
+  `portal_party_kinds` (jsonb, NOT NULL, default `[]`) is the narrowing, where empty means **no narrowing**.
+  Deliberately not folded into one column: if "non-empty list = open" were the rule then "open to everyone" is
+  unexpressible without a magic sentinel, and the natural empty-list reading flips to **fail-open on the exact
+  column AC-F2b-2 warns about**. Both server defaults are load-bearing, since the columns are NOT NULL on a table
+  that already has rows.
+- **AC-F2b-7** `[OPS]` `contact_access_types` is admin-curated and most Respond.io-synced contacts have none, so
+  a definition that declares kinds locks out every unclassified contact. That is correctly fail-closed, but it
+  means a dealer-only form is an outage on day one unless dealers are classified first. **After-sales S1 owns
+  that classification**; it is not a bug to be fixed by loosening the gate.
+
+**AC-F2b-3's premise is false and is rewritten.** "Portal rows are created by `_instantiate`" is not true of a
+workflow submission, and following it literally breaks the AC's own siblings. `_instantiate` is a per-kind
+constructor over four flat-column models plus a setattr allow-list; a submission has JSONB answers validated
+against a **published version**, plus `version_id` and a `status_id` resolved from the engine. Routing through it
+means either skipping F0 validation and the publish gate, or duplicating `create_submission`.
+
+- **AC-F2b-8** `[BE]` The portal path goes through `WorkflowFormsService.create_submission`, which gains
+  keyword-only `respondent_contact_id` / `source_entity_type` / `source_entity_id` / `respond_inbox_url` and must
+  accept `user_id=None`. That is what buys F0 validation, the publish gate, the version pin and the F2a
+  `submission_created` emit **for free**. AC-F2b-3's real content is its two invariants, which stand:
+  `respond_inbox_url` is non-null in the creating INSERT, and it is unwritable from a contact payload.
+  Reuse `PortalService._build_respond_inbox_url` verbatim rather than reimplementing it; it already resolves
+  `respond_io_id` and already returns None when the contact has none, which is the whole of AC-F2b-4.
+
+- **AC-F2b-9** `[BE]` **A portal submit starts the same SLA clock an internal one does**, and the tracker carries
+  `respond_contact_id`. F2a emits `submission_created` from `create_submission` and nowhere else, so a portal
+  path that builds the row itself silently skips it, and the submissions with no deadline are then precisely the
+  ones a customer filed. Nothing reports that: an SLA that was never started is indistinguishable from one nobody
+  configured. The existing portal already learned this (`submit_draft` carries an explicit `emit_form_event`
+  block commented "Portal submit bypasses the API state-transition methods"). A **refused** submit must start no
+  clock, so the gate runs before the spawn.
+
+- **AC-F2b-10** `[BE]` **F2a gap to close here:** `emit_submission_event` never passes `contact_id` to
+  `emit_form_event`, which is what populates `conversation_sla_tracking.respond_contact_id` - the field the
+  WhatsApp channel and the CS pin lookup both key on. Without it a portal submission spawns a tracker with a
+  deadline and no way to reply to the person who filed it. Read `submission.respondent_contact_id` **inside** the
+  emitter rather than adding a kwarg, so no caller can forget it.
+
+- **AC-F2b-11** `[BE]` **A contact may edit only while the submission sits on its definition's initial rung.**
+  F2b did not define portal editability at all. This needs no new column (the four bespoke forms use
+  `portal_draft_at` plus a rejected-is-editable rule; a submission has a status graph instead, and
+  `update_submission` already refuses a terminal status). Ownership is checked separately: another contact's
+  submission is 403 or 404, never readable.
+
+- **AC-F2b-12** `[BE]` **Portal routes live under `app/api/v1/public/portal.py` behind `get_portal_token`.**
+  Placing them under `app/api/v1/workflow_forms/` inherits the JWT dependency, so no contact could ever reach
+  them, which then invites exactly the second token scheme AC-F2b-5 forbids.
+
+**Name collision, kept deliberately.** `source_entity_type` / `source_entity_id` here mean "what spawned this
+form". On `conversation_sla_tracking` the same names mean the **form type** and the form's own id. Same schema,
+opposite referents. Kept anyway, because ADR-0009 already establishes this pair as the repo's polymorphic
+"what spawned this" idiom for `service_jobs`, so renaming here would make the after-sales code inconsistent with
+its own ADR. `source_entity_id` is `String`, not uuid: a polymorphic pointer cannot assume every target has a
+uuid PK, and `respond_contacts` and `users` are text.
+
+### F2b corrections, round 2 - found at implementation (2026-08-01)
+
+- **AC-F2b-13** `[BE]` **The submission serializer must split admin from portal.** `_submission_out` does not
+  emit `respond_inbox_url`, and it was right not to: the portal's own `get_submission` uses the same serializer,
+  so adding it would put an **admin inbox URL into the payload a customer reads back**. But the whole point of
+  writing that URL at row creation is the admin chat panel, and the admin detail page reads this serializer, so
+  as shipped the column is populated and nothing renders it. Two serializers, or one with an explicit
+  `include_admin_fields` flag defaulting to **False**. Admin-only: `respond_inbox_url`, `respondent_contact_id`,
+  `source_entity_type`, `source_entity_id`. Defaulting the flag to False is what makes a future caller's
+  omission safe rather than leaky.
+- **AC-F2b-14** `[BE]` **Validate declared party kinds against `contact_access_types` at save.**
+  `update_definition` normalises case but does not check the codes exist, so typing `dealers` for `dealer`
+  produces a form open to **nobody**, silently, and the symptom is indistinguishable from AC-F2b-7's "dealers are
+  not classified yet". A `WHERE code IN (...)` check at save turns a silent outage into a validation error.
+- **AC-F2b-15** `[BE][MIG]` **Portal editability needs a one-way latch, because "initial rung" is not
+  monotonic.** AC-F2b-11 said a contact may edit while the submission sits on its definition's initial rung. For
+  a **deriving** definition the initial rung IS the derived open key, and the header **returns** there whenever
+  lines are un-decided - so a submission would become contact-editable again *after staff had started work on
+  it*. Add `workflow_submissions.portal_locked_at` (nullable timestamp), stamped the first time the submission
+  leaves its initial rung, and require `portal_locked_at IS NULL` **as well as** the initial rung. A latch is
+  monotonic where a status test is not. **Supersedes AC-F2b-11.**
+- **AC-F2b-16** `[BE]` `get_definition_schema(token, definition_id)` is accepted as a sixth portal method: the
+  five pinned ones never let a contact render a form they have not already filed, since the schema only arrives
+  on `get_submission`. Same `_assert_submittable` gate, then the published preview. Without it the route surface
+  ships unusable.
+- **Flagged, not fixed:** `PortalService._build_respond_inbox_url` returns None when
+  `settings.respond_app_base_url` is unset, so on a deployment that never configured it every portal submission
+  gets a NULL inbox URL, looking exactly like the bug AC-F2b-3 exists to prevent. Environment config, not code.
 
 ### F2c - attachments and notifications
 
