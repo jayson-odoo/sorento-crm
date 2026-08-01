@@ -84,6 +84,11 @@ class ProjectPOVersion(Base, CompanyScopedMixin):
     page_count = Column(Integer, nullable=True)
 
     # Raw model output, kept verbatim so a later prompt change can be re-scored against it.
+    # Extraction runs on the worker, so the row carries its own progress. A version
+    # stuck on "queued" reads as a hung system, which is why every exit path writes a
+    # terminal state and a sentence a person can act on.
+    extraction_state = Column(String(16), nullable=False, server_default="queued")
+    extraction_error = Column(Text, nullable=True)
     extracted_json = Column(JSONB, nullable=True)
     extraction_model = Column(String(80), nullable=True)
     extraction_tokens_in = Column(Integer, nullable=True)
@@ -229,6 +234,8 @@ class DeliveryScheduleVersion(Base, CompanyScopedMixin):
     source_filename = Column(Text, nullable=True)
     schedule_date = Column(Date, nullable=True)
 
+    extraction_state = Column(String(16), nullable=False, server_default="queued")
+    extraction_error = Column(Text, nullable=True)
     extracted_json = Column(JSONB, nullable=True)
     extraction_model = Column(String(80), nullable=True)
     # Per COLUMN, never per document (schedule spike, 2026-08-02): a wholesale reject
