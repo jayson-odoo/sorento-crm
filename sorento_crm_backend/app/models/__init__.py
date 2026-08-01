@@ -101,6 +101,24 @@ from app.models.scm import (
     ScmAnalyticsRun,
     MarketResearchRun,
 )
+from app.models.project_so import (  # noqa: F401
+    CustomerPO,
+    CustomerPOVersion,
+    CustomerPOLine,
+    CustomerPOAnnotation,
+    DeliverySchedule,
+    DeliveryScheduleVersion,
+    ProjectDeliveryPhase,
+    DeliveryScheduleCell,
+    CustomerItemCodeMap,
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+    SODraftFinding,
+    OrderChangeNotice,
+    SOAmendment,
+    OrderInquiry,
+    OrderInquiryRow,
+)
 
 __all__ = [
     "Company",
