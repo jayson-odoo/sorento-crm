@@ -21,7 +21,9 @@ import { STALE_TONE_CLASS, describeStaleness } from '../../_shared/lib/staleness
 import { CriticalPanel } from './CriticalPanel';
 import { ProjectActivityPanel } from './ProjectActivityPanel';
 import { ProjectAccessPanel } from './ProjectAccessPanel';
+import { DeliverySchedulesPanel } from './DeliverySchedulesPanel';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
+import { SalesOrdersPanel } from './SalesOrdersPanel';
 import { QuotationsPanel } from './QuotationsPanel';
 import { SamplesPanel } from './SamplesPanel';
 import { SponsorshipsPanel } from './SponsorshipsPanel';
@@ -46,6 +48,8 @@ const TABS = [
   { id: 'samples', label: 'Samples' },
   { id: 'sponsorships', label: 'Sponsorships' },
   { id: 'pos', label: 'POs' },
+  { id: 'schedules', label: 'Delivery schedules' },
+  { id: 'sales-orders', label: 'Sales orders' },
   { id: 'activity', label: 'Activity' },
   { id: 'documents', label: 'Documents' },
 ] as const;
@@ -303,6 +307,8 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       {activeTab === 'samples' && <SamplesPanel project={project} />}
       {activeTab === 'sponsorships' && <SponsorshipsPanel project={project} />}
       {activeTab === 'pos' && <PurchaseOrdersPanel project={project} />}
+      {activeTab === 'schedules' && <DeliverySchedulesPanel project={project} />}
+      {activeTab === 'sales-orders' && <SalesOrdersPanel project={project} />}
       {activeTab === 'activity' && <ProjectActivityPanel project={project} />}
       {activeTab === 'documents' && (
         <NotYetPanel

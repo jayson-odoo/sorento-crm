@@ -618,6 +618,14 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'projects.projects.view',
       },
       {
+        // Marketing's worklist: leads assigned but not yet accepted. Its own entry
+        // because a lead nobody has accepted is nobody's job, and it stays invisible
+        // if you have to go looking for it inside the leads list.
+        title: 'Awaiting Acceptance',
+        path: '/project-sales/lead-acceptance',
+        permission: 'projects.projects.view',
+      },
+      {
         title: 'My Tasks',
         path: '/project-sales/my-tasks',
         permission: 'projects.projects.view',
@@ -1512,6 +1520,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
       {
         title: 'Leads',
         path: '/project-sales/leads',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Marketing's worklist: leads assigned but not yet accepted. Its own entry
+        // because a lead nobody has accepted is nobody's job, and it stays invisible
+        // if you have to go looking for it inside the leads list.
+        title: 'Awaiting Acceptance',
+        path: '/project-sales/lead-acceptance',
         permission: 'projects.projects.view',
       },
       {
