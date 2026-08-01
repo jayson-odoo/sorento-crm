@@ -264,6 +264,31 @@ CRM-side. Putting the LLM in n8n forks the prompt registry and duplicates the re
 From `REQUIREMENTS-inbox-2026-08-01.md` (R1-R12, all resolved) and the CS discovery study
 (`flowcharts/Sorento_Operational_Discovery_Study_CS.pdf`). These sit on the forms platform per `adr/0011`.
 
+### Slotting and prior art - added 2026-08-02, before S1
+
+**Group M arrived after the slice sequence was written and no slice claimed it.** Building S1 without
+resolving that would have shipped a Site the very next slice had to migrate. Two corrections follow.
+
+- **AC-M37 moves into S1** `[BE][MIG]`. S1 is the slice that creates the Site, and the plan gave it
+  `site_maps_url text` alone. Defining the Site twice - a URL now, then `latitude` / `longitude` /
+  `place_id` later - means a second migration on the same concept plus a decision about whether the URL
+  survives. S1 now carries all four fields and `site_maps_url` is dropped from its schema before it is ever
+  written. AC-M38 (pin optional, geocode at dispatch) and AC-M39 (both kept, neither reconciled) stay with
+  the consumer form in S3; AC-M40 (referrer-restricted key) is a deployment gate, not a slice.
+
+- **AC-M8, AC-M9, AC-M10 and AC-M13 are ALREADY BUILT** and must not be built again.
+  `workflow_submission_line_disposition.py` (F1a) seeds exactly the option set AC-M8 names - `write_off`,
+  `cn_cancellation`, `replacement_same_model`, `replacement_equivalent_value`, `replacement_wrong_model`,
+  `repair`, `maintenance` - plus `nothing_to_collect` for AC-M13.
+  `workflow_submission_derived_status.py` derives the header from the lines, closing when every line is
+  terminal and **reopening** when one stops being decided, which is AC-M10; per-line independence is
+  AC-M9. This is ADR-0011 paying off rather than a coincidence: the goods track asked for line-level
+  disposition, and the case was already a form submission. S7 inherits these instead of implementing them,
+  and its remaining work is the RMA container (AC-M11, AC-M14, AC-M15, AC-M16) and the collection gate
+  (AC-M17 to AC-M19).
+
+The rest of group M is slotted in `PLAN-after-sales-warranty.md` under "Slice sequence".
+
 ### Waiting attribution - the single design behind R2, R7, R8, R12
 
 - **AC-M1** `[BE][MIG]` Given a case, Then it carries `waiting_on_party` (`cs`/`maintenance`/`plumber`/`customer`/`supplier`/`warehouse`), `waiting_on_reason_id` -> configurable master data, and `waiting_since`. **One shared reason vocabulary** serves both the pending reason and the overdue reason.
