@@ -56,6 +56,11 @@ from app.services.workflow_submission_line_status_graph import (
     WORKFLOW_SUBMISSION_LINE_ENTITY_TYPE,
     assert_lines_replaceable,
 )
+from app.services.workflow_submission_sla import (
+    SUBMISSION_CREATED_EVENT,
+    emit_submission_event,
+    submission_status_event,
+)
 from app.services.workflow_submission_status_graph import (
     WORKFLOW_SUBMISSION_ENTITY_TYPE,
 )
@@ -738,10 +743,39 @@ class WorkflowFormsService:
                 )
             )
         self.db.flush()
-        recompute_submission_status(self.db, sub)
+        derived = recompute_submission_status(self.db, sub)
         self.db.commit()
         self.db.refresh(sub)
+
+        # Post-commit, because ``_start_for_config`` commits unconditionally: emitting
+        # before this line would commit a half-built submission.
+        #
+        # A deriving definition has no other reachable start event -- every manual move
+        # into its derived pair is refused, and a submission is created on the open rung
+        # with no transition -- so creation is where its clock begins.
+        emit_submission_event(
+            self.db, sub, SUBMISSION_CREATED_EVENT, actor_user_id=user_id
+        )
+        if derived:
+            # Only when the header ACTUALLY moved. Reachable when every line arrives
+            # already decided; a recompute that changed nothing must fire nothing, or a
+            # stage resolves on the strength of a submission nobody has worked on.
+            self._emit_derived_status_event(sub)
         return sub
+
+    def _emit_derived_status_event(self, submission: WorkflowSubmission) -> None:
+        """Fire the SLA event for a header move DERIVATION made.
+
+        ``actor_user_id`` is None on purpose. Somebody decided a LINE, and nobody moved
+        the header -- the transition log records the same absence -- so passing the line
+        decider through would credit them with a move they did not make (AC-F1a-29).
+        """
+        emit_submission_event(
+            self.db,
+            submission,
+            submission_status_event(submission.status_key),
+            actor_user_id=None,
+        )
 
     def _initial_line_status_id(
         self, definition: Optional[WorkflowFormDefinition]
@@ -843,14 +877,19 @@ class WorkflowFormsService:
         setattr(s, "updated_by_user_id", user_id)
         setattr(s, "updated_at", datetime.utcnow())
         self.db.flush()
+        derived = False
         if lines is not None:
             # Replaced lines are a new population, which is one of the reachable ways a
             # resolved submission reopens (a decided line can never leave its terminal
             # rung). Derivation recomputes from whatever it finds rather than assuming
             # which API produced it.
-            recompute_submission_status(self.db, s)
+            derived = recompute_submission_status(self.db, s)
         self.db.commit()
         self.db.refresh(s)
+        # Post-commit and only on an ACTUAL header move: a line replacement that leaves
+        # the header where it was must not touch its clock.
+        if derived:
+            self._emit_derived_status_event(s)
         return s
 
     def delete_submission(self, submission_id: str) -> None:
@@ -928,6 +967,9 @@ class WorkflowFormsService:
             user_id=user_id,
         )
         self.db.add(log)
+        # Read before the commit expires the row; the emit below needs the key, and
+        # re-reading it would reload a status the SLA emit may have committed over.
+        to_status_key = str(getattr(to_status, "key", "") or "")
         self.db.commit()
 
         # Post-commit and best-effort: the move has already succeeded, so a notification
@@ -936,6 +978,15 @@ class WorkflowFormsService:
             self._notify_submitter(s, edge, str(getattr(log, "id", "") or ""))
         except Exception as exc:  # noqa: BLE001
             logger.warning("Workflow transition notification failed for %s: %s", s.id, exc)
+
+        # The SLA event for a MANUAL move, so it carries its mover: a human decided
+        # this, and the tracker's responded_by / resolved_by must say who.
+        emit_submission_event(
+            self.db,
+            s,
+            submission_status_event(to_status_key),
+            actor_user_id=user_id,
+        )
 
         self.db.refresh(s)
         return s
@@ -1147,9 +1198,15 @@ class WorkflowFormsService:
         # The header follows its lines. No row is written here for the line itself:
         # workflow_submission_transition_logs is the HEADER's companion log, and a line
         # move logged there would put a status the submission never held into its trail.
-        recompute_submission_status(self.db, submission)
+        derived = recompute_submission_status(self.db, submission)
         self.db.commit()
         self.db.refresh(line)
+        # Post-commit, and only when the header MOVED. ``recompute_submission_status``
+        # runs on every line decision and returns False when the answer is unchanged, so
+        # emitting per recompute would resolve a submission on the strength of its first
+        # decided line.
+        if derived:
+            self._emit_derived_status_event(submission)
         return line
 
     def set_line_disposition(

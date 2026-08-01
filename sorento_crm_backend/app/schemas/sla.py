@@ -5,6 +5,15 @@ from datetime import datetime, timezone
 from decimal import Decimal
 import uuid
 
+# The ONE definition of the form-SLA type tuple, imported rather than restated. The
+# service tuple gates every service path and this alias drives the
+# FormSLAConfigBase.source_entity_type validator, so two literals mean a type can be
+# half-added: the service accepts it and the schema boundary then 422s, which reads as
+# a broken API rather than a half-finished change. No import cycle - form_sla_service
+# never imports this module at import time (its sla-schema imports are all local to a
+# function), and app/schemas/__init__.py is a bare comment.
+from app.services.form_sla_service import FORM_SLA_TYPES as _FORM_SLA_TYPES
+
 
 def _coerce_optional_message_id(v):
     """Accept int, numeric string, or null for external message ids (e.g. n8n)."""
@@ -556,15 +565,16 @@ class ConversationSLATrackingResponse(ConversationSLATrackingBase):
         return self
 
 
-_FORM_SLA_TYPES = ("stock_inquiry", "purchase_request", "sponsorship_form", "complaint", "ticket")
-
-
 class FormSLAConfigBase(BaseModel):
     source_entity_type: str
     stage_code: str
     policy_id: str
     agent_code: str
     team_set_code: Optional[str] = None
+    # NULL = this stage applies to every form definition of the type. Set = it applies
+    # to that definition only. Only workflow_submission has definitions; for the other
+    # five types one type IS one form, so the column stays NULL.
+    definition_id: Optional[str] = None
     start_event: str
     respond_event: Optional[str] = None
     resolve_event: Optional[str] = None
@@ -603,6 +613,7 @@ class FormSLAConfigUpdate(BaseModel):
     policy_id: Optional[str] = None
     agent_code: Optional[str] = None
     team_set_code: Optional[str] = None
+    definition_id: Optional[str] = None
     start_event: Optional[str] = None
     respond_event: Optional[str] = None
     resolve_event: Optional[str] = None

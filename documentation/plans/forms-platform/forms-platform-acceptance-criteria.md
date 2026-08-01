@@ -477,6 +477,160 @@ AC-F1a-6's `exchange` / `credit_note` were illustrative and contradict `REQUIREM
 - **F1a declares no HTTP surface.** Every AC is service-level, so the suite is service-level. If routes for line
   transition and disposition land here, endpoint tests (happy path, auth denial, 422) are a follow-up.
 
+---
+
+## Group F2 - the integration layer (SLA, portal, notifications, attachments)
+
+The last forms-platform dependency before after-sales S1. Split into three buildable sub-groups because they
+share nothing but the submission: **F2a** SLA, **F2b** portal, **F2c** attachments and notifications. Each can
+land and be gated on its own.
+
+Substrate note that shapes all three: a submission has **no `company_id`** (no `CompanyScopedMixin`), while the
+multi-company work is landing elsewhere. Do not add one here on a guess.
+
+### F2a - SLA reaches submissions
+
+- **AC-F2a-1** `[BE]` Given `workflow_submission` is absent from the SLA machinery, Then it is added to
+  **BOTH** definitions of the tuple: `FORM_SLA_TYPES` at `app/services/form_sla_service.py:32` **and** the
+  duplicated literal `_FORM_SLA_TYPES` at `app/schemas/sla.py:559`, which drives a Pydantic validator at `:581`.
+  **Adding it to only one passes the service and then 422s at the schema boundary.** A test must assert the two
+  are equal, so the next person cannot half-add a type.
+- **AC-F2a-2** `[BE]` Given the duplication is itself the defect, Then prefer making `app/schemas/sla.py` import
+  the tuple rather than restate it, unless that creates an import cycle. If it does, keep both and pin equality
+  with the test above, and say why in a comment.
+- **AC-F2a-3** `[BE][MIG]` Given stage config lives in `form_sla_configs` keyed by
+  `(source_entity_type, stage_code)` with `start_event` / `resolve_event`, Then at least one stage is seeded for
+  `workflow_submission`, following the live shape (`complaint` uses `main`: submit -> approved,rejected, then
+  `customer_service`: approved -> resolved).
+- **AC-F2a-4** `[BE]` Given a stage is identified by `(source_entity_type, team_set_code)` and stages must not
+  share a policy row, Then each seeded stage has its own, or the known duplicate-assignment bug returns: a
+  shared policy plus an `_active_tracker` lookup that ignores `team_set_code` sends two "sla_assigned"
+  WhatsApp messages for one form.
+- **AC-F2a-5** `[BE]` Given a submission's status now moves by **derivation** as well as by hand (F1a), Then a
+  derived move emits the SLA event the same as a manual one. Derivation is the only status writer for a
+  deriving definition, so an SLA that only listens to `apply_transition` would never start or resolve a clock on
+  exactly the forms after-sales needs.
+- **AC-F2a-6** `[BE]` Given `advance_on_event` defaults to NULL meaning "any resolve advances", Then each seeded
+  stage sets it explicitly to the approving event, or a rejection spawns the next stage. This is a known
+  production defect in the existing configs, not a hypothetical.
+- **AC-F2a-7** `[BE]` Given the handling lock, Then "escalated" is `escalated_at IS NOT NULL`, never
+  `current_tier > 1`. A form can legitimately START above tier 1, so keying on tier falsely locks a
+  never-escalated form and disables its CTAs.
+- **AC-F2a-8** `[BE]` Given `conversation_sla_tracking` is shared by two systems discriminated only by
+  `source_entity_type`, Then every contact-keyed conversation query keeps using `conversation_tracking_scope()`.
+  Adding a sixth form type widens the set of rows a careless conversation query would falsely match.
+
+### F2b - portal submission
+
+- **AC-F2b-1** `[BE][MIG]` Given a submission may come from a contact rather than a user, Then it carries
+  `respondent_contact_id` to `respond_contacts`, plus `source_entity_type` / `source_entity_id` so a submission
+  can point back at whatever spawned it.
+- **AC-F2b-2** `[BE]` Given not every form is public, Then a **definition declares** whether it is
+  portal-submittable and by which party kind. Default closed: a form is internal until someone says otherwise.
+  This is the one place in the forms platform where fail-open would expose data.
+- **AC-F2b-3** `[BE]` Given portal rows are created by `_instantiate`, Then `respond_inbox_url` is set **at row
+  creation**. The admin chat panel renders empty otherwise, and it must be excluded from any
+  `_editable_fields` payload application.
+- **AC-F2b-4** `[BE]` Given `PortalToken.contact_id` stores the internal `respond_contacts.id`, Then any
+  Respond.io inbox URL or message call resolves the contact's `respond_io_id` first. The two are not
+  interchangeable and confusing them is a documented recurring bug.
+- **AC-F2b-5** `[BE]` Given the portal already carries the four bespoke forms, Then a submission's portal
+  surface reuses `PortalToken` + OTP rather than adding a second token scheme.
+
+### F2c - attachments and notifications
+
+- **AC-F2c-1** `[BE][MIG]` Given attachments, Then both **submission-level and line-level** linkage exist,
+  reusing `attachments` and the existing `storage_router`. Line-level matters because the after-sales flow
+  attaches proof per returned item, not per case.
+- **AC-F2c-2** `[BE]` Given attachment keys, Then they are `{type}/{id}/{original_filename}`, never
+  `{type}/{name}`, which collides across records. `original_filename` is the immutable upload name and the key
+  basename; `stored_filename` is the editable display name.
+- **AC-F2c-3** `[BE]` Given per-type caps, Then the cap is read from the configurable
+  `attachment_types.max_count_per_entity`, with blank meaning unlimited. Do not hardcode a limit.
+- **AC-F2c-4** `[BE]` Given `notifications.user_id` is **NOT NULL** (verified), Then a contact-facing
+  notification cannot be written by putting a contact in `user_id`. Whatever path is chosen must be explicit
+  about how a contact is addressed, and a test must cover a contact-only recipient. This is the constraint most
+  likely to be discovered late.
+- **AC-F2c-5** `[BE]` Given every Respond.io send must be auditable, Then a send writes an `integration_log`
+  row on **success and failure**, mirroring `_send_and_log`. Local testing runs with intentionally wrong
+  credentials, so a 401'd send must still appear in the outbox. `integration_log.business_id` is a UUID column:
+  use the notification id, never a composite string.
+- **AC-F2c-6** `[BE]` Given notification is a post-commit side effect, Then it is best-effort: catch and warn,
+  never raise. Otherwise the caller gets a 500 for an operation that actually succeeded, and the retry takes an
+  idempotent path that never backfills the missed side effect.
+- **AC-F2c-7** `[BE]` Given SLA notify is a matrix, Then the stage boolean AND the per-user per-event toggle both
+  gate a channel. In-app always sends when the stage allows; WhatsApp additionally needs a linked
+  `RespondContact`.
+
+### F2a corrections - after the red suite (2026-08-01)
+
+Writing the suite produced ten findings. Six needed a decision. Where these conflict with F2a above, **this
+section wins**.
+
+**AC-F2a-2 resolved, preferred branch confirmed.** `app/schemas/sla.py` CAN import the tuple from
+`form_sla_service` with no cycle (verified: importing the service never pulls in the schema module, and
+`app/schemas/__init__.py` is a bare comment). So delete the literal and import it, and assert **identity** not
+equality: equality would pass a second literal that merely agrees today.
+
+- **AC-F2a-9** `[BE]` **A deriving definition has no reachable event to start a clock, so a creation event is
+  required.** `assert_manual_header_move_allowed` refuses every manual move INTO the derived pair, and a
+  submission is *created* on the open rung with no transition at all. So the only header events a deriving form
+  can fire are the pair's two keys, and the resolved one fires when the work FINISHES. A stage could only start at
+  the wrong end of the clock. Therefore: a distinct **`submission_created`** event is emitted when a submission is
+  created, and a deriving definition's first stage starts there. Non-deriving forms keep starting on the
+  status-move event, exactly as `complaint` starts on `submit`. Two event sources, chosen per definition, rather
+  than overloading status with a meaning it does not have.
+- **AC-F2a-10** `[BE][MIG]` **`form_sla_configs` must scope per definition.** `emit_event` selects every active
+  config for the TYPE, and `workflow_submission` is one type for every definition, so one seeded chain would apply
+  identically to an RMA form, a warranty claim and a satisfaction survey. Worse, `start_event` names status KEYS
+  and keys are shared across forks by design, so a forked definition that renames a rung silently stops matching
+  while one that reuses a key inherits another form's stage. Add a **nullable `form_sla_configs.definition_id`**
+  (NULL = applies to every definition, so the five existing form types are untouched) plus one predicate in
+  `emit_event`. After-sales needs several definitions with different stages; without this, F2a delivers a single
+  global chain and S1 cannot use it.
+- **AC-F2a-11** `[BE][MIG]` **Seed ONE stage, on the default vocabulary.** AC-F2a-3 said to follow the live
+  two-stage complaint shape; that cannot be expressed here. The default submission graph's post-decision rungs
+  (`approved`, `rejected`) are both terminal and nothing leaves a terminal rung, so there is no rung for a second
+  stage to resolve on. Widening the default graph to create one is exactly what F1 refuses ("every real form is
+  expected to fork", pinned by a test so widening is a conscious act). So: one stage on the default, and forked
+  definitions add their own chained stages via AC-F2a-10. **Supersedes AC-F2a-3's two-stage instruction.** Note
+  AC-F2a-4 is then vacuous against a single row, so its behavioural half must be tested on a two-stage chain the
+  test builds itself.
+- **AC-F2a-12** `[BE]` **The emit belongs in the service callers, post-commit, not inside
+  `recompute_submission_status`.** That function documents "flushes, never commits", and `_start_for_config`
+  calls `db.commit()` unconditionally, so an emit inside recompute would commit a caller's half-built
+  transaction: `create_submission` recomputes BEFORE its own commit, so an SLA start would commit a partially
+  built submission. `create_submission`, `update_submission(lines=...)` and `apply_line_transition` each compare
+  the header status before and after and emit after committing, best-effort.
+- **AC-F2a-13** `[BE]` **Every SLA notification for a submission currently links to a 404.** Four per-type lookup
+  tables have no `workflow_submission` entry and each degrades silently: `_form_detail_link` falls through to
+  `/workflow-submission/{id}`, which is not a real FE route; `_STAGE_ACTION_LABELS` degrades a precise escalation
+  reason to "The assignee did not act on this form"; `_FE_RECORD_ROUTES` (and `MyPendingSLAWidget.ENTITY_ROUTES`,
+  which its comment says must match) resolves a notification link to a Respond inbox instead of the record; and
+  `_ENTITY_NUMBER_SOURCE` has no entry, so notifications name the type rather than a document. Fix the first
+  three in F2a. `_ENTITY_NUMBER_SOURCE` cannot be fixed: `workflow_submissions` has no number column and
+  numbering is explicitly ungrilled, so the type-name fallback stays, but as a recorded choice.
+- **AC-F2a-14** `[BE]` `submission_status_event(status_key)` must be **injective** over the status keys: two keys
+  mapping to one event name means one rung's move fires another rung's stage. Returning the key itself satisfies
+  this and reads naturally in a seeded config.
+
+Two flagged, deliberately NOT fixed here:
+
+- **`resolved_by` is auto-stamped from the tracker's assignee**, so a derived resolve names a person rather than
+  nobody, against the spirit of AC-F1a-29. Changing it affects all five existing form types, so F2a pins the
+  weaker correct invariant instead: a derived resolve must not name whoever decided the *line*.
+- **The reopen path stays unreachable** (task #17): no add-one-line endpoint, and `assert_lines_replaceable`
+  refuses replacement once any line is decided, which is always true of a resolved submission. F2a inherits this;
+  a stage configured to start on the open key can therefore never restart.
+
+### Gates for all three
+
+- **AC-F2-8** `[BE]` Full-suite failure set identical to the pre-slice baseline, compared set-wise, run
+  **serially** with `-p no:randomly`, and **with the dev stack stopped** - a live backend on the same database
+  produces hundreds of bogus failures (observed: 1002).
+- **AC-F2-9** `[BE][MIG]` Migrations orchestrator-owned, chained onto `312_wf_line_status`, exactly one head,
+  and written defensively since the shared dev database is stamped on another worktree's chain.
+
 ## Deferred, with the reason
 
 - **F1a** (submission **lines** carry `status_id` + disposition, header status derived) is a separate slice.

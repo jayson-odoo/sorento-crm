@@ -75,6 +75,10 @@ const ENTITY_ROUTES: Record<string, { base: string; label: string }> = {
   complaint: { base: '/complaint-management/complaints', label: 'Complaint' },
   purchase_request: { base: '/procurement-management/purchase-requests', label: 'Purchase request' },
   sponsorship_form: { base: '/procurement-management/purchase-requests', label: 'Sponsorship form' },
+  workflow_submission: { base: '/workflow-forms-management/submissions', label: 'Form submission' },
+  // 'ticket' is the example the comment below uses for what goes wrong when a member of
+  // FORM_SLA_TYPES is absent here, and it was itself absent. Added for the same reason.
+  ticket: { base: '/ticket-management/tickets', label: 'Ticket' },
 };
 
 type AnyTask = MyPendingSLAItem | TeamPendingItem;

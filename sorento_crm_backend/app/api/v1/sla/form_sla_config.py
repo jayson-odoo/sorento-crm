@@ -47,6 +47,11 @@ def _serialize(config: FormSLAConfig) -> dict:
         "policy_id": str(config.policy_id),
         "agent_code": config.agent_code,
         "team_set_code": config.team_set_code,
+        # Built by hand, so a column the response model merely inherits never reaches
+        # the frontend: an admin's per-definition stage would read as a global one.
+        "definition_id": (
+            str(config.definition_id) if config.definition_id is not None else None
+        ),
         "start_event": config.start_event,
         "respond_event": config.respond_event,
         "resolve_event": config.resolve_event,
@@ -111,6 +116,14 @@ def _validate_policy(db: Session, policy_id: str) -> None:
         raise handle_validation_error(f"SLA Policy not found: {policy_id}")
 
 
+def _same_definition_scope(definition_id: Optional[str]):
+    """Filter matching rows in the SAME definition scope. ``NULL = NULL`` is never true
+    in SQL, so the every-definition scope has to be tested with IS NULL."""
+    if definition_id:
+        return FormSLAConfig.definition_id == definition_id
+    return FormSLAConfig.definition_id.is_(None)
+
+
 def _validate_next(db: Session, next_id: Optional[str], self_id: Optional[str]) -> None:
     if not next_id:
         return
@@ -133,12 +146,16 @@ async def create_form_sla_config(
         _validate_policy(db, payload.policy_id)
         _validate_next(db, payload.next_config_id, None)
         if payload.is_active:
+            # Scoped by definition_id as well as type + stage: one type covers every
+            # workflow form definition, so an RMA form and a warranty claim both want a
+            # stage called 'main'. NULL (applies to every definition) is its own scope.
             existing = (
                 db.query(FormSLAConfig)
                 .filter(
                     FormSLAConfig.source_entity_type == payload.source_entity_type,
                     FormSLAConfig.stage_code == payload.stage_code,
                     FormSLAConfig.is_active.is_(True),
+                    _same_definition_scope(payload.definition_id),
                 )
                 .first()
             )
@@ -184,6 +201,7 @@ async def update_form_sla_config(
         new_active = update_data.get("is_active", config.is_active)
         new_type = update_data.get("source_entity_type", config.source_entity_type)
         new_stage = update_data.get("stage_code", config.stage_code)
+        new_definition = update_data.get("definition_id", config.definition_id)
         if new_active:
             collision = (
                 db.query(FormSLAConfig)
@@ -192,6 +210,7 @@ async def update_form_sla_config(
                     FormSLAConfig.stage_code == new_stage,
                     FormSLAConfig.is_active.is_(True),
                     FormSLAConfig.id != config_id,
+                    _same_definition_scope(new_definition),
                 )
                 .first()
             )

@@ -150,6 +150,17 @@ class FormSLAConfig(Base):
     policy_id = Column(UUID(as_uuid=False), ForeignKey("sla_policies.id", ondelete="RESTRICT"), nullable=False)
     agent_code = Column(String(100), nullable=False)
     team_set_code = Column(String(100), nullable=True)
+    # Definition scope, for the one form type that has definitions. NULL = the stage
+    # applies to EVERY definition of the type, which is what keeps the five
+    # single-form types (complaint, PR, SF, stock_inquiry, ticket) untouched. Set = the
+    # stage applies to that definition only, because `workflow_submission` is one type
+    # covering an RMA form, a warranty claim and a satisfaction survey at once, and
+    # start_event names status KEYS that forked definitions deliberately share.
+    definition_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("workflow_form_definitions.id", ondelete="CASCADE"),
+        nullable=True,
+    )
     start_event = Column(String(100), nullable=False)
     respond_event = Column(String(100), nullable=True)
     resolve_event = Column(String(100), nullable=True)
@@ -179,6 +190,7 @@ class FormSLAConfig(Base):
     __table_args__ = (
         Index("ix_form_sla_configs_source_entity_type", "source_entity_type"),
         Index("ix_form_sla_configs_policy_id", "policy_id"),
+        Index("ix_form_sla_configs_definition_id", "definition_id"),
     )
 
 

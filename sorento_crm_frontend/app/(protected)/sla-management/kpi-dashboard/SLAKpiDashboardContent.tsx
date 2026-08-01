@@ -62,6 +62,9 @@ const ENTITY_ROUTES: Record<string, string> = {
   complaint: '/complaint-management/complaints',
   purchase_request: '/procurement-management/purchase-requests',
   sponsorship_form: '/procurement-management/purchase-requests',
+  // Missing here means the row silently falls through to the conversation tracking
+  // page rather than the record, which reads as a broken link rather than a gap.
+  workflow_submission: '/workflow-forms-management/submissions',
 };
 
 function taskHref(t: KpiTaskRow): string {

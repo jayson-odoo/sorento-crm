@@ -1,8 +1,10 @@
 """Form SLA orchestrator: starts/responds/resolves SLA trackers for forms.
 
 Forms supported (source_entity_type values): stock_inquiry, purchase_request,
-sponsorship_form, complaint. Configuration lives in form_sla_configs and is
-queried by source_entity_type. Trackers themselves reuse conversation_sla_tracking
+sponsorship_form, complaint, ticket, workflow_submission. Configuration lives in
+form_sla_configs and is queried by source_entity_type - plus, for workflow_submission,
+an optional definition_id scope, because one type covers every form definition.
+Trackers themselves reuse conversation_sla_tracking
 (same table) — a tracker for a form has source_entity_type set to the form's
 type, source_entity_id set to the form row's id.
 
@@ -14,6 +16,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.access import AccessAgent
@@ -35,6 +38,12 @@ FORM_SLA_TYPES = (
     "sponsorship_form",
     "complaint",
     "ticket",
+    # A form submission is a form, so every form-SLA path applies to it: the overdue
+    # scan, the handling-lock scope, the manual-escalate guard and the
+    # conversation-vs-form discriminator all test membership of this one tuple.
+    # ``app/schemas/sla.py`` imports it rather than restating it, so a type can never
+    # be half-added (service accepts, Pydantic boundary 422s).
+    "workflow_submission",
 )
 
 
@@ -107,6 +116,11 @@ def _working_due_naive(db: Session, start_dt: datetime, hours: float) -> datetim
 
 # (table, number column) per form type - for resolving a human-readable document
 # number instead of showing the raw UUID in notifications.
+#
+# `workflow_submission` is deliberately absent: `workflow_submissions` has no number
+# column and submission numbering is not designed yet, so the caller's type-name
+# fallback ("Workflow submission") is the honest answer. A UUID must never appear in
+# its place. Add the entry when a number column lands.
 _ENTITY_NUMBER_SOURCE: dict = {
     "complaint": ("complaints", "complaint_number"),
     "stock_inquiry": ("stock_inquiries", "inquiry_number"),
@@ -193,6 +207,13 @@ _STAGE_ACTION_LABELS: dict[tuple[str, str], dict[str, str]] = {
         "response": "respond to the ticket",
         "resolution": "resolve the ticket",
     },
+    # The seeded workflow_submission stage (see workflow_submission_sla): resolves on
+    # approve OR reject and declares no respond_event, so a single verb covers both
+    # clocks. Without an entry the escalation reason degrades to the generic "did not
+    # act on this form", which tells the new assignee nothing about what is owed.
+    ("workflow_submission", "main"): {
+        "resolution": "approve or reject the submission",
+    },
 }
 
 
@@ -220,6 +241,11 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
         return f"/complaint-management/complaints/{source_entity_id}"
     if source_entity_type == "ticket":
         return f"/ticket-management/tickets/{source_entity_id}"
+    if source_entity_type == "workflow_submission":
+        return f"/workflow-forms-management/submissions/{source_entity_id}"
+    # The fallback builds a route from the type name, which is right for nothing in
+    # particular: any type reaching it links every SLA notification to a 404. Add the
+    # real route above when a new form type joins FORM_SLA_TYPES.
     return f"/{source_entity_type.replace('_', '-')}/{source_entity_id}"
 
 
@@ -317,8 +343,15 @@ class FormSLAOrchestrator:
         *,
         contact_id: Optional[str] = None,
         actor_user_id: Optional[str] = None,
+        definition_id: Optional[str] = None,
     ) -> None:
         """Evaluate every active config for this form type and dispatch matching action.
+
+        ``definition_id`` narrows the config set for a type whose rows are not all one
+        form: a config that names a definition applies ONLY to that definition, and a
+        config with no definition applies to every one of them. Omitting the argument
+        therefore selects the every-definition configs only, which is exactly the five
+        single-form types' behaviour before the column existed.
 
         Errors are logged but never propagated — SLA orchestration must not block
         the underlying state transition.
@@ -327,11 +360,20 @@ class FormSLAOrchestrator:
             return
 
         try:
+            scope = (
+                FormSLAConfig.definition_id.is_(None)
+                if not definition_id
+                else or_(
+                    FormSLAConfig.definition_id.is_(None),
+                    FormSLAConfig.definition_id == str(definition_id),
+                )
+            )
             configs = (
                 self.db.query(FormSLAConfig)
                 .filter(
                     FormSLAConfig.source_entity_type == source_entity_type,
                     FormSLAConfig.is_active.is_(True),
+                    scope,
                 )
                 .all()
             )
@@ -1169,7 +1211,16 @@ class FormSLAOrchestrator:
         # Destination link mirroring the pending-tasks row click: routed form types open
         # their in-system record; others (e.g. ticket) open the Respond conversation.
         # _FE_RECORD_ROUTES must match MyPendingSLAWidget.ENTITY_ROUTES.
-        _FE_RECORD_ROUTES = {"stock_inquiry", "complaint", "purchase_request", "sponsorship_form"}
+        _FE_RECORD_ROUTES = {
+            "stock_inquiry",
+            "complaint",
+            "purchase_request",
+            "sponsorship_form",
+            # A submission has an in-system detail page, so its notification must open
+            # THAT and not a Respond inbox: a submission need not have a contact at all,
+            # in which case the inbox branch resolves to nothing.
+            "workflow_submission",
+        }
         if s_type in _FE_RECORD_ROUTES:
             form_url = full_link
         else:
@@ -1334,6 +1385,7 @@ def emit_form_event(
     *,
     contact_id: Optional[str] = None,
     actor_user_id: Optional[str] = None,
+    definition_id: Optional[str] = None,
 ) -> None:
     """Module-level helper: thin wrapper for callers that don't hold an orchestrator."""
     FormSLAOrchestrator(db).emit_event(
@@ -1342,4 +1394,5 @@ def emit_form_event(
         event_name,
         contact_id=contact_id,
         actor_user_id=actor_user_id,
+        definition_id=definition_id,
     )
