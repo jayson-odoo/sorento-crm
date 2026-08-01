@@ -18,6 +18,13 @@ class WorkflowFormDefinitionUpdate(BaseModel):
     description: Optional[str] = None
     is_active: Optional[bool] = None
     draft_schema: Optional[Dict[str, Any]] = None
+    # Line-derived header status (F1a), opt-in per definition. Sent as a group: the
+    # keys name rungs of the HEADER graph in force for this form, the open one must be
+    # that graph's starting state and the resolved one must not be final, and the save
+    # is refused with `status_derivation_misconfigured` when either rule is broken.
+    derives_status_from_lines: Optional[bool] = None
+    derived_open_status_key: Optional[str] = Field(None, max_length=64)
+    derived_resolved_status_key: Optional[str] = Field(None, max_length=64)
 
 
 class WorkflowFormVersionOut(BaseModel):
@@ -49,6 +56,11 @@ class WorkflowFormDefinitionOut(BaseModel):
     published_version_number: Optional[int] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # Off, with no keys, on every definition that has not opted in. Reported so the
+    # builder can show the current configuration instead of guessing at it.
+    derives_status_from_lines: bool = False
+    derived_open_status_key: Optional[str] = None
+    derived_resolved_status_key: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -76,6 +88,49 @@ class WorkflowTransitionRequest(BaseModel):
 
     to_status_id: str
     remark: Optional[str] = None
+
+
+class WorkflowLineTransitionRequest(BaseModel):
+    """The line status to move to. The engine resolves which edge authorises it.
+
+    No remark: ``workflow_submission_transition_logs`` is the HEADER's companion log,
+    and a line move writes nothing there, so a remark would have nowhere to land.
+    """
+
+    to_status_id: str
+
+
+class WorkflowLineDispositionRequest(BaseModel):
+    """How a decided line will be settled, or ``null`` to clear it.
+
+    Both fields default to None, so an omitted ``disposition`` CLEARS. That is
+    deliberate: this is the one payload whose whole purpose is to set or unset a single
+    value, and a PATCH that silently kept the old one would leave the caller unable to
+    clear it at all.
+    """
+
+    disposition: Optional[str] = Field(None, max_length=150)
+    disposition_reason: Optional[str] = None
+
+
+class WorkflowLineDispositionOptionOut(BaseModel):
+    """One selectable disposition, straight from the bound lookup set."""
+
+    value: str
+    label: str
+    description: Optional[str] = None
+
+
+class WorkflowLineDispositionOptionsOut(BaseModel):
+    """The dispositions an admin currently offers, in their configured order.
+
+    ``set_key`` is None when nothing is bound to the column, which is a real state (a
+    deployment that never seeded the set) and reads as an empty dropdown rather than an
+    error. Never a hardcoded list: the options are admin-editable master data.
+    """
+
+    set_key: Optional[str] = None
+    options: List[WorkflowLineDispositionOptionOut] = Field(default_factory=list)
 
 
 class WorkflowSubmissionLineOut(BaseModel):

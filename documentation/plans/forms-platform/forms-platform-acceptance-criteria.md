@@ -398,6 +398,29 @@ header between the two declared rungs, so a deriving submission could never reac
   closed by hand. This keeps ADR-0013's one-writer rule scoped to the values that are actually derived, which is
   what the rule is for. **Supersedes AC-F1a-9.**
 
+### CORRECTION 2b - gate on the TARGET only (third attempt at this rule)
+
+Correction 2 fixed "a deriving submission can never be closed" by scoping the refusal to the derived pair. That
+was still wrong, and only became visible once the routes existed and someone asked what a user could click.
+
+The guard refused a move when **either** endpoint was in the pair. But AC-F1a-23 forces the open key to be the
+graph's initial rung, so a deriving submission is **always created on a pair rung**, so `from` is always in the
+pair, so **every manual move was refused**. `allowed-transitions` returned an empty list forever and a deriving
+submission's detail page had no action buttons at all. The exact property pair-scoping was introduced to provide
+was still not achieved.
+
+- **AC-F1a-30** `[BE]` Given a deriving definition, Then a manual header move is refused **only when the TARGET
+  is one of the two declared rungs** (`status_derived_not_writable`); moving **out** of the pair is permitted.
+  Once the header is parked outside both rungs, `recompute_submission_status` declines to touch it, so permitting
+  the move creates no second writer. Same shape as `complaint_fulfilment_service`, where `closed` and `rejected`
+  are sticky and auto-fulfilment leaves them alone. **Supersedes AC-F1a-22, which supersedes AC-F1a-9.**
+
+The lesson worth keeping: "refuse if either end is involved" reads as the safer choice and was the unusable one.
+A guard on a derived value has to be asymmetric, because the whole point is that one direction is owned by the
+machine and the other by a person. Also: the service-level test suite hid this by hand-parking the header, so
+only an HTTP-level test with a real creation path exposed it. **A test that constructs the state it asserts on
+cannot tell you whether that state is reachable.**
+
 ### CORRECTION 3 - the two declared rungs need validating, or a submission strands outside them
 
 Both found by the test author, both otherwise silent:

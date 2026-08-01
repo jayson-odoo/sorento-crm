@@ -19,9 +19,13 @@ from app.schemas.workflow_forms import (
     WorkflowFormDefinitionCreate,
     WorkflowFormDefinitionOut,
     WorkflowFormDefinitionUpdate,
+    WorkflowLineDispositionOptionsOut,
+    WorkflowLineDispositionRequest,
+    WorkflowLineTransitionRequest,
     WorkflowPreviewOut,
     WorkflowPublishedDefinitionOut,
     WorkflowSubmissionCreate,
+    WorkflowSubmissionLineOut,
     WorkflowSubmissionOut,
     WorkflowSubmissionUpdate,
     WorkflowTransitionRequest,
@@ -29,6 +33,9 @@ from app.schemas.workflow_forms import (
 from app.form_engine.schemas import validate_form_doc
 from app.services.error_handler import AppException
 from app.services.workflow_forms_service import WorkflowFormsService
+from app.services.workflow_submission_line_disposition import (
+    active_disposition_options,
+)
 from app.models.workflow_forms import WorkflowSubmission
 
 router = APIRouter()
@@ -139,6 +146,13 @@ def update_definition(
         description=body.description,
         is_active=body.is_active,
         draft_schema=body.draft_schema,
+        # Turning line-derived status on is a definition edit, not a separate endpoint:
+        # the two keys and the flag are one configuration and validating them apart would
+        # let a half-saved pair through. A refused pair is 422
+        # `status_derivation_misconfigured` and the row is left exactly as it was.
+        derives_status_from_lines=body.derives_status_from_lines,
+        derived_open_status_key=body.derived_open_status_key,
+        derived_resolved_status_key=body.derived_resolved_status_key,
     )
     return svc._def_out(d)
 
@@ -313,3 +327,92 @@ def apply_transition(
         current_user.get("id") or "",
     )
     return _serialize_submission(svc, str(getattr(s, "id", "") or ""))
+
+
+# --- submission lines ---
+#
+# Both writes answer with the whole SUBMISSION, not with the line. Deciding a line can
+# move the header (that is the entire point of a derived status), so a line-shaped
+# response would leave the caller holding a header it has to guess is stale. One payload,
+# one refresh, and the line is in ``lines`` where the caller already reads it.
+#
+# The disposition options live at ``/line-dispositions`` rather than under ``/lines/``
+# on purpose: a literal segment sharing a prefix with ``/lines/{line_id}`` is exactly
+# how a fixed path gets captured as an id (the /integration/escalate case), and moving
+# it out of the way costs nothing.
+
+
+@router.get("/line-dispositions", response_model=WorkflowLineDispositionOptionsOut)
+def list_line_dispositions(
+    db: Session = Depends(get_db),
+    _user: dict = Depends(require_permission_with_api_key("workflow_forms.submissions.view")),
+):
+    """The dispositions a line may be given, from the bound lookup set.
+
+    Never a hardcoded list in the client: a disposition is admin-editable master data,
+    so the picker has to read whatever the deployment currently offers or it will offer
+    a value the write path refuses.
+    """
+    set_key, options = active_disposition_options(db)
+    return {"set_key": set_key, "options": options}
+
+
+@router.get("/lines/{line_id}", response_model=WorkflowSubmissionLineOut)
+def get_line(
+    line_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(require_permission_with_api_key("workflow_forms.submissions.view")),
+):
+    svc = WorkflowFormsService(db)
+    return svc._line_out(svc.get_line(line_id))
+
+
+@router.get("/lines/{line_id}/allowed-transitions")
+def allowed_line_transitions(
+    line_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(require_permission_with_api_key("workflow_forms.submissions.view")),
+):
+    """The decisions to offer on this line. Empty for a form without line statuses."""
+    return {"transitions": WorkflowFormsService(db).allowed_line_transitions(line_id)}
+
+
+@router.post("/lines/{line_id}/transition", response_model=WorkflowSubmissionOut)
+def apply_line_transition(
+    line_id: str,
+    body: WorkflowLineTransitionRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("workflow_forms.submissions.transition")),
+):
+    """Decide one line, then re-derive the header.
+
+    The same permission as a header move: this IS a status move, on the graph a line
+    answers to, and a reviewer who may not move a submission must not be able to move it
+    indirectly by deciding its lines.
+    """
+    svc = WorkflowFormsService(db)
+    line = svc.apply_line_transition(line_id, body.to_status_id, current_user.get("id") or "")
+    return _serialize_submission(svc, str(getattr(line, "submission_id", "") or ""))
+
+
+@router.patch("/lines/{line_id}/disposition", response_model=WorkflowSubmissionOut)
+def set_line_disposition(
+    line_id: str,
+    body: WorkflowLineDispositionRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("workflow_forms.submissions.edit")),
+):
+    """Record how a line will be settled, or clear it.
+
+    The EDIT permission, not the transition one: a disposition is orthogonal to the
+    line's status and recording it decides nothing, so it must not need the authority to
+    move a submission (and must not move one).
+    """
+    svc = WorkflowFormsService(db)
+    line = svc.set_line_disposition(
+        line_id,
+        body.disposition,
+        current_user.get("id") or "",
+        disposition_reason=body.disposition_reason,
+    )
+    return _serialize_submission(svc, str(getattr(line, "submission_id", "") or ""))

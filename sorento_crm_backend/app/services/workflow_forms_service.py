@@ -265,6 +265,16 @@ class WorkflowFormsService:
             "published_version_number": pub_ver.version_number if pub_ver else None,
             "created_at": d.created_at,
             "updated_at": d.updated_at,
+            # The builder has to be able to READ the derivation config it just saved, and
+            # this dict is built by hand: a field the response model merely inherits never
+            # reaches the frontend, which reads as a toggle that refuses to stay on.
+            "derives_status_from_lines": bool(
+                getattr(d, "derives_status_from_lines", False)
+            ),
+            "derived_open_status_key": getattr(d, "derived_open_status_key", None),
+            "derived_resolved_status_key": getattr(
+                d, "derived_resolved_status_key", None
+            ),
         }
 
     def get_definition(self, definition_id: str) -> WorkflowFormDefinition:
@@ -530,29 +540,34 @@ class WorkflowFormsService:
             "limit": limit,
         }
 
+    def _line_out(self, ln: WorkflowSubmissionLine) -> Dict[str, Any]:
+        """One line row, as both the submission payload and the line routes report it.
+
+        One serializer, so a line read and the same line inside its submission can never
+        disagree about what it holds.
+        """
+        return {
+            "id": ln.id,
+            "line_group_id": ln.line_group_id,
+            "sort_order": ln.sort_order,
+            "row_data": ln.row_data or {},
+            # NULL on every line of a form that does not use line statuses, which is
+            # every form today. Keys as well as the id: the frontend may not render a
+            # UUID.
+            "status_id": ln.status_id,
+            "status_key": ln.status_key,
+            "status_label": ln.status_label,
+            "disposition": ln.disposition,
+            "disposition_reason": ln.disposition_reason,
+        }
+
     def _submission_out(
         self,
         s: WorkflowSubmission,
         include_logs: bool = True,
         include_form_schema: bool = False,
     ) -> Dict[str, Any]:
-        lines = [
-            {
-                "id": ln.id,
-                "line_group_id": ln.line_group_id,
-                "sort_order": ln.sort_order,
-                "row_data": ln.row_data or {},
-                # NULL on every line of a form that does not use line statuses, which is
-                # every form today. Keys as well as the id: the frontend may not render a
-                # UUID.
-                "status_id": ln.status_id,
-                "status_key": ln.status_key,
-                "status_label": ln.status_label,
-                "disposition": ln.disposition,
-                "disposition_reason": ln.disposition_reason,
-            }
-            for ln in (s.lines or [])
-        ]
+        lines = [self._line_out(ln) for ln in (s.lines or [])]
         logs = []
         if include_logs:
             logs = [
@@ -1038,6 +1053,45 @@ class WorkflowFormsService:
                 status_code=404, message="Submission line not found.", code="not_found"
             )
         return line
+
+    def allowed_line_transitions(self, line_id: str) -> List[Dict[str, Any]]:
+        """The decisions to offer as buttons on one line.
+
+        Resolved through the same graph ``apply_line_transition`` guards with, or a user
+        is shown a decision the server will refuse.
+
+        No user parameter and no role gate, unlike the header's twin: the retired role
+        gating is keyed to HEADER statuses, and inventing a per-line rule here would be a
+        new authorization rule smuggled in as a list endpoint.
+
+        Empty for a line with no status (a form that never opted in) and for a line
+        stranded off its graph. Both are "no decision is available", which is what the
+        caller has to render, and neither is an error to read.
+        """
+        line = self.get_line(line_id)
+        submission = line.submission
+        status_id = getattr(line, "status_id", None)
+        if submission is None or status_id is None:
+            return []
+        scope_id = str(submission.definition_id)
+        graph = resolve_graph(self.db, WORKFLOW_SUBMISSION_LINE_ENTITY_TYPE, scope_id)
+        out: List[Dict[str, Any]] = []
+        for edge in available_transitions(
+            self.db, WORKFLOW_SUBMISSION_LINE_ENTITY_TYPE, str(status_id), scope_id
+        ):
+            target = graph.by_id(str(edge.to_status_id))
+            if target is None:
+                continue
+            out.append(
+                {
+                    "id": edge.id,
+                    "label": edge.label,
+                    "to_status_id": target.id,
+                    "to_status_key": target.key,
+                    "to_status_label": target.label,
+                }
+            )
+        return out
 
     def apply_line_transition(
         self,

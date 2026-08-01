@@ -191,13 +191,25 @@ def assert_manual_header_move_allowed(
     from_status_id: Optional[str],
     to_status_id: str,
 ) -> None:
-    """Refuse a hand-made move into or out of the derived pair. Raises 422.
+    """Refuse a hand-made move INTO the derived pair. Raises 422.
 
-    Scoped to the pair, not to the whole graph. Derivation only ever moves the header
-    between those two rungs, so refusing everything would mean a deriving submission
-    could never reach any terminal state at all -- it could not be closed by hand even
-    once its lines were all decided. ADR-0013's one-writer rule is about the values that
-    are actually derived, and this keeps it there.
+    Gated on the TARGET only, and that asymmetry is the whole design:
+
+    * Moving **into** either derived rung is refused. Those two values are derivation's
+      to write, and ADR-0013 rule 11 allows exactly one writer per derived value.
+    * Moving **out** of the pair is allowed. Once the header is parked outside both
+      declared rungs, `recompute_submission_status` leaves it alone, so there is no
+      second writer to conflict with. That is the same shape as
+      `complaint_fulfilment_service`, where `closed` and `rejected` are sticky and
+      auto-fulfilment declines to touch them.
+
+    An earlier version refused a move when EITHER endpoint was in the pair, which read as
+    the safer choice and was in fact unusable: `assert_derivation_config` forces the open
+    key to be the graph's initial rung, so a submission is always created ON a pair rung,
+    so `from` was always in the pair, so every manual move was refused. The practical
+    symptom was that `allowed-transitions` returned an empty list forever and a deriving
+    submission had no action buttons at all -- the opposite of the "it can still be closed
+    by hand" property the pair-scoping was introduced to provide.
     """
     if not definition_derives_status(definition):
         return
@@ -206,14 +218,10 @@ def assert_manual_header_move_allowed(
         str(open_status.id): str(open_status.label),
         str(resolved_status.id): str(resolved_status.label),
     }
-    involved = [
-        pair[status_id]
-        for status_id in (str(from_status_id or ""), str(to_status_id or ""))
-        if status_id in pair
-    ]
-    if not involved:
+    target = str(to_status_id or "")
+    if target not in pair:
         return
-    labels = " and ".join(dict.fromkeys(involved))
+    labels = pair[target]
     raise AppException(
         status_code=422,
         message=(

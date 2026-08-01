@@ -403,15 +403,19 @@ def test_a_submission_whose_every_line_is_cancelled_is_not_derivable():
         assert _logs(db, submission) == []
 
 
-def test_a_deriving_definitions_header_cannot_be_moved_out_of_the_derived_pair_by_hand():
+def test_a_deriving_definitions_header_cannot_be_moved_INTO_the_derived_pair_by_hand():
     """The derived-but-writable trap, and the reason most of this section exists.
+
     ADR-0013 rule 11 allows exactly one writer of a status column. A header that is
     computed from its lines AND settable through ``apply_transition`` has two, and
     the moment they disagree neither is trustworthy. A distinct code is required so
     the FE can say why rather than showing a generic 422.
 
-    The submission sits on the OPEN rung here, so every move it has available leaves
-    the derived pair and every one of them is refused (AC-F1a-22)."""
+    Gated on the TARGET: writing a derived rung by hand is what must be refused. Moving
+    OUT of the pair is permitted, and has its own test, because an earlier guard that
+    refused either endpoint refused every move a real user could make (a deriving
+    submission always starts on a pair rung) and left the detail page with no buttons.
+    """
     with blank_session() as db:
         graphs = _seeded(db)
         definition = _definition(db, derives=True)
@@ -420,14 +424,37 @@ def test_a_deriving_definitions_header_cannot_be_moved_out_of_the_derived_pair_b
         with pytest.raises(AppException) as err:
             WorkflowFormsService(db).apply_transition(
                 str(submission.id),
-                graphs.header.by_key("submitted").id,
+                graphs.header.by_key(RESOLVED_KEY).id,  # a rung derivation owns
                 "ZZT by hand",
                 "zzt-user",
             )
         assert err.value.status_code == 422
         assert err.value.detail["code"] == "status_derived_not_writable"
-        assert _header_key(db, submission) == OPEN_KEY
-        assert _logs(db, submission) == []
+
+
+def test_a_deriving_definitions_header_CAN_be_moved_out_of_the_pair_by_hand():
+    """The half AC-F1a-22 was introduced to provide, and did not achieve until now.
+
+    Once the header is parked outside both declared rungs, ``recompute_submission_status``
+    leaves it alone, so permitting the move creates no second writer. Without this a
+    deriving submission could never be closed or rejected by hand at all.
+    """
+    with blank_session() as db:
+        graphs = _seeded(db)
+        definition = _definition(db, derives=True)
+        submission = _created(db, definition, rows=1)
+        outside = graphs.header.by_key("submitted")  # not in the (draft, approved) pair
+
+        WorkflowFormsService(db).apply_transition(
+            str(submission.id), outside.id, "ZZT by hand", "zzt-user"
+        )
+        # Compare by KEY so a failure names a rung instead of a uuid.
+        assert _header_key(db, submission) == "submitted"
+        # A human moved it, so unlike a derived move this logs one row WITH a mover and an
+        # authorising edge. That is the difference AC-F1a-29's marker encodes.
+        logs = _logs(db, submission)
+        assert len(logs) == 1
+        assert logs[0].user_id == "zzt-user"
 
 
 def test_a_deriving_definition_offers_no_manual_transitions_out_of_the_derived_pair():

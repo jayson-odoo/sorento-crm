@@ -25,7 +25,7 @@ test. The writer calls ``assert_disposition_allowed`` itself.
 from __future__ import annotations
 
 import uuid
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -192,6 +192,48 @@ def seed_workflow_submission_line_disposition_lookup(db: Session) -> Dict[str, i
     db.flush()
 
     return summary
+
+
+def active_disposition_options(db: Session) -> Tuple[Optional[str], List[Dict[str, Optional[str]]]]:
+    """``(set_key, options)`` for the bound set: what a UI may offer today.
+
+    Read through the BINDING rather than by ``set_key``, for the same reason
+    ``assert_disposition_allowed`` validates through it: the binding is what decides
+    which set the column answers to, so a picker built off the set key could offer
+    options the writer would then reject.
+
+    ACTIVE options only, matching the validator exactly. Offering a retired option would
+    hand the user a choice the write path refuses. Nothing is derived from
+    ``LINE_DISPOSITION_OPTIONS`` here: that tuple is the seed, not the live list, and an
+    admin may have added or retired one since.
+    """
+    binding = (
+        db.query(LookupBinding)
+        .filter(
+            LookupBinding.tenant_id.is_(None),
+            LookupBinding.table_name == LINE_DISPOSITION_TABLE,
+            LookupBinding.column_name == LINE_DISPOSITION_COLUMN,
+        )
+        .first()
+    )
+    if binding is None:
+        return None, []
+    lookup_set = db.query(LookupSet).filter(LookupSet.id == binding.set_id).first()
+    rows = (
+        db.query(LookupOption)
+        .filter(LookupOption.set_id == binding.set_id, LookupOption.is_active.is_(True))
+        .order_by(LookupOption.sort_order.asc(), LookupOption.label.asc())
+        .all()
+    )
+    options = [
+        {
+            "value": str(row.value),
+            "label": str(row.label),
+            "description": row.description,
+        }
+        for row in rows
+    ]
+    return (str(lookup_set.set_key) if lookup_set is not None else None), options
 
 
 def assert_disposition_allowed(db: Session, value: Optional[str]) -> None:
