@@ -9,6 +9,16 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { useProductAttachmentsByProduct, useDeleteProductAttachment } from '../../product-attachments/hooks/useProductAttachments';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import type { ProductAttachment } from '../../product-attachments/types/productAttachment.types';
@@ -46,6 +56,9 @@ export default function ProductAttachmentsTab({
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [detailModalAttachmentId, setDetailModalAttachmentId] = useState<string | null>(null);
   const [manageLinksFor, setManageLinksFor] = useState<{ attachmentId: string; initialKeys: string[] } | null>(null);
+  // Held as a pair so the dialog can name the file: the rows carry near-identical
+  // filenames, and an id alone tells the user nothing about which one they hit.
+  const [unlinkTarget, setUnlinkTarget] = useState<{ id: string; filename: string } | null>(null);
 
   // Fetch existing product attachments
   const { data: productAttachments, isLoading: isLoadingAttachments } = useProductAttachmentsByProduct(productId || null);
@@ -292,7 +305,14 @@ export default function ProductAttachmentsTab({
             type="button"
             variant="ghost"
             size="sm"
-            onClick={() => handleRemove(pa.id)}
+            aria-label="Unlink attachment"
+            title="Unlink attachment"
+            onClick={() =>
+              setUnlinkTarget({
+                id: pa.id,
+                filename: pa.attachment?.original_filename || 'this attachment',
+              })
+            }
             disabled={deleteMutation.isPending}
           >
             {deleteMutation.isPending ? (
@@ -444,6 +464,37 @@ export default function ProductAttachmentsTab({
           }}
         />
       )}
+      <AlertDialog
+        open={unlinkTarget != null}
+        onOpenChange={(open) => !open && setUnlinkTarget(null)}
+      >
+        {/* Capped height because at 375px a long filename pushes the footer off
+            screen, leaving the user with no way to cancel. */}
+        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unlink attachment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <span className="font-medium break-words">{unlinkTarget?.filename}</span> will no
+              longer be attached to this product. This action cannot be undone. The file stays in
+              Resource Management and can be linked again.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault();
+                if (unlinkTarget) handleRemove(unlinkTarget.id);
+                setUnlinkTarget(null);
+              }}
+              disabled={deleteMutation.isPending}
+            >
+              Unlink
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
