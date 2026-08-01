@@ -11,9 +11,13 @@ tests covering group D, and the four `/flyer-readings` routes are green on 27 mo
 deliberately never stored - see the S7.3 outcome note at the foot of this file.
 S7.4 BACKEND is DONE: `POST /flyer-readings/{id}/seed` builds a draft brochure through the
 existing `save_version`, green on 34 tests (`tests/test_dealer_kit_flyer_seed.py`) covering
-AC-E1 to AC-E4. AC-E5 is `[E2E]` and stays open with the review screen. No migration: the
-seed writes only `page`, `page_version` and `collection` rows that already exist. See the
-S7.4 outcome note at the foot of this file.
+AC-E1 to AC-E4. No migration: the seed writes only `page`, `page_version` and `collection`
+rows that already exist. See the S7.4 outcome note at the foot of this file.
+S7.4 FRONTEND is DONE: the three step review screen at `/dealer-kit/flyer-readings`, wired
+to the real API, green on 80 vitest cases and 3 playwright specs
+(`e2e/dealer-kit-flyer-seeding.spec.ts`). The E2E half of AC-E5 - the seed produces a
+version no reader can reach - is covered there; the dealer-vs-consumer half is already
+pinned by `e2e/dealer-kit-offer-pricing.spec.ts`. See the S7.4 FE outcome note at the foot.
 **Companion UAC:** `flyer-seeding-acceptance-criteria.md`
 **Input artefact:** `_SORENTO A3 FLYER 2025-2026_compressed.pdf` (36 pages, A3 portrait, vector).
 **Depends on:** S1 builder core, S2 collections.
@@ -328,3 +332,55 @@ the id assertion so a future reuse fails on the damage it does rather than on bo
 **Left open:** AC-E5 (`[E2E]`, dealer and consumer prices from one published document) needs
 the review screen and a browser, and is not faked with a backend test. The review screen
 itself, the FE half of S7.4, is next.
+
+---
+
+## S7.4 outcome, frontend half (2026-08-02)
+
+Three steps on two routes: `/dealer-kit/flyer-readings` (which flyers have been read, plus
+the upload) and `/dealer-kit/flyer-readings/{id}` (review, then seed). A sidebar entry
+called **Flyers** under Dealer Kit, added with the screen rather than after it: the
+brochure image picker shipped reachable only by typing the URL and that is not a defect
+worth repeating.
+
+**The review screen is written to be unflattering.** It opens with four figures - printed,
+matched, missing, printed twice - and if anything is missing it says, above the fold, that
+those products will NOT be in the brochure. The same list is repeated on the seed form
+before the button, and again in the result afterwards, because the result screen is the
+last moment anybody is still thinking about the flyer. Sizes are labelled a report in the
+section subtitle and there is no control anywhere that could write one, which is the rule
+S7.6 will inherit. A standing "what the draft will not have right" card names the guessed
+headings, the blank product photos and the rows the baseline tolerance split - none of
+which are in the report, so none of which would ever appear on their own.
+
+Decisions worth keeping:
+
+- **The promotion is asked on the REVIEW, not on the seed form.** It is a question about
+  the report first ("what does this offer not carry") and only afterwards a property of
+  the brochure, and asking it twice would let a reviewer report against one promotion and
+  seed with another. The detail query is keyed on it, and `placeholderData` keeps the
+  previous answer on screen while the recompute runs - a skeleton there would throw away a
+  half-filled seed form and the section somebody was reading.
+- **Every report table is a `ReportGrid` with `listingKey=""`.** Column personalisation is
+  off deliberately: unset, the grid keys saved widths on the URL, which here carries a
+  reading id - a config row per user per flyer, four per screen, never read again. It also
+  leaves the grid in its skeleton state until something else re-renders it, which showed up
+  in the browser as ten blank rows where an empty section should have said it was empty.
+  `useListingColumnPreferences` settles a ref rather than state, so a grid with no data
+  query of its own never gets the render that clears it.
+- **The seed result replaces the form rather than navigating.** Going straight to the
+  builder would put the skipped codes behind a back button.
+
+**Contract gap found, not worked around:** the section HEADINGS the extractor read are
+stored on the reading but are NOT on `FlyerReadingOut`, so the review screen can say
+headings are guessed but cannot show WHICH ones are wrong - the reviewer still has to open
+the builder and compare against the paper. Surfacing them is an additive field on the
+detail response (`headings: [{page, text}]`), deliberately left for a slice that can also
+test it on the backend.
+
+Verified in a browser against the real stack (login, sidebar, upload, review, seed,
+re-seed, delete, 375px) on the committed 3 page fixture: 41 codes printed, 36 matched, 5
+absent from the master with trigram suggestions from 72% to 100%, 27 dimension candidates
+of which 1 conflicts, 2 codes printed on two pages. The seed produced 3 sections, 17
+printed rows and 36 products, with no label on the version and a 4xx from the public
+catalogue - which is AC-E2 observed rather than asserted.
