@@ -145,7 +145,11 @@ project, the upload becomes a NEW VERSION of that PO rather than a second PO.
   "extraction_state": "queued" | "running" | "done" | "failed",
   "extraction_error": null,
   "extraction_model": "gemini-2.5-flash",
-  "page_count": 10,
+  "page_count": 10, "pages_extracted": 10, "failed_pages": [],
+  "purchase_order": {
+    "approved_by_name": null, "approved_at": null,
+    "countersigned_by_name": null, "countersigned_at": null
+  },
   "document_url": "…",            // presigned, for the side-by-side viewer
   "header": {
     "po_number": "HQ/26/01/041",
@@ -164,7 +168,7 @@ project, the upload becomes a NEW VERSION of that PO rather than a second PO.
   },
   "lines": [
     {
-      "id": "…", "line_no": 1,
+      "id": "…", "line_no": 1, "page_no": 1,
       "stock_code_raw": "SRTWC8613-RL", "description_raw": "…",
       "qty": "927", "uom_raw": "SETS",
       "unit_price": "392.85", "amount": "364171.95",
@@ -183,6 +187,24 @@ project, the upload becomes a NEW VERSION of that PO rather than a second PO.
 the model. `lines_total` is our sum. When `lines_total != extracted_total` the confirm
 screen must say so at the top: that difference is the single best signal that a page was
 misread.
+
+With one exception, which matters on the client's own PO: when the gap is EXACTLY the value
+of the accepted cancellations, it is a fact and not an alarm. Compared exactly, never with a
+tolerance. Otherwise accepting the real strike-through on line 7 would leave a correct PO
+crying wolf, and `total_mismatch` would block its publish forever.
+
+`interpretation_json` keys are fixed, because a mismatch here is invisible until a human
+clicks: `line_nos`, `code`, `description`, `po_number`, `text`. An edit spreads the original
+JSON first, so keys the form has no field for survive.
+
+`PUT .../lines/{line_id}` and `POST .../confirm` both return the recomputed version.
+
+### `PUT /purchase-order-versions/{po_version_id}`
+
+ADDED 2026-08-02. Section 2 originally gave a PUT for lines only, but AC-D3 says every
+extracted field is editable before approval and the header carries the PO number, date,
+term and filing reference. Accepts the `header` block above. Returns the recomputed
+version.
 
 ### `PUT /purchase-order-versions/{po_version_id}/lines/{line_id}`
 
