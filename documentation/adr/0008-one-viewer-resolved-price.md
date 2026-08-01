@@ -45,9 +45,18 @@ the design summary, and eventually an order. Every one of them is a chance to ad
 
 1. **The document never stores a price.** Already true (AC-G1) and restated because it is
    what makes one published page serve staff, dealers and consumers correctly.
-2. **A price a viewer may not see is ABSENT from the payload**, not sent and hidden. Already
-   the rule for `invoice_price` (AC-G6, AC-G7); it now covers `offer_price` too, because a
-   promotion restricted to dealers must not reach a consumer's browser at all.
+2. **A FIGURE a viewer may not see never reaches them.** Not sent and hidden by the
+   frontend, not sent and styled away: the number is not in the response. The same is true
+   of the promotion's id, which would otherwise say "there is an offer here you are not
+   being given".
+
+   *Corrected 2026-08-01.* This rule first read "absent from the payload", which overstated
+   what the codebase does and what matters. The precedent set by `invoice_price` (AC-G6,
+   AC-G7) is that the KEY is present with a null value and the FIGURE is unrecoverable, and
+   `offer_price` follows it exactly. A null key carries no information about the price, so
+   the protection is identical, while a genuinely absent key would mean
+   `response_model_exclude_none` and a breaking change for every reader. The wording is
+   fixed here rather than the code being churned to match a doc that was wrong.
 3. **Money is `Decimal` end to end.** Formatting happens at the edge, once. No float
    arithmetic, no summing in TypeScript. The frontend receives numbers it renders, never
    numbers it computes, which is why `quote_selection` sums server-side today.

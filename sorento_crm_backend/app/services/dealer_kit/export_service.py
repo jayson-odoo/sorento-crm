@@ -137,10 +137,36 @@ def get_request(db: Session, download_id: str) -> ExportRequest:
     return row
 
 
+#: What each export audience is entitled to see. `access_codes` is the one knob
+#: that decides whether a promotion applies to a reader (ADR 0008) and which
+#: imagery they may see, so an audience that maps to nothing produces a document
+#: priced and illustrated for nobody in particular.
+#:
+#: Staff map to no codes on purpose. `is_staff` governs the INVOICE price and not
+#: a promotion's audience, because exporting AS a dealer is how somebody asks for
+#: the trade view. A staff export therefore shows list prices, which is a
+#: commercial choice worth revisiting rather than an accident.
+_AUDIENCE_ACCESS_CODES = {
+    "dealer": frozenset({"dealer"}),
+    "end_user": frozenset({"end_user"}),
+    "staff": frozenset(),
+}
+
+
 def viewer_for(request: ExportRequest) -> ViewerContext:
-    """The viewer a render must use. Derived only from the snapshot."""
+    """The viewer a render must use. Derived only from the snapshot.
+
+    The audience used to set `is_staff` alone, leaving `access_codes` empty, so a
+    PDF requested for DEALERS came out priced and illustrated for a consumer. The
+    export screen gives no hint of that; the dealer opening the file does.
+
+    An unrecognised audience gets nothing rather than the most generous reading:
+    a new audience nobody has taught this function about must not default into
+    seeing trade prices.
+    """
     return ViewerContext(
         is_staff=(request.audience == "staff"),
+        access_codes=_AUDIENCE_ACCESS_CODES.get(request.audience, frozenset()),
         show_invoice_price=bool(request.show_invoice_price),
     )
 
