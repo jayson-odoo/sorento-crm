@@ -20,6 +20,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { useFieldLinkageSchema } from '../hooks/useFieldLinkageSchema';
 import { useProduct } from '../hooks/useProducts';
+import { useProductBrochureImage } from '../hooks/useProductBrochureImage';
+import ProductBrochureImageControl, {
+  BrochureImageBadge,
+  isImageAttachment,
+} from './ProductBrochureImageControl';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 
 function attachmentDirectoriesHref(directoryId: string | null | undefined): string {
@@ -54,6 +59,13 @@ export default function ProductAttachmentsTab({
   }, [accessTypes]);
   const downloadMutation = useDownloadAttachment();
   const deleteMutation = useDeleteProductAttachment();
+  const {
+    chosenAttachmentId,
+    chooseBrochureImage,
+    clearChosenBrochureImage,
+    savingAttachmentId,
+    isClearing,
+  } = useProductBrochureImage(productId, productAttachments);
 
   // Build a per-attachment field-key list from the product's `field_attachments`
   // map. The map is keyed by field_key, so we invert it once.
@@ -174,17 +186,27 @@ export default function ProductAttachmentsTab({
   const renderAttachmentItem = (pa: ProductAttachment) => {
     const attachmentId = pa.attachment?.id;
     const fieldKeys = attachmentId ? (fieldKeysByAttachmentId.get(attachmentId) ?? []) : [];
+    // Only an image can be the photo on a catalogue tile; a spec sheet there is
+    // worse than no photo, so PDFs are never offered the control.
+    const canBeBrochureImage = isImageAttachment(
+      pa.attachment?.mime_type,
+      pa.attachment?.original_filename,
+    );
+    // Compared against the one chosen id rather than read off the row, so two
+    // rows can never render the mark at the same time. Not gated on the file
+    // being an image: a flag that legacy data left on a PDF has to stay visible
+    // and clearable, or the product is marked with nothing on screen saying so.
+    const isBrochureImage = !!attachmentId && attachmentId === chosenAttachmentId;
     return (
     <div
       key={pa.id}
-      className="flex items-center justify-between rounded-lg border p-4"
+      data-testid={`product-attachment-row-${pa.id}`}
+      className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between"
     >
-      <div className="flex items-center gap-3 flex-1">
-        {pa.is_primary && (
-          <Badge variant="primary">Primary</Badge>
-        )}
-        <div className="flex-1">
-          <p className="font-medium text-sm">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        {isBrochureImage && <BrochureImageBadge />}
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-sm break-words">
             {pa.attachment?.original_filename || 'Unknown'}
           </p>
           <p className="text-xs text-muted-foreground">
@@ -204,7 +226,16 @@ export default function ProductAttachmentsTab({
           )}
         </div>
       </div>
-      <div className="flex gap-2">
+      <div className="flex shrink-0 flex-wrap justify-end gap-1 sm:gap-2">
+        {isEditMode && attachmentId && (canBeBrochureImage || isBrochureImage) && (
+          <ProductBrochureImageControl
+            isChosen={isBrochureImage}
+            isSaving={savingAttachmentId === attachmentId}
+            isClearing={isClearing}
+            onChoose={() => chooseBrochureImage(attachmentId)}
+            onClear={clearChosenBrochureImage}
+          />
+        )}
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
