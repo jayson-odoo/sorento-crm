@@ -47,6 +47,38 @@ def _require_page(db: Session, page_id: str) -> Page:
     return page
 
 
+def _require_promotion(db: Session, promotion_id: str) -> None:
+    """404 unless the promotion exists in the caller's company scope.
+
+    Scope is enforced by the ORM filter, so another company's promotion reads as
+    absent - the same answer a page of theirs gives, and for the same reason.
+    """
+    from app.models.marketing import Promotion
+
+    exists = db.query(Promotion.id).filter(Promotion.id == promotion_id).first()
+    if exists is None:
+        raise AppException(status_code=404, message="Promotion not found")
+
+
+def promotion_labels(db: Session, promotion_ids: Iterable[Optional[str]]) -> dict[str, Optional[str]]:
+    """promotion_id -> its description, for a screen.
+
+    Resolved here for the same reason ``author_names`` is: an id must never
+    reach the UI, and "which offer prices this brochure" is only useful as the
+    flyer's name. A promotion with no description resolves to None rather than
+    to its id - the UI supplies the words for that, and a uuid is never an
+    acceptable fallback label.
+    """
+    ids = {pid for pid in promotion_ids if pid}
+    if not ids:
+        return {}
+
+    from app.models.marketing import Promotion
+
+    rows = db.query(Promotion.id, Promotion.description).filter(Promotion.id.in_(ids)).all()
+    return {pid: (description or None) for pid, description in rows}
+
+
 def public_path(db: Session, page) -> Optional[str]:
     """The shareable address for a page: ``/c/{company_code}/{slug}``.
 
@@ -99,12 +131,18 @@ def list_pages(db: Session) -> list[dict]:
         .all()
     )
 
+    # One lookup for the whole list, like the company codes above: a per-row
+    # resolve turns a page list into a query per page.
+    labels = promotion_labels(db, (p.promotion_id for p in pages))
+
     return [
         {
             "id": p.id,
             "name": p.name,
             "slug": p.slug,
             "updated_at": p.updated_at,
+            "promotion_id": p.promotion_id,
+            "promotion_label": labels.get(p.promotion_id) if p.promotion_id else None,
             "published_version": published.get(p.id),
             "latest_version": latest.get(p.id, 0),
             "public_path": (
@@ -121,18 +159,55 @@ def get_page(db: Session, page_id: str) -> Page:
     return _require_page(db, page_id)
 
 
-def create_page(db: Session, *, name: str, slug: str, user_id: Optional[str]) -> Page:
+def create_page(
+    db: Session,
+    *,
+    name: str,
+    slug: str,
+    user_id: Optional[str],
+    promotion_id: Optional[str] = None,
+) -> Page:
     existing = db.query(Page).filter(Page.slug == slug).first()
     if existing is not None:
         raise AppException(status_code=409, message=f"A page already uses the address '{slug}'")
+
+    if promotion_id:
+        # Validated before the insert, so a bad link cannot leave a half-made
+        # page behind. Optional: no promotion is list prices only, not an error.
+        _require_promotion(db, promotion_id)
 
     # A new page ships with real paper geometry. Leaving it null pushes the
     # decision onto every reader of the document, and paper mode has nothing to
     # paginate against.
     page = Page(
-        name=name, slug=slug, created_by=user_id, print_profile=DEFAULT_PRINT_PROFILE
+        name=name,
+        slug=slug,
+        created_by=user_id,
+        print_profile=DEFAULT_PRINT_PROFILE,
+        promotion_id=promotion_id or None,
     )
     db.add(page)
+    db.commit()
+    db.refresh(page)
+    return page
+
+
+def set_promotion(db: Session, page_id: str, promotion_id: Optional[str]) -> Page:
+    """Link a brochure to the promotion that prices it, or clear the link.
+
+    One promotion, never a list: which offer a brochure quotes is an editorial
+    decision somebody makes once (PLAN D5). Whether it applies to the reader in
+    front of us is a separate question, answered per viewer at read time.
+
+    ``None`` clears it, and clearing is a normal end state - the page falls back
+    to list prices (D6) rather than to a stale offer.
+    """
+    page = _require_page(db, page_id)
+
+    if promotion_id:
+        _require_promotion(db, promotion_id)
+
+    page.promotion_id = promotion_id or None
     db.commit()
     db.refresh(page)
     return page

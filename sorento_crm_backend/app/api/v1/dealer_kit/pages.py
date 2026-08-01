@@ -37,6 +37,8 @@ from app.schemas.dealer_kit import (
     LabelMove,
     PageCreate,
     PageDetail,
+    PagePromotionOut,
+    PagePromotionSet,
     PageSummary,
     PageVersionOut,
     VersionCreate,
@@ -99,7 +101,13 @@ def create_page(
     db: Session = Depends(get_db),
     user: dict = Depends(_EDIT),
 ):
-    page = svc.create_page(db, name=payload.name, slug=payload.slug, user_id=_user_id(user))
+    page = svc.create_page(
+        db,
+        name=payload.name,
+        slug=payload.slug,
+        user_id=_user_id(user),
+        promotion_id=payload.promotion_id,
+    )
     return PageDetail(
         id=page.id,
         name=page.name,
@@ -108,6 +116,8 @@ def create_page(
         published_version=None,
         latest_version=0,
         public_path=svc.public_path(db, page),
+        promotion_id=page.promotion_id,
+        promotion_label=svc.promotion_labels(db, [page.promotion_id]).get(page.promotion_id),
         doc={"sections": [], "printProfile": svc.DEFAULT_PRINT_PROFILE},
         versions=[],
     )
@@ -138,8 +148,36 @@ def get_page(page_id: str, db: Session = Depends(get_db), _user: dict = Depends(
         published_version=published,
         latest_version=versions[0].version if versions else 0,
         public_path=svc.public_path(db, page),
+        # Built by hand, like every field above it: a column added only to the
+        # schema class would never reach the screen.
+        promotion_id=page.promotion_id,
+        promotion_label=svc.promotion_labels(db, [page.promotion_id]).get(page.promotion_id),
         doc=doc,
         versions=versions,
+    )
+
+
+@router.put("/pages/{page_id}/promotion", response_model=PagePromotionOut)
+def set_page_promotion(
+    page_id: str,
+    payload: PagePromotionSet,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_EDIT),
+):
+    """Say which promotion prices this brochure, or clear the link.
+
+    ``page.edit`` rather than ``page.publish``: choosing the offer a catalogue
+    quotes is drafting work, and it changes nothing a reader sees until the
+    version carrying it is published.
+
+    A null ``promotionId`` clears it. That is a normal end state, not an error -
+    the page falls back to list prices.
+    """
+    page = svc.set_promotion(db, page_id, payload.promotion_id)
+    return PagePromotionOut(
+        page_id=page.id,
+        promotion_id=page.promotion_id,
+        promotion_label=svc.promotion_labels(db, [page.promotion_id]).get(page.promotion_id),
     )
 
 

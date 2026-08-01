@@ -18,6 +18,8 @@ export const MOCK_PAGES: PageSummary[] = [
     publishedVersion: 2,
     latestVersion: 3,
     publicPath: '/c/SRT/2026-bathroom',
+    promotionId: 'promo-a3-flyer',
+    promotionLabel: '_SORENTO A3 FLYER 2025-2026_compressed',
   },
   {
     id: 'page-kitchen-2026',
@@ -27,5 +29,8 @@ export const MOCK_PAGES: PageSummary[] = [
     publishedVersion: null,
     latestVersion: 1,
     publicPath: '/c/SRT/2026-kitchen',
+    // No promotion: list prices only, which is a normal page and not a broken one.
+    promotionId: null,
+    promotionLabel: null,
   },
 ];

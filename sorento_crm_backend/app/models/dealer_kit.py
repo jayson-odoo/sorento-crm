@@ -77,6 +77,21 @@ class Page(Base, CompanyScopedMixin):
     # Public address segment. Unique per company, not globally: Sorento and Mocha
     # may each publish a "2026-bathroom".
     slug = Column(String(200), nullable=False)
+    # WHICH promotion prices this brochure, when one does (PLAN D5). A Sorento
+    # flyer IS a promotion here - `promotions.description` holds the PDF's
+    # filename - so the page carries a binding, never a price. Null is normal
+    # and means list prices only (D6), which is why it is optional and never
+    # inferred.
+    #
+    # SET NULL, deliberately. CASCADE would let deleting a promotion delete a
+    # published catalogue, and RESTRICT would let one brochure block marketing
+    # from deleting their own row. Unlinking falls back to list prices, which is
+    # the only outcome nobody has to discover from a customer.
+    promotion_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("promotions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     print_profile = Column(JSONB, nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     created_at = _created_at()

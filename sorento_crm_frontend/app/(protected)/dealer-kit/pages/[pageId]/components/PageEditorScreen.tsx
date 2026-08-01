@@ -26,6 +26,7 @@ import {
   saveVersion,
 } from '../../../services/dealerKitService';
 import { PageEditor } from '../../../components/PageEditor';
+import { PagePromotionControl } from './PagePromotionControl';
 import { VersionHistory } from './VersionHistory';
 import type { PageDoc, PageVersion } from '@/lib/dealer-kit/types';
 
@@ -139,6 +140,14 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
                 Unsaved changes
               </Badge>
             )}
+            {/* Saved on its own, not with the document: which promotion prices
+                the brochure is a property of the page, so it survives every
+                version and does not wait for a publish. */}
+            <PagePromotionControl
+              pageId={pageId}
+              promotionId={page.promotionId}
+              promotionLabel={page.promotionLabel}
+            />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">

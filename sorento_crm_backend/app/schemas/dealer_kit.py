@@ -17,8 +17,13 @@ _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 class PageCreate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str = Field(min_length=1, max_length=200)
     slug: str = Field(min_length=1, max_length=200)
+    # Optional from the start: the flyer seed knows which promotion matches the
+    # uploaded filename, and a page created by hand simply has no offer yet.
+    promotion_id: Optional[str] = Field(default=None, validation_alias="promotionId")
 
     @field_validator("slug")
     @classmethod
@@ -46,6 +51,15 @@ class PageSummary(BaseModel):
     latest_version: int = Field(default=0, serialization_alias="latestVersion")
     # The shareable address, resolved server-side. See page_service.public_path.
     public_path: Optional[str] = Field(default=None, serialization_alias="publicPath")
+    # Which promotion prices this brochure, when one does. Null is list prices
+    # only, which is a normal state and not a defect (PLAN D5/D6).
+    promotion_id: Optional[str] = Field(default=None, serialization_alias="promotionId")
+    # Its description, resolved server-side so no id reaches a screen. Null when
+    # nothing is linked OR when the promotion carries no description - the UI
+    # supplies the words for the latter, never the uuid.
+    promotion_label: Optional[str] = Field(
+        default=None, serialization_alias="promotionLabel"
+    )
 
 
 class PageVersionOut(BaseModel):
@@ -71,8 +85,35 @@ class PageDetail(BaseModel):
     )
     latest_version: int = Field(default=0, serialization_alias="latestVersion")
     public_path: Optional[str] = Field(default=None, serialization_alias="publicPath")
+    promotion_id: Optional[str] = Field(default=None, serialization_alias="promotionId")
+    promotion_label: Optional[str] = Field(
+        default=None, serialization_alias="promotionLabel"
+    )
     doc: dict[str, Any]
     versions: list[PageVersionOut] = Field(default_factory=list)
+
+
+class PagePromotionSet(BaseModel):
+    """Which promotion prices this brochure. ``null`` clears the link.
+
+    One nullable field rather than a PUT/DELETE pair: clearing is the same
+    editorial decision as choosing, made in the same control, and a null here
+    says exactly what it means.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    promotion_id: Optional[str] = Field(default=None, validation_alias="promotionId")
+
+
+class PagePromotionOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    page_id: str = Field(serialization_alias="pageId")
+    promotion_id: Optional[str] = Field(default=None, serialization_alias="promotionId")
+    promotion_label: Optional[str] = Field(
+        default=None, serialization_alias="promotionLabel"
+    )
 
 
 class VersionCreate(BaseModel):

@@ -587,3 +587,120 @@ def test_an_unknown_audience_is_rejected(api):
             f"/api/v1/dealer-kit/pages/{page_id}/exports", json={"audience": "everyone"}
         )
     assert res.status_code == 422, res.text
+
+
+# --------------------------------------------------------------------------
+# The promotion link (S7.2)
+# --------------------------------------------------------------------------
+
+
+def _seed_promotion(db, description="ZZT A3 FLYER 2025-2026.pdf"):
+    """A promotion in the incumbent company, so the scoped read finds it."""
+    from app.models.marketing import Promotion
+
+    promo = Promotion(
+        id=str(uuid.uuid4()),
+        description=description,
+        is_active=True,
+        company_id="00000000-0000-0000-0000-000000000001",
+    )
+    db.add(promo)
+    db.flush()
+    return promo
+
+
+def test_the_promotion_link_round_trips_through_the_page(api):
+    """A field only added to the schema never reaches a screen: the routes build
+    their response dicts by hand, so the round trip is the assertion."""
+    db, _as = api
+    _as(_ADMIN_ID)
+    promo = _seed_promotion(db)
+
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-promo-link")
+
+        fresh = c.get(f"/api/v1/dealer-kit/pages/{page_id}").json()
+        assert fresh["promotionId"] is None
+        assert fresh["promotionLabel"] is None
+
+        linked = c.put(
+            f"/api/v1/dealer-kit/pages/{page_id}/promotion",
+            json={"promotionId": promo.id},
+        )
+        assert linked.status_code == 200, linked.text
+        assert linked.json()["promotionId"] == promo.id
+        # The description, never the id: a uuid must not reach the UI.
+        assert linked.json()["promotionLabel"] == promo.description
+
+        got = c.get(f"/api/v1/dealer-kit/pages/{page_id}").json()
+        assert got["promotionId"] == promo.id
+        assert got["promotionLabel"] == promo.description
+
+        row = next(
+            r for r in c.get("/api/v1/dealer-kit/pages").json() if r["id"] == page_id
+        )
+        assert row["promotionId"] == promo.id
+        assert row["promotionLabel"] == promo.description
+
+
+def test_clearing_the_promotion_puts_the_page_back_on_list_prices(api):
+    db, _as = api
+    _as(_ADMIN_ID)
+    promo = _seed_promotion(db, "ZZT KITCHEN SINK PROMO DEALER.pdf")
+
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-promo-clear")
+        c.put(
+            f"/api/v1/dealer-kit/pages/{page_id}/promotion",
+            json={"promotionId": promo.id},
+        )
+
+        cleared = c.put(
+            f"/api/v1/dealer-kit/pages/{page_id}/promotion", json={"promotionId": None}
+        )
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["promotionId"] is None
+
+        assert c.get(f"/api/v1/dealer-kit/pages/{page_id}").json()["promotionId"] is None
+
+
+def test_an_unknown_promotion_is_404(api):
+    _db, _as = api
+    _as(_ADMIN_ID)
+
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-promo-unknown")
+        res = c.put(
+            f"/api/v1/dealer-kit/pages/{page_id}/promotion",
+            json={"promotionId": str(uuid.uuid4())},
+        )
+    assert res.status_code == 404, res.text
+    # The message matters here: a missing ROUTE also answers 404, and this test
+    # would then pass while proving nothing.
+    assert "promotion" in res.text.lower(), res.text
+
+
+def test_linking_a_promotion_is_an_edit_not_a_publish(api):
+    """Which promotion prices a brochure is editorial work, so page.edit is the
+    gate. A stranger cannot touch it at all."""
+    db, _as = api
+    promo = _seed_promotion(db, "ZZT OFFICE.pdf")
+
+    _as(_ADMIN_ID)
+    with TestClient(app) as c:
+        page_id = _create_page(c, "zzt-promo-perm")
+
+    _as(_EDITOR_ID)
+    with TestClient(app) as c:
+        allowed = c.put(
+            f"/api/v1/dealer-kit/pages/{page_id}/promotion",
+            json={"promotionId": promo.id},
+        )
+    assert allowed.status_code == 200, allowed.text
+
+    _as(_NOPERM_ID)
+    with TestClient(app) as c:
+        refused = c.put(
+            f"/api/v1/dealer-kit/pages/{page_id}/promotion", json={"promotionId": None}
+        )
+    assert refused.status_code == 403, refused.text

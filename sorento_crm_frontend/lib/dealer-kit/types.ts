@@ -151,6 +151,17 @@ export interface PageSummary {
   updatedAt: string;
   publishedVersion: number | null;
   latestVersion: number;
+  /**
+   * The promotion this brochure quotes, when one does. Null is a finished
+   * state: the catalogue shows list prices.
+   */
+  promotionId: string | null;
+  /**
+   * That promotion's name, resolved by the backend so no id is ever rendered.
+   * Null when nothing is linked, and also when the promotion carries no
+   * description - the UI supplies the words for that case.
+   */
+  promotionLabel: string | null;
 }
 
 export interface Page extends PageSummary {

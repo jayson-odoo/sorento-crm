@@ -22,6 +22,13 @@
  *          {doc, commitMessage}          -> PageVersion 201             page.edit
  *          version = max(version)+1 PER page. Never updates a row.
  *
+ * PUT    /pages/{id}/promotion  {promotionId|null}
+ *          -> {pageId, promotionId, promotionLabel}              page.edit
+ *          Which promotion prices this brochure (PLAN D5). One promotion, and
+ *          null clears it - a page with no promotion shows list prices, which
+ *          is a finished state rather than a missing one. 404 on a promotion
+ *          outside the caller's company scope, like every other read here.
+ *
  * PUT    /pages/{id}/labels/published  {versionId} -> PageVersion       page.publish
  * PUT    /pages/{id}/labels/staging    {versionId} -> PageVersion       page.edit
  *          Publish AND rollback are both the published call, aimed at a version.
@@ -62,6 +69,8 @@ interface PageSummaryWire {
   publishedVersion: number | null;
   latestVersion: number;
   publicPath: string | null;
+  promotionId: string | null;
+  promotionLabel: string | null;
 }
 
 interface PageVersionWire {
@@ -101,6 +110,10 @@ function toSummary(wire: PageSummaryWire): PageSummary {
     publishedVersion: wire.publishedVersion,
     latestVersion: wire.latestVersion,
     publicPath: wire.publicPath ?? null,
+    promotionId: wire.promotionId ?? null,
+    // Resolved by the backend. Never fall back to the id: a uuid on a screen is
+    // banned, and "which offer prices this" only means anything as a name.
+    promotionLabel: wire.promotionLabel ?? null,
   };
 }
 
@@ -181,6 +194,44 @@ export async function moveLabel(
   }
 
   return toVersion(await response.json());
+}
+
+
+export interface PagePromotionLink {
+  promotionId: string | null;
+  promotionLabel: string | null;
+}
+
+/**
+ * Link this brochure to the promotion that prices it, or clear the link.
+ *
+ * `null` is a real answer, not an absent one: the catalogue falls back to list
+ * prices. The response carries the label the backend resolved, so the control
+ * can show a name it never had to look up itself.
+ */
+export async function setPagePromotion(
+  pageId: string,
+  promotionId: string | null,
+): Promise<PagePromotionLink> {
+  const response = await apiFetch(`${BASE}/pages/${encodeURIComponent(pageId)}/promotion`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ promotionId }),
+  });
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(
+        response,
+        promotionId ? 'Could not link the promotion' : 'Could not clear the promotion',
+      ),
+    );
+  }
+
+  const wire = (await response.json()) as Partial<PagePromotionLink>;
+  return {
+    promotionId: wire.promotionId ?? null,
+    promotionLabel: wire.promotionLabel ?? null,
+  };
 }
 
 
