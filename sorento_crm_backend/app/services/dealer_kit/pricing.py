@@ -223,17 +223,45 @@ def resolve_prices(
     for product in products:
         if product.id in views:
             continue
-        list_price = _as_decimal(product.list_price)
+        list_price = _a_real_price(product.list_price)
         offer = _offer_worth_showing(offers.get(product.id), list_price)
         views[product.id] = PriceView(
             currency=product.currency or DEFAULT_CURRENCY,
             list_price=list_price,
             offer_price=offer,
-            invoice_price=_as_decimal(product.invoice_price) if show_invoice else None,
+            invoice_price=_a_real_price(product.invoice_price) if show_invoice else None,
             promotion_id=promotion_id if offer is not None else None,
         )
 
     return views
+
+
+def _a_real_price(value) -> Optional[Decimal]:
+    """The figure, unless it is the absence of one wearing a number's clothes.
+
+    ``products.list_price`` is NOT NULL and defaults to zero, so a product whose
+    price was never imported is stored identically to one deliberately priced at
+    nothing. Those are not both real categories: a genuine giveaway is a
+    promotion line priced against a promotion, not a permanent list price of
+    nought. So zero means "we do not have a price for this", and the honest
+    rendering of that is the one the system already has for a product with no
+    price at all: nothing.
+
+    The alternative was found by opening the published catalogue in a browser,
+    where a tile on the page a dealer forwards to a customer printed MYR 0.00
+    against a real product. Nothing is a statement about our data. MYR 0.00 is a
+    claim about the price, and one somebody could reasonably act on.
+
+    Not a rare shape either: 10,370 of 22,805 live products carry
+    ``list_price = 0.00``, 46% of one company's catalogue and 45% of the other's.
+
+    Negatives go the same way. Nobody is owed money for taking a bath away, and
+    an import reading a spreadsheet column with the wrong sign produces them.
+    """
+    price = _as_decimal(value)
+    if price is None or price <= 0:
+        return None
+    return price
 
 
 def _offer_worth_showing(
