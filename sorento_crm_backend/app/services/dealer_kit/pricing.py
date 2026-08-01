@@ -223,13 +223,42 @@ def resolve_prices(
     for product in products:
         if product.id in views:
             continue
-        offer = offers.get(product.id)
+        list_price = _as_decimal(product.list_price)
+        offer = _offer_worth_showing(offers.get(product.id), list_price)
         views[product.id] = PriceView(
             currency=product.currency or DEFAULT_CURRENCY,
-            list_price=_as_decimal(product.list_price),
+            list_price=list_price,
             offer_price=offer,
             invoice_price=_as_decimal(product.invoice_price) if show_invoice else None,
             promotion_id=promotion_id if offer is not None else None,
         )
 
     return views
+
+
+def _offer_worth_showing(
+    offer: Optional[Decimal], list_price: Optional[Decimal]
+) -> Optional[Decimal]:
+    """The promotional figure, but only when it is actually an offer.
+
+    A tile draws an offer as "list price struck through, offer prominent", so a
+    promotion line priced at or above list renders as a crossed-out 285 beside a
+    bold 1,099: the catalogue advertising a price nobody charges, presented as a
+    discount. On the live database 422 of 1,178 promotion lines are at or above
+    their product's list price and 20 are exactly zero.
+
+    Those rows are not wrong as RECORDS. Promotions carry bundle and free-gift
+    bookkeeping, and a line priced above list is meaningful inside a group where
+    somebody is buying several things together. What is wrong is reading one of
+    them as "the price of this product, alone, on its own tile", which is the
+    only question this module answers.
+
+    A product with no list price has nothing to be cheaper than, so the
+    promotional figure stands on its own. The alternative would hide a product
+    that is genuinely on offer because its master data is incomplete.
+    """
+    if offer is None or offer <= 0:
+        return None
+    if list_price is not None and offer >= list_price:
+        return None
+    return offer

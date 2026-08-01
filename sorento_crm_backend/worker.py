@@ -12,6 +12,28 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Loaded HERE, before anything imports the storage layer, because only
+# `app/main.py` did it and the worker is a separate process.
+#
+# The symptom is quiet and expensive: `storage_router.default_provider()` reads
+# `STORAGE_DEFAULT_PROVIDER` straight from the environment, so with `.env`
+# unloaded the API signed URLs against R2 while the worker signed them against
+# S3. A catalogue PDF export then died in the worker on a CloudFront private key
+# the deployment does not use. Compose hides it, because `env_file:` puts the
+# real variables in the container environment, so it only bites bare-metal and
+# local workers - the two places where somebody is trying to reproduce a bug.
+try:  # pragma: no cover - import-time wiring
+    from dotenv import load_dotenv as _load_dotenv
+
+    _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if os.path.exists(_env_path):
+        _load_dotenv(_env_path, override=True)
+    else:
+        _load_dotenv(override=True)
+except ImportError:
+    # A container that ships real environment variables does not need it.
+    pass
+
 import logging
 from rq import Worker, Queue
 from app.services.queue_service import redis_conn
