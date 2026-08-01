@@ -1,10 +1,14 @@
-"""LLM provider abstraction (OpenAI + Anthropic).
+"""LLM provider abstraction (OpenAI, Anthropic, Gemini).
 
 Goal: keep the agent loop and reformulator/embedder pieces in
 ``ai_assistant_service`` provider-agnostic. Each provider exposes the same
 ``chat`` / ``embed`` / ``test_connection`` surface and returns a normalized
 ``ChatResult`` whose ``raw`` field carries enough provider-native data to
 iterate tool calls in the agent loop.
+
+Gemini is the exception to "same surface, same capabilities": it is here for
+document extraction only, and raises rather than pretends on tool calling and
+embeddings. See ``GeminiProvider``.
 """
 from __future__ import annotations
 
@@ -557,6 +561,153 @@ class AnthropicProvider:
 
 
 # ---------------------------------------------------------------------------
+# Gemini
+# ---------------------------------------------------------------------------
+
+_GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+
+def _gemini_post(url: str, payload: dict, *, api_key: str, timeout: int = 180) -> dict:
+    """Single transport seam for the Gemini REST call.
+
+    A module-level function rather than a method so tests can substitute it
+    without a fake SDK, and so the key stays out of the URL: Google accepts
+    ``x-goog-api-key``, and a key in the query string ends up in every log
+    line and proxy record that ever sees the request.
+    """
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode()[:500]
+        raise RuntimeError(f"HTTP {exc.code}: {detail}") from None
+
+
+def _convert_messages_to_gemini(messages: list[dict]) -> tuple[Optional[dict], list[dict]]:
+    """Split off the system instruction and map roles onto Gemini's names.
+
+    Gemini calls the assistant ``model`` and carries the system prompt in a
+    separate ``systemInstruction`` field, same shape of problem as Anthropic.
+    """
+    system_text, rest = _split_system_messages(messages)
+    contents: list[dict] = []
+    for message in rest:
+        role = "model" if message.get("role") == "assistant" else "user"
+        contents.append({"role": role, "parts": [{"text": str(message.get("content") or "")}]})
+    instruction = {"parts": [{"text": system_text}]} if system_text else None
+    return instruction, contents
+
+
+class GeminiProvider:
+    """Google Gemini via REST, for document extraction.
+
+    Deliberately narrow: ``chat`` with optional images and forced JSON, which
+    is the whole job (reading a scanned PO or a delivery-schedule matrix).
+    Tool calling and embeddings raise instead of pretending, so the agent loop
+    can never be handed a provider that quietly ignores its tools.
+    """
+
+    name = "gemini"
+
+    def __init__(self, api_key: str, default_model: str = "gemini-2.5-flash") -> None:
+        self.api_key = api_key
+        self.default_model = default_model
+
+    def chat(
+        self,
+        messages: list[dict],
+        *,
+        tools: Optional[list[dict]] = None,
+        temperature: float = 0.0,
+        model: Optional[str] = None,
+        max_tokens: Optional[int] = None,
+        images: Optional[list[ImagePart]] = None,
+        response_format: Optional[dict] = None,
+        json_schema: Optional[dict] = None,
+        json_schema_name: Optional[str] = None,
+    ) -> ChatResult:
+        if tools:
+            raise NotImplementedError(
+                "GeminiProvider does not implement tool calling; use openai or anthropic"
+            )
+
+        instruction, contents = _convert_messages_to_gemini(messages)
+        if images:
+            if not contents:
+                contents = [{"role": "user", "parts": []}]
+            for image in images:
+                contents[-1]["parts"].append(
+                    {"inline_data": {"mime_type": image.mime, "data": image.data_b64}}
+                )
+
+        generation: dict[str, Any] = {"temperature": temperature}
+        if max_tokens is not None:
+            generation["maxOutputTokens"] = max_tokens
+        if json_schema is not None:
+            generation["responseMimeType"] = "application/json"
+            generation["responseSchema"] = json_schema
+        elif (response_format or {}).get("type") in {"json_object", "json_schema"}:
+            generation["responseMimeType"] = "application/json"
+
+        payload: dict[str, Any] = {"contents": contents, "generationConfig": generation}
+        if instruction:
+            payload["systemInstruction"] = instruction
+
+        url = f"{_GEMINI_BASE}/models/{model or self.default_model}:generateContent"
+        body = _gemini_post(url, payload, api_key=self.api_key)
+
+        candidates = body.get("candidates") or []
+        if not candidates:
+            reason = (body.get("promptFeedback") or {}).get("blockReason") or "no candidate"
+            raise RuntimeError(f"Gemini returned no candidate: {reason}")
+
+        candidate = candidates[0]
+        finish = candidate.get("finishReason")
+        # A truncated document is worse than a failed one: half a PO looks like
+        # a complete PO with lines missing, and nothing downstream can tell.
+        if finish and finish not in {"STOP", "MAX_TOKENS"}:
+            raise RuntimeError(f"Gemini stopped early: {finish}")
+        if finish == "MAX_TOKENS":
+            raise RuntimeError("Gemini stopped early: MAX_TOKENS (response truncated)")
+
+        content = "".join(
+            part.get("text", "") for part in (candidate.get("content") or {}).get("parts") or []
+        )
+        usage = body.get("usageMetadata") or {}
+        prompt_tokens = int(usage.get("promptTokenCount") or 0)
+        completion_tokens = int(usage.get("candidatesTokenCount") or 0)
+
+        return ChatResult(
+            content=content,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=int(usage.get("totalTokenCount") or prompt_tokens + completion_tokens),
+            tool_calls=[],
+            raw=body,
+        )
+
+    def embed(self, text: str) -> list[float]:
+        raise NotImplementedError("GeminiProvider is extraction-only; embeddings live elsewhere")
+
+    def test_connection(self) -> tuple[bool, str, int]:
+        started = time.perf_counter()
+        try:
+            self.chat([{"role": "user", "content": "hi"}], temperature=0, max_tokens=1)
+            return True, "OK", int((time.perf_counter() - started) * 1000)
+        except Exception as exc:  # noqa: BLE001
+            return False, str(exc), int((time.perf_counter() - started) * 1000)
+
+
+# ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
 
@@ -572,4 +723,6 @@ def get_provider(provider: str, api_key: str, model: Optional[str] = None) -> LL
         return OpenAIProvider(api_key=api_key, default_model=model or "gpt-4o-mini")
     if key == "anthropic":
         return AnthropicProvider(api_key=api_key, default_model=model or "claude-haiku-4-5")
+    if key == "gemini":
+        return GeminiProvider(api_key=api_key, default_model=model or "gemini-2.5-flash")
     raise ValueError(f"Unsupported provider: {provider}")
