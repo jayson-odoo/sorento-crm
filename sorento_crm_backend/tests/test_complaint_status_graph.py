@@ -343,12 +343,22 @@ def test_the_key_guard_refuses_to_leave_a_terminal_status():
 
 
 def test_an_unrecognised_current_status_can_go_nowhere():
-    """Fail closed: a row holding a string outside the graph has no outgoing edge."""
+    """Fail closed: a row holding a string outside the graph cannot move.
+
+    The refusal is what matters and has not changed. What changed on 2026-08-01 is the
+    REASON given: this used to report `status_transition_not_allowed`, because an
+    unrecognised key resolved to "no current status" and then found no outgoing edge.
+    That blamed the graph for a bad row, and told an admin to go and edit a graph that
+    was correct. `complaints.status` is a plain VARCHAR with no FK or CHECK, so it can
+    hold any string at all, which makes this the likeliest way to reach it.
+    """
     with blank_session() as db:
         _seeded(db)
         with pytest.raises(AppException) as err:
             assert_transition_allowed_by_key(db, COMPLAINT_ENTITY_TYPE, "legacy_junk", "responded")
-        assert err.value.detail["code"] == "status_transition_not_allowed"
+        assert err.value.detail["code"] == "status_not_in_graph"
+        # Actionable: the offending value has to appear, or the row cannot be found.
+        assert "legacy_junk" in str(err.value.detail["message"])
 
 
 def test_the_key_guard_reports_an_unknown_status_identically_to_the_id_guard():

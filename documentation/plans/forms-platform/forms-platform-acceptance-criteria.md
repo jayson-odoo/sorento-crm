@@ -279,6 +279,92 @@ register (MCP itself is clean - zero workflow references verified), and
 
 ---
 
+---
+
+## Group F1a - status on submission LINES, and a derived header
+
+Required by the after-sales exchange/return flow (`REQUIREMENTS-inbox-2026-08-01.md` R1/R3): Customer Service
+approves **some lines and rejects others**, each line carries its own **disposition**, and the submission's status
+follows from its lines.
+
+The whole risk of this slice is one thing: **a derived value that is also writable is two sources of truth.**
+Most ACs below exist to stop that, not to add features.
+
+### Line status
+
+- **AC-F1a-1** `[BE][MIG]` Given `workflow_submission_lines` today carries only `line_group_id`, `sort_order` and
+  `row_data`, Then it gains `status_id`, a `UUID(as_uuid=False)` FK to `statuses.id`, **nullable**. Nullable
+  because line-level status is **opt-in per definition**: most forms have lines that are just data, and forcing a
+  status on them would mean seeding a graph for every form that has a repeater.
+- **AC-F1a-2** `[BE]` Given a new entity type, Then `workflow_submission_line` registers **FK-based**
+  (`status_attr="status_id"`) per ADR-0013 rule 1, with its own default graph. It is **not** the submission's
+  graph: a line's lifecycle is a per-item decision (approve, reject, substitute) and the header's is a case
+  lifecycle. Sharing one graph would force every header state onto every line.
+- **AC-F1a-3** `[BE]` Given a line belongs to a submission which belongs to a definition, Then its
+  `scope_resolver` resolves the **definition** (one hop through the submission), so a definition forks its line
+  graph exactly as it forks its header graph. This is the indirect case `scope_resolver` was designed for.
+- **AC-F1a-4** `[BE]` Given a line transition, Then it is authorised by the engine and an out-of-graph move is
+  **422**, identically to the header. One authority, not a second per-line rule engine.
+- **AC-F1a-5** `[BE]` Given the fork-stranding defect (task #14: `fork_graph` does not remap records that already
+  point at the default graph), Then line-level status must not ship until that is closed **or** a record-side
+  guard raises `status_not_in_graph` when a line's current status is absent from its resolved graph. Lines
+  multiply the exposure: one submission can strand many rows at once.
+
+### Disposition
+
+- **AC-F1a-6** `[BE][MIG]` Given a disposition is configurable master data and not a lifecycle, Then it is
+  **NOT** a status and **NOT** a new master table. It reuses the existing lookup system: a `lookup_sets` row
+  `workflow_submission_line_disposition`, its `lookup_options`, and a `lookup_bindings` row for
+  `('workflow_submission_lines', 'disposition')`. The column is a `String` holding the option `value`, matching
+  the seven existing bindings (`complaints.complaint_type` and friends). That buys the admin dropdown UI, the
+  keyword search and the default-value behaviour for free.
+- **AC-F1a-7** `[BE]` Given a disposition value, Then it is validated app-side against the **active** options of
+  the bound set, exactly as the existing bindings are. An inactive or unknown value is rejected.
+- **AC-F1a-8** `[DOC]` Disposition and line status are **orthogonal**. A line can be `approved` with disposition
+  `exchange` or `credit_note`; rejecting a line does not imply a disposition. Do not collapse them into one
+  column, and do not derive one from the other.
+
+### The derived header - where the bugs live
+
+- **AC-F1a-9** `[BE]` Given a definition opts into line-derived status, Then the header status is **computed from
+  its lines and is not directly writable**. `apply_transition` on the header must refuse for such a definition,
+  with a distinct error code. ADR-0013 rule 11 requires exactly one writer of a status column; a derived header
+  that is also settable violates it and the two will disagree.
+- **AC-F1a-10** `[BE]` Given derivation is **opt-in**, Then a definition that does not declare it keeps today's
+  behaviour exactly: the header is set by transition and lines carry no status. No existing form changes shape.
+- **AC-F1a-11** `[BE]` Given the recompute, Then it is **idempotent**: running it twice changes nothing, and
+  running it on an unchanged submission performs no write and emits no transition log row. A derived value that
+  logs on every recompute floods history.
+- **AC-F1a-12** `[BE]` Given every non-cancelled line reaches a terminal status, Then the header moves to the
+  definition's declared resolved status. **And given a line then leaves terminal, the header REOPENS.** The
+  reopen case is not optional: `complaint_fulfilment_service` already implements exactly this shape (a
+  `processed_by_cs` complaint becomes `fulfilled` when every non-cancelled linked DO is delivered, and reopens
+  when one stops being delivered). Follow it, including that a cancelled line is excluded rather than counted as
+  done.
+- **AC-F1a-13** `[BE]` Given derivation reads the engine's **trait flags** (`is_terminal`, `is_archived`) rather
+  than hardcoded status keys, Then a definition may rename or fork its line statuses without touching the
+  derivation code. Branching on key strings here would re-create the coupling the status engine exists to remove.
+- **AC-F1a-14** `[BE]` Given partial approval is the driving requirement, Then a submission with some lines
+  approved and others rejected is a **first-class state**, not an error: the header reflects "decided" while the
+  lines retain their individual outcomes, and nothing forces all lines to agree.
+- **AC-F1a-15** `[BE]` Given a submission with **zero** lines, Then derivation must not claim "all lines
+  terminal" and silently resolve it. An empty set satisfies "all" vacuously, which is the same class of bug as an
+  empty `rules[]` matching everything (F0's trap). Zero lines means not derivable, and the header stays put.
+- **AC-F1a-16** `[BE]` Given the header changes by derivation, Then the transition log records it with the
+  derivation as the actor rather than attributing it to whoever last touched a line. A derived move has no human
+  mover, and recording one is a lie in the audit trail.
+
+### Boundaries
+
+- **AC-F1a-17** `[BE]` Given reporting, Then it groups by status **key**, never id and never `category`, on lines
+  as on headers. A forked line graph re-keys ids for the same rungs.
+- **AC-F1a-18** `[BE][MIG]` Given migrations fork the head when more than one author writes them, Then F1a's
+  migration is orchestrator-owned, chains onto `311_wf_submission_status`, and leaves exactly one head.
+- **AC-F1a-19** `[BE]` Given no regression is acceptable, Then the full suite's failure set is **identical** to
+  the pre-slice baseline, compared set-wise and not by count, run **serially** with `-p no:randomly`.
+- **AC-F1a-20** `[FE]` F1a is backend-only. `workflow-forms-management` stays stale until F3, and the sidebar's
+  app-wide `published-for-submission` call must keep working.
+
 ## Deferred, with the reason
 
 - **F1a** (submission **lines** carry `status_id` + disposition, header status derived) is a separate slice.

@@ -194,6 +194,22 @@ def assert_transition_allowed(
         )
 
     current = graph.by_id(from_status_id) if from_status_id else None
+    if from_status_id and current is None:
+        # The RECORD is outside its own graph, not the transition. Reachable as soon as
+        # a scope forks: forking copies statuses under new ids, so a record created
+        # before the fork still points at the default graph's id. Falling through to the
+        # edge lookup below reported status_transition_not_allowed, which sends an admin
+        # to edit a graph that is fine, and printed "its current state" because there was
+        # no label to name. Diagnose the record instead.
+        raise AppException(
+            status_code=422,
+            message=(
+                f"This record's current status ({from_status_id}) is not part of the "
+                "status graph in force for it, so it cannot be moved. Its status was "
+                "most likely set before this graph was forked."
+            ),
+            code="status_not_in_graph",
+        )
     if current is not None and current.is_terminal:
         raise AppException(
             status_code=422,
@@ -248,6 +264,20 @@ def assert_transition_allowed_by_key(
             code="status_not_in_graph",
         )
     current = graph.by_key(from_key) if from_key else None
+    if from_key and current is None:
+        # Same diagnosis as the id-based guard, but it must be raised HERE. Passing None
+        # down would look like a first entry into the graph, and the record would be told
+        # its transition is not allowed rather than that its status is unknown. This is
+        # the likelier path in practice: a key-valued column is a plain VARCHAR with no
+        # FK, so it can hold any string at all.
+        raise AppException(
+            status_code=422,
+            message=(
+                f"This record's current status ('{from_key}') is not part of the status "
+                "graph in force for it, so it cannot be moved."
+            ),
+            code="status_not_in_graph",
+        )
     return assert_transition_allowed(
         db, entity_type, current.id if current else None, target.id, scope_id
     )
