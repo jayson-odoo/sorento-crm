@@ -219,6 +219,40 @@ def assert_transition_allowed(
     return edge
 
 
+def assert_transition_allowed_by_key(
+    db: Session,
+    entity_type: str,
+    from_key: Optional[str],
+    to_key: str,
+    scope_id: Optional[str] = None,
+) -> StatusTransition:
+    """The same guard, for an entity whose column holds the status KEY.
+
+    The engine is FK-based: ``StatusEntity.status_attr`` defaults to ``status_id``
+    and everything above works on ids. Some pre-engine tables instead hold the key
+    itself in a plain ``VARCHAR`` (``complaints.status``), and moving those onto a
+    FK is a data migration across every branch site. This adapter resolves both
+    ends by key and delegates, so the authority stays in one place.
+
+    An unrecognised ``from_key`` resolves to no current status, which has no
+    outgoing edges: a row holding a string outside the graph fails closed.
+    """
+    graph = resolve_graph(db, entity_type, scope_id)
+    target = graph.by_key(to_key) if to_key else None
+    if target is None:
+        # Kept in lockstep with assert_transition_allowed's own status_not_in_graph
+        # raise, which cannot be reused here: there is no id to hand it.
+        raise AppException(
+            status_code=422,
+            message="That status does not belong to this record's status graph.",
+            code="status_not_in_graph",
+        )
+    current = graph.by_key(from_key) if from_key else None
+    return assert_transition_allowed(
+        db, entity_type, current.id if current else None, target.id, scope_id
+    )
+
+
 # ---------------------------------------------------------------- forking
 
 

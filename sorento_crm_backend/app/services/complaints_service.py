@@ -1685,6 +1685,50 @@ class ComplaintService:
     #   approved  -> processed_by_cs | closed
     _RESPONSE_STAGE_STATUSES: tuple[str, ...] = ("new", "submitted", "updated", "responded")
 
+    def _assert_status_transition_allowed(self, complaint, update_data: dict) -> None:
+        """Hold a generic write to the complaint status graph.
+
+        Both write paths that accept a ``ComplaintUpdate`` apply it through a blind
+        setattr loop, and ``status`` is a bare ``Optional[str]`` on the schema. So
+        without this, any authenticated caller or X-API-Key client could set any
+        status from any state, and a status engine that guarded only the dedicated
+        action routes (/approve, /reject, /process, /close, /void) would be
+        documentation rather than enforcement.
+
+        Two deliberate fail-OPEN escapes, so registering the graph stays a
+        behavioural no-op:
+
+        1. A write that repeats the status the complaint already holds is not a
+           transition. A caller echoing a whole record back must keep working, and
+           such a write leaves no audit diff -- so it is invisible in the historical
+           evidence that says no out-of-graph transition has ever happened.
+        2. An environment with no seeded complaint graph has no edges to check
+           against. Failing closed there would reject every status write until the
+           seed migration ran, which is a deploy-ordering trap.
+
+        The incoming value is checked as sent (not case-folded): a mis-cased status
+        would be stored verbatim and then match none of the by-name branches, so
+        rejecting it is the honest outcome. The CURRENT value is lowered, mirroring
+        how ``void_complaint`` and the ``_RESPONSE_STAGE_STATUSES`` check already
+        read it.
+        """
+        if "status" not in update_data:
+            return
+
+        from app.services.complaint_status_graph import COMPLAINT_ENTITY_TYPE
+        from app.services.status_service import (
+            assert_transition_allowed_by_key,
+            resolve_graph,
+        )
+
+        target = update_data["status"]
+        current = (getattr(complaint, "status", None) or "").strip().lower()
+        if not target or target == current:
+            return
+        if not resolve_graph(self.db, COMPLAINT_ENTITY_TYPE, None).statuses:
+            return
+        assert_transition_allowed_by_key(self.db, COMPLAINT_ENTITY_TYPE, current, target)
+
     def update_complaint(self, complaint_id: str, complaint_data: ComplaintUpdate):
         """Update a complaint."""
         complaint = self.get_complaint(complaint_id)
@@ -1709,6 +1753,8 @@ class ComplaintService:
         # in; status only changes when the caller explicitly sends `status`, or
         # via the dedicated reply action (update_complaint_and_reply →
         # 'responded'). The old auto-'updated' flip was unwanted.
+
+        self._assert_status_transition_allowed(complaint, update_data)
 
         for key, value in update_data.items():
             setattr(complaint, key, value)
@@ -1790,6 +1836,9 @@ class ComplaintService:
             raise handle_validation_error("technical_team_response is required to reply.")
 
         update_data.pop("technical_team_response", None)
+
+        # Same blind setattr loop as update_complaint, same schema, same hole.
+        self._assert_status_transition_allowed(complaint, update_data)
 
         for key, value in update_data.items():
             setattr(complaint, key, value)

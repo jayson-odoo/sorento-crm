@@ -62,10 +62,22 @@ def test_edit_response_does_not_regress_decided_status(db: Session, terminal: st
     assert (out.technical_team_response or "").strip() != ""
 
 
-def test_edit_response_moves_submitted_to_updated(db: Session) -> None:
+def test_edit_response_does_not_move_submitted_to_updated(db: Session) -> None:
+    """A plain save must NOT auto-transition the status.
+
+    This asserted the opposite until 2026-08-01, and had been failing on `main`:
+    it pinned an auto-flip to 'updated' that was deliberately removed (see the
+    note at `complaints_service.update_complaint`, "The old auto-'updated' flip
+    was unwanted"). The one live complaint row carrying 'updated' is a relic of
+    that removed behaviour, and no code writes the value now.
+
+    Inverted rather than deleted, because the property is worth holding: editing
+    a response is not a state change, and the status graph declares no
+    `submitted -> updated` edge for it to use.
+    """
     c = _seed(db, "submitted")
     out = _edit_response(db, c.id, "first response draft")
-    assert out.status == "updated"
+    assert out.status == "submitted"
 
 
 def test_edit_response_keeps_responded(db: Session) -> None:

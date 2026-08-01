@@ -196,6 +196,15 @@ async def startup_event():
         logging.info("Embedding change listeners registered")
     except Exception as e:
         logging.error(f"Failed to register embedding change listeners: {str(e)}", exc_info=True)
+    # Status-engine entities. Code-side registry, no DB access: it is what lets the
+    # engine block deleting a status that live records still hold, and migrate those
+    # records, without the engine knowing a domain table.
+    try:
+        from app.services.complaint_status_graph import register_complaint_status_entity
+        register_complaint_status_entity()
+        logging.info("Status entity registered: complaint")
+    except Exception as e:
+        logging.error(f"Failed to register status entities: {str(e)}", exc_info=True)
     # Register task handlers unconditionally so manual "run now" works on API
     # containers even when scheduler ticks are gated to the worker container.
     try:
