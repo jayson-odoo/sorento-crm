@@ -28,7 +28,7 @@ const TILE: ResolvedTile = {
   badges: [],
 };
 
-function payload(tileFields: string[]) {
+function payload(tileFields: string[], printProfile = DEFAULT_PRINT_PROFILE) {
   return {
     pageName: 'ZZT flyer',
     version: 1,
@@ -59,7 +59,7 @@ function payload(tileFields: string[]) {
           ],
         },
       ],
-      printProfile: DEFAULT_PRINT_PROFILE,
+      printProfile,
     },
     collections: { c1: [TILE] },
     tileTemplates: { t1: tileFields },
@@ -157,6 +157,17 @@ describe('the printed page geometry', () => {
     expect(main.style.paddingRight).toBe(`${DEFAULT_PRINT_PROFILE.margins.right}mm`);
   });
 
+  it('leaves the shell-cancelling rule to the group that owns it', async () => {
+    // Every route in `(public)` needs <body> out of the shell's flex row, not
+    // just this one - the public catalogue was rendering 274px wide without it.
+    // Two copies of one rule is the same defect as two declarations of the
+    // paper size, so the layout states it and this page does not repeat it.
+    const main = await printedMain();
+    const css = (main.querySelector('style') as HTMLStyleElement).innerHTML;
+
+    expect(css).not.toMatch(/display:\s*block\s*!important/);
+  });
+
   it('leaves the paper size to Chromium and states it nowhere itself', async () => {
     const main = await printedMain();
     const css = (main.querySelector('style') as HTMLStyleElement).innerHTML;
@@ -182,5 +193,90 @@ describe('the printed page geometry', () => {
     const app = path.join(process.cwd(), 'app');
     expect(existsSync(path.join(app, '(public)/c/print/[downloadId]/page.tsx'))).toBe(true);
     expect(existsSync(path.join(app, '(auth)/c'))).toBe(false);
+  });
+});
+
+/**
+ * One sheet, one layout.
+ *
+ * The paper is 794px wide on A4 portrait, so the renderer's media queries were
+ * firing and handing back TABLET placements, while tile density fell back to
+ * its desktop default because the print page named no breakpoint at all. The
+ * export therefore stacked blocks the tablet way and filled them at the desktop
+ * tile count, which is a page that exists at no width.
+ */
+describe('the breakpoint the paper is', () => {
+  async function printedWith(printProfile: typeof DEFAULT_PRINT_PROFILE) {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue({ ok: true, json: async () => payload(['name', 'price'], printProfile) }),
+    );
+    const { container } = await renderPrintPage();
+    return container;
+  }
+
+  function layoutCss(container: HTMLElement): string {
+    return (container.querySelector('[data-dk-catalogue] style') as HTMLStyleElement).innerHTML;
+  }
+
+  function tilesAcross(container: HTMLElement): string {
+    return (container.querySelector('[data-dk-tile-grid]') as HTMLElement).style
+      .gridTemplateColumns;
+  }
+
+  it('lays an A4 sheet out as the tablet it is, density and placement together', async () => {
+    const container = await printedWith(DEFAULT_PRINT_PROFILE);
+
+    // The document declares 4 across on desktop and 2 on tablet.
+    expect(tilesAcross(container)).toBe('repeat(2, minmax(0, 1fr))');
+    // ...and the placements come from the same breakpoint's variables.
+    expect(layoutCss(container)).toContain('var(--dk-t-col)');
+    expect(layoutCss(container)).not.toContain('var(--dk-d-col)');
+  });
+
+  it('lays an A3 landscape sheet out as the desktop it is', async () => {
+    // 420mm is 1587px. The same code that answers "tablet" for A4 has to answer
+    // "desktop" here, or it is a constant wearing a function's clothes.
+    const container = await printedWith({
+      ...DEFAULT_PRINT_PROFILE,
+      pageSize: 'A3',
+      orientation: 'landscape',
+    });
+
+    expect(tilesAcross(container)).toBe('repeat(4, minmax(0, 1fr))');
+    expect(layoutCss(container)).toContain('var(--dk-d-col)');
+    expect(layoutCss(container)).not.toContain('var(--dk-t-col)');
+  });
+
+  it('leaves no media query on the page to disagree with that choice', async () => {
+    const container = await printedWith(DEFAULT_PRINT_PROFILE);
+
+    // A query is a second opinion about a width that cannot change. Paper does
+    // not resize, and the half of the layout that is data (tile density) could
+    // never have been behind a query anyway - which is exactly how the two came
+    // apart.
+    expect(layoutCss(container)).not.toContain('@media');
+  });
+});
+
+describe('where a fold is allowed to land', () => {
+  it('keeps the break out of the middle of a product', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => payload(['name', 'price']) }),
+    );
+    const { container } = await renderPrintPage();
+    const css = (container.querySelector('main[data-dk-print-ready] style') as HTMLStyleElement)
+      .innerHTML;
+
+    // A section taller than one page cannot be kept whole, so Chromium breaks
+    // it wherever the fold falls - measured at 47.6pt of a 57pt tile on the
+    // first sheet, with that product's price alone on the second. The section
+    // rule states what the paginator models; the tile rule states the guarantee
+    // that survives when the model cannot hold.
+    expect(css).toMatch(/\[data-dk-section-id\]\s*{[^}]*break-inside:\s*avoid/);
+    expect(css).toMatch(/\[data-dk-tile\]\s*{[^}]*break-inside:\s*avoid/);
   });
 });

@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 
-import { paginate, usablePageHeightMm, type PaginationInput } from './paginate';
-import { DEFAULT_PRINT_PROFILE } from './types';
+import {
+  paginate,
+  paperBreakpoint,
+  paperWidthPx,
+  usablePageHeightMm,
+  type PaginationInput,
+} from './paginate';
+import { DEFAULT_PRINT_PROFILE, type PaperOrientation, type PaperSize } from './types';
 
 /**
  * Golden set for paper-mode pagination (AC-H3 / AC-H5 / AC-H7).
@@ -30,6 +36,48 @@ describe('usablePageHeightMm', () => {
     expect(
       usablePageHeightMm({ ...DEFAULT_PRINT_PROFILE, orientation: 'landscape' }),
     ).toBe(210 - 15 - 15);
+  });
+});
+
+/**
+ * Which breakpoint a sheet of paper IS.
+ *
+ * The print page renders the catalogue at exactly one breakpoint, for both the
+ * block placements and the tile density, and this is where that one is chosen.
+ * It has to be read off the paper rather than fixed, because the editor offers
+ * papers on both sides of the desktop threshold: every A4 and Letter sheet is
+ * a tablet, and A3 landscape is a desktop.
+ */
+describe('paperBreakpoint', () => {
+  const profile = (pageSize: PaperSize, orientation: PaperOrientation) => ({
+    ...DEFAULT_PRINT_PROFILE,
+    pageSize,
+    orientation,
+  });
+
+  it.each<[PaperSize, PaperOrientation, number, string]>([
+    ['A4', 'portrait', 794, 'tablet'],
+    ['A4', 'landscape', 1123, 'tablet'],
+    ['A3', 'portrait', 1123, 'tablet'],
+    // The one that stops the answer being hardcoded.
+    ['A3', 'landscape', 1587, 'desktop'],
+    ['Letter', 'portrait', 816, 'tablet'],
+    ['Letter', 'landscape', 1056, 'tablet'],
+  ])('%s %s is %ipx, which is a %s sheet', (pageSize, orientation, px, breakpoint) => {
+    expect(Math.round(paperWidthPx(profile(pageSize, orientation)))).toBe(px);
+    expect(paperBreakpoint(profile(pageSize, orientation))).toBe(breakpoint);
+  });
+
+  it('measures the whole sheet, not the area inside the margins', () => {
+    // The worker prints with Chromium's own margins at zero, so the page box is
+    // the paper and that is what a media query would resolve against. Deducting
+    // the document's margins here would pick the wrong breakpoint for any sheet
+    // sitting near a threshold.
+    const wide = profile('A3', 'landscape');
+    const narrowMargins = { ...wide, margins: { top: 40, right: 40, bottom: 40, left: 40 } };
+
+    expect(paperWidthPx(narrowMargins)).toBe(paperWidthPx(wide));
+    expect(paperBreakpoint(narrowMargins)).toBe('desktop');
   });
 });
 

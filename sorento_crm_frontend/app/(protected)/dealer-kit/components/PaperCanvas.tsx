@@ -96,8 +96,9 @@ export function PaperCanvas({
               : `${overflowing.length} sections are taller than a page`}
           </AlertTitle>
           <AlertDescription>
-            A section never splits across a fold, so this one will spill past the printable
-            area. Shorten it or set it to start a new page.
+            The printer will split it, and this preview cannot show you where. The break
+            will not fall through a product, but the page count below is only right up to
+            here. Shorten the section, or set the next one to start a new page.
           </AlertDescription>
         </Alert>
       )}
@@ -196,7 +197,7 @@ export function PaperCanvas({
             )}
           >
             {page.isCover ? 'Cover' : `Page ${page.pageNumber}`}
-            {page.overflows && ' · content overflows'}
+            {page.overflows && ' · taller than the page, the printer will split it'}
           </span>
         </div>
       ))}

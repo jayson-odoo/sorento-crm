@@ -1,6 +1,10 @@
 'use client';
 
-import { BREAKPOINT_MIN_WIDTH } from '@/lib/dealer-kit/deriveLayout';
+import {
+  BREAKPOINT_COLUMNS,
+  BREAKPOINT_MIN_WIDTH,
+  type Breakpoint,
+} from '@/lib/dealer-kit/deriveLayout';
 import { cn } from '@/lib/utils';
 import { ROW_GAP_PX, ROW_HEIGHT_PX } from '@/lib/dealer-kit/gridMetrics';
 import type {
@@ -20,13 +24,14 @@ import { BlockPreview } from './BlockPreview';
  * the PDF worker prints through headless Chromium. One renderer, so "the PDF
  * matches the screen" is structural rather than a promise someone has to keep.
  *
- * **Why the layout is CSS variables plus three media queries, not Tailwind
+ * **Why the layout is CSS variables plus a generated stylesheet, not Tailwind
  * classes.** A block's column and row come from the document, so they are data,
  * not design tokens. Emitting `col-start-[7]` per block would need a class for
  * every value at every breakpoint, which Tailwind cannot generate ahead of time
  * from runtime data. Custom properties carry the numbers; one stylesheet reads
- * them at each breakpoint. That also means resizing the window re-lays-out with
- * no JavaScript at all, which is what makes it safe to print.
+ * them. Every block carries all three breakpoints' numbers at once, which is
+ * what lets the stylesheet switch between them with no JavaScript - by media
+ * query on screen, and by naming one outright on paper (see `breakpoint`).
  */
 
 // Shared with the builder canvas: see lib/dealer-kit/gridMetrics. These two
@@ -41,11 +46,17 @@ const PADDING_Y: Record<string, string> = {
   xl: 'py-16',
 };
 
-/** The stylesheet the custom properties feed. Emitted once per rendered page. */
-const LAYOUT_CSS = `
+/** Which custom-property family carries a breakpoint's placement. */
+const VAR_PREFIX: Record<Breakpoint, 'd' | 't' | 'm'> = {
+  desktop: 'd',
+  tablet: 't',
+  mobile: 'm',
+};
+
+/** Everything that is true of the grid at every width. */
+const GRID_BASE_CSS = `
 .dk-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
   /*
     Rows GROW to their content. A block's row count was measured in the builder
     at the builder's width; the published page is a different width, so a tile
@@ -57,26 +68,47 @@ const LAYOUT_CSS = `
   grid-auto-rows: minmax(${ROW_HEIGHT_PX}px, auto);
   gap: ${ROW_GAP_PX}px;
 }
+.dk-block { min-width: 0; }
+`;
+
+/** The column count and the placement variables for one breakpoint. */
+function placementRules(breakpoint: Breakpoint): string {
+  const prefix = VAR_PREFIX[breakpoint];
+
+  return `.dk-grid { grid-template-columns: repeat(${BREAKPOINT_COLUMNS[breakpoint]}, minmax(0, 1fr)); }
 .dk-block {
-  grid-column: var(--dk-m-col) / span var(--dk-m-span);
-  grid-row: var(--dk-m-row) / span var(--dk-m-rows);
-  min-width: 0;
+  grid-column: var(--dk-${prefix}-col) / span var(--dk-${prefix}-span);
+  grid-row: var(--dk-${prefix}-row) / span var(--dk-${prefix}-rows);
+}`;
 }
-@media (min-width: ${BREAKPOINT_MIN_WIDTH.tablet}px) {
-  .dk-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); }
-  .dk-block {
-    grid-column: var(--dk-t-col) / span var(--dk-t-span);
-    grid-row: var(--dk-t-row) / span var(--dk-t-rows);
+
+/**
+ * The stylesheet the custom properties feed. Emitted once per rendered page.
+ *
+ * `responsive` is the screen: mobile-first, with the wider layouts behind media
+ * queries, so resizing the window re-lays-out with no JavaScript.
+ *
+ * A PINNED breakpoint emits the same rules with the media queries removed, and
+ * that is the print path. Paper cannot resize, so a query is a decision made by
+ * something that is not the document - and it is a DIFFERENT decision from the
+ * one that picks tile density, which is data and cannot be a query at all. That
+ * is precisely how the two came apart: see the note on `breakpoint` below.
+ */
+function layoutCss(breakpoint: Breakpoint | 'responsive'): string {
+  if (breakpoint !== 'responsive') {
+    return `${GRID_BASE_CSS}\n${placementRules(breakpoint)}\n`;
   }
+
+  return `${GRID_BASE_CSS}
+${placementRules('mobile')}
+@media (min-width: ${BREAKPOINT_MIN_WIDTH.tablet}px) {
+${placementRules('tablet')}
 }
 @media (min-width: ${BREAKPOINT_MIN_WIDTH.desktop}px) {
-  .dk-grid { grid-template-columns: repeat(12, minmax(0, 1fr)); }
-  .dk-block {
-    grid-column: var(--dk-d-col) / span var(--dk-d-span);
-    grid-row: var(--dk-d-row) / span var(--dk-d-rows);
-  }
+${placementRules('desktop')}
 }
 `;
+}
 
 /** A placement that is missing at a breakpoint falls back to a full-width row. */
 function placementVars(
@@ -128,7 +160,7 @@ function RenderedBlock({
   section: Section;
   index: number;
   data: RenderedCatalogueData;
-  breakpoint: 'desktop' | 'tablet' | 'mobile';
+  breakpoint: Breakpoint;
 }) {
   const fallbackRow = index * 2 + 1;
   const style = {
@@ -151,7 +183,7 @@ function RenderedSection({
 }: {
   section: Section;
   data: RenderedCatalogueData;
-  breakpoint: 'desktop' | 'tablet' | 'mobile';
+  breakpoint: Breakpoint;
 }) {
   // `exclude` is a print instruction, not a visibility one: the section is part
   // of the digital catalogue and simply does not go on paper. Only the PDF path
@@ -190,19 +222,35 @@ export function CatalogueRenderer({
   resolvedCollections,
   tileTemplates,
   /**
-   * Which breakpoint's tile density to use. The LAYOUT is responsive via CSS at
-   * every width, but tile count per row is data, so print has to pick one -
-   * paper has a fixed width and no media query will fire for it.
+   * Which breakpoint this rendering IS.
+   *
+   * `responsive` (the screen) lets the media queries choose the placement as
+   * the window changes, and takes desktop tile density.
+   *
+   * Naming a breakpoint pins BOTH halves of the layout to it: the placement
+   * rules are emitted without media queries, and the same breakpoint chooses
+   * tile density. That is one decision, which is the point.
+   *
+   * Print used to name none, and got the two halves from different places. The
+   * default put DESKTOP density on the page, while the media queries still ran
+   * and resolved against the width of the paper (A4 portrait is 794px, so
+   * `min-width: 768px` fires and `min-width: 1280px` does not), so the
+   * PLACEMENTS came out of the tablet layout. Blocks the designer put side by
+   * side arrived stacked, carrying a tile count that belonged to the layout
+   * they did not get.
    */
-  breakpoint = 'desktop',
+  breakpoint = 'responsive',
 }: {
   name: string;
   sections: Section[];
   className?: string;
   resolvedCollections?: Record<string, ResolvedTile[]>;
   tileTemplates?: Record<string, TileField[]>;
-  breakpoint?: 'desktop' | 'tablet' | 'mobile';
+  breakpoint?: Breakpoint | 'responsive';
 }) {
+  // Responsive placement is chosen per width by CSS, but density is data and
+  // cannot be; desktop keeps the screen exactly as it was.
+  const density: Breakpoint = breakpoint === 'responsive' ? 'desktop' : breakpoint;
   const data: RenderedCatalogueData = {
     collections: resolvedCollections,
     tileTemplates,
@@ -222,13 +270,13 @@ export function CatalogueRenderer({
 
   return (
     <div className={cn('w-full', className)} data-dk-catalogue>
-      <style dangerouslySetInnerHTML={{ __html: LAYOUT_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: layoutCss(breakpoint) }} />
       {sections.map((section) => (
         <RenderedSection
           key={section.id}
           section={section}
           data={data}
-          breakpoint={breakpoint}
+          breakpoint={density}
         />
       ))}
     </div>

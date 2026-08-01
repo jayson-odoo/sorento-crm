@@ -22,7 +22,8 @@
 import { use, useEffect, useState } from 'react';
 
 import { CatalogueRenderer } from '@/app/(protected)/dealer-kit/components/CatalogueRenderer';
-import type { PageDoc, ResolvedTile, TileField } from '@/lib/dealer-kit/types';
+import { paperBreakpoint } from '@/lib/dealer-kit/paginate';
+import { DEFAULT_PRINT_PROFILE, type PageDoc, type ResolvedTile, type TileField } from '@/lib/dealer-kit/types';
 
 interface PrintPayload {
   pageName: string;
@@ -69,13 +70,30 @@ const PAGE_CSS = `
 @page { margin: 0; }
 html, body { margin: 0; padding: 0; background: #fff; }
 /*
-  The app shell makes <body> a full-height flex row for the sidebar. A printed
-  document is a block that flows onto as many pages as it needs; as a flex item
-  it would be sized by the shell instead of by the paper. Class selectors beat
-  element selectors, so overriding the shell's own utilities needs !important.
+  Taking <body> back out of the app shell's flex row is NOT here. A printed
+  document is a block that flows onto as many pages as it needs rather than a
+  flex item sized by a sidebar layout, but so is a public catalogue, so the
+  rule belongs to the (public) layout that both routes share. It was stated
+  here alone for a while, which is why the catalogue rendered 274px wide while
+  the PDF came out fine.
 */
-html, body { display: block !important; height: auto !important; }
+/*
+  Where a fold is allowed to land.
+
+  A section is atomic, which is what Print Preview's paginator assumes when it
+  draws a break line. But break-inside is a request, not a law: a
+  section taller than one page cannot be kept whole, and Chromium then breaks it
+  wherever the fold happens to fall. Measured on a 40-product A4 export, that
+  was through the middle of a tile row - the product names printed on page one
+  and their prices on page two, 47.6pt of a 57pt tile on the first sheet.
+
+  So the second rule states the guarantee we can actually keep, at the grain the
+  reader recognises: whatever else a fold does, it does not cut a product in
+  half. The paginator promises sections do not split; this makes the case it
+  cannot promise survivable rather than silently wrong.
+*/
 [data-dk-section-id] { break-inside: avoid; }
+[data-dk-tile] { break-inside: avoid; }
 `;
 
 export default function CataloguePrintPage({
@@ -144,8 +162,23 @@ export default function CataloguePrintPage({
     };
   }, [payload]);
 
-  const profile = payload?.doc?.printProfile;
-  const margins = profile?.margins ?? { top: 15, right: 15, bottom: 15, left: 15 };
+  const profile = payload?.doc?.printProfile ?? DEFAULT_PRINT_PROFILE;
+  const margins = profile.margins ?? DEFAULT_PRINT_PROFILE.margins;
+
+  /**
+   * The paper IS a breakpoint, and the document is rendered at exactly one.
+   *
+   * Not a preference: A4 portrait is 210mm, which is 794 CSS pixels, and 794px
+   * is a tablet. A3 landscape is 1587px, which is a desktop. So it is read off
+   * the print profile the export was requested with, and the renderer then uses
+   * that one breakpoint for BOTH the block placements and the tile density.
+   *
+   * Naming none was the bug. Tile density fell back to desktop while the
+   * renderer's media queries went on resolving against the width of the sheet
+   * and handed back tablet placements, so one sheet of paper carried half of
+   * each layout.
+   */
+  const breakpoint = paperBreakpoint(profile);
 
   if (failed) {
     // Rendered rather than thrown so the worker's screenshot of a failure is
@@ -180,6 +213,7 @@ export default function CataloguePrintPage({
           sections={payload.doc?.sections ?? []}
           resolvedCollections={payload.collections}
           tileTemplates={payload.tileTemplates}
+          breakpoint={breakpoint}
         />
       )}
     </main>
