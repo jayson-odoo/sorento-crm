@@ -188,6 +188,32 @@ This is the difference between "the AI extracts POs" and "the AI extracts THIS P
 It runs in CI; an extraction change that regresses it does not merge. It also gives P4, P5, P6
 and P7 an objective done condition instead of a demo.
 
+## 5b. Extraction spike result (2026-08-01, measured not assumed)
+
+Run before sizing P4/P5, on the real scan, scored against the real documents.
+
+| Model | numbers | struck-through | handwriting | tokens (10 pages) |
+|---|---|---|---|---|
+| `gemini-2.5-flash` | **52/52** | **1/1** | successor PO + dates correct | 6,371 in / 7,997 out, 134s |
+| `gemini-2.5-pro` | 27/27 (2 pages) | 1/1 | correct | same input cost |
+| `gemini-3.1-pro-preview` | 27/27 (2 pages) | 1/1 | correct | 2x input cost |
+| `gpt-4o-mini` | 25/36 | **0/1 (missed it)** | date and successor PO both mangled | 51,680 in / 1,117 out |
+
+**The self-proving reconciliation:** extracted line amounts sum to 1,810,640.62; minus the
+handwritten cancellation of line 7 (4,733.60) that is exactly the quotation total of
+1,805,907.02. One number validates the extraction, the cancellation reading and the
+cross-check together.
+
+Decisions this settles:
+
+- **Pin `gemini-2.5-flash`.** It matched both pro models exactly and costs a fraction. A
+  `GeminiProvider` adapter is needed in `llm_provider.py` (about 40 lines, same shape as the
+  OpenAI and Anthropic ones); Gemini is not currently supported there.
+- `gpt-4o-mini` is unusable for this: it missed the struck-through cancellation entirely, which
+  no arithmetic check can catch. Its two numeric errors WOULD have been caught, which is the
+  two-tier gate working as designed.
+- Sorento needs its own Gemini key; the spike borrowed another project's.
+
 ## 6. Open risks
 
 - **Vision quality on Malaysian site handwriting.** Mitigated by reject-by-default cards, but

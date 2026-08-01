@@ -423,7 +423,13 @@ features are tested against real user samples.
 
 - **AC-M1** Extraction of `Buimaco Bulk PO - Tuju Residence - (R1).pdf` must reproduce every
   printed line exactly: line number, stock code, description, quantity, UOM, unit price and
-  amount, for all 21 lines.
+  amount, for all **52 lines across 10 pages**.
+- **AC-M1a** Every line must satisfy `qty x unit_price == amount`, and the sum of line amounts
+  MINUS any line cancelled by annotation must equal the quotation total exactly
+  (1,810,640.62 - 4,733.60 = 1,805,907.02). Measured on 2026-08-01: 52/52.
+- **AC-M1b** The PO's stock-code COLUMN is truncated by the customer's own printing
+  (`SRTWC86`, `2155-BLUE`). The full code lives in the description, so code resolution reads
+  both and never trusts the column alone.
 - **AC-M2** Both handwritten amendments must be detected as annotation cards, and the struck
   through line 7 (`SRTFV1001`, 16 NOS, RM 295.85) must be proposed as CANCELLED.
 - **AC-M3** Extraction of `Delivery Schedule - Buimaco (Tuju Residences).pdf` must reproduce
