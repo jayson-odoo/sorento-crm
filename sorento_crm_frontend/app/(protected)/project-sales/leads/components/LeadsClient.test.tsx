@@ -11,7 +11,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ProjectLead } from '../../_shared/types/project.types';
+import type { LeadWithAcceptance } from '../../_shared/types/leadAcceptance.types';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -114,7 +114,7 @@ vi.mock(
 
 import { LeadsClient } from './LeadsClient';
 
-function lead(overrides: Partial<ProjectLead> = {}): ProjectLead {
+function lead(overrides: Partial<LeadWithAcceptance> = {}): LeadWithAcceptance {
   return {
     id: 'l1',
     lead_code: 'LEAD-000001',
@@ -222,7 +222,7 @@ describe('LeadsClient', () => {
 
     expect(await screen.findByText('No open leads')).toBeInTheDocument();
     expect(
-      screen.getByText(/ownership only locks when you qualify it into a project/i),
+      screen.getByText(/it becomes somebody's only when they accept it/i),
     ).toBeInTheDocument();
   });
 
@@ -246,6 +246,35 @@ describe('LeadsClient', () => {
     renderClient();
 
     expect(await screen.findByText(/3 projects/)).toBeInTheDocument();
+  });
+
+  it('shows who told us, that the buyer is unknown, and how long acceptance has waited', async () => {
+    listLeads.mockResolvedValue({
+      data: [
+        lead({
+          customer_id: null,
+          customer_name: null,
+          informant_source: 'bci',
+          informant_party_label: 'Veritas Architects Sdn Bhd',
+          informant_ref: 'BCI-778812',
+          acceptance_state: 'assigned',
+          owner_name: 'Ali',
+          assigned_at: new Date(Date.now() - 50 * 3_600_000)
+            .toISOString()
+            .replace('Z', ''),
+        }),
+      ],
+      pagination: { total: 1, page: 1, limit: 200 },
+    });
+
+    renderClient();
+
+    expect(
+      await screen.findByText(/Told us: Veritas Architects Sdn Bhd · BCI · BCI-778812/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Buyer: not known yet/)).toBeInTheDocument();
+    expect(screen.getByText('Awaiting acceptance by Ali')).toBeInTheDocument();
+    expect(screen.getByText('Waiting 2 days')).toBeInTheDocument();
   });
 
   it('reports a load failure rather than looking empty', async () => {

@@ -22,86 +22,98 @@ import {
   useLeadMutations,
   useProjectParties,
 } from '../../_shared/hooks/useProjects';
-import type { LeadNewCustomer, LeadSource } from '../../_shared/types/project.types';
-
-const SOURCE_OPTIONS = [
-  { value: 'site_visit', label: 'Site visit', description: 'Saw it on the ground' },
-  { value: 'architect', label: 'Architect', description: 'A consultant told us' },
-  { value: 'contractor', label: 'Contractor', description: 'A main contractor told us' },
-  { value: 'dealer', label: 'Dealer', description: 'A dealer passed it on' },
-  { value: 'inbound', label: 'Inbound enquiry', description: 'They came to us' },
-  { value: 'other', label: 'Other' },
-];
+import {
+  useAssignableUsers,
+  useLeadAcceptanceMutations,
+} from '../../_shared/hooks/useLeadAcceptance';
+import type { LeadNewCustomer, ProjectLeadBody } from '../../_shared/types/project.types';
+import type { LeadInformantBody } from '../../_shared/types/leadAcceptance.types';
+import {
+  EMPTY_INFORMANT,
+  InformantFieldset,
+  informantBody,
+  type InformantDraft,
+} from './InformantFieldset';
+import { informantSourceLabel } from './acceptance';
 
 const STEPS = [
-  { id: 'customer', label: 'Who told us' },
   { id: 'development', label: 'The development' },
+  { id: 'informant', label: 'Who told us' },
   { id: 'detail', label: 'Lead detail' },
-  { id: 'confirm', label: 'Confirm' },
+  { id: 'confirm', label: 'Assign and confirm' },
 ] as const;
 
 type StepId = (typeof STEPS)[number]['id'];
 
 /**
- * The wizard from the plan: select-or-create customer, development info, lead detail,
- * confirm.
+ * Record a lead: the development, who told us, the little we know, and who it goes to.
  *
- * Four steps rather than one long form on purpose. Step 1 is the only REQUIRED
- * decision (AC-O1), and a single form would bury it among eight optional fields, which
- * is how a required field ends up being filled with whatever is nearest.
+ * The development comes FIRST because it is the only required decision (AC-A3). A lead
+ * anchors on the job, not on a counterparty: on day one nobody knows who will place the
+ * order, so the buyer is optional and the informant is a separate thing entirely.
  *
  * A lead is never clash-checked (AC-O3), so there is no warning panel here. That check
  * happens once, at qualify, where it means something.
  */
 export function LeadWizardDialog({ onDone }: { onDone: () => void }) {
   const { create } = useLeadMutations();
-  const [step, setStep] = React.useState<StepId>('customer');
+  const { assign } = useLeadAcceptanceMutations();
+  const [step, setStep] = React.useState<StepId>('development');
+
+  const [title, setTitle] = React.useState('');
+  const [developerPartyId, setDeveloperPartyId] = React.useState('');
+  const [location, setLocation] = React.useState('');
+
+  const [informant, setInformant] = React.useState<InformantDraft>(EMPTY_INFORMANT);
 
   const [customerId, setCustomerId] = React.useState('');
   const [creatingCustomer, setCreatingCustomer] = React.useState(false);
   const [newCustomer, setNewCustomer] = React.useState<LeadNewCustomer>({
     customer_name: '',
   });
-
-  const [title, setTitle] = React.useState('');
-  const [developerPartyId, setDeveloperPartyId] = React.useState('');
-  const [location, setLocation] = React.useState('');
-
-  const [source, setSource] = React.useState<string>('');
-  const [sourceDetail, setSourceDetail] = React.useState('');
   const [estimatedValue, setEstimatedValue] = React.useState('');
   const [notes, setNotes] = React.useState('');
 
+  const [ownerUserId, setOwnerUserId] = React.useState('');
+
   const developers = useProjectParties({ party_type: 'developer', limit: 200 });
+  const parties = useProjectParties({ limit: 200 });
 
   // The shared customer-select hook, not a bespoke fetch: one definition of "the
   // customer list" across the app, per the architecture rules. SearchableSelect
   // filters it client-side, which is what every other customer picker does.
   const customers = useCustomerSelectQuery();
+  const users = useAssignableUsers();
 
   const selectedCustomer = (customers.data ?? []).find((row) => row.id === customerId);
 
-  const customerReady = creatingCustomer
-    ? newCustomer.customer_name.trim().length > 0
-    : Boolean(customerId);
   const developmentReady = title.trim().length > 0;
-
   const stepIndex = STEPS.findIndex((candidate) => candidate.id === step);
-  const canAdvance =
-    step === 'customer' ? customerReady : step === 'development' ? developmentReady : true;
+  const canAdvance = step === 'development' ? developmentReady : true;
 
   async function submit() {
-    await create.mutateAsync({
+    const body: ProjectLeadBody & LeadInformantBody = {
       title: title.trim(),
-      customer_id: creatingCustomer ? null : customerId,
+      customer_id: creatingCustomer ? null : customerId || null,
       new_customer: creatingCustomer ? newCustomer : null,
       developer_party_id: developerPartyId || null,
-      source: (source || null) as LeadSource | null,
-      source_detail: sourceDetail.trim() || null,
       estimated_value: estimatedValue.trim() || null,
       location: location.trim() || null,
       notes: notes.trim() || null,
-    });
+      ...informantBody(informant),
+    };
+    const lead = await create.mutateAsync(body);
+
+    // Assignment is its own step server-side: it stamps the clock and notifies the
+    // salesperson. A failure here leaves a perfectly good unassigned lead, so it must
+    // not roll the wizard back (the mutation reports it).
+    if (ownerUserId) {
+      try {
+        await assign.mutateAsync({ id: lead.id, ownerUserId });
+      } catch {
+        /* reported by the mutation */
+      }
+    }
     onDone();
   }
 
@@ -111,7 +123,7 @@ export function LeadWizardDialog({ onDone }: { onDone: () => void }) {
         <DialogHeader>
           <DialogTitle>Record a lead</DialogTitle>
           <DialogDescription>
-            A lead claims nothing. Ownership locks when you qualify it into a project.
+            A lead claims nothing. Ownership locks when the salesperson accepts it.
           </DialogDescription>
         </DialogHeader>
 
@@ -135,106 +147,6 @@ export function LeadWizardDialog({ onDone }: { onDone: () => void }) {
         </div>
 
         <DialogBody className="max-h-[60vh] space-y-4 overflow-y-auto">
-          {step === 'customer' && (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Somebody told us about this. That person or firm is the lead&apos;s
-                customer, even when they have never bought anything from us.
-              </p>
-
-              {creatingCustomer ? (
-                <div className="space-y-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="lead-new-customer">
-                      Name <span className="text-destructive">*</span>
-                    </Label>
-                    <Input
-                      id="lead-new-customer"
-                      value={newCustomer.customer_name}
-                      onChange={(event) =>
-                        setNewCustomer((previous) => ({
-                          ...previous,
-                          customer_name: event.target.value,
-                        }))
-                      }
-                      placeholder="Veritas Architects Sdn Bhd"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Created as a prospect. An existing customer with this name is
-                      reused rather than duplicated.
-                    </p>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="lead-new-phone">Phone</Label>
-                      <Input
-                        id="lead-new-phone"
-                        value={newCustomer.phone_number ?? ''}
-                        onChange={(event) =>
-                          setNewCustomer((previous) => ({
-                            ...previous,
-                            phone_number: event.target.value,
-                          }))
-                        }
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="lead-new-email">Email</Label>
-                      <Input
-                        id="lead-new-email"
-                        type="email"
-                        value={newCustomer.email ?? ''}
-                        onChange={(event) =>
-                          setNewCustomer((previous) => ({
-                            ...previous,
-                            email: event.target.value,
-                          }))
-                        }
-                      />
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCreatingCustomer(false)}
-                  >
-                    Pick an existing customer instead
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="lead-customer">
-                      Customer <span className="text-destructive">*</span>
-                    </Label>
-                    <SearchableSelect
-                      id="lead-customer"
-                      value={customerId}
-                      onChange={setCustomerId}
-                      options={(customers.data ?? []).map((row) => ({
-                        value: row.id,
-                        label: row.customer_name,
-                        description: row.customer_code ?? undefined,
-                      }))}
-                      placeholder="Search customers"
-                      emptyMessage="No match. Create the customer instead."
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCreatingCustomer(true)}
-                  >
-                    <Plus className="size-4" aria-hidden />
-                    They are not a customer yet
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
-
           {step === 'development' && (
             <div className="space-y-4">
               <div className="space-y-1.5">
@@ -279,28 +191,107 @@ export function LeadWizardDialog({ onDone }: { onDone: () => void }) {
             </div>
           )}
 
+          {step === 'informant' && (
+            <InformantFieldset value={informant} onChange={setInformant} />
+          )}
+
           {step === 'detail' && (
             <div className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="lead-source">Where it came from</Label>
-                <SearchableSelect
-                  id="lead-source"
-                  value={source}
-                  onChange={setSource}
-                  clearable
-                  options={SOURCE_OPTIONS}
-                  placeholder="Not recorded"
-                />
+              <div className="space-y-3">
+                {creatingCustomer ? (
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="lead-new-customer">
+                        Buyer name <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        id="lead-new-customer"
+                        value={newCustomer.customer_name}
+                        onChange={(event) =>
+                          setNewCustomer((previous) => ({
+                            ...previous,
+                            customer_name: event.target.value,
+                          }))
+                        }
+                        placeholder="Sunway Construction Sdn Bhd"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Created as a prospect. An existing customer with this name is
+                        reused rather than duplicated.
+                      </p>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="lead-new-phone">Phone</Label>
+                        <Input
+                          id="lead-new-phone"
+                          value={newCustomer.phone_number ?? ''}
+                          onChange={(event) =>
+                            setNewCustomer((previous) => ({
+                              ...previous,
+                              phone_number: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="lead-new-email">Email</Label>
+                        <Input
+                          id="lead-new-email"
+                          type="email"
+                          value={newCustomer.email ?? ''}
+                          onChange={(event) =>
+                            setNewCustomer((previous) => ({
+                              ...previous,
+                              email: event.target.value,
+                            }))
+                          }
+                        />
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCreatingCustomer(false)}
+                    >
+                      Pick an existing buyer instead
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="lead-customer">Buyer</Label>
+                      <SearchableSelect
+                        id="lead-customer"
+                        value={customerId}
+                        onChange={setCustomerId}
+                        clearable
+                        options={(customers.data ?? []).map((row) => ({
+                          value: row.id,
+                          label: row.customer_name,
+                          description: row.customer_code ?? undefined,
+                        }))}
+                        placeholder="Usually not known yet"
+                        emptyMessage="No match. Create the buyer instead."
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Leave it empty until a contractor is awarded.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCreatingCustomer(true)}
+                    >
+                      <Plus className="size-4" aria-hidden />
+                      The buyer is not a customer yet
+                    </Button>
+                  </div>
+                )}
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="lead-source-detail">Who said what</Label>
-                <Input
-                  id="lead-source-detail"
-                  value={sourceDetail}
-                  onChange={(event) => setSourceDetail(event.target.value)}
-                  placeholder="e.g. QS at Veritas mentioned it on 12 Jul"
-                />
-              </div>
+
               <div className="space-y-1.5">
                 <Label htmlFor="lead-value">Rough value (RM)</Label>
                 <Input
@@ -326,20 +317,28 @@ export function LeadWizardDialog({ onDone }: { onDone: () => void }) {
           )}
 
           {step === 'confirm' && (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Did we get this right? Nothing here is locked in: a lead is editable, and
-                qualifying it later is what registers the project.
-              </p>
-              <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
-                <Fact
-                  label="Told us"
-                  value={
-                    creatingCustomer
-                      ? `${newCustomer.customer_name.trim()} (new)`
-                      : (selectedCustomer?.customer_name ?? 'Selected customer')
-                  }
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="lead-owner">Assign to</Label>
+                <SearchableSelect
+                  id="lead-owner"
+                  value={ownerUserId}
+                  onChange={setOwnerUserId}
+                  clearable
+                  options={(users.data ?? []).map((user) => ({
+                    value: user.id,
+                    label: user.name || user.email,
+                    description: user.name ? user.email : undefined,
+                  }))}
+                  placeholder="Leave with marketing for now"
+                  emptyMessage="No match"
                 />
+                <p className="text-xs text-muted-foreground">
+                  They accept or decline it. Until then the lead is nobody&apos;s.
+                </p>
+              </div>
+
+              <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
                 <Fact label="Development" value={title.trim()} />
                 <Fact
                   label="Developer"
@@ -351,10 +350,28 @@ export function LeadWizardDialog({ onDone }: { onDone: () => void }) {
                 />
                 <Fact label="Location" value={location.trim() || null} />
                 <Fact
-                  label="Source"
+                  label="Told us"
                   value={
-                    SOURCE_OPTIONS.find((option) => option.value === source)?.label ?? null
+                    [
+                      informantSourceLabel(informantBody(informant).informant_source),
+                      (parties.data?.data ?? []).find(
+                        (party) => party.id === informant.informant_party_id,
+                      )?.name ?? null,
+                      informant.informant_contact_name.trim() || null,
+                      informant.informant_ref.trim() || null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ') || null
                   }
+                />
+                <Fact
+                  label="Buyer"
+                  value={
+                    creatingCustomer
+                      ? `${newCustomer.customer_name.trim()} (new)`
+                      : (selectedCustomer?.customer_name ?? null)
+                  }
+                  emptyText="Not known yet"
                 />
                 <Fact
                   label="Rough value"
@@ -380,7 +397,11 @@ export function LeadWizardDialog({ onDone }: { onDone: () => void }) {
               Cancel
             </Button>
             {step === 'confirm' ? (
-              <Button type="button" disabled={create.isPending} onClick={submit}>
+              <Button
+                type="button"
+                disabled={create.isPending || assign.isPending || !developmentReady}
+                onClick={submit}
+              >
                 Record lead
               </Button>
             ) : (
@@ -400,12 +421,20 @@ export function LeadWizardDialog({ onDone }: { onDone: () => void }) {
   );
 }
 
-function Fact({ label, value }: { label: string; value?: string | null }) {
+function Fact({
+  label,
+  value,
+  emptyText = 'Not recorded',
+}: {
+  label: string;
+  value?: string | null;
+  emptyText?: string;
+}) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="break-words text-sm">
-        {value ?? <span className="text-muted-foreground">Not recorded</span>}
+        {value ?? <span className="text-muted-foreground">{emptyText}</span>}
       </dd>
     </div>
   );

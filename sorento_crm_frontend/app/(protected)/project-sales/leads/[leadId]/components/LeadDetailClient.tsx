@@ -3,21 +3,29 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { RotateCcw, Ban, Loader2, Trash2, Users } from 'lucide-react';
+import { useSession } from 'next-auth/react';
+import { RotateCcw, Ban, Check, Loader2, Pencil, Trash2, UserPlus, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useStatusGraph } from '@/app/(protected)/system-management/status-graphs/hooks/useStatusGraphs';
 import {
   useCustomerPortfolio,
   useLead,
   useLeadMutations,
 } from '../../../_shared/hooks/useProjects';
-import type { ProjectLead } from '../../../_shared/types/project.types';
+import { useLeadAcceptanceMutations } from '../../../_shared/hooks/useLeadAcceptance';
+import type { LeadWithAcceptance } from '../../../_shared/types/leadAcceptance.types';
+import { AssignLeadDialog } from '../../components/AssignLeadDialog';
+import { DeclineLeadDialog } from '../../components/DeclineLeadDialog';
+import { LeadAcceptanceBadge } from '../../components/LeadAcceptanceBadge';
+import { informantSourceLabel } from '../../components/acceptance';
 import { DisqualifyLeadDialog } from './DisqualifyLeadDialog';
+import { EditLeadInformantDialog } from './EditLeadInformantDialog';
 import { QualifyLeadDialog } from './QualifyLeadDialog';
 
 /**
@@ -33,9 +41,14 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
   const router = useRouter();
   const { data: lead, isLoading, isError, error } = useLead(leadId);
   const graph = useStatusGraph('project_lead', null, false);
-  const { move, disqualify, reopen, remove } = useLeadMutations();
+  const { move, disqualify, reopen, remove, update } = useLeadMutations();
+  const { assign, accept, decline } = useLeadAcceptanceMutations();
+  const { data: session } = useSession();
   const [qualifying, setQualifying] = React.useState(false);
   const [disqualifying, setDisqualifying] = React.useState(false);
+  const [assigning, setAssigning] = React.useState(false);
+  const [declining, setDeclining] = React.useState(false);
+  const [editingWho, setEditingWho] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
 
   if (isLoading) {
@@ -70,6 +83,20 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
 
   const isOpen = lead.outcome === 'open';
 
+  // Phase 1's ProjectLead predates the informant and the handshake, so the P1 fields are
+  // read through the wider type. The dialogs below still take the phase-1 shape.
+  const view: LeadWithAcceptance = lead;
+  const viewerId = session?.user?.id;
+  // Accept and decline belong to the person holding it. Anyone else pressing them would
+  // get a 403, which is a worse way to learn the same thing.
+  const isAssignee = Boolean(viewerId && view.owner_user_id === viewerId);
+  const awaitingAcceptance = view.acceptance_state === 'assigned';
+  // The server also lets the person who RECORDED the lead hand it out, which is the
+  // decline path: a declined lead lands back with marketing with no owner at all. The
+  // response carries no `created_by`, so an unassigned lead is treated as assignable and
+  // the server has the final say.
+  const canAssign = isOpen && (lead.can_edit || !view.owner_user_id);
+
   return (
     <div className="space-y-5">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -86,13 +113,41 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
           </div>
           <h1 className="mt-1 text-xl font-semibold">{lead.title}</h1>
           <p className="text-sm text-muted-foreground">
-            {[lead.customer_name, lead.developer_name, lead.location]
-              .filter(Boolean)
-              .join(' · ') || 'Nothing else recorded yet'}
+            {[lead.developer_name, lead.location].filter(Boolean).join(' · ') ||
+              'Nothing else recorded yet'}
           </p>
+          <LeadAcceptanceBadge
+            lead={view}
+            className="mt-1.5 flex flex-wrap items-center gap-1.5"
+          />
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {lead.can_edit && isOpen && awaitingAcceptance && isAssignee && (
+            <>
+              <Button
+                type="button"
+                disabled={accept.isPending}
+                onClick={() => accept.mutate(lead.id)}
+              >
+                <Check className="size-4" aria-hidden />
+                Accept
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDeclining(true)}
+              >
+                Decline
+              </Button>
+            </>
+          )}
+          {canAssign && (
+            <Button type="button" variant="outline" onClick={() => setAssigning(true)}>
+              <UserPlus className="size-4" aria-hidden />
+              {view.owner_user_id ? 'Reassign' : 'Assign'}
+            </Button>
+          )}
           {isOpen && (
             <div className="w-full sm:w-48">
               <SearchableSelect
@@ -166,13 +221,20 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
+          <InformantCard
+            lead={view}
+            canEdit={lead.can_edit}
+            onEdit={() => setEditingWho(true)}
+          />
+
+          <AcceptanceCard lead={view} />
+
           <Card>
             <CardHeader>
               <CardTitle className="text-sm">What we heard</CardTitle>
             </CardHeader>
             <CardContent>
               <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-                <Fact label="Told us" value={lead.customer_name} />
                 <Fact label="Developer" value={lead.developer_name} />
                 <Fact label="Location" value={lead.location} />
                 <Fact
@@ -184,7 +246,6 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
                   label="Rough value"
                   value={lead.estimated_value ? formatMyr(lead.estimated_value) : null}
                 />
-                <Fact label="Owner" value={lead.owner_name} />
                 <Fact
                   label="Disqualified because"
                   value={
@@ -202,10 +263,14 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
             </CardContent>
           </Card>
 
-          <QualifiedProjects lead={lead} />
+          <QualifiedProjects lead={view} />
         </div>
 
-        <AccountPanel lead={lead} />
+        <AccountPanel
+          lead={view}
+          canEdit={lead.can_edit}
+          onSetBuyer={() => setEditingWho(true)}
+        />
       </div>
 
       {qualifying && (
@@ -217,6 +282,37 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
           onDone={() => setDisqualifying(false)}
           onConfirm={async (reason) => {
             await disqualify.mutateAsync({ id: lead.id, reason });
+          }}
+        />
+      )}
+      {assigning && (
+        <AssignLeadDialog
+          leadCode={lead.lead_code}
+          currentOwnerName={lead.owner_name}
+          submitting={assign.isPending}
+          onDone={() => setAssigning(false)}
+          onConfirm={async (ownerUserId, note) => {
+            await assign.mutateAsync({ id: lead.id, ownerUserId, note });
+          }}
+        />
+      )}
+      {declining && (
+        <DeclineLeadDialog
+          leadCode={lead.lead_code}
+          submitting={decline.isPending}
+          onDone={() => setDeclining(false)}
+          onConfirm={async (reason) => {
+            await decline.mutateAsync({ id: lead.id, reason });
+          }}
+        />
+      )}
+      {editingWho && (
+        <EditLeadInformantDialog
+          lead={view}
+          submitting={update.isPending}
+          onDone={() => setEditingWho(false)}
+          onConfirm={async (body) => {
+            await update.mutateAsync({ id: lead.id, body });
           }}
         />
       )}
@@ -244,11 +340,93 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
 }
 
 /**
+ * Who told us. Its own card, above the buyer, so the two are never read as one thing:
+ * an informant is a data source and never issues a purchase order.
+ */
+function InformantCard({
+  lead,
+  canEdit,
+  onEdit,
+}: {
+  lead: LeadWithAcceptance;
+  canEdit: boolean;
+  onEdit: () => void;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <CardTitle className="min-w-0 break-words text-sm">Who told us</CardTitle>
+        {canEdit && (
+          <Button type="button" variant="outline" size="sm" onClick={onEdit}>
+            <Pencil className="size-4" aria-hidden />
+            Edit
+          </Button>
+        )}
+      </CardHeader>
+      <CardContent>
+        <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+          <Fact label="Source" value={informantSourceLabel(lead.informant_source)} />
+          <Fact label="Their reference" value={lead.informant_ref} />
+          <Fact
+            label="Firm"
+            value={lead.informant_party_label}
+            emptyText="No firm on record"
+          />
+          <Fact label="Contact name" value={lead.informant_contact_name} />
+          <Fact
+            label="Buyer"
+            value={lead.customer_name}
+            emptyText="Not known yet"
+          />
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** The handshake: who holds it, since when, and what they said if they said no. */
+function AcceptanceCard({ lead }: { lead: LeadWithAcceptance }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm">Handover</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <LeadAcceptanceBadge lead={lead} className="flex flex-wrap items-center gap-1.5" />
+        <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+          <Fact label="Assigned to" value={lead.owner_name} emptyText="Nobody yet" />
+          <Fact
+            label="Assigned"
+            value={
+              lead.assigned_at ? formatDateTimeInMalaysia(lead.assigned_at) : null
+            }
+          />
+          <Fact
+            label="Accepted"
+            value={
+              lead.accepted_at ? formatDateTimeInMalaysia(lead.accepted_at) : null
+            }
+            emptyText="Not accepted yet"
+          />
+          <Fact
+            label="Declined"
+            value={
+              lead.declined_at ? formatDateTimeInMalaysia(lead.declined_at) : null
+            }
+          />
+          <Fact label="Declined because" value={lead.declined_reason} />
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
  * What this lead became. Always rendered, per the CRUD standard: an empty section with
  * a next step beats a section that vanishes and makes the feature look absent.
  */
-function QualifiedProjects({ lead }: { lead: ProjectLead }) {
-  const portfolio = useCustomerPortfolio(lead.customer_id);
+function QualifiedProjects({ lead }: { lead: LeadWithAcceptance }) {
+  const portfolio = useCustomerPortfolio(lead.customer_id ?? undefined);
   const projects = (portfolio.data?.projects ?? []).filter(
     (project) => project.lead_id === lead.id,
   );
@@ -263,9 +441,9 @@ function QualifiedProjects({ lead }: { lead: ProjectLead }) {
           <Skeleton className="h-12 w-full" />
         ) : projects.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nothing registered from this lead yet. Qualifying it runs the duplicate check
-            and claims the development. One lead can yield several projects, so a
-            masterplan can be split phase by phase.
+            {lead.project_count > 0
+              ? `${lead.project_count} project${lead.project_count === 1 ? '' : 's'} came from this lead. Open them from the pipeline.`
+              : 'Nothing registered from this lead yet. Qualifying it runs the duplicate check and claims the development. One lead can yield several projects, so a masterplan can be split phase by phase.'}
           </p>
         ) : (
           <ul className="divide-y divide-border">
@@ -291,8 +469,16 @@ function QualifiedProjects({ lead }: { lead: ProjectLead }) {
 }
 
 /** The account view (AC-O9), from the lead's side. */
-function AccountPanel({ lead }: { lead: ProjectLead }) {
-  const portfolio = useCustomerPortfolio(lead.customer_id);
+function AccountPanel({
+  lead,
+  canEdit,
+  onSetBuyer,
+}: {
+  lead: LeadWithAcceptance;
+  canEdit: boolean;
+  onSetBuyer: () => void;
+}) {
+  const portfolio = useCustomerPortfolio(lead.customer_id ?? undefined);
   const otherLeads = (portfolio.data?.leads ?? []).filter((row) => row.id !== lead.id);
   const projects = portfolio.data?.projects ?? [];
 
@@ -300,14 +486,25 @@ function AccountPanel({ lead }: { lead: ProjectLead }) {
     <Card>
       <CardHeader>
         <CardTitle className="text-sm">
-          {lead.customer_name ?? 'This account'}
+          {lead.customer_name ?? 'No buyer yet'}
         </CardTitle>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Everything this customer has told us about, and what it turned into.
+          Everything this buyer has been part of, and what it turned into.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
-        {portfolio.isLoading ? (
+        {!lead.customer_id ? (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              A buyer is named once a contractor is awarded.
+            </p>
+            {canEdit && (
+              <Button type="button" variant="outline" size="sm" onClick={onSetBuyer}>
+                Set the buyer
+              </Button>
+            )}
+          </div>
+        ) : portfolio.isLoading ? (
           <Skeleton className="h-24 w-full" />
         ) : (
           <>
@@ -362,12 +559,20 @@ function AccountPanel({ lead }: { lead: ProjectLead }) {
   );
 }
 
-function Fact({ label, value }: { label: string; value?: string | null }) {
+function Fact({
+  label,
+  value,
+  emptyText = 'Not recorded',
+}: {
+  label: string;
+  value?: string | null;
+  emptyText?: string;
+}) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd className="break-words text-sm">
-        {value ?? <span className="text-muted-foreground">Not recorded</span>}
+        {value ?? <span className="text-muted-foreground">{emptyText}</span>}
       </dd>
     </div>
   );

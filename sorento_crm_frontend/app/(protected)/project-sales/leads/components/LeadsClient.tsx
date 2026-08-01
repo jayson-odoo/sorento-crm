@@ -11,7 +11,9 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useLeadMetrics, useLeads } from '../../_shared/hooks/useProjects';
-import type { ProjectLead } from '../../_shared/types/project.types';
+import type { LeadWithAcceptance } from '../../_shared/types/leadAcceptance.types';
+import { LeadAcceptanceBadge } from './LeadAcceptanceBadge';
+import { informantSummary } from './acceptance';
 import { LeadWizardDialog } from './LeadWizardDialog';
 
 const OUTCOME_OPTIONS = [
@@ -58,7 +60,9 @@ export function LeadsClient() {
     source: source ? [source] : undefined,
     limit: 200,
   });
-  const rows = leads.data?.data ?? [];
+  // The lead list already serves the P1 informant and acceptance fields; phase 1's
+  // ProjectLead type predates them, so the rows are read through the wider type.
+  const rows: LeadWithAcceptance[] = leads.data?.data ?? [];
   const total = leads.data?.pagination.total ?? 0;
 
   return (
@@ -67,7 +71,8 @@ export function LeadsClient() {
         <div className="min-w-0">
           <h1 className="text-xl font-semibold">Leads</h1>
           <p className="text-sm text-muted-foreground">
-            Developments we have heard about. Nobody owns one until it is qualified.
+            Developments we have heard about. Nobody owns one until a salesperson
+            accepts it.
           </p>
         </div>
         <Button type="button" onClick={() => setWizardOpen(true)}>
@@ -138,7 +143,7 @@ export function LeadsClient() {
           </h2>
           <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
             Record what you heard on site, even when it is vague. A lead costs nothing
-            and claims nothing: ownership only locks when you qualify it into a project.
+            and claims nothing: it becomes somebody&apos;s only when they accept it.
           </p>
           <Button type="button" className="mt-4" onClick={() => setWizardOpen(true)}>
             <Plus className="size-4" aria-hidden />
@@ -221,7 +226,8 @@ function Metric({
   );
 }
 
-function LeadCard({ lead }: { lead: ProjectLead }) {
+function LeadCard({ lead }: { lead: LeadWithAcceptance }) {
+  const informant = informantSummary(lead);
   return (
     <li className="rounded-lg border border-border p-3">
       <div className="flex items-start justify-between gap-2">
@@ -248,13 +254,18 @@ function LeadCard({ lead }: { lead: ProjectLead }) {
             </span>
           </Link>
           <p className="truncate text-xs text-muted-foreground">
-            {[lead.customer_name, lead.developer_name, lead.location]
-              .filter(Boolean)
-              .join(' · ') || 'No customer recorded'}
+            {[lead.developer_name, lead.location].filter(Boolean).join(' · ') ||
+              'No developer or location recorded'}
           </p>
+          <p className="truncate text-xs text-muted-foreground" title={informant ?? undefined}>
+            Told us: {informant ?? 'not recorded'}
+          </p>
+          <p className="truncate text-xs text-muted-foreground">
+            Buyer: {lead.customer_name ?? 'not known yet'}
+          </p>
+          <LeadAcceptanceBadge lead={lead} className="flex flex-wrap items-center gap-1" />
           <p className="text-xs text-muted-foreground">
-            {lead.owner_name ?? 'Unassigned'}
-            {lead.estimated_value ? ` · ${formatMyr(lead.estimated_value)}` : ''}
+            {lead.estimated_value ? formatMyr(lead.estimated_value) : 'No value yet'}
             {lead.project_count > 0
               ? ` · ${lead.project_count} project${lead.project_count === 1 ? '' : 's'}`
               : ''}

@@ -10,9 +10,15 @@ Everything mounts under `/api/v1/project-sales`. Auth, RBAC and the `projects` m
 are as phase 1 (see `app/api/v1/projects/__init__.py`). Routers with literal path segments
 mount BEFORE `/projects/{project_id}` or they get captured by it.
 
-Frontend rule that follows from `lib/api.ts`: the FE calls
-`apiFetch('/api/project-sales/...')`, which maps to `/api/v1/project-sales/...`. Do not add a
+Frontend rule, CORRECTED 2026-08-02: the FE calls `apiFetch('/api/v1/project-sales/...')`,
+with the version segment written out. An earlier draft of this file said
+`apiFetch('/api/project-sales/...')` on the strength of the rewrite table in `lib/api.ts`,
+but that table has no `project-sales` entry, so the short form 404s. Every existing
+project-sales service uses `const BASE = '/api/v1/project-sales'`; match it. Do not add a
 Next route handler for any of this.
+
+Note also that some phase-1 collection routes are declared with a trailing slash
+(`${BASE}/projects/`), and calling them without it returns a 307.
 
 ## Conventions used below
 
@@ -20,7 +26,11 @@ Next route handler for any of this.
   in Postgres and a float round trip loses cents on a 1.8 million ringgit PO.
 - Dates are `yyyy-mm-dd`. Timestamps are naive UTC ISO, as everywhere else in this backend.
 - List endpoints use the existing DataGrid contract (`buildDataGridParams`, `page`, `limit`,
-  `sort`, `dir`, `query`) and return `{data, total, page, limit}`.
+  `sort`, `dir`, `query`) and return the repo's standard `ListResponse`:
+  `{data, pagination: {total, page, limit}, empty}`. CORRECTED 2026-08-02: an earlier
+  draft of this file said `{data, total, page, limit}`, which no endpoint in this
+  codebase returns. The frontend already reads `pagination.total` from the sibling
+  lead and project lists, so matching it was the only honest option.
 - No UUID is ever rendered in the UI. Every response that carries an id also carries the
   human label the screen shows (`*_label`, `*_name`, `*_code`).
 - Errors: raise `AppException`. The FE reads them with `extractApiError`.
@@ -34,7 +44,11 @@ Extends the existing lead routes. `customer_id` (the BUYER) is now nullable ever
 ### Fields added to `ProjectLeadResponse`
 
 ```
-informant_source          "bci" | "referral" | "walk_in" | "consultant" | "architect" | "other" | null
+informant_source          "bci" | "panel" | "referral" | "walk_in" | "consultant"
+                          | "architect" | "contractor" | "other" | null
+                          -- the union of this file's original list and the UAC's, which
+                          -- disagreed. Refusing either set would 422 a screen that was
+                          -- following its own spec.
 informant_ref             string | null      -- their reference, e.g. a BCI job id
 informant_party_id        uuid | null
 informant_party_label     string | null      -- resolved name, for the UI
@@ -44,6 +58,11 @@ assigned_at               timestamp | null
 accepted_at               timestamp | null
 declined_reason           string | null
 declined_at               timestamp | null
+can_assign                bool               -- ADDED 2026-08-02. Diverges from can_edit
+                          -- exactly where it matters: a decline clears the owner and
+                          -- can_edit is owner-or-manager, so whoever raised the lead
+                          -- could otherwise not re-assign the lead that just came back
+                          -- to them. Sent rather than inferred client-side.
 ```
 
 `POST` and `PUT` accept `informant_source`, `informant_ref`, `informant_party_id`,
@@ -54,6 +73,9 @@ declined_at               timestamp | null
 ```json
 { "owner_user_id": "…", "note": "optional" }
 ```
+
+`note` reaches the assignee in their notification and is NOT stored on the lead: there is
+no column for it, and appending it to `notes` would corrupt the sighting's own notes.
 
 Sets `owner_user_id`, `acceptance_state="assigned"`, `assigned_at=now`, clears any earlier
 decline. Notifies the assignee (in-app always; email and WhatsApp per the user's own
@@ -96,7 +118,7 @@ Phase 2 adds versioned documents to that row.
 optional `purchase_order_id` to add a version to an existing PO.
 
 Synchronous up to the point where the document is stored and a version row exists, then
-extraction runs on the RQ `imports` queue. Response, `202`:
+extraction runs on the RQ `project_docs` queue. Response, `202`:
 
 ```json
 {
@@ -242,6 +264,14 @@ document the customer considers correct.
 Response `202`, same shape as the PO upload (`delivery_schedule_id`, `schedule_version_id`,
 `version_no`, `extraction_state`).
 
+### `GET /projects/{project_id}/delivery-schedules` and `GET /delivery-schedules/{id}/versions`
+
+ADDED 2026-08-02. Without these there is no way to reach a `version_id` starting from a
+project, which the first draft of this file simply missed. Both on the standard
+`ListResponse`, modelled on the quotation pair phase 1 already ships. Schedule rows carry
+the PO number, the issuer label, the latest version number and its reconciliation counts,
+so a list renders without a UUID on it.
+
 ### `GET /delivery-schedule-versions/{version_id}`
 
 ```json
@@ -250,7 +280,12 @@ Response `202`, same shape as the PO upload (`delivery_schedule_id`, `schedule_v
   "revision_label": "REVISED 1 - 23/7/2026",
   "issuer_party_label": "SLG Construction Sdn Bhd",
   "po_version_id": "…", "po_version_no": 1,
-  "extraction_state": "done",
+  "extraction_state": "queued" | "running" | "done" | "partial" | "failed",
+  "extraction_error": null,
+  "page_count": 3,
+  "pages_extracted": 3,
+  "purchase_order_id": "…", "po_number": "HQ/26/01/121",
+  "uploaded_by_name": "…", "confirmed_by_name": null, "created_at": "…",
   "document_url": "…",
   "schedule_date": "2026-07-23",
   "phases": [
@@ -258,7 +293,8 @@ Response `202`, same shape as the PO upload (`delivery_schedule_id`, `schedule_v
       "label": "Level 2 & 7", "delivery_date": "2026-07-01" }
   ],
   "products": [
-    { "product_id": "…", "product_code": "SRTWC8613-RL", "product_name": "…",
+    { "product_index": 1,
+      "product_id": "…", "product_code": "SRTWC8613-RL", "product_name": "…",
       "customer_code_raw": "BUI-HB-SRTWC8613-RL",
       "resolution_source": "map" | "code" | "manual" | null,
       "column_total": "927",
@@ -266,7 +302,7 @@ Response `202`, same shape as the PO upload (`delivery_schedule_id`, `schedule_v
       "po_qty": "927",
       "reconciled": true }
   ],
-  "cells": [ { "phase_id": "…", "product_id": "…", "qty": "135" } ],
+  "cells": [ { "phase_id": "…", "product_index": 1, "product_id": "…", "qty": "135" } ],
   "reconciliation": { "reconciled_columns": 35, "total_columns": 38 },
   "confirmed_at": null
 }
@@ -282,11 +318,18 @@ pass). The confirm screen shows the failing columns and lets a person fix those 
 ### `PUT /delivery-schedule-versions/{version_id}/cells`
 
 ```json
-{ "cells": [ {"phase_id": "…", "product_id": "…", "qty": "140"} ] }
+{ "cells": [ {"phase_id": "…", "product_index": 1, "product_id": "…", "qty": "140"} ] }
 ```
 
-Upsert by `(phase_id, product_id)`; a `qty` of `"0"` deletes the cell. Recomputes column
-totals and reconciliation. This is the per-column correction path.
+Upsert by `(phase_id, product_index)`, with `product_id` accepted as an alternative once
+the column is resolved. Keying on `product_id` ALONE cannot address a column whose product
+is still unidentified, and such a column renders blank while showing a non-zero total,
+which looks like a bug rather than an unresolved column. A `qty` of `"0"` deletes the cell.
+
+Recomputes column totals and reconciliation, and RETURNS the recomputed version in the
+same shape as the GET. So do `PUT .../products/{product_index}` and `POST .../confirm`: the
+frontend writes the response straight into its cache rather than refetching, so returning
+anything else blanks the grid mid-edit.
 
 ### `PUT /delivery-schedule-versions/{version_id}/products/{product_index}`
 
@@ -314,6 +357,13 @@ shape of section 5.2. The area split is a PROPOSAL: one real PO produced three S
 them an early product subset with no area logic at all, so the response says where each
 grouping came from (`grouping_origin`) and the screen lets a person regroup.
 
+### `GET /purchase-orders/{po_id}/versions` and `GET /purchase-orders/{po_id}/delivery-schedule-versions`
+
+ADDED 2026-08-02. Nothing enumerated versions, yet both "build drafts from a schedule
+version" and "compare against a version" require the user to pick one. A strict subset of
+the single-version body is enough: id, version number, label, confirmed-at, plus the
+reconciliation counts for schedules.
+
 ### `GET /projects/{project_id}/sales-orders`
 
 DataGrid contract. Row:
@@ -325,10 +375,12 @@ DataGrid contract. Row:
   "area_group": "TOWER",
   "status": "draft" | "blocked" | "ready" | "published" | "amended",
   "grouping_origin": "area" | "learned" | "manual" | "subset",
-  "line_count": 99, "total_amount": "1441735.07",
+  "line_count": 99, "total_amount": "1611107.81",
   "hard_findings": 0, "warn_findings": 3,
   "is_pre_order": false, "is_sponsorship": false,
-  "customer_name": "…", "po_number": "HQ/26/01/041",
+  "customer_name": "…",
+  "purchase_order_id": "…", "po_number": "HQ/26/01/121",
+  "import_file_url": null,
   "created_at": "…"
 }
 ```
@@ -347,6 +399,7 @@ Adds `lines[]` and `findings[]`:
       "phase_id": "…", "phase_label": "Level 2 & 7",
       "explosion_source": "package" | "quotation" | "none",
       "source_po_line_no": 1,
+      "parent_line_id": null, "is_companion": false,
       "stock_location": "…" }
   ],
   "findings": [
@@ -363,6 +416,12 @@ components (a priced parent plus zero-priced companions). `item_packages` is aut
 the quotation grouping is the fallback and must reproduce the quoted quantities exactly.
 
 ### Finding codes
+
+ONLY HARD findings block a publish. A warning with no reason on it does not block: it is
+recorded as unacknowledged and named in the publish confirmation, so the person publishing
+sees what they are waving through. CLARIFIED 2026-08-02, because "publishes once
+acknowledged" and "refused with the blocking findings listed" read differently and the
+frontend had to guess. Enabling a button the server then 409s on is the worse failure.
 
 Hard stops, five of them, all arithmetic. A draft carrying any unacknowledged hard finding
 cannot publish:

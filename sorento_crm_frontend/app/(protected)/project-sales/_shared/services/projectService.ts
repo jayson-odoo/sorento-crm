@@ -563,6 +563,7 @@ export async function listLeads(
   (params.owner_user_id ?? []).forEach((value) => sp.append('owner_user_id', value));
   (params.customer_id ?? []).forEach((value) => sp.append('customer_id', value));
   (params.source ?? []).forEach((value) => sp.append('source', value));
+  (params.acceptance_state ?? []).forEach((value) => sp.append('acceptance_state', value));
   if (params.page) sp.set('page', String(params.page));
   if (params.limit) sp.set('limit', String(params.limit));
   if (params.sort) sp.set('sort', params.sort);

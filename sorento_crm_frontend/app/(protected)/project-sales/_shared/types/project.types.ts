@@ -542,6 +542,11 @@ export interface LeadListParams {
   owner_user_id?: string[];
   customer_id?: string[];
   source?: string[];
+  /** Narrows to where the handshake stands: assigned but unanswered, accepted, declined.
+   *  Server-side because "who has not answered yet" is the whole question the acceptance
+   *  worklist exists to ask, and filtering one page of results client-side answers it
+   *  only for that page. */
+  acceptance_state?: string[];
   page?: number;
   limit?: number;
   sort?: string;
