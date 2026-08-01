@@ -85,6 +85,12 @@ class Customer(Base, CompanyScopedMixin):
     # invoice pickers can filter prospects out if the noise becomes real. Null on the
     # 2,391 pre-existing rows, which is the honest answer for them.
     source = Column(String(32), nullable=True)
+    # Accounts receivable, ingested from AutoCount (D23). Here rather than computed
+    # because AutoCount is the ledger: without it a credit warning can only compare
+    # one order's value against a limit, which ignores everything already owed.
+    ar_outstanding = Column(Numeric(15, 2), nullable=True)
+    ar_ageing_json = Column(JSONB, nullable=True)  # {"current":..,"30":..,"60":..,"90+":..}
+    ar_as_of = Column(DateTime(timezone=False), nullable=True)
 
     orders = relationship("Order", back_populates="customer")
     customer_contacts = relationship(

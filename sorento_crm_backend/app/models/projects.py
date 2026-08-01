@@ -236,6 +236,11 @@ class Project(Base, CompanyScopedMixin):
     outcome = Column(String(16), nullable=False, server_default=OUTCOME_OPEN, default=OUTCOME_OPEN)
     loss_reason = Column(String(64), nullable=True)
 
+    # Project sales admin's filing reference, e.g. PS26-0143 (D24). Searchable, and
+    # deliberately NOT an identity: it is neither the project code nor a purchase
+    # document, it is the string written on every piece of paper for this job.
+    admin_ref = Column(String(64), nullable=True, index=True)
+
     owner_user_id = Column(
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
@@ -645,6 +650,27 @@ class ProjectLead(Base, CompanyScopedMixin):
     owner_user_id = Column(
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
+
+    # --- who told us (D6) -------------------------------------------------------------
+    # An informant is a data source, never a debtor: BCI, a consultant, an architect who
+    # mentioned the job. None of this is ever written to `customers`, and none of it
+    # implies the informant will buy anything.
+    informant_source = Column(String(32), nullable=True)  # bci | referral | walk_in | ...
+    informant_ref = Column(String(180), nullable=True)  # their reference, e.g. a BCI job id
+    informant_party_id = Column(
+        UUID(as_uuid=False), ForeignKey("project_parties.id", ondelete="SET NULL"), nullable=True
+    )
+    # A lone informant with no firm on record is normal, so the name stands on its own.
+    informant_contact_name = Column(String(180), nullable=True)
+
+    # --- the acceptance handshake (D7) ------------------------------------------------
+    # Assignment is not ownership. A lead sits `assigned` until the salesperson accepts
+    # it, which is what makes silence measurable and escalation fair.
+    acceptance_state = Column(String(24), nullable=True)  # assigned | accepted | declined
+    assigned_at = Column(DateTime(timezone=False), nullable=True)
+    accepted_at = Column(DateTime(timezone=False), nullable=True)
+    declined_reason = Column(Text, nullable=True)
+    declined_at = Column(DateTime(timezone=False), nullable=True)
 
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
