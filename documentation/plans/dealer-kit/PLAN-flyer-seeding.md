@@ -160,3 +160,42 @@ someone with the master-data permission.
 - **Column count comes from the paper.** Six across on A3 is not six across on a phone;
   the derived-layout machinery handles smaller breakpoints, but the desktop count may need
   a nudge.
+
+---
+
+## S7.0 outcome (2026-08-01)
+
+Shipped and gated. Two surfaces, one flag (`product_attachments.is_primary`), enforced in
+the service AND by a partial unique index so no write path can produce two.
+
+Verified end to end in a browser, which is the only check that mattered: choosing
+`CBF31049.jpg` in the picker moved the catalogue tile for `SRTWC286-SH` off
+`SRTWC286_SH_2.jpg`, confirmed independently at the API. No renderer change was needed,
+exactly as predicted.
+
+**Defects found and fixed that were not in the plan:**
+
+- Deleted photos were offered as candidates: 611 of 2,924 image links, 20%. Worse than it
+  reads, because choosing one returned 200 while the tile silently did not change, so a
+  human decision was discarded without a word.
+- The new unique index turned two older write paths (the attachment PUT and the n8n link
+  POST) into 500s carrying raw constraint text. Both now funnel through the one service.
+- The default listing read all 22,805 products into Python on every debounced keystroke.
+  Now 17-147ms.
+- A failed save left the tile looking chosen, so a user moved on believing a product was
+  answered when it was not.
+- The screen shipped with no sidebar entry, reachable only by typing the URL.
+- `resolve_signed_url` fails open, so an unsignable image reached the browser and came back
+  403 as a broken tile. Image paths now sign strictly; 181 of 2,472 links are affected on
+  one environment.
+
+**Known and deliberately left, for the next slice or for marketing:**
+
+- Two candidates on one product can be indistinguishable, because the filename is the only
+  label shown and some products carry two files with the same name. A human cannot tell
+  them apart either.
+- In a company with no product attachments at all, the screen reads "11390 of 11390 still
+  to choose" with every row empty. Correct, but it is that company's default landing state
+  and looks broken.
+- Under the default "only unanswered" filter the answered row leaves the list on the next
+  fetch, so the mark is only ever seen optimistically.
