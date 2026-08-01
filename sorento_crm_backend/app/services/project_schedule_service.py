@@ -1,0 +1,2013 @@
+"""Delivery-schedule intake: read the customer's matrix, then argue with it (P6).
+
+A delivery schedule is a grid the customer drew: phase rows by product columns, the
+quantity in the cell, grouped under an area heading such as TOWER or COMMON AREA, with
+a TOTAL QTY row at the bottom. Every customer draws it differently and a main
+contractor will not adopt our template (D13), so it is read rather than imported.
+
+Four measured facts shape everything here, all from the 2026-08-02 spike over the
+client's own R1 and R2 schedules (PLAN-project-lead-to-so.md 5c):
+
+**Reconciliation is per COLUMN, never per document.** 29 of 37 columns reconciled on
+the first vision pass of R1, 35 of 38 on R2. A document-level accept-or-reject would
+reject nearly every real schedule; the confirm screen names the failing columns and a
+person fixes those cells.
+
+**The checksum has two independent sources.** The schedule's own TOTAL QTY row,
+transcribed and not computed, and the PO quantity for the same product. A column is
+reconciled when the column total equals the PO quantity and, where the document prints
+one, the reported total too.
+
+**It reconciles against the PO VERSION the schedule NAMES** (finding G1), not the
+current amended state. The 4 March schedule still lists 16 of an item a 15 May pencil
+note cancelled; measuring it against today's state would reject a document the customer
+considers correct.
+
+**Phase identity is `(area_group, sequence)` and never the label** (finding G6). The
+COMMON AREA rows carry no label at all, and matching on the label collapsed three real
+phases into one.
+
+The intake is HYBRID, which is the shape the spike bought. These schedules are
+spreadsheet prints and carry a text layer, so the quantities are lifted from it
+geometrically -- exact, free and repeatable -- and the vision pass is left to do
+STRUCTURE: which column is which product, which row is which phase and which area it
+sits under. Measured on the real R1: 36 of 38 columns transcribed from the text layer
+sum exactly to the printed TOTAL QTY row, against 29 of 37 for vision alone. Where a
+page's grid cannot be corroborated the vision numbers stand and the checksum flags what
+it flags -- a scanned schedule with no text layer takes that path for the whole
+document, which is the fallback working rather than a degradation.
+"""
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+from app.models.order import Customer
+from app.models.product import Product
+from app.models.project_so import (
+    CustomerItemCodeMap,
+    DeliverySchedule,
+    DeliveryScheduleCell,
+    DeliveryScheduleVersion,
+    ProjectDeliveryPhase,
+    ProjectPOLine,
+    ProjectPOVersion,
+)
+from app.models.projects import (
+    Project,
+    ProjectParty,
+    ProjectPurchaseOrder,
+    ProjectPurchaseOrderLine,
+)
+from app.services.error_handler import AppException
+
+logger = logging.getLogger(__name__)
+
+STATE_QUEUED = "queued"
+STATE_RUNNING = "running"
+STATE_DONE = "done"
+# Some pages answered and some did not. A separate state rather than a flag, because
+# "done" beside an error message reads as a contradiction on screen.
+STATE_PARTIAL = "partial"
+STATE_FAILED = "failed"
+
+# Where the uploaded document hangs. One attachment type for every phase-2 project
+# document, so the Files admin has one row to configure rather than one per slice.
+ATTACHMENT_ENTITY_TYPE = "delivery_schedule_version"
+ATTACHMENT_TYPE_CODE = "project_document"
+
+# A fuzzy product match is allowed to resolve a column only when it is both strong and
+# unambiguous. A wrong product here becomes a wrong commitment, so the floor is high
+# and a near-tie is left unresolved for a person rather than guessed.
+TRIGRAM_FLOOR = 0.72
+TRIGRAM_MARGIN = 0.08
+# pg_trgm lives in ``public`` and is schema-qualified deliberately: tests pin
+# search_path to a scratch schema so raw SQL cannot reach the real tables.
+_TRGM_SCHEMA = "public"
+
+_RESOLUTION_MAP = "map"
+_RESOLUTION_CODE = "code"
+_RESOLUTION_TRIGRAM = "trigram"
+_RESOLUTION_MANUAL = "manual"
+
+
+# --------------------------------------------------------------------- quantities
+
+
+def qty_str(value: Optional[Decimal]) -> Optional[str]:
+    """Quantities cross the wire as strings. A float round trip loses cents on a 1.8
+    million ringgit PO, and the same discipline applies to the counts beside it."""
+    if value is None:
+        return None
+    normalised = Decimal(value).normalize()
+    if normalised == normalised.to_integral_value():
+        normalised = normalised.quantize(Decimal(1))
+    return format(normalised, "f")
+
+
+def to_decimal(value: Any) -> Optional[Decimal]:
+    """Anything the model or a person typed, as a Decimal, or None if it is not one."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, Decimal):
+        return value
+    text_value = str(value).strip().replace(",", "")
+    if not text_value:
+        return None
+    try:
+        return Decimal(text_value)
+    except InvalidOperation:
+        return None
+
+
+def _parse_date(value: Any) -> Optional[date]:
+    if isinstance(value, date):
+        return value
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value).strip()[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _clean(value: Any, limit: int = 180) -> Optional[str]:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    return text_value[:limit] or None
+
+
+# ---------------------------------------------------------------- the text layer
+
+
+_CODE_TOKEN = re.compile(r"^[A-Z0-9][A-Z0-9/\-]*\d[A-Z0-9/\-]*$")
+_QTY_TOKEN = re.compile(r"^\d{1,3}(?:,\d{3})*(?:\.\d+)?$|^\d+(?:\.\d+)?$")
+_ROW_TOLERANCE = 4.0  # points; rows on these prints sit ~11 apart
+_COLUMN_TOLERANCE = 6.0
+_COLUMN_SNAP = 12.0
+
+
+@dataclass
+class TextLayerPage:
+    """One page of the matrix, read from the PDF's own text rather than from a model.
+
+    ``rows`` are in printed order and map column index to quantity; a blank cell is
+    ABSENT, never zero, because a blank means this phase does not take this product.
+
+    ``grid_proven`` is the corroboration rule that makes the numbers usable: a page's
+    grid is proven by the columns that carry a printed total, and where every one of
+    them equals the sum of its own column the transcription of the remaining columns is
+    trusted too. One column short means a row was misread, so the whole page is left to
+    vision rather than half-believed.
+    """
+
+    page_no: int
+    column_count: int
+    header_codes: List[str] = field(default_factory=list)
+    rows: List[Dict[int, Decimal]] = field(default_factory=list)
+    totals: Dict[int, Decimal] = field(default_factory=dict)
+
+    @property
+    def grid_proven(self) -> bool:
+        checked = 0
+        for index in range(self.column_count):
+            reported = self.totals.get(index)
+            if reported is None:
+                continue
+            checked += 1
+            if sum((row.get(index, Decimal(0)) for row in self.rows), Decimal(0)) != reported:
+                return False
+        return checked > 0
+
+
+def _display_words(page) -> List[Tuple[Any, str]]:
+    """Words in DISPLAY space. These sheets are printed rotated, so the raw coordinates
+    have rows running vertically; the page's own rotation matrix undoes that and the
+    rest of this parser can assume rows are horizontal on every document."""
+    import fitz
+
+    matrix = page.rotation_matrix
+    return [(fitz.Rect(w[:4]) * matrix, w[4]) for w in page.get_text("words")]
+
+
+def _cluster(items, key, tolerance: float):
+    groups: List[Tuple[List[float], List[Any]]] = []
+    for item in sorted(items, key=key):
+        centre = key(item)
+        if groups and abs(centre - groups[-1][0][-1]) <= tolerance:
+            groups[-1][0].append(centre)
+            groups[-1][1].append(item)
+        else:
+            groups.append(([centre], [item]))
+    return [(sum(cs) / len(cs), members) for cs, members in groups]
+
+
+def _qty_token(word: str) -> Optional[Decimal]:
+    cleaned = word.replace(",", "")
+    return Decimal(cleaned) if _QTY_TOKEN.match(cleaned) else None
+
+
+def _parse_text_page(page, page_no: int) -> Optional[TextLayerPage]:
+    words = _display_words(page)
+    if not words:
+        return None
+
+    # The header line is the printed line carrying the most code-like tokens. Its
+    # LEFTMOST word marks where column one begins, which is also where the label and
+    # date column ends -- one measurement that locates both axes.
+    lines: Dict[float, List[Tuple[Any, str]]] = {}
+    for rect, word in words:
+        lines.setdefault(round(rect.y0, 1), []).append((rect, word))
+    header = None
+    for _key, group in sorted(lines.items()):
+        codes = [(r, w) for r, w in group if len(w) >= 5 and _CODE_TOKEN.match(w)]
+        if codes and (header is None or len(codes) > len(header[1])):
+            header = (group, codes)
+    if header is None:
+        return None
+    header_line, code_words = header
+    label_x = min(rect.x0 for rect, _ in header_line)
+    header_bottom = max(rect.y1 for rect, _ in header_line)
+
+    body = [(r, w) for r, w in words if r.y0 > header_bottom]
+    label_words = [(r, w) for r, w in body if (r.x0 + r.x1) / 2 < label_x]
+    candidate_rows = _cluster(label_words, lambda it: (it[0].y0 + it[0].y1) / 2, _ROW_TOLERANCE)
+
+    def numbers_at(centre: float):
+        return [
+            (r, w)
+            for r, w in body
+            if (r.x0 + r.x1) / 2 >= label_x
+            and abs((r.y0 + r.y1) / 2 - centre) <= _ROW_TOLERANCE
+            and _qty_token(w) is not None
+        ]
+
+    # The matrix body is bracketed by the first and last rows that carry a number in
+    # the data region. Above it sit the product descriptions and the sheet's title
+    # block, both of which contain numbers ("Size : 700 x 380mm") that would otherwise
+    # be read as quantities.
+    filled = [centre for centre, _ in candidate_rows if numbers_at(centre)]
+    if not filled:
+        return None
+    first, last = min(filled), max(filled)
+
+    totals_centre = None
+    data_centres: List[float] = []
+    for centre, group in candidate_rows:
+        if not first <= centre <= last:
+            continue
+        if "TOTAL" in " ".join(word for _, word in group).upper():
+            totals_centre = centre
+        else:
+            data_centres.append(centre)
+
+    measured = []
+    for centre in data_centres + ([totals_centre] if totals_centre is not None else []):
+        measured.extend(numbers_at(centre))
+    if not measured:
+        return None
+
+    # Columns are discovered from where the numbers actually fall, not from where the
+    # header codes start: on the real R1 one page heads a column with a bare code and
+    # another with a brand word first, so the code's offset inside its cell varies.
+    centres = [c for c, _ in _cluster(measured, lambda it: (it[0].x0 + it[0].x1) / 2, _COLUMN_TOLERANCE)]
+
+    def column_of(rect) -> Optional[int]:
+        middle = (rect.x0 + rect.x1) / 2
+        best_index, best_distance = None, None
+        for index, centre in enumerate(centres):
+            distance = abs(middle - centre)
+            if best_distance is None or distance < best_distance:
+                best_index, best_distance = index, distance
+        return best_index if best_distance is not None and best_distance <= _COLUMN_SNAP else None
+
+    def cells_at(centre: float) -> Dict[int, Decimal]:
+        out: Dict[int, Decimal] = {}
+        for rect, word in numbers_at(centre):
+            index = column_of(rect)
+            value = _qty_token(word)
+            if index is not None and value is not None:
+                out[index] = value
+        return out
+
+    return TextLayerPage(
+        page_no=page_no,
+        column_count=len(centres),
+        header_codes=[word for _, word in sorted(code_words, key=lambda it: it[0].x0)],
+        rows=[cells_at(centre) for centre in data_centres],
+        totals=cells_at(totals_centre) if totals_centre is not None else {},
+    )
+
+
+def parse_text_matrix(content: bytes, mime: str) -> Dict[int, TextLayerPage]:
+    """Every page of the document that yields a matrix, keyed by 1-based page number.
+
+    A scan has no text layer and returns nothing at all, which is the correct answer:
+    the caller then keeps what the vision pass said.
+    """
+    if (mime or "").lower() not in ("application/pdf", "application/x-pdf"):
+        return {}
+    try:
+        import fitz
+    except Exception:  # noqa: BLE001 - the cross-check is an optimisation, never a gate
+        logger.warning("PyMuPDF unavailable; schedule text-layer cross-check skipped")
+        return {}
+
+    pages: Dict[int, TextLayerPage] = {}
+    try:
+        document = fitz.open(stream=content, filetype="pdf")
+    except Exception:  # noqa: BLE001
+        logger.warning("schedule text-layer parse could not open the document", exc_info=True)
+        return {}
+    try:
+        for index, page in enumerate(document, start=1):
+            try:
+                parsed = _parse_text_page(page, index)
+            except Exception:  # noqa: BLE001 - one bad page must not lose the rest
+                logger.warning("schedule text-layer parse failed on page %s", index, exc_info=True)
+                parsed = None
+            if parsed is not None:
+                pages[index] = parsed
+    finally:
+        document.close()
+    return pages
+
+
+# ------------------------------------------------------------- in-flight structures
+
+
+@dataclass
+class _Phase:
+    area_group: str
+    sequence: int
+    label: Optional[str] = None
+    delivery_date: Optional[date] = None
+    phase_id: Optional[str] = None
+
+    @property
+    def key(self) -> Tuple[str, int]:
+        return (self.area_group, self.sequence)
+
+
+@dataclass
+class _Column:
+    index: int
+    page_no: int
+    customer_code_raw: Optional[str]
+    header_code: Optional[str]
+    name: Optional[str]
+    cells: Dict[Tuple[str, int], Decimal] = field(default_factory=dict)
+    reported_total: Optional[Decimal] = None
+    reported_total_source: Optional[str] = None
+    qty_source: str = "vision"
+    product_id: Optional[str] = None
+    resolution_source: Optional[str] = None
+
+    @property
+    def key(self) -> str:
+        if self.product_id:
+            return f"product:{self.product_id}"
+        return f"raw:{(self.customer_code_raw or '').upper()}"
+
+
+# ------------------------------------------------------------------------ service
+
+
+class ProjectScheduleService:
+    """Everything a delivery schedule does between arriving and binding."""
+
+    def __init__(self, db: Session):
+        self.db = db
+        # Set by read_document so run_extraction can report the model and the pages that
+        # did not answer without threading them through persistence.
+        self._last_extraction = None
+
+    # ------------------------------------------------------------------ lookups
+
+    def get_version(self, version_id: str) -> DeliveryScheduleVersion:
+        version = self.db.get(DeliveryScheduleVersion, version_id)
+        if version is None:
+            raise AppException(
+                status_code=404,
+                message="Delivery schedule version not found.",
+                code="schedule_version_not_found",
+            )
+        return version
+
+    def schedule_for(self, version: DeliveryScheduleVersion) -> DeliverySchedule:
+        schedule = self.db.get(DeliverySchedule, version.delivery_schedule_id)
+        if schedule is None:
+            raise AppException(
+                status_code=404,
+                message="Delivery schedule not found.",
+                code="delivery_schedule_not_found",
+            )
+        return schedule
+
+    # ------------------------------------------------------------------- upload
+
+    def create_version(
+        self,
+        *,
+        purchase_order: ProjectPurchaseOrder,
+        content: bytes,
+        filename: str,
+        mime: str,
+        actor_user_id: Optional[str],
+        issuer_party_id: Optional[str] = None,
+        revision_label: Optional[str] = None,
+        delivery_schedule_id: Optional[str] = None,
+        po_version_id: Optional[str] = None,
+        page_count: Optional[int] = None,
+    ) -> DeliveryScheduleVersion:
+        """Store the document and open a version for it. Extraction happens later.
+
+        ``po_version_id`` is what the checksum will reconcile AGAINST and defaults to
+        the PO's latest CONFIRMED version, because that is the document the customer
+        was working from when they drew the schedule (finding G1).
+        """
+        schedule = self._resolve_schedule(purchase_order, delivery_schedule_id, issuer_party_id)
+        if issuer_party_id and schedule.issuer_party_id != issuer_party_id:
+            self._assert_party(issuer_party_id)
+            schedule.issuer_party_id = issuer_party_id
+
+        resolved_po_version = self._resolve_po_version(purchase_order, po_version_id)
+        next_no = (
+            self.db.query(func.coalesce(func.max(DeliveryScheduleVersion.version_no), 0))
+            .filter(DeliveryScheduleVersion.delivery_schedule_id == schedule.id)
+            .scalar()
+        ) + 1
+
+        version = DeliveryScheduleVersion(
+            company_id=schedule.company_id,
+            delivery_schedule_id=schedule.id,
+            version_no=next_no,
+            revision_label=_clean(revision_label, 80),
+            po_version_id=resolved_po_version.id if resolved_po_version else None,
+            source_filename=_clean(filename, 255),
+            extraction_state=STATE_QUEUED,
+            # The page count is known here and nowhere else cheaply, and the confirm
+            # screen needs it to say "4 of 7 pages read" rather than just "working".
+            extracted_json={"page_count": page_count} if page_count else None,
+        )
+        self.db.add(version)
+        self.db.flush()
+
+        version.attachment_id = self._store_document(
+            version, content=content, filename=filename, mime=mime, actor_user_id=actor_user_id
+        )
+        self.db.flush()
+        return version
+
+    def _resolve_schedule(
+        self,
+        purchase_order: ProjectPurchaseOrder,
+        delivery_schedule_id: Optional[str],
+        issuer_party_id: Optional[str],
+    ) -> DeliverySchedule:
+        if delivery_schedule_id:
+            schedule = self.db.get(DeliverySchedule, delivery_schedule_id)
+            if schedule is None or schedule.purchase_order_id != purchase_order.id:
+                raise AppException(
+                    status_code=404,
+                    message="That delivery schedule does not belong to this purchase order.",
+                    code="delivery_schedule_not_found",
+                )
+            return schedule
+
+        existing = (
+            self.db.query(DeliverySchedule)
+            .filter(DeliverySchedule.purchase_order_id == purchase_order.id)
+            .order_by(DeliverySchedule.created_at.asc())
+            .first()
+        )
+        if existing is not None:
+            return existing
+
+        if issuer_party_id:
+            self._assert_party(issuer_party_id)
+        schedule = DeliverySchedule(
+            company_id=purchase_order.company_id,
+            project_id=purchase_order.project_id,
+            purchase_order_id=purchase_order.id,
+            issuer_party_id=issuer_party_id,
+        )
+        self.db.add(schedule)
+        self.db.flush()
+        return schedule
+
+    def _assert_party(self, party_id: str) -> None:
+        if self.db.get(ProjectParty, party_id) is None:
+            raise AppException(
+                status_code=404,
+                message="The issuing company is not on file.",
+                code="issuer_party_not_found",
+            )
+
+    def _resolve_po_version(
+        self, purchase_order: ProjectPurchaseOrder, po_version_id: Optional[str]
+    ) -> Optional[ProjectPOVersion]:
+        query = self.db.query(ProjectPOVersion).filter(
+            ProjectPOVersion.purchase_order_id == purchase_order.id
+        )
+        if po_version_id:
+            version = query.filter(ProjectPOVersion.id == po_version_id).first()
+            if version is None:
+                raise AppException(
+                    status_code=404,
+                    message="That PO version does not belong to this purchase order.",
+                    code="po_version_not_found",
+                )
+            return version
+        confirmed = (
+            query.filter(ProjectPOVersion.confirmed_at.isnot(None))
+            .order_by(ProjectPOVersion.version_no.desc())
+            .first()
+        )
+        return confirmed or query.order_by(ProjectPOVersion.version_no.desc()).first()
+
+    def _store_document(
+        self,
+        version: DeliveryScheduleVersion,
+        *,
+        content: bytes,
+        filename: str,
+        mime: str,
+        actor_user_id: Optional[str],
+    ) -> Optional[str]:
+        from app.services.entity_attachment_service import EntityAttachmentService
+        from app.services.storage_router import (
+            cdn_base_url,
+            default_provider,
+            get_backend,
+            sanitize_storage_filename,
+        )
+
+        self._ensure_attachment_type()
+        safe_name = sanitize_storage_filename(filename) or "delivery-schedule.pdf"
+        provider = default_provider()
+        key, _ = get_backend(provider).upload_file(
+            file_content=content,
+            file_path=f"{ATTACHMENT_ENTITY_TYPE}/{version.id}/{safe_name}",
+            content_type=mime,
+        )
+        link = EntityAttachmentService(self.db).create_attachment_and_link(
+            entity_type=ATTACHMENT_ENTITY_TYPE,
+            entity_id=str(version.id),
+            file_url=cdn_base_url(provider, key),
+            file_name=filename,
+            file_size_bytes=len(content),
+            attachment_type_code=ATTACHMENT_TYPE_CODE,
+            created_by=actor_user_id,
+            storage_provider=provider,
+        )
+        if link.attachment is not None:
+            # Set here rather than in the shared helper: re-reading the document on the
+            # worker needs to know whether it is a PDF or a photograph.
+            link.attachment.mime_type = _clean(mime, 100)
+        return str(link.attachment_id)
+
+    def _ensure_attachment_type(self) -> None:
+        """One project-document type, created on first use.
+
+        Seeded here rather than in a migration because the type is reference data the
+        feature owns: an install that never uploads a project document never needs it.
+        """
+        from app.models.resources import AttachmentType
+
+        existing = (
+            self.db.query(AttachmentType)
+            .filter(AttachmentType.code == ATTACHMENT_TYPE_CODE)
+            .first()
+        )
+        if existing is not None:
+            return
+        self.db.add(
+            AttachmentType(
+                code=ATTACHMENT_TYPE_CODE,
+                type_name="Project Document",
+                description="Customer purchase orders and delivery schedules (project sales).",
+                allowed_extensions="pdf,jpg,jpeg,png",
+                max_file_size_mb=30,
+            )
+        )
+        self.db.flush()
+
+    def document_url(self, version: DeliveryScheduleVersion) -> Optional[str]:
+        """A signed URL for the side-by-side viewer. Never a stored signed URL: they
+        expire, and a detail page that 403s a week later reads as lost data."""
+        if not version.attachment_id:
+            return None
+        from app.models.resources import Attachment
+        from app.services.storage_router import resolve_signed_url
+
+        attachment = self.db.get(Attachment, version.attachment_id)
+        if attachment is None or not attachment.file_path:
+            return None
+        try:
+            return resolve_signed_url(
+                attachment.file_path, provider=attachment.storage_provider
+            )
+        except Exception:  # noqa: BLE001 - a missing preview must not 500 the page
+            logger.warning(
+                "could not sign the schedule document for version %s", version.id, exc_info=True
+            )
+            return None
+
+    def _document_bytes(self, version: DeliveryScheduleVersion) -> Tuple[bytes, str]:
+        from app.models.resources import Attachment
+        from app.services.storage_router import extract_key, get_backend
+
+        if not version.attachment_id:
+            raise AppException(
+                status_code=422,
+                message="This schedule version has no document to read.",
+                code="schedule_document_missing",
+            )
+        attachment = self.db.get(Attachment, version.attachment_id)
+        key = extract_key(getattr(attachment, "file_path", None)) if attachment else None
+        if attachment is None or not key:
+            raise AppException(
+                status_code=422,
+                message="The stored document could not be located.",
+                code="schedule_document_missing",
+            )
+        content = get_backend(attachment.storage_provider).download_file(key)
+        mime = attachment.mime_type or self._guess_mime(version.source_filename)
+        return content, mime
+
+    @staticmethod
+    def _guess_mime(filename: Optional[str]) -> str:
+        lowered = (filename or "").lower()
+        if lowered.endswith(".png"):
+            return "image/png"
+        if lowered.endswith((".jpg", ".jpeg")):
+            return "image/jpeg"
+        return "application/pdf"
+
+    # --------------------------------------------------------------- extraction
+
+    def read_document(self, content: bytes, mime: str) -> List[Tuple[int, dict]]:
+        """The vision pass. Returns (page_no, answer) for every page that answered."""
+        from app.services.document_extraction import extract_document
+
+        result = extract_document(self.db, content, mime, prompt_key="schedule_extractor")
+        self._last_extraction = result
+        return [
+            (page.page_no, page.data) for page in result.ok_pages if page.data is not None
+        ]
+
+    def run_extraction(self, schedule_version_id: str) -> dict:
+        """Entry point for the RQ task. Always leaves a terminal state behind.
+
+        A page that fails does not fail the document: nine good pages is a schedule a
+        person can finish, an exception is one they cannot start.
+        """
+        from app.services.document_extraction import ExtractionUnavailable
+
+        version = self.get_version(schedule_version_id)
+        version.extraction_state = STATE_RUNNING
+        version.extraction_error = None
+        self.db.commit()
+
+        try:
+            content, mime = self._document_bytes(version)
+            pages = self.read_document(content, mime)
+            result = getattr(self, "_last_extraction", None)
+            if result is not None:
+                version.extraction_model = result.model
+            if not pages:
+                raise AppException(
+                    status_code=422,
+                    message="Nothing could be read from this document.",
+                    code="schedule_extraction_empty",
+                )
+            summary = self.persist_pages(
+                version, pages, text_pages=parse_text_matrix(content, mime)
+            )
+            failed = list(result.failed_pages) if result is not None else []
+            # PARTIAL is a first-class outcome, not an error: the pages that answered
+            # are usable, and naming the ones that did not is what lets a person finish
+            # the job. `pages_extracted < page_count` says the same thing arithmetically.
+            version.extraction_state = STATE_PARTIAL if failed else STATE_DONE
+            if failed:
+                version.extraction_error = (
+                    f"Pages {', '.join(str(p) for p in failed)} could not be read; "
+                    "the rest of the schedule was."
+                )
+            self.db.commit()
+            return {"status": version.extraction_state, "version_id": str(version.id),
+                    "failed_pages": failed, **summary}
+        except ExtractionUnavailable as exc:
+            self.db.rollback()
+            return self._fail(version, str(exc))
+        except AppException as exc:
+            self.db.rollback()
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            return self._fail(version, str(detail.get("message") or exc.detail))
+        except Exception as exc:  # noqa: BLE001 - the row must never stay on "running"
+            self.db.rollback()
+            logger.exception("schedule extraction failed for version %s", schedule_version_id)
+            return self._fail(version, str(exc))
+
+    def _fail(self, version: DeliveryScheduleVersion, message: str) -> dict:
+        version.extraction_state = STATE_FAILED
+        version.extraction_error = message[:500]
+        self.db.commit()
+        return {"status": STATE_FAILED, "version_id": str(version.id), "error": message[:300]}
+
+    # -------------------------------------------------------------- persistence
+
+    def persist_pages(
+        self,
+        version: DeliveryScheduleVersion,
+        pages: Sequence[Tuple[int, dict]],
+        text_pages: Optional[Dict[int, TextLayerPage]] = None,
+    ) -> dict:
+        """Turn the extractor's per-page answers into phases, cells and a verdict.
+
+        Re-running this on the same version replaces its cells and leaves the project's
+        phases where they are: phases are upserted on their identity, so a second read
+        after a prompt change cannot leave the project holding two of every row.
+        """
+        schedule = self.schedule_for(version)
+        project = self.db.get(Project, schedule.project_id)
+        header = self._merge_header(pages)
+        version.extracted_json = {
+            # Carried forward from the upload: it is how many pages the DOCUMENT has,
+            # against how many answered.
+            "page_count": (version.extracted_json or {}).get("page_count"),
+            "pages": [{"page_no": no, "data": data} for no, data in pages],
+        }
+        if header.get("schedule_date"):
+            version.schedule_date = header["schedule_date"]
+        if header.get("revision") and not version.revision_label:
+            version.revision_label = _clean(header["revision"], 80)
+
+        phases, columns = self._read_pages(pages, text_pages or {})
+        self._resolve_columns(version, schedule, columns)
+        columns = self._merge_duplicate_columns(columns)
+        self._upsert_phases(version, project, phases)
+        self._write_cells(version, phases, columns)
+        return self._reconcile(version, schedule, phases, columns, header)
+
+    def _merge_header(self, pages: Sequence[Tuple[int, dict]]) -> dict:
+        """First page that says something wins. Later pages repeat the same block."""
+        merged: Dict[str, Any] = {}
+        for _page_no, data in pages:
+            block = (data or {}).get("header") or {}
+            for field_name in ("project", "po_ref", "revision"):
+                if not merged.get(field_name) and block.get(field_name):
+                    merged[field_name] = _clean(block[field_name])
+            if not merged.get("schedule_date"):
+                parsed = _parse_date(block.get("schedule_date"))
+                if parsed:
+                    merged["schedule_date"] = parsed
+        return merged
+
+    def _read_pages(
+        self, pages: Sequence[Tuple[int, dict]], text_pages: Dict[int, TextLayerPage]
+    ) -> Tuple[List[_Phase], List[_Column]]:
+        """Structure from the vision pass, quantities from the text layer where it
+        corroborates itself. Column order and row order are the join between them:
+        both read the sheet left to right and top to bottom."""
+        phases: Dict[Tuple[str, int], _Phase] = {}
+        columns: List[_Column] = []
+
+        for page_no, data in pages:
+            data = data or {}
+            page_phases = self._page_phases(data)
+            page_columns = self._page_columns(data, page_no, len(columns))
+
+            for phase in page_phases:
+                existing = phases.get(phase.key)
+                if existing is None:
+                    phases[phase.key] = phase
+                    continue
+                if existing.label is None and phase.label:
+                    existing.label = phase.label
+                if existing.delivery_date is None and phase.delivery_date:
+                    existing.delivery_date = phase.delivery_date
+
+            quantities = self._page_quantities(data, page_phases, page_columns)
+            reported = self._page_reported_totals(data, page_columns)
+            source = "vision"
+
+            text_page = text_pages.get(page_no)
+            if (
+                text_page is not None
+                and text_page.grid_proven
+                and len(text_page.rows) == len(page_phases)
+                and text_page.column_count == len(page_columns)
+            ):
+                quantities = {
+                    (page_phases[row_index].key, page_columns[col_index].index): value
+                    for row_index, row in enumerate(text_page.rows)
+                    for col_index, value in row.items()
+                    if col_index < len(page_columns)
+                }
+                reported = {
+                    page_columns[col_index].index: value
+                    for col_index, value in text_page.totals.items()
+                    if col_index < len(page_columns)
+                }
+                source = "text_layer"
+
+            by_index = {column.index: column for column in page_columns}
+            for column in page_columns:
+                column.qty_source = source
+                column.reported_total = reported.get(column.index)
+                column.reported_total_source = (
+                    source if column.reported_total is not None else None
+                )
+            for (phase_key, column_index), value in quantities.items():
+                column = by_index.get(column_index)
+                if column is not None:
+                    column.cells[phase_key] = value
+            columns.extend(page_columns)
+
+        ordered = sorted(phases.values(), key=lambda p: (p.area_group, p.sequence))
+        return ordered, columns
+
+    def _page_phases(self, data: dict) -> List[_Phase]:
+        """Rows in printed order, numbered within their area group.
+
+        The sequence is the identity (finding G6). The COMMON AREA rows carry no label
+        at all, so a label-keyed merge collapsed three real phases into one.
+        """
+        raw = data.get("phases") or []
+        ordered = sorted(
+            enumerate(raw), key=lambda pair: (_row_ordinal(pair[1], pair[0]), pair[0])
+        )
+        counters: Dict[str, int] = {}
+        out: List[_Phase] = []
+        for _index, row in ordered:
+            area = _clean(row.get("area_group"), 80) or "UNGROUPED"
+            counters[area] = counters.get(area, 0) + 1
+            out.append(
+                _Phase(
+                    area_group=area,
+                    sequence=counters[area],
+                    label=_clean(row.get("label")),
+                    delivery_date=_parse_date(row.get("delivery_date")),
+                )
+            )
+        return out
+
+    def _page_columns(self, data: dict, page_no: int, offset: int) -> List[_Column]:
+        raw = data.get("products") or []
+        ordered = sorted(
+            enumerate(raw), key=lambda pair: (_col_ordinal(pair[1], pair[0]), pair[0])
+        )
+        return [
+            _Column(
+                index=offset + position,
+                page_no=page_no,
+                customer_code_raw=_clean(item.get("customer_code")) or _clean(item.get("code")),
+                header_code=_clean(item.get("code"), 100),
+                name=_clean(item.get("name"), 255),
+            )
+            for position, (_index, item) in enumerate(ordered)
+        ]
+
+    def _page_quantities(
+        self, data: dict, page_phases: List[_Phase], page_columns: List[_Column]
+    ) -> Dict[Tuple[Tuple[str, int], int], Decimal]:
+        """The vision pass's cells, addressed by the row and column numbers it gave."""
+        rows_by_number = {index + 1: phase for index, phase in enumerate(page_phases)}
+        cols_by_number = {index + 1: column for index, column in enumerate(page_columns)}
+        out: Dict[Tuple[Tuple[str, int], int], Decimal] = {}
+        for cell in data.get("cells") or []:
+            phase = rows_by_number.get(_as_int(cell.get("row")))
+            column = cols_by_number.get(_as_int(cell.get("col")))
+            value = to_decimal(cell.get("qty"))
+            # A zero is dropped with the blanks: a printed zero and an empty cell both
+            # mean this phase does not take this product.
+            if phase is None or column is None or value is None or value == 0:
+                continue
+            out[(phase.key, column.index)] = value
+        return out
+
+    def _page_reported_totals(
+        self, data: dict, page_columns: List[_Column]
+    ) -> Dict[int, Decimal]:
+        cols_by_number = {index + 1: column for index, column in enumerate(page_columns)}
+        out: Dict[int, Decimal] = {}
+        for item in data.get("reported_totals") or []:
+            column = cols_by_number.get(_as_int(item.get("col")))
+            value = to_decimal(item.get("qty"))
+            if column is not None and value is not None:
+                out[column.index] = value
+        return out
+
+    # ------------------------------------------------------- product resolution
+
+    def _resolve_columns(
+        self,
+        version: DeliveryScheduleVersion,
+        schedule: DeliverySchedule,
+        columns: List[_Column],
+    ) -> None:
+        customer_id = self.customer_id_for(schedule)
+        remembered = self._remembered_codes(customer_id)
+        for column in columns:
+            product_id, source = self._resolve_one(version, column, remembered)
+            column.product_id = product_id
+            column.resolution_source = source
+
+    def _remembered_codes(self, customer_id: Optional[str]) -> Dict[str, str]:
+        if not customer_id:
+            return {}
+        rows = (
+            self.db.query(CustomerItemCodeMap)
+            .filter(CustomerItemCodeMap.customer_id == customer_id)
+            .all()
+        )
+        return {(row.customer_code or "").upper(): row.product_id for row in rows}
+
+    def _resolve_one(
+        self,
+        version: DeliveryScheduleVersion,
+        column: _Column,
+        remembered: Dict[str, str],
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """In order: what this customer taught us, the code printed inside their own,
+        then a strong and unambiguous fuzzy match. Anything less is left to a person."""
+        raw = (column.customer_code_raw or "").upper()
+        if raw and raw in remembered:
+            return remembered[raw], _RESOLUTION_MAP
+
+        for candidate in _code_candidates(column.header_code, column.customer_code_raw):
+            product = self._product_by_code(version, candidate)
+            if product is not None:
+                return product.id, _RESOLUTION_CODE
+
+        probe = column.header_code or column.customer_code_raw
+        product_id = self._product_by_similarity(version, probe)
+        if product_id:
+            return product_id, _RESOLUTION_TRIGRAM
+        return None, None
+
+    def _product_by_code(
+        self, version: DeliveryScheduleVersion, code: str
+    ) -> Optional[Product]:
+        query = self.db.query(Product).filter(
+            func.upper(func.trim(Product.product_code)) == code.upper()
+        )
+        if version.company_id:
+            query = query.filter(Product.company_id == version.company_id)
+        return query.first()
+
+    def _product_by_similarity(
+        self, version: DeliveryScheduleVersion, probe: Optional[str]
+    ) -> Optional[str]:
+        if not probe or len(probe) < 4:
+            return None
+        similarity = getattr(func, _TRGM_SCHEMA).similarity(Product.product_code, probe)
+        query = self.db.query(Product.id, similarity.label("sim"))
+        if version.company_id:
+            query = query.filter(Product.company_id == version.company_id)
+        rows = query.order_by(similarity.desc()).limit(2).all()
+        if not rows or float(rows[0].sim or 0) < TRIGRAM_FLOOR:
+            return None
+        if len(rows) > 1 and float(rows[0].sim) - float(rows[1].sim or 0) < TRIGRAM_MARGIN:
+            # Two products this close apart is a question, not an answer.
+            return None
+        return rows[0].id
+
+    def _merge_duplicate_columns(self, columns: List[_Column]) -> List[_Column]:
+        """Two columns of the same product become one.
+
+        A cell is keyed on (phase, product), so the data model cannot hold the same
+        product twice for one phase. The real R1 heads two adjacent columns with the
+        same code, so this is a document that exists rather than a hypothetical.
+        """
+        merged: Dict[str, _Column] = {}
+        out: List[_Column] = []
+        for column in columns:
+            seen = merged.get(column.key)
+            if seen is None:
+                merged[column.key] = column
+                out.append(column)
+                continue
+            for phase_key, value in column.cells.items():
+                seen.cells[phase_key] = seen.cells.get(phase_key, Decimal(0)) + value
+            if column.reported_total is not None:
+                seen.reported_total = (seen.reported_total or Decimal(0)) + column.reported_total
+        for position, column in enumerate(out):
+            column.index = position
+        return out
+
+    # ------------------------------------------------------------------- phases
+
+    def _upsert_phases(
+        self,
+        version: DeliveryScheduleVersion,
+        project: Optional[Project],
+        phases: List[_Phase],
+    ) -> None:
+        """Create the phase rows the cells need, and leave existing dates alone.
+
+        A revision moves dates. Overwriting them here would erase the "from" side of
+        the move before anyone has agreed the new document, so the promotion happens on
+        confirm and this only fills what does not exist yet.
+        """
+        if project is None:
+            raise AppException(
+                status_code=404,
+                message="The project this schedule belongs to is missing.",
+                code="project_not_found",
+            )
+        existing = {
+            (row.area_group, row.sequence): row
+            for row in self.db.query(ProjectDeliveryPhase)
+            .filter(ProjectDeliveryPhase.project_id == project.id)
+            .all()
+        }
+        for phase in phases:
+            row = existing.get(phase.key)
+            if row is None:
+                row = ProjectDeliveryPhase(
+                    company_id=version.company_id,
+                    project_id=project.id,
+                    area_group=phase.area_group,
+                    sequence=phase.sequence,
+                    label=phase.label,
+                    delivery_date=phase.delivery_date,
+                    source_version_id=version.id,
+                )
+                self.db.add(row)
+                self.db.flush()
+                existing[phase.key] = row
+            phase.phase_id = str(row.id)
+
+    def _write_cells(
+        self,
+        version: DeliveryScheduleVersion,
+        phases: List[_Phase],
+        columns: List[_Column],
+    ) -> None:
+        by_key = {phase.key: phase for phase in phases}
+        self.db.query(DeliveryScheduleCell).filter(
+            DeliveryScheduleCell.version_id == version.id
+        ).delete(synchronize_session=False)
+        for column in columns:
+            for phase_key, value in column.cells.items():
+                phase = by_key.get(phase_key)
+                if phase is None or phase.phase_id is None or value is None or value == 0:
+                    continue
+                self.db.add(
+                    DeliveryScheduleCell(
+                        company_id=version.company_id,
+                        version_id=version.id,
+                        phase_id=phase.phase_id,
+                        product_id=column.product_id,
+                        customer_code_raw=column.customer_code_raw,
+                        qty=value,
+                    )
+                )
+        self.db.flush()
+
+    # ----------------------------------------------------------- reconciliation
+
+    def _reconcile(
+        self,
+        version: DeliveryScheduleVersion,
+        schedule: DeliverySchedule,
+        phases: List[_Phase],
+        columns: List[_Column],
+        header: dict,
+    ) -> dict:
+        po_quantities, po_source = self._po_quantities(schedule, version)
+        entries = []
+        for column in columns:
+            total = sum(column.cells.values(), Decimal(0))
+            po_row = po_quantities.get(column.product_id) if column.product_id else None
+            entries.append(
+                self._column_entry(
+                    column, total=total, po_row=po_row, po_source=po_source
+                )
+            )
+
+        payload = {
+            "columns": entries,
+            "phases": [
+                {
+                    "key": list(phase.key),
+                    "area_group": phase.area_group,
+                    "sequence": phase.sequence,
+                    "phase_id": phase.phase_id,
+                    "label": phase.label,
+                    "delivery_date": phase.delivery_date.isoformat() if phase.delivery_date else None,
+                }
+                for phase in phases
+            ],
+            "date_warnings": _date_warnings(phases),
+            "header": {
+                "po_ref": header.get("po_ref"),
+                "project": header.get("project"),
+            },
+            "qty_source": _count_by(columns, lambda c: c.qty_source),
+            "reconciled_columns": sum(1 for entry in entries if entry["reconciled"]),
+            "total_columns": len(entries),
+        }
+        existing = version.reconciliation_json or {}
+        if existing.get("acknowledgement"):
+            payload["acknowledgement"] = existing["acknowledgement"]
+        version.reconciliation_json = payload
+        version.reconciled_columns = payload["reconciled_columns"]
+        version.total_columns = payload["total_columns"]
+        return {
+            "reconciled_columns": payload["reconciled_columns"],
+            "total_columns": payload["total_columns"],
+        }
+
+    def _column_entry(
+        self,
+        column: _Column,
+        *,
+        total: Decimal,
+        po_row: Optional[dict],
+        po_source: Optional[str],
+    ) -> dict:
+        po_qty = po_row["qty"] if po_row else None
+        cancelled = po_row["cancelled"] if po_row else Decimal(0)
+        reconciled, reason = _verdict(total, column.reported_total, po_qty)
+        note = None
+        if cancelled and cancelled > 0:
+            # AC-E3a: the cancellation stays visible instead of quietly changing the
+            # number this column is measured against.
+            note = (
+                f"{qty_str(cancelled)} of the PO quantity for this product is cancelled on "
+                "the version this schedule names; it reconciles as printed and must not "
+                "become sales order lines."
+            )
+        return {
+            "index": column.index,
+            "key": column.key,
+            "page_no": column.page_no,
+            "customer_code_raw": column.customer_code_raw,
+            "header_code": column.header_code,
+            "name": column.name,
+            "product_id": column.product_id,
+            "resolution_source": column.resolution_source,
+            "column_total": qty_str(total),
+            "reported_total": qty_str(column.reported_total),
+            "reported_total_source": column.reported_total_source,
+            "qty_source": column.qty_source,
+            "po_qty": qty_str(po_qty),
+            "po_qty_source": po_source if po_qty is not None else None,
+            "cancelled_qty": qty_str(cancelled) if cancelled else None,
+            "reconciled": reconciled,
+            "reason": reason,
+            "note": note,
+        }
+
+    def _po_quantities(
+        self, schedule: DeliverySchedule, version: DeliveryScheduleVersion
+    ) -> Tuple[Dict[str, dict], Optional[str]]:
+        """What the PO committed, per product, on the version this schedule names.
+
+        Cancelled lines are INCLUDED in the quantity and reported separately. The
+        schedule was drawn from the document as printed, and netting a later pencil
+        cancellation into the target would reject a correct schedule (finding G1).
+        """
+        quantities: Dict[str, dict] = {}
+        if version.po_version_id:
+            rows = (
+                self.db.query(ProjectPOLine)
+                .filter(ProjectPOLine.po_version_id == version.po_version_id)
+                .all()
+            )
+            for row in rows:
+                if not row.resolved_product_id:
+                    continue
+                entry = quantities.setdefault(
+                    row.resolved_product_id, {"qty": Decimal(0), "cancelled": Decimal(0)}
+                )
+                entry["qty"] += Decimal(row.qty or 0)
+                if row.is_cancelled:
+                    entry["cancelled"] += Decimal(row.qty or 0)
+            if quantities:
+                return quantities, "po_version"
+
+        # No extracted document on this PO: a PO keyed in by hand is still a PO, and
+        # its lines are the same commitment.
+        rows = (
+            self.db.query(ProjectPurchaseOrderLine)
+            .filter(ProjectPurchaseOrderLine.po_id == schedule.purchase_order_id)
+            .all()
+        )
+        for row in rows:
+            if not row.product_id:
+                continue
+            entry = quantities.setdefault(
+                row.product_id, {"qty": Decimal(0), "cancelled": Decimal(0)}
+            )
+            entry["qty"] += Decimal(row.quantity or 0)
+        return quantities, ("po_row" if quantities else None)
+
+    def _recompute(self, version: DeliveryScheduleVersion) -> None:
+        """Re-run the verdict from the CELL ROWS after a person edited them."""
+        payload = version.reconciliation_json or {}
+        entries: List[dict] = list(payload.get("columns") or [])
+        schedule = self.schedule_for(version)
+        po_quantities, po_source = self._po_quantities(schedule, version)
+
+        totals: Dict[str, Decimal] = {}
+        seen_codes: Dict[str, dict] = {}
+        cells = (
+            self.db.query(DeliveryScheduleCell)
+            .filter(DeliveryScheduleCell.version_id == version.id)
+            .all()
+        )
+        known = {entry["key"]: entry for entry in entries}
+        for cell in cells:
+            key = (
+                f"product:{cell.product_id}"
+                if cell.product_id
+                else f"raw:{(cell.customer_code_raw or '').upper()}"
+            )
+            totals[key] = totals.get(key, Decimal(0)) + Decimal(cell.qty or 0)
+            if key not in known:
+                # A cell for a column the extraction never produced. Surfaced as its
+                # own column rather than silently left out of every total.
+                seen_codes[key] = {
+                    "index": len(entries) + len(seen_codes),
+                    "key": key,
+                    "page_no": None,
+                    "customer_code_raw": cell.customer_code_raw,
+                    "header_code": None,
+                    "name": None,
+                    "product_id": cell.product_id,
+                    "resolution_source": _RESOLUTION_MANUAL,
+                    "reported_total": None,
+                    "reported_total_source": None,
+                    "qty_source": _RESOLUTION_MANUAL,
+                }
+        entries.extend(seen_codes.values())
+
+        for entry in entries:
+            total = totals.get(entry["key"], Decimal(0))
+            po_row = po_quantities.get(entry["product_id"]) if entry.get("product_id") else None
+            reported = to_decimal(entry.get("reported_total"))
+            po_qty = po_row["qty"] if po_row else None
+            reconciled, reason = _verdict(total, reported, po_qty)
+            entry["column_total"] = qty_str(total)
+            entry["po_qty"] = qty_str(po_qty)
+            entry["po_qty_source"] = po_source if po_qty is not None else None
+            cancelled = po_row["cancelled"] if po_row else Decimal(0)
+            entry["cancelled_qty"] = qty_str(cancelled) if cancelled else None
+            entry["reconciled"] = reconciled
+            entry["reason"] = reason
+
+        payload["columns"] = entries
+        payload["reconciled_columns"] = sum(1 for entry in entries if entry["reconciled"])
+        payload["total_columns"] = len(entries)
+        version.reconciliation_json = payload
+        version.reconciled_columns = payload["reconciled_columns"]
+        version.total_columns = payload["total_columns"]
+        # JSONB reassignment is what tells SQLAlchemy the value changed; mutating the
+        # dict in place would not flush.
+        self.db.add(version)
+        self.db.flush()
+
+    # ------------------------------------------------------------------ editing
+
+    def update_cells(self, version_id: str, cells: Sequence[dict]) -> DeliveryScheduleVersion:
+        """Upsert by (phase, product). A quantity of zero DELETES the cell, because a
+        blank means this phase does not take this product.
+
+        A cell may name its column by ``product_index`` instead of ``product_id``, and
+        for an unidentified column it MUST: a column whose product nobody has named yet
+        has no product id to key on, and it is exactly the column somebody is correcting.
+        """
+        version = self.get_version(version_id)
+        self._assert_open(version)
+        for payload in cells:
+            phase_id = _clean(payload.get("phase_id"), 64)
+            product_id = _clean(payload.get("product_id"), 64)
+            raw_code = _clean(payload.get("customer_code_raw"))
+            column = self._column_at(version, payload.get("product_index"))
+            if column is not None:
+                product_id = product_id or _clean(column.get("product_id"), 64)
+                raw_code = raw_code or _clean(column.get("customer_code_raw"))
+            value = to_decimal(payload.get("qty"))
+            if not phase_id or value is None:
+                raise AppException(
+                    status_code=422,
+                    message="Every cell needs a phase and a quantity.",
+                    code="schedule_cell_invalid",
+                )
+            if not product_id and not raw_code:
+                raise AppException(
+                    status_code=422,
+                    message=(
+                        "A cell needs the product it belongs to, or the customer's own "
+                        "code where the column is still unidentified."
+                    ),
+                    code="schedule_cell_no_column",
+                )
+            phase = self.db.get(ProjectDeliveryPhase, phase_id)
+            if phase is None:
+                raise AppException(
+                    status_code=404,
+                    message="That delivery phase is not on this project.",
+                    code="delivery_phase_not_found",
+                )
+            query = self.db.query(DeliveryScheduleCell).filter(
+                DeliveryScheduleCell.version_id == version.id,
+                DeliveryScheduleCell.phase_id == phase_id,
+            )
+            if product_id:
+                query = query.filter(DeliveryScheduleCell.product_id == product_id)
+            else:
+                query = query.filter(
+                    DeliveryScheduleCell.product_id.is_(None),
+                    func.upper(DeliveryScheduleCell.customer_code_raw)
+                    == (raw_code or "").upper(),
+                )
+            existing = query.first()
+            if value == 0:
+                if existing is not None:
+                    self.db.delete(existing)
+                continue
+            if existing is not None:
+                existing.qty = value
+                continue
+            self.db.add(
+                DeliveryScheduleCell(
+                    company_id=version.company_id,
+                    version_id=version.id,
+                    phase_id=phase_id,
+                    product_id=product_id,
+                    customer_code_raw=raw_code or self._code_for_product(version, product_id),
+                    qty=value,
+                )
+            )
+        self.db.flush()
+        self._recompute(version)
+        return version
+
+    def _column_at(
+        self, version: DeliveryScheduleVersion, product_index: Any
+    ) -> Optional[dict]:
+        index = _as_int(product_index)
+        if index is None:
+            return None
+        entry = next(
+            (
+                item
+                for item in (version.reconciliation_json or {}).get("columns") or []
+                if item.get("index") == index
+            ),
+            None,
+        )
+        if entry is None:
+            raise AppException(
+                status_code=404,
+                message=f"Column {index + 1} is not on this schedule.",
+                code="schedule_column_not_found",
+            )
+        return entry
+
+    def _code_for_product(
+        self, version: DeliveryScheduleVersion, product_id: Optional[str]
+    ) -> Optional[str]:
+        for entry in (version.reconciliation_json or {}).get("columns") or []:
+            if entry.get("product_id") == product_id:
+                return entry.get("customer_code_raw")
+        return None
+
+    def resolve_product_column(
+        self,
+        version_id: str,
+        product_index: int,
+        product_id: str,
+        *,
+        actor_user_id: Optional[str] = None,
+    ) -> DeliveryScheduleVersion:
+        """Name the product a column means, and remember it for this customer (AC-E4).
+
+        The next schedule from the same customer resolves the same code silently, which
+        is the point: a person identifies `BUI-HB-SRTWC8613-RL` exactly once.
+        """
+        version = self.get_version(version_id)
+        self._assert_open(version)
+        payload = version.reconciliation_json or {}
+        entries: List[dict] = list(payload.get("columns") or [])
+        entry = next((item for item in entries if item.get("index") == product_index), None)
+        if entry is None:
+            raise AppException(
+                status_code=404,
+                message="That column is not on this schedule.",
+                code="schedule_column_not_found",
+            )
+        product = self.db.get(Product, product_id)
+        if product is None:
+            raise AppException(
+                status_code=404, message="Product not found.", code="product_not_found"
+            )
+        clash = next(
+            (
+                item
+                for item in entries
+                if item.get("product_id") == product_id and item.get("index") != product_index
+            ),
+            None,
+        )
+        if clash is not None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{product.product_code} is already the column headed "
+                    f"{clash.get('customer_code_raw') or clash.get('name') or 'earlier on this sheet'}. "
+                    "Correct that column instead of pointing two at one product."
+                ),
+                code="schedule_column_duplicate_product",
+            )
+
+        old_key = entry["key"]
+        cells = self.db.query(DeliveryScheduleCell).filter(
+            DeliveryScheduleCell.version_id == version.id
+        )
+        if entry.get("product_id"):
+            cells = cells.filter(DeliveryScheduleCell.product_id == entry["product_id"])
+        else:
+            cells = cells.filter(
+                DeliveryScheduleCell.product_id.is_(None),
+                func.upper(DeliveryScheduleCell.customer_code_raw)
+                == (entry.get("customer_code_raw") or "").upper(),
+            )
+        for cell in cells.all():
+            cell.product_id = product_id
+
+        entry["product_id"] = product_id
+        entry["key"] = f"product:{product_id}"
+        entry["resolution_source"] = _RESOLUTION_MANUAL
+        payload["columns"] = entries
+        version.reconciliation_json = payload
+        self.db.add(version)
+        self.db.flush()
+        logger.info(
+            "schedule column %s on version %s repointed from %s to product %s",
+            product_index, version.id, old_key, product.product_code,
+        )
+
+        self._remember_code(version, entry.get("customer_code_raw"), product_id, actor_user_id)
+        self._recompute(version)
+        return version
+
+    def _remember_code(
+        self,
+        version: DeliveryScheduleVersion,
+        customer_code: Optional[str],
+        product_id: str,
+        actor_user_id: Optional[str],
+    ) -> None:
+        customer_id = self.customer_id_for(self.schedule_for(version))
+        if not customer_id or not customer_code:
+            return
+        existing = (
+            self.db.query(CustomerItemCodeMap)
+            .filter(
+                CustomerItemCodeMap.customer_id == customer_id,
+                func.upper(CustomerItemCodeMap.customer_code) == customer_code.upper(),
+            )
+            .first()
+        )
+        if existing is not None:
+            existing.product_id = product_id
+            existing.confirmed_by = actor_user_id
+            return
+        self.db.add(
+            CustomerItemCodeMap(
+                company_id=version.company_id,
+                customer_id=customer_id,
+                customer_code=customer_code,
+                product_id=product_id,
+                confirmed_by=actor_user_id,
+            )
+        )
+        self.db.flush()
+
+    def customer_id_for(self, schedule: DeliverySchedule) -> Optional[str]:
+        """The debtor this schedule's codes belong to.
+
+        The PO's issuer first, through the party-to-customer bridge, then the lead's
+        buyer. A schedule may be issued by somebody else entirely (AC-E6, and R2 was),
+        but the item codes are the BUYER's, so the map is keyed on them.
+        """
+        po = self.db.get(ProjectPurchaseOrder, schedule.purchase_order_id)
+        if po is not None and po.issuing_party_id:
+            party = self.db.get(ProjectParty, po.issuing_party_id)
+            if party is not None and party.customer_id:
+                return party.customer_id
+        project = self.db.get(Project, schedule.project_id)
+        if project is not None and project.lead_id:
+            from app.models.projects import ProjectLead
+
+            lead = self.db.get(ProjectLead, project.lead_id)
+            if lead is not None and lead.customer_id:
+                return lead.customer_id
+        return None
+
+    # ------------------------------------------------------------------ confirm
+
+    def confirm(
+        self,
+        version_id: str,
+        *,
+        actor_user_id: Optional[str],
+        acknowledge_unreconciled: bool = False,
+        reason: Optional[str] = None,
+    ) -> DeliveryScheduleVersion:
+        """Bind the grid, and promote what this version says about the phases.
+
+        Refused while any column is unreconciled unless a person acknowledges it with a
+        reason, which is then kept on the version forever.
+        """
+        version = self.get_version(version_id)
+        self._assert_open(version)
+        payload = version.reconciliation_json or {}
+        entries: List[dict] = list(payload.get("columns") or [])
+        if not entries:
+            raise AppException(
+                status_code=409,
+                message="There is nothing to confirm: no product columns were read.",
+                code="schedule_nothing_to_confirm",
+            )
+        # A partial read is not a reconciliation failure, it is a MISSING part of the
+        # sheet: the columns on the pages that did not answer are absent altogether, so
+        # nothing flags them. Binding that would commit a schedule with a third of its
+        # products silently missing, so it takes the same acknowledgement.
+        if version.extraction_state == STATE_PARTIAL and not acknowledge_unreconciled:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"Part of this schedule could not be read. {version.extraction_error} "
+                    "Finish those pages by hand, or confirm anyway with a reason."
+                ),
+                code="schedule_pages_unread",
+            )
+        failing = [entry for entry in entries if not entry.get("reconciled")]
+        if failing and not acknowledge_unreconciled:
+            named = ", ".join(
+                str(entry.get("customer_code_raw") or entry.get("name") or f"column {entry['index'] + 1}")
+                for entry in failing[:8]
+            )
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{len(failing)} of {len(entries)} columns do not reconcile: {named}. "
+                    "Correct those cells, or confirm anyway with a reason."
+                ),
+                code="schedule_unreconciled_columns",
+            )
+        acknowledging = acknowledge_unreconciled and (
+            bool(failing) or version.extraction_state == STATE_PARTIAL
+        )
+        if acknowledging and not (reason or "").strip():
+            raise AppException(
+                status_code=422,
+                message="Confirming a schedule the checks doubt needs a reason.",
+                code="schedule_acknowledge_reason_required",
+            )
+
+        self._promote_phases(version, payload)
+        if acknowledging:
+            acknowledgement: Dict[str, Any] = {
+                "reason": (reason or "").strip(),
+                "by": actor_user_id,
+                "at": datetime.utcnow().isoformat(),
+                "columns": [entry["index"] for entry in failing],
+                "partial_read": version.extraction_state == STATE_PARTIAL,
+            }
+            payload["acknowledgement"] = acknowledgement
+        version.reconciliation_json = dict(payload)
+        version.confirmed_by = actor_user_id
+        version.confirmed_at = datetime.utcnow()
+        self.db.add(version)
+        self.db.flush()
+        return version
+
+    def _promote_phases(self, version: DeliveryScheduleVersion, payload: dict) -> None:
+        """What THIS version says about each phase becomes what the project holds.
+
+        Keyed on (area_group, sequence) and never the label (finding G6). Until this
+        moment the phase row still carries the previous version's date, which is what
+        gives the amendment engine both ends of a move.
+        """
+        for item in payload.get("phases") or []:
+            if not item.get("phase_id"):
+                continue
+            phase = self.db.get(ProjectDeliveryPhase, item["phase_id"])
+            if phase is None:
+                continue
+            delivery_date = _parse_date(item.get("delivery_date"))
+            if delivery_date:
+                phase.delivery_date = delivery_date
+            if item.get("label"):
+                phase.label = item["label"]
+            phase.source_version_id = version.id
+
+    def _assert_open(self, version: DeliveryScheduleVersion) -> None:
+        if version.confirmed_at is not None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    "This schedule version is confirmed. Upload a revision rather than "
+                    "editing what was agreed."
+                ),
+                code="schedule_version_confirmed",
+            )
+
+    # --------------------------------------------------------------- serialising
+
+    def get_version_detail(self, version_id: str) -> dict:
+        version = self.get_version(version_id)
+        schedule = self.schedule_for(version)
+        payload = version.reconciliation_json or {}
+        po = self.db.get(ProjectPurchaseOrder, schedule.purchase_order_id)
+        project = self.db.get(Project, schedule.project_id)
+        po_version = (
+            self.db.get(ProjectPOVersion, version.po_version_id)
+            if version.po_version_id
+            else None
+        )
+        issuer = (
+            self.db.get(ProjectParty, schedule.issuer_party_id)
+            if schedule.issuer_party_id
+            else None
+        )
+
+        phase_rows = {
+            str(row.id): row
+            for row in self.db.query(ProjectDeliveryPhase)
+            .filter(ProjectDeliveryPhase.project_id == schedule.project_id)
+            .all()
+        }
+        phases = []
+        for item in payload.get("phases") or []:
+            row = phase_rows.get(str(item.get("phase_id")))
+            phases.append(
+                {
+                    "id": item.get("phase_id"),
+                    "area_group": item.get("area_group"),
+                    "sequence": item.get("sequence"),
+                    "label": item.get("label"),
+                    "delivery_date": item.get("delivery_date"),
+                    # What the project holds today, so a revision shows the move
+                    # instead of just the new date.
+                    "promoted_delivery_date": (
+                        row.delivery_date.isoformat() if row is not None and row.delivery_date else None
+                    ),
+                }
+            )
+
+        products = []
+        for entry in payload.get("columns") or []:
+            product = (
+                self.db.get(Product, entry["product_id"]) if entry.get("product_id") else None
+            )
+            products.append(
+                {
+                    "product_index": entry.get("index"),
+                    "product_id": entry.get("product_id"),
+                    "product_code": product.product_code if product else None,
+                    "product_name": product.product_name if product else None,
+                    "customer_code_raw": entry.get("customer_code_raw"),
+                    "header_name": entry.get("name"),
+                    "resolution_source": entry.get("resolution_source"),
+                    "column_total": entry.get("column_total"),
+                    "reported_total": entry.get("reported_total"),
+                    "po_qty": entry.get("po_qty"),
+                    "cancelled_qty": entry.get("cancelled_qty"),
+                    "qty_source": entry.get("qty_source"),
+                    "reconciled": bool(entry.get("reconciled")),
+                    "reason": entry.get("reason"),
+                    "note": entry.get("note"),
+                }
+            )
+
+        # Every cell says which COLUMN it belongs to, not only which product. A column
+        # whose product nobody has identified yet has no product id, and keying the grid
+        # on product alone left those columns rendering empty while still showing a
+        # total, which reads as a bug rather than as work to do.
+        index_by_key = {
+            entry["key"]: entry.get("index") for entry in payload.get("columns") or []
+        }
+        cells = []
+        for cell in (
+            self.db.query(DeliveryScheduleCell)
+            .filter(DeliveryScheduleCell.version_id == version.id)
+            .all()
+        ):
+            key = (
+                f"product:{cell.product_id}"
+                if cell.product_id
+                else f"raw:{(cell.customer_code_raw or '').upper()}"
+            )
+            cells.append(
+                {
+                    "phase_id": cell.phase_id,
+                    "product_index": index_by_key.get(key),
+                    "product_id": cell.product_id,
+                    "customer_code_raw": cell.customer_code_raw,
+                    "qty": qty_str(Decimal(cell.qty)),
+                }
+            )
+
+        extracted = version.extracted_json or {}
+        return {
+            "id": str(version.id),
+            "delivery_schedule_id": str(version.delivery_schedule_id),
+            "purchase_order_id": str(schedule.purchase_order_id),
+            "version_no": version.version_no,
+            "revision_label": version.revision_label,
+            "issuer_party_label": issuer.name if issuer else None,
+            "po_version_id": version.po_version_id,
+            "po_version_no": po_version.version_no if po_version else None,
+            "po_number": po.po_number if po else None,
+            "project_id": str(schedule.project_id),
+            "project_code": project.project_code if project else None,
+            "project_title": project.title if project else None,
+            "extraction_state": version.extraction_state,
+            "extraction_error": version.extraction_error,
+            "extraction_model": version.extraction_model,
+            "page_count": extracted.get("page_count"),
+            "pages_extracted": len(extracted.get("pages") or []),
+            "document_url": self.document_url(version),
+            "schedule_date": version.schedule_date.isoformat() if version.schedule_date else None,
+            "phases": phases,
+            "products": products,
+            "cells": cells,
+            "date_warnings": payload.get("date_warnings") or [],
+            "acknowledgement": payload.get("acknowledgement"),
+            "reconciliation": {
+                "reconciled_columns": int(version.reconciled_columns or 0),
+                "total_columns": int(version.total_columns or 0),
+            },
+            "uploaded_by_name": self._uploader_name(version),
+            "confirmed_by_name": self._user_name(version.confirmed_by),
+            "confirmed_at": version.confirmed_at.isoformat() if version.confirmed_at else None,
+            "created_at": version.created_at.isoformat() if version.created_at else None,
+        }
+
+    # ------------------------------------------------------------------- listings
+
+    def list_schedules(self, project_id: str) -> List[dict]:
+        """Every delivery schedule on a project, each headed by its latest version.
+
+        Named by the PO it belongs to and the company that issued it, never by its id:
+        a schedule's own label is usually blank, and a UUID heads nothing.
+        """
+        schedules = (
+            self.db.query(DeliverySchedule)
+            .filter(DeliverySchedule.project_id == project_id)
+            .order_by(DeliverySchedule.created_at.asc())
+            .all()
+        )
+        if not schedules:
+            return []
+        ids = [row.id for row in schedules]
+        versions = (
+            self.db.query(DeliveryScheduleVersion)
+            .filter(DeliveryScheduleVersion.delivery_schedule_id.in_(ids))
+            .order_by(DeliveryScheduleVersion.version_no.asc())
+            .all()
+        )
+        grouped: Dict[str, List[DeliveryScheduleVersion]] = {}
+        for version in versions:
+            grouped.setdefault(str(version.delivery_schedule_id), []).append(version)
+
+        out = []
+        for schedule in schedules:
+            own = grouped.get(str(schedule.id), [])
+            latest = own[-1] if own else None
+            po = self.db.get(ProjectPurchaseOrder, schedule.purchase_order_id)
+            issuer = (
+                self.db.get(ProjectParty, schedule.issuer_party_id)
+                if schedule.issuer_party_id
+                else None
+            )
+            out.append(
+                {
+                    "id": str(schedule.id),
+                    "project_id": str(schedule.project_id),
+                    "purchase_order_id": str(schedule.purchase_order_id),
+                    "po_number": po.po_number if po else None,
+                    "issuer_party_label": issuer.name if issuer else None,
+                    "label": schedule.label,
+                    "version_count": len(own),
+                    "latest_version_id": str(latest.id) if latest else None,
+                    "latest_version_no": latest.version_no if latest else None,
+                    "latest_revision_label": latest.revision_label if latest else None,
+                    "extraction_state": latest.extraction_state if latest else None,
+                    "reconciled_columns": int(latest.reconciled_columns or 0) if latest else 0,
+                    "total_columns": int(latest.total_columns or 0) if latest else 0,
+                    "confirmed_at": (
+                        latest.confirmed_at.isoformat()
+                        if latest is not None and latest.confirmed_at
+                        else None
+                    ),
+                    "created_at": schedule.created_at.isoformat() if schedule.created_at else None,
+                }
+            )
+        return out
+
+    def list_versions(self, schedule_id: str) -> List[dict]:
+        """The revision history of one schedule, newest first.
+
+        R1 and R2 are separate documents of the same commitment (AC-G1), so this list is
+        what a person navigates rather than a single mutable grid.
+        """
+        schedule = self.db.get(DeliverySchedule, schedule_id)
+        if schedule is None:
+            raise AppException(
+                status_code=404,
+                message="Delivery schedule not found.",
+                code="delivery_schedule_not_found",
+            )
+        versions = (
+            self.db.query(DeliveryScheduleVersion)
+            .filter(DeliveryScheduleVersion.delivery_schedule_id == schedule_id)
+            .order_by(DeliveryScheduleVersion.version_no.desc())
+            .all()
+        )
+        po = self.db.get(ProjectPurchaseOrder, schedule.purchase_order_id)
+        out = []
+        for version in versions:
+            po_version = (
+                self.db.get(ProjectPOVersion, version.po_version_id)
+                if version.po_version_id
+                else None
+            )
+            extracted = version.extracted_json or {}
+            out.append(
+                {
+                    "id": str(version.id),
+                    "delivery_schedule_id": str(schedule.id),
+                    "purchase_order_id": str(schedule.purchase_order_id),
+                    "po_number": po.po_number if po else None,
+                    "version_no": version.version_no,
+                    "revision_label": version.revision_label,
+                    "po_version_no": po_version.version_no if po_version else None,
+                    "schedule_date": (
+                        version.schedule_date.isoformat() if version.schedule_date else None
+                    ),
+                    "extraction_state": version.extraction_state,
+                    "extraction_error": version.extraction_error,
+                    "page_count": extracted.get("page_count"),
+                    "pages_extracted": len(extracted.get("pages") or []),
+                    "reconciled_columns": int(version.reconciled_columns or 0),
+                    "total_columns": int(version.total_columns or 0),
+                    "uploaded_by_name": self._uploader_name(version),
+                    "confirmed_by_name": self._user_name(version.confirmed_by),
+                    "confirmed_at": (
+                        version.confirmed_at.isoformat() if version.confirmed_at else None
+                    ),
+                    "created_at": version.created_at.isoformat() if version.created_at else None,
+                }
+            )
+        return out
+
+    def _user_name(self, user_id: Optional[str]) -> Optional[str]:
+        if not user_id:
+            return None
+        from app.models.user import User
+
+        user = self.db.get(User, user_id)
+        return getattr(user, "name", None) or getattr(user, "email", None) if user else None
+
+    def _uploader_name(self, version: DeliveryScheduleVersion) -> Optional[str]:
+        """Who uploaded the document, taken from the attachment link that carries it.
+
+        The version row has no ``created_by`` of its own, and the link already records
+        the person who put the file there, so it is the same fact rather than a copy.
+        """
+        from app.models.entity_attachment import EntityAttachmentLink
+
+        link = (
+            self.db.query(EntityAttachmentLink)
+            .filter(
+                EntityAttachmentLink.entity_type == ATTACHMENT_ENTITY_TYPE,
+                EntityAttachmentLink.entity_id == str(version.id),
+            )
+            .order_by(EntityAttachmentLink.created_at.asc())
+            .first()
+        )
+        return self._user_name(getattr(link, "created_by", None))
+
+
+# ----------------------------------------------------------------- free helpers
+
+
+def _as_int(value: Any) -> Optional[int]:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def _row_ordinal(item: dict, fallback: int) -> int:
+    value = _as_int(item.get("row"))
+    return value if value is not None else fallback + 1
+
+
+def _col_ordinal(item: dict, fallback: int) -> int:
+    value = _as_int(item.get("col"))
+    return value if value is not None else fallback + 1
+
+
+def _code_candidates(header_code: Optional[str], customer_code: Optional[str]) -> List[str]:
+    """Our code, hiding inside theirs.
+
+    `BUI-HB-SRTWC8613-RL` is `SRTWC8613-RL` with the customer's prefix bolted on, so
+    the candidates are the code the model read plus every suffix of the printed one.
+    Longest first: `SRTWC8613-RL` must be tried before `RL`.
+    """
+    out: List[str] = []
+    if header_code:
+        out.append(header_code.strip())
+    if customer_code:
+        cleaned = customer_code.strip()
+        out.append(cleaned)
+        parts = cleaned.split("-")
+        for start in range(1, len(parts)):
+            out.append("-".join(parts[start:]))
+    seen = set()
+    unique = []
+    for candidate in out:
+        key = candidate.upper()
+        if candidate and len(candidate) >= 3 and key not in seen:
+            seen.add(key)
+            unique.append(candidate)
+    return unique
+
+
+def _verdict(
+    total: Decimal, reported: Optional[Decimal], po_qty: Optional[Decimal]
+) -> Tuple[bool, Optional[str]]:
+    """A column is reconciled when every checksum available agrees, and there is one.
+
+    Silence is not agreement: a column with no PO quantity to compare against is not
+    reconciled, it is unchecked, and saying so is the whole point of the screen.
+    """
+    if reported is not None and total != reported:
+        return False, (
+            f"the column adds up to {qty_str(total)}, the schedule's own total says "
+            f"{qty_str(reported)}"
+        )
+    if po_qty is None:
+        return False, "no purchase order quantity to reconcile against"
+    if total != po_qty:
+        return False, (
+            f"the column adds up to {qty_str(total)}, the purchase order says {qty_str(po_qty)}"
+        )
+    return True, None
+
+
+def _date_warnings(phases: List[_Phase]) -> List[dict]:
+    """Dates that run backwards inside an area group (AC-E7).
+
+    `8/3/2026` is either 8 March or 3 August, and the two schedules in the golden set
+    use different conventions. The rows run in calendar order, so a date that goes
+    backwards is the tell that the reading is wrong, and it is raised rather than
+    corrected.
+    """
+    warnings: List[dict] = []
+    previous: Dict[str, Optional[date]] = {}
+    for phase in sorted(phases, key=lambda p: (p.area_group, p.sequence)):
+        last = previous.get(phase.area_group)
+        if last is not None and phase.delivery_date is not None and phase.delivery_date < last:
+            warnings.append(
+                {
+                    "area_group": phase.area_group,
+                    "sequence": phase.sequence,
+                    "delivery_date": phase.delivery_date.isoformat(),
+                    "detail": (
+                        f"{phase.area_group} row {phase.sequence} is dated before the row "
+                        "above it. Confirm the day and month."
+                    ),
+                }
+            )
+        if phase.delivery_date is not None:
+            previous[phase.area_group] = phase.delivery_date
+    return warnings
+
+
+def _count_by(items, key) -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    for item in items:
+        value = key(item)
+        out[value] = out.get(value, 0) + 1
+    return out
