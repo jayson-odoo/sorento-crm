@@ -53,6 +53,39 @@ _ATTRIBUTION_FKS = [
 ]
 
 
+def _columns(table: str) -> set:
+    return {c["name"] for c in sa.inspect(op.get_bind()).get_columns(table)}
+
+
+def _add_column_if_missing(table: str, column: sa.Column) -> None:
+    """Idempotent add.
+
+    The shared local development database is stamped on another worktree's chain, so it
+    cannot be brought forward with `alembic upgrade` and these columns are applied there
+    by hand instead. A plain `add_column` would abort on the second attempt. Guarding also
+    makes a re-run after a partial failure safe. Same reason `305` and `306` were made
+    resilient to schema drift.
+    """
+    if column.name not in _columns(table):
+        op.add_column(table, column)
+
+
+def _drop_column_if_present(table: str, column: str) -> None:
+    if column in _columns(table):
+        op.drop_column(table, column)
+
+
+def _create_index_if_missing(name: str, table: str, columns: list) -> None:
+    if name not in {ix["name"] for ix in sa.inspect(op.get_bind()).get_indexes(table)}:
+        op.create_index(name, table, columns)
+
+
+def _create_fk_if_missing(name, table, referent, local, remote, **kwargs) -> None:
+    existing = {fk.get("name") for fk in sa.inspect(op.get_bind()).get_foreign_keys(table)}
+    if name not in existing:
+        op.create_foreign_key(name, table, referent, local, remote, **kwargs)
+
+
 def upgrade() -> None:
     bind = op.get_bind()
 
@@ -69,7 +102,7 @@ def upgrade() -> None:
         session.close()
 
     # ---- workflow_submissions.status_id ----
-    op.add_column(
+    _add_column_if_missing(
         "workflow_submissions",
         sa.Column("status_id", UUID(as_uuid=False), nullable=True),
     )
@@ -103,55 +136,59 @@ def upgrade() -> None:
         )
 
     op.alter_column("workflow_submissions", "status_id", nullable=False)
-    op.create_foreign_key(
-        "fk_workflow_submissions_status",
-        "workflow_submissions",
-        "statuses",
-        ["status_id"],
-        ["id"],
+    _create_fk_if_missing(
+        "fk_workflow_submissions_status", "workflow_submissions", "statuses",
+        ["status_id"], ["id"],
     )
-    op.create_index(
+    _create_index_if_missing(
         "ix_workflow_submissions_status_id", "workflow_submissions", ["status_id"]
     )
     # Drops its index with it.
-    op.drop_column("workflow_submissions", "current_state_code")
+    _drop_column_if_present("workflow_submissions", "current_state_code")
 
     # ---- transition log, re-keyed to status ids ----
     log = "workflow_submission_transition_logs"
-    op.add_column(log, sa.Column("from_status_id", UUID(as_uuid=False), nullable=True))
-    op.add_column(log, sa.Column("to_status_id", UUID(as_uuid=False), nullable=False))
-    op.add_column(
+    _add_column_if_missing(log, sa.Column("from_status_id", UUID(as_uuid=False), nullable=True))
+    # Nullable here, tightened below, so an existing row can be given a value first.
+    _add_column_if_missing(log, sa.Column("to_status_id", UUID(as_uuid=False), nullable=True))
+    _add_column_if_missing(
         log, sa.Column("status_transition_id", UUID(as_uuid=False), nullable=True)
     )
-    op.drop_column(log, "from_state_code")
-    op.drop_column(log, "to_state_code")
-    op.drop_column(log, "transition_id")
+    for _retired in ("from_state_code", "to_state_code", "transition_id"):
+        _drop_column_if_present(log, _retired)
+
+    # Now tighten it. Added nullable above so the column could be created before any
+    # value existed for it; the model declares it NOT NULL, and a log row that does not
+    # say where the record went is not a log row.
+    if bind.execute(
+        sa.text(f"SELECT count(*) FROM {log} WHERE to_status_id IS NULL")
+    ).scalar():
+        raise RuntimeError(
+            f"{log} has rows with no to_status_id. Reconcile them before upgrading: a "
+            "transition log row that does not record its destination cannot be repaired "
+            "later."
+        )
+    op.alter_column(log, "to_status_id", nullable=False)
 
     # No ondelete on the status FKs: a status referenced by history must not be
     # deletable out from under it. The edge FK is SET NULL, because an admin editing a
     # graph legitimately deletes transitions and the trail must outlive that edit.
-    op.create_foreign_key(
+    _create_fk_if_missing(
         "fk_wf_transition_logs_from_status", log, "statuses", ["from_status_id"], ["id"]
     )
-    op.create_foreign_key(
+    _create_fk_if_missing(
         "fk_wf_transition_logs_to_status", log, "statuses", ["to_status_id"], ["id"]
     )
-    op.create_foreign_key(
-        "fk_wf_transition_logs_edge",
-        log,
-        "status_transitions",
-        ["status_transition_id"],
-        ["id"],
-        ondelete="SET NULL",
+    _create_fk_if_missing(
+        "fk_wf_transition_logs_edge", log, "status_transitions",
+        ["status_transition_id"], ["id"], ondelete="SET NULL",
     )
 
     # ---- attribution FKs (AC-F1-16) ----
     # Columns stay VARCHAR: users.id is a text column, and a uuid column cannot hold an
     # FK to it. Converting users.id belongs to the uuid-id principle work, not here.
     for table, column, name in _ATTRIBUTION_FKS:
-        op.create_foreign_key(
-            name, table, "users", [column], ["id"], ondelete="SET NULL"
-        )
+        _create_fk_if_missing(name, table, "users", [column], ["id"], ondelete="SET NULL")
 
     # ---- persisted config that would break on a code-only deploy ----
     bind.execute(

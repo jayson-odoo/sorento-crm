@@ -83,6 +83,14 @@ class WorkflowSubmissionLineOut(BaseModel):
     line_group_id: str
     sort_order: int
     row_data: Dict[str, Any]
+    # All NULL for a form that does not use line-level statuses, which is every form
+    # today. The key and label travel beside the id because the frontend may not render
+    # a UUID.
+    status_id: Optional[str] = None
+    status_key: Optional[str] = None
+    status_label: Optional[str] = None
+    disposition: Optional[str] = None
+    disposition_reason: Optional[str] = None
 
     class Config:
         from_attributes = True

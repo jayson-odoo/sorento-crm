@@ -213,6 +213,14 @@ async def startup_event():
         logging.info("Status entity registered: workflow_submission")
     except Exception as e:
         logging.error(f"Failed to register status entities: {str(e)}", exc_info=True)
+    try:
+        from app.services.workflow_submission_line_status_graph import (
+            register_workflow_submission_line_status_entity,
+        )
+        register_workflow_submission_line_status_entity()
+        logging.info("Status entity registered: workflow_submission_line")
+    except Exception as e:
+        logging.error(f"Failed to register status entities: {str(e)}", exc_info=True)
     # Register task handlers unconditionally so manual "run now" works on API
     # containers even when scheduler ticks are gated to the worker container.
     try:

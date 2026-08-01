@@ -42,6 +42,20 @@ from app.services.status_service import (
     resolve_graph,
 )
 from app.services.workflow_form_field_defs import collect_field_defs
+from app.services.workflow_submission_derived_status import (
+    assert_derivation_config,
+    assert_manual_header_move_allowed,
+    definition_derives_status,
+    derived_pair_ids,
+    recompute_submission_status,
+)
+from app.services.workflow_submission_line_disposition import (
+    assert_disposition_allowed,
+)
+from app.services.workflow_submission_line_status_graph import (
+    WORKFLOW_SUBMISSION_LINE_ENTITY_TYPE,
+    assert_lines_replaceable,
+)
 from app.services.workflow_submission_status_graph import (
     WORKFLOW_SUBMISSION_ENTITY_TYPE,
 )
@@ -297,6 +311,9 @@ class WorkflowFormsService:
         description: Optional[str],
         is_active: Optional[bool],
         draft_schema: Optional[Dict[str, Any]],
+        derives_status_from_lines: Optional[bool] = None,
+        derived_open_status_key: Optional[str] = None,
+        derived_resolved_status_key: Optional[str] = None,
     ) -> WorkflowFormDefinition:
         d = self.get_definition(definition_id)
         if name is not None:
@@ -308,6 +325,36 @@ class WorkflowFormsService:
         if draft_schema is not None:
             _assert_document_shape(draft_schema)
             setattr(d, "draft_schema", draft_schema)
+        derivation_fields = (
+            "derives_status_from_lines",
+            "derived_open_status_key",
+            "derived_resolved_status_key",
+        )
+        previous = {field: getattr(d, field, None) for field in derivation_fields}
+        if derives_status_from_lines is not None:
+            setattr(d, "derives_status_from_lines", derives_status_from_lines)
+        if derived_open_status_key is not None:
+            setattr(d, "derived_open_status_key", derived_open_status_key.strip() or None)
+        if derived_resolved_status_key is not None:
+            setattr(
+                d, "derived_resolved_status_key", derived_resolved_status_key.strip() or None
+            )
+        # Validated at SAVE, where the admin can still fix it. Both rules are permanent
+        # once a submission exists: an open key that is not the graph's starting state
+        # strands every submission outside the derived pair, and a terminal resolved key
+        # makes reopening unreachable.
+        try:
+            assert_derivation_config(self.db, d)
+        except AppException:
+            # Put the row back as it was, and FLUSH it back: the validation itself runs a
+            # query, so autoflush has already written the refused values. Restoring only
+            # in memory would leave the database holding them until the caller happened to
+            # roll back. Rolling the whole transaction back here is not an option either,
+            # since it would discard unrelated work the caller has not committed.
+            for field, value in previous.items():
+                setattr(d, field, value)
+            self.db.flush()
+            raise
         setattr(d, "updated_at", datetime.utcnow())
         self.db.commit()
         self.db.refresh(d)
@@ -495,6 +542,14 @@ class WorkflowFormsService:
                 "line_group_id": ln.line_group_id,
                 "sort_order": ln.sort_order,
                 "row_data": ln.row_data or {},
+                # NULL on every line of a form that does not use line statuses, which is
+                # every form today. Keys as well as the id: the frontend may not render a
+                # UUID.
+                "status_id": ln.status_id,
+                "status_key": ln.status_key,
+                "status_label": ln.status_label,
+                "disposition": ln.disposition,
+                "disposition_reason": ln.disposition_reason,
             }
             for ln in (s.lines or [])
         ]
@@ -655,6 +710,7 @@ class WorkflowFormsService:
         )
         self.db.add(sub)
         self.db.flush()
+        line_status_id = self._initial_line_status_id(d)
         for i, row in enumerate(lines):
             self.db.add(
                 WorkflowSubmissionLine(
@@ -663,11 +719,33 @@ class WorkflowFormsService:
                     line_group_id=row["line_group_id"],
                     sort_order=row.get("sort_order", i),
                     row_data=row.get("row_data") or {},
+                    status_id=line_status_id,
                 )
             )
+        self.db.flush()
+        recompute_submission_status(self.db, sub)
         self.db.commit()
         self.db.refresh(sub)
         return sub
+
+    def _initial_line_status_id(
+        self, definition: Optional[WorkflowFormDefinition]
+    ) -> Optional[str]:
+        """The status a new line starts on, or None for a definition that never opted in.
+
+        None keeps today's behaviour bit for bit: most forms have lines that are just
+        data, so stamping them would mean seeding a line graph for every form with a
+        repeater. A DERIVING definition is the opposite case -- lines that arrive with no
+        status could never resolve its header -- and the value comes from the LINE graph
+        resolved for this definition, never from the header's.
+        """
+        if definition is None or not definition_derives_status(definition):
+            return None
+        return str(
+            initial_status(
+                self.db, WORKFLOW_SUBMISSION_LINE_ENTITY_TYPE, str(definition.id)
+            ).id
+        )
 
     def update_submission(
         self,
@@ -710,6 +788,15 @@ class WorkflowFormsService:
             new_header = header_data
         new_lines_payload: List[Dict[str, Any]] = []
         if lines is not None:
+            # Replacing lines is a DELETE plus re-insert with fresh UUIDs, so it would
+            # silently destroy every line status and disposition. Refused while any line
+            # carries a decision; a header-only edit (lines is None) is untouched by this.
+            assert_lines_replaceable(self.db, s)
+            line_status_id = self._initial_line_status_id(
+                self.db.query(WorkflowFormDefinition)
+                .filter(WorkflowFormDefinition.id == s.definition_id)
+                .first()
+            )
             self.db.query(WorkflowSubmissionLine).filter(WorkflowSubmissionLine.submission_id == s.id).delete(
                 synchronize_session=False
             )
@@ -728,6 +815,7 @@ class WorkflowFormsService:
                         line_group_id=row["line_group_id"],
                         sort_order=row.get("sort_order", i),
                         row_data=row.get("row_data") or {},
+                        status_id=line_status_id,
                     )
                 )
         else:
@@ -739,6 +827,13 @@ class WorkflowFormsService:
         setattr(s, "header_data", clean)
         setattr(s, "updated_by_user_id", user_id)
         setattr(s, "updated_at", datetime.utcnow())
+        self.db.flush()
+        if lines is not None:
+            # Replaced lines are a new population, which is one of the reachable ways a
+            # resolved submission reopens (a decided line can never leave its terminal
+            # rung). Derivation recomputes from whatever it finds rather than assuming
+            # which API produced it.
+            recompute_submission_status(self.db, s)
         self.db.commit()
         self.db.refresh(s)
         return s
@@ -761,10 +856,21 @@ class WorkflowFormsService:
         unknown status, a status from another entity's or another definition's graph, a
         deactivated target, a move out of a final status and a move with no declared
         edge are all 422 with their own code.
+
+        A deriving definition adds one more refusal, and only one: a move into or out of
+        the two rungs derivation owns. Everything else stays human-driven, so a resolved
+        submission can still be closed by hand.
         """
         s = self.get_submission(submission_id)
         scope_id = str(s.definition_id)
         from_status_id = str(s.status_id)
+
+        assert_manual_header_move_allowed(
+            self.db,
+            self.get_definition(scope_id),
+            from_status_id,
+            to_status_id,
+        )
 
         edge = assert_transition_allowed(
             self.db,
@@ -864,10 +970,12 @@ class WorkflowFormsService:
         """The moves to offer as buttons.
 
         Resolved through the same graph the guard uses, or a user is shown an action the
-        server will refuse.
+        server will refuse. That includes the derived pair: offering a move the derivation
+        guard rejects is how a user learns the product is broken.
         """
         s = self.get_submission(submission_id)
         scope_id = str(s.definition_id)
+        definition = self.get_definition(scope_id)
         graph = resolve_graph(self.db, WORKFLOW_SUBMISSION_ENTITY_TYPE, scope_id)
         current = graph.by_id(str(s.status_id))
         edges = available_transitions(
@@ -881,6 +989,10 @@ class WorkflowFormsService:
         for edge in edges:
             target = graph.by_id(str(edge.to_status_id))
             if target is None:
+                continue
+            if not self._manual_header_move_offerable(
+                definition, str(s.status_id), str(target.id)
+            ):
                 continue
             if not can_use_transition(
                 gating, getattr(current, "key", None), str(target.key), roles
@@ -896,3 +1008,121 @@ class WorkflowFormsService:
                 }
             )
         return out
+
+    def _manual_header_move_offerable(
+        self,
+        definition: WorkflowFormDefinition,
+        from_status_id: str,
+        to_status_id: str,
+    ) -> bool:
+        """False for a move ``apply_transition`` would refuse as derived.
+
+        A misconfigured definition still raises out of here rather than quietly showing
+        no buttons, which would read as a form whose workflow simply ended.
+        """
+        pair = derived_pair_ids(self.db, definition)
+        if pair is None:
+            return True
+        return from_status_id not in pair and to_status_id not in pair
+
+    # --- lines ---
+
+    def get_line(self, line_id: str) -> WorkflowSubmissionLine:
+        line = (
+            self.db.query(WorkflowSubmissionLine)
+            .filter(WorkflowSubmissionLine.id == line_id)
+            .first()
+        )
+        if not line:
+            raise AppException(
+                status_code=404, message="Submission line not found.", code="not_found"
+            )
+        return line
+
+    def apply_line_transition(
+        self,
+        line_id: str,
+        to_status_id: str,
+        user_id: str,
+    ) -> WorkflowSubmissionLine:
+        """Decide one line, if the engine allows it, then re-derive the header.
+
+        The same authority as a header move: one engine, not a second per-line rule set,
+        so a line's legal moves are configuration rather than code. The graph is the LINE
+        graph resolved for the submission's definition, which is why a status from the
+        header's graph is rejected even though the two share keys.
+
+        ``user_id`` is the mover. It is not recorded on the line: the table has no
+        attribution column, and the derived header move that may follow deliberately
+        carries no user at all (nobody made that move). See AC-F1a-29.
+
+        No line-level role gate. The retired role gating is keyed to HEADER statuses, and
+        inventing a per-line rule during this slice would be a new authorization rule
+        smuggled in as a feature.
+        """
+        line = self.get_line(line_id)
+        submission = line.submission
+        if submission is None:
+            raise AppException(
+                status_code=404, message="Submission line not found.", code="not_found"
+            )
+        from_status_id = getattr(line, "status_id", None)
+        if from_status_id is None:
+            # NULL is not a rung of any graph, so there is nothing to move from. Failing
+            # closed with the same code as a stranded line keeps one answer for one
+            # question: this record is not on the graph you are moving it through.
+            raise AppException(
+                status_code=422,
+                message=(
+                    "This line has no status, so it cannot be moved. Its form does not "
+                    "use line-level statuses."
+                ),
+                code="status_not_in_graph",
+            )
+
+        assert_transition_allowed(
+            self.db,
+            WORKFLOW_SUBMISSION_LINE_ENTITY_TYPE,
+            str(from_status_id),
+            to_status_id,
+            str(submission.definition_id),
+        )
+
+        setattr(line, "status_id", to_status_id)
+        self.db.flush()
+        # The header follows its lines. No row is written here for the line itself:
+        # workflow_submission_transition_logs is the HEADER's companion log, and a line
+        # move logged there would put a status the submission never held into its trail.
+        recompute_submission_status(self.db, submission)
+        self.db.commit()
+        self.db.refresh(line)
+        return line
+
+    def set_line_disposition(
+        self,
+        line_id: str,
+        disposition: Optional[str],
+        user_id: str,
+        disposition_reason: Optional[str] = None,
+    ) -> WorkflowSubmissionLine:
+        """Record how a line will be settled, or clear it.
+
+        Validated against the ACTIVE options of the bound lookup set. Called explicitly
+        rather than left to the flush listener, which only ``app.main`` installs.
+
+        Recording a disposition is NOT a decision: it must not move the line, so it
+        cannot move the header either. If it did, a submission could resolve on lines
+        nobody ever approved.
+        """
+        line = self.get_line(line_id)
+        value = (disposition or "").strip() or None
+        assert_disposition_allowed(self.db, value)
+        setattr(line, "disposition", value)
+        if disposition_reason is not None:
+            setattr(line, "disposition_reason", disposition_reason.strip() or None)
+        if value is None:
+            # A cleared disposition has no reason to explain.
+            setattr(line, "disposition_reason", None)
+        self.db.commit()
+        self.db.refresh(line)
+        return line

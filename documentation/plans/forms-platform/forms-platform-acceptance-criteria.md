@@ -365,6 +365,95 @@ Most ACs below exist to stop that, not to add features.
 - **AC-F1a-20** `[FE]` F1a is backend-only. `workflow-forms-management` stays stale until F3, and the sidebar's
   app-wide `published-for-submission` call must keep working.
 
+---
+
+## Group F1a corrections - after the red suite exposed the gaps (2026-08-01)
+
+The test author found ten problems while writing the suite. Six needed a decision rather than a wording fix.
+Where these conflict with Group F1a above, **this section wins**. Originals stand for auditability.
+
+### CORRECTION 1 - line decisions are silently destroyed by an answer edit (the serious one)
+
+**Verified:** `update_submission` bulk-deletes every line and re-inserts with fresh UUIDs
+(`workflow_forms_service.py:713-730`). Any edit that includes `lines` would therefore wipe every line status and
+disposition, with no error. That is silent loss of exactly what this slice adds, and no AC covered it.
+
+- **AC-F1a-21** `[BE]` Given any line of a submission has been **decided** (a status other than the graph's
+  initial rung, or a non-null disposition), Then `update_submission` **refuses to replace lines**, with a distinct
+  error code. A header-only edit (`lines is None`) stays allowed and is untouched by this rule.
+
+  Refusing rather than merging is deliberate. A merge needs a stable per-row identity, and the document supplies
+  none: `row_data` is free-form and the line `id` is server-generated, so any matching rule would be a heuristic
+  that mis-attributes a decision to the wrong row. Losing a decision quietly is worse than refusing an edit
+  loudly. A stable line key, and with it a real merge, is its own slice.
+
+### CORRECTION 2 - a deriving submission could never be closed
+
+AC-F1a-9 said `apply_transition` refuses for a deriving definition. Too broad: derivation only ever moves the
+header between the two declared rungs, so a deriving submission could never reach any terminal state at all.
+
+- **AC-F1a-22** `[BE]` Given a deriving definition, Then `apply_transition` refuses **only** moves into or out of
+  the two declared derived rungs (`status_derived_not_writable`), and **permits** any other move. Derivation owns
+  the open/resolved pair; the rest of the lifecycle stays human-driven, so a resolved submission can still be
+  closed by hand. This keeps ADR-0013's one-writer rule scoped to the values that are actually derived, which is
+  what the rule is for. **Supersedes AC-F1a-9.**
+
+### CORRECTION 3 - the two declared rungs need validating, or a submission strands outside them
+
+Both found by the test author, both otherwise silent:
+
+- **AC-F1a-23** `[BE]` Given `apply_transition` refuses moves into the derived pair, Then
+  `derived_open_status_key` **must be the header graph's initial rung** for that definition, validated when the
+  definition is saved with a loud error. Otherwise a submission created on `draft` while the open key is
+  `submitted` sits outside the declared pair forever, and derivation correctly refuses to hijack it, so the
+  submission is permanently stuck with no way back.
+- **AC-F1a-24** `[BE]` Given `update_submission` refuses to edit a submission whose header sits on a terminal
+  status, Then `derived_resolved_status_key` **must NOT be terminal**, validated at save. A terminal resolved rung
+  freezes the submission, and adding a line is the main reachable way to reopen one, so a terminal resolved rung
+  makes reopen unreachable. Closing for good is a separate manual move, which AC-F1a-22 now permits.
+
+### CORRECTION 4 - "a line leaves terminal" is not reachable through the line API
+
+AC-F1a-12 assumed a line could be un-decided. It cannot: `approved` and `rejected` are terminal and
+`assert_transition_allowed` refuses any move out of a terminal rung.
+
+- **AC-F1a-25** `[BE]` Given reopen, Then the reachable triggers are: a line **added**, lines **replaced**, or an
+  admin **clearing `is_terminal`** on a rung. Derivation's contract is to **notice** that the line population
+  changed, not to be the path that changed it, so it must recompute correctly from whatever state it finds rather
+  than assuming which API produced it. The reopen requirement in AC-F1a-12 stands; only its trigger list is
+  corrected.
+
+### CORRECTION 5 - disposition vocabulary, and the missing reason
+
+AC-F1a-6's `exchange` / `credit_note` were illustrative and contradict `REQUIREMENTS-inbox-2026-08-01.md`.
+
+- **AC-F1a-26** `[BE][MIG]` Seed R1/R3's actual vocabulary: `write_off`, `cn_cancellation`,
+  `replacement_same_model`, `replacement_equivalent_value`, `replacement_wrong_model`, `repair`, `maintenance`,
+  `nothing_to_collect`. It is admin-editable master data, so tests must not pin the list.
+- **AC-F1a-27** `[BE][MIG]` Given R3's "nothing to collect" **requires a reason**, Then
+  `workflow_submission_lines` also carries a nullable `disposition_reason`. Adding it now costs one column;
+  discovering later that the requirement has nowhere to land costs a migration plus a UI change.
+- **AC-F1a-28** `[DOC]` The line **status** `cancelled` and the **disposition** `cn_cancellation` are different
+  things on different columns with near-identical labels. UI copy must keep them apart, and `cancelled` is the one
+  derivation excludes.
+
+### CORRECTION 6 - a derived move has no actor column to name
+
+- **AC-F1a-29** `[BE]` Given the transition log's only actor column is `user_id`, an FK to `users.id`, a sentinel
+  string is impossible. Then a derived move is marked by `user_id IS NULL` **and**
+  `status_transition_id IS NULL` **and** `remark = DERIVED_TRANSITION_REMARK`. That satisfies AC-F1a-16 without
+  adding DDL to the log table. An explicit `actor_kind` column is the better long-term shape and is deferred.
+
+### Narrowed
+
+- **AC-F1a-17 is narrowed to lines.** It said "on lines as on headers", but no header roll-up exists to mirror:
+  `keys_by_entity` returns keys, not counts. Only the line-side count-by-key is in scope; a header roll-up is
+  unbuilt on both sides and is not this slice's job.
+- **AC-F1a-18 and AC-F1a-19 are gates, not tests.** A single alembic head and an identical failure set cannot be
+  asserted from a test file. They are verified by the orchestrator, serially, with `-p no:randomly`.
+- **F1a declares no HTTP surface.** Every AC is service-level, so the suite is service-level. If routes for line
+  transition and disposition land here, endpoint tests (happy path, auth denial, 422) are a follow-up.
+
 ## Deferred, with the reason
 
 - **F1a** (submission **lines** carry `status_id` + disposition, header status derived) is a separate slice.

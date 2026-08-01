@@ -40,6 +40,21 @@ class WorkflowFormDefinition(Base):
         String(64), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
 
+    # ---- line-derived header status (F1a), opt-in per definition ----
+    # Off by default with a server_default, because every definition that exists today
+    # moves its header by transition and must keep doing exactly that.
+    derives_status_from_lines = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
+    # The two rungs derivation toggles between, named by KEY and never by statuses.id: a
+    # definition that forks its header graph gets fresh ids for the same rungs, so an id
+    # here would point at the default graph's row and resolve to nothing after a fork.
+    # Validated when the definition is saved (see workflow_submission_derived_status):
+    # the open key must be the header graph's initial rung, and the resolved key must not
+    # be terminal.
+    derived_open_status_key = Column(String(64), nullable=True)
+    derived_resolved_status_key = Column(String(64), nullable=True)
+
     versions = relationship(
         "WorkflowFormVersion",
         back_populates="definition",
@@ -168,7 +183,14 @@ class WorkflowSubmission(Base):
 
 
 class WorkflowSubmissionLine(Base):
-    """Repeating line rows (e.g. line items) for a submission."""
+    """Repeating line rows (e.g. line items) for a submission.
+
+    A line carries its own state and its own outcome, because Customer Service approves
+    some lines and rejects others: ``status_id`` is the decision (in the status engine,
+    on the ``workflow_submission_line`` graph) and ``disposition`` is how the decided
+    line will be settled. They are orthogonal on purpose - a line can be approved with
+    any disposition, and rejecting one implies none.
+    """
 
     __tablename__ = "workflow_submission_lines"
 
@@ -182,12 +204,39 @@ class WorkflowSubmissionLine(Base):
     line_group_id = Column(String(64), nullable=False)
     sort_order = Column(Integer, nullable=False, server_default="0")
     row_data = Column(JSONB, nullable=False, server_default="{}")
+    # NULLABLE, unlike the submission's: line-level status is opt-in per definition, and
+    # most forms have lines that are just data. Still a real FK, so a status cannot be
+    # deleted out from under a line. Indexed because count_records and the
+    # count-by-key roll-up both filter on it.
+    status_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("statuses.id"),
+        nullable=True,
+        index=True,
+    )
+    # A ``lookup_options.value``, validated app-side against the active options of the
+    # set bound to ('workflow_submission_lines', 'disposition') -- the same shape as the
+    # existing bindings, so no FK here.
+    disposition = Column(String(150), nullable=True)
+    # "Nothing to collect" requires a reason, and a reason has nowhere else to land.
+    disposition_reason = Column(Text, nullable=True)
 
     submission = relationship("WorkflowSubmission", back_populates="lines")
+    status = relationship("Status", foreign_keys=[status_id])
 
     __table_args__ = (
         Index("ix_workflow_submission_lines_submission_group", "submission_id", "line_group_id"),
     )
+
+    # The frontend may not render UUIDs, and reporting groups by key, so a line reaches a
+    # serializer holding both the way the header does.
+    @property
+    def status_key(self):
+        return getattr(self.status, "key", None)
+
+    @property
+    def status_label(self):
+        return getattr(self.status, "label", None)
 
 
 class WorkflowSubmissionTransitionLog(Base):
