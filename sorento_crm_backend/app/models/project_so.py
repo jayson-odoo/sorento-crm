@@ -47,6 +47,13 @@ def _uuid_str() -> str:
 
 
 # --------------------------------------------------------------------------- customer PO
+#
+# The customer PO ROW is phase 1's ``project_purchase_orders`` (see
+# ``app.models.projects``). Phase 2 does not fork it: it hangs versioned documents,
+# extracted lines and handwriting cards off that same row, so a PO recorded by hand
+# and a PO arriving as a scan are one PO with one number, not two.
+#
+# These constants describe columns phase 2 adds to that table.
 
 PO_STATUS_DRAFT = "draft"
 PO_STATUS_APPROVED = "approved"
@@ -58,66 +65,16 @@ ANNOTATION_EDITED = "edited"
 ANNOTATION_REJECTED = "rejected"
 
 
-class CustomerPO(Base, CompanyScopedMixin):
-    """A purchase order the customer sent us, always against a project (D-lifecycle step 6).
-
-    There is no standalone PO. The project is what carries the quotation every line is
-    checked against, so a PO with no project cannot be cross-checked and must not exist.
-    """
-
-    __tablename__ = "customer_pos"
-    __audit_track__ = True
-
-    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
-    project_id = Column(
-        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False
-    )
-    customer_id = Column(
-        UUID(as_uuid=False), ForeignKey("customers.id", ondelete="RESTRICT"), nullable=True
-    )
-    po_number = Column(String(120), nullable=False)
-    po_date = Column(Date, nullable=True)
-    term_days = Column(Integer, nullable=True)
-    sales_person = Column(String(120), nullable=True)
-    customer_order_ref = Column(String(180), nullable=True)
-    remark = Column(Text, nullable=True)
-    # The PS filing reference project sales admin puts on everything (D24).
-    admin_ref = Column(String(64), nullable=True)
-
-    status = Column(String(24), nullable=False, server_default=PO_STATUS_DRAFT)
-    # An annotation can name a successor PO ("refer to New P/O HQ/26/05/087") long before
-    # that document is uploaded, so the pointer is text until it resolves.
-    supersedes_po_number = Column(String(120), nullable=True)
-    superseded_by_po_id = Column(
-        UUID(as_uuid=False), ForeignKey("customer_pos.id", ondelete="SET NULL"), nullable=True
-    )
-
-    approved_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    approved_at = Column(DateTime(timezone=False), nullable=True)
-    countersigned_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    countersigned_at = Column(DateTime(timezone=False), nullable=True)
-
-    created_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
-    updated_at = Column(
-        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
-    )
-
-    __table_args__ = (
-        UniqueConstraint("company_id", "project_id", "po_number", name="uq_customer_pos_project_number"),
-        Index("ix_customer_pos_project", "project_id"),
-        Index("ix_customer_pos_status", "status"),
-    )
-
-
-class CustomerPOVersion(Base, CompanyScopedMixin):
+class ProjectPOVersion(Base, CompanyScopedMixin):
     """One uploaded document. Immutable once confirmed: a revision is a NEW version."""
 
-    __tablename__ = "customer_po_versions"
+    __tablename__ = "project_po_versions"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
-    customer_po_id = Column(
-        UUID(as_uuid=False), ForeignKey("customer_pos.id", ondelete="CASCADE"), nullable=False
+    purchase_order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_purchase_orders.id", ondelete="CASCADE"),
+        nullable=False,
     )
     version_no = Column(Integer, nullable=False)
     attachment_id = Column(
@@ -141,11 +98,11 @@ class CustomerPOVersion(Base, CompanyScopedMixin):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("customer_po_id", "version_no", name="uq_customer_po_versions_no"),
+        UniqueConstraint("purchase_order_id", "version_no", name="uq_project_po_versions_no"),
     )
 
 
-class CustomerPOLine(Base, CompanyScopedMixin):
+class ProjectPOLine(Base, CompanyScopedMixin):
     """A printed line, as printed.
 
     ``stock_code_raw`` is deliberately the customer's own truncated column
@@ -153,11 +110,11 @@ class CustomerPOLine(Base, CompanyScopedMixin):
     recovered from the description into ``resolved_product_id`` (AC-M1b, measured).
     """
 
-    __tablename__ = "customer_po_lines"
+    __tablename__ = "project_po_lines"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     po_version_id = Column(
-        UUID(as_uuid=False), ForeignKey("customer_po_versions.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("project_po_versions.id", ondelete="CASCADE"), nullable=False
     )
     line_no = Column(Integer, nullable=False)
     stock_code_raw = Column(String(180), nullable=True)
@@ -177,23 +134,23 @@ class CustomerPOLine(Base, CompanyScopedMixin):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("po_version_id", "line_no", name="uq_customer_po_lines_no"),
-        Index("ix_customer_po_lines_version", "po_version_id"),
+        UniqueConstraint("po_version_id", "line_no", name="uq_project_po_lines_no"),
+        Index("ix_project_po_lines_version", "po_version_id"),
     )
 
 
-class CustomerPOAnnotation(Base, CompanyScopedMixin):
+class ProjectPOAnnotation(Base, CompanyScopedMixin):
     """A handwritten note on the scan, as its own reviewable card (D11).
 
     ``dedup_key`` is what makes re-uploading an annotated scan safe: the same pencil note
     on a later scan is the SAME annotation and must not be proposed twice.
     """
 
-    __tablename__ = "customer_po_annotations"
+    __tablename__ = "project_po_annotations"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     po_version_id = Column(
-        UUID(as_uuid=False), ForeignKey("customer_po_versions.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=False), ForeignKey("project_po_versions.id", ondelete="CASCADE"), nullable=False
     )
     dedup_key = Column(String(180), nullable=False)
     page_no = Column(Integer, nullable=True)
@@ -233,8 +190,10 @@ class DeliverySchedule(Base, CompanyScopedMixin):
     project_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    customer_po_id = Column(
-        UUID(as_uuid=False), ForeignKey("customer_pos.id", ondelete="CASCADE"), nullable=False
+    purchase_order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_purchase_orders.id", ondelete="CASCADE"),
+        nullable=False,
     )
     issuer_party_id = Column(
         UUID(as_uuid=False), ForeignKey("project_parties.id", ondelete="SET NULL"), nullable=True
@@ -242,7 +201,7 @@ class DeliverySchedule(Base, CompanyScopedMixin):
     label = Column(String(180), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
-    __table_args__ = (Index("ix_delivery_schedules_po", "customer_po_id"),)
+    __table_args__ = (Index("ix_delivery_schedules_po", "purchase_order_id"),)
 
 
 class DeliveryScheduleVersion(Base, CompanyScopedMixin):
@@ -262,7 +221,7 @@ class DeliveryScheduleVersion(Base, CompanyScopedMixin):
     version_no = Column(Integer, nullable=False)
     revision_label = Column(String(80), nullable=True)  # "REVISED 1 - 23/7/2026"
     po_version_id = Column(
-        UUID(as_uuid=False), ForeignKey("customer_po_versions.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("project_po_versions.id", ondelete="SET NULL"), nullable=True
     )
     attachment_id = Column(
         UUID(as_uuid=False), ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True
@@ -396,8 +355,10 @@ class ProjectSalesOrder(Base, CompanyScopedMixin):
     project_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False
     )
-    customer_po_id = Column(
-        UUID(as_uuid=False), ForeignKey("customer_pos.id", ondelete="SET NULL"), nullable=True
+    purchase_order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_purchase_orders.id", ondelete="SET NULL"),
+        nullable=True,
     )
     schedule_version_id = Column(
         UUID(as_uuid=False), ForeignKey("delivery_schedule_versions.id", ondelete="SET NULL"),
@@ -466,7 +427,7 @@ class ProjectSalesOrderLine(Base, CompanyScopedMixin):
         nullable=True,
     )
     source_po_line_id = Column(
-        UUID(as_uuid=False), ForeignKey("customer_po_lines.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=False), ForeignKey("project_po_lines.id", ondelete="SET NULL"), nullable=True
     )
     # Which quotation line this consumed balance from, shown on screen always (G3).
     quotation_line_id = Column(
@@ -543,8 +504,10 @@ class OrderChangeNotice(Base, CompanyScopedMixin):
     project_id = Column(
         UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    customer_po_id = Column(
-        UUID(as_uuid=False), ForeignKey("customer_pos.id", ondelete="SET NULL"), nullable=True
+    purchase_order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_purchase_orders.id", ondelete="SET NULL"),
+        nullable=True,
     )
     project_sales_order_id = Column(
         UUID(as_uuid=False), ForeignKey("project_sales_orders.id", ondelete="SET NULL"), nullable=True

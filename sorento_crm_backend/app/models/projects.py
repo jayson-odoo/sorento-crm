@@ -1027,6 +1027,37 @@ class ProjectPurchaseOrder(Base, CompanyScopedMixin):
     po_amount = Column(Numeric(15, 2), nullable=True)
     notes = Column(Text, nullable=True)
 
+    # --- phase 2: the same PO row, now able to arrive as a scanned document -----------
+    # Versioned documents, extracted lines and handwriting cards hang off this row
+    # (``app.models.project_so``). A PO keyed in by hand and a PO uploaded as a scan are
+    # deliberately ONE row with one number: two tables would mean two answers to "what
+    # did the customer commit to".
+    #
+    # Fields printed on the customer's document, kept as printed.
+    term_days = Column(Integer, nullable=True)
+    sales_person = Column(String(120), nullable=True)
+    customer_order_ref = Column(String(180), nullable=True)
+    # Project sales admin's filing reference, e.g. PS26-0143 (D24). Not a project code and
+    # not a purchase document: it is how they find the file.
+    admin_ref = Column(String(64), nullable=True)
+
+    status = Column(String(24), nullable=False, server_default="draft")
+    # A pencil note can name a successor PO months before that document is uploaded, so
+    # the pointer stays text until it resolves to a row.
+    supersedes_po_number = Column(String(120), nullable=True)
+    superseded_by_po_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_purchase_orders.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    approved_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    approved_at = Column(DateTime(timezone=False), nullable=True)
+    countersigned_by = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    countersigned_at = Column(DateTime(timezone=False), nullable=True)
+
     created_by = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
@@ -1036,6 +1067,7 @@ class ProjectPurchaseOrder(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_project_purchase_orders_project", "project_id"),
         Index("ix_project_purchase_orders_version", "quotation_version_id"),
+        Index("ix_project_purchase_orders_status", "status"),
         # PO numbers are the issuer's, so they are unique per issuer at best. Scoped to
         # the project instead: recording the same PO number twice on one project is the
         # actual mistake worth stopping.

@@ -1,4 +1,4 @@
-"""319 customer PO to sales order (phase 2)
+"""319 project PO document intake to sales order (phase 2)
 
 Sixteen module tables plus the lead changes phase 2 needs. Nothing is added to a CORE
 table: `sales_orders` and `sales_order_lines` stay ignorant of projects (finding G5), and
@@ -34,41 +34,50 @@ LEAD_COLUMNS = (
     ("declined_at", sa.DateTime()),
 )
 
+PO_COLUMNS = (
+    # printed on the customer's document, kept as printed
+    ("term_days", sa.Integer()),
+    ("sales_person", sa.String(length=120)),
+    ("customer_order_ref", sa.String(length=180)),
+    # project sales admin's filing reference, e.g. PS26-0143 (D24)
+    ("admin_ref", sa.String(length=64)),
+    # a pencil note can name a successor PO long before that document is uploaded,
+    # so the pointer stays text until it resolves to a row
+    ("supersedes_po_number", sa.String(length=120)),
+    ("superseded_by_po_id", postgresql.UUID(as_uuid=False)),
+    ("approved_by", sa.String(length=100)),
+    ("approved_at", sa.DateTime()),
+    ("countersigned_by", sa.String(length=100)),
+    ("countersigned_at", sa.DateTime()),
+)
+
 
 def upgrade() -> None:
-    op.create_table(
-        "customer_pos",
-        sa.Column("id", postgresql.UUID(as_uuid=False), nullable=False, primary_key=True),
-        sa.Column("project_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
-        sa.Column("customer_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("customers.id", ondelete="RESTRICT"), nullable=True),
-        sa.Column("po_number", sa.String(length=120), nullable=False),
-        sa.Column("po_date", sa.Date(), nullable=True),
-        sa.Column("term_days", sa.Integer(), nullable=True),
-        sa.Column("sales_person", sa.String(length=120), nullable=True),
-        sa.Column("customer_order_ref", sa.String(length=180), nullable=True),
-        sa.Column("remark", sa.Text(), nullable=True),
-        sa.Column("admin_ref", sa.String(length=64), nullable=True),
+    # --- the customer PO row is phase 1's; phase 2 widens it, never forks it ---------
+    for name, coltype in PO_COLUMNS:
+        op.add_column("project_purchase_orders", sa.Column(name, coltype, nullable=True))
+    op.add_column(
+        "project_purchase_orders",
         sa.Column("status", sa.String(length=24), server_default=sa.text("'draft'"), nullable=False),
-        sa.Column("supersedes_po_number", sa.String(length=120), nullable=True),
-        sa.Column("superseded_by_po_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("customer_pos.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("approved_by", sa.String(length=100), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("approved_at", sa.DateTime(), nullable=True),
-        sa.Column("countersigned_by", sa.String(length=100), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("countersigned_at", sa.DateTime(), nullable=True),
-        sa.Column("created_by", sa.String(length=100), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
-        sa.Column("company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=True),
-        sa.UniqueConstraint("company_id", "project_id", "po_number", name="uq_customer_pos_project_number"),
     )
-    op.create_index("ix_customer_pos_company_id", "customer_pos", ["company_id"])
-    op.create_index("ix_customer_pos_project", "customer_pos", ["project_id"])
-    op.create_index("ix_customer_pos_status", "customer_pos", ["status"])
+    op.create_index("ix_project_purchase_orders_status", "project_purchase_orders", ["status"])
+    op.create_foreign_key(
+        "fk_project_po_superseded_by", "project_purchase_orders", "project_purchase_orders",
+        ["superseded_by_po_id"], ["id"], ondelete="SET NULL",
+    )
+    op.create_foreign_key(
+        "fk_project_po_approved_by", "project_purchase_orders", "users",
+        ["approved_by"], ["id"], ondelete="SET NULL",
+    )
+    op.create_foreign_key(
+        "fk_project_po_countersigned_by", "project_purchase_orders", "users",
+        ["countersigned_by"], ["id"], ondelete="SET NULL",
+    )
 
     op.create_table(
-        "customer_po_versions",
+        "project_po_versions",
         sa.Column("id", postgresql.UUID(as_uuid=False), nullable=False, primary_key=True),
-        sa.Column("customer_po_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("customer_pos.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("purchase_order_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_purchase_orders.id", ondelete="CASCADE"), nullable=False),
         sa.Column("version_no", sa.Integer(), nullable=False),
         sa.Column("attachment_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True),
         sa.Column("source_filename", sa.Text(), nullable=True),
@@ -84,14 +93,14 @@ def upgrade() -> None:
         sa.Column("confirmed_at", sa.DateTime(), nullable=True),
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.Column("company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=True),
-        sa.UniqueConstraint("customer_po_id", "version_no", name="uq_customer_po_versions_no"),
+        sa.UniqueConstraint("purchase_order_id", "version_no", name="uq_project_po_versions_no"),
     )
-    op.create_index("ix_customer_po_versions_company_id", "customer_po_versions", ["company_id"])
+    op.create_index("ix_project_po_versions_company_id", "project_po_versions", ["company_id"])
 
     op.create_table(
-        "customer_po_lines",
+        "project_po_lines",
         sa.Column("id", postgresql.UUID(as_uuid=False), nullable=False, primary_key=True),
-        sa.Column("po_version_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("customer_po_versions.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("po_version_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_po_versions.id", ondelete="CASCADE"), nullable=False),
         sa.Column("line_no", sa.Integer(), nullable=False),
         sa.Column("stock_code_raw", sa.String(length=180), nullable=True),
         sa.Column("description_raw", sa.Text(), nullable=True),
@@ -105,15 +114,15 @@ def upgrade() -> None:
         sa.Column("arithmetic_ok", sa.Boolean(), nullable=True),
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.Column("company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=True),
-        sa.UniqueConstraint("po_version_id", "line_no", name="uq_customer_po_lines_no"),
+        sa.UniqueConstraint("po_version_id", "line_no", name="uq_project_po_lines_no"),
     )
-    op.create_index("ix_customer_po_lines_company_id", "customer_po_lines", ["company_id"])
-    op.create_index("ix_customer_po_lines_version", "customer_po_lines", ["po_version_id"])
+    op.create_index("ix_project_po_lines_company_id", "project_po_lines", ["company_id"])
+    op.create_index("ix_project_po_lines_version", "project_po_lines", ["po_version_id"])
 
     op.create_table(
-        "customer_po_annotations",
+        "project_po_annotations",
         sa.Column("id", postgresql.UUID(as_uuid=False), nullable=False, primary_key=True),
-        sa.Column("po_version_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("customer_po_versions.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("po_version_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_po_versions.id", ondelete="CASCADE"), nullable=False),
         sa.Column("dedup_key", sa.String(length=180), nullable=False),
         sa.Column("page_no", sa.Integer(), nullable=True),
         sa.Column("crop_attachment_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True),
@@ -130,19 +139,19 @@ def upgrade() -> None:
         sa.Column("company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=True),
         sa.UniqueConstraint("po_version_id", "dedup_key", name="uq_po_annotations_dedup"),
     )
-    op.create_index("ix_customer_po_annotations_company_id", "customer_po_annotations", ["company_id"])
+    op.create_index("ix_project_po_annotations_company_id", "project_po_annotations", ["company_id"])
 
     op.create_table(
         "delivery_schedules",
         sa.Column("id", postgresql.UUID(as_uuid=False), nullable=False, primary_key=True),
         sa.Column("project_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("customer_po_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("customer_pos.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("purchase_order_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_purchase_orders.id", ondelete="CASCADE"), nullable=False),
         sa.Column("issuer_party_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_parties.id", ondelete="SET NULL"), nullable=True),
         sa.Column("label", sa.String(length=180), nullable=True),
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("now()"), nullable=False),
         sa.Column("company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=True),
     )
-    op.create_index("ix_delivery_schedules_po", "delivery_schedules", ["customer_po_id"])
+    op.create_index("ix_delivery_schedules_po", "delivery_schedules", ["purchase_order_id"])
     op.create_index("ix_delivery_schedules_company_id", "delivery_schedules", ["company_id"])
 
     op.create_table(
@@ -151,7 +160,7 @@ def upgrade() -> None:
         sa.Column("delivery_schedule_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("delivery_schedules.id", ondelete="CASCADE"), nullable=False),
         sa.Column("version_no", sa.Integer(), nullable=False),
         sa.Column("revision_label", sa.String(length=80), nullable=True),
-        sa.Column("po_version_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("customer_po_versions.id", ondelete="SET NULL"), nullable=True),
+        sa.Column("po_version_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_po_versions.id", ondelete="SET NULL"), nullable=True),
         sa.Column("attachment_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("attachments.id", ondelete="SET NULL"), nullable=True),
         sa.Column("source_filename", sa.Text(), nullable=True),
         sa.Column("schedule_date", sa.Date(), nullable=True),
@@ -217,7 +226,7 @@ def upgrade() -> None:
         "project_sales_orders",
         sa.Column("id", postgresql.UUID(as_uuid=False), nullable=False, primary_key=True),
         sa.Column("project_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False),
-        sa.Column("customer_po_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("customer_pos.id", ondelete="SET NULL"), nullable=True),
+        sa.Column("purchase_order_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_purchase_orders.id", ondelete="SET NULL"), nullable=True),
         sa.Column("schedule_version_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("delivery_schedule_versions.id", ondelete="SET NULL"), nullable=True),
         sa.Column("so_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("sales_orders.id", ondelete="SET NULL"), nullable=True),
         sa.Column("area_group", sa.String(length=80), nullable=True),
@@ -253,7 +262,7 @@ def upgrade() -> None:
         sa.Column("amount", sa.Numeric(precision=15, scale=2), server_default=sa.text("0"), nullable=False),
         sa.Column("delivery_date", sa.Date(), nullable=True),
         sa.Column("phase_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_delivery_phases.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("source_po_line_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("customer_po_lines.id", ondelete="SET NULL"), nullable=True),
+        sa.Column("source_po_line_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_po_lines.id", ondelete="SET NULL"), nullable=True),
         sa.Column("quotation_line_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_quotation_lines.id", ondelete="SET NULL"), nullable=True),
         sa.Column("stock_location", sa.String(length=80), nullable=True),
         sa.Column("explosion_source", sa.String(length=32), nullable=True),
@@ -287,7 +296,7 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=False), nullable=False, primary_key=True),
         sa.Column("ocn_number", sa.String(length=64), nullable=False),
         sa.Column("project_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("customer_po_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("customer_pos.id", ondelete="SET NULL"), nullable=True),
+        sa.Column("purchase_order_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_purchase_orders.id", ondelete="SET NULL"), nullable=True),
         sa.Column("project_sales_order_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("project_sales_orders.id", ondelete="SET NULL"), nullable=True),
         sa.Column("reason", sa.Text(), nullable=True),
         sa.Column("source_document_kind", sa.String(length=32), nullable=True),
@@ -376,6 +385,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    for constraint in (
+        "fk_project_po_countersigned_by", "fk_project_po_approved_by",
+        "fk_project_po_superseded_by",
+    ):
+        op.drop_constraint(constraint, "project_purchase_orders", type_="foreignkey")
+    op.drop_index("ix_project_purchase_orders_status", table_name="project_purchase_orders")
+    op.drop_column("project_purchase_orders", "status")
+    for name, _ in reversed(PO_COLUMNS):
+        op.drop_column("project_purchase_orders", name)
     op.drop_column("customers", "ar_as_of")
     op.drop_column("customers", "ar_ageing_json")
     op.drop_column("customers", "ar_outstanding")
@@ -390,7 +408,7 @@ def downgrade() -> None:
         "order_inquiry_rows", "order_inquiries", "so_amendments", "order_change_notices",
         "so_draft_findings", "project_sales_order_lines", "project_sales_orders",
         "customer_item_code_map", "delivery_schedule_cells", "project_delivery_phases",
-        "delivery_schedule_versions", "delivery_schedules", "customer_po_annotations",
-        "customer_po_lines", "customer_po_versions", "customer_pos",
+        "delivery_schedule_versions", "delivery_schedules", "project_po_annotations",
+        "project_po_lines", "project_po_versions",
     ):
         op.drop_table(table)

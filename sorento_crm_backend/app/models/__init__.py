@@ -102,10 +102,9 @@ from app.models.scm import (
     MarketResearchRun,
 )
 from app.models.project_so import (  # noqa: F401
-    CustomerPO,
-    CustomerPOVersion,
-    CustomerPOLine,
-    CustomerPOAnnotation,
+    ProjectPOVersion,
+    ProjectPOLine,
+    ProjectPOAnnotation,
     DeliverySchedule,
     DeliveryScheduleVersion,
     ProjectDeliveryPhase,

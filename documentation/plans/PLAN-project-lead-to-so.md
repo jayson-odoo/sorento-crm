@@ -65,20 +65,34 @@ New tables:
 project_delivery_phases      project_id, area_group, label, sequence, delivery_date,
                              source_schedule_version_id            (D12)
 
-customer_pos                 project_id, customer_id, po_number, po_date, term_days,
-                             customer_order_ref, admin_ref (PS…), remark,
-                             status(draft|approved|superseded), superseded_by_po_id,
-                             approved_by, approved_at
-customer_po_versions         customer_po_id, version_no, document_attachment_id,
-                             extracted_json, extracted_by, confirmed_at        (D14)
-customer_po_lines            customer_po_version_id, line_no, stock_code_raw, description_raw,
+project_po_versions          purchase_order_id, version_no, attachment_id, page_count,
+                             extracted_json, extraction_model, arithmetic_passed,
+                             arithmetic_total, extracted_total, confirmed_by/at   (D14)
+project_po_lines             po_version_id, line_no, stock_code_raw, description_raw,
                              qty, uom_raw, unit_price, amount, is_cancelled,
-                             resolved_product_id
-customer_po_annotations      customer_po_version_id, dedup_key(date,item,text_hash),
-                             crop_attachment_id, raw_text, interpretation_json,
+                             resolved_product_id, resolution_source, arithmetic_ok
+project_po_annotations       po_version_id, dedup_key(date,item,text_hash), page_no,
+                             crop_attachment_id, raw_text, written_date, refers_to_lines,
+                             interpretation, interpretation_json,
                              state(proposed|accepted|edited|rejected), actioned_by  (D11)
 
-delivery_schedules           project_id, customer_po_id, po_version_id, issuer_party_id,
+                             -- CORRECTION, 2026-08-02, while writing the schema.
+                             -- There is NO `customer_pos` table. Phase 1 already owns the
+                             -- customer PO row (`project_purchase_orders`: project,
+                             -- quotation_version, issuing party, number, date, amount, plus
+                             -- per line model/price mismatch flags and the mismatch notify).
+                             -- A second header table would mean two answers to "what did the
+                             -- customer commit to", and a user who records a PO by hand in
+                             -- project management and then uploads the scan would end up with
+                             -- two unrelated POs. Phase 2 WIDENS the phase-1 row instead:
+                             --   project_purchase_orders + term_days, sales_person,
+                             --   customer_order_ref, admin_ref, status, supersedes_po_number,
+                             --   superseded_by_po_id, approved_by/at, countersigned_by/at
+                             -- and reuses its existing quotation cross-check rather than
+                             -- duplicating it. Extraction stays raw and immutable on the
+                             -- version; the confirmed state is the phase-1 PO lines.
+
+delivery_schedules           project_id, purchase_order_id, po_version_id, issuer_party_id,
                              label, revision_no, issued_at
                              -- po_version_id is what the checksum reconciles against  [G1]
 delivery_schedule_versions   delivery_schedule_id, version_no, document_attachment_id,
@@ -88,7 +102,7 @@ delivery_schedule_cells      version_id, phase_id, product_id, qty              
 customer_item_code_map       customer_id, customer_code, product_id, confirmed_by   (AC-E4)
 set_explosion_map            customer_id, po_code_or_text, product_id, component_json (D10)
 
-project_sales_orders         project_id, customer_po_id, area_group, so_id(->sales_orders),
+project_sales_orders         project_id, purchase_order_id, area_group, so_id(->sales_orders),
                              provisional_ref, autocount_doc_no, is_pre_order,
                              is_sponsorship, sponsorship_form_id, grouping_origin,
                              status(draft|blocked|ready|published|amended)
@@ -99,7 +113,7 @@ so_draft_findings            project_sales_order_id, line_id, severity(hard|warn
 
 so_amendments                project_sales_order_id, source_version_ref, ocn_id,
                              verb, delta_json, status, approved_by, published_at   (D14,D15)
-order_change_notices         project_id, customer_po_id, project_sales_order_id,
+order_change_notices         project_id, purchase_order_id, project_sales_order_id,
                              reason, approver_id, approved_at, source_document_id  (D15)
 
 order_inquiries              project_sales_order_id, amendment_id, raised_at, state
@@ -124,7 +138,8 @@ customers      + ar_outstanding, ar_ageing_json, ar_as_of                       
 (sales_orders is CORE and is left alone: no project_id, no is_pre_order)          [G5]
 ```
 
-Reused as is: `project_parties` (+ its existing `customer_id` bridge), `item_packages`,
+Reused as is: `project_purchase_orders` / `project_purchase_order_lines` (widened, see the
+correction above), `project_parties` (+ its existing `customer_id` bridge), `item_packages`,
 `sales_orders` / `sales_order_lines`, `purchase_requests` (sponsorship forms), the form SLA
 and handling lock, the activities adapter, the status engine.
 
