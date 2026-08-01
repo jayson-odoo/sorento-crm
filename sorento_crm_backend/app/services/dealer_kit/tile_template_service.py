@@ -25,6 +25,12 @@ TILE_FIELDS: tuple[str, ...] = (
     "name",
     "code",
     "price",
+    # The promotion's figure, drawn beside the list price with the list price
+    # struck through. Bound on its own it prints the offer ALONE, which is how a
+    # consumer flyer that never quotes LP is designed. Either binding falls back
+    # to the list price with no offer styling when no offer reaches this reader
+    # (ADR 0008 rule 5), so a tile never looks discounted to itself.
+    "offerPrice",
     "dimensions",
     "badges",
     "cta",

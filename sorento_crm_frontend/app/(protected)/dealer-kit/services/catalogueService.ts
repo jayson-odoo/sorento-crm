@@ -50,6 +50,11 @@ export const TILE_FIELDS: { value: TileField; label: string; hint: string }[] = 
   { value: 'name', label: 'Name', hint: 'Product name' },
   { value: 'code', label: 'Code', hint: 'Product code' },
   { value: 'price', label: 'Price', hint: 'Resolved for whoever is reading' },
+  {
+    value: 'offerPrice',
+    label: 'Offer price',
+    hint: 'On its own, prints the promotion price without the list price',
+  },
   { value: 'dimensions', label: 'Dimensions', hint: 'Length x width x height' },
   { value: 'badges', label: 'Certification badges', hint: 'Valid certifications only' },
   { value: 'cta', label: 'Action button', hint: 'Add to selection' },

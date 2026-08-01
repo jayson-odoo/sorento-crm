@@ -135,6 +135,9 @@ function tileFor(product: PickerProduct): ResolvedTile {
     productName: product.name,
     // A staff viewer sees list price; the mock stands in for a resolved one.
     price: product.price,
+    // No promotion in the mock catalogue, so no offer - which is the state a
+    // tile must render as a plain list price, never as a struck-through one.
+    offerPrice: null,
     invoicePrice: null,
     imageUrl: null,
     dimensions: '760 x 440 x 220 mm',

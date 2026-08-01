@@ -66,6 +66,17 @@ the design summary, and eventually an order. Every one of them is a chance to ad
    here, once.
 5. **No applicable offer is the list price with no offer styling.** Never a hidden product,
    never a stale figure. An expired promotion is simply a promotion with no applicable rows.
+6. **The LIST price carries the strikethrough, and there is ONE treatment.** Added when the
+   figures first became visible. `price` is the original, higher figure a flyer prints as
+   "LP: RM 1,260"; `offer_price` is the lower one, "SP RM 599". So the line goes through
+   `price` and `offer_price` is the prominent number - inverted, the catalogue advertises a
+   price nobody is charging. It is drawn once, in `TilePrices` (`TileGrid.tsx`), which the
+   screen, the tile-design preview and the printed PDF all render through: the PDF prints
+   the same component tree through headless Chromium, so "the PDF and the brochure look the
+   same" is structural rather than a promise. A design binds `price`, `offerPrice`, or
+   both; either binding falls back to the list price alone when no offer reaches the reader,
+   and `offerPrice` on its own prints the offer with no struck-through figure, which is the
+   consumer flyer that never quotes LP.
 
 ## What this costs
 

@@ -33,6 +33,17 @@ def test_a_design_stores_its_fields_in_the_document():
         assert svc.fields_of(row) == ["image", "name", "price"]
 
 
+def test_the_promotional_price_is_bindable():
+    # Held back until the tile could actually draw it, which is the whitelist's
+    # own rule: a bindable field is one the renderer knows how to show. The tile
+    # now draws the list price struck through beside the offer, so it is in.
+    with pg_session() as db:
+        row = svc.create_template(
+            db, name=_name(), fields=["name", "price", "offerPrice"]
+        )
+        assert svc.fields_of(row) == ["name", "price", "offerPrice"]
+
+
 def test_field_order_is_preserved_because_the_order_is_the_design():
     with pg_session() as db:
         row = svc.create_template(db, name=_name(), fields=["price", "image", "name"])

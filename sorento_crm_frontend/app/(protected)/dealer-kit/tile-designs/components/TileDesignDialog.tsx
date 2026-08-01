@@ -44,6 +44,9 @@ const SAMPLE: ResolvedTile = {
   productCode: 'SK-3040',
   productName: 'Undermount Kitchen Sink 760mm',
   price: 'RM 1,290.00',
+  // On promotion on purpose: the offer treatment is the decision being made in
+  // this dialog, and a sample with no offer would hide it.
+  offerPrice: 'RM 899.00',
   invoicePrice: null,
   imageUrl: null,
   dimensions: '760 x 440 x 220 mm',
@@ -203,8 +206,9 @@ export function TileDesignDialog({
               </div>
             </div>
             <p className="text-[10px] text-muted-foreground">
-              Shown with a sample product. Price is whatever the reader is allowed to see, so a
-              consumer and a dealer can see different figures in the same design.
+              Shown with a sample product that is on promotion. Price is whatever the reader is
+              allowed to see, so a consumer and a dealer can see different figures in the same
+              design, and a product with no offer prints its list price on its own.
             </p>
           </div>
         </div>

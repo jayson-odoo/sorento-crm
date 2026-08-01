@@ -194,6 +194,7 @@ export type TileField =
   | 'name'
   | 'code'
   | 'price'
+  | 'offerPrice'
   | 'dimensions'
   | 'badges'
   | 'cta';
@@ -212,7 +213,16 @@ export interface ResolvedTile {
   productId: string;
   productCode: string;
   productName: string;
+  /** The LIST price: the original, higher figure a flyer prints as "LP". */
   price: string | null;
+  /**
+   * The PROMOTIONAL price: what this reader actually pays, when an offer
+   * reaches them. Sent BESIDE `price` rather than instead of it, so the tile
+   * can strike the list price through and show what is being saved. `null`
+   * means no offer applies to this reader - which is also how an offer they
+   * may not see arrives: with no figure to recover (ADR 0008 rule 2).
+   */
+  offerPrice: string | null;
   invoicePrice: string | null;
   imageUrl: string | null;
   dimensions: string | null;

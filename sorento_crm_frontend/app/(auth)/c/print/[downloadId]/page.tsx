@@ -21,7 +21,12 @@
 import { use, useEffect, useState } from 'react';
 
 import { CatalogueRenderer } from '@/app/(protected)/dealer-kit/components/CatalogueRenderer';
-import { PAPER_SIZES_MM, type PageDoc, type ResolvedTile } from '@/lib/dealer-kit/types';
+import {
+  PAPER_SIZES_MM,
+  type PageDoc,
+  type ResolvedTile,
+  type TileField,
+} from '@/lib/dealer-kit/types';
 
 interface PrintPayload {
   pageName: string;
@@ -29,6 +34,13 @@ interface PrintPayload {
   audience: string;
   doc: PageDoc;
   collections: Record<string, ResolvedTile[]>;
+  /**
+   * tileTemplateId -> the fields that design binds, sent with the payload so
+   * this page never fetches a design of its own. It has to be PASSED ON: the
+   * renderer falls back to a default field list when it gets nothing, and a
+   * default is by definition not the design the brochure on screen is using.
+   */
+  tileTemplates?: Record<string, TileField[]>;
 }
 
 function apiBase(): string {
@@ -143,6 +155,7 @@ export default function CataloguePrintPage({
           name={payload.pageName}
           sections={payload.doc?.sections ?? []}
           resolvedCollections={payload.collections}
+          tileTemplates={payload.tileTemplates}
         />
       )}
     </main>

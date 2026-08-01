@@ -740,6 +740,80 @@ def test_a_public_page_with_no_promotion_shows_list_prices(db) -> None:
         app.dependency_overrides.clear()
 
 
+def test_the_printed_copy_quotes_the_same_two_figures_as_the_screen(db) -> None:
+    """Parity: the PDF payload and the public page report the same money.
+
+    The user's requirement is one sentence - the PDF and the brochure on screen
+    must look the same - and the rendering is genuinely one component. What is
+    left to prove is that the two payloads feeding it agree, because a tile can
+    only strike a list price through if it is handed BOTH figures.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.models.company import Company
+    from app.models.dealer_kit import PageLabel, PageVersion
+    from app.services.dealer_kit import export_service, page_service, render_token
+
+    company = db.query(Company).filter(Company.code == "SRT").one()
+
+    product = _product(db, list_price="1260.00")
+    collection = _collection(db, product)
+    promotion_id = _promotion(db, {product: "599.00"}, access_levels=["end_user"])
+
+    slug = unique_code("zzt-parity").lower()
+    page = page_service.create_page(
+        db, name=f"ZZT {slug}", slug=slug, user_id=None, promotion_id=promotion_id
+    )
+    doc = {
+        "sections": [
+            {
+                "id": "s1",
+                "blocks": [
+                    {"props": {"kind": "collection", "collectionId": collection.id}}
+                ],
+            }
+        ]
+    }
+    version = PageVersion(page_id=page.id, version=1, doc=doc)
+    db.add(version)
+    db.flush()
+    db.add(PageLabel(page_id=page.id, label="published", version_id=version.id))
+    db.flush()
+
+    # A consumer's copy: same audience as the anonymous reader of the link, so
+    # the two payloads are directly comparable.
+    download = export_service.request_export(
+        db, page_id=page.id, audience="consumer", user_id=_USER_ID
+    )
+    db.flush()
+
+    def _override():
+        yield db
+
+    app.dependency_overrides[get_db] = _override
+    try:
+        with TestClient(app) as client:
+            on_screen = client.get(f"/api/v1/public/c/{company.code}/{slug}")
+            printed = client.get(
+                f"/api/v1/public/print/{download.id}",
+                params={"token": render_token.issue(download.id)},
+            )
+        assert on_screen.status_code == 200, on_screen.text
+        assert printed.status_code == 200, printed.text
+
+        screen_tile = on_screen.json()["collections"][collection.id][0]
+        print_tile = printed.json()["collections"][collection.id][0]
+
+        assert screen_tile["price"] == "MYR 1,260.00"
+        assert screen_tile["offerPrice"] == "MYR 599.00"
+        # The struck-through figure and the prominent one, identical on paper.
+        assert print_tile["price"] == screen_tile["price"]
+        assert print_tile["offerPrice"] == screen_tile["offerPrice"]
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_an_anonymous_reader_of_a_collection_still_gets_list_prices(db) -> None:
     # ``resolve_tiles`` keeps its anonymous default, so a caller that knows
     # nothing about promotions behaves exactly as it did.

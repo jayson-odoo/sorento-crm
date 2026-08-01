@@ -20,7 +20,8 @@ import type { ResolvedTile, TileField } from '@/lib/dealer-kit/types';
  *
  * A tile shows a price only when the server sent one. `null` means this viewer
  * may not see it, and there is no number in the payload to reveal (AC-G7) - so
- * there is deliberately no "hide it with CSS" path here.
+ * there is deliberately no "hide it with CSS" path here. The same is true of
+ * the promotional price: see `TilePrices` for which figure carries the line.
  */
 
 const GAP = 'gap-3';
@@ -69,6 +70,84 @@ function TileImage({ tile, show }: { tile: ResolvedTile; show: boolean }) {
         />
       ) : (
         <ImageOff className="size-5 text-muted-foreground" aria-hidden />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The money on a tile: ONE treatment, used by the screen and by the PDF.
+ *
+ * `price` is the LIST price (the higher, original figure - "LP: RM 1,260" on a
+ * printed flyer) and `offerPrice` is the PROMOTIONAL one (the lower figure -
+ * "SP RM 599"). So the line goes through `price`, and `offerPrice` is the
+ * prominent number. Inverted, this advertises a figure nobody is charging.
+ *
+ * Which of the two the design binds decides what is PRINTED, never what is
+ * resolved - the server has already decided what this reader may see:
+ *
+ * - binds `price` (every design saved before offers existed): the offer shows
+ *   the moment one applies, so a promotion-linked brochure stops quoting list
+ *   prices without anybody re-editing the design.
+ * - binds `offerPrice` alone: the offer ALONE, no struck-through figure. That
+ *   is the consumer flyer that never quotes LP.
+ * - no offer, either binding: the list price alone with NO strikethrough and no
+ *   empty slot beside it (ADR 0008 rule 5). A tile must not look discounted to
+ *   itself, and `null` from an ineligible viewer renders identically to a
+ *   product with no promotion at all (AC-G7).
+ */
+function TilePrices({ tile, show }: { tile: ResolvedTile; show: Set<TileField> }) {
+  const bindsList = show.has('price');
+  const bindsOffer = show.has('offerPrice');
+  if (!bindsList && !bindsOffer) return null;
+
+  const offer = tile.offerPrice;
+  // An offer-only design still needs a figure when no offer reaches this
+  // reader, and the honest one is the list price.
+  const list = bindsList || !offer ? tile.price : null;
+
+  if (!list && !offer) return null;
+
+  return (
+    <div className="mt-auto flex flex-col gap-0.5">
+      {/*
+        Wraps rather than truncates. At 375px two long money strings do not fit
+        on one line, and a clipped price shows a number that is not the price -
+        the one failure mode worse than a second line.
+      */}
+      <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5" data-dk-price-row>
+        {list && (
+          <span
+            data-dk-list-price
+            className={cn(
+              'min-w-0 break-words',
+              offer
+                ? 'text-[10px] text-muted-foreground line-through'
+                : 'text-xs font-semibold text-foreground',
+            )}
+          >
+            {list}
+          </span>
+        )}
+
+        {offer && (
+          <span
+            data-dk-offer-price
+            className="min-w-0 break-words text-xs font-semibold text-foreground"
+          >
+            {offer}
+          </span>
+        )}
+      </div>
+
+      {/*
+        Staff only, and only when the document asks: both gates are ANDed
+        server-side, so a figure that arrives here is one this reader may see.
+      */}
+      {tile.invoicePrice && (
+        <span className="break-words text-[10px] text-muted-foreground">
+          Invoice {tile.invoicePrice}
+        </span>
       )}
     </div>
   );
@@ -141,13 +220,7 @@ export function ProductTile({
         </div>
       )}
 
-      {show.has('price') && tile.price && (
-        <p className="mt-auto text-xs font-semibold text-foreground">{tile.price}</p>
-      )}
-
-      {show.has('price') && tile.invoicePrice && (
-        <p className="text-[10px] text-muted-foreground">Invoice {tile.invoicePrice}</p>
-      )}
+      <TilePrices tile={tile} show={show} />
     </article>
   );
 }
