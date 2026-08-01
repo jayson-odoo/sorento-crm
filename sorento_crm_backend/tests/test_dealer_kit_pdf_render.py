@@ -5,8 +5,9 @@ proves that a request actually becomes a file, and - the part that matters -
 that a staff export and a consumer export of the SAME page produce DIFFERENT
 documents.
 
-Skipped unless the frontend is reachable, because it drives headless Chromium
-at a real print page. Run with the stack up:
+These drive headless Chromium at a real print page, so they need a frontend.
+An absent one is a FAILURE, not a skip: see `_require_a_reachable_frontend`.
+Run with the stack up:
 
     DEALER_KIT_PRINT_BASE_URL=http://localhost:3020 pytest tests/test_dealer_kit_pdf_render.py
 """
@@ -23,6 +24,9 @@ from tests._pg_fixture import unique_code
 
 PRINT_BASE = os.environ.get("DEALER_KIT_PRINT_BASE_URL", "http://localhost:3020")
 _USER = "00000000-0000-4000-8000-00000000e001"
+
+# The one way to say "I know, and I am choosing not to run them".
+RENDER_TESTS_ENV = "DEALER_KIT_RENDER_TESTS"
 
 
 @pytest.fixture()
@@ -73,25 +77,88 @@ def committed_db():
             session.close()
 
 
+_frontend_probe: dict[str, bool] = {}
+
+
 def _frontend_up() -> bool:
-    import urllib.error
-    import urllib.request
+    """Is something answering at PRINT_BASE?
 
-    try:
-        with urllib.request.urlopen(PRINT_BASE, timeout=3) as response:
-            return response.status < 500
-    except Exception:
-        return False
+    Probed lazily and remembered, not at import: collection happens in places
+    that never intend to RUN these (the `--collect-only` gate runs inside a
+    container with no network), and a per-collection socket timeout there is
+    pure cost.
+    """
+    if "up" not in _frontend_probe:
+        import urllib.request
+
+        try:
+            with urllib.request.urlopen(PRINT_BASE, timeout=3) as response:
+                _frontend_probe["up"] = response.status < 500
+        except Exception:
+            _frontend_probe["up"] = False
+    return _frontend_probe["up"]
 
 
+_NO_FRONTEND = f"""\
+The Dealer Kit PDF render tests need a running frontend, and nothing answered
+at {PRINT_BASE}.
+
+These are the ONLY tests that prove an exported PDF matches the brochure, so
+they must not disappear quietly. To run them:
+
+    cd sorento_crm_frontend && npm ci --force && npm run build && npm start
+    # `npm start` serves on :3000; use `PORT=3020 npm start` to match the
+    # DEALER_KIT_PRINT_BASE_URL default below.
+
+    # Chromium is driven from a spawned subprocess, so the browser binary must
+    # exist for the backend interpreter:
+    python -m playwright install chromium
+
+    DEALER_KIT_PRINT_BASE_URL=http://localhost:3020 pytest tests/test_dealer_kit_pdf_render.py
+
+The print page also fetches the backend directly, so :8000 (or whatever
+NEXT_PUBLIC_API_URL was baked into the frontend build) has to be up too, with
+the frontend's origin in CORS_ORIGINS.
+
+If you deliberately do not want them in this run, say so and they will skip:
+
+    {RENDER_TESTS_ENV}=skip pytest ...
+"""
+
+
+# A skip has to be a DECISION. `skipif(not _frontend_up())` made it an accident:
+# CI never starts a frontend, so all seven skipped and the job reported green -
+# a tick standing for nothing over the one requirement the user actually stated.
 pytestmark = [
     pytest.mark.skipif(
         os.environ.get("SKIP_LIVE_DB_TESTS") == "1", reason="SKIP_LIVE_DB_TESTS=1"
     ),
-    pytest.mark.skipif(
-        not _frontend_up(), reason=f"frontend not reachable at {PRINT_BASE}"
-    ),
 ]
+
+
+@pytest.fixture(autouse=True)
+def _honour_the_opt_out():
+    """The ONLY route to a skip: someone asked for one.
+
+    A skip is a setup-time decision, so it belongs in a fixture. The absent
+    frontend deliberately does NOT - see `_require_a_reachable_frontend`.
+    """
+    if os.environ.get(RENDER_TESTS_ENV, "").strip().lower() == "skip":
+        pytest.skip(f"{RENDER_TESTS_ENV}=skip (explicitly opted out)")
+
+
+def _require_a_reachable_frontend() -> None:
+    """Fail - as a FAILURE, not an error - when there is no frontend to drive.
+
+    Called from `_render`, i.e. from the test BODY, rather than from a fixture.
+    `pytest.fail` during setup is reported as an *error*, and in this repo a run
+    with errors means something else entirely (a contended database, see
+    PRINCIPLES); a missing frontend must not be mistaken for that. Every test in
+    this file renders a PDF, because a render test that renders nothing is not
+    one, so `_render` is the honest choke point.
+    """
+    if not _frontend_up():
+        pytest.fail(_NO_FRONTEND, pytrace=False)
 
 
 def _product(db, created, list_price=Decimal("1290.00")):
@@ -194,6 +261,7 @@ def _page_with_products(db, created, *, product_count: int = 1, profile=None):
 
 
 def _render(db, page_id, audience, show_invoice_price, *, landscape=False, paper="A4"):
+    _require_a_reachable_frontend()
     download = export_service.request_export(
         db,
         page_id=page_id,
@@ -259,12 +327,14 @@ def _drawn_extents(pdf_bytes: bytes) -> list[dict]:
 
 
 def _pdf_text(pdf_bytes: bytes) -> str:
-    """Crude but sufficient: pull readable strings out of the PDF stream."""
-    from pypdf import PdfReader
-    from io import BytesIO
+    """Every readable string in the document, sheet order.
 
-    reader = PdfReader(BytesIO(pdf_bytes))
-    return "\n".join((page.extract_text() or "") for page in reader.pages)
+    PyMuPDF rather than pypdf, which was the only pypdf import in the repo and
+    is not in requirements.txt: it happens to be present in one developer venv,
+    so these tests would have ERRORED the moment they ran anywhere else. Same
+    extraction the rest of this file already relies on, one dependency fewer.
+    """
+    return "\n".join(_text_per_page(pdf_bytes))
 
 
 def _text_per_page(pdf_bytes: bytes) -> list[str]:
