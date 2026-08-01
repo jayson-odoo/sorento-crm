@@ -1819,6 +1819,7 @@ class PickingHeaderService:
         if not resolved_ids:
             raise handle_not_found("GRN", grn_id)
         grn = self.db.query(PickingHeader).options(
+            joinedload(PickingHeader.supplier),
             selectinload(PickingHeader.picking_lines).joinedload(PickingLine.product),
             selectinload(PickingHeader.picking_lines).joinedload(PickingLine.spo_allocation),
             selectinload(PickingHeader.picking_lines).joinedload(PickingLine.source_warehouse),

@@ -185,6 +185,14 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
               <p className="font-medium">{grn.spo_number ?? '-'}</p>
             </div>
             <div>
+              <p className="text-sm text-muted-foreground">Supplier</p>
+              <p className="font-medium">
+                {grn.supplier
+                  ? `${grn.supplier.supplier_name} (${grn.supplier.supplier_code})`
+                  : grn.supplier_code ?? '-'}
+              </p>
+            </div>
+            <div>
               <p className="text-sm text-muted-foreground">Picking Date</p>
               <p className="font-medium">
                 {grn.picking_date

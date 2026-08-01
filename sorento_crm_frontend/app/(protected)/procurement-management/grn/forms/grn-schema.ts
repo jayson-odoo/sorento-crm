@@ -2,8 +2,8 @@ import { z } from 'zod';
 
 export const pickingLineSchema = z.object({
   product_id: z.string().min(1, 'Product is required'),
-  quantity_expected: z.coerce.number().int().min(0, 'Quantity expected must be 0 or more'),
-  quantity_picked: z.coerce.number().int().min(0, 'Quantity received must be 0 or more'),
+  quantity_expected: z.coerce.number().min(0, 'Quantity expected must be 0 or more'),
+  quantity_picked: z.coerce.number().min(0, 'Quantity received must be 0 or more'),
   source_warehouse_id: z.string().min(1, 'Location is required'),
   spo_allocation_id: z.string().optional(),
   picked_condition: z.string().optional(),

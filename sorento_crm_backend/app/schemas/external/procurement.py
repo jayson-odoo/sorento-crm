@@ -92,6 +92,12 @@ class GRNHeader(BaseModel):
     picking_type: Optional[str] = None
     picking_date: Optional[str | date] = None
     notes: Optional[str] = None
+    # AutoCount GRN ingest (S17). Both optional for back-compat: a legacy caller
+    # that omits them still creates a picking on the create-only path. supplier_code
+    # resolves-or-null (a miss must NOT 400); source_ref is the stable identity key
+    # that routes the request through the adopt-by-source_ref verdict path.
+    supplier_code: Optional[str] = None
+    source_ref: Optional[str] = None
 
 
 class GRNLine(BaseModel):
@@ -100,10 +106,14 @@ class GRNLine(BaseModel):
     warehouse_id: Optional[str] = None
     location: Optional[str] = None
     product_code: str
-    quantity: int
+    # AutoCount ships fractional quantities as JSON strings ("2.5") to avoid float
+    # drift; parse as Decimal, never int (an Integer coercion truncated 2.5 -> 2).
+    quantity: Decimal
     uom_id: Optional[str] = None
+    # Wire sends uom as a CODE ("UNIT"), resolved to uom_id best-effort in ingest.
+    uom: Optional[str] = None
 
-    @field_validator("spo_allocation_line", "quantity", mode="before")
+    @field_validator("spo_allocation_line", mode="before")
     @classmethod
     def coerce_int(cls, v: Any) -> Any:
         if v is None:
@@ -112,6 +122,16 @@ class GRNLine(BaseModel):
             s = v.strip()
             return int(s) if s else None
         return int(v) if v is not None else None
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def coerce_quantity(cls, v: Any) -> Optional[Decimal]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            return Decimal(s) if s else None
+        return Decimal(v)
 
 
 class GRNRequest(BaseModel):

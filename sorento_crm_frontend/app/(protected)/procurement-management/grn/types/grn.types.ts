@@ -59,11 +59,18 @@ export interface GRN {
   total_items_picked?: number | null;
   total_items_discrepancy?: number | null;
   total_cost?: number | null;
+  supplier_code?: string | null;
+  supplier_id?: string | null;
   notes?: string | null;
   created_at: Date;
   updated_at: Date;
   lines_count?: number;
   items_count?: number;
+  supplier?: {
+    id: string;
+    supplier_code: string;
+    supplier_name: string;
+  } | null;
 }
 
 export interface GRNDetail extends GRN {
