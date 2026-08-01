@@ -74,6 +74,12 @@ if __name__ == '__main__':
     register_company_scope_listeners()
 
     _maybe_start_scheduler()
-    worker = ForkSafeWorker(['imports', 'respond_io'], connection=redis_conn)
-    logger.info("Starting RQ worker for 'imports' and 'respond_io' queues...")
+    # WORKER_QUEUES lets one checkout run a worker for only its own queues. Every
+    # checkout shares one Redis, so a worker started elsewhere would otherwise claim a
+    # job whose task module it does not have and fail it on import, which reads as a
+    # bug in the code that enqueued it.
+    queues = [q.strip() for q in os.environ.get(
+        'WORKER_QUEUES', 'imports,respond_io,project_docs').split(',') if q.strip()]
+    worker = ForkSafeWorker(queues, connection=redis_conn)
+    logger.info("Starting RQ worker for queues: %s", ", ".join(queues))
     worker.work()

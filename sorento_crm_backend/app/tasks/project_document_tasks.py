@@ -20,6 +20,38 @@ from app.services.company_scope import set_company_scope
 
 logger = logging.getLogger(__name__)
 
+# Its own queue, not `imports`.
+#
+# Two reasons, and the second is the one that bites. Extraction is minutes of waiting
+# on a remote model, so parking it behind a spreadsheet import (or the reverse) makes
+# both feel broken. More importantly, every checkout of this repository shares one
+# Redis, so a worker started from a different working tree happily claims a job whose
+# task module it does not have and fails it on import. A dedicated queue means only a
+# worker that was started for THIS code can take these jobs.
+PROJECT_DOCS_QUEUE = "project_docs"
+
+
+def enqueue_po_extraction(po_version_id: str):
+    """Queue a PO version for reading. Call this rather than enqueueing by hand, so
+    the queue name lives in one place."""
+    from app.services.queue_service import enqueue_job
+
+    return enqueue_job(
+        extract_po_version, po_version_id, queue_name=PROJECT_DOCS_QUEUE, job_timeout=1800
+    )
+
+
+def enqueue_schedule_extraction(schedule_version_id: str):
+    """Queue a delivery-schedule version for reading."""
+    from app.services.queue_service import enqueue_job
+
+    return enqueue_job(
+        extract_schedule_version,
+        schedule_version_id,
+        queue_name=PROJECT_DOCS_QUEUE,
+        job_timeout=1800,
+    )
+
 
 def extract_po_version(po_version_id: str) -> dict:
     """Read a customer PO version and persist its lines and annotations."""
