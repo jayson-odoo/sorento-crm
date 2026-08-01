@@ -8,7 +8,7 @@
  * a promise. A separate print template would drift, and the drift would only be
  * visible in a document that has already gone to a printer.
  *
- * Two things this page must get right:
+ * Three things this page must get right:
  *
  * 1. **It decides nothing about prices.** The payload arrives already resolved
  *    for the audience recorded when the export was requested. This page has no
@@ -16,17 +16,13 @@
  * 2. **It says when it is finished.** The worker waits for
  *    `data-dk-print-ready="true"` rather than a fixed delay, so a slow
  *    catalogue is not silently truncated halfway down page three.
+ * 3. **It decides nothing about the paper either.** See `PAGE_CSS`.
  */
 
 import { use, useEffect, useState } from 'react';
 
 import { CatalogueRenderer } from '@/app/(protected)/dealer-kit/components/CatalogueRenderer';
-import {
-  PAPER_SIZES_MM,
-  type PageDoc,
-  type ResolvedTile,
-  type TileField,
-} from '@/lib/dealer-kit/types';
+import type { PageDoc, ResolvedTile, TileField } from '@/lib/dealer-kit/types';
 
 interface PrintPayload {
   pageName: string;
@@ -47,6 +43,40 @@ function apiBase(): string {
   const env = process.env.NEXT_PUBLIC_API_URL;
   return env ? env.replace(/\/$/, '') : '';
 }
+
+/**
+ * There is ONE owner of the page geometry, and it is not this file.
+ *
+ * The worker calls `page.pdf(format=..., landscape=...)` with the document's
+ * print profile, and Chromium ignores a CSS `@page size` unless it is asked for
+ * `prefer_css_page_size`. This stylesheet used to declare `size: <W>mm auto` as
+ * well: measured on a real A4 export, the MediaBox came back 210 x 297mm, so
+ * the declaration decided nothing and only looked like it did.
+ *
+ * Two declarations of one fact are the defect even while they agree, and these
+ * two would have stopped agreeing the moment anyone turned
+ * `prefer_css_page_size` on. The CSS width had already swapped itself for
+ * landscape, and `landscape=True` rotates the paper again, so the rotation
+ * would have been applied twice: a 297mm-wide document on a 210mm-wide page.
+ *
+ * Hence: the CSS says nothing about size, and <main> is `width: 100%` - the
+ * page box, which is the paper the worker asked for, in either orientation,
+ * with no arithmetic here that could disagree with it. `margin: 0` stays,
+ * because the document's own margins are applied as padding on <main> and a
+ * second set would shrink every page by a margin nobody chose.
+ */
+const PAGE_CSS = `
+@page { margin: 0; }
+html, body { margin: 0; padding: 0; background: #fff; }
+/*
+  The app shell makes <body> a full-height flex row for the sidebar. A printed
+  document is a block that flows onto as many pages as it needs; as a flex item
+  it would be sized by the shell instead of by the paper. Class selectors beat
+  element selectors, so overriding the shell's own utilities needs !important.
+*/
+html, body { display: block !important; height: auto !important; }
+[data-dk-section-id] { break-inside: avoid; }
+`;
 
 export default function CataloguePrintPage({
   params,
@@ -115,9 +145,6 @@ export default function CataloguePrintPage({
   }, [payload]);
 
   const profile = payload?.doc?.printProfile;
-  const paper = PAPER_SIZES_MM[profile?.pageSize ?? 'A4'];
-  const landscape = profile?.orientation === 'landscape';
-  const widthMm = landscape ? paper.height : paper.width;
   const margins = profile?.margins ?? { top: 15, right: 15, bottom: 15, left: 15 };
 
   if (failed) {
@@ -131,7 +158,13 @@ export default function CataloguePrintPage({
       // The single flag the worker waits on.
       data-dk-print-ready={payload && imagesSettled ? 'true' : 'false'}
       style={{
-        width: `${widthMm}mm`,
+        // Fills the page box, whatever paper the worker asked Chromium for.
+        // See PAGE_CSS: the paper is not this page's decision to restate.
+        width: '100%',
+        // The margins are INSIDE that width. Stated here rather than inherited
+        // from a global reset, because this document also has to be right when
+        // it is rendered by a browser that never loaded the app's stylesheet.
+        boxSizing: 'border-box',
         paddingTop: `${margins.top}mm`,
         paddingRight: `${margins.right}mm`,
         paddingBottom: `${margins.bottom}mm`,
@@ -139,16 +172,7 @@ export default function CataloguePrintPage({
         background: '#ffffff',
       }}
     >
-      {/* Chromium's own margins are set to zero by the worker, because the
-          document's margins are already applied above. Two sets would shrink
-          every page by a margin nobody chose. */}
-      <style
-        dangerouslySetInnerHTML={{
-          __html: `@page { size: ${widthMm}mm auto; margin: 0; }
-            html, body { margin: 0; padding: 0; background: #fff; }
-            [data-dk-section-id] { break-inside: avoid; }`,
-        }}
-      />
+      <style dangerouslySetInnerHTML={{ __html: PAGE_CSS }} />
 
       {payload && (
         <CatalogueRenderer

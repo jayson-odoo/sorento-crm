@@ -121,11 +121,17 @@ def _product(db, created):
     return product
 
 
-def _page_with_products(db, created):
-    """A published page carrying one collection block bound to one product."""
+def _page_with_products(db, created, *, product_count: int = 1):
+    """A published page carrying one collection block bound to its products.
+
+    ``product_count`` fills the tile row: a document that overflows the paper
+    loses the RIGHTMOST tile first, so a single centred tile can hide a clip
+    that three tiles make obvious.
+    """
     from app.services.dealer_kit import tile_template_service
 
-    product = _product(db, created)
+    products = [_product(db, created) for _ in range(product_count)]
+    product = products[0]
     page = page_service.create_page(
         db,
         name=f"ZZT PDF {unique_code('page')}",
@@ -133,7 +139,7 @@ def _page_with_products(db, created):
         user_id=None,
     )
     collection = collection_service.create_collection(
-        db, scope="page", page_id=page.id, pinned_product_ids=[product.id]
+        db, scope="page", page_id=page.id, pinned_product_ids=[p.id for p in products]
     )
     design = tile_template_service.create_template(
         db, name=f"ZZT design {unique_code('d')}", fields=["name", "code", "price"]
@@ -179,7 +185,7 @@ def _page_with_products(db, created):
     return page, product
 
 
-def _render(db, page_id, audience, show_invoice_price):
+def _render(db, page_id, audience, show_invoice_price, *, landscape=False, paper="A4"):
     download = export_service.request_export(
         db,
         page_id=page_id,
@@ -190,7 +196,58 @@ def _render(db, page_id, audience, show_invoice_price):
     db.commit()  # the browser and the API read through their OWN connections
 
     url = task._print_url(download.id)
-    return task._render_pdf(url, landscape=False, paper="A4"), download
+    return task._render_pdf(url, landscape=landscape, paper=paper), download
+
+
+def _drawn_extents(pdf_bytes: bytes) -> list[dict]:
+    """Per page: the paper box, and the x-extent of everything drawn on it.
+
+    PyMuPDF reports DEVICE coordinates - the transformation Chromium wrote into
+    the content stream is already applied - so these are the numbers a reader
+    sees. Reading the text matrix raw instead gives figures 4/3 too large and
+    an overflow that is not there.
+    """
+    import fitz
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        pages = []
+        for page in doc:
+            width = float(page.rect.width)
+            # A text block is (x0, y0, x1, y1, text, ...), so the coordinates
+            # need pulling out as floats before any arithmetic.
+            text_boxes = [
+                (float(block[0]), float(block[2])) for block in page.get_text("blocks")
+            ]
+            boxes = list(text_boxes)
+            boxes += [
+                (float(d["rect"].x0), float(d["rect"].x1)) for d in page.get_drawings()
+            ]
+            boxes += [
+                (float(i["bbox"][0]), float(i["bbox"][2]))
+                for i in page.get_image_info()
+            ]
+            pages.append(
+                {
+                    "width": width,
+                    "height": float(page.rect.height),
+                    "right": max((x1 for _x0, x1 in boxes), default=0.0),
+                    # Backgrounds paint the whole sheet whatever the document
+                    # does, so they say nothing about how wide the brochure is.
+                    # Everything else is content, and content is what has to
+                    # follow the paper when the paper turns landscape.
+                    "content_right": max(
+                        (x1 for x0, x1 in boxes if x1 - x0 < width * 0.99), default=0.0
+                    ),
+                    # Text only: the document's background legitimately starts
+                    # at x=0, so it cannot answer "where does the brochure
+                    # begin".
+                    "text_left": min((x0 for x0, _x1 in text_boxes), default=0.0),
+                }
+            )
+        return pages
+    finally:
+        doc.close()
 
 
 def _pdf_text(pdf_bytes: bytes) -> str:
@@ -214,6 +271,84 @@ def test_a_request_becomes_a_real_pdf_containing_the_products(committed_db):
     assert product.product_code in text
     # List price is public, so it renders for every audience.
     assert "1,290.00" in text
+
+
+# Chromium rounds the paper to whole device pixels, so the box is never exact
+# to the point. One point of slack is far below the 64pt clip these catch.
+_TOLERANCE_PT = 1.0
+
+_MM_PT = 72 / 25.4
+_MARGIN_PT = page_service.DEFAULT_PRINT_PROFILE["margins"]["left"] * _MM_PT
+
+# Inside its own margin the renderer adds a section gutter and a tile border,
+# so the first and last tile stop short of the margin by a few points. 30pt of
+# slack absorbs that while still being an order of magnitude smaller than the
+# 65pt frame and the 145pt shortfall these assertions exist to catch.
+_INSIDE_MARGIN_SLACK_PT = 30.0
+
+
+def test_nothing_the_reader_can_see_falls_off_the_paper(committed_db):
+    """The user's requirement, measured: the PDF looks like the brochure.
+
+    It did not. The document was rendered inside the `(auth)` group's sign-in
+    Card, so it started 65pt in from the left edge and its last 64pt - the
+    right-hand tile - hung off the paper and was clipped. Nothing in the
+    document said so; only the rendered file does.
+    """
+    db, created = committed_db
+    page, _product = _page_with_products(db, created, product_count=3)
+    pdf_bytes, _download = _render(db, page.id, "staff", False)
+
+    for index, extent in enumerate(_drawn_extents(pdf_bytes), start=1):
+        assert extent["right"] <= extent["width"] + _TOLERANCE_PT, (
+            f"page {index}: content reaches {extent['right']:.1f}pt on a "
+            f"{extent['width']:.1f}pt page, so "
+            f"{extent['right'] - extent['width']:.1f}pt of it is clipped"
+        )
+        # And from the other side: a document squeezed into a centred card fits
+        # the paper trivially while looking nothing like the brochure. The
+        # brochure begins and ends at ITS OWN margins, not somewhere inside a
+        # frame that belongs to another screen.
+        assert extent["text_left"] <= _MARGIN_PT + _INSIDE_MARGIN_SLACK_PT, (
+            f"page {index}: the brochure starts {extent['text_left']:.1f}pt in "
+            f"on a page whose own margin is {_MARGIN_PT:.1f}pt, so something is "
+            "framing it"
+        )
+        assert (
+            extent["content_right"]
+            >= extent["width"] - _MARGIN_PT - _INSIDE_MARGIN_SLACK_PT
+        ), (
+            f"page {index}: the brochure only reaches "
+            f"{extent['content_right']:.1f}pt of a {extent['width']:.1f}pt page"
+        )
+
+
+def test_a_landscape_export_fills_the_landscape_paper(committed_db):
+    """One owner of the page geometry, proved on the orientation that breaks it.
+
+    Chromium's `landscape=True` rotates the paper. The print page used to state
+    the width in millimetres as well, swapping it for landscape itself, so the
+    rotation lived in two places and only ever agreed by luck. The page now
+    takes the page box as it finds it.
+    """
+    db, created = committed_db
+    page, _product = _page_with_products(db, created, product_count=3)
+    pdf_bytes, _download = _render(db, page.id, "staff", False, landscape=True)
+
+    extents = _drawn_extents(pdf_bytes)
+    assert extents[0]["width"] > extents[0]["height"], "not a landscape page box"
+    for index, extent in enumerate(extents, start=1):
+        assert extent["right"] <= extent["width"] + _TOLERANCE_PT, (
+            f"page {index}: {extent['right'] - extent['width']:.1f}pt clipped"
+        )
+        assert (
+            extent["content_right"]
+            >= extent["width"] - _MARGIN_PT - _INSIDE_MARGIN_SLACK_PT
+        ), (
+            f"page {index}: the document did not follow the paper round to "
+            f"landscape - {extent['content_right']:.1f}pt of "
+            f"{extent['width']:.1f}pt"
+        )
 
 
 def test_a_staff_export_and_a_consumer_export_of_one_page_differ(committed_db):

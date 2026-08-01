@@ -33,6 +33,13 @@ def render(url: str, out_path: str, *, landscape: bool, paper: str) -> int:
             page.goto(url, wait_until="networkidle", timeout=READY_TIMEOUT_MS)
             page.wait_for_selector(READY_SELECTOR, timeout=READY_TIMEOUT_MS)
             pdf_bytes = page.pdf(
+                # These two ARE the page geometry, and they are the only
+                # statement of it. `prefer_css_page_size` is deliberately not
+                # set: the print page declares no `@page size`, so turning it on
+                # would leave Chromium with nothing to size the paper by. Both
+                # values come from the same `print_profile` the page renders, so
+                # the document is laid out at `width: 100%` of whatever paper is
+                # named here - including when `landscape` rotates it.
                 format=paper,
                 landscape=landscape,
                 # The document's own margins are already in the print page's
