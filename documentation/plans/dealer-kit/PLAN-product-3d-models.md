@@ -1,145 +1,164 @@
 # PLAN — Real product models in 3D, generated from product photos (S8)
 
-**Status:** Grilled 2026-07-31. Blocked on S7.0 until a human has chosen each product's image.
+**Status:** Grilled 2026-08-01. Blocked on S7.0 (a chosen image) and materially helped by S7.6 (dimensions).
 **Companion UAC:** `product-3d-models-acceptance-criteria.md`
-**Depends on:** S4 room designer (the renderer that currently draws boxes), and **S7.0**
-(the brochure image flag) for its source image.
+**Not a Dealer Kit feature.** A 3D model is a property of a PRODUCT, like its photo
+and its dimensions. It lives in master data, is triggered from the product, and is used by
+whatever wants it: the room designer today, tiles or AR later.
 
 ---
 
 ## The problem, stated honestly
 
-Every product in the room designer is a grey box with its code printed on the front. That
-was the right first move: dimensions are free, exact, and available for the whole
-catalogue, whereas a model pipeline covers whatever somebody has modelled and leaves the
-rest missing. But a customer asking "what will my bathroom look like" is not answered by
-seven grey boxes.
+Every product in the room designer is a grey box with its code on the front. That was the
+right first move, because dimensions are free and exact for the whole catalogue while a
+model pipeline covers only what somebody has modelled. But a customer asking "what will my
+bathroom look like" is not answered by seven grey boxes.
 
-Two separate gaps sit underneath this, and only one of them is about models:
+Three gaps sit underneath, and only one of them is about models.
 
-1. **Shape.** A box does not look like a water closet.
-2. **Size.** Only **3,331 of 22,805** products have length and height. `SRTWC286-SH` has
-   **31 photos and no dimensions**. So even a perfect mesh has nothing to scale to.
+| | Count | Of |
+|---|---|---|
+| Products | 22,805 | |
+| Active, not discontinued | 17,402 | |
+| **With any image at all** | **1,541** | 6.8% |
+| With length, width and height | 3,331 | 14.6% |
+| **With BOTH an image and dimensions** | **473** | 2.1% |
 
-A mesh with no dimensions is a shape floating at an invented size, which is a worse lie
-than an honest box. The flyer seeding slice (S7) recovers dimensions for 425 codes and is
-the natural companion to this work.
+So the addressable set today is **473 products**, not 22,805. For this flyer's 998 codes it
+is **229**. S7.6, which recovers dimensions for 425 flyer cards, roughly doubles that,
+which is why it belongs before this slice rather than after it.
 
-**And a third gap, found while grilling: nobody has said which photo is the product.**
-`product_attachments.is_primary` is `false` on all 1,087 photo rows behind the flyer's
-products. `SRTWC286-SH` has 31 linked images including `98. BLANK PAGE_PG93.jpg` and two
-other products' photographs. Filenames would identify the right image for 509 of 535
-codes, and inference was **rejected as too dangerous**: a generator fed the wrong picture
-produces a confident, expensive model of the wrong product, and nobody would know until a
-customer saw it in their bathroom. So this slice consumes the flag a human sets in S7.0,
-and generates nothing for a product that has no chosen image.
+And a fourth gap, found while grilling S7: **nobody has ever said which photo is the
+product.** `product_attachments.is_primary` is false on every row. `SRTWC286-SH` has 31
+linked images including `98. BLANK PAGE_PG93.jpg` and two other products' photographs.
+Filenames would identify the right image for 509 of 535, and inference is rejected: a
+generator fed the wrong picture produces a confident, expensive model of the wrong product.
+S8 consumes the flag a human sets in S7.0 and generates nothing without it.
 
-## Decision
+## Decisions
 
-**AI image-to-3D per SKU.** *(user decision, taken with the cost and quality caveats on the
-table.)* A hosted image-to-3D API turns the primary product photo into a glTF mesh. No
-manual modelling, no GPU to run.
+**D1 — AI image-to-3D, one interface, provider chosen by benchmark.** *(user)*
+Before committing, generate the same five products on two or three providers and judge them
+at real size in the room designer, not on a turntable. The set is chosen to be the
+catalogue's hard cases, because the failure mode everyone reports is glossy and reflective
+surfaces and this catalogue is mostly glossy and reflective:
 
-The caveats stand and are designed around rather than argued with:
+| SKU | Why it is in the set |
+|---|---|
+| `SRTWC286-SH` | glossy white ceramic, the archetypal case |
+| `SRTWT51012` | chrome and rose gold, the worst case for reconstruction |
+| `SRTJC8041` | acrylic bathtub, 1700mm, a large concave form |
+| `SRTMRL707` | frameless LED mirror, nearly flat and reflective |
+| `SRTBF11102` | timber-front vanity, a box with real material detail |
 
-- **Cost is per generation.** Mitigated by generating **on demand and once**, never as a
-  bulk sweep over 22,805 products. The 535 flyer SKUs that actually have a photo are the
-  realistic working set.
-- **Quality on glossy ceramics and chrome is unreliable.** Mitigated by a **draft state**:
-  a generated model is not visible to dealers until a human approves it. Same shape as the
-  page publish flow, for the same reason.
-- **A provider will change or die.** Mitigated by putting one interface in front of it.
+**Needs from you:** API keys for the shortlisted providers and a small spend, perhaps 15
+generations. Nothing else in the plan is blocked while that is arranged.
 
-## Phase 0 — the journey
+**D2 — Per product, never per brochure.** *(user)* Triggered from the product detail page
+and in bulk from the products grid. Stored in `public`, alongside products. Not in the
+`dealer_kit` schema: uninstalling the module drops that schema, and it must not take the
+product models with it.
 
-Two actors, two entry points.
+**D3 — A product with no dimensions still gets a model, marked estimated.** *(user)*
+1,068 of the 1,541 products with an image have no dimensions. Refusing them would mean
+almost nothing ever gets modelled. The mesh is scaled to the same placeholder volume the box
+uses today and carries the identical estimated treatment, so it is honest about the one thing
+it does not know. Typing dimensions later rescales it with no regeneration.
 
-**Marketing, curating.** From a product's detail page, or from a collection in bulk:
-**Generate 3D model**. The photo used is the one somebody chose as the brochure image in
-S7.0, shown right there so the choice is visible before anything is spent. A product with
-no chosen image cannot be generated, and says so. One decision: generate, or not. It returns to a queue: models come back minutes later, and the queue
-shows each one turning on a turntable next to its photo. One decision per model: **approve**
-or **reject and try another photo**. An approved model is what dealers see. A rejected one
-never was.
+**D4 — Staff see it immediately, dealers only after approval.** *(user)*
+The moment a model lands it renders for staff, including in a real room, so it is judged at
+size and beside other products, which is where a bad mesh actually shows. Dealers and
+consumers keep the box until somebody approves it. Rejection keeps its reason and returns the
+product to a box.
 
-**The dealer or consumer, designing.** Nothing new to learn. They place a product in the
-room and it looks like the product. Where there is no approved model, they get the box they
-get today, which still carries the real dimensions and the real code. The room never
-refuses to show a product because nobody has modelled it.
+**D5 — GLB is the master; whatever else the job returns is kept beside it.** *(user)*
+GLB is what the app loads: web-native, an open Khronos standard, and imported natively by
+Blender, 3ds Max, Rhino, Unreal, Unity and SketchUp. Any OBJ, FBX or USDZ the same job
+produces is stored as an attachment and offered on a Download menu, because asking for them
+at job time is free while converting later is a pipeline to build and host. USDZ is what
+makes "view it in your bathroom" work on an iPhone, which is worth having for free.
+
+STL is deliberately not a target: it carries geometry with no colour or texture, so it
+answers 3D printing rather than visualisation.
+
+**D6 — A permission plus a configurable monthly cap.** A dedicated
+`product_model.generate` permission decides who may spend; a cap in Settings decides how
+much per month. Past the cap generation refuses with a plain message and the month's count,
+rather than silently queueing. Both DB-configurable, so a big push is a settings change.
+
+**D7 — Claude vets, it does not model.** Claude produces no geometry. It is used where
+judgement is the work and it directly protects the spend:
+
+- before a job, check the chosen photo really is one product, photographic, and not a line
+  drawing or a blank page;
+- after a job, compare a render of the mesh against the source photo and flag the obvious
+  failures, so a human reviews a short list instead of 229 turntables;
+- read dimensions off technical drawings, extending what S7.6 recovers from the flyer.
 
 ## Design
 
 **Storage.** Models are files, so they go where files go: `attachments`, through the storage
-router, with a new `3D Model` attachment type (`glb`). No second file store.
+router, under a new `3D Model` attachment type. No second file store.
 
-**`dealer_kit.product_model`** (one row per attempt, not per product, so a rejected
-generation stays on the record):
+**`product_model`** (one row per attempt, so a rejected generation stays on the record):
 
 | column | why |
 |---|---|
 | `product_id` | the SKU |
-| `source_attachment_id` | the photo it was generated FROM, so a re-run against a better photo is a different row |
+| `source_attachment_id` | the photo it came FROM, so a re-run on a better photo is a new row |
 | `model_attachment_id` | the GLB, null until it lands |
+| `extra_attachment_ids` | OBJ, FBX, USDZ from the same job |
 | `provider`, `provider_job_id` | which service, which job |
 | `status` | `queued` / `generating` / `ready` / `approved` / `rejected` / `failed` |
 | `failure_reason` | the provider's own message, kept verbatim |
-| `reviewed_by`, `reviewed_at` | who approved it |
-| `scale_source` | `product_dimensions` or `unscaled`, see below |
+| `reviewed_by`, `reviewed_at`, `rejection_reason` | who decided and why |
+| `scale_source` | `product_dimensions` or `estimated` |
 
 Company-scoped via `CompanyScopedMixin` like every other owned table.
 
-**Generation is a job, never a request.** RQ on a `models` queue, mirroring the imports
-queue. The API enqueues and returns; the worker calls the provider, polls, downloads the
-GLB, stores it, flips the status. The worker is already a required part of the dev stack.
+**Generation is a job, never a request.** RQ on a `models` queue, mirroring imports. The API
+enqueues and returns; the worker submits, polls, downloads, stores, flips the status.
 
-**One interface, one provider behind it.** `Image3DProvider` with `submit(image) -> job_id`
-and `poll(job_id) -> ready|generating|failed`. A stub provider returns a committed GLB
-fixture, so no test ever touches the network and the whole pipeline is testable offline.
+**One interface, providers behind it.** `Image3DProvider` with `submit(image) -> job_id` and
+`poll(job_id) -> ready | generating | failed`. A stub returns a committed GLB fixture, so the
+whole pipeline is testable offline and no test touches the network.
 
-**Scaling is the part that goes wrong.** A generated mesh has no idea how big the thing is.
-So:
-
-- Product has dimensions → the mesh is scaled to that bounding box. `scale_source =
-  product_dimensions`.
-- Product has none → the mesh is scaled to the same placeholder volume the box uses today,
-  and **is marked estimated in exactly the same way the box already is** (the orange
-  treatment). It must not quietly look authoritative because it now has a nice shape.
-
-**Renderer preference.** Approved model → box. Two states, not three: an unapproved model
-does not render for anyone except the reviewer.
-
-**Loading cost is real.** A GLB per product, in a scene that may hold a dozen, on a dealer's
-phone. So: models are loaded lazily per placed product, cached by attachment id for the
-session, and a product still renders as its box while its model is in flight. The room is
-never blocked on a download.
+**Renderer preference.** Approved model, then box. For staff, ready model, then box. A model
+is loaded lazily per placed product and cached by attachment id for the session, and the
+product renders as its box while its model is in flight: a room on a showroom's wifi must
+never block on a download.
 
 ## Slices
 
-**S8.0 — Blocked on S7.0.** No generation is built until a human can say which image is
-the product. Everything below assumes that flag exists.
+**S8.0 — Blocked on S7.0.** Nothing is built until a human can say which image is the product.
 
-**S8.1 — Schema, attachment type, permission.** Migration, `product_model`, `3D Model`
-type, `dealer_kit.model.generate` and `dealer_kit.model.approve` slugs with the grant
-sweep.
+**S8.1 — Benchmark.** Five SKUs, two or three providers, judged at real size. Produces the
+provider decision and the first honest quality read. Needs keys and a small spend.
 
-**S8.2 — Provider interface plus stub, and the job.** Test-first: the whole pipeline
-queued → generating → ready, driven by the stub, with the failure and timeout paths
-covered before a real provider is wired.
+**S8.2 — Schema, attachment type, permissions, cap.** Migration, `product_model`, the
+`3D Model` type, `product_model.generate` and `product_model.approve`, the settings cap, and
+the grant sweep.
 
-**S8.3 — Real provider.** One implementation. Key in env, absent key means the feature is
-off rather than broken.
+**S8.3 — Provider interface, stub, and the job.** Test-first: queued to generating to ready,
+plus the failure and timeout paths, all driven by the stub before a real provider is wired.
 
-**S8.4 — Review queue (FE).** The turntable next to the source photo, approve or reject.
+**S8.4 — Real provider**, the one the benchmark chose. Absent key means the feature is off
+rather than broken.
 
-**S8.5 — Renderer.** Load an approved GLB, scale it, fall back to the box, keep the room
-interactive while it loads. The existing scene is already built once and synced
-incrementally, so a model arriving mid-session is a mesh swap, not a rebuild.
+**S8.5 — Product surfaces.** Generate and approve on the product detail page, bulk generate
+from the products grid, the Download menu, and the estimated-size warning.
+
+**S8.6 — Renderer.** Load an approved GLB, scale it, fall back to the box, keep the room
+interactive while it loads. The scene is already built once and synced incrementally, so a
+model arriving mid-session is a mesh swap rather than a rebuild.
+
+**S8.7 — Claude vetting.** Pre-flight photo check and post-flight comparison, both as
+advisory flags on the review, never as an automatic reject.
 
 ## What this does not do
 
-- It does not model a room's fittings (taps on a basin, a mirror on a wall). One SKU, one
-  mesh.
-- It does not give a product materials or finishes. The generated mesh brings its own
-  texture from the photo, which is exactly as accurate as the photo was.
-- It does not fix the dimensions gap. S7's dimension report does, for 367 SKUs, and the
-  rest stay honest placeholders until somebody types them.
+- It does not model a product's fittings separately. One SKU, one mesh.
+- It does not give a product materials or finishes beyond what the photo carried.
+- It does not fix the dimensions gap. S7.6 does, for 425 flyer cards; the rest stay honest
+  placeholders until somebody types the number, model or no model.

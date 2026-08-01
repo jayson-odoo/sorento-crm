@@ -1,0 +1,140 @@
+{
+  "_about": [
+    "A transcript of what is PRINTED on the fixture pages, verified against the",
+    "document itself. This is the ground truth the extractor is scored against.",
+    "",
+    "It is deliberately not produced by the extractor. The codes were taken by a",
+    "plain regex over the PDF's own text layer, and the rows by grouping those",
+    "codes on their exact printed baselines - both simpler and independent of the",
+    "tolerance-based clustering being measured. Scoring the extractor against its",
+    "own output would let it misread the flyer completely and still score 100%.",
+    "",
+    "`sha256` pins the fixture. If the PDF changes, the golden must be",
+    "re-verified against the new one rather than silently re-blessed."
+  ],
+  "fixture": "flyer_sample.pdf",
+  "sha256_prefix": "b54b109512c6427a",
+  "source": "_SORENTO A3 FLYER 2025-2026_compressed.pdf, pages 1, 3 and 4",
+  "pages": [
+    {
+      "number": 1,
+      "_note": "The cover. Codes but no priced grid, and the page most likely to break an extractor tuned on the dense spreads.",
+      "heading": "Inspiring Designs, Exciting Promotions",
+      "full_width_band": true,
+      "codes": [
+        "SRT764-25",
+        "SRTWC191-G2",
+        "SRTBF11102",
+        "SRTWT6415",
+        "SRTWT51012",
+        "SRTMRL707",
+        "FG-CW06",
+        "FG-CW13"
+      ],
+      "rows": [
+        ["SRTMRL707"],
+        ["SRTWT6415"],
+        ["SRTWC191-G2"],
+        ["SRTBF11102", "SRTWT51012"],
+        ["FG-CW13"],
+        ["FG-CW06"]
+      ],
+      "_row_note": [
+        "SRTBF11102 and SRTWT51012 are set 6pt apart and read as one row.",
+        "FG-CW13 and FG-CW06 are 45pt apart and are two.",
+        "SRT764-25 is printed as 'SRT764-25 -CR', with a space inside the SKU,",
+        "so it is in `codes` but sits in no row this transcript can place."
+      ]
+    },
+    {
+      "number": 2,
+      "_note": "Flyer page 3: the bathtub spread. Two dense grids and a gift band.",
+      "heading": "BATHTUB COLLECTION",
+      "full_width_band": false,
+      "codes": [
+        "SRTJC8041",
+        "SRTJC2025",
+        "SRTJC2024",
+        "SRTJC5107",
+        "SRTJC8018",
+        "SRTJC8066",
+        "SRTJC8028",
+        "SRTJC8030",
+        "SRTJC8037",
+        "SRTJC2023",
+        "SRTPP3-30PC",
+        "FG-CW06",
+        "FG-CW13"
+      ],
+      "rows": [
+        ["SRTJC2023"],
+        ["SRTJC8037", "SRTJC8030", "SRTJC8041"],
+        ["SRTJC8028", "SRTJC8066", "SRTJC8018", "SRTJC5107", "SRTJC2024", "SRTJC2025"],
+        ["FG-CW06"],
+        ["SRTPP3-30PC", "FG-CW13"]
+      ]
+    },
+    {
+      "number": 3,
+      "_note": "Flyer page 4: the water closet spread. The densest page in the fixture.",
+      "heading": "WATER CLOSET",
+      "full_width_band": true,
+      "codes": [
+        "SRTSCBD702",
+        "SRTSCBD701",
+        "SRTSCBD291",
+        "SRTWC286-SH",
+        "SRTWC8066-S",
+        "SRTWC7614-RL",
+        "SRTWC8354-SH",
+        "SRTWC8357-RL",
+        "SRTWC8152-SH",
+        "SRTWC8036-SH-UF",
+        "SRTWC8517-SH-UF",
+        "SRTWC8318-RL",
+        "SRTWC8504-RL",
+        "SRTWC8320-RL-UF",
+        "SRTWC200-S-RL-UF",
+        "SRTWC8356-RL",
+        "SRTWC287-RL",
+        "SRTWC8366-RL-UF",
+        "SRTWC8088-RL-UF",
+        "SRTWC8319-P-RL-UF",
+        "SRTWC8066-S-BL",
+        "SRTWC8066-S-MBL",
+        "SRTWC8318-RL-BL"
+      ],
+      "rows": [
+        ["SRTSCBD702", "SRTSCBD701", "SRTSCBD291"],
+        ["SRTWC7614-RL", "SRTWC8354-SH", "SRTWC8357-RL"],
+        [
+          "SRTWC286-SH",
+          "SRTWC8066-S",
+          "SRTWC8152-SH",
+          "SRTWC8036-SH-UF",
+          "SRTWC8517-SH-UF",
+          "SRTWC8318-RL"
+        ],
+        [
+          "SRTWC8504-RL",
+          "SRTWC8320-RL-UF",
+          "SRTWC200-S-RL-UF",
+          "SRTWC8356-RL",
+          "SRTWC287-RL",
+          "SRTWC8366-RL-UF"
+        ],
+        [
+          "SRTWC8088-RL-UF",
+          "SRTWC8319-P-RL-UF",
+          "SRTWC8066-S-BL",
+          "SRTWC8066-S-MBL"
+        ],
+        ["SRTWC8318-RL-BL"]
+      ],
+      "_row_note": [
+        "SRTWC286-SH is printed twice: once at the top of the page in a callout,",
+        "and once in its own grid row. It belongs to the grid row."
+      ]
+    }
+  ]
+}
