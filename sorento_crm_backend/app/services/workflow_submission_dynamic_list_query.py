@@ -19,7 +19,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.workflow_forms import WorkflowFormDefinition, WorkflowFormVersion
-from app.services.workflow_forms_service import _collect_field_defs
+
+# Reads F0's block document. Deliberately NOT
+# `workflow_forms_service._collect_field_defs`: the list-query router is mounted by
+# `app.main`, so importing a private helper out of a service that F1 retires put an
+# ImportError-at-startup on the boot path. See app/services/workflow_form_field_defs.py.
+from app.services.workflow_form_field_defs import collect_field_defs as _collect_field_defs
 
 # Field ids from the builder are typically UUIDs; allow safe slug-like ids.
 _ID_SAFE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
@@ -42,16 +47,25 @@ class DynamicListQueryField:
 
 
 def _ops_for_workflow_type(ft: Optional[str]) -> Tuple[str, List[str], bool]:
-    """Return (data_type, allowed_operators, filterable)."""
+    """Return (data_type, allowed_operators, filterable).
+
+    Covers BOTH vocabularies. The old-shape names (`checkbox`, `multi_select`,
+    `date_range`) are kept so an in-flight caller cannot regress, and the F0
+    block-document names are added alongside.
+
+    Getting this wrong is silent rather than loud: an unmapped numeric type falls
+    through to the string branch, and a string comparison puts "10" before "9". So
+    every new type name is mapped explicitly instead of relying on the default.
+    """
     t = (ft or "text").lower()
-    if t in ("number",):
+    if t in ("number", "integer", "rating", "computed"):
         return "number", ["eq", "ne", "gt", "gte", "lt", "lte", "is_null"], True
-    if t in ("checkbox",):
+    if t in ("checkbox", "yesno"):
         return "boolean", ["eq", "is_null"], True
     if t in ("date", "datetime"):
         return "date", ["eq", "ne", "gt", "gte", "lt", "lte", "is_null"], True
-    if t in ("multi_select", "date_range"):
-        # v1: export-only or limited — date_range JSON object; multi_select array
+    if t in ("multi_select", "date_range", "multiselect", "checkboxes"):
+        # Stored as a JSON array or object, so equality is meaningless: contains only.
         return "string", ["contains", "is_null"], True
     return "string", ["eq", "ne", "contains", "starts_with", "in", "is_null"], True
 
