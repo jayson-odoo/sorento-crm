@@ -1,7 +1,15 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, Pencil, Plus, ReceiptText, Trash2, TrendingDown } from 'lucide-react';
+import {
+  AlertTriangle,
+  Pencil,
+  Plus,
+  ReceiptText,
+  Trash2,
+  TrendingDown,
+  Upload,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,6 +24,8 @@ import type { Project, ProjectPurchaseOrder } from '../../_shared/types/project.
 import { formatMyr } from './QuotationsPanel';
 import { PurchaseOrderDialog } from './PurchaseOrderDialog';
 import { PurchaseOrderLinesEditor } from './PurchaseOrderLinesEditor';
+import { POIntakeUploadDialog } from './POIntakeUploadDialog';
+import { POIntakeVersionsStrip } from './POIntakeVersionsStrip';
 
 const SOURCE_LABELS: Record<string, string> = {
   contractor_direct: 'Contractor direct',
@@ -29,6 +39,10 @@ const SOURCE_LABELS: Record<string, string> = {
  * on purpose: a MISMATCH is an exception worth chasing, while DRIFT from v1 is the
  * expected result of a negotiation and is shown as a plain number. Presenting erosion as
  * an alert would make every successfully negotiated PO look like a problem.
+ *
+ * This is also the ONE place a customer PO document is uploaded (P4). The scan and the PO
+ * row are the same commitment, so a second home for POs would immediately mean two answers
+ * to "what did they order".
  */
 export function PurchaseOrdersPanel({ project }: { project: Project }) {
   const purchaseOrders = usePurchaseOrders(project.id);
@@ -38,6 +52,11 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
   const [editing, setEditing] = React.useState<ProjectPurchaseOrder | null>(null);
   const [deleting, setDeleting] = React.useState<ProjectPurchaseOrder | null>(null);
   const [openId, setOpenId] = React.useState<string | null>(null);
+  // A `po` of null means "a PO we have no row for yet"; a PO means "another version of this
+  // one", which is how a re-scanned PO stays one commitment instead of becoming two.
+  const [uploadingFor, setUploadingFor] = React.useState<{
+    po: ProjectPurchaseOrder | null;
+  } | null>(null);
 
   const rows = React.useMemo(() => purchaseOrders.data ?? [], [purchaseOrders.data]);
   const totalValue = rows.reduce((sum, row) => sum + Number(row.line_total || 0), 0);
@@ -61,10 +80,21 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
             </p>
           </div>
           {project.can_edit && (
-            <Button type="button" size="sm" onClick={() => setCreating(true)}>
-              <Plus className="size-4" aria-hidden />
-              Record a PO
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="button" size="sm" onClick={() => setUploadingFor({ po: null })}>
+                <Upload className="size-4" aria-hidden />
+                Upload a PO document
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setCreating(true)}
+              >
+                <Plus className="size-4" aria-hidden />
+                Record a PO
+              </Button>
+            </div>
           )}
         </CardHeader>
 
@@ -108,10 +138,16 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
                 the project can be archived but not deleted.
               </p>
               {project.can_edit && (
-                <Button type="button" className="mt-4" onClick={() => setCreating(true)}>
-                  <Plus className="size-4" aria-hidden />
-                  Record the first PO
-                </Button>
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                  <Button type="button" onClick={() => setUploadingFor({ po: null })}>
+                    <Upload className="size-4" aria-hidden />
+                    Upload the PO document
+                  </Button>
+                  <Button type="button" variant="outline" onClick={() => setCreating(true)}>
+                    <Plus className="size-4" aria-hidden />
+                    Record it by hand
+                  </Button>
+                </div>
               )}
             </div>
           ) : (
@@ -172,6 +208,15 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
                           mode="icon"
                           variant="ghost"
                           size="sm"
+                          onClick={() => setUploadingFor({ po })}
+                          aria-label={`Upload a document for ${po.po_number}`}
+                        >
+                          <Upload className="size-3.5" />
+                        </Button>
+                        <Button
+                          mode="icon"
+                          variant="ghost"
+                          size="sm"
                           onClick={() => setEditing(po)}
                           aria-label={`Edit ${po.po_number}`}
                         >
@@ -191,7 +236,13 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
                   </div>
 
                   {openId === po.id && (
-                    <div className="border-t border-border p-3">
+                    <div className="space-y-3 border-t border-border p-3">
+                      <POIntakeVersionsStrip
+                        projectId={project.id}
+                        poId={po.id}
+                        canEdit={Boolean(project.can_edit)}
+                        onUpload={() => setUploadingFor({ po })}
+                      />
                       <PurchaseOrderLinesEditor project={project} po={po} />
                     </div>
                   )}
@@ -201,6 +252,15 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
           )}
         </CardContent>
       </Card>
+
+      {uploadingFor && (
+        <POIntakeUploadDialog
+          projectId={project.id}
+          purchaseOrderId={uploadingFor.po?.id ?? null}
+          purchaseOrderNumber={uploadingFor.po?.po_number ?? null}
+          onDone={() => setUploadingFor(null)}
+        />
+      )}
 
       {(creating || editing) && (
         <PurchaseOrderDialog
