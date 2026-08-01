@@ -3,8 +3,10 @@
 The whole risk of this slice is one thing: **a derived value that is also writable is two
 sources of truth.** ADR-0013 rule 11 allows exactly one writer of a status column, so a
 deriving definition's header is written HERE and nowhere else, and
-``assert_manual_header_move_allowed`` refuses the human path into or out of the two rungs
-this module owns.
+``assert_manual_header_move_allowed`` refuses the human path INTO the two rungs this
+module owns. Moving back out by hand stays allowed, which is what lets a resolved
+submission be closed for good; see that function for why the symmetric version was
+unusable.
 
 **Opt-in, in columns.** ``derives_status_from_lines`` plus two status KEYS on the
 definition. Columns rather than a key inside the versioned document, because a published
@@ -221,12 +223,12 @@ def assert_manual_header_move_allowed(
     target = str(to_status_id or "")
     if target not in pair:
         return
-    labels = pair[target]
+    label = pair[target]
     raise AppException(
         status_code=422,
         message=(
-            f"This submission's status follows its lines, so it cannot be moved into or "
-            f"out of {labels} by hand. Decide the lines instead."
+            f"This submission's status follows its lines, so it cannot be moved into "
+            f"{label} by hand. Decide the lines instead."
         ),
         code="status_derived_not_writable",
     )

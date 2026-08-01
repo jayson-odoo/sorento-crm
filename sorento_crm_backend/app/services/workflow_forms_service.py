@@ -974,9 +974,9 @@ class WorkflowFormsService:
         deactivated target, a move out of a final status and a move with no declared
         edge are all 422 with their own code.
 
-        A deriving definition adds one more refusal, and only one: a move into or out of
-        the two rungs derivation owns. Everything else stays human-driven, so a resolved
-        submission can still be closed by hand.
+        A deriving definition adds one more refusal, and only one: a move INTO either of
+        the two rungs derivation owns. A move back out is permitted, which is precisely
+        what lets a resolved submission still be closed by hand.
         """
         s = self.get_submission(submission_id)
         scope_id = str(s.definition_id)

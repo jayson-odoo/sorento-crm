@@ -9,7 +9,10 @@ response. Those are what is asserted.
 Three of these tests exist because they are the ones that pass a wrong implementation:
 
 1. **The asymmetry** (AC-F1a-22). A deriving definition's header refuses a manual move
-   into or out of the derived pair, and PERMITS a move that touches neither. A file that
+   INTO the derived pair, and PERMITS both a move back out of it and a move that touches
+   neither. Refusing on either endpoint is the version that was tried and was unusable:
+   the open rung must be the graph's initial state, so ``from`` is always in the pair and
+   every manual move would be refused. A file that
    only asserted the refusal would pass an implementation that refuses everything, which
    is the bug the correction was written for: a deriving submission that can never be
    closed.
