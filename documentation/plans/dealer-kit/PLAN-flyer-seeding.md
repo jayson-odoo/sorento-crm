@@ -4,6 +4,9 @@
 S7.2 is built and green: `page.promotion_id` (migration 315), `resolve_prices` (ADR 0008),
 and all four money surfaces migrated onto it - tile, quote line, bundle allocation, public
 and print payloads.
+S7.3 is HALF built: `match_reading` (`app/services/dealer_kit/flyer_matching.py`) is green on
+47 tests covering group D; the `POST /flyer-readings` and `GET /flyer-readings/{id}` routes
+are still outstanding.
 **Companion UAC:** `flyer-seeding-acceptance-criteria.md`
 **Input artefact:** `_SORENTO A3 FLYER 2025-2026_compressed.pdf` (36 pages, A3 portrait, vector).
 **Depends on:** S1 builder core, S2 collections.
