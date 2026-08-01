@@ -35,10 +35,20 @@ def unique_code(stem: str = "") -> str:
 
 @contextmanager
 def pg_session() -> Session:
-    """Yield a session whose work is discarded at the end."""
+    """Yield a session over the REAL database whose work is discarded at the end.
+
+    ``join_transaction_mode="create_savepoint"`` for the same reason
+    `blank_session` needs it, plus one more that only applies here. Without it
+    the mode resolves to ``rollback_only``, where ``session.rollback()`` rolls
+    back the OUTER transaction rather than a savepoint: a test that seeds a row,
+    provokes an expected failure, calls ``rollback()`` and then asserts the row
+    survived would find it gone. Several complaint tests are written exactly that
+    way, so the weaker mode would make them fail for a reason unrelated to what
+    they test.
+    """
     connection = engine.connect()
     transaction = connection.begin()
-    session = Session(bind=connection)
+    session = Session(bind=connection, join_transaction_mode="create_savepoint")
     try:
         yield session
     finally:

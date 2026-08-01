@@ -13,7 +13,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal, engine
+from app.database import engine
+from tests._pg_fixture import pg_session
 from app.models.complaints import Complaint
 from app.services.complaints_service import ComplaintService
 
@@ -31,12 +32,8 @@ def _clean_state():
 
 @pytest.fixture
 def db() -> Iterator[Session]:
-    s = SessionLocal()
-    try:
+    with pg_session() as s:
         yield s
-    finally:
-        s.rollback()
-        s.close()
 
 
 def _seed(db: Session, status: str) -> Complaint:

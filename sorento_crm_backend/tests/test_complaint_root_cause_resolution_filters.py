@@ -17,7 +17,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.api.v1.complaints.complaints import _csv_ids
-from app.database import SessionLocal, engine
+from app.database import engine
+from tests._pg_fixture import pg_session
 from app.models.complaints import Complaint
 from app.models.complaint_master_data import ComplaintResolution, ComplaintRootCause
 from app.services.company_scope import set_company_scope
@@ -48,13 +49,9 @@ def _clean_state():
 
 @pytest.fixture
 def db() -> Iterator[Session]:
-    s = SessionLocal()
-    set_company_scope(s, None)
-    try:
+    with pg_session() as s:
+        set_company_scope(s, None)
         yield s
-    finally:
-        s.rollback()
-        s.close()
 
 
 def _total(svc: ComplaintService, **kwargs) -> int:
