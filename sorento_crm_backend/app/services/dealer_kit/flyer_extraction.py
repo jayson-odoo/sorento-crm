@@ -141,17 +141,38 @@ class FlyerReading:
         return list(seen)
 
 
+class EncryptedFlyerError(ValueError):
+    """A real PDF that this system is not allowed to read.
+
+    A subclass of ``ValueError`` on purpose, so every existing caller that
+    already refuses unreadable files keeps working unchanged. It exists only so
+    the layer that turns the failure into WORDS can tell the two cases apart:
+    "that is not a PDF" and "that is a PDF I cannot open" call for opposite
+    actions from the person holding the file.
+    """
+
+
 def extract_flyer(data: bytes) -> FlyerReading:
     """Read a flyer PDF into its structure.
 
     Raises ``ValueError`` for anything that is not a PDF, rather than returning
     an empty reading: a designer who uploaded the wrong file needs to be told,
-    not handed a catalogue with nothing in it.
+    not handed a catalogue with nothing in it. A password-protected PDF raises
+    the ``EncryptedFlyerError`` subclass, because that one is fixable by the
+    person uploading it.
     """
     try:
         document = fitz.open(stream=data, filetype="pdf")
     except Exception as exc:  # pragma: no cover - the message varies by version
         raise ValueError(f"Not a readable PDF: {exc}") from exc
+
+    # Checked HERE rather than left to fail later. PyMuPDF opens a locked
+    # document happily and only objects when something reads a page, by which
+    # point its complaint is "document closed or encrypted" - a message that is
+    # actively misleading in front of somebody looking at an open document.
+    if document.needs_pass:
+        document.close()
+        raise EncryptedFlyerError("The PDF is password protected")
 
     if document.page_count == 0:
         raise ValueError("The PDF has no pages")

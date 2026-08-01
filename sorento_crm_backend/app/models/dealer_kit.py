@@ -366,6 +366,46 @@ class ExportRequest(Base):
     version = relationship("PageVersion")
 
 
+class FlyerReadingRecord(Base, CompanyScopedMixin):
+    """A printed flyer somebody uploaded, as this system READ it (S7.3).
+
+    Named ``...Record`` rather than ``FlyerReading`` on purpose: that name
+    already belongs to the extractor's dataclass
+    (``app.services.dealer_kit.flyer_extraction.FlyerReading``), and the two are
+    handled side by side in one service. Two classes under one name in one file
+    is a bug waiting for a hurried import.
+
+    **``reading_json`` holds the READING, never the report.** The report - what
+    each printed code matched, what it did not, what the linked promotion does
+    not carry - is DERIVED from the reading against the product master and the
+    promotion, and it is recomputed on every read. Storing it would freeze an
+    answer that is only true for the master it was computed against: create one
+    product or change one promotion and a stored report starts telling marketing
+    to close gaps somebody already closed. Matching the real flyer's 998 codes
+    costs 0.4s, which is far less than the cost of a stale answer nobody can see
+    is stale.
+
+    ``sha256`` is the bytes' fingerprint, so "is this the same PDF I uploaded on
+    Tuesday" is answerable without keeping the file. The bytes themselves are
+    deliberately NOT kept here: what the seed needs is the structure, and the
+    original document lives wherever marketing keeps it.
+    """
+
+    __tablename__ = "flyer_reading"
+    __table_args__ = (
+        Index("ix_dealer_kit_flyer_reading_company_created", "company_id", "created_at"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    filename = Column(String(255), nullable=False)
+    byte_size = Column(Integer, nullable=False)
+    sha256 = Column(String(64), nullable=False)
+    reading_json = Column(JSONB, nullable=False)
+    created_by = Column(UUID(as_uuid=False), nullable=True)
+    created_at = _created_at()
+
+
 class Selection(Base, CompanyScopedMixin):
     """What somebody chose. The spine the room and the quote hang off.
 

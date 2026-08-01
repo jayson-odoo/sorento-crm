@@ -4,9 +4,11 @@
 S7.2 is built and green: `page.promotion_id` (migration 315), `resolve_prices` (ADR 0008),
 and all four money surfaces migrated onto it - tile, quote line, bundle allocation, public
 and print payloads.
-S7.3 is HALF built: `match_reading` (`app/services/dealer_kit/flyer_matching.py`) is green on
-47 tests covering group D; the `POST /flyer-readings` and `GET /flyer-readings/{id}` routes
-are still outstanding.
+S7.3 is DONE: `match_reading` (`app/services/dealer_kit/flyer_matching.py`) is green on 47
+tests covering group D, and the four `/flyer-readings` routes are green on 27 more
+(`tests/test_dealer_kit_flyer_readings.py`). A reading is PERSISTED
+(`dealer_kit.flyer_reading`, migration 316); the report is DERIVED from it on every read and
+deliberately never stored - see the S7.3 outcome note at the foot of this file.
 **Companion UAC:** `flyer-seeding-acceptance-criteria.md`
 **Input artefact:** `_SORENTO A3 FLYER 2025-2026_compressed.pdf` (36 pages, A3 portrait, vector).
 **Depends on:** S1 builder core, S2 collections.
@@ -138,9 +140,9 @@ pages cut from the real flyer.
 resolver the Kit does not have: today `product_facts` knows `list_price` and nothing else,
 so every tile would show LP. This is the slice that makes a seeded page tell the truth.
 
-**S7.3 — Match and report.** Codes to products in company scope, trigram suggestions for
-the 38 misses, the not-promoted list, the dimensions candidates. `POST /flyer-readings`,
-`GET /flyer-readings/{id}`.
+**S7.3 — Match and report.** DONE. Codes to products in company scope, trigram suggestions
+for the 38 misses, the not-promoted list, the dimensions candidates. `POST /flyer-readings`,
+`GET /flyer-readings/{id}`, plus the list and a hard `DELETE`.
 
 **S7.4 — Review and seed.** The three-step screen, then `POST /flyer-readings/{id}/seed`
 building the doc through the existing `save_version`. Draft by construction: no label moves.
@@ -205,3 +207,47 @@ exactly as predicted.
   and looks broken.
 - Under the default "only unanswered" filter the answered row leaves the list on the next
   fetch, so the mark is only ever seen optimistically.
+
+---
+
+## S7.3 outcome (2026-08-01)
+
+Four routes on the existing dealer-kit router, all behind the page permissions already in
+use: `page.edit` to upload or delete, `page.view` to read or list. No new slug, because a
+fourth one would need a grant sweep before any existing role held it, and everybody who can
+build a page can already do everything a reading leads to.
+
+**The reading is stored; the report is not.** `dealer_kit.flyer_reading` keeps what the
+extractor read - pages, cards, printed rows, artwork, headings - and the match report is
+recomputed against the master on every read. A stored report is only true for the master it
+was computed against, and it goes stale in the direction that costs money: it keeps telling
+marketing to close gaps that were closed last week, with nothing on the screen to say the
+number is old. Recomputing 998 codes costs 0.4s and three statements. The regression test
+for this changes the master between two GETs of the same reading and expects the answer to
+move.
+
+**Extraction runs inside the request.** 36 A3 pages take about a second, so a queue would
+buy nothing and cost a pending state, a polling screen, a failure path and a worker restart
+per code change. That stops being true at roughly ten seconds of extraction - a much larger
+document, or the artwork rasterisation coming in S7.5 - at which point it becomes an enqueue
+returning 202 with a row to watch, like the catalogue PDF export.
+
+Decisions worth keeping:
+
+- **The wrong file is a 400 in words.** `extract_flyer` already refuses a non-PDF; the route
+  maps it. A 500 tells a designer the system is broken when their file is, and a 201 with an
+  empty report tells them their flyer has no products on it.
+- **50 MB ceiling, 413, and the message names the limit.** The real flyer is 20 MB, and the
+  same document exported without compression can double that. The upload is read in chunks
+  so the check fires before the whole file is held.
+- **`promotionId` is typed as a UUID at the edge**, so a malformed one is a 422 and never
+  reaches a WHERE clause. It is asked on the READ as well as the upload, because "what does
+  this promotion not carry" is a question about the report rather than a property of the
+  file. An unknown-but-well-formed id is NOT a 404: it reports everything as not promoted,
+  which is how a reviewer discovers the brochure points at a promotion somebody deleted.
+- **Another company's reading is 404, never 403.** 403 confirms the id exists.
+- **The list carries no reports.** One report per row is one match run per row, on a screen
+  whose only job is to say which flyers have been read.
+
+Migration 316 was applied to the shared dev database by hand and NOT stamped (that database
+sits at another worktree's revision), so its DDL is idempotent throughout.

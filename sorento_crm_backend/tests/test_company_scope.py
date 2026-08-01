@@ -306,9 +306,17 @@ def test_every_company_id_table_is_registered():
     #                               link row is what keeps those apart.
     # `selection_line` is deliberately NOT owned - it hangs off a scoped parent,
     # so scoping it too would filter it twice and add nothing.
+    # S7.3 then adds one:
+    #   flyer_reading             - an uploaded flyer, as this system read it.
+    #                               Owned because the report derived from it
+    #                               resolves printed codes against THIS company's
+    #                               products: every code in the real flyer exists
+    #                               in both companies, so an unscoped reading
+    #                               would seed one company's catalogue with the
+    #                               other's product ids.
     # The count is asserted on purpose: a new owned table must be an explicit
     # decision here, not something that slips in and silently misses the filter.
-    assert len(owned) == 41, f"expected 41 owned tables, found {len(owned)}: {sorted(owned)}"
+    assert len(owned) == 42, f"expected 42 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

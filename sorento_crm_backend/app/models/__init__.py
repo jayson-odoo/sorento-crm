@@ -76,6 +76,7 @@ from app.models.dealer_kit import (
     Collection,
     Bundle,
     BundleComponent,
+    FlyerReadingRecord,
     Selection,
     SelectionLine,
 )
@@ -266,6 +267,7 @@ __all__ = [
     "Selection",
     "SelectionLine",
     "BundleComponent",
+    "FlyerReadingRecord",
 ]
 
 # Auto-discovery: import models.py from each app/modules/<key>/ so Alembic + SQLAlchemy

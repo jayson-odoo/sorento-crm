@@ -294,6 +294,128 @@ class ExportRequestOut(BaseModel):
     audience: str
 
 
+# ---------------------------------------------------------------------------
+# Flyer readings and their match report (S7.3)
+# ---------------------------------------------------------------------------
+
+
+class CodeSuggestionOut(BaseModel):
+    """The nearest existing code to one the master does not have.
+
+    Carries its score because a reviewer clicking "apply" is entitled to see how
+    confident the guess is: a suggestion with no number behind it reads as a
+    fact, and applying it silently puts the wrong product in front of a customer.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    product_id: str = Field(serialization_alias="productId")
+    product_code: str = Field(serialization_alias="productCode")
+    product_name: str = Field(serialization_alias="productName")
+    similarity: float
+
+
+class MatchedCodeOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: str
+    product_id: str = Field(serialization_alias="productId")
+    product_code: str = Field(serialization_alias="productCode")
+    product_name: str = Field(serialization_alias="productName")
+    # Every page it was printed on, not just the first. A reviewer is holding the
+    # flyer, and "it is wrong somewhere" is not a correction anybody can make.
+    pages: list[int] = Field(default_factory=list)
+
+
+class UnmatchedCodeOut(BaseModel):
+    """A printed code the master does not have.
+
+    No product id, deliberately: the gap is the point, and a reader of this
+    object cannot accidentally treat the suggestion as the answer (PLAN D8).
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: str
+    pages: list[int] = Field(default_factory=list)
+    suggestion: Optional[CodeSuggestionOut] = None
+
+
+class DimensionCandidateOut(BaseModel):
+    """A size the flyer printed, beside the size the product currently holds.
+
+    A review queue entry. Nothing is written to the product master from a
+    reading (PLAN D9) - which of the two records is wrong is a decision for
+    somebody holding the master-data permission.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: str
+    product_id: str = Field(serialization_alias="productId")
+    pages: list[int] = Field(default_factory=list)
+    printed_length_mm: float = Field(serialization_alias="printedLengthMm")
+    printed_width_mm: float = Field(serialization_alias="printedWidthMm")
+    printed_height_mm: float = Field(serialization_alias="printedHeightMm")
+    current_length_mm: Optional[float] = Field(
+        default=None, serialization_alias="currentLengthMm"
+    )
+    current_width_mm: Optional[float] = Field(
+        default=None, serialization_alias="currentWidthMm"
+    )
+    current_height_mm: Optional[float] = Field(
+        default=None, serialization_alias="currentHeightMm"
+    )
+    # missing / agrees / conflicts.
+    verdict: str
+
+
+class MatchReportOut(BaseModel):
+    """Everything the review screen needs, and nothing it has to derive."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    matched: list[MatchedCodeOut] = Field(default_factory=list)
+    unmatched: list[UnmatchedCodeOut] = Field(default_factory=list)
+    not_promoted: list[MatchedCodeOut] = Field(
+        default_factory=list, serialization_alias="notPromoted"
+    )
+    dimension_candidates: list[DimensionCandidateOut] = Field(
+        default_factory=list, serialization_alias="dimensionCandidates"
+    )
+    # code -> the pages it was printed on, for codes printed more than once.
+    duplicates: dict[str, list[int]] = Field(default_factory=dict)
+    promotion_id: Optional[str] = Field(default=None, serialization_alias="promotionId")
+
+
+class FlyerReadingSummary(BaseModel):
+    """One uploaded flyer, WITHOUT its report.
+
+    The list screen only says which flyers have been read. Attaching a report to
+    each row would run a match per row for a screen nobody reads them on.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    filename: str
+    byte_size: int = Field(serialization_alias="byteSize")
+    page_count: int = Field(default=0, serialization_alias="pageCount")
+    code_count: int = Field(default=0, serialization_alias="codeCount")
+    uploaded_at: datetime = Field(serialization_alias="uploadedAt")
+
+
+class FlyerReadingOut(FlyerReadingSummary):
+    """One flyer and what it means right now.
+
+    ``report`` is recomputed on every read and never stored - see
+    ``flyer_reading_service``. That is why it lives on the detail response and
+    not on the row.
+    """
+
+    report: MatchReportOut
+
+
 class SelectionCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
