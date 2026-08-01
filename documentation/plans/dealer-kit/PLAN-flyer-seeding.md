@@ -9,6 +9,11 @@ tests covering group D, and the four `/flyer-readings` routes are green on 27 mo
 (`tests/test_dealer_kit_flyer_readings.py`). A reading is PERSISTED
 (`dealer_kit.flyer_reading`, migration 316); the report is DERIVED from it on every read and
 deliberately never stored - see the S7.3 outcome note at the foot of this file.
+S7.4 BACKEND is DONE: `POST /flyer-readings/{id}/seed` builds a draft brochure through the
+existing `save_version`, green on 34 tests (`tests/test_dealer_kit_flyer_seed.py`) covering
+AC-E1 to AC-E4. AC-E5 is `[E2E]` and stays open with the review screen. No migration: the
+seed writes only `page`, `page_version` and `collection` rows that already exist. See the
+S7.4 outcome note at the foot of this file.
 **Companion UAC:** `flyer-seeding-acceptance-criteria.md`
 **Input artefact:** `_SORENTO A3 FLYER 2025-2026_compressed.pdf` (36 pages, A3 portrait, vector).
 **Depends on:** S1 builder core, S2 collections.
@@ -251,3 +256,75 @@ Decisions worth keeping:
 
 Migration 316 was applied to the shared dev database by hand and NOT stamped (that database
 sits at another worktree's revision), so its DDL is idempotent throughout.
+
+---
+
+## S7.4 outcome, backend half (2026-08-01)
+
+One route on the existing dealer-kit router, `POST /flyer-readings/{id}/seed`, behind
+`dealer_kit.page.edit` and deliberately NOT `page.publish`. No new slug and no new table:
+the seed writes a `page`, one `page_version` through the existing `save_version`, and one
+`collection` per printed row.
+
+**Draft by construction.** No draft flag exists and none was added. A version with no label
+pointing at it is unreachable by every reader (`published_doc` refuses to fall back to the
+latest version), so the absence of a label IS the draft and approving it is the publish that
+already exists. A flag would be a second way to say the same thing, and the two would
+disagree the first time one was forgotten.
+
+Decisions the ACs did not settle, and the reasoning:
+
+- **Unmatched codes are dropped from the document and named in the response.** A collection
+  pins product ids, so a code the master does not have cannot be pinned, and inventing a
+  product for one would put a SKU nobody stocks in front of a customer (D8). The response
+  carries a `skipped` list in the SAME shape as the match report - code, pages, trigram
+  suggestion - so the reviewer sees exactly what did not make it and where to look for it
+  on the paper. It is deliberately NOT written into the document as a note: the document is
+  what a customer eventually reads, and internal QA text there is one careless publish away
+  from a customer. The recomputed report on the reading keeps answering the same question
+  afterwards, and keeps answering it truthfully as products are created.
+- **A row where nothing matched produces no collection at all.** An empty pinned collection
+  renders a blank grid a designer can do nothing with, inside a page that otherwise looks
+  complete. The section still exists, so the draft still lines up against the flyer page by
+  page.
+- **Two products under one photo both get a tile**, in printed order, in the same
+  collection. The extractor emits both codes and does not decide which owns the picture;
+  neither does the seed. Collapsing them would drop a product from the catalogue on a guess,
+  and the Kit's tile model has no variant concept to collapse them into (D4).
+- **A misread heading is carried through verbatim.** Fixture page 2 reads "Transforming
+  Your" where the paper says "BATHTUB COLLECTION". The seed does not repair it, because a
+  draft that quietly invents a heading is a draft nobody can check against the flyer. It is
+  a five second correction on the review screen, which is exactly why heading carries the
+  smallest fidelity weight.
+- **The promotion is a parameter, applied on the seed.** D5 says a brochure links to one
+  promotion explicitly and never by inference. The review screen is where a human is already
+  answering that question - it is the screen that reports what the promotion does not carry -
+  so the click that approves the seed IS the explicit act. It is typed as a UUID at the edge
+  (422 on a malformed one), validated before anything is written (404 on an unknown one, and
+  no half-made page left behind), and an omitted value on a re-seed means "leave it alone",
+  never "unlink": silently dropping a live brochure's offer is the worse failure, and
+  clearing is the page's own PUT, which says so out loud.
+- **A seed says where it is going.** `pageId` re-seeds; `name` plus `slug` create. Exactly
+  one, 422 otherwise. Nothing links a reading to a page it seeded earlier, on purpose: one
+  flyer legitimately seeds a dealer brochure and a consumer one, so the target is a decision
+  the review screen makes rather than a column.
+- **The paper comes from the flyer.** The fixture measures A3 portrait, and the PDF export
+  reads the PAGE row's profile, so a seed left on the A4 default would print an A3 layout
+  onto A4 and overflow every section. `cover` is set false: the flyer's own first page IS
+  the cover. Applied on creation ONLY - the profile is shared by every version of a page, so
+  overwriting it on a re-seed would re-paginate an already-published edition.
+- **Company scope.** Another company's reading is a 404 before anything is written (never a
+  403, which would confirm the id exists). The seed then lands in the scope that reading was
+  reachable in, which IS its company; a scope holding more than one company cannot stamp an
+  owned row at all, so it fails closed rather than guessing.
+
+**AC-E4 was proved by mutation, not by assertion alone.** With the seed changed to reuse an
+existing page-scoped collection, `test_an_older_version_still_renders_exactly_what_it_did`
+fails on version 1's collection having gained a third product it was never approved with,
+and `test_reseeding_writes_a_new_version_and_brand_new_collections` fails on the id sets
+overlapping. Reverted, both pass. The membership assertion is deliberately ordered before
+the id assertion so a future reuse fails on the damage it does rather than on bookkeeping.
+
+**Left open:** AC-E5 (`[E2E]`, dealer and consumer prices from one published document) needs
+the review screen and a browser, and is not faked with a backend test. The review screen
+itself, the FE half of S7.4, is next.

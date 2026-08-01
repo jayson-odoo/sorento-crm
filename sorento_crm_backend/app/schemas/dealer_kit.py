@@ -10,8 +10,9 @@ import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
@@ -414,6 +415,79 @@ class FlyerReadingOut(FlyerReadingSummary):
     """
 
     report: MatchReportOut
+
+
+# ---------------------------------------------------------------------------
+# Seeding a brochure from a reading (S7.4)
+# ---------------------------------------------------------------------------
+
+
+class FlyerSeedIn(BaseModel):
+    """Where a seed goes, and which offer prices it.
+
+    ``pageId`` re-seeds an existing brochure as a new version; ``name`` plus
+    ``slug`` create one. Exactly one of the two - see the validator.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    page_id: Optional[str] = Field(default=None, validation_alias="pageId")
+    name: Optional[str] = Field(default=None, max_length=200)
+    slug: Optional[str] = Field(default=None, max_length=200)
+    # A UUID at the edge, not a str: a malformed value is then a 422 and can
+    # never reach a WHERE clause. This feature has produced that 500 once.
+    promotion_id: Optional[UUID] = Field(default=None, validation_alias="promotionId")
+    commit_message: Optional[str] = Field(
+        default=None, max_length=500, validation_alias="commitMessage"
+    )
+
+    @field_validator("slug")
+    @classmethod
+    def _slug_shape(cls, v: Optional[str]) -> Optional[str]:
+        # Same rule as PageCreate: the slug becomes a public URL segment.
+        if v is None:
+            return None
+        v = v.strip().lower()
+        if not _SLUG_RE.match(v):
+            raise ValueError(
+                "Address may use lowercase letters, numbers and single hyphens only"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _one_target(self) -> "FlyerSeedIn":
+        from app.services.dealer_kit.flyer_seed_service import (
+            assert_target_is_unambiguous,
+        )
+
+        assert_target_is_unambiguous(self.page_id, self.name, self.slug)
+        return self
+
+
+class FlyerSeedOut(BaseModel):
+    """What the seed made, for the screen that asked for it.
+
+    Counts rather than the document: the review screen sends the caller straight
+    into the builder, which loads the page itself.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    page_id: str = Field(serialization_alias="pageId")
+    name: str
+    slug: str
+    public_path: Optional[str] = Field(default=None, serialization_alias="publicPath")
+    version_id: str = Field(serialization_alias="versionId")
+    version: int
+    section_count: int = Field(default=0, serialization_alias="sectionCount")
+    collection_count: int = Field(default=0, serialization_alias="collectionCount")
+    seeded_product_count: int = Field(
+        default=0, serialization_alias="seededProductCount"
+    )
+    # Printed codes that reached no tile, each with the nearest existing code as
+    # a suggestion. The same shape the match report uses, because it is the same
+    # answer - and a seed is only trustworthy if what it dropped is visible.
+    skipped: list[UnmatchedCodeOut] = Field(default_factory=list)
 
 
 class SelectionCreate(BaseModel):

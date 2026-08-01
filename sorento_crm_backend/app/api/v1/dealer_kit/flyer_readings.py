@@ -34,11 +34,15 @@ from app.schemas.dealer_kit import (
     DimensionCandidateOut,
     FlyerReadingOut,
     FlyerReadingSummary,
+    FlyerSeedIn,
+    FlyerSeedOut,
     MatchReportOut,
     MatchedCodeOut,
     UnmatchedCodeOut,
 )
 from app.services.dealer_kit import flyer_reading_service as svc
+from app.services.dealer_kit import flyer_seed_service as seed_service
+from app.services.dealer_kit import page_service
 
 router = APIRouter()
 
@@ -214,6 +218,66 @@ def get_flyer_reading(
     the file. A reviewer tries it against two promotions without re-uploading.
     """
     return _detail(db, svc.get_reading(db, reading_id), promotion_id)
+
+
+@router.post(
+    "/flyer-readings/{reading_id}/seed",
+    response_model=FlyerSeedOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def seed_from_flyer_reading(
+    reading_id: str,
+    payload: FlyerSeedIn,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_EDIT),
+):
+    """Build a DRAFT brochure from a reading.
+
+    ``page.edit`` and deliberately NOT ``page.publish``: this creates a version
+    no reader can reach, and putting it in front of every dealer stays a
+    separate decision by somebody trusted with it. That is the whole of AC-E2 -
+    a draft is a draft because no label points at it, not because a flag says so.
+
+    201 rather than 202: the document exists by the time this returns. Matching
+    the real flyer's 998 codes costs about 0.4s and the writes are a page, its
+    version and one collection per printed row, so a queue here would buy a
+    polling screen and nothing else.
+
+    Another company's reading is a 404 from ``get_reading``, before anything is
+    written. The seed then lands in the scope that reading was reachable in,
+    which IS its company - and a scope holding more than one company cannot
+    stamp an owned row at all, so it fails closed rather than guessing.
+    """
+    record = svc.get_reading(db, reading_id)
+    result = seed_service.seed(
+        db,
+        record,
+        page_id=payload.page_id,
+        name=payload.name,
+        slug=payload.slug,
+        promotion_id=str(payload.promotion_id) if payload.promotion_id else None,
+        commit_message=payload.commit_message,
+        user_id=_user_id(user),
+    )
+    return FlyerSeedOut(
+        page_id=result.page.id,
+        name=result.page.name,
+        slug=result.page.slug,
+        public_path=page_service.public_path(db, result.page),
+        version_id=result.version.id,
+        version=result.version.version,
+        section_count=result.section_count,
+        collection_count=len(result.collections),
+        seeded_product_count=result.seeded_product_count,
+        skipped=[
+            UnmatchedCodeOut(
+                code=entry.code,
+                pages=list(entry.pages),
+                suggestion=_suggestion_out(entry.suggestion),
+            )
+            for entry in result.skipped
+        ],
+    )
 
 
 @router.delete("/flyer-readings/{reading_id}", status_code=status.HTTP_204_NO_CONTENT)
