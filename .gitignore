@@ -36,3 +36,6 @@ docker-compose.yml
 # Private keys (security audit 2026-06-29 — never commit)
 *.pem
 private_key.pem
+
+# Lavish review artifacts (local review surfaces, not deliverables)
+.lavish/
