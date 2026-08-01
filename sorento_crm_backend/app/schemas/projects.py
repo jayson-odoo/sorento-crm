@@ -706,6 +706,10 @@ class ProjectLeadResponse(BaseModel):
     project_count: int = 0
     possible_duplicates: List[ProjectLeadDuplicateHint] = Field(default_factory=list)
     can_edit: bool = False
+    # Diverges from can_edit precisely where it matters: a decline clears the owner and
+    # can_edit is owner-or-manager, so whoever raised the lead could otherwise not
+    # re-assign the lead that just came back to them.
+    can_assign: bool = False
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

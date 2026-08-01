@@ -613,11 +613,18 @@ class ProjectLead(Base, CompanyScopedMixin):
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     lead_code = Column(String(64), nullable=False)
 
-    # Required (AC-O1), matching ecohub's non-nullable `Lead.clientId`. Somebody told
-    # us, so there is always a somebody. RESTRICT rather than SET NULL: silently
-    # orphaning the lead would leave a rumour with no source.
+    # The BUYER, and optional since phase 2 (D6, AC-A1). It was required on the
+    # premise that somebody told us so there is always a somebody, but that conflates
+    # two different people: the one who mentioned the job and the one who will
+    # eventually place the order. The informant is recorded in its own fields below and
+    # is never written to `customers`, because a data source is not a debtor. Most real
+    # leads arrive long before anyone knows who the buyer will be, and requiring one
+    # meant inventing a customer row to get past the form.
+    #
+    # RESTRICT rather than SET NULL where a buyer IS named: silently detaching it would
+    # leave a lead that looks like it never had one.
     customer_id = Column(
-        UUID(as_uuid=False), ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False
+        UUID(as_uuid=False), ForeignKey("customers.id", ondelete="RESTRICT"), nullable=True
     )
     # Optional: at sighting time the developer is frequently the unknown.
     developer_party_id = Column(

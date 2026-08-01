@@ -162,12 +162,19 @@ def test_the_wizard_can_create_its_customer_in_the_same_request(api):
     assert response.json()["customer_name"] == f"{MARKER} Veritas Architects"
 
 
-def test_a_lead_with_neither_customer_nor_new_customer_is_refused(api):
+def test_a_lead_with_neither_customer_nor_new_customer_is_accepted(api):
+    """AC-A1: the buyer is optional now, so the route must not invent one.
+
+    This asserted a 422 under AC-O1. The premise changed: whoever mentioned the job is
+    the informant, and the buyer is whoever eventually places the order, who is usually
+    unknown at this point.
+    """
     client, _db, _company_id, _user_id = api
 
     response = client.post(BASE, json={"title": "Somebody heard something"})
 
-    assert response.status_code == 422, response.text
+    assert response.status_code == 201, response.text
+    assert response.json()["customer_id"] is None
 
 
 def test_qualifying_returns_the_serialised_project(api):

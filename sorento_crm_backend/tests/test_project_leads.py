@@ -98,11 +98,14 @@ def test_creating_a_lead_stamps_a_code_and_its_initial_status():
         assert lead.status_id is not None
 
 
-def test_a_lead_without_a_customer_is_refused():
-    """AC-O1: somebody told us about it, so there is always a somebody.
+def test_a_lead_needs_no_buyer_because_nobody_knows_one_yet():
+    """AC-A1 replaces AC-O1, which required a customer on every lead.
 
-    Matching ecohub, where ``Lead.clientId`` is non-nullable. A lead with no customer
-    is a note, and notes do not need a pipeline.
+    That premise conflated two different people: whoever mentioned the job, and
+    whoever will eventually place the order. The first is now recorded as the
+    informant, which is never a `customers` row because a data source is not a
+    debtor. Requiring a buyer here meant inventing a customer to get past the form,
+    which is how a pipeline fills up with debtors that never bought anything.
     """
     from app.services import project_lead_service as leads
     from app.services import project_seed_service
@@ -112,15 +115,19 @@ def test_a_lead_without_a_customer_is_refused():
         project_seed_service.run(db, company_id=company_id)
         owner = _user(db, f"{MARKER} Ali")
 
-        with pytest.raises(AppException) as exc:
-            leads.create_lead(
-                db,
-                company_id=company_id,
-                actor_user_id=owner,
-                payload={"title": "Someone heard something"},
-            )
+        lead = leads.create_lead(
+            db,
+            company_id=company_id,
+            actor_user_id=owner,
+            payload={
+                "title": "Someone heard something",
+                "informant_source": "architect",
+                "informant_contact_name": "Ar. Nurul Huda",
+            },
+        )
 
-        assert exc.value.status_code == 422
+        assert lead.customer_id is None
+        assert lead.informant_contact_name == "Ar. Nurul Huda"
 
 
 # ------------------------------------------------------------------ qualify

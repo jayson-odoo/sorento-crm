@@ -1,4 +1,4 @@
-"""Lead API (S2c, UAC Group O).
+"""Lead API (S2c, UAC Group O; P1, UAC Group A).
 
 Three actions get their own endpoints rather than riding the generic PUT, because each
 does work the field alone cannot express:
@@ -11,6 +11,13 @@ does work the field alone cannot express:
 
 A blocked qualify returns 409 and leaves the lead OPEN: the recourse is join-or-dispute
 on the incumbent project, and the lead is the user's record of why they were asking.
+
+Three more join them for the handover handshake (D7): **assign**, **accept** and
+**decline**. Same reasoning -- none of them is a field edit. Assignment starts a clock,
+acceptance is the only thing that confers ownership, and a decline hands the lead back
+to the pool with a reason on it. Every one of them tells the other person, after the
+commit and best-effort: the handover is already recorded, and a notification backend
+that is down must not 500 an assignment that happened.
 """
 from __future__ import annotations
 
@@ -26,8 +33,11 @@ from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
 from app.schemas.projects import (
     ClashPreviewResponse,
     CustomerPortfolioResponse,
+    ProjectLeadAssignRequest,
+    ProjectLeadAwaitingAcceptanceRow,
     ProjectLeadConversionMetrics,
     ProjectLeadCreate,
+    ProjectLeadDeclineRequest,
     ProjectLeadDisqualifyRequest,
     ProjectLeadQualifyRequest,
     ProjectLeadReasonOption,
@@ -69,6 +79,9 @@ async def list_leads(
     owner_user_id: Optional[List[str]] = Query(None),
     customer_id: Optional[List[str]] = Query(None),
     source: Optional[List[str]] = Query(None),
+    acceptance_state: Optional[List[str]] = Query(
+        None, description="assigned | accepted | declined (AC-A7)."
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: str = Query("created_at"),
@@ -89,6 +102,7 @@ async def list_leads(
             owner_user_id=owner_user_id,
             customer_id=customer_id,
             source=source,
+            acceptance_state=acceptance_state,
             page=page,
             limit=limit,
             sort=sort,
@@ -116,6 +130,55 @@ async def list_disqualify_reasons(
     disqualify will refuse until they do."""
     try:
         return svc.disqualify_reasons(db)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get(
+    "/awaiting-acceptance",
+    response_model=ListResponse[ProjectLeadAwaitingAcceptanceRow],
+)
+async def list_awaiting_acceptance(
+    owner_user_id: Optional[List[str]] = Query(None),
+    min_hours: float = Query(
+        0, ge=0, description="Only leads that have been waiting at least this long."
+    ),
+    query: Optional[str] = Query(None, description="Matches the title or the lead code."),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
+    current_user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Marketing's worklist: which leads has nobody taken (AC-A7).
+
+    Declared BEFORE /{lead_id} so "awaiting-acceptance" is not read as a lead id.
+
+    Newest assignment first, each row carrying ``hours_since_assigned``. No `sort`
+    parameter: the order IS the answer this screen exists to give, and letting the grid
+    re-sort it by created_at would hide the handover that has been waiting since Tuesday
+    behind fifty older leads.
+    """
+    try:
+        result = svc.awaiting_acceptance(
+            db,
+            company_id=acting_company_id(db),
+            actor_user_id=current_user["id"],
+            permissions=permission_slugs(db, current_user["id"]),
+            owner_user_id=owner_user_id,
+            min_hours=min_hours,
+            query=query,
+            page=page,
+            limit=limit,
+        )
+        return {
+            "data": result["data"],
+            "pagination": {
+                "total": result["total"],
+                "page": result["page"],
+                "limit": result["limit"],
+            },
+            "empty": result["total"] == 0,
+        }
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -175,22 +238,28 @@ async def create_lead(
 ):
     """Record a sighting. No clash check, deliberately (AC-O3).
 
-    Accepts either an existing ``customer_id`` or a ``new_customer`` block, which is
-    step 1 of the wizard: the informant is frequently an architect or contractor who
-    has never bought anything.
+    The BUYER is optional (AC-A1): marketing works BCI and panel channels, where on day
+    one nobody knows who the buyer is, because the trading house only exists once a
+    contractor is awarded. Who told us goes on the informant fields instead, and is
+    never written to ``customers``.
+
+    ``customer_id`` or a ``new_customer`` block is accepted for the case where the buyer
+    IS already known and not on file. Neither given means no buyer yet, which is the
+    normal shape of a BCI lead and not an error.
     """
     try:
         company_id = acting_company_id(db)
         body = payload.model_dump(exclude_unset=True)
         new_customer = body.pop("new_customer", None)
-        customer = svc.select_or_create_customer(
-            db,
-            company_id=company_id,
-            actor_user_id=current_user["id"],
-            customer_id=body.get("customer_id"),
-            new_customer=new_customer,
-        )
-        body["customer_id"] = customer.id
+        if body.get("customer_id") or new_customer:
+            customer = svc.select_or_create_customer(
+                db,
+                company_id=company_id,
+                actor_user_id=current_user["id"],
+                customer_id=body.get("customer_id"),
+                new_customer=new_customer,
+            )
+            body["customer_id"] = customer.id
         lead = svc.create_lead(
             db,
             company_id=company_id,
@@ -245,6 +314,96 @@ async def change_lead_status(
         svc.change_lead_status(db, lead, payload.to_status_id)
         db.commit()
         db.refresh(lead)
+        return _one(db, lead, current_user)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/{lead_id}/assign", response_model=ProjectLeadResponse)
+async def assign_lead(
+    lead_id: str,
+    payload: ProjectLeadAssignRequest,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Hand the lead to a salesperson and start the acceptance clock (AC-A4).
+
+    Re-assigning an already-assigned lead is allowed and resets the clock. The lead is
+    NOT owned by the assignee until they accept.
+    """
+    try:
+        validate_uuid_path(lead_id, resource="Lead")
+        lead = svc.get_lead(db, lead_id)
+        svc.assert_can_assign_lead(
+            lead, current_user["id"], permission_slugs(db, current_user["id"])
+        )
+        svc.assign_lead(db, lead=lead, owner_user_id=payload.owner_user_id)
+        db.commit()
+        db.refresh(lead)
+        # After the commit, and best-effort inside: the handover is recorded, and the
+        # retry for a 500 raised here would assign a lead that is already assigned.
+        svc.notify_lead_assigned(
+            db, lead=lead, actor_user_id=current_user["id"], note=payload.note
+        )
+        return _one(db, lead, current_user)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/{lead_id}/accept", response_model=ProjectLeadResponse)
+async def accept_lead(
+    lead_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Take on a lead that was handed to you (AC-A5). 409 when nobody assigned it.
+
+    Only the assignee, or a manager acting for them, may accept: the point of the
+    handshake is that nothing is ever silently owned by somebody who never opened it.
+    """
+    try:
+        validate_uuid_path(lead_id, resource="Lead")
+        lead = svc.get_lead(db, lead_id)
+        svc.accept_lead(
+            db,
+            lead=lead,
+            actor_user_id=current_user["id"],
+            permissions=permission_slugs(db, current_user["id"]),
+        )
+        db.commit()
+        db.refresh(lead)
+        return _one(db, lead, current_user)
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/{lead_id}/decline", response_model=ProjectLeadResponse)
+async def decline_lead(
+    lead_id: str,
+    payload: ProjectLeadDeclineRequest,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Refuse the handover with a reason (AC-A5). The lead returns to the pool.
+
+    Whoever assigned it is told, so it does not die in either tray.
+    """
+    try:
+        validate_uuid_path(lead_id, resource="Lead")
+        lead = svc.get_lead(db, lead_id)
+        svc.decline_lead(
+            db,
+            lead=lead,
+            reason=payload.reason,
+            actor_user_id=current_user["id"],
+            permissions=permission_slugs(db, current_user["id"]),
+        )
+        db.commit()
+        db.refresh(lead)
+        svc.notify_lead_declined(db, lead=lead, actor_user_id=current_user["id"])
         return _one(db, lead, current_user)
     except Exception as exc:
         db.rollback()

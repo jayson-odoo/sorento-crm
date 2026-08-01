@@ -5,11 +5,17 @@ The whole design follows from one fact: **a lead is a rumour**.
 - It is NOT exclusive. No fuzzy lock, no clash block, no unique title (AC-O3).
   Locking hearsay would let the first person to type a guess own a development nobody
   has confirmed exists, and a lead frequently has no developer to lock on.
-- It needs a customer, because somebody told us (AC-O1).
+- It anchors on the DEVELOPMENT, not on a counterparty (D6, AC-A1). The buyer is
+  optional and means the debtor who will issue the PO; the INFORMANT who told us is
+  recorded separately, because BCI is a data source and not a debtor.
 - Ownership locks at QUALIFY, which is the moment the registration clash check
   finally runs, and where a rumour becomes a claim (AC-O4).
 - One lead may produce SEVERAL projects: a masterplan sighting becomes a separate
   registration per phase (AC-O5).
+
+Phase 2 adds the handover handshake (D7, AC-A4..A7): assignment is NOT ownership. A
+lead sits `assigned` until the salesperson accepts it, and a decline puts it back in
+marketing's pool with a reason on it, rather than dying in somebody's tray.
 
 Near-duplicates ARE surfaced on the list, informationally, using the same matcher the
 registration lock uses. Surfacing and enforcing are different things and this module
@@ -17,7 +23,8 @@ does exactly one of them here.
 """
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence, Set
 
 from sqlalchemy import func, or_
@@ -42,16 +49,44 @@ from app.services.numbering_service import NumberingService
 from app.services.project_clash_service import find_clashes, normalise_project_title
 from app.status_engine.registry import get_status_entity
 
+logger = logging.getLogger(__name__)
+
 NUMBERING_DOC_TYPE = "project_lead"
 LEAD_ENTITY_TYPE = "project_lead"
+# The audit listener keys on the TABLE name, not the class name, and the assigner is
+# read back out of the trail (see `_assigner_user_id`).
+LEAD_AUDIT_ENTITY_TYPE = "project_leads"
 
 OUTCOME_OPEN = LEAD_OUTCOME_OPEN
 OUTCOME_QUALIFIED = LEAD_OUTCOME_QUALIFIED
 OUTCOME_DISQUALIFIED = LEAD_OUTCOME_DISQUALIFIED
 
+# The handshake (D7). NULL means no handover has happened yet -- a lead somebody
+# recorded for themselves is not "awaiting acceptance" by anyone.
+ACCEPTANCE_ASSIGNED = "assigned"
+ACCEPTANCE_ACCEPTED = "accepted"
+ACCEPTANCE_DECLINED = "declined"
+
+# Who told us (AC-A2). The union of the codes named in the contract and in the UAC:
+# both lists are real -- `panel` and `contractor` come from how marketing actually
+# works, `architect` from the API contract the frontend is built against -- and
+# refusing either one would 422 a screen that is following its own spec.
+INFORMANT_SOURCE_BCI = "bci"
+INFORMANT_SOURCES = (
+    INFORMANT_SOURCE_BCI,
+    "panel",
+    "referral",
+    "walk_in",
+    "consultant",
+    "architect",
+    "contractor",
+    "other",
+)
+
 # Fields a caller may set on create or edit. Everything else about a lead is decided
-# by the service (code, outcome, status, qualified_at) so a client cannot, for
-# example, mark its own lead qualified without going through the clash check.
+# by the service (code, outcome, status, qualified_at, and every acceptance column) so
+# a client cannot, for example, mark its own lead qualified without going through the
+# clash check, or accept a lead nobody assigned to it.
 EDITABLE_FIELDS = (
     "customer_id",
     "developer_party_id",
@@ -62,6 +97,10 @@ EDITABLE_FIELDS = (
     "location",
     "notes",
     "owner_user_id",
+    "informant_source",
+    "informant_ref",
+    "informant_party_id",
+    "informant_contact_name",
 )
 
 MANAGE_PERMISSION = "projects.projects.manage"
@@ -81,22 +120,19 @@ def _clean_title(raw: Optional[str]) -> str:
     return title
 
 
-def _assert_customer(db: Session, customer_id: Optional[str]) -> None:
-    """AC-O1. Required, matching ecohub's non-nullable ``Lead.clientId``.
+def _assert_buyer(db: Session, customer_id: Optional[str]) -> None:
+    """The buyer is OPTIONAL (AC-A1, D6), and means the debtor who will issue the PO.
 
-    A lead with no customer is a note, and notes do not need a pipeline. Checked in
-    the service as well as by the NOT NULL column so the caller gets a 422 that says
-    what to do rather than an IntegrityError.
+    Phase 1 required it, matching ecohub's non-nullable ``Lead.clientId``. That is the
+    accepted deviation: ecohub's lead IS a consumer enquiry, while a BCI sighting has
+    no counterparty at all -- the trading house only exists once a contractor is
+    awarded, which is often months after marketing records the development. Asking for
+    it on day one would either block the lead or invite a made-up customer row.
+
+    Who told us is recorded on the informant fields instead, and never in ``customers``.
     """
     if not customer_id:
-        raise AppException(
-            status_code=422,
-            message=(
-                "A lead needs the customer who told us about it. Pick an existing "
-                "customer or create one from the wizard."
-            ),
-            code="lead_customer_required",
-        )
+        return
     exists = db.query(Customer.id).filter(Customer.id == customer_id).first()
     if not exists:
         raise AppException(
@@ -104,6 +140,34 @@ def _assert_customer(db: Session, customer_id: Optional[str]) -> None:
             message="That customer no longer exists.",
             code="lead_customer_not_found",
         )
+
+
+def _assert_informant(db: Session, payload: Dict[str, Any]) -> None:
+    """Validate the informant bucket and its firm, when either was supplied.
+
+    Only what is PRESENT in the payload is checked, so a PUT that touches the title
+    cannot be rejected for an informant it never mentioned.
+    """
+    if "informant_source" in payload:
+        source = payload.get("informant_source")
+        if source and source not in INFORMANT_SOURCES:
+            raise AppException(
+                status_code=422,
+                message=f"Unknown informant source '{source}'.",
+                code="lead_informant_source_invalid",
+            )
+    if payload.get("informant_party_id"):
+        exists = (
+            db.query(ProjectParty.id)
+            .filter(ProjectParty.id == payload["informant_party_id"])
+            .first()
+        )
+        if not exists:
+            raise AppException(
+                status_code=404,
+                message="That informant no longer exists.",
+                code="lead_informant_party_not_found",
+            )
 
 
 def _assert_source(source: Optional[str]) -> None:
@@ -210,9 +274,10 @@ def create_lead(
 ) -> ProjectLead:
     """Record a sighting. No clash check, by design (AC-O3)."""
     title = _clean_title(payload.get("title"))
-    _assert_customer(db, payload.get("customer_id"))
+    _assert_buyer(db, payload.get("customer_id"))
     _assert_source(payload.get("source"))
     _assert_developer(db, payload.get("developer_party_id"))
+    _assert_informant(db, payload)
 
     code = NumberingService(db).get_next_number(NUMBERING_DOC_TYPE, commit_rule=False)
     if not code:
@@ -228,7 +293,7 @@ def create_lead(
     lead = ProjectLead(
         company_id=company_id,
         lead_code=code,
-        customer_id=payload["customer_id"],
+        customer_id=payload.get("customer_id"),
         developer_party_id=payload.get("developer_party_id"),
         title=title,
         normalised_title=normalise_project_title(title),
@@ -237,6 +302,10 @@ def create_lead(
         estimated_value=payload.get("estimated_value"),
         location=payload.get("location"),
         notes=payload.get("notes"),
+        informant_source=payload.get("informant_source"),
+        informant_ref=payload.get("informant_ref"),
+        informant_party_id=payload.get("informant_party_id"),
+        informant_contact_name=payload.get("informant_contact_name"),
         outcome=OUTCOME_OPEN,
         owner_user_id=payload.get("owner_user_id") or actor_user_id,
         created_by=actor_user_id,
@@ -257,13 +326,15 @@ def select_or_create_customer(
     customer_id: Optional[str] = None,
     new_customer: Optional[Dict[str, Any]] = None,
 ) -> Customer:
-    """Step 1 of the wizard: pick a customer, or create one for a non-buyer.
+    """Pick the BUYER, or create it when it is known and not yet on file.
 
-    This is the accepted reversal recorded in the plan: `project_parties` exists to
-    keep organisations OUT of the 2,391-row buying ledger, and here we add to it. The
-    real data supports it (KHOO SOON LEE REALTY and GLOBAL INGRESS are already
-    customers), and rows created this way carry ``source='project_lead'`` so order and
-    invoice pickers can filter prospects out if the noise becomes real.
+    Phase 1 also used this for the person who told us, which D6 reverses: an informant
+    is a data source, never a debtor, and BCI has no business in a buying ledger. Only a
+    counterparty that will actually issue a purchase order comes through here now, which
+    is why nothing calls it when neither ``customer_id`` nor ``new_customer`` is given.
+
+    Rows created this way still carry ``source='project_lead'`` so order and invoice
+    pickers can filter prospects out if the noise becomes real.
     """
     if customer_id:
         customer = db.query(Customer).filter(Customer.id == customer_id).first()
@@ -372,12 +443,15 @@ def update_lead(db: Session, lead: ProjectLead, payload: Dict[str, Any]) -> Proj
         lead.title = title
         lead.normalised_title = normalise_project_title(title)
     if "customer_id" in payload:
-        _assert_customer(db, payload.get("customer_id"))
+        # Explicitly allowed to go back to NULL: a buyer named in error is corrected by
+        # clearing it, not by pointing the lead at some other debtor.
+        _assert_buyer(db, payload.get("customer_id"))
         lead.customer_id = payload["customer_id"]
     if "source" in payload:
         _assert_source(payload.get("source"))
     if "developer_party_id" in payload:
         _assert_developer(db, payload.get("developer_party_id"))
+    _assert_informant(db, payload)
 
     for field in EDITABLE_FIELDS:
         if field in ("title", "customer_id"):
@@ -436,6 +510,442 @@ def delete_lead(db: Session, lead: ProjectLead) -> None:
     """
     db.delete(lead)
     db.flush()
+
+
+# ------------------------------------------------- the acceptance handshake
+#
+# D7 in one sentence: **assignment is not ownership**. Marketing hands a lead over and
+# the salesperson either takes it or says why not, and until one of those happens the
+# lead is measurably waiting. Their own note started this: the handover has to be
+# explicit or the lead dies between the two of them.
+
+
+def _assert_assignee(db: Session, user_id: Optional[str]):
+    """The person being asked to take it must exist and still work here."""
+    from app.models.user import User
+
+    if not user_id:
+        raise AppException(
+            status_code=422,
+            message="Pick the salesperson this lead is going to.",
+            code="lead_assignee_required",
+        )
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise AppException(
+            status_code=404,
+            message="That user no longer exists.",
+            code="lead_assignee_not_found",
+        )
+    # A trashed user cannot open the lead, so assigning to one is a lead nobody is
+    # holding while the list says somebody is.
+    if getattr(user, "is_trashed", False):
+        raise AppException(
+            status_code=422,
+            message="That user has been removed. Pick somebody who can act on it.",
+            code="lead_assignee_inactive",
+        )
+    return user
+
+
+def can_assign_lead(
+    lead: ProjectLead, user_id: str, permissions: Optional[Set[str]] = None
+) -> bool:
+    """Who may hand a lead out: a manager, the current holder, or whoever recorded it.
+
+    The creator matters because of the decline path. A decline clears
+    ``owner_user_id``, and ``can_edit_lead`` is owner-or-manager -- so without this the
+    marketing user who raised the lead could not re-assign the very lead that just came
+    back to them, which is precisely where the journey says it lands.
+    """
+    if MANAGE_PERMISSION in (permissions or set()):
+        return True
+    if not user_id:
+        return False
+    return lead.owner_user_id == user_id or lead.created_by == user_id
+
+
+def assert_can_assign_lead(
+    lead: ProjectLead, user_id: str, permissions: Optional[Set[str]] = None
+) -> None:
+    if not can_assign_lead(lead, user_id, permissions):
+        raise AppException(
+            status_code=403,
+            message=(
+                "This lead belongs to somebody else. Ask its owner or a manager to "
+                "hand it over."
+            ),
+            code="lead_not_assignable",
+        )
+
+
+def assign_lead(
+    db: Session,
+    *,
+    lead: ProjectLead,
+    owner_user_id: str,
+) -> ProjectLead:
+    """Hand the lead over and start the clock (AC-A4).
+
+    Re-assigning an already-assigned lead is allowed and RESETS the clock: the second
+    salesperson cannot inherit the first one's silence, and marketing's worklist has to
+    read as the wait for the person who is actually holding it now.
+
+    Any earlier decline is cleared for the same reason -- a stale "declined by Ali,
+    wrong patch" alongside a live assignment to Siti reads as a refusal of Siti's.
+    """
+    _assert_assignee(db, owner_user_id)
+
+    lead.owner_user_id = owner_user_id
+    lead.acceptance_state = ACCEPTANCE_ASSIGNED
+    lead.assigned_at = datetime.utcnow()
+    lead.accepted_at = None
+    lead.declined_reason = None
+    lead.declined_at = None
+    db.flush()
+    return lead
+
+
+def can_decide_acceptance(
+    lead: ProjectLead, user_id: str, permissions: Optional[Set[str]] = None
+) -> bool:
+    """Only the person it was handed to answers for it -- or a manager on their behalf.
+
+    The manager exception is not a convenience: somebody has to be able to clear an
+    assignment made to a person who has gone on leave, and the alternative is a lead
+    frozen `assigned` forever.
+    """
+    if MANAGE_PERMISSION in (permissions or set()):
+        return True
+    return bool(user_id) and lead.owner_user_id == user_id
+
+
+def _assert_pending_acceptance(lead: ProjectLead) -> None:
+    if lead.acceptance_state != ACCEPTANCE_ASSIGNED:
+        raise AppException(
+            status_code=409,
+            message=(
+                "This lead is not waiting on anybody. Assign it to a salesperson first."
+            ),
+            code="lead_not_awaiting_acceptance",
+        )
+
+
+def _assert_can_decide(
+    lead: ProjectLead, user_id: str, permissions: Optional[Set[str]] = None
+) -> None:
+    if not can_decide_acceptance(lead, user_id, permissions):
+        raise AppException(
+            status_code=403,
+            message=(
+                "This lead was handed to somebody else. Only they -- or their manager "
+                "-- can accept or decline it."
+            ),
+            code="lead_acceptance_not_yours",
+        )
+
+
+def accept_lead(
+    db: Session,
+    *,
+    lead: ProjectLead,
+    actor_user_id: str,
+    permissions: Optional[Set[str]] = None,
+) -> ProjectLead:
+    """Take the lead on (AC-A5). From here it is genuinely owned.
+
+    State is checked before authorship on purpose: "nobody assigned this" is the more
+    useful answer to an admin pressing Accept on an unassigned lead than "not yours".
+    """
+    _assert_pending_acceptance(lead)
+    _assert_can_decide(lead, actor_user_id, permissions)
+
+    lead.acceptance_state = ACCEPTANCE_ACCEPTED
+    lead.accepted_at = datetime.utcnow()
+    db.flush()
+    return lead
+
+
+def decline_lead(
+    db: Session,
+    *,
+    lead: ProjectLead,
+    reason: Optional[str],
+    actor_user_id: str,
+    permissions: Optional[Set[str]] = None,
+) -> ProjectLead:
+    """Refuse the handover and put the lead back in the pool (AC-A5).
+
+    ``owner_user_id`` is cleared, which is the whole point: a declined lead that kept
+    its owner would sit in the refuser's list forever and never appear in marketing's
+    unassigned view. The reason stays on the lead so the next assignment is made with
+    it in view ("not my patch" is routing information, not a complaint).
+
+    The outcome is untouched: a decline is a handover failing, not the development
+    going away.
+    """
+    _assert_pending_acceptance(lead)
+    _assert_can_decide(lead, actor_user_id, permissions)
+
+    text = " ".join((reason or "").split())
+    if not text:
+        raise AppException(
+            status_code=422,
+            message="Say why it is not yours, so marketing can route it properly.",
+            code="lead_decline_reason_required",
+        )
+
+    lead.acceptance_state = ACCEPTANCE_DECLINED
+    lead.declined_reason = text
+    lead.declined_at = datetime.utcnow()
+    lead.accepted_at = None
+    lead.owner_user_id = None
+    db.flush()
+    return lead
+
+
+# ------------------------------------------------- telling the other person
+#
+# Everything below is BEST-EFFORT and runs AFTER the caller has committed. The handover
+# is already recorded, so a notification backend that is down must never turn a
+# successful assign into a 500 -- and it especially must not, because the retry would
+# re-assign a lead that is already assigned.
+
+
+def _lead_url(lead: ProjectLead) -> str:
+    """The in-system detail page. Recipients are staff, so this is never a portal link;
+    the deep-link-after-login carries them back here if their session lapsed."""
+    from app.config import settings
+
+    base = (getattr(settings, "frontend_base_url", None) or "").strip().rstrip("/")
+    path = f"/project-sales/leads/{lead.id}"
+    return f"{base}{path}" if base else path
+
+
+def _notify_users(
+    db: Session,
+    *,
+    user_ids: Sequence[Optional[str]],
+    lead: ProjectLead,
+    notif_type: str,
+    event_type: str,
+    title: str,
+    body: str,
+    data: Dict[str, Any],
+    dedup_key: str,
+) -> int:
+    """Fan out to a de-duplicated recipient set. Returns how many were notified.
+
+    In-app always fires; email and WhatsApp are each gated by the RECIPIENT's own
+    per-event toggle inside ``create_with_channel_preferences``, the same matrix the SLA
+    notify uses. The assignment pair is reused for both halves of the handshake: an
+    assign and the decline that answers it are one conversation about who is holding
+    this lead, and a lead-specific toggle pair would be a `users` column this slice
+    cannot add.
+    """
+    try:
+        from app.services.notification_service import NotificationService
+
+        service = NotificationService(db)
+        sent = 0
+        for user_id in {str(u) for u in user_ids if u}:
+            service.create_with_channel_preferences(
+                user_id=user_id,
+                type=notif_type,
+                title=title,
+                body=body,
+                data=data,
+                source_entity_type=LEAD_ENTITY_TYPE,
+                source_entity_id=str(lead.id),
+                dedup_key=dedup_key,
+                event_type=event_type,
+                send_in_app=True,
+                send_email=True,
+                send_whatsapp=True,
+                email_pref_attr="notify_email_on_assignment",
+                whatsapp_pref_attr="notify_whatsapp_on_assignment",
+            )
+            sent += 1
+        return sent
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "lead notification not sent: type=%s lead=%s (%s)", notif_type, lead.id, exc
+        )
+        return 0
+
+
+def notify_lead_assigned(
+    db: Session,
+    *,
+    lead: ProjectLead,
+    actor_user_id: Optional[str] = None,
+    note: Optional[str] = None,
+) -> int:
+    """Tell the assignee one thing, with enough on it to decide (AC-A4, journey step 2).
+
+    The message CARRIES the development, the developer and the value, because otherwise
+    Ali has to open the record just to decide whether to care.
+    """
+    try:
+        developer = _party_name(db, lead.developer_party_id)
+        value = f"RM {lead.estimated_value}" if lead.estimated_value is not None else None
+        facts = " | ".join(str(part) for part in (developer, lead.location, value) if part)
+        body = f"{lead.title}"
+        if facts:
+            body += f"\n{facts}"
+        if note:
+            body += f"\n\nFrom the sender: {note}"
+        body += "\n\nAccept it to make it yours, or decline with a reason."
+        body += f"\n\nOpen: {_lead_url(lead)}"
+
+        return _notify_users(
+            db,
+            user_ids=[lead.owner_user_id],
+            lead=lead,
+            notif_type="project_lead_assigned",
+            event_type="project_lead_assigned",
+            title=f"Lead {lead.lead_code} assigned to you",
+            body=body,
+            data={
+                "lead_id": str(lead.id),
+                "lead_code": lead.lead_code,
+                "title": lead.title,
+                "developer_name": developer,
+                "estimated_value": (
+                    str(lead.estimated_value)
+                    if lead.estimated_value is not None
+                    else None
+                ),
+                "assigned_by_user_id": actor_user_id,
+                "note": note,
+                "link": _lead_url(lead),
+                "whatsapp_context_vars": {
+                    "entity_number": lead.lead_code,
+                    "message": body,
+                },
+            },
+            # Per ASSIGNMENT, not per lead: a re-assignment resets the clock and has to
+            # be able to notify again, which a lead-scoped key would suppress.
+            dedup_key=(
+                f"{lead.id}:assigned:"
+                f"{(lead.assigned_at or datetime.utcnow()).isoformat()}"
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Guards the message BUILD as well as the send: resolving the developer name is
+        # a query, and a failure there would 500 an assignment that already committed.
+        logger.warning("lead assigned notify failed: lead=%s (%s)", lead.id, exc)
+        return 0
+
+
+def notify_lead_declined(
+    db: Session,
+    *,
+    lead: ProjectLead,
+    actor_user_id: Optional[str] = None,
+) -> int:
+    """Tell whoever handed it over that it came back, and why (AC-A5).
+
+    Recipient is the assigner read out of the audit trail, falling back to whoever
+    recorded the lead -- in the journey they are the same marketing person. A decline
+    nobody hears about is the failure mode D7 exists to remove.
+    """
+    try:
+        decliner = _user_label(db, actor_user_id)
+        body = f"{lead.title}"
+        if decliner:
+            body += f"\n{decliner} declined it: {lead.declined_reason}"
+        else:
+            body += f"\nDeclined: {lead.declined_reason}"
+        body += "\n\nIt is back in the unassigned pool. Assign it to somebody else."
+        body += f"\n\nOpen: {_lead_url(lead)}"
+
+        return _notify_users(
+            db,
+            user_ids=_decline_recipients(db, lead),
+            lead=lead,
+            notif_type="project_lead_declined",
+            event_type="project_lead_declined",
+            title=f"Lead {lead.lead_code} was declined",
+            body=body,
+            data={
+                "lead_id": str(lead.id),
+                "lead_code": lead.lead_code,
+                "title": lead.title,
+                "declined_by_user_id": actor_user_id,
+                "declined_by_name": decliner,
+                "declined_reason": lead.declined_reason,
+                "link": _lead_url(lead),
+                "whatsapp_context_vars": {
+                    "entity_number": lead.lead_code,
+                    "message": body,
+                },
+            },
+            # Per DECLINE: the same lead can be assigned and declined more than once,
+            # and the second refusal is news.
+            dedup_key=(
+                f"{lead.id}:declined:"
+                f"{(lead.declined_at or datetime.utcnow()).isoformat()}"
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Same guard as the assign side, and for the same reason: resolving the assigner
+        # and the decliner are both queries, run after the decline has committed.
+        logger.warning("lead declined notify failed: lead=%s (%s)", lead.id, exc)
+        return 0
+
+
+def _decline_recipients(db: Session, lead: ProjectLead) -> List[str]:
+    """Whoever assigned it, then whoever recorded it, then management.
+
+    Never empty by design: a lead that came back and told nobody is the tray it was
+    supposed to escape from.
+    """
+    recipients = [uid for uid in (_assigner_user_id(db, lead), lead.created_by) if uid]
+    if recipients:
+        return recipients
+
+    from app.services.project_notify_service import management_user_ids
+
+    return management_user_ids(db)
+
+
+def _assigner_user_id(db: Session, lead: ProjectLead) -> Optional[str]:
+    """Who last assigned this lead, from the audit trail.
+
+    There is no ``assigned_by`` column, and the audit listener already records the actor
+    of every lead UPDATE (``__audit_track__`` on the model), so reading it back is
+    cheaper than a column that would duplicate it. Best-effort: an install where the
+    listeners are not registered simply falls through to ``created_by``.
+    """
+    try:
+        from app.models.audit import AuditLog
+
+        row = (
+            db.query(AuditLog.user_id)
+            .filter(
+                AuditLog.entity_type == LEAD_AUDIT_ENTITY_TYPE,
+                AuditLog.entity_id == str(lead.id),
+                AuditLog.new_values["acceptance_state"].astext == ACCEPTANCE_ASSIGNED,
+            )
+            .order_by(AuditLog.changed_at.desc())
+            .first()
+        )
+        return str(row[0]) if row and row[0] else None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("lead assigner lookup failed: lead=%s (%s)", lead.id, exc)
+        return None
+
+
+def _party_name(db: Session, party_id: Optional[str]) -> Optional[str]:
+    if not party_id:
+        return None
+    row = db.query(ProjectParty.name).filter(ProjectParty.id == party_id).first()
+    return row[0] if row else None
+
+
+def _user_label(db: Session, user_id: Optional[str]) -> Optional[str]:
+    return _resolve_names(db, [user_id]).get(user_id or "") if user_id else None
 
 
 # ------------------------------------------------------------------ qualify
@@ -623,15 +1133,22 @@ def serialize_leads(
         if customer_ids
         else {}
     )
-    developer_ids = {lead.developer_party_id for lead in leads if lead.developer_party_id}
-    developers = (
+    # One query for BOTH party roles. The developer and the informant are frequently
+    # the same firm, and two queries would be two round trips for one answer.
+    party_ids = {
+        party_id
+        for lead in leads
+        for party_id in (lead.developer_party_id, lead.informant_party_id)
+        if party_id
+    }
+    parties = (
         {
             row.id: row.name
             for row in db.query(ProjectParty)
-            .filter(ProjectParty.id.in_(developer_ids))
+            .filter(ProjectParty.id.in_(party_ids))
             .all()
         }
-        if developer_ids
+        if party_ids
         else {}
     )
     status_ids = {lead.status_id for lead in leads if lead.status_id}
@@ -658,7 +1175,17 @@ def serialize_leads(
                 "customer_id": lead.customer_id,
                 "customer_name": customers.get(lead.customer_id or ""),
                 "developer_party_id": lead.developer_party_id,
-                "developer_name": developers.get(lead.developer_party_id or ""),
+                "developer_name": parties.get(lead.developer_party_id or ""),
+                "informant_source": lead.informant_source,
+                "informant_ref": lead.informant_ref,
+                "informant_party_id": lead.informant_party_id,
+                "informant_party_label": parties.get(lead.informant_party_id or ""),
+                "informant_contact_name": lead.informant_contact_name,
+                "acceptance_state": lead.acceptance_state,
+                "assigned_at": lead.assigned_at,
+                "accepted_at": lead.accepted_at,
+                "declined_reason": lead.declined_reason,
+                "declined_at": lead.declined_at,
                 "source": lead.source,
                 "source_detail": lead.source_detail,
                 "estimated_value": (
@@ -677,6 +1204,13 @@ def serialize_leads(
                 "project_count": project_counts.get(lead.id, 0),
                 "possible_duplicates": hints.get(lead.id, []),
                 "can_edit": can_edit_lead(lead, actor_user_id, permissions or set()),
+                # Separate from can_edit because the two diverge exactly where it
+                # matters: a decline clears the owner, and can_edit is
+                # owner-or-manager, so the marketing user who raised the lead could
+                # not re-assign the lead that just came back to them. Sent rather
+                # than inferred client-side, which was the frontend's only remaining
+                # guess about who may act.
+                "can_assign": can_assign_lead(lead, actor_user_id, permissions),
                 "created_at": lead.created_at,
                 "updated_at": lead.updated_at,
             }
@@ -757,6 +1291,7 @@ def list_leads(
     owner_user_id: Optional[Sequence[str]] = None,
     customer_id: Optional[Sequence[str]] = None,
     source: Optional[Sequence[str]] = None,
+    acceptance_state: Optional[Sequence[str]] = None,
     page: int = 1,
     limit: int = 50,
     sort: str = "created_at",
@@ -769,6 +1304,10 @@ def list_leads(
         q = q.filter(
             or_(ProjectLead.title.ilike(like), ProjectLead.lead_code.ilike(like))
         )
+    if acceptance_state:
+        # AC-A7: marketing filters the ordinary list by handshake state too, so
+        # "accepted" and "declined" are one click away from the same screen.
+        q = q.filter(ProjectLead.acceptance_state.in_(list(acceptance_state)))
     if outcome:
         q = q.filter(ProjectLead.outcome.in_(list(outcome)))
     if status_id:
@@ -809,6 +1348,77 @@ def list_leads(
         "page": page,
         "limit": limit,
     }
+
+
+def hours_since(moment: Optional[datetime], *, now: Optional[datetime] = None) -> Optional[float]:
+    """Hours between a naive-UTC timestamp and now, to two decimals.
+
+    Computed here rather than in the browser: the columns are naive UTC, and a
+    JavaScript ``new Date()`` on a string with no zone reads it as local time, which
+    would put every Malaysian row eight hours out.
+    """
+    if not moment:
+        return None
+    delta = (now or datetime.utcnow()) - moment
+    return round(delta.total_seconds() / 3600.0, 2)
+
+
+def awaiting_acceptance(
+    db: Session,
+    *,
+    company_id: str,
+    actor_user_id: str = "",
+    permissions: Optional[Set[str]] = None,
+    owner_user_id: Optional[Sequence[str]] = None,
+    min_hours: float = 0,
+    query: Optional[str] = None,
+    page: int = 1,
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """Marketing's worklist: every lead nobody has taken yet (AC-A7).
+
+    Newest assignment first, deliberately, and NOT longest-waiting first: this is the
+    handover queue marketing works, and the oldest rows are the ones already chased.
+    ``min_hours`` is how "nobody has answered me since Tuesday" is asked for.
+
+    Every row carries ``hours_since_assigned`` so the screen shows the wait without
+    doing date maths.
+    """
+    now = datetime.utcnow()
+
+    q = db.query(ProjectLead).filter(
+        ProjectLead.company_id == company_id,
+        ProjectLead.acceptance_state == ACCEPTANCE_ASSIGNED,
+    )
+    if owner_user_id:
+        q = q.filter(ProjectLead.owner_user_id.in_(list(owner_user_id)))
+    if query:
+        like = f"%{query.strip()}%"
+        q = q.filter(
+            or_(ProjectLead.title.ilike(like), ProjectLead.lead_code.ilike(like))
+        )
+    if min_hours and float(min_hours) > 0:
+        q = q.filter(ProjectLead.assigned_at <= now - timedelta(hours=float(min_hours)))
+
+    total = q.count()
+    page = max(1, int(page or 1))
+    limit = max(1, min(int(limit or 50), MAX_PAGE_LIMIT))
+    rows = (
+        q.order_by(ProjectLead.assigned_at.desc())
+        .offset((page - 1) * limit)
+        .limit(limit)
+        .all()
+    )
+
+    serialised = serialize_leads(
+        db, rows, actor_user_id=actor_user_id, permissions=permissions
+    )
+    # Same `now` for every row, so two rows assigned in the same second cannot report
+    # different waits.
+    for row, lead in zip(serialised, rows):
+        row["hours_since_assigned"] = hours_since(lead.assigned_at, now=now)
+
+    return {"data": serialised, "total": total, "page": page, "limit": limit}
 
 
 def conversion_metrics(db: Session, *, company_id: str) -> Dict[str, Any]:
