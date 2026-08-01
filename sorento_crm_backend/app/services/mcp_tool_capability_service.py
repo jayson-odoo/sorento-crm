@@ -1300,7 +1300,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="List workflow form submissions.",
         description=(
             "Retrieves marketing form. DO NOT use this tool for checking stock, placing orders, or submitting data. "
-            "List workflow submissions with definition_id / state_code filters."
+            "List workflow submissions with definition_id / status_key filters."
         ),
         typical_user_questions=(
             "List workflow submissions.",

@@ -72,7 +72,9 @@ class WorkflowSubmissionUpdate(BaseModel):
 
 
 class WorkflowTransitionRequest(BaseModel):
-    transition_id: str
+    """The status to move to. The engine resolves which edge authorises it."""
+
+    to_status_id: str
     remark: Optional[str] = None
 
 
@@ -87,10 +89,17 @@ class WorkflowSubmissionLineOut(BaseModel):
 
 
 class WorkflowTransitionLogOut(BaseModel):
+    """One accepted move: the endpoints, the edge that authorised it, the remark.
+
+    Keys travel beside the ids because the frontend may not render a UUID.
+    """
+
     id: str
-    from_state_code: Optional[str] = None
-    to_state_code: str
-    transition_id: Optional[str] = None
+    from_status_id: Optional[str] = None
+    to_status_id: str
+    from_status_key: Optional[str] = None
+    to_status_key: Optional[str] = None
+    status_transition_id: Optional[str] = None
     remark: Optional[str] = None
     user_id: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -103,7 +112,10 @@ class WorkflowSubmissionOut(BaseModel):
     id: str
     definition_id: str
     version_id: str
-    current_state_code: str
+    status_id: str
+    # Derived from the joined status row, so a grid never has to show an id.
+    status_key: Optional[str] = None
+    status_label: Optional[str] = None
     header_data: Dict[str, Any]
     lines: List[WorkflowSubmissionLineOut] = Field(default_factory=list)
     transition_logs: List[WorkflowTransitionLogOut] = Field(default_factory=list)

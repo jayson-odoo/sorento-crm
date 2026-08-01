@@ -129,12 +129,12 @@ class ListQuerySearchService:
     def _search_workflow_form_submissions(self, req: ListSearchRequest, clause, sort_field: str, sort_dir: str) -> dict:
         svc = WorkflowFormsService(self.db)
         wf_def_id = (req.workflow_form_definition_id or "").strip() or None
-        st = (req.workflow_submission_state_code or "").strip() or None
+        status_key = (req.workflow_submission_status_key or "").strip() or None
         raw = svc.list_submissions(
             page=req.page,
             limit=req.limit,
             definition_id=wf_def_id,
-            state_code=st,
+            status_key=status_key,
             query=req.quick_search,
             sort_field=sort_field or "updated_at",
             sort_dir=sort_dir or "desc",

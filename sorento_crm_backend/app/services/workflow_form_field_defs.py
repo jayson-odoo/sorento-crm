@@ -1,10 +1,10 @@
 """Extract dynamic list-query field definitions from a `FormDocument`.
 
-Replaces `workflow_forms_service._collect_field_defs`, which reads the retired
-old-shape document (`header_sections` / `header_fields` / `line_groups`).
+Replaces the private field-collecting helper in `workflow_forms_service`, which read
+the retired old-shape document (`header_sections` / `header_fields` / `line_groups`).
 
 **Why a separate module rather than a patch to that service.**
-`workflow_submission_dynamic_list_query` imported `_collect_field_defs`, and
+`workflow_submission_dynamic_list_query` imported that private helper, and
 `app/api/v1/list_query.py` imports that, and `app.main` mounts the list-query
 router. So a private helper inside a form service sat on the API's **boot import
 path**: removing it during F1 would raise `ImportError` at uvicorn startup, taking

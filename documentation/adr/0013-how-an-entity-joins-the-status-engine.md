@@ -123,10 +123,27 @@ listeners capture `old_values` / `new_values` for every tracked column. So a sta
 is **already** recorded, with actor, timestamp, trace_id, contact attribution and company scoping. That is why
 complaints need no bespoke history table.
 
-A per-entity `*_transition_logs` table is therefore a second trail that has to be kept honest by hand, and the
-two will disagree the first time someone writes the status without going through the service that logs. If the
-specific edge taken or a transition remark must be retained, put them on the entity as columns and let the
-listener diff them.
+**Amended 2026-08-01, after F1.** The original wording banned a companion table outright and told you to put
+the edge and remark on the entity as columns. That was too absolute, and the alternative was worse: a
+submission has one current status but many transitions, so carrying the edge on the entity means `last_edge` /
+`last_remark` columns whose only purpose is to be diffed out of a JSONB audit row. That is a worse shape than a
+table, and reading history back out of `audit_logs` JSONB is worse than querying one.
+
+The rule that actually matters is narrower, so state it that way:
+
+- **`audit_logs` owns "what changed".** The before and after of the status column. Never duplicate that as the
+  source of truth.
+- **A companion log may exist for what `audit_logs` cannot express** - *which edge* authorised the move, and the
+  remark that came with it. Those are the two things a reviewer reads and neither is a column diff.
+- **The companion log is never authoritative for current status.** If you can reconstruct "where is this record
+  now" from it, you have built the second trail this rule forbids.
+- **Exactly one code path may write the status column.** This is the condition that makes the two consistent,
+  and it is the real content of the original warning: the trails disagree the moment something writes the status
+  without going through the service that logs. A direct write that bypasses it is a defect, not a shortcut.
+
+`WorkflowSubmissionTransitionLog` after F1 is the worked example: it keeps `from_status_id` / `to_status_id` /
+`status_transition_id` / `remark` and nothing else, with `ON DELETE SET NULL` on the edge so history outlives an
+admin editing the graph.
 
 If you do write an event log for any reason, note that `create_event_log` interprets **naive datetimes as
 Malaysia time** while tracking columns store naive UTC, so passing a naive UTC value silently shifts it by

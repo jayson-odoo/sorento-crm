@@ -29,6 +29,7 @@ from sqlalchemy import String
 
 from app.form_engine.schemas import FORM_SCHEMA_VERSION
 from app.models.status import TRIGGER_MANUAL, Status, StatusTransition
+from app.models.user import User
 from app.models.workflow_forms import (
     WorkflowFormDefinition,
     WorkflowFormVersion,
@@ -58,7 +59,7 @@ from app.services.workflow_submission_status_graph import (
 )
 from app.status_engine import registry as status_registry
 
-from ._pg_fixture import blank_session, unique_code
+from ._pg_fixture import TEST_PREFIX, blank_session, unique_code
 
 APP = Path(__file__).resolve().parent.parent / "app"
 
@@ -123,12 +124,34 @@ def _seeded(db):
     return resolve_graph(db, WORKFLOW_SUBMISSION_ENTITY_TYPE, None)
 
 
+def _attribution_users(db):
+    """The users this file attributes submissions and moves to.
+
+    AC-F1-16 makes ``created_by_user_id`` / ``updated_by_user_id`` /
+    ``WorkflowSubmissionTransitionLog.user_id`` real ``users.id`` foreign keys, and
+    Postgres enforces them at INSERT. So the symbolic ids the helpers below pass have
+    to name rows that exist -- an id no user holds is exactly what the FK is there to
+    reject.
+    """
+    for user_id in ("zzt-user", "u"):
+        if db.query(User).filter(User.id == user_id).first() is None:
+            db.add(
+                User(
+                    id=user_id,
+                    email=f"{user_id}@{TEST_PREFIX.lower()}.invalid",
+                    name=f"{TEST_PREFIX} tester",
+                )
+            )
+    db.flush()
+
+
 def _definition(db, *, publish: bool = True, doc=None) -> WorkflowFormDefinition:
     """A definition with a published version, built by hand.
 
     Deliberately not via the service: the graph tests must not depend on the
     service's own contract, or one broken assumption reads as twenty failures.
     """
+    _attribution_users(db)
     document = doc if doc is not None else FORM_DOC
     definition = WorkflowFormDefinition(
         id=str(uuid.uuid4()),

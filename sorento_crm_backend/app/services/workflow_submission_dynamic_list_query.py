@@ -20,11 +20,11 @@ from sqlalchemy.orm import Session
 
 from app.models.workflow_forms import WorkflowFormDefinition, WorkflowFormVersion
 
-# Reads F0's block document. Deliberately NOT
-# `workflow_forms_service._collect_field_defs`: the list-query router is mounted by
+# Reads F0's block document. Deliberately NOT the private field-collecting helper that
+# used to live in `workflow_forms_service`: the list-query router is mounted by
 # `app.main`, so importing a private helper out of a service that F1 retires put an
 # ImportError-at-startup on the boot path. See app/services/workflow_form_field_defs.py.
-from app.services.workflow_form_field_defs import collect_field_defs as _collect_field_defs
+from app.services.workflow_form_field_defs import collect_field_defs
 
 # Field ids from the builder are typically UUIDs; allow safe slug-like ids.
 _ID_SAFE = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
@@ -79,7 +79,7 @@ def build_dynamic_field_metas_for_definition(schema: Dict[str, Any]) -> List[Dyn
     out: List[DynamicListQueryField] = []
     sort_base = 500
 
-    header, line_groups = _collect_field_defs(schema)
+    header, line_groups = collect_field_defs(schema)
     for f in header:
         fid = f.get("id")
         if not _validate_id(str(fid)):

@@ -60,7 +60,9 @@ class ListSearchRequest(BaseModel):
     # Workflow forms (list-query + UI quick filters)
     workflow_definition_is_active: Optional[bool] = None
     workflow_form_definition_id: Optional[str] = None
-    workflow_submission_state_code: Optional[str] = None
+    # The submission's status KEY (e.g. "submitted"), resolved through the status
+    # engine. Keys are stable across a per-definition graph fork where ids are not.
+    workflow_submission_status_key: Optional[str] = None
     # Promotions (list-query + UI quick filters)
     promotion_status: Optional[str] = None
     promotion_access_level: Optional[str] = None
@@ -96,7 +98,9 @@ class ListExportRequest(BaseModel):
     item_type: Optional[str] = None
     workflow_definition_is_active: Optional[bool] = None
     workflow_form_definition_id: Optional[str] = None
-    workflow_submission_state_code: Optional[str] = None
+    # The submission's status KEY (e.g. "submitted"), resolved through the status
+    # engine. Keys are stable across a per-definition graph fork where ids are not.
+    workflow_submission_status_key: Optional[str] = None
     promotion_status: Optional[str] = None
     promotion_access_level: Optional[str] = None
 

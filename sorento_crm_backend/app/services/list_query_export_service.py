@@ -12,6 +12,7 @@ from app.models.marketing import Promotion, PromotionProduct
 from app.models.order import Customer, Order, OrderLine
 from app.models.product import Product
 from app.models.procurement import Supplier
+from app.models.status import Status
 from app.models.workflow_forms import WorkflowFormDefinition, WorkflowSubmission
 from app.schemas.list_query import ListExportRequest
 from app.services.list_query_metadata_service import ListQueryMetadataService
@@ -402,9 +403,14 @@ class ListQueryExportService:
         wf_def_id = (req.workflow_form_definition_id or "").strip() or None
         if wf_def_id:
             q = q.filter(WorkflowSubmission.definition_id == wf_def_id)
-        st = (req.workflow_submission_state_code or "").strip() or None
-        if st:
-            q = q.filter(WorkflowSubmission.current_state_code == st)
+        status_key = (req.workflow_submission_status_key or "").strip() or None
+        # The status lives in the status engine now, so both the quick filter and the
+        # quick search reach it through one join -- a second join to `statuses` would
+        # need an alias and would multiply rows.
+        if status_key or req.quick_search:
+            q = q.join(Status, WorkflowSubmission.status_id == Status.id)
+        if status_key:
+            q = q.filter(Status.key == status_key)
         if req.quick_search:
             like = f"%{req.quick_search.strip()}%"
             q = q.outerjoin(
@@ -413,7 +419,8 @@ class ListQueryExportService:
             )
             q = q.filter(
                 or_(
-                    WorkflowSubmission.current_state_code.ilike(like),
+                    Status.key.ilike(like),
+                    Status.label.ilike(like),
                     WorkflowFormDefinition.name.ilike(like),
                     WorkflowFormDefinition.code.ilike(like),
                 )

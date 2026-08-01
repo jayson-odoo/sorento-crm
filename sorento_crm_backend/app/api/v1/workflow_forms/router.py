@@ -1,9 +1,9 @@
 """Workflow forms: definitions, publish, submissions, transitions."""
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, Literal, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Body, Depends, Query, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -26,7 +26,9 @@ from app.schemas.workflow_forms import (
     WorkflowSubmissionUpdate,
     WorkflowTransitionRequest,
 )
-from app.services.workflow_forms_service import WorkflowFormsService, validate_schema
+from app.form_engine.schemas import validate_form_doc
+from app.services.error_handler import AppException
+from app.services.workflow_forms_service import WorkflowFormsService
 from app.models.workflow_forms import WorkflowSubmission
 
 router = APIRouter()
@@ -44,12 +46,17 @@ def _serialize_submission(
             joinedload(WorkflowSubmission.lines),
             joinedload(WorkflowSubmission.transition_logs),
             joinedload(WorkflowSubmission.definition),
+            joinedload(WorkflowSubmission.status),
         )
         .filter(WorkflowSubmission.id == sub_id)
         .first()
     )
     if not s:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found.")
+        raise AppException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="Submission not found.",
+            code="not_found",
+        )
     return svc._submission_out(s, include_logs=True, include_form_schema=include_form_schema)
 
 
@@ -183,37 +190,16 @@ def published_schema_for_submission(
 @router.get("/definitions/{definition_id}/flow-graph")
 def flow_graph(
     definition_id: str,
-    source: Literal["draft", "published"] = Query("draft"),
     db: Session = Depends(get_db),
     _user: dict = Depends(require_permission_with_api_key("workflow_forms.definitions.view")),
 ):
-    svc = WorkflowFormsService(db)
-    schema, _src = svc.preview(definition_id, source=source)
-    nodes: List[Dict[str, Any]] = []
-    for s in schema.get("states") or []:
-        if isinstance(s, dict):
-            nodes.append(
-                {
-                    "id": s.get("id"),
-                    "code": s.get("code"),
-                    "name": s.get("name"),
-                    "is_initial": bool(s.get("is_initial")),
-                    "is_terminal": bool(s.get("is_terminal")),
-                }
-            )
-    edges: List[Dict[str, Any]] = []
-    for t in schema.get("transitions") or []:
-        if isinstance(t, dict):
-            edges.append(
-                {
-                    "id": t.get("id"),
-                    "from_state_id": t.get("from_state_id"),
-                    "to_state_id": t.get("to_state_id"),
-                    "label": t.get("label"),
-                    "direction": t.get("direction") or "forward",
-                }
-            )
-    return {"nodes": nodes, "edges": edges}
+    """The status graph in force for this definition.
+
+    Read from the status engine, not from the document: the document no longer carries
+    states, so there is no draft-versus-published distinction to make here. A definition
+    that has not forked reports the default graph with ``is_fork: false``.
+    """
+    return WorkflowFormsService(db).status_graph(definition_id)
 
 
 @router.post("/definitions/validate-schema")
@@ -221,7 +207,8 @@ def validate_schema_body(
     schema: Dict[str, Any] = Body(...),
     _user: dict = Depends(require_permission("workflow_forms.definitions.edit")),
 ):
-    errs = validate_schema(schema)
+    """The publish gate, run without publishing. Reports every problem, not the first."""
+    errs = validate_form_doc(schema)
     return {"valid": len(errs) == 0, "errors": errs}
 
 
@@ -233,12 +220,12 @@ def list_submissions(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     definition_id: Optional[str] = Query(None),
-    state_code: Optional[str] = Query(None),
+    status_key: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _user: dict = Depends(require_permission_with_api_key("workflow_forms.submissions.view")),
 ):
     svc = WorkflowFormsService(db)
-    result = svc.list_submissions(page=page, limit=limit, definition_id=definition_id, state_code=state_code)
+    result = svc.list_submissions(page=page, limit=limit, definition_id=definition_id, status_key=status_key)
     return ListResponse(
         data=result["data"],
         pagination=PaginationResponse(total=result["total"], page=result["page"], limit=result["limit"]),
@@ -321,7 +308,7 @@ def apply_transition(
     svc = WorkflowFormsService(db)
     s = svc.apply_transition(
         submission_id,
-        body.transition_id,
+        body.to_status_id,
         body.remark,
         current_user.get("id") or "",
     )

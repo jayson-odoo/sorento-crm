@@ -1,16 +1,30 @@
-"""Business logic for workflow form definitions, publishing, and submissions."""
+"""Business logic for workflow form definitions, publishing, and submissions.
+
+Two authorities, and neither is this module. The **document** (what a form asks) is
+owned by ``app.form_engine``: ``validate_form_doc`` is the publish gate and
+``validate_submission`` is the answer boundary. The **graph** (what a submission may do
+next) is owned by the status engine: ``app.services.status_service`` decides whether a
+move is legal, for the graph the submission's definition scopes.
+
+Before F1 both lived here, in a state machine embedded in
+``workflow_form_versions.schema`` alongside a second, disagreeing validator. Nothing in
+this module reads ``states`` / ``transitions`` out of that JSON any more, and no release
+ships with both validators.
+"""
 from __future__ import annotations
 
 import logging
 import re
 import uuid
-from datetime import date, datetime
-from typing import Any, Dict, List, Optional, Set, Tuple
+from datetime import datetime
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from fastapi import HTTPException, status
-from sqlalchemy import and_, desc, func, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.form_engine.schemas import FORM_SCHEMA_VERSION, FormDocument, validate_form_doc
+from app.form_engine.validation import validate_submission
+from app.models.status import Status
 from app.models.user import UserRoleAssignment
 from app.models.workflow_forms import (
     WorkflowFormDefinition,
@@ -19,7 +33,18 @@ from app.models.workflow_forms import (
     WorkflowSubmissionLine,
     WorkflowSubmissionTransitionLog,
 )
+from app.services.error_handler import AppException
 from app.services.notification_service import NotificationService
+from app.services.status_service import (
+    assert_transition_allowed,
+    available_transitions,
+    initial_status,
+    resolve_graph,
+)
+from app.services.workflow_form_field_defs import collect_field_defs
+from app.services.workflow_submission_status_graph import (
+    WORKFLOW_SUBMISSION_ENTITY_TYPE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,296 +54,78 @@ CODE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{0,98}$", re.I)
 def _as_schema_dict(raw: Any) -> Dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
-ALLOWED_FIELD_TYPES = frozenset(
-    {
-        "text",
-        "textarea",
-        "number",
-        "email",
-        "date",
-        "datetime",
-        "date_range",
-        "select",
-        "multi_select",
-        "checkbox",
-        "radio",
-        "url",
-        "phone",
-    }
-)
 
+def default_form_document() -> Dict[str, Any]:
+    """A new definition's starting draft: one page, one section, nothing asked yet.
 
-def default_draft_schema() -> Dict[str, Any]:
+    Shape-valid so the builder can load it, but deliberately NOT publishable -- an empty
+    page fails the publish gate, which is the correct answer for a form nobody has
+    authored yet.
+    """
     return {
-        "header_fields": [],
-        "line_groups": [],
-        "states": [
+        "schemaVersion": FORM_SCHEMA_VERSION,
+        "pages": [
             {
-                "id": "s_draft",
-                "name": "Draft",
-                "code": "draft",
-                "is_initial": True,
-                "is_terminal": False,
-                "view_role_ids": [],
-                "edit_role_ids": [],
-            },
-            {
-                "id": "s_submitted",
-                "name": "Submitted",
-                "code": "submitted",
-                "is_initial": False,
-                "is_terminal": False,
-                "view_role_ids": [],
-                "edit_role_ids": [],
-            },
-            {
-                "id": "s_approved",
-                "name": "Approved",
-                "code": "approved",
-                "is_initial": False,
-                "is_terminal": True,
-                "view_role_ids": [],
-                "edit_role_ids": [],
-            },
-            {
-                "id": "s_rejected",
-                "name": "Rejected",
-                "code": "rejected",
-                "is_initial": False,
-                "is_terminal": True,
-                "view_role_ids": [],
-                "edit_role_ids": [],
-            },
+                "id": "page-1",
+                "title": "Page 1",
+                "sections": [{"id": "section-1", "title": "Details", "fields": []}],
+            }
         ],
-        "transitions": [
-            {
-                "id": "tr_submit",
-                "from_state_id": "s_draft",
-                "to_state_id": "s_submitted",
-                "label": "Submit",
-                "direction": "forward",
-                "allowed_role_ids": [],
-            },
-            {
-                "id": "tr_approve",
-                "from_state_id": "s_submitted",
-                "to_state_id": "s_approved",
-                "label": "Approve",
-                "direction": "forward",
-                "allowed_role_ids": [],
-            },
-            {
-                "id": "tr_reject",
-                "from_state_id": "s_submitted",
-                "to_state_id": "s_rejected",
-                "label": "Reject",
-                "direction": "forward",
-                "allowed_role_ids": [],
-            },
-            {
-                "id": "tr_send_back",
-                "from_state_id": "s_submitted",
-                "to_state_id": "s_draft",
-                "label": "Send back",
-                "direction": "back",
-                "allowed_role_ids": [],
-            },
-        ],
-        "notification_rules": [],
     }
 
 
-def validate_schema(schema: Dict[str, Any]) -> List[str]:
-    errors: List[str] = []
-    if not isinstance(schema, dict):
-        return ["Schema must be an object."]
-    states = schema.get("states") or []
-    transitions = schema.get("transitions") or []
-    header_fields = _header_fields_flat(schema)
-    line_groups = schema.get("line_groups") or []
+def _assert_document_shape(document: Dict[str, Any]) -> None:
+    """A draft save only has to be READABLE, not publishable.
 
-    if not isinstance(states, list) or len(states) < 1:
-        errors.append("At least one state is required.")
-    state_ids: Set[str] = set()
-    initial_count = 0
-    for s in states:
-        if not isinstance(s, dict):
-            errors.append("Each state must be an object.")
-            continue
-        sid = s.get("id")
-        code = s.get("code")
-        if not sid or not isinstance(sid, str):
-            errors.append("Each state needs a string id.")
-        else:
-            state_ids.add(sid)
-        if not code or not isinstance(code, str):
-            errors.append(f"State {sid} needs a string code.")
-        if s.get("is_initial"):
-            initial_count += 1
-    if initial_count != 1:
-        errors.append("Exactly one state must have is_initial=true.")
-
-    for i, f in enumerate(header_fields):
-        if not isinstance(f, dict):
-            errors.append(f"Header field {i} invalid.")
-            continue
-        fid = f.get("id")
-        ftype = f.get("type")
-        if not fid or not isinstance(fid, str):
-            errors.append(f"Header field {i} needs id.")
-        if not ftype or ftype not in ALLOWED_FIELD_TYPES:
-            errors.append(f"Header field {fid or i} has unsupported type.")
-
-    for gi, g in enumerate(line_groups):
-        if not isinstance(g, dict):
-            errors.append(f"Line group {gi} invalid.")
-            continue
-        gid = g.get("id")
-        if not gid or not isinstance(gid, str):
-            errors.append(f"Line group {gi} needs id.")
-        for fi, lf in enumerate(g.get("fields") or []):
-            if not isinstance(lf, dict):
-                errors.append(f"Line group {gid} field {fi} invalid.")
-                continue
-            if not lf.get("id"):
-                errors.append(f"Line group {gid} field {fi} needs id.")
-            t = lf.get("type")
-            if not t or t not in ALLOWED_FIELD_TYPES:
-                errors.append(f"Line group {gid} field {lf.get('id')} unsupported type.")
-
-    for t in transitions:
-        if not isinstance(t, dict):
-            errors.append("Each transition must be an object.")
-            continue
-        tid = t.get("id")
-        fs = t.get("from_state_id")
-        ts = t.get("to_state_id")
-        if not tid:
-            errors.append("Transition missing id.")
-        if fs not in state_ids or ts not in state_ids:
-            errors.append(f"Transition {tid} references unknown state.")
-        direction = t.get("direction") or "forward"
-        if direction not in ("forward", "back"):
-            errors.append(f"Transition {tid} direction must be forward or back.")
-
-    return errors
-
-
-def _state_id_to_code(schema: Dict[str, Any], state_id: Optional[str]) -> Optional[str]:
-    if state_id is None:
-        return None
-    sid = str(state_id).strip()
-    if not sid:
-        return None
-    for s in schema.get("states") or []:
-        if isinstance(s, dict) and s.get("id") == sid:
-            out = s.get("code")
-            return str(out) if out is not None else None
-    return None
-
-
-def _state_by_code(schema: Dict[str, Any], code: str) -> Optional[Dict[str, Any]]:
-    for s in schema.get("states") or []:
-        if isinstance(s, dict) and s.get("code") == code:
-            return s
-    return None
-
-
-def _initial_state_code(schema: Dict[str, Any]) -> str:
-    for s in schema.get("states") or []:
-        if isinstance(s, dict) and s.get("is_initial"):
-            return str(s.get("code") or "draft")
-    raise ValueError("No initial state")
-
-
-def _header_fields_flat(schema: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Flatten header fields from header_sections (preferred) or legacy header_fields."""
-    secs = schema.get("header_sections")
-    if isinstance(secs, list) and len(secs) > 0:
-        out: List[Dict[str, Any]] = []
-        for s in secs:
-            if isinstance(s, dict):
-                for f in s.get("fields") or []:
-                    if isinstance(f, dict):
-                        out.append(f)
-        return out
-    return [f for f in (schema.get("header_fields") or []) if isinstance(f, dict)]
-
-
-def _collect_field_defs(schema: Dict[str, Any]) -> Tuple[List[Dict], List[Tuple[str, List[Dict]]]]:
-    header = _header_fields_flat(schema)
-    line_groups: List[Tuple[str, List[Dict]]] = []
-    for g in schema.get("line_groups") or []:
-        if isinstance(g, dict) and g.get("id"):
-            line_groups.append((g["id"], [f for f in (g.get("fields") or []) if isinstance(f, dict)]))
-    return header, line_groups
-
-
-def _parse_iso_date(s: str) -> Optional[date]:
-    s = (s or "").strip()
-    if not s:
-        return None
+    The publish gate (``validate_form_doc``) requires an answerable page; a draft in
+    progress legitimately has none. But an unparseable draft must be rejected here,
+    because everything downstream -- the builder, the dynamic list-query columns, the
+    publish gate itself -- silently degrades to empty on a document it cannot read.
+    """
     try:
-        return date.fromisoformat(s[:10])
-    except ValueError:
-        return None
+        FormDocument.model_validate(document)
+    except Exception as exc:  # pydantic ValidationError
+        raise AppException(
+            status_code=422,
+            message=f"This form document cannot be read: {exc}",
+            code="form_document_malformed",
+        )
 
 
-def _validate_data_against_fields(fields: List[Dict[str, Any]], data: Dict[str, Any], path: str) -> List[str]:
-    errs: List[str] = []
-    for f in fields:
-        fid = f.get("id")
-        if not fid:
-            continue
-        val = data.get(fid)
-        required = bool(f.get("required"))
-        ft = f.get("type")
+def _raise_problems(problems: Sequence[str], code: str, lead: str) -> None:
+    """Surface every problem in one message, not just the first.
 
-        if required:
-            missing = False
-            if val is None or val == "":
-                missing = True
-            elif isinstance(val, list) and len(val) == 0:
-                missing = True
-            elif ft == "date_range":
-                if not isinstance(val, dict):
-                    missing = True
-                else:
-                    start_s = str(val.get("start") or "").strip()
-                    end_s = str(val.get("end") or "").strip()
-                    if not start_s or not end_s:
-                        missing = True
-            if missing:
-                errs.append(f"{path}: field '{f.get('label') or fid}' is required.")
+    ``AppException`` carries a single string, and the frontend's ``extractApiError``
+    prefers ``detail`` over ``message`` -- so the whole list goes in ``message`` rather
+    than being hidden behind a structured field the toast never shows.
+    """
+    if not problems:
+        return
+    count = len(problems)
+    noun = "problem" if count == 1 else "problems"
+    raise AppException(
+        status_code=422,
+        message=f"{lead} {count} {noun}: " + " | ".join(problems),
+        code=code,
+    )
 
-        # light type checks
-        if val is not None and val != "" and ft == "number":
-            if isinstance(val, (dict, list)):
-                errs.append(f"{path}: '{fid}' must be a number.")
-            else:
-                try:
-                    float(val)
-                except (TypeError, ValueError):
-                    errs.append(f"{path}: '{fid}' must be a number.")
-        if val is not None and val != "" and ft == "email" and isinstance(val, str) and "@" not in val:
-            errs.append(f"{path}: '{fid}' must look like an email.")
 
-        if ft == "date_range" and val is not None and val != "":
-            if not isinstance(val, dict):
-                errs.append(f"{path}: '{fid}' must be an object with start and end dates.")
-            else:
-                start_s = str(val.get("start") or "").strip()
-                end_s = str(val.get("end") or "").strip()
-                if (start_s and not end_s) or (end_s and not start_s):
-                    errs.append(f"{path}: '{fid}' date range must include both start and end.")
-                if start_s and end_s:
-                    d0 = _parse_iso_date(start_s)
-                    d1 = _parse_iso_date(end_s)
-                    if d0 is None or d1 is None:
-                        errs.append(f"{path}: '{fid}' dates must be valid ISO dates (YYYY-MM-DD).")
-                    elif d1 < d0:
-                        errs.append(f"{path}: '{fid}' end date must be on or after start date.")
-    return errs
+# --------------------------------------------------------------- role gating
+#
+# Re-keyed from state ids to status KEYS, and from a transition id to
+# ``<from_key>:<to_key>``, because keys are stable across a scope fork where ids are not
+# -- the same reason reporting groups by key.
+#
+# **Default-open is preserved on purpose.** The retired gating failed open twice over: a
+# missing state allowed, and an empty role list allowed. The status engine fails CLOSED.
+# ADR-0013 rule 13 says not to change mechanism and policy in one commit, so F1 re-keys
+# the mechanism and keeps the old policy. Which permission system should own a form
+# definition is still ungrilled (AC-F1-13), so nothing here reaches into
+# ``user_role_permissions``.
+#
+# There is deliberately no VIEW gate: the retired ``_can_view_state`` had zero callers
+# repo-wide, so inventing one during a re-key would be a new authorization rule
+# smuggled in as a refactor.
 
 
 def user_role_ids(db: Session, user_id: str) -> Set[str]:
@@ -326,62 +133,45 @@ def user_role_ids(db: Session, user_id: str) -> Set[str]:
     return {r[0] for r in rows}
 
 
-def _can_view_state(schema: Dict[str, Any], state_code: str, role_ids: Set[str]) -> bool:
-    st = _state_by_code(schema, state_code)
-    if not st:
+def _role_gating(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """The role map for a published snapshot, or empty.
+
+    Empty for every document F0's builder produces: ``FormDocument`` forbids extra keys,
+    so a published document cannot carry one. It is read rather than assumed absent so
+    the default-open policy is expressed in code, and so F3 has one place to point at
+    whatever storage the permissions decision lands on.
+    """
+    gating = schema.get("role_gating")
+    return gating if isinstance(gating, dict) else {}
+
+
+def _allows(allowed: Any, role_ids: Set[str]) -> bool:
+    """Default-open: no entry, or an empty list, allows everyone."""
+    if not isinstance(allowed, Iterable) or isinstance(allowed, (str, bytes)):
         return True
-    allowed = st.get("view_role_ids") or []
-    if not allowed:
+    ids = {str(x) for x in allowed}
+    if not ids:
         return True
-    return bool(role_ids.intersection(set(allowed)))
+    return bool(role_ids & ids)
 
 
-def _can_edit_state(schema: Dict[str, Any], state_code: str, role_ids: Set[str]) -> bool:
-    st = _state_by_code(schema, state_code)
-    if not st:
+def can_edit_in_status(gating: Dict[str, Any], status_key: Optional[str], role_ids: Set[str]) -> bool:
+    edit_roles = (gating.get("edit_role_ids") or {}) if gating else {}
+    if not isinstance(edit_roles, dict) or not status_key:
         return True
-    allowed = st.get("edit_role_ids") or []
-    if not allowed:
+    return _allows(edit_roles.get(status_key), role_ids)
+
+
+def can_use_transition(
+    gating: Dict[str, Any],
+    from_key: Optional[str],
+    to_key: Optional[str],
+    role_ids: Set[str],
+) -> bool:
+    transition_roles = (gating.get("transition_role_ids") or {}) if gating else {}
+    if not isinstance(transition_roles, dict) or not from_key or not to_key:
         return True
-    return bool(role_ids.intersection(set(allowed)))
-
-
-def _can_use_transition(trans: Dict[str, Any], role_ids: Set[str]) -> bool:
-    allowed = trans.get("allowed_role_ids") or []
-    if not allowed:
-        return True
-    return bool(role_ids.intersection(set(allowed)))
-
-
-def _find_transition(schema: Dict[str, Any], transition_id: str, from_code: str) -> Optional[Dict[str, Any]]:
-    from_id = None
-    for s in schema.get("states") or []:
-        if isinstance(s, dict) and s.get("code") == from_code:
-            from_id = s.get("id")
-            break
-    if not from_id:
-        return None
-    for t in schema.get("transitions") or []:
-        if not isinstance(t, dict):
-            continue
-        if t.get("id") == transition_id and t.get("from_state_id") == from_id:
-            return t
-    return None
-
-
-def validate_submission_payload(schema: Dict[str, Any], header_data: Dict[str, Any], lines_payload: List[Dict[str, Any]]) -> List[str]:
-    errs: List[str] = []
-    header_fields, line_groups = _collect_field_defs(schema)
-    errs.extend(_validate_data_against_fields(header_fields, header_data, "Header"))
-    group_fields = {gid: flds for gid, flds in line_groups}
-    for i, row in enumerate(lines_payload):
-        gid = row.get("line_group_id")
-        rd = row.get("row_data") or {}
-        if not gid or gid not in group_fields:
-            errs.append(f"Line {i}: unknown line_group_id.")
-            continue
-        errs.extend(_validate_data_against_fields(group_fields[gid], rd, f"Line {i}"))
-    return errs
+    return _allows(transition_roles.get(f"{from_key}:{to_key}"), role_ids)
 
 
 class WorkflowFormsService:
@@ -466,25 +256,33 @@ class WorkflowFormsService:
     def get_definition(self, definition_id: str) -> WorkflowFormDefinition:
         d = self.db.query(WorkflowFormDefinition).filter(WorkflowFormDefinition.id == definition_id).first()
         if not d:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workflow form not found.")
+            raise AppException(
+                status_code=404, message="Workflow form not found.", code="not_found"
+            )
         return d
 
     def create_definition(self, code: str, name: str, description: Optional[str], user_id: str) -> WorkflowFormDefinition:
         code = code.strip().lower()
         if not CODE_PATTERN.match(code):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Code must start with alphanumeric and use lowercase letters, numbers, dashes, underscores.",
+            raise AppException(
+                status_code=400,
+                message=(
+                    "Code must start with alphanumeric and use lowercase letters, "
+                    "numbers, dashes, underscores."
+                ),
+                code="code_invalid",
             )
         if self.db.query(WorkflowFormDefinition).filter(WorkflowFormDefinition.code == code).first():
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Code already exists.")
+            raise AppException(
+                status_code=409, message="Code already exists.", code="code_duplicate"
+            )
         d = WorkflowFormDefinition(
             id=str(uuid.uuid4()),
             code=code,
             name=name.strip(),
             description=description,
             is_active=True,
-            draft_schema=default_draft_schema(),
+            draft_schema=default_form_document(),
             created_by_user_id=user_id,
         )
         self.db.add(d)
@@ -508,9 +306,7 @@ class WorkflowFormsService:
         if is_active is not None:
             setattr(d, "is_active", is_active)
         if draft_schema is not None:
-            errs = validate_schema(draft_schema)
-            if errs:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": errs})
+            _assert_document_shape(draft_schema)
             setattr(d, "draft_schema", draft_schema)
         setattr(d, "updated_at", datetime.utcnow())
         self.db.commit()
@@ -520,9 +316,11 @@ class WorkflowFormsService:
     def publish_definition(self, definition_id: str, user_id: str) -> WorkflowFormVersion:
         d = self.get_definition(definition_id)
         schema = _as_schema_dict(getattr(d, "draft_schema", None))
-        errs = validate_schema(schema)
-        if errs:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": errs})
+        _raise_problems(
+            validate_form_doc(schema),
+            "form_document_invalid",
+            "This form cannot be published until you fix",
+        )
         max_ver = (
             self.db.query(func.max(WorkflowFormVersion.version_number))
             .filter(WorkflowFormVersion.definition_id == d.id)
@@ -549,20 +347,66 @@ class WorkflowFormsService:
         if source == "published":
             pvid = getattr(d, "published_version_id", None)
             if pvid is None or str(pvid).strip() == "":
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No published version.")
+                raise AppException(
+                    status_code=400,
+                    message="This form has no published version yet.",
+                    code="not_published",
+                )
             v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == pvid).first()
             if not v:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Published version missing.")
+                raise AppException(
+                    status_code=404,
+                    message="The published version of this form is missing.",
+                    code="version_missing",
+                )
             return _as_schema_dict(getattr(v, "schema", None)), "published"
         return _as_schema_dict(getattr(d, "draft_schema", None)), "draft"
+
+    def status_graph(self, definition_id: str) -> Dict[str, Any]:
+        """The statuses and edges in force for one definition.
+
+        What the builder draws instead of the retired embedded state machine. It reports
+        whether the definition has forked, because that is the difference between
+        editing this form's graph and editing every unforked form's graph.
+        """
+        d = self.get_definition(definition_id)
+        graph = resolve_graph(self.db, WORKFLOW_SUBMISSION_ENTITY_TYPE, str(d.id))
+        return {
+            "definition_id": d.id,
+            "is_fork": graph.is_fork,
+            "nodes": [
+                {
+                    "id": s.id,
+                    "key": s.key,
+                    "label": s.label,
+                    "color_hex": s.color_hex,
+                    "sort_order": s.sort_order,
+                    "is_initial": s.is_initial,
+                    "is_terminal": s.is_terminal,
+                    "is_active": s.is_active,
+                }
+                for s in graph.statuses
+            ],
+            "edges": [
+                {
+                    "id": t.id,
+                    "from_status_id": t.from_status_id,
+                    "to_status_id": t.to_status_id,
+                    "label": t.label,
+                    "trigger_mode": t.trigger_mode,
+                }
+                for t in graph.transitions
+            ],
+        }
 
     def delete_definition(self, definition_id: str) -> None:
         d = self.get_definition(definition_id)
         n = self.db.query(WorkflowSubmission).filter(WorkflowSubmission.definition_id == d.id).count()
         if n:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Cannot delete: {n} submission(s) exist. Remove submissions first.",
+            raise AppException(
+                status_code=409,
+                message=f"Cannot delete: {n} submission(s) exist. Remove submissions first.",
+                code="definition_in_use",
             )
         self.db.delete(d)
         self.db.commit()
@@ -574,7 +418,7 @@ class WorkflowFormsService:
         page: int = 1,
         limit: int = 50,
         definition_id: Optional[str] = None,
-        state_code: Optional[str] = None,
+        status_key: Optional[str] = None,
         query: Optional[str] = None,
         sort_field: str = "updated_at",
         sort_dir: str = "desc",
@@ -583,12 +427,20 @@ class WorkflowFormsService:
         q = self.db.query(WorkflowSubmission).options(
             joinedload(WorkflowSubmission.lines),
             joinedload(WorkflowSubmission.definition),
+            joinedload(WorkflowSubmission.status),
         )
+        wanted_key = (status_key or "").strip() or None
+        # Filtering, quick search and sorting all reach the status row. Join once: a
+        # second join to the same table would need an alias and silently multiply rows.
+        needs_status = bool(wanted_key) or bool(query and query.strip()) or sort_field == "status_key"
+        if needs_status:
+            q = q.join(Status, WorkflowSubmission.status_id == Status.id)
+
         filters = []
         if definition_id:
             filters.append(WorkflowSubmission.definition_id == definition_id)
-        if state_code and state_code.strip():
-            filters.append(WorkflowSubmission.current_state_code == state_code.strip())
+        if wanted_key:
+            filters.append(Status.key == wanted_key)
         if query and query.strip():
             like = f"%{query.strip()}%"
             q = q.outerjoin(
@@ -597,7 +449,8 @@ class WorkflowFormsService:
             )
             filters.append(
                 or_(
-                    WorkflowSubmission.current_state_code.ilike(like),
+                    Status.key.ilike(like),
+                    Status.label.ilike(like),
                     WorkflowFormDefinition.name.ilike(like),
                     WorkflowFormDefinition.code.ilike(like),
                 )
@@ -608,7 +461,7 @@ class WorkflowFormsService:
             q = q.filter(and_(*filters))
 
         sort_map = {
-            "current_state_code": WorkflowSubmission.current_state_code,
+            "status_key": Status.key,
             "created_at": WorkflowSubmission.created_at,
             "updated_at": WorkflowSubmission.updated_at,
             "definition_id": WorkflowSubmission.definition_id,
@@ -650,9 +503,12 @@ class WorkflowFormsService:
             logs = [
                 {
                     "id": lg.id,
-                    "from_state_code": lg.from_state_code,
-                    "to_state_code": lg.to_state_code,
-                    "transition_id": lg.transition_id,
+                    "from_status_id": lg.from_status_id,
+                    "to_status_id": lg.to_status_id,
+                    # Keys as well as ids: the frontend may not render a UUID.
+                    "from_status_key": lg.from_status_key,
+                    "to_status_key": lg.to_status_key,
+                    "status_transition_id": lg.status_transition_id,
                     "remark": lg.remark,
                     "user_id": lg.user_id,
                     "created_at": lg.created_at,
@@ -688,7 +544,9 @@ class WorkflowFormsService:
             "id": s.id,
             "definition_id": s.definition_id,
             "version_id": s.version_id,
-            "current_state_code": s.current_state_code,
+            "status_id": s.status_id,
+            "status_key": s.status_key,
+            "status_label": s.status_label,
             "header_data": s.header_data or {},
             "lines": lines,
             "transition_logs": logs,
@@ -708,8 +566,63 @@ class WorkflowFormsService:
             .first()
         )
         if not s:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Submission not found.")
+            raise AppException(
+                status_code=404, message="Submission not found.", code="not_found"
+            )
         return s
+
+    # --- answers ---
+
+    def _published_version(self, definition: WorkflowFormDefinition) -> WorkflowFormVersion:
+        pvid = getattr(definition, "published_version_id", None)
+        if pvid is None or str(pvid).strip() == "":
+            raise AppException(
+                status_code=400,
+                message="This form has no published version to submit against.",
+                code="not_published",
+            )
+        v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == pvid).first()
+        if not v:
+            raise AppException(
+                status_code=400,
+                message="The published version of this form is missing.",
+                code="version_missing",
+            )
+        return v
+
+    def _clean_answers(self, schema: Dict[str, Any], header_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Validated answers, ready to store. Raises 422 listing every field problem."""
+        clean, errors = validate_submission(schema, header_data or {})
+        _raise_problems(
+            [f"{key}: {message}" for key, message in errors.items()],
+            "form_answers_invalid",
+            "This submission cannot be saved until you fix",
+        )
+        return clean
+
+    def _assert_known_line_groups(
+        self, schema: Dict[str, Any], lines_payload: List[Dict[str, Any]]
+    ) -> None:
+        """Line rows must name a repeater or table that exists in the document.
+
+        Preserved from the retired validator: a row filed under an unknown group is
+        invisible to every grid and export, so it must be rejected rather than stored.
+        """
+        _header, line_groups = collect_field_defs(schema)
+        known = {group_key for group_key, _fields in line_groups}
+        unknown = sorted(
+            {
+                str(row.get("line_group_id"))
+                for row in lines_payload
+                if str(row.get("line_group_id") or "") not in known
+            }
+        )
+        if unknown:
+            raise AppException(
+                status_code=422,
+                message="These line groups do not exist on this form: " + ", ".join(unknown),
+                code="line_group_unknown",
+            )
 
     def create_submission(
         self,
@@ -719,27 +632,25 @@ class WorkflowFormsService:
         user_id: str,
     ) -> WorkflowSubmission:
         d = self.get_definition(definition_id)
-        pvid = getattr(d, "published_version_id", None)
-        if pvid is None or str(pvid).strip() == "":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Form has no published version.")
-        v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == pvid).first()
-        if not v:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Published version missing.")
+        v = self._published_version(d)
         schema = _as_schema_dict(getattr(v, "schema", None))
-        lines_payload = [{"line_group_id": x["line_group_id"], "row_data": x.get("row_data") or {}} for x in lines]
-        errs = validate_submission_payload(schema, header_data, lines_payload)
-        if errs:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": errs})
-        try:
-            initial = _initial_state_code(schema)
-        except ValueError:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid form schema.")
+        lines_payload = [
+            {"line_group_id": x["line_group_id"], "row_data": x.get("row_data") or {}}
+            for x in lines
+        ]
+        clean = self._clean_answers(schema, header_data)
+        self._assert_known_line_groups(schema, lines_payload)
+
+        # Fail closed: status_id is NOT NULL, so an unseeded graph has no legal value to
+        # write, and a 422 naming the missing graph beats an IntegrityError.
+        status = initial_status(self.db, WORKFLOW_SUBMISSION_ENTITY_TYPE, str(d.id))
+
         sub = WorkflowSubmission(
             id=str(uuid.uuid4()),
             definition_id=d.id,
             version_id=v.id,
-            current_state_code=initial,
-            header_data=header_data or {},
+            status_id=status.id,
+            header_data=clean,
             created_by_user_id=user_id,
         )
         self.db.add(sub)
@@ -768,15 +679,32 @@ class WorkflowFormsService:
         s = self.get_submission(submission_id)
         v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == s.version_id).first()
         if not v:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Version missing.")
+            raise AppException(
+                status_code=400,
+                message="The version this submission was made against is missing.",
+                code="version_missing",
+            )
         schema = _as_schema_dict(getattr(v, "schema", None))
-        cur_code = str(getattr(s, "current_state_code", "") or "")
-        st = _state_by_code(schema, cur_code)
-        if st and st.get("is_terminal"):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot edit a terminal state.")
+
+        # Terminality comes from the STATUS GRAPH now. Deriving it from a document that
+        # no longer carries states would make it unconditionally false and quietly
+        # re-enable editing on closed submissions.
+        graph = resolve_graph(self.db, WORKFLOW_SUBMISSION_ENTITY_TYPE, str(s.definition_id))
+        current = graph.by_id(str(s.status_id))
+        if current is not None and bool(current.is_terminal):
+            raise AppException(
+                status_code=422,
+                message=f"'{current.label}' is a final status; this submission cannot be edited.",
+                code="status_terminal",
+            )
         roles = user_role_ids(self.db, user_id)
-        if not _can_edit_state(schema, cur_code, roles):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot edit in this state.")
+        if not can_edit_in_status(_role_gating(schema), getattr(current, "key", None), roles):
+            raise AppException(
+                status_code=403,
+                message="Your role cannot edit a submission in this status.",
+                code="status_edit_forbidden",
+            )
+
         new_header: Dict[str, Any] = _as_schema_dict(getattr(s, "header_data", None))
         if header_data is not None:
             new_header = header_data
@@ -806,10 +734,9 @@ class WorkflowFormsService:
             new_lines_payload = [
                 {"line_group_id": ln.line_group_id, "row_data": ln.row_data or {}} for ln in s.lines
             ]
-        errs = validate_submission_payload(schema, new_header, new_lines_payload)
-        if errs:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"errors": errs})
-        setattr(s, "header_data", new_header)
+        clean = self._clean_answers(schema, new_header)
+        self._assert_known_line_groups(schema, new_lines_payload)
+        setattr(s, "header_data", clean)
         setattr(s, "updated_by_user_id", user_id)
         setattr(s, "updated_at", datetime.utcnow())
         self.db.commit()
@@ -824,186 +751,148 @@ class WorkflowFormsService:
     def apply_transition(
         self,
         submission_id: str,
-        transition_id: str,
+        to_status_id: str,
         remark: Optional[str],
         user_id: str,
     ) -> WorkflowSubmission:
+        """Move a submission to another status, if the engine allows it.
+
+        The engine is the authority, not the client and not the schema document: an
+        unknown status, a status from another entity's or another definition's graph, a
+        deactivated target, a move out of a final status and a move with no declared
+        edge are all 422 with their own code.
+        """
         s = self.get_submission(submission_id)
-        v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == s.version_id).first()
-        if not v:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Version missing.")
-        schema = _as_schema_dict(getattr(v, "schema", None))
-        cur_code = str(getattr(s, "current_state_code", "") or "")
-        trans = _find_transition(schema, transition_id, cur_code)
-        if not trans:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid transition for current state.")
+        scope_id = str(s.definition_id)
+        from_status_id = str(s.status_id)
+
+        edge = assert_transition_allowed(
+            self.db,
+            WORKFLOW_SUBMISSION_ENTITY_TYPE,
+            from_status_id,
+            to_status_id,
+            scope_id,
+        )
+
+        graph = resolve_graph(self.db, WORKFLOW_SUBMISSION_ENTITY_TYPE, scope_id)
+        from_status = graph.by_id(from_status_id) if from_status_id else None
+        to_status = graph.by_id(to_status_id)
         roles = user_role_ids(self.db, user_id)
-        if not _can_use_transition(trans, roles):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not allowed to use this transition.")
-        to_sid = trans.get("to_state_id")
-        to_code = _state_id_to_code(schema, str(to_sid) if to_sid is not None else None)
-        if not to_code:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Broken schema.")
-        from_code = cur_code
-        setattr(s, "current_state_code", to_code)
+        version = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == s.version_id).first()
+        gating = _role_gating(_as_schema_dict(getattr(version, "schema", None)))
+        if not can_use_transition(
+            gating,
+            getattr(from_status, "key", None),
+            getattr(to_status, "key", None),
+            roles,
+        ):
+            raise AppException(
+                status_code=403,
+                message="Your role cannot perform this transition.",
+                code="status_transition_forbidden",
+            )
+
+        setattr(s, "status_id", to_status_id)
         setattr(s, "updated_by_user_id", user_id)
         setattr(s, "updated_at", datetime.utcnow())
+        # Written only for an ACCEPTED move: a rejected transition is not history, and
+        # logging the attempt would put a status the submission never held into the trail.
         log = WorkflowSubmissionTransitionLog(
             id=str(uuid.uuid4()),
             submission_id=str(getattr(s, "id", "") or ""),
-            from_state_code=from_code,
-            to_state_code=to_code,
-            transition_id=transition_id,
+            from_status_id=from_status_id,
+            to_status_id=to_status_id,
+            status_transition_id=edge.id,
             remark=remark,
             user_id=user_id,
         )
         self.db.add(log)
-        self.db.flush()
-        log_id_str = str(getattr(log, "id", "") or "")
-        self._fire_notifications(schema, s, trans, log_id_str, user_id)
         self.db.commit()
+
+        # Post-commit and best-effort: the move has already succeeded, so a notification
+        # failure must not surface as a 500 for an operation that worked.
+        try:
+            self._notify_submitter(s, edge, str(getattr(log, "id", "") or ""))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Workflow transition notification failed for %s: %s", s.id, exc)
+
         self.db.refresh(s)
         return s
 
-    def _fire_notifications(
+    def _notify_submitter(
         self,
-        schema: Dict[str, Any],
         submission: WorkflowSubmission,
-        transition: Dict[str, Any],
+        edge: Any,
         log_id: str,
-        actor_user_id: str,
     ) -> None:
+        """Tell the person who submitted that their submission moved.
+
+        The retired builder also fanned out to roles named in
+        ``schema["notification_rules"]``. That config lived in the state machine this
+        slice deletes, so there is nothing left to read; the submitter notification is
+        unconditional and survives. Re-introducing a rules engine belongs with whatever
+        owns form permissions (AC-F1-13), not here.
+        """
+        submitter_raw = getattr(submission, "created_by_user_id", None)
+        submitter_id = str(submitter_raw) if submitter_raw is not None else ""
+        if submitter_id.strip() == "":
+            return
+
         definition = (
             self.db.query(WorkflowFormDefinition)
             .filter(WorkflowFormDefinition.id == submission.definition_id)
             .first()
         )
         sub_id = str(getattr(submission, "id", "") or "")
-        def_def_id = str(getattr(submission, "definition_id", "") or "")
-        sub_state = str(getattr(submission, "current_state_code", "") or "")
         def_title = str(getattr(definition, "name", "") or "") if definition is not None else ""
-        title = f"Workflow: {def_title or 'Form'} — {transition.get('label') or 'Updated'}"
-        body = f"Submission {sub_id[:8]}… moved to {sub_state}."
-        submitter_body = (
-            f'Your submission {sub_id[:8]}… is now in state "{sub_state}".'
+        status_label = submission.status_label or ""
+        title = f"Workflow: {def_title or 'Form'} - {getattr(edge, 'label', None) or 'Updated'}"
+        NotificationService(self.db).create(
+            user_id=submitter_id,
+            type="workflow_forms.transition",
+            title=title,
+            body=f'Your submission {sub_id[:8]}... is now "{status_label}".',
+            data={"submission_id": sub_id, "definition_id": str(submission.definition_id)},
+            source_entity_type="workflow_submission",
+            source_entity_id=sub_id,
+            # event_type must fit notifications.event_type (VARCHAR); the log id is
+            # unique per accepted transition, so it is the natural idempotency key.
+            event_type=f"workflow_forms.tr.{log_id}.submitter",
         )
-        svc = NotificationService(self.db)
-        # event_type must fit notifications.event_type (VARCHAR); log_id is unique per transition log
-        event_type = f"workflow_forms.tr.{log_id}"
-        submitter_event_type = f"{event_type}.submitter"
-
-        # Always notify the original submitter when the workflow state changes (even if no builder rules).
-        submitter_raw = getattr(submission, "created_by_user_id", None)
-        submitter_id = str(submitter_raw) if submitter_raw is not None else ""
-        if submitter_id.strip() != "":
-            try:
-                svc.create(
-                    user_id=submitter_id,
-                    type="workflow_forms.transition",
-                    title=title,
-                    body=submitter_body,
-                    data={"submission_id": sub_id, "definition_id": def_def_id},
-                    source_entity_type="workflow_submission",
-                    source_entity_id=sub_id,
-                    event_type=submitter_event_type,
-                )
-            except Exception as e:
-                logger.warning("Submitter notification failed for user %s: %s", submitter_id, e)
-
-        tid = transition.get("id")
-        rules = [r for r in (schema.get("notification_rules") or []) if isinstance(r, dict) and r.get("transition_id") == tid]
-        if not rules:
-            return
-        recipient_role_ids: Set[str] = set()
-        channels: Set[str] = set()
-        for rule in rules:
-            for rid in rule.get("recipient_role_ids") or []:
-                recipient_role_ids.add(str(rid))
-            for ch in rule.get("channels") or ["in_app"]:
-                channels.add(str(ch))
-        if not recipient_role_ids:
-            return
-        user_ids = (
-            self.db.query(UserRoleAssignment.user_id)
-            .filter(UserRoleAssignment.role_id.in_(list(recipient_role_ids)))
-            .distinct()
-            .all()
-        )
-        for (uid,) in user_ids:
-            if str(uid) == str(actor_user_id):
-                continue
-            # Submitter already received workflow_forms.tr.{log_id}.submitter
-            if submitter_id.strip() != "" and str(uid) == submitter_id:
-                continue
-            try:
-                want_email = "email" in channels
-                want_in_app = "in_app" in channels
-                if want_email and want_in_app:
-                    svc.create(
-                        user_id=str(uid),
-                        type="workflow_forms.transition",
-                        title=title,
-                        body=body,
-                        data={"submission_id": sub_id, "definition_id": def_def_id},
-                        source_entity_type="workflow_submission",
-                        source_entity_id=sub_id,
-                        event_type=event_type,
-                    )
-                elif want_in_app:
-                    svc.create_in_app_only(
-                        user_id=str(uid),
-                        type="workflow_forms.transition",
-                        title=title,
-                        body=body,
-                        source_entity_type="workflow_submission",
-                        source_entity_id=sub_id,
-                        event_type=event_type,
-                    )
-                elif want_email:
-                    svc.create(
-                        user_id=str(uid),
-                        type="workflow_forms.transition",
-                        title=title,
-                        body=body,
-                        data={"submission_id": sub_id},
-                        source_entity_type="workflow_submission",
-                        source_entity_id=sub_id,
-                        event_type=event_type,
-                    )
-            except Exception as e:
-                logger.warning("Notification failed for user %s: %s", uid, e)
 
     def allowed_transitions_for_user(self, submission_id: str, user_id: str) -> List[Dict[str, Any]]:
-        s = self.get_submission(submission_id)
-        v = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == s.version_id).first()
-        if not v:
-            return []
-        schema = _as_schema_dict(getattr(v, "schema", None))
-        roles = user_role_ids(self.db, user_id)
-        cur_sc = str(getattr(s, "current_state_code", "") or "")
-        from_id = None
-        for st in schema.get("states") or []:
-            if isinstance(st, dict) and st.get("code") == cur_sc:
-                from_id = st.get("id")
-                break
-        if not from_id:
-            return []
-        out: List[Dict[str, Any]] = []
-        for t in schema.get("transitions") or []:
-            if not isinstance(t, dict):
-                continue
-            if t.get("from_state_id") != from_id:
-                continue
-            if _can_use_transition(t, roles):
-                tid = t.get("to_state_id")
-                to_code = _state_id_to_code(schema, str(tid) if tid is not None else None)
-                out.append(
-                    {
-                        "id": t.get("id"),
-                        "label": t.get("label"),
-                        "direction": t.get("direction") or "forward",
-                        "to_state_code": to_code,
-                    }
-                )
-        return [x for x in out if x.get("id")]
+        """The moves to offer as buttons.
 
+        Resolved through the same graph the guard uses, or a user is shown an action the
+        server will refuse.
+        """
+        s = self.get_submission(submission_id)
+        scope_id = str(s.definition_id)
+        graph = resolve_graph(self.db, WORKFLOW_SUBMISSION_ENTITY_TYPE, scope_id)
+        current = graph.by_id(str(s.status_id))
+        edges = available_transitions(
+            self.db, WORKFLOW_SUBMISSION_ENTITY_TYPE, str(s.status_id), scope_id
+        )
+        version = self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id == s.version_id).first()
+        gating = _role_gating(_as_schema_dict(getattr(version, "schema", None)))
+        roles = user_role_ids(self.db, user_id)
+
+        out: List[Dict[str, Any]] = []
+        for edge in edges:
+            target = graph.by_id(str(edge.to_status_id))
+            if target is None:
+                continue
+            if not can_use_transition(
+                gating, getattr(current, "key", None), str(target.key), roles
+            ):
+                continue
+            out.append(
+                {
+                    "id": edge.id,
+                    "label": edge.label,
+                    "to_status_id": target.id,
+                    "to_status_key": target.key,
+                    "to_status_label": target.label,
+                }
+            )
+        return out

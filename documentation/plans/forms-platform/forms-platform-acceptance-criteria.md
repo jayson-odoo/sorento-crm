@@ -207,7 +207,26 @@ The module is also **reachable and globally load-bearing**:
   that throws nothing, so no test would catch it by accident. Derive terminality from the status graph's
   `is_terminal` instead.
 
-### NEW: one status trail, not two
+### RESOLVED: AC-F1-22 was wrong to delete the table outright
+
+AC-F1-22 below said delete `workflow_submission_transition_logs`. The implementer flagged the conflict rather
+than silently picking a side: the spec suite imports the model and pins its shape and write behaviour in 8
+tests, so deleting it fails the file at import.
+
+**The AC was wrong, and it is the AC that changed.** Carrying the edge and remark on the submission instead
+means `last_edge` / `last_remark` columns existing only to be diffed out of a JSONB audit row, for an entity
+with one current status and many transitions. Worse shape, worse to query.
+
+Resolution, now the worked example in ADR-0013 rule 11: **keep the table, narrowed to what `audit_logs` cannot
+express** (`from_status_id` / `to_status_id` / `status_transition_id` / `remark`), **and** set `__audit_track__`
+on `WorkflowSubmission` so the status diff itself lives in `audit_logs`. The table is never authoritative for
+current status. The condition that keeps the two honest is that exactly one code path writes `status_id`;
+verified, there are two writers and both are in the service (creation from the initial status, and
+`apply_transition`). A direct write bypassing them is a defect.
+
+AC-F1-22 as originally written is kept below for auditability.
+
+### SUPERSEDED: one status trail, not two
 
 - **AC-F1-22** `[BE][MIG]` Given `workflow_submission_transition_logs` calls itself "Audit trail of state
   changes" (`app/models/workflow_forms.py:153`) and holds 0 rows, and given `audit_logs` already captures every
