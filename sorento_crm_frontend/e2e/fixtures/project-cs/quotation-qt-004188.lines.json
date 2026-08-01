@@ -1,0 +1,554 @@
+{
+  "_source": "sorento_crm_frontend/e2e/fixtures/project-cs/quotation-qt-004188.pdf",
+  "_note": "Transcribed from the committed PDF and verified by arithmetic: every line satisfies qty x unit_price == total and the 60 lines sum to the printed grand total. A priced parent is followed by its zero-priced companions at the same quantity, which is what makes a set a set.",
+  "header": {
+    "quotation_no": "QT-004188",
+    "date": "28/01/2026",
+    "customer": "BUIMACO SDN BHD (PROJECT)",
+    "project": "TUJU RESIDENCE AT J",
+    "your_ref": null
+  },
+  "grand_total": 1805907.02,
+  "lines": [
+    {
+      "item": 1,
+      "code": "SRTWC8613-RL",
+      "description": "SORENTO ONE PIECE WASH DOWN (RIMLESS) WC S-TRAP SRTWC8613-RL",
+      "qty": 927,
+      "uom": "UNIT",
+      "unit_price": 392.85,
+      "total": 364171.95
+    },
+    {
+      "item": 2,
+      "code": "TPE-9300",
+      "description": "FLEXIBLE STRAIGHT CONNECTOR P10 B (4\")100MM (PW-136) (TPE-9300)",
+      "qty": 927,
+      "uom": "UNIT",
+      "unit_price": 0.0,
+      "total": 0.0
+    },
+    {
+      "item": 3,
+      "code": "SRTWCX8608-RL",
+      "description": "SORENTO CLOSE COUPLED PEDESTAL (S-TRAP 250MM) SRTWCX8608-RL",
+      "qty": 894,
+      "uom": "UNIT",
+      "unit_price": 305.55,
+      "total": 273161.7
+    },
+    {
+      "item": 4,
+      "code": "SRTWCY8608",
+      "description": "SORENTO CLOSE-COUPLED CISTERN ONLY (S-TRAP). SRTWCY8608",
+      "qty": 894,
+      "uom": "UNIT",
+      "unit_price": 0.0,
+      "total": 0.0
+    },
+    {
+      "item": 5,
+      "code": "SRTWC8608-SC",
+      "description": "SORENTO SRTWC8608-SC SEAT COVER ONLY",
+      "qty": 894,
+      "uom": "UNIT",
+      "unit_price": 0.0,
+      "total": 0.0
+    },
+    {
+      "item": 6,
+      "code": "TPE-9300",
+      "description": "FLEXIBLE STRAIGHT CONNECTOR P10 B (4\")100MM (PW-136) (TPE-9300)",
+      "qty": 894,
+      "uom": "UNIT",
+      "unit_price": 0.0,
+      "total": 0.0
+    },
+    {
+      "item": 7,
+      "code": "SRTWCX8840-S-RL",
+      "description": "SORENTO CLOSE COUPLED PEDESTAL ONLY RIMLESS (S-TRAP 250MM) SRTWCX8840-S-RL",
+      "qty": 9,
+      "uom": "UNIT",
+      "unit_price": 305.55,
+      "total": 2749.95
+    },
+    {
+      "item": 8,
+      "code": "SRTWCY8840",
+      "description": "SORENTO CLOSE-COUPLED CISTERN ONLY (C/W FITTING) SRTWCY8840",
+      "qty": 9,
+      "uom": "UNIT",
+      "unit_price": 0.0,
+      "total": 0.0
+    },
+    {
+      "item": 9,
+      "code": "SRTWC8840-SC",
+      "description": "SORENTO SRTWC8840 SEAT COVER ONLY SRTWC8840-SC",
+      "qty": 9,
+      "uom": "UNIT",
+      "unit_price": 0.0,
+      "total": 0.0
+    },
+    {
+      "item": 10,
+      "code": "TPE-9300",
+      "description": "FLEXIBLE STRAIGHT CONNECTOR P10 B (4\")100MM (PW-136) (TPE-9300)",
+      "qty": 9,
+      "uom": "UNIT",
+      "unit_price": 0.0,
+      "total": 0.0
+    },
+    {
+      "item": 11,
+      "code": "B2155-NL-BLUE",
+      "description": "ANGLE VALVE (NO LOGO) B2155-NL-BLUE",
+      "qty": 1816,
+      "uom": "UNIT",
+      "unit_price": 5.5,
+      "total": 9988.0
+    },
+    {
+      "item": 12,
+      "code": "C-FH12",
+      "description": "CABANA PVC FLEXIBLE HOSE 12\" (30CM) C-FH12",
+      "qty": 1816,
+      "uom": "UNIT",
+      "unit_price": 4.4,
+      "total": 7990.4
+    },
+    {
+      "item": 13,
+      "code": "SRTUB206-BI",
+      "description": "SORENTO CERAMIC WALL HUNG URINAL BACK INLET (300X350X680MM) SRTUB206-BI",
+      "qty": 16,
+      "uom": "UNIT",
+      "unit_price": 164.08,
+      "total": 2625.28
+    },
+    {
+      "item": 14,
+      "code": "SRTWB7055",
+      "description": "SORENTO CERAMIC ART BASIN ONLY (480X480X160MM) SRTWB7055 C/W SCREW",
+      "qty": 927,
+      "uom": "UNIT",
+      "unit_price": 163.87,
+      "total": 151907.49
+    },
+    {
+      "item": 15,
+      "code": "SRTWB243",
+      "description": "SORENTO WALL HUNG BASIN (510X420X200MM) C/W BASIN SCREW. SRTWB243",
+      "qty": 852,
+      "uom": "UNIT",
+      "unit_price": 70.81,
+      "total": 60330.12
+    },
+    {
+      "item": 16,
+      "code": "CBT001-B",
+      "description": "CABANA BOTTLE TRAP CBT001-B",
+      "qty": 1779,
+      "uom": "UNIT",
+      "unit_price": 17.9,
+      "total": 31844.1
+    },
+    {
+      "item": 17,
+      "code": "SRTPW0035-CR",
+      "description": "SORENTO PLASTIC POP UP WASTE SRTPW0035-CR",
+      "qty": 1779,
+      "uom": "UNIT",
+      "unit_price": 12.29,
+      "total": 21863.91
+    },
+    {
+      "item": 18,
+      "code": "SRTWB7099",
+      "description": "SORENTO SEMI RECESSED BASIN(500X450X160MM) SRTWB7099",
+      "qty": 38,
+      "uom": "UNIT",
+      "unit_price": 205.0,
+      "total": 7790.0
+    },
+    {
+      "item": 19,
+      "code": "SRTWB246",
+      "description": "SORENTO WALL HUNG BASIN (640x530x185MM) SRTWB246 C/W SCREW",
+      "qty": 9,
+      "uom": "UNIT",
+      "unit_price": 485.0,
+      "total": 4365.0
+    },
+    {
+      "item": 20,
+      "code": "CBT001-B",
+      "description": "CABANA BOTTLE TRAP CBT001-B",
+      "qty": 47,
+      "uom": "UNIT",
+      "unit_price": 17.9,
+      "total": 841.3
+    },
+    {
+      "item": 21,
+      "code": "SRTPW0035",
+      "description": "SORENTO PLASTIC POP UP WASTE SRTPW0035",
+      "qty": 47,
+      "uom": "UNIT",
+      "unit_price": 8.29,
+      "total": 389.63
+    },
+    {
+      "item": 22,
+      "code": "SRTWT6801",
+      "description": "SORENTO BASIN COLD TAP SRTWT6801",
+      "qty": 927,
+      "uom": "UNIT",
+      "unit_price": 85.36,
+      "total": 79128.72
+    },
+    {
+      "item": 23,
+      "code": "SRTWT7445-LV",
+      "description": "SORENTO BASIN COLD TAP ( LEVEL HANDLE ) SRTWT7445-LV",
+      "qty": 890,
+      "uom": "UNIT",
+      "unit_price": 60.14,
+      "total": 53524.6
+    },
+    {
+      "item": 24,
+      "code": "SRTSC07",
+      "description": "SORENTO ELBOWLINE TAP SRTSC07",
+      "qty": 9,
+      "uom": "UNIT",
+      "unit_price": 98.94,
+      "total": 890.46
+    },
+    {
+      "item": 25,
+      "code": "B2155-NL-BLUE",
+      "description": "ANGLE VALVE (NO LOGO) B2155-NL-BLUE",
+      "qty": 1835,
+      "uom": "UNIT",
+      "unit_price": 5.5,
+      "total": 10092.5
+    },
+    {
+      "item": 26,
+      "code": "C-FH12",
+      "description": "CABANA PVC FLEXIBLE HOSE 12\" (30CM) C-FH12",
+      "qty": 1835,
+      "uom": "UNIT",
+      "unit_price": 4.4,
+      "total": 8074.0
+    },
+    {
+      "item": 27,
+      "code": "CB2829-DIY",
+      "description": "CABANA PILLAR MOUNTED SINK TAP CB2829-DIY",
+      "qty": 300,
+      "uom": "UNIT",
+      "unit_price": 31.04,
+      "total": 9312.0
+    },
+    {
+      "item": 28,
+      "code": "B2155-NL-BLUE",
+      "description": "ANGLE VALVE (NO LOGO) B2155-NL-BLUE",
+      "qty": 305,
+      "uom": "UNIT",
+      "unit_price": 5.5,
+      "total": 1677.5
+    },
+    {
+      "item": 29,
+      "code": "C-FH16",
+      "description": "CABANA PVC FLEXIBLE HOSE 16\" (40CM) C-FH16",
+      "qty": 305,
+      "uom": "UNIT",
+      "unit_price": 5.27,
+      "total": 1607.35
+    },
+    {
+      "item": 30,
+      "code": "SRTWT2219",
+      "description": "SORENTO ABLUTION TAP SRTWT2219",
+      "qty": 12,
+      "uom": "UNIT",
+      "unit_price": 48.5,
+      "total": 582.0
+    },
+    {
+      "item": 31,
+      "code": "CB2805A-DIY",
+      "description": "CABANA HOSE BIB TAP CB2805A-DIY",
+      "qty": 934,
+      "uom": "UNIT",
+      "unit_price": 19.4,
+      "total": 18119.6
+    },
+    {
+      "item": 32,
+      "code": "CB55CR-PJ",
+      "description": "CABANA BIDET COLOUR CHROME CB55CR-PJ",
+      "qty": 1777,
+      "uom": "UNIT",
+      "unit_price": 19.4,
+      "total": 34473.8
+    },
+    {
+      "item": 33,
+      "code": "CB81CR-PJ",
+      "description": "CABANA BIDET C/W HOLDER LOGO COLOUR CHROME CB81CR-PJ",
+      "qty": 53,
+      "uom": "UNIT",
+      "unit_price": 15.0,
+      "total": 795.0
+    },
+    {
+      "item": 34,
+      "code": "CB1178A-SS-NEW",
+      "description": "CABANA SUS304 ANGLE VALVE CB1178A-SS-NEW",
+      "qty": 1830,
+      "uom": "UNIT",
+      "unit_price": 12.13,
+      "total": 22197.9
+    },
+    {
+      "item": 35,
+      "code": "SRTSS4240",
+      "description": "SORENTO 3 JET ABS HAND SHOWER WITH AIR INDUCTION SRTSS4240",
+      "qty": 1777,
+      "uom": "UNIT",
+      "unit_price": 32.31,
+      "total": 57414.87
+    },
+    {
+      "item": 36,
+      "code": "SRTFH15-HD",
+      "description": "SORENTO 1.5 METER HIGH DENSITY CHROME SHOWER FLEXIBLE HOSE SRTFH15-HD",
+      "qty": 1777,
+      "uom": "UNIT",
+      "unit_price": 12.8,
+      "total": 22745.6
+    },
+    {
+      "item": 37,
+      "code": "SRTSSB9320",
+      "description": "SORENTO SLIDING BAR SRTSSB9320",
+      "qty": 1777,
+      "uom": "UNIT",
+      "unit_price": 35.4,
+      "total": 62905.8
+    },
+    {
+      "item": 38,
+      "code": "CB2320",
+      "description": "CABANA SHOWER UNION CB2320",
+      "qty": 1777,
+      "uom": "UNIT",
+      "unit_price": 26.19,
+      "total": 46539.63
+    },
+    {
+      "item": 39,
+      "code": "SRTWT51012",
+      "description": "SORENTO BATHTUB FREESTANDING MIXER TAP SRTWT51012",
+      "qty": 53,
+      "uom": "UNIT",
+      "unit_price": 630.0,
+      "total": 33390.0
+    },
+    {
+      "item": 40,
+      "code": "CSH2072",
+      "description": "CABANA 4\" ABS SHOWER HEAD (ROUND) CSH2072",
+      "qty": 7,
+      "uom": "UNIT",
+      "unit_price": 9.99,
+      "total": 69.93
+    },
+    {
+      "item": 41,
+      "code": "CSA150",
+      "description": "CABANA ABS SHOWER ARM 150MM CSA150",
+      "qty": 7,
+      "uom": "UNIT",
+      "unit_price": 3.69,
+      "total": 25.83
+    },
+    {
+      "item": 42,
+      "code": "SRTSH862",
+      "description": "****SORENTO ROUND SS304 SHOWER HEAD 200x2MM SRTSH862",
+      "qty": 8,
+      "uom": "UNIT",
+      "unit_price": 108.93,
+      "total": 871.44
+    },
+    {
+      "item": 43,
+      "code": null,
+      "description": "****SORENTO SHOWER ARM (ROUND) 500MM (304",
+      "qty": 8,
+      "uom": "UNIT",
+      "unit_price": 44.23,
+      "total": 353.84
+    },
+    {
+      "item": 44,
+      "code": "SRTWT6813",
+      "description": "SORENTO CONCEALED BATH & SHOWER MIXER SRTWT6813",
+      "qty": 927,
+      "uom": "UNIT",
+      "unit_price": 83.42,
+      "total": 77330.34
+    },
+    {
+      "item": 45,
+      "code": "SRTWT7408",
+      "description": "SORENTO CONCEALED SHOWER COLD TAP SRTWT7408",
+      "qty": 865,
+      "uom": "UNIT",
+      "unit_price": 49.47,
+      "total": 42791.55
+    },
+    {
+      "item": 46,
+      "code": "SRTBT1872-17",
+      "description": "SORENTO FREE STANDING BATHTUB 1700x800x580MM SRTBT1872-17",
+      "qty": 53,
+      "uom": "UNIT",
+      "unit_price": 1950.0,
+      "total": 103350.0
+    },
+    {
+      "item": 47,
+      "code": "SRT1000-CR",
+      "description": "SORENTO PAPER HOLDER SRT1000-CR",
+      "qty": 1830,
+      "uom": "UNIT",
+      "unit_price": 31.04,
+      "total": 56803.2
+    },
+    {
+      "item": 48,
+      "code": "CKS1050",
+      "description": "CABANA KITCHEN SINK (SIZE : 1000 X 500 X 140MM) CKS1050 -1 BOWL 1 DRAINER-",
+      "qty": 258,
+      "uom": "UNIT",
+      "unit_price": 65.48,
+      "total": 16893.84
+    },
+    {
+      "item": 49,
+      "code": "CKSW015",
+      "description": "CABANA KITCHEN SINK WASTE CKSW015",
+      "qty": 258,
+      "uom": "UNIT",
+      "unit_price": 0.0,
+      "total": 0.0
+    },
+    {
+      "item": 50,
+      "code": "TPE-9201-300",
+      "description": "40MM (1 1/2\") PLASTIC BOTTLE TRAP C/W VERTICAL & HORIZONTAL PIPE 300MM. TPE-9201-300",
+      "qty": 295,
+      "uom": "UNIT",
+      "unit_price": 6.31,
+      "total": 1861.45
+    },
+    {
+      "item": 51,
+      "code": "SRTKS6045",
+      "description": "SORENTO S/STEEL KITCHEN SINK SRTKS6045 (600x450x230MM)",
+      "qty": 5,
+      "uom": "UNIT",
+      "unit_price": 256.57,
+      "total": 1282.85
+    },
+    {
+      "item": 52,
+      "code": "TPE-9201 / PW-02",
+      "description": "40MM (1 1/2\") PLASTIC BOTTLE TRAP ONLY. TPE-9201 / PW-02",
+      "qty": 5,
+      "uom": "UNIT",
+      "unit_price": 3.88,
+      "total": 19.4
+    },
+    {
+      "item": 53,
+      "code": "SRT5732",
+      "description": "SORENTO S/STEEL GRAB BAR (750x98x247MM) SRT5732",
+      "qty": 12,
+      "uom": "UNIT",
+      "unit_price": 223.1,
+      "total": 2677.2
+    },
+    {
+      "item": 54,
+      "code": "SRT5674-N",
+      "description": "SORENTO STAINLESS STEEL GRAB BAR (600x695MM) SRT5674-N",
+      "qty": 12,
+      "uom": "UNIT",
+      "unit_price": 191.58,
+      "total": 2298.96
+    },
+    {
+      "item": 55,
+      "code": "CB6633",
+      "description": "CABANA S/STEEL FLOOR GRATING 6\" CB6633",
+      "qty": 1420,
+      "uom": "UNIT",
+      "unit_price": 11.16,
+      "total": 15847.2
+    },
+    {
+      "item": 56,
+      "code": "CB6633-PP",
+      "description": "CABANA S/STEEL FLOOR GRATING 6\" CB6633-PP",
+      "qty": 4500,
+      "uom": "UNIT",
+      "unit_price": 11.16,
+      "total": 50220.0
+    },
+    {
+      "item": 57,
+      "code": "SRT382-6",
+      "description": "SORENTO STAINLESS STEEL FLOOR GRATING 6\" x 6\" SRT382-6",
+      "qty": 207,
+      "uom": "UNIT",
+      "unit_price": 13.77,
+      "total": 2850.39
+    },
+    {
+      "item": 58,
+      "code": "SRT382-6-DIY",
+      "description": "SORENTO STAINLESS STEEL FLOOR GRATING 6\" x 6\" SRT382-6-DIY",
+      "qty": 720,
+      "uom": "UNIT",
+      "unit_price": 13.77,
+      "total": 9914.4
+    },
+    {
+      "item": 59,
+      "code": "SRTA8046",
+      "description": "SORENTO FLOOR GRATING 150 X 150MM SRTA8046",
+      "qty": 948,
+      "uom": "UNIT",
+      "unit_price": 10.48,
+      "total": 9935.04
+    },
+    {
+      "item": 60,
+      "code": "CB6645",
+      "description": "CABANA S/STEEL FLOOR GRATING (100*100) CB6645 -NL (N/LOGO)",
+      "qty": 702,
+      "uom": "UNIT",
+      "unit_price": 10.0,
+      "total": 7020.0
+    }
+  ]
+}
