@@ -26,6 +26,30 @@ from app.models.base import company_scope
 from app.services.dealer_kit.viewer import ANONYMOUS, ViewerContext
 from tests._pg_fixture import pg_session, unique_code
 
+
+class _SigningBackend:
+    """A storage backend whose signer works, whatever this machine has installed.
+
+    Without this these tests passed for the wrong reason. Real signing needs a
+    CloudFront private key that is absent here, `resolve_signed_url` used to
+    fail open and hand back the raw path, and an assertion of "a url came back"
+    was satisfied by that fallback - so the suite proved nothing about signing
+    and would have changed answer on a machine that HAD the key. Now that the
+    image paths sign strictly, the stub is what makes these tests about access
+    control rather than about local configuration.
+    """
+
+    def get_signed_url(self, key: str, expires_in: int = 3600) -> str:
+        return f"https://cdn.test.invalid/{key}?Signature=stub"
+
+
+@pytest.fixture(autouse=True)
+def _signing_works(monkeypatch):
+    from app.services import storage_router
+
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _SigningBackend())
+
+
 pytestmark = pytest.mark.skipif(
     os.environ.get("SKIP_LIVE_DB_TESTS") == "1",
     reason="SKIP_LIVE_DB_TESTS=1",

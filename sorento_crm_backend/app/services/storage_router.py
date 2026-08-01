@@ -133,6 +133,7 @@ def resolve_signed_url(
     *,
     provider: Optional[str] = None,
     expires_in: int = 3600,
+    strict: bool = False,
 ) -> Optional[str]:
     """Return a fresh signed URL for the stored file_path.
 
@@ -144,13 +145,26 @@ def resolve_signed_url(
     Already-signed URLs (CloudFront Policy/Key-Pair-Id query params or R2
     AWS4-HMAC-SHA256 signatures) are passed through unchanged when ``provider``
     cannot be determined and the URL clearly carries a live signature.
+
+    ``strict`` decides what an UNSIGNABLE file is worth. By default this
+    function fails open: signing raises, it logs, and it hands back the raw
+    path. For a download link that is a fair last resort, because the user gets
+    something to try and ten call sites depend on it.
+
+    For an IMAGE it is the wrong answer. Nothing tries anything: the browser
+    requests the unsigned URL, the CDN answers 403, and the reader gets a broken
+    image where the surface already has a designed no-image state. So callers
+    that render an image pass ``strict=True`` and treat a signing failure as an
+    absent image. Not hypothetical: 181 of 2,472 linked product images could not
+    be signed on one environment, and they rendered as broken tiles rather than
+    as the empty state.
     """
     if not file_path:
-        return file_path
+        return None if strict else file_path
 
     raw = str(file_path).strip()
     if not raw:
-        return file_path
+        return None if strict else file_path
 
     chosen = (
         normalize_provider(provider)
@@ -166,7 +180,7 @@ def resolve_signed_url(
 
     key = extract_key(raw)
     if not key:
-        return raw
+        return None if strict else raw
     try:
         return get_backend(chosen).get_signed_url(key, expires_in=expires_in)
     except Exception as e:  # noqa: BLE001
@@ -176,7 +190,7 @@ def resolve_signed_url(
             (key or "")[:80],
             e,
         )
-        return raw
+        return None if strict else raw
 
 
 def copy_object_verified(provider: str, old_key: str, new_key: str) -> None:

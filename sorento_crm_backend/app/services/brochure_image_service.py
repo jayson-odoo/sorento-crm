@@ -312,6 +312,12 @@ def signed_urls(
             # A tile in the picker is about 112px. Sending full-size photos
             # would make a page of 31 candidates tens of megabytes.
             source = attachment.thumbnail_path or attachment.file_path
+            # strict: a candidate that cannot be signed shows as having no
+            # preview rather than as a broken thumbnail, so a human is not
+            # invited to choose a photo the catalogue could never render.
             candidate["url"] = resolve_signed_url(
-                source, provider=attachment.storage_provider, expires_in=expires_in
+                source,
+                provider=attachment.storage_provider,
+                expires_in=expires_in,
+                strict=True,
             )

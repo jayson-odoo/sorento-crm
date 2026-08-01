@@ -99,8 +99,15 @@ def primary_image_urls(
         # A tile is around 300px wide. Sending the full-size photo turns a forty
         # product page into tens of megabytes over a showroom's wifi.
         source = attachment.thumbnail_path or attachment.file_path
+        # strict: a photo that cannot be signed is an ABSENT image, not a broken
+        # tile. The map already omits products with no permitted image and the
+        # tile has a no-image state designed for exactly this, whereas an
+        # unsigned URL reaches the browser and comes back 403.
         signed = resolve_signed_url(
-            source, provider=attachment.storage_provider, expires_in=expires_in
+            source,
+            provider=attachment.storage_provider,
+            expires_in=expires_in,
+            strict=True,
         )
         if signed:
             urls[link.product_id] = signed
