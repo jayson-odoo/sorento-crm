@@ -214,6 +214,32 @@ Decisions this settles:
   two-tier gate working as designed.
 - Sorento needs its own Gemini key; the spike borrowed another project's.
 
+## 5c. Schedule spike result (2026-08-02, measured)
+
+Same harness, both schedule versions, `gemini-2.5-flash`. The result splits from the PO.
+
+| Check | R1 | R2 |
+|---|---|---|
+| Column sums == the schedule's own TOTAL QTY row | 29/37 | 35/38 |
+| Column sums == PO quantity for that product | 28/37 | 30/38 |
+| Phases matched R1 -> R2 | 13/13 | - |
+| Date moves extracted | **13/13, exactly as the DELAY email lists them** | - |
+
+Three conclusions, and they change the build:
+
+1. **The delta engine is validated.** The twelve TOWER moves came out identical to Maryam's
+   email (`01/07/2026 -> 07/01/2027` through `01/06/2027 -> 10/06/2027`). Nothing about the
+   revision design needs to change.
+2. **Pure vision is NOT good enough for the cell matrix** (roughly 20% of columns wrong on R1).
+   The checksum caught every one, which is the design working, but a whole-document reject would
+   reject nearly every real schedule. Intake becomes **hybrid**: the schedule HAS a text layer,
+   so quantities are parsed deterministically from it and vision is used only for STRUCTURE
+   (which column is which product, which row is which phase). Reconciliation then runs
+   **per column**, and only the columns that fail are put in front of CS to correct.
+3. **G6 is real, not theoretical.** The unlabeled COMMON AREA rows collapsed into a single key,
+   turning three phases into one. Phase identity MUST be `(area_group, sequence)` with the date
+   and quantity vector corroborating, exactly as G6 specified.
+
 ## 6. Open risks
 
 - **Vision quality on Malaysian site handwriting.** Mitigated by reject-by-default cards, but
