@@ -718,6 +718,66 @@ Two flagged, deliberately NOT fixed here:
   refuses replacement once any line is decided, which is always true of a resolved submission. F2a inherits this;
   a stage configured to start on the open key can therefore never restart.
 
+### F2c corrections - after the red suite (2026-08-01)
+
+**The design error this slice was hiding, and it lives across the F2b/F2c seam.**
+
+- **AC-F2c-8** `[BE]` **A portal-filed submission must tell its customer when it moves.** `_notify_submitter`
+  reads `created_by_user_id`, which F2b makes NULL for every portal filing, so it returns early: the one origin
+  with a real person waiting for the answer is the one origin that gets no message, and it fails silently. Neither
+  F2b nor F2c named this, because each was correct in isolation. Notify the respondent contact on a header move,
+  best-effort, alongside the existing submitter notify.
+
+**AC-F2c-4 and AC-F2c-5 contradicted each other.** F2c-4 forbids a `notifications` row for a contact; F2c-5 said
+the outbox `business_id` must be "the notification id". On the contact path there IS no notification, so F2c-5
+was unreachable on the only path F2c-4 allows.
+
+- **AC-F2c-9** `[BE]` The generalised rule: `business_id` is a **bare uuid that is the primary key of the table
+  named in `business_table`**. For a contact send that is `workflow_submissions`; for a staff WhatsApp driven by a
+  notification it stays the notification id. Never a composite string.
+
+**The three open questions, decided:**
+
+- **AC-F2c-10** `[BE]` A submission-linked attachment is **company-shared, `company_id` NULL**. `Attachment` is
+  already `__company_shared__`, and `workflow_submissions` has no `company_id` at all, so stamping a scope onto
+  the child of an unscoped parent would leave the submission visible under a scope where its own evidence has
+  vanished. That reads as data loss, not as a permission.
+- **AC-F2c-11** `[BE]` **The cap counts per LINKED ROW**, so a line-linked file counts against the **line** and a
+  case-level file has its own budget. `check_quota` already counts by `(entity_type, entity_id, type)`, so this
+  needs no change to it. One budget per case would let item 1 of a 20-item RMA exhaust the evidence allowance for
+  item 20, and the customer finds out when the last photo is refused.
+- **AC-F2c-12** `[BE]` **A contact is addressed by NOT writing a `notifications` row** - resolve
+  `respondent_contact_id` to `respond_io_id` and send, logging the outbox both ways. The dangerous half:
+  `notifications.user_id` is NOT NULL **and carries no foreign key**, so a `respond_contacts.id` inserts cleanly
+  and produces a row addressed to a principal who will never log in, with no error at any layer.
+
+**Two corrections to AC-F2c-2, both security-shaped:**
+
+- **AC-F2c-13** `[BE]` "`original_filename` is the key basename" **cannot be taken literally**: it is raw client
+  input, and `"../../etc/passwd.png"` produces a key that lands outside its own id folder, re-opening the very
+  collision the id segment closes, through the customer's own file picker. Use the repo's existing
+  `sanitize_storage_filename` for the basename; store `original_filename` raw on the row.
+- **AC-F2c-14** `[BE]` The `{id}` segment is the **attachment id**, not the entity id. The repo has both
+  precedents (`direct_access/{attachment_id}/` versus `promotion/{entity_id}/`), and the entity id does not
+  deduplicate two files with the same name on one line. Choosing the entity id would make a uniqueness suffix
+  mandatory.
+
+**Two more:**
+
+- **AC-F2c-15** `[BE]` The staff recipient of an attachment notification is the **active form-SLA tracker's
+  assignee** - the platform's only definition of "who is handling this". That makes F2c depend on F2a, with a
+  day-one hole: F2a's seed deliberately creates no teams, so no tracker exists until ops configures them and an
+  upload has **no recipient at all**. Correct behaviour is a silent no-op, not an exception.
+- **AC-F2c-1 is retagged `[BE][SEED]`.** It needs **no schema DDL**: `entity_attachment_links` already carries
+  `entity_type` / `entity_id` wide enough for both scopes. The `[MIG]` tag is what invites someone to add the
+  third linkage table the same AC forbids. The only migration content is one idempotent `attachment_types` seed.
+
+**Flagged, pre-existing, not fixed here:** `max_count_per_entity = 0` means "never attachable" rather than
+"unlimited", so a form posting `0` instead of omitting the field silently bricks a whole attachment type; and
+`attachments.uploaded_by` is a `uuid` column while `users.id` is `String(64)`, so a non-uuid principal (the
+API-key principal is literally `system`) 500s the upload. The suite pins the weaker invariant that survives
+either fix: `uploader_kind` still reads `user`, so the row degrades to "a staff member we cannot name".
+
 ### Gates for all three
 
 - **AC-F2-8** `[BE]` Full-suite failure set identical to the pre-slice baseline, compared set-wise, run

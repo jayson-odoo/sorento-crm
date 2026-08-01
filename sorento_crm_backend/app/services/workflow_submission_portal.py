@@ -349,6 +349,72 @@ class WorkflowSubmissionPortalService:
             str(row.id), header_data, lines, None
         )
 
+    # -------------------------------------------------------------- evidence (F2c)
+
+    def upload_attachment(
+        self,
+        token: PortalToken,
+        submission_id: str,
+        *,
+        contents: bytes,
+        filename: Optional[str] = None,
+        content_type: Optional[str] = None,
+        line_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Attach one file to the contact's own submission, or to one of its lines.
+
+        ``_owned`` first: without it the only thing protecting one customer's claim from
+        another's is the unguessability of its id, and an upload is a WRITE onto somebody
+        else's record.
+
+        Attribution is passed as a CONTACT, never as a user. ``uploaded_by`` used to be
+        the only attribution column, so a portal upload's NULL meant both "a contact sent
+        it" and "we do not know" - and stamping a service account instead would put a
+        staff member's name on a customer's photo in the Files page.
+
+        A contact may upload after the submission locks. Editing the ANSWERS after a
+        decision was taken against them rewrites the record under the decision; sending
+        the photo the adjudicator just asked for is the opposite, and refusing it is how
+        a case stalls.
+        """
+        submission = self._owned(token, submission_id)
+        return self._attachments().upload(
+            submission_id=str(submission.id),
+            line_id=line_id,
+            contents=contents,
+            filename=filename,
+            content_type=content_type,
+            uploaded_by_contact_id=self._contact_id(token),
+        )
+
+    def list_attachments(
+        self,
+        token: PortalToken,
+        submission_id: str,
+        line_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """The files on the contact's own submission, or on one of its lines.
+
+        Reading is the leak that matters here: a warranty claim's photos are the
+        customer's own property damage. Scoped through ``_owned``, so another contact's
+        submission is never loaded and never distinguishable from one that does not
+        exist.
+        """
+        submission = self._owned(token, submission_id)
+        return self._attachments().list_attachments(str(submission.id), line_id=line_id)
+
+    def _attachments(self):
+        """The one service that owns the link scopes, the key and the cap.
+
+        Local import: the attachments service reaches the notification stack, and the
+        portal is imported from it indirectly through the form services.
+        """
+        from app.services.workflow_submission_attachments import (
+            WorkflowSubmissionAttachmentService,
+        )
+
+        return WorkflowSubmissionAttachmentService(self.db)
+
     def _assert_editable(self, submission: WorkflowSubmission) -> None:
         start = initial_status(
             self.db,

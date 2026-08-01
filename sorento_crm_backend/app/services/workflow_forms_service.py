@@ -1037,10 +1037,19 @@ class WorkflowFormsService:
 
         # Post-commit and best-effort: the move has already succeeded, so a notification
         # failure must not surface as a 500 for an operation that worked.
+        log_id = str(getattr(log, "id", "") or "")
         try:
-            self._notify_submitter(s, edge, str(getattr(log, "id", "") or ""))
+            self._notify_submitter(s, edge, log_id)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Workflow transition notification failed for %s: %s", s.id, exc)
+
+        # The OTHER origin, and the one with a person waiting. ``_notify_submitter``
+        # reads created_by_user_id, which is NULL for every portal filing, so it returns
+        # early: without this line a customer's claim can be approved or rejected and the
+        # only party told is nobody (AC-F2c-8). A contact is reached by a different path
+        # entirely, because notifications.user_id is NOT NULL and has no foreign key, so
+        # writing a contact id there succeeds and addresses nobody.
+        self._notify_respondent_contact(s, edge, log_id)
 
         # The SLA event for a MANUAL move, so it carries its mover: a human decided
         # this, and the tracker's responded_by / resolved_by must say who.
@@ -1053,6 +1062,45 @@ class WorkflowFormsService:
 
         self.db.refresh(s)
         return s
+
+    def _notify_respondent_contact(
+        self,
+        submission: WorkflowSubmission,
+        edge: Any,
+        log_id: str,
+    ) -> None:
+        """Tell the contact a portal-filed submission is about that it moved.
+
+        Best-effort, and the rollback is part of that: a notification that fails
+        mid-flush leaves the session unusable, so the ``db.refresh`` two lines below
+        would raise PendingRollbackError - a 500 for a move that was already committed.
+        A submission that cannot be approved because a customer's WhatsApp window is
+        shut is the least acceptable failure this can produce.
+
+        Local import so the notification stack is not pulled in at module import time,
+        mirroring every other side-effect call site in this service.
+        """
+        try:
+            from app.services.workflow_submission_notify import (
+                notify_submission_status_change,
+            )
+
+            notify_submission_status_change(
+                self.db,
+                submission,
+                transition_label=getattr(edge, "label", None),
+                event_type=f"workflow_forms.tr.{log_id}.contact",
+            )
+        except Exception as exc:  # noqa: BLE001
+            try:
+                self.db.rollback()
+            except Exception:  # noqa: BLE001 - nothing left to salvage
+                logger.warning("Session rollback failed after contact notification")
+            logger.warning(
+                "Workflow transition contact notification failed for %s: %s",
+                submission.id,
+                exc,
+            )
 
     def _notify_submitter(
         self,

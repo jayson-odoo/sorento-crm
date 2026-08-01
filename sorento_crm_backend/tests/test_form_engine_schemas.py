@@ -1255,6 +1255,18 @@ def test_no_id_column_is_plain_string(table_name):
     False)`` rather than ``Column(String)``. That exact drift - a model declaring
     varchar where the column is uuid - is what broke ``user_sessions.id`` auth on
     production, so it is pinned here rather than discovered later.
+
+    Exempt by necessity, not by preference:
+
+    * ``respondent_contact_id`` (F2b) targets ``respond_contacts.id``, which is a
+      TEXT column. Postgres refuses a foreign key from ``uuid`` to ``text``, so
+      the uuid form of this column cannot exist at all. Every other FK into that
+      table is a string for the same reason.
+    * ``source_entity_id`` (F2b) is a polymorphic pointer with no FK, and cannot
+      assume every table it may name has a uuid primary key.
+
+    Both are string because the schema leaves no alternative. Anything added here
+    for mere convenience is the drift this test exists to catch.
     """
     import app.models.workflow_forms  # noqa: F401  register the tables
 
@@ -1263,7 +1275,15 @@ def test_no_id_column_is_plain_string(table_name):
         column.name
         for column in table_.columns
         if (column.name == "id" or column.name.endswith("_id"))
-        and column.name not in {"tenant_id", "line_group_id", "created_by_user_id", "updated_by_user_id"}
+        and column.name
+        not in {
+            "tenant_id",
+            "line_group_id",
+            "created_by_user_id",
+            "updated_by_user_id",
+            "respondent_contact_id",
+            "source_entity_id",
+        }
         and isinstance(column.type, String)
         and not isinstance(column.type, UUID)
     ]
