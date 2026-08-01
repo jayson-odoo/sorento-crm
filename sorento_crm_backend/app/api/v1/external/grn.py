@@ -1,7 +1,9 @@
 """External API for GRN creation."""
+import logging
 from datetime import date
 from typing import Union, List as ListType
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
 
@@ -10,6 +12,7 @@ from app.dependencies import get_external_api_user
 from app.schemas.external.procurement import GRNRequest
 from app.schemas.procurement import PickingHeaderCreate, PickingLineCreate, PickingHeaderResponse
 from app.services.procurement_service import PickingHeaderService
+from app.services.grn_ingest_service import GrnIngestService
 from app.models.procurement import SPOAllocation
 from app.api.v1.external.utils import (
     parse_date_value,
@@ -19,11 +22,13 @@ from app.api.v1.external.utils import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
-@router.post("/", response_model=PickingHeaderResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/")
 def create_grn(
     payload: Union[GRNRequest, ListType[GRNRequest]],
+    dry_run: bool = Query(False, description="Resolve + apply then roll back; writes nothing."),
     current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
@@ -35,6 +40,32 @@ def create_grn(
 
     if not payload.grn_lines:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No GRN lines provided")
+
+    # AutoCount GRN ingest (S17-1c): when source_ref is present, route through the
+    # adopt-by-source_ref verdict path (idempotent, dry_run-capable, 200-always with
+    # per-record outcomes). A caller that omits source_ref keeps the legacy create-
+    # only path below (back-compat). picking_number is display + mutable, never the
+    # adopt key.
+    if payload.goods_receive_notes.source_ref:
+        service = GrnIngestService(db, integration_id=current_user.get("integration_id"))
+        result = service.ingest(payload, dry_run=dry_run)
+        if dry_run:
+            db.rollback()
+        else:
+            db.commit()
+        logger.info(
+            "grn.ingest integration=%s dry_run=%s created=%d updated=%d failed=%d retryable=%d",
+            current_user.get("integration_name"), dry_run,
+            result.created, result.updated, result.failed, result.retryable,
+        )
+        return JSONResponse(status_code=status.HTTP_200_OK, content=result.as_dict())
+
+    if dry_run:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="dry_run requires source_ref (the AutoCount ingest path). The legacy "
+                   "create-only path always writes.",
+        )
 
     product_codes = [item.product_code for item in payload.grn_lines]
     products_map = get_products_by_code(db, product_codes)
@@ -180,4 +211,8 @@ def create_grn(
     # landed in the wrong company looks like it appeared from nowhere.
     created_by = current_user["id"]
     service = PickingHeaderService(db)
-    return service.create_grn(grn, created_by=created_by, source_system="external_api")
+    created = service.create_grn(grn, created_by=created_by, source_system="external_api")
+    # The decorator no longer pins a response_model (the source_ref path returns the
+    # verdict envelope), so serialize the legacy shape explicitly and keep the 201.
+    body = PickingHeaderResponse.model_validate(created).model_dump(mode="json")
+    return JSONResponse(status_code=status.HTTP_201_CREATED, content=body)

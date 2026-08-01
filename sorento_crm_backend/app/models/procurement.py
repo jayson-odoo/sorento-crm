@@ -357,10 +357,15 @@ class PickingHeader(Base, CompanyScopedMixin):
     inspected_by_user_id = Column(UUID(as_uuid=False), nullable=True)
     inspection_date = Column(DateTime(timezone=False), nullable=True)
     picking_status = Column(String(50), default="draft", nullable=False)
-    total_items_picked = Column(Integer, nullable=True)
-    total_items_discrepancy = Column(Integer, nullable=True)
+    # Widened to Numeric (S17-1a): aggregate of Decimal line quantities.
+    total_items_picked = Column(Numeric(15, 4), nullable=True)
+    total_items_discrepancy = Column(Numeric(15, 4), nullable=True)
     total_cost = Column(Numeric(15, 2), nullable=True)
     notes = Column(Text, nullable=True)
+    # AutoCount GRN ingest (S17-1b): supplier captured-if-resolvable. A miss keeps
+    # the raw code with supplier_id NULL — supplier is not a hard requirement.
+    supplier_code = Column(String(50), nullable=True)
+    supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True)
     # Provenance. A GRN can arrive three ways - a staff create, an Excel import, or
     # the external (n8n / AutoCount) API - and the row itself recorded none of
     # them, so "who created this GRN, and into which company" could only be
@@ -380,7 +385,8 @@ class PickingHeader(Base, CompanyScopedMixin):
     )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
-    
+
+    supplier = relationship("Supplier", foreign_keys=[supplier_id])
     picking_lines = relationship("PickingLine", back_populates="picking_header")
     
     __table_args__ = (
@@ -404,12 +410,14 @@ class PickingLine(Base, CompanyScopedMixin):
     # SCM (M0): soft link to the originating PO line when this pick is a goods-received
     # against a purchase order (drives supplier lead-time / quality snapshots).
     po_line_id = Column(UUID(as_uuid=False), ForeignKey("purchase_order_lines.id", ondelete="SET NULL"), nullable=True)
-    qty_accepted = Column(Integer, nullable=True)
-    qty_rejected = Column(Integer, nullable=True)
+    # Widened to Numeric (S17-1a): AutoCount ships fractional quantities as
+    # strings ("2.5"); an Integer column truncated them to 2.
+    qty_accepted = Column(Numeric(15, 4), nullable=True)
+    qty_rejected = Column(Numeric(15, 4), nullable=True)
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="RESTRICT"), nullable=False)
-    quantity_expected = Column(Integer, nullable=False)
-    quantity_picked = Column(Integer, nullable=False)
-    quantity_discrepancy = Column(Integer, Computed("(quantity_expected - quantity_picked)"), nullable=False)
+    quantity_expected = Column(Numeric(15, 4), nullable=False)
+    quantity_picked = Column(Numeric(15, 4), nullable=False)
+    quantity_discrepancy = Column(Numeric(15, 4), Computed("(quantity_expected - quantity_picked)"), nullable=False)
     uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True)
     picked_condition = Column(String(50), default="good", nullable=False)
     condition_remarks = Column(Text, nullable=True)

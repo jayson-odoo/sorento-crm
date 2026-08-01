@@ -432,8 +432,8 @@ class SPOWithAllocationsGroup(BaseModel):
 class PickingLineBase(BaseModel):
     spo_allocation_id: Optional[str] = None
     product_id: str
-    quantity_expected: int
-    quantity_picked: int
+    quantity_expected: Decimal
+    quantity_picked: Decimal
     # quantity_discrepancy is a DB-generated column; do not include in create
     uom_id: Optional[str] = None
     picked_condition: str = "good"
@@ -453,7 +453,7 @@ class PickingLineCreate(PickingLineBase):
 class PickingLineResponse(PickingLineBase):
     id: str
     picking_header_id: str
-    quantity_discrepancy: int = 0  # from DB generated column
+    quantity_discrepancy: Decimal = Decimal(0)  # from DB generated column
     created_at: datetime
     updated_at: Optional[datetime] = None
     product: Optional[ProductSimple] = None
@@ -478,16 +478,19 @@ class PickingHeaderBase(BaseModel):
     inspected_by_user_id: Optional[str] = None
     inspection_date: Optional[datetime] = None
     picking_status: str = "draft"
-    total_items_picked: Optional[int] = None
-    total_items_discrepancy: Optional[int] = None
+    total_items_picked: Optional[Decimal] = None
+    total_items_discrepancy: Optional[Decimal] = None
     total_cost: Optional[Decimal] = None
+    supplier_code: Optional[str] = None
+    supplier_id: Optional[str] = None
     notes: Optional[str] = None
 
     # source_entity_id is physically a uuid column on picking_headers (the model
     # declares String, but the live column is uuid), so SQLAlchemy hands back a
     # UUID object that strict str validation rejects - coerce like the user ids.
     @field_validator(
-        "picked_by_user_id", "inspected_by_user_id", "source_entity_id", mode="before"
+        "picked_by_user_id", "inspected_by_user_id", "source_entity_id",
+        "supplier_id", mode="before"
     )
     @classmethod
     def coerce_user_id_to_str(cls, v: object) -> Optional[str]:
@@ -509,8 +512,8 @@ class PickingHeaderUpdate(BaseModel):
     inspected_by_user_id: Optional[str] = None
     inspection_date: Optional[datetime] = None
     picking_status: Optional[str] = None
-    total_items_picked: Optional[int] = None
-    total_items_discrepancy: Optional[int] = None
+    total_items_picked: Optional[Decimal] = None
+    total_items_discrepancy: Optional[Decimal] = None
     total_cost: Optional[Decimal] = None
     notes: Optional[str] = None
     picking_lines: Optional[List[PickingLineCreate]] = None
@@ -530,7 +533,9 @@ class PickingHeaderResponse(PickingHeaderBase):
     source_system: Optional[str] = None
     created_by_label: Optional[str] = None
     import_filename: Optional[str] = None
-    
+    supplier: Optional[SupplierSimple] = None
+
+
     class Config:
         from_attributes = True
 
