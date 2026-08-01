@@ -237,6 +237,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                   <Fact label="Project type" value={project.type_name} />
                   <Fact label="Template" value={project.template_name} />
                   <Fact label="Location" value={project.location} />
+                  <Fact label="Filing reference" value={project.admin_ref} />
                   <Fact label="Architect" value={project.architect_name} />
                   <Fact label="Main contractor" value={project.main_contractor_name} />
                   <Fact

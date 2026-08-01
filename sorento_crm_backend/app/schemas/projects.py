@@ -218,6 +218,10 @@ class ProjectUpdateRequest(BaseModel):
     template_id: Optional[str] = None
     owner_user_id: Optional[str] = None
     loss_reason: Optional[str] = None
+    # Project sales admin's filing reference, e.g. PS26-0143. Searchable, and not an
+    # identity: it is the string written on every piece of paper for this job, and
+    # without it nobody can tie a document back to the file it belongs to.
+    admin_ref: Optional[str] = Field(None, max_length=64)
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -249,6 +253,7 @@ class ProjectResponse(BaseModel):
     title: str
     outcome: str
     loss_reason: Optional[str] = None
+    admin_ref: Optional[str] = None
 
     developer_party_id: Optional[str] = None
     developer_name: Optional[str] = None
@@ -559,9 +564,44 @@ class ProjectTaskHistoryEntry(BaseModel):
 # ----------------------------------------------------------------- S2c leads
 
 
-class ProjectLeadBase(BaseModel):
+class ProjectLeadInformant(BaseModel):
+    """Who told us (D6, AC-A2). Never a debtor, never written to `customers`.
+
+    Separate from the BUYER because a BCI sighting has no counterparty at all: the
+    trading house only exists once a contractor is awarded. Mixed into create and
+    update rather than nested, so the wizard posts one flat body.
+    """
+
+    informant_source: Optional[str] = Field(
+        None,
+        max_length=32,
+        description=(
+            "Reportable bucket: bci | panel | referral | walk_in | consultant | "
+            "architect | contractor | other."
+        ),
+    )
+    informant_ref: Optional[str] = Field(
+        None, max_length=180, description="Their own reference, e.g. a BCI project id."
+    )
+    informant_party_id: Optional[str] = Field(
+        None, description="A firm on `project_parties`, when the informant has one."
+    )
+    informant_contact_name: Optional[str] = Field(
+        None,
+        max_length=180,
+        description="A lone informant with no firm on record is normal.",
+    )
+
+
+class ProjectLeadBase(ProjectLeadInformant):
     title: str = Field(min_length=1)
-    customer_id: str = Field(description="Required (AC-O1): somebody told us about it.")
+    customer_id: Optional[str] = Field(
+        None,
+        description=(
+            "The BUYER: the debtor who will issue the PO (D6). Nullable, and usually "
+            "unknown on day one -- set it when the contractor is awarded."
+        ),
+    )
     developer_party_id: Optional[str] = Field(
         None, description="Often unknown at sighting time."
     )
@@ -589,19 +629,17 @@ class ProjectLeadNewCustomer(BaseModel):
 
 
 class ProjectLeadCreate(ProjectLeadBase):
-    customer_id: Optional[str] = Field(
-        None, description="Omit only when supplying `new_customer` instead."
-    )
     new_customer: Optional[ProjectLeadNewCustomer] = Field(
         None,
         description=(
-            "Step 1 of the wizard when the informant is not yet a customer. Ignored "
-            "when `customer_id` is given."
+            "Create the BUYER inline when it is already known and not on file. Ignored "
+            "when `customer_id` is given, and omitted entirely on a BCI sighting, which "
+            "has no buyer yet."
         ),
     )
 
 
-class ProjectLeadUpdate(BaseModel):
+class ProjectLeadUpdate(ProjectLeadInformant):
     title: Optional[str] = Field(None, min_length=1)
     customer_id: Optional[str] = None
     developer_party_id: Optional[str] = None
@@ -628,10 +666,26 @@ class ProjectLeadResponse(BaseModel):
     lead_code: str
     title: str
 
-    customer_id: str
+    customer_id: Optional[str] = None
     customer_name: Optional[str] = None
     developer_party_id: Optional[str] = None
     developer_name: Optional[str] = None
+
+    informant_source: Optional[str] = None
+    informant_ref: Optional[str] = None
+    informant_party_id: Optional[str] = None
+    # Resolved from `project_parties` so the screen never has to render the id, per the
+    # cursor rule that no UUID reaches the UI.
+    informant_party_label: Optional[str] = None
+    informant_contact_name: Optional[str] = None
+
+    # The acceptance handshake (D7). `assigned` is not ownership: a lead is only owned
+    # once the salesperson accepts it, which is what makes silence measurable.
+    acceptance_state: Optional[str] = None
+    assigned_at: Optional[datetime] = None
+    accepted_at: Optional[datetime] = None
+    declined_reason: Optional[str] = None
+    declined_at: Optional[datetime] = None
 
     source: Optional[str] = None
     source_detail: Optional[str] = None
@@ -659,6 +713,42 @@ class ProjectLeadResponse(BaseModel):
 
 class ProjectLeadStatusChangeRequest(BaseModel):
     to_status_id: str
+
+
+class ProjectLeadAssignRequest(BaseModel):
+    """Hand the lead to a salesperson and start the acceptance clock (AC-A4)."""
+
+    owner_user_id: str = Field(
+        min_length=1, description="The salesperson being asked to take it on."
+    )
+    note: Optional[str] = Field(
+        None,
+        description=(
+            "Context for the assignee, carried in their notification. Not stored on "
+            "the lead: the lead's own `notes` belong to the sighting."
+        ),
+    )
+
+
+class ProjectLeadDeclineRequest(BaseModel):
+    """Refuse an assignment (AC-A5). The reason is free text on purpose.
+
+    Unlike a disqualification, which feeds the conversion report and must come from a
+    lookup, this is one salesperson telling marketing why it is not their patch.
+    """
+
+    reason: str = Field(min_length=1)
+
+
+class ProjectLeadAwaitingAcceptanceRow(ProjectLeadResponse):
+    """A row of marketing's "who has taken nothing" worklist (AC-A7).
+
+    ``hours_since_assigned`` is computed here so the screen shows the wait without
+    doing date maths in the browser, where a naive-UTC timestamp would be read as
+    local time and every row would be eight hours out.
+    """
+
+    hours_since_assigned: Optional[float] = None
 
 
 class ProjectLeadQualifyRequest(BaseModel):

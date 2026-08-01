@@ -548,6 +548,7 @@ def serialize_projects(
                 "title": project.title,
                 "outcome": project.outcome,
                 "loss_reason": project.loss_reason,
+                "admin_ref": project.admin_ref,
                 "developer_party_id": project.developer_party_id,
                 "developer_name": party_names.get(project.developer_party_id),
                 "type_id": project.type_id,
@@ -832,6 +833,7 @@ _PROJECT_FIELDS = (
     "type_id",
     "template_id",
     "loss_reason",
+    "admin_ref",
     "management_support",
     "management_notes",
 )

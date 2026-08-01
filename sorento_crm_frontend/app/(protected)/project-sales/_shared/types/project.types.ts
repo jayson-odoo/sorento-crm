@@ -114,6 +114,10 @@ export interface Project {
   title: string;
   outcome: ProjectOutcome;
   loss_reason?: string | null;
+  /** Project sales admin's filing reference, e.g. PS26-0143. Not an identity: it is
+   *  the string written on every piece of paper for this job, and it is how they find
+   *  the file. Searchable, and shown beside the project code rather than instead of it. */
+  admin_ref?: string | null;
 
   developer_party_id?: string | null;
   developer_name?: string | null;
@@ -206,6 +210,7 @@ export interface ProjectUpdateBody extends Partial<ProjectRegisterBody> {
   management_support?: string | null;
   management_notes?: string | null;
   loss_reason?: string | null;
+  admin_ref?: string | null;
 }
 
 export interface ClashCandidate {
