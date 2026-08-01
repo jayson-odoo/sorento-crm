@@ -142,13 +142,18 @@ def get_request(db: Session, download_id: str) -> ExportRequest:
 #: imagery they may see, so an audience that maps to nothing produces a document
 #: priced and illustrated for nobody in particular.
 #:
-#: Staff map to no codes on purpose. `is_staff` governs the INVOICE price and not
-#: a promotion's audience, because exporting AS a dealer is how somebody asks for
-#: the trade view. A staff export therefore shows list prices, which is a
-#: commercial choice worth revisiting rather than an accident.
+#: Staff map to no codes because they do not need any: a staff export is an
+#: INTERNAL COPY of the brochure, and an internal copy carries the brochure's own
+#: offers whoever they were aimed at. A copy that silently showed list prices
+#: would be printed, read, and quoted from, and the number would disagree with
+#: the page the customer is looking at.
+#: Keyed on AUDIENCES above. Note the asymmetry, which is easy to get wrong: the
+#: audience is "consumer" while the access code it grants is "end_user". Keying
+#: this map on "end_user" matched no real audience at all, and a consumer export
+#: only behaved because empty codes fall back to the public code downstream.
 _AUDIENCE_ACCESS_CODES = {
     "dealer": frozenset({"dealer"}),
-    "end_user": frozenset({"end_user"}),
+    "consumer": frozenset({"end_user"}),
     "staff": frozenset(),
 }
 
@@ -164,10 +169,14 @@ def viewer_for(request: ExportRequest) -> ViewerContext:
     a new audience nobody has taught this function about must not default into
     seeing trade prices.
     """
+    is_staff = request.audience == "staff"
     return ViewerContext(
-        is_staff=(request.audience == "staff"),
+        is_staff=is_staff,
         access_codes=_AUDIENCE_ACCESS_CODES.get(request.audience, frozenset()),
         show_invoice_price=bool(request.show_invoice_price),
+        # The office copy is the brochure. A dealer or consumer export is a
+        # document for that audience and is gated like one.
+        is_internal_copy=is_staff,
     )
 
 

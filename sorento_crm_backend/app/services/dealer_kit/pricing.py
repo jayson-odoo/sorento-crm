@@ -114,6 +114,14 @@ def _may_see_offer(levels: Optional[Sequence[str]], viewer: ViewerContext) -> bo
     if not levels:
         return False
 
+    # An INTERNAL COPY is the brochure, so it carries the brochure's own offers
+    # whoever they were aimed at. An office PDF that dropped them would be
+    # printed, read, and quoted from, and the figure would disagree with the page
+    # the customer is looking at. Deliberately NOT keyed on is_staff: staff
+    # previewing what a consumer will see must still see the consumer's price.
+    if viewer.is_internal_copy:
+        return True
+
     # The public catalogue is the consumer-facing surface, so a reader who
     # brought no code counts as a consumer - exactly as they do for imagery.
     codes = set(viewer.access_codes) or {PUBLIC_ACCESS_CODE}

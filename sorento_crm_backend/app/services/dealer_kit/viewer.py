@@ -28,6 +28,17 @@ class ViewerContext:
     is_staff: bool = False
     access_codes: frozenset[str] = frozenset()
     show_invoice_price: bool = False
+    #: This render is an internal COPY of a published brochure, so it shows the
+    #: brochure's own offer prices whoever the promotion was aimed at.
+    #:
+    #: Its own flag rather than a second meaning for ``is_staff``, which decides
+    #: the invoice price - a genuinely internal figure a dealer must never read.
+    #: Whether the OFFER prices appear is a different question: an office copy
+    #: that silently dropped them would be printed, read, and quoted from, and
+    #: the number would disagree with the page the customer is looking at. That
+    #: is not a leak, it is two documents that are meant to be one contradicting
+    #: each other.
+    is_internal_copy: bool = False
 
     @property
     def may_see_invoice_price(self) -> bool:

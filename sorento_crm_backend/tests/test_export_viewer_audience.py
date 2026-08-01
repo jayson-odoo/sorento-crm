@@ -31,7 +31,9 @@ class TestTheAudienceDecidesTheOffer:
         assert viewer.is_staff is False
 
     def test_a_consumer_export_carries_the_consumer_code(self) -> None:
-        viewer = viewer_for(_Request("end_user"))
+        # The audience is "consumer"; the access code it grants is "end_user".
+        # That asymmetry is real and this map was keyed on the wrong one.
+        viewer = viewer_for(_Request("consumer"))
 
         assert "end_user" in viewer.access_codes
         assert "dealer" not in viewer.access_codes
@@ -40,7 +42,7 @@ class TestTheAudienceDecidesTheOffer:
         # The failure this exists to prevent, stated as the rule rather than as
         # the mechanism: a document sent to a consumer must not carry trade
         # pricing, whatever the promotion says.
-        viewer = viewer_for(_Request("end_user"))
+        viewer = viewer_for(_Request("consumer"))
 
         assert viewer.access_codes.isdisjoint({"dealer"})
 
@@ -59,18 +61,41 @@ class TestStaff:
         assert viewer.is_staff is True
         assert viewer.invoice_price_visible is False
 
-    def test_staff_do_not_silently_inherit_a_trade_offer(self) -> None:
-        """A staff export shows list prices unless it asks to be a dealer's copy.
+    def test_a_staff_export_is_an_internal_copy_of_the_brochure(self) -> None:
+        """The office PDF shows what the brochure shows.
 
-        This follows the pricing decision that `is_staff` governs the invoice
-        price and NOT a promotion's audience: seeing the trade price is what
-        exporting AS a dealer is for. It is recorded as a test because it is a
-        commercial choice somebody may want to revisit, not an accident, and the
-        next person should find the argument rather than the behaviour alone.
+        It is a COPY of a published document, so dropping its offer prices would
+        leave somebody printing it, reading a list price off it, and quoting a
+        number that disagrees with the page the customer has open. Carried by its
+        own flag rather than by access codes, because the question "is this the
+        brochure" is not the question "which audience is this for".
         """
         viewer = viewer_for(_Request("staff"))
 
-        assert viewer.access_codes.isdisjoint({"dealer"})
+        assert viewer.is_internal_copy is True
+
+    def test_a_dealer_or_consumer_export_is_not_an_internal_copy(self) -> None:
+        # Those are documents FOR an audience and are gated like one.
+        assert viewer_for(_Request("dealer")).is_internal_copy is False
+        assert viewer_for(_Request("consumer")).is_internal_copy is False
+
+
+class TestTheMapMatchesTheRealAudiences:
+    def test_every_declared_audience_is_mapped(self) -> None:
+        """No audience may fall through to the empty default by accident.
+
+        This map was keyed on "end_user" while the declared audience is
+        "consumer", so consumer exports matched nothing and only worked because
+        empty codes fall back to the public code downstream. A silent fallback
+        that happens to be right is the worst kind, so the mapping is asserted
+        against the declared list rather than trusted.
+        """
+        from app.services.dealer_kit.export_service import (
+            AUDIENCES,
+            _AUDIENCE_ACCESS_CODES,
+        )
+
+        assert set(_AUDIENCE_ACCESS_CODES) == set(AUDIENCES)
 
 
 class TestUnknownAudience:
