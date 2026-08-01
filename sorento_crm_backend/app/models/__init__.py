@@ -30,7 +30,7 @@ from app.models.respond_template import (
     RespondMessageTemplate,
     RespondTemplateDefault,
 )
-from app.models.workflow_stage import WorkflowStage
+from app.models.status import Status, StatusTransition
 from app.models.entity_conversation import EntityConversationMessage
 from app.models.integration import Integration, IntegrationApiKey, IntegrationLog
 from app.models.integration_reference import IntegrationReference
@@ -166,7 +166,8 @@ __all__ = [
     "RespondChannel",
     "RespondMessageTemplate",
     "RespondTemplateDefault",
-    "WorkflowStage",
+    "Status",
+    "StatusTransition",
     "EntityConversationMessage",
     "IntegrationLog",
     "ImportLog",
