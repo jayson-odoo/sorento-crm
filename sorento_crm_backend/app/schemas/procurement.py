@@ -1,10 +1,23 @@
 """Procurement schemas."""
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, field_serializer
 from typing import Optional, List
 from datetime import datetime, date
 from decimal import Decimal
 import uuid
 from app.schemas.resources import AttachmentTypeSimple
+
+
+def _decimal_to_number(v):
+    """Serialize a Numeric(15,4) quantity as a JSON number, not a string.
+
+    Pydantic serializes Decimal as a JSON STRING ("5.0000") by default. These
+    picking-quantity columns were Integer before S17 (JSON number 5), so emitting
+    them as a Decimal string would (a) flip every existing whole-number GRN's
+    display to "5.0000" and (b) break the frontend's `number`-typed contract at
+    runtime. Coerce to float on the way out; storage + ingest input stay Decimal
+    (that is where drift matters), display precision via float is exact for 4dp.
+    """
+    return float(v) if v is not None else None
 
 
 class SupplierBase(BaseModel):
@@ -414,6 +427,12 @@ class PickingLineResponse(PickingLineBase):
     source_warehouse: Optional[WarehouseSimple] = None
     destination_warehouse: Optional[WarehouseSimple] = None
 
+    # Emit picking quantities as JSON numbers (they were Integer pre-S17), not
+    # Decimal strings. See _decimal_to_number.
+    _ser_line_qty = field_serializer(
+        "quantity_expected", "quantity_picked", "quantity_discrepancy"
+    )(_decimal_to_number)
+
     class Config:
         from_attributes = True
 
@@ -480,6 +499,12 @@ class PickingHeaderResponse(PickingHeaderBase):
     lines_count: Optional[int] = 0
     items_count: Optional[int] = 0
     supplier: Optional[SupplierSimple] = None
+
+    # Header qty totals were Integer pre-S17; emit as JSON numbers, not Decimal
+    # strings. See _decimal_to_number.
+    _ser_header_totals = field_serializer(
+        "total_items_picked", "total_items_discrepancy"
+    )(_decimal_to_number)
 
     class Config:
         from_attributes = True
