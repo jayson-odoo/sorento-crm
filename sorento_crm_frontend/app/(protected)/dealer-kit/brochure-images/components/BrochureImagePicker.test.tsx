@@ -33,6 +33,7 @@ vi.mock(
   }),
 );
 
+import { toast } from 'sonner';
 import {
   clearBrochureImage,
   setBrochureImage,
@@ -51,6 +52,21 @@ import { BrochureImagePicker } from './BrochureImagePicker';
 const mockList = vi.mocked(listBrochureImages);
 const mockSet = vi.mocked(setBrochureImage);
 const mockPromotions = vi.mocked(listBrochureImagePromotionOptions);
+const mockToastError = vi.mocked(toast.error);
+
+/** A promise this test resolves or rejects on cue, to hold a save in flight. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  // Attached now because an unhandled rejection between the reject() and the
+  // mutation's own catch fails the run on its own.
+  promise.catch(() => {});
+  return { promise, resolve, reject };
+}
 
 function candidate(
   index: number,
@@ -330,6 +346,89 @@ describe('BrochureImagePicker', () => {
         container.querySelector('[data-dk-bi-remaining]')?.textContent?.replace(/\s+/g, ' '),
       ).toBe('97 of 998 still to choose'),
     );
+  });
+
+  it('takes the mark back off when the save fails, and leaves the count alone', async () => {
+    // The mark is the only record of the decision. A save that 404s (product
+    // outside the company scope), 400s (not an image) or 500s while the tile
+    // still reads "chosen" tells the user this product is answered when it is
+    // not, and nobody finds out until a customer is looking at the wrong photo.
+    mockList.mockResolvedValue({
+      items: [SINGLE_CANDIDATE_ROW],
+      total: 998,
+      remaining: 98,
+      shown: 98,
+    });
+    mockSet.mockRejectedValue(new Error('Attachment is not linked to this product'));
+
+    const { container } = renderPicker();
+    await screen.findByText('SRTSCBD320');
+
+    await act(async () => {
+      fireEvent.click(tile('SRTSCBD320.jpg'));
+    });
+
+    await waitFor(() =>
+      expect(mockToastError).toHaveBeenCalledWith('Attachment is not linked to this product'),
+    );
+    expect(tile('SRTSCBD320.jpg')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByText('chosen')).toBeNull();
+    // The count and the list have to agree: a product still in the backlog that
+    // stopped being counted is one the worklist can never be finished on.
+    expect(
+      container.querySelector('[data-dk-bi-remaining]')?.textContent?.replace(/\s+/g, ' '),
+    ).toBe('98 of 998 still to choose');
+  });
+
+  it('puts the previous choice back when a re-choice fails', async () => {
+    // Rolling back to "nothing chosen" would be its own lie: this product was
+    // answered, and the failed attempt to change the answer did not unanswer it.
+    mockList.mockResolvedValue(page([CHOSEN_ROW]));
+    mockSet.mockRejectedValue(new Error('Product not found'));
+
+    renderPicker();
+    await screen.findByText('SRTWC8354-SH');
+
+    await act(async () => {
+      fireEvent.click(tile('SRTWC8354-SH_02.jpg'));
+    });
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Product not found'));
+    expect(tile('SRTWC8354-SH.jpg')).toHaveAttribute('aria-pressed', 'true');
+    expect(tile('SRTWC8354-SH_02.jpg')).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('leaves a later choice marked when an earlier save on the same product fails', async () => {
+    // Two clicks in a row on one product, and the abandoned first save answers
+    // last. Rolling back on the product rather than on the attempt would clear a
+    // mark the user is entitled to keep.
+    const first = deferred<{ productId: string; chosenAttachmentId: string }>();
+    const second = deferred<{ productId: string; chosenAttachmentId: string }>();
+    mockList.mockResolvedValue(page([MESSY_ROW]));
+    mockSet.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+    renderPicker();
+    await screen.findByText('SRTWC286-SH');
+
+    await act(async () => {
+      fireEvent.click(tile('61. BLANK PAGE_PG12.jpg'));
+    });
+    await act(async () => {
+      fireEvent.click(tile('SRTWC286-SH.jpg'));
+    });
+
+    await act(async () => {
+      first.reject(new Error('Attachment is not linked to this product'));
+      await Promise.resolve();
+    });
+
+    expect(tile('SRTWC286-SH.jpg')).toHaveAttribute('aria-pressed', 'true');
+    expect(tile('61. BLANK PAGE_PG12.jpg')).toHaveAttribute('aria-pressed', 'false');
+
+    await act(async () => {
+      second.resolve({ productId: 'p-1', chosenAttachmentId: 'att-1' });
+    });
+    expect(tile('SRTWC286-SH.jpg')).toHaveAttribute('aria-pressed', 'true');
   });
 
   it('offers only the pages it can actually list', async () => {

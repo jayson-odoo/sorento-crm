@@ -73,7 +73,8 @@ export function BrochureImagePicker() {
    *
    * Without this the tile shows nothing chosen for as long as the round trip
    * takes, which reads as "the click did not register" and invites a second
-   * click on a different candidate.
+   * click on a different candidate. It is dropped again if the save fails, so
+   * the mark can never outlive the answer it claims to record.
    */
   const [pendingChoice, setPendingChoice] = useState<Record<string, string>>({});
 
@@ -101,7 +102,26 @@ export function BrochureImagePicker() {
     // rather than putting the product back to having no image at all.
     if (isChosen) return;
     setPendingChoice((current) => ({ ...current, [productId]: attachmentId }));
-    setImage.mutate({ productId, attachmentId });
+    setImage.mutate(
+      { productId, attachmentId },
+      {
+        // A failed save leaves the product unanswered, and an error toast is
+        // read once and gone while the mark stays on screen: keeping it would
+        // tell the user this product is done for the rest of their session.
+        // Dropping the pending entry falls the row back to the cached page,
+        // which is the last thing the server actually reported.
+        onError: () =>
+          setPendingChoice((current) => {
+            // Keyed on the attempt, not just the product. If the user has since
+            // clicked another candidate, that later choice is what is on screen
+            // and this failure is not entitled to clear it.
+            if (current[productId] !== attachmentId) return current;
+            const next = { ...current };
+            delete next[productId];
+            return next;
+          }),
+      },
+    );
   };
 
   return (

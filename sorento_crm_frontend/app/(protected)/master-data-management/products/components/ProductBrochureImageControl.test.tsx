@@ -256,4 +256,82 @@ describe('ProductAttachmentsTab brochure image control', () => {
     expect(within(attachmentRow('pa-a')).getByText('Brochure image')).toBeInTheDocument();
     expect(screen.getAllByText('Brochure image')).toHaveLength(1);
   });
+
+  it('keeps the mark when clearing fails', async () => {
+    // Same lie in the other direction: a row that reads as cleared while the
+    // flag is still set sends the user off to choose a replacement they do not
+    // need, and the tile keeps the photo they thought they had removed.
+    clearBrochureImage.mockRejectedValue(new Error('Product not found'));
+    renderTab();
+
+    await waitFor(() => expect(attachmentRow('pa-a')).toBeInTheDocument());
+
+    fireEvent.click(
+      within(attachmentRow('pa-a')).getByRole('button', { name: 'Clear brochure image' }),
+    );
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Clear' }));
+
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith('Product not found'));
+    expect(within(attachmentRow('pa-a')).getByText('Brochure image')).toBeInTheDocument();
+    expect(screen.getAllByText('Brochure image')).toHaveLength(1);
+  });
+
+  it('stays at nothing chosen when the first save on a product fails', async () => {
+    // Nothing was flagged before, so the roll-back target is "no mark at all".
+    // A mark left behind here is the worst version of the lie: the product reads
+    // as answered on a screen whose entire job is recording that answer.
+    getProductAttachmentsByProduct.mockResolvedValue([
+      { ...PHOTO_A, is_primary: false },
+      PHOTO_B,
+      SPEC_PDF,
+    ]);
+    setBrochureImage.mockRejectedValue(new Error('Attachment is not an image'));
+    renderTab();
+
+    await waitFor(() => expect(attachmentRow('pa-b')).toBeInTheDocument());
+
+    fireEvent.click(
+      within(attachmentRow('pa-b')).getByRole('button', { name: 'Use as brochure image' }),
+    );
+
+    await waitFor(() =>
+      expect(toastMock.error).toHaveBeenCalledWith('Attachment is not an image'),
+    );
+    expect(screen.queryByText('Brochure image')).not.toBeInTheDocument();
+    // Still offered, because the product genuinely has no brochure image and the
+    // user has to be able to try again.
+    expect(
+      within(attachmentRow('pa-b')).getByRole('button', { name: 'Use as brochure image' }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps a successful choice marked when a later save fails', async () => {
+    // The roll-back target is what the server last accepted, not what the page
+    // was first rendered with.
+    getProductAttachmentsByProduct.mockResolvedValue([
+      { ...PHOTO_A, is_primary: false },
+      PHOTO_B,
+      SPEC_PDF,
+    ]);
+    renderTab();
+
+    await waitFor(() => expect(attachmentRow('pa-b')).toBeInTheDocument());
+
+    fireEvent.click(
+      within(attachmentRow('pa-b')).getByRole('button', { name: 'Use as brochure image' }),
+    );
+    await waitFor(() =>
+      expect(within(attachmentRow('pa-b')).getByText('Brochure image')).toBeInTheDocument(),
+    );
+
+    setBrochureImage.mockRejectedValue(new Error('Product not found'));
+    fireEvent.click(
+      within(attachmentRow('pa-a')).getByRole('button', { name: 'Use as brochure image' }),
+    );
+
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith('Product not found'));
+    expect(within(attachmentRow('pa-b')).getByText('Brochure image')).toBeInTheDocument();
+    expect(screen.getAllByText('Brochure image')).toHaveLength(1);
+  });
 });

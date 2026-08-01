@@ -70,6 +70,10 @@ export function useSetBrochureImage() {
     },
     onError: (error: Error) => {
       toast.error(error.message || 'Could not save the brochure image');
+      // Nothing to undo here on purpose: the count is only ever decremented in
+      // onSuccess, so a failed save leaves it agreeing with the list. Anything
+      // that moves the patch above into onMutate owes this branch the reverse
+      // patch, or the header will claim work that was never saved.
     },
   });
 }
