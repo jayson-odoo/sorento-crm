@@ -82,6 +82,21 @@ export function acceptanceBadgeVariant(
 }
 
 /**
+ * Whether this viewer may hand the lead to somebody.
+ *
+ * Shared by the list row and the detail header so the two cannot drift: the server also
+ * lets the person who RECORDED the lead hand it out, which is the decline path, since a
+ * declined lead lands back with marketing owning nothing. The response carries no
+ * `created_by`, so an unassigned lead is treated as assignable and the server has the
+ * final say.
+ */
+export function canAssignLead(
+  lead: Pick<LeadWithAcceptance, 'outcome' | 'can_edit' | 'owner_user_id'>,
+): boolean {
+  return lead.outcome === 'open' && (lead.can_edit || !lead.owner_user_id);
+}
+
+/**
  * The wait in plain words. Rounded down, because "3 hours" is a fact a person can act on
  * and "3.4 hours" is a number they have to translate first.
  */

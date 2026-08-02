@@ -1,7 +1,10 @@
 /**
- * S2c - LeadsClient (AC-O3, AC-O6).
+ * S2c - LeadsClient (AC-O3, AC-O6), now on the shared DataGrid.
  *
- * Two things carry the design and are pinned here:
+ * Three things carry the design and are pinned here:
+ *   - the rows are the SHARED grid, with a pinned listing key rather than the pathname
+ *     default, because a list that looks unlike every other list is a list people have
+ *     to re-learn
  *   - a duplicate is SURFACED, never enforced, and it names the other person so the
  *     race becomes a conversation
  *   - conversion reads "no decisions yet" rather than 0%, because zero is a different
@@ -25,6 +28,21 @@ if (!window.matchMedia) {
 
 const listLeads = vi.fn();
 const getLeadMetrics = vi.fn();
+const listingKeys: (string | null | undefined)[] = [];
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/project-sales/leads',
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}));
+
+// The DataGrid persists column preferences over the network; stub that away, and
+// record the key it was given so the pathname fallback cannot creep back in.
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: ({ listingKey }: { listingKey?: string | null }) => {
+    listingKeys.push(listingKey);
+    return { resetToDefaults: async () => {}, isLoading: false };
+  },
+}));
 
 vi.mock('../../_shared/services/projectService', () => ({
   listLeads: (...args: unknown[]) => listLeads(...args),
@@ -78,6 +96,22 @@ vi.mock('../../_shared/services/projectService', () => ({
   createProjectTemplate: vi.fn(),
   updateProjectTemplate: vi.fn(),
   deleteProjectTemplate: vi.fn(),
+}));
+
+vi.mock('../../_shared/services/leadAcceptanceService', () => ({
+  listAwaitingAcceptance: vi.fn(),
+  assignLead: vi.fn(),
+  acceptLead: vi.fn(),
+  declineLead: vi.fn(),
+  nudgeLeadAssignee: vi.fn(),
+}));
+
+vi.mock('@/services/userSelectService', () => ({
+  getUsersSelect: vi.fn(async () => []),
+}));
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), custom: vi.fn() },
 }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -151,11 +185,20 @@ function renderClient() {
   );
 }
 
+/** Radix opens its popovers on pointerdown, which fireEvent.click does not send. */
+function openFilters() {
+  fireEvent.pointerDown(screen.getByRole('button', { name: /filters/i }), {
+    button: 0,
+    ctrlKey: false,
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  listingKeys.length = 0;
   listLeads.mockResolvedValue({
     data: [],
-    pagination: { total: 0, page: 1, limit: 200 },
+    pagination: { total: 0, page: 1, limit: 25 },
   });
   getLeadMetrics.mockResolvedValue(NO_METRICS);
 });
@@ -169,6 +212,31 @@ describe('LeadsClient', () => {
         expect.objectContaining({ outcome: ['open'] }),
       ),
     );
+  });
+
+  it('asks the server for one page at a time, sorted newest first', async () => {
+    renderClient();
+
+    await waitFor(() =>
+      expect(listLeads).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 1, limit: 25, sort: 'created_at', dir: 'desc' }),
+      ),
+    );
+  });
+
+  it('pins its own listing key rather than falling back to the pathname', async () => {
+    renderClient();
+
+    await waitFor(() => expect(listingKeys.length).toBeGreaterThan(0));
+    expect(listingKeys).toContain('projects.projects.view::leads');
+    expect(listingKeys).not.toContain('/project-sales/leads');
+  });
+
+  it('keeps the grid toolbar while loading, so the page does not jump', () => {
+    listLeads.mockReturnValue(new Promise(() => {}));
+    renderClient();
+
+    expect(screen.getByRole('button', { name: /filters/i })).toBeInTheDocument();
   });
 
   it('says "no decisions yet" instead of 0% conversion', async () => {
@@ -205,14 +273,17 @@ describe('LeadsClient', () => {
           ],
         }),
       ],
-      pagination: { total: 1, page: 1, limit: 200 },
+      pagination: { total: 1, page: 1, limit: 25 },
     });
 
     renderClient();
 
     const hint = await screen.findByText(/Also recorded by Siti/);
     expect(hint).toBeInTheDocument();
-    expect(hint).toHaveTextContent(/Leads are not exclusive, so both stand/);
+    expect(hint).toHaveAttribute(
+      'title',
+      'Also recorded by Siti. Leads are not exclusive, so both stand.',
+    );
     // No blocking language anywhere: recording a duplicate lead is allowed.
     expect(screen.queryByText(/already registered/i)).not.toBeInTheDocument();
   });
@@ -230,17 +301,23 @@ describe('LeadsClient', () => {
     renderClient();
     await screen.findByText('No open leads');
 
-    fireEvent.change(screen.getByLabelText('All outcomes'), {
+    openFilters();
+    fireEvent.change(await screen.findByLabelText('All outcomes'), {
       target: { value: 'qualified' },
     });
 
     expect(await screen.findByText('No leads match these filters')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(listLeads).toHaveBeenCalledWith(
+        expect.objectContaining({ outcome: ['qualified'] }),
+      ),
+    );
   });
 
   it('shows how many projects a lead produced, because one lead may produce several', async () => {
     listLeads.mockResolvedValue({
       data: [lead({ project_count: 3, outcome: 'qualified' })],
-      pagination: { total: 1, page: 1, limit: 200 },
+      pagination: { total: 1, page: 1, limit: 25 },
     });
 
     renderClient();
@@ -254,27 +331,82 @@ describe('LeadsClient', () => {
         lead({
           customer_id: null,
           customer_name: null,
+          developer_name: 'Setia Land',
+          location: 'Setia Alam, Selangor',
+          estimated_value: '1800000',
           informant_source: 'bci',
           informant_party_label: 'Veritas Architects Sdn Bhd',
           informant_ref: 'BCI-778812',
           acceptance_state: 'assigned',
+          owner_user_id: 'u-ali',
           owner_name: 'Ali',
           assigned_at: new Date(Date.now() - 50 * 3_600_000)
             .toISOString()
             .replace('Z', ''),
         }),
       ],
-      pagination: { total: 1, page: 1, limit: 200 },
+      pagination: { total: 1, page: 1, limit: 25 },
     });
 
     renderClient();
 
     expect(
-      await screen.findByText(/Told us: Veritas Architects Sdn Bhd · BCI · BCI-778812/),
+      await screen.findByText('Veritas Architects Sdn Bhd · BCI · BCI-778812'),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Buyer: not known yet/)).toBeInTheDocument();
+    expect(screen.getByText('Not known yet')).toBeInTheDocument();
     expect(screen.getByText('Awaiting acceptance by Ali')).toBeInTheDocument();
     expect(screen.getByText('Waiting 2 days')).toBeInTheDocument();
+    // Every fact the old cards carried is still a column.
+    expect(screen.getByText('Setia Land')).toBeInTheDocument();
+    expect(screen.getByText('Setia Alam, Selangor')).toBeInTheDocument();
+    expect(screen.getByText('RM 1,800,000')).toBeInTheDocument();
+    // No UUID reaches the screen.
+    expect(screen.queryByText('l1')).not.toBeInTheDocument();
+    expect(screen.queryByText('u-ali')).not.toBeInTheDocument();
+  });
+
+  it('offers assign and delete on the row, and only where they are allowed', async () => {
+    listLeads.mockResolvedValue({
+      data: [
+        lead({ id: 'l1', lead_code: 'LEAD-000001', can_edit: true }),
+        lead({
+          id: 'l2',
+          lead_code: 'LEAD-000002',
+          outcome: 'qualified',
+          can_edit: false,
+        }),
+      ],
+      pagination: { total: 2, page: 1, limit: 25 },
+    });
+
+    renderClient();
+
+    expect(
+      await screen.findByRole('button', { name: 'Assign LEAD-000001' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Delete LEAD-000001' }),
+    ).toBeInTheDocument();
+    // A qualified lead nobody may edit is read only: no assign, no delete.
+    expect(
+      screen.queryByRole('button', { name: /LEAD-000002/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('confirms before deleting, and says it cannot be undone', async () => {
+    listLeads.mockResolvedValue({
+      data: [lead()],
+      pagination: { total: 1, page: 1, limit: 25 },
+    });
+
+    renderClient();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete LEAD-000001' }));
+
+    expect(await screen.findByText('Confirm delete')).toBeInTheDocument();
+    expect(
+      screen.getByText(/This action cannot be undone/),
+    ).toBeInTheDocument();
   });
 
   it('reports a load failure rather than looking empty', async () => {
@@ -283,5 +415,6 @@ describe('LeadsClient', () => {
     renderClient();
 
     expect(await screen.findByText('Backend is down')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 });

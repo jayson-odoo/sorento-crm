@@ -15,8 +15,8 @@ import {
   useProjectTypes,
   useProjects,
 } from '../../_shared/hooks/useProjects';
+import { ProjectsGrid } from '../../_shared/components/ProjectsGrid';
 import { EmptyState, PipelineBoard } from './PipelineBoard';
-import { PipelineGrid } from './PipelineGrid';
 import { RegisterProjectDialog } from './RegisterProjectDialog';
 
 const VIEW_STORAGE_KEY = 'project-sales.pipeline.view';
@@ -272,7 +272,7 @@ export function PipelineClient() {
           }}
         />
       ) : (
-        <PipelineGrid
+        <ProjectsGrid
           projects={rows}
           total={total}
           isLoading={projects.isLoading}
@@ -283,6 +283,10 @@ export function PipelineClient() {
           onSortingChange={setSorting}
           onRefresh={() => void projects.refetch()}
           searchSlot={searchSlot}
+          // Its own key, separate from the Projects list: the same table serves two
+          // jobs here, and a manager reading the pipeline arranges it differently
+          // from somebody working the flat list.
+          listingKey="projects.projects.view::pipeline"
         />
       )}
 

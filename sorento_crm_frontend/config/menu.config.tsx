@@ -608,6 +608,14 @@ export const MENU_SIDEBAR: MenuConfig = [
     moduleKey: 'projects',
     children: [
       {
+        // The flat list of everything registered. Above Pipeline because a board
+        // answers "where is everything in the funnel" and a list answers "take me to
+        // this one"; without its own entry the only way into a project was the board.
+        title: 'Projects',
+        path: '/project-sales/projects',
+        permission: 'projects.projects.view',
+      },
+      {
         title: 'Pipeline',
         path: '/project-sales/pipeline',
         permission: 'projects.projects.view',
@@ -1512,6 +1520,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     icon: Building2,
     moduleKey: 'projects',
     children: [
+      {
+        // The flat list of everything registered. Above Pipeline because a board
+        // answers "where is everything in the funnel" and a list answers "take me to
+        // this one"; without its own entry the only way into a project was the board.
+        title: 'Projects',
+        path: '/project-sales/projects',
+        permission: 'projects.projects.view',
+      },
       {
         title: 'Pipeline',
         path: '/project-sales/pipeline',

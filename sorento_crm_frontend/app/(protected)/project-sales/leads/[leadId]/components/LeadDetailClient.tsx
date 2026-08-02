@@ -23,7 +23,7 @@ import type { LeadWithAcceptance } from '../../../_shared/types/leadAcceptance.t
 import { AssignLeadDialog } from '../../components/AssignLeadDialog';
 import { DeclineLeadDialog } from '../../components/DeclineLeadDialog';
 import { LeadAcceptanceBadge } from '../../components/LeadAcceptanceBadge';
-import { informantSourceLabel } from '../../components/acceptance';
+import { canAssignLead, informantSourceLabel } from '../../components/acceptance';
 import { DisqualifyLeadDialog } from './DisqualifyLeadDialog';
 import { EditLeadInformantDialog } from './EditLeadInformantDialog';
 import { QualifyLeadDialog } from './QualifyLeadDialog';
@@ -91,11 +91,9 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
   // get a 403, which is a worse way to learn the same thing.
   const isAssignee = Boolean(viewerId && view.owner_user_id === viewerId);
   const awaitingAcceptance = view.acceptance_state === 'assigned';
-  // The server also lets the person who RECORDED the lead hand it out, which is the
-  // decline path: a declined lead lands back with marketing with no owner at all. The
-  // response carries no `created_by`, so an unassigned lead is treated as assignable and
-  // the server has the final say.
-  const canAssign = isOpen && (lead.can_edit || !view.owner_user_id);
+  // Shared with the leads list, so the row and this header can never disagree about
+  // who is allowed to hand a lead on.
+  const canAssign = canAssignLead(view);
 
   return (
     <div className="space-y-5">

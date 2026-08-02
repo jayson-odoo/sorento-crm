@@ -15,19 +15,27 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import {
+  DataGridListToolbar,
+  type ListToolbarFilters,
+} from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
-import type { Project } from '../../_shared/types/project.types';
+import type { Project } from '../types/project.types';
 
 /**
- * The management view of the same pipeline (AC-G5).
+ * Every registered project as a row. ONE grid, two screens.
+ *
+ * It is the management view of the pipeline (AC-G5) and it is the Projects list in the
+ * sidebar. Those are the same table of the same records, so they are the same component:
+ * a second copy would be two places for a column to be added and one place for it to be
+ * forgotten. The pipeline still owns the board; only the grid is shared.
  *
  * Fixed layout with explicit sizes and `truncate` + `title` on every long cell, so a
  * verbose project title cannot push the value and owner columns off screen.
  */
-export function PipelineGrid({
+export function ProjectsGrid({
   projects,
   total,
   isLoading,
@@ -38,6 +46,9 @@ export function PipelineGrid({
   onSortingChange,
   onRefresh,
   searchSlot,
+  filters,
+  listingKey,
+  emptyMessage = 'No projects match these filters.',
 }: {
   projects: Project[];
   total: number;
@@ -49,6 +60,14 @@ export function PipelineGrid({
   onSortingChange: (next: SortingState) => void;
   onRefresh: () => void;
   searchSlot?: React.ReactNode;
+  filters?: ListToolbarFilters;
+  /**
+   * Pinned by the caller, never left to DataGrid's `usePathname()` fallback. The two
+   * screens sharing this grid are two listings a person arranges differently, and a
+   * pathname default on any id-bearing route writes one preferences row per record.
+   */
+  listingKey: string;
+  emptyMessage?: React.ReactNode;
 }) {
   const [columnVisibility, setColumnVisibility] = useState({});
 
@@ -58,6 +77,7 @@ export function PipelineGrid({
         accessorKey: 'project_code',
         header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
         size: 120,
+        meta: { headerTitle: 'Code' },
         cell: ({ row }) => (
           <Link
             href={`/project-sales/${row.original.id}`}
@@ -71,6 +91,7 @@ export function PipelineGrid({
         accessorKey: 'title',
         header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
         size: 260,
+        meta: { headerTitle: 'Project' },
         cell: ({ row }) => (
           <Link
             href={`/project-sales/${row.original.id}`}
@@ -87,6 +108,7 @@ export function PipelineGrid({
         header: ({ column }) => <DataGridColumnHeader title="Developer" column={column} />,
         size: 180,
         enableSorting: false,
+        meta: { headerTitle: 'Developer' },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.developer_name ?? ''}>
             {row.original.developer_name ?? <Muted>Not set</Muted>}
@@ -99,6 +121,7 @@ export function PipelineGrid({
         header: ({ column }) => <DataGridColumnHeader title="Stage" column={column} />,
         size: 140,
         enableSorting: false,
+        meta: { headerTitle: 'Stage' },
         cell: ({ row }) =>
           row.original.status_label ? (
             <Badge variant="secondary" className="truncate">
@@ -112,6 +135,7 @@ export function PipelineGrid({
         accessorKey: 'outcome',
         header: ({ column }) => <DataGridColumnHeader title="Outcome" column={column} />,
         size: 110,
+        meta: { headerTitle: 'Outcome' },
         cell: ({ row }) => (
           <Badge
             variant={row.original.outcome === 'open' ? 'outline' : 'secondary'}
@@ -127,6 +151,7 @@ export function PipelineGrid({
         header: ({ column }) => <DataGridColumnHeader title="Estimated" column={column} />,
         size: 130,
         enableSorting: false,
+        meta: { headerTitle: 'Estimated' },
         cell: ({ row }) =>
           row.original.estimated_sales_value ? (
             <span className="tabular-nums">
@@ -142,6 +167,7 @@ export function PipelineGrid({
         header: ({ column }) => <DataGridColumnHeader title="Brands" column={column} />,
         size: 150,
         enableSorting: false,
+        meta: { headerTitle: 'Brands' },
         cell: ({ row }) =>
           row.original.brands.length ? (
             <span className="block truncate" title={row.original.brands.join(', ')}>
@@ -157,6 +183,7 @@ export function PipelineGrid({
         header: ({ column }) => <DataGridColumnHeader title="Owner" column={column} />,
         size: 150,
         enableSorting: false,
+        meta: { headerTitle: 'Owner' },
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.owner_name ?? ''}>
             {row.original.owner_name ?? <Muted>Unassigned</Muted>}
@@ -171,6 +198,7 @@ export function PipelineGrid({
         header: ({ column }) => <DataGridColumnHeader title="Next action" column={column} />,
         size: 150,
         enableSorting: false,
+        meta: { headerTitle: 'Next action' },
         cell: ({ row }) =>
           row.original.next_action_date ? (
             <span
@@ -197,6 +225,7 @@ export function PipelineGrid({
         accessorKey: 'last_meaningful_activity_at',
         header: ({ column }) => <DataGridColumnHeader title="Last activity" column={column} />,
         size: 130,
+        meta: { headerTitle: 'Last activity' },
         cell: ({ row }) =>
           row.original.days_since_last_activity === null ||
           row.original.days_since_last_activity === undefined ? (
@@ -214,6 +243,7 @@ export function PipelineGrid({
         header: () => <span className="text-xs">Flags</span>,
         size: 110,
         enableSorting: false,
+        meta: { headerTitle: 'Flags' },
         cell: ({ row }) =>
           row.original.is_critical ? (
             <Badge variant="destructive">Critical</Badge>
@@ -254,15 +284,16 @@ export function PipelineGrid({
       table={table}
       recordCount={total}
       isLoading={isLoading}
-      standardToolbar={false}
+      listingKey={listingKey}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-      emptyMessage="No projects match these filters."
+      emptyMessage={emptyMessage}
     >
       <Card>
         <CardHeader className="block">
           <DataGridListToolbar
             table={table}
             searchSlot={searchSlot}
+            filters={filters}
             exportConfig={{ filename: 'projects_export.xlsx' }}
             onRefresh={onRefresh}
             isRefreshing={Boolean(isFetching) && !isLoading}
