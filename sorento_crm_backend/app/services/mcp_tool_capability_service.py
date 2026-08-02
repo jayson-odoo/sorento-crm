@@ -967,8 +967,11 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "everything the user needs: (1) a per-shipment breakdown \u2014 each entry has "
             "shipment_number, shipping_container_number, ETA, batch_number, remaining_incoming_quantity "
             "(computed as quantity_shipped - quantity_received; fully-received lines are auto-filtered "
-            "out), packing-list attachment, and that shipment's warehouse_allocations (warehouse_code, "
-            "warehouse_name, allocated_quantity from SPO allocations); (2) nearest "
+            "out), packing-list attachment, that shipment's warehouse_allocations (warehouse_code, "
+            "warehouse_name, allocated_quantity from SPO allocations), and unallocated_quantity — how "
+            "much of the line no salesperson has claimed to a warehouse yet (empty warehouse_allocations "
+            "= pending allocation; a positive unallocated_quantity beside allocations = partly allocated; "
+            "null = fully allocated); (2) nearest "
             "estimated_arrival_date. Quantities and warehouse allocations are reported line-by-line "
             "per shipment \u2014 NOT pre-aggregated into a product total or a combined warehouse summary; "
             "sum across shipments yourself if the user asks for a grand total. Do NOT also "
@@ -985,6 +988,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Which warehouses is this incoming stock allocated to and how many to each?",
             "When is this SKU arriving?",
             "Where will this product be stocked when it arrives?",
+            "Has this incoming stock been allocated / claimed yet?",
+            "How much of this incoming quantity is still unallocated?",
         ),
         aliases=(
             "incoming for a product",
@@ -1028,7 +1033,10 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "shipment (shipment_number, shipping_container_number, estimated_arrival_date, "
             "packing-list attachment) with a nested `lines[]` array \u2014 each line carries "
             "product_code, product_name, batch_number, remaining_incoming_quantity, and "
-            "warehouse_allocations (warehouse_code, warehouse_name, allocated_quantity). "
+            "warehouse_allocations (warehouse_code, warehouse_name, allocated_quantity), and "
+            "unallocated_quantity — how much of the line no salesperson has claimed to a warehouse "
+            "yet (empty warehouse_allocations = pending allocation; a positive unallocated_quantity "
+            "beside allocations = partly allocated; null = fully allocated). "
             "For 'any incoming for product X / SKU X', pass `product_ids` (UUID or product_code) \u2014 "
             "lines are then filtered to those products. For 'what is arriving this month / from "
             "supplier Y / shipment Z', pass `eta_from`/`eta_to`, `supplier_ids`, or `shipment_ids`. "
@@ -1044,6 +1052,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Open shipments from supplier X.",
             "Tell me about shipment FJ24041192 / container MSCU5475129.",
             "Which products are still incoming and when do they arrive?",
+            "Has this incoming stock been allocated / claimed yet?",
+            "How much of this incoming quantity is still unallocated?",
         ),
         aliases=(
             "incoming stock",
@@ -1051,6 +1061,8 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "incoming shipments",
             "what is arriving",
             "pending incoming stock",
+            "unallocated incoming stock",
+            "pending allocation",
         ),
     ),
     "crm_incoming_stock_shipment_products": ToolIntent(
