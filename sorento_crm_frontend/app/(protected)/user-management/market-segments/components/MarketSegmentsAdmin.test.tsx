@@ -29,8 +29,22 @@ function renderWithClient(ui: React.ReactElement) {
 }
 
 const SEGMENTS: MarketSegment[] = [
-  { code: 'retail', name: 'Retail', description: 'Walk-in buyers', is_active: true, sort_order: 1 },
-  { code: 'project', name: 'Project', description: null, is_active: false, sort_order: 2 },
+  {
+    code: 'retail',
+    name: 'Retail',
+    description: 'Walk-in buyers',
+    is_active: true,
+    sort_order: 1,
+    is_requestor_selectable: false,
+  },
+  {
+    code: 'project',
+    name: 'Project',
+    description: null,
+    is_active: false,
+    sort_order: 2,
+    is_requestor_selectable: true,
+  },
 ];
 
 function mockState(state: Record<string, unknown>) {
@@ -101,6 +115,32 @@ describe('MarketSegmentsAdmin', () => {
     // "Active" also appears as a column header, so scope to the status badge.
     expect(screen.getAllByText('Active').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('Inactive')).toBeInTheDocument();
+  });
+
+  // The requestor-picker indicator is the admin's only view of which segments
+  // feed the "Requested by" / "Sales person" dropdown, so it must be visible on
+  // the row AND editable in the dialog.
+  it('shows the requestor-picker indicator per segment', () => {
+    mockState({ data: SEGMENTS });
+    renderWithClient(<MarketSegmentsAdmin />);
+    expect(screen.getByText('Included')).toBeInTheDocument();
+    expect(screen.getByText('Excluded')).toBeInTheDocument();
+  });
+
+  it('seeds the requestor-picker checkbox from the edited segment and saves it', async () => {
+    mockState({ data: SEGMENTS });
+    renderWithClient(<MarketSegmentsAdmin />);
+    // Second row = 'project', the requestor-selectable one.
+    fireEvent.click(screen.getAllByLabelText('Edit')[1]);
+    const checkbox = screen.getByLabelText('Include in requestor picker');
+    expect(checkbox).toBeChecked();
+    fireEvent.click(checkbox);
+    fireEvent.click(screen.getByRole('button', { name: 'Update' }));
+    await waitFor(() => expect(update.mutate).toHaveBeenCalled());
+    expect(update.mutate.mock.calls[0][0]).toMatchObject({
+      code: 'project',
+      body: { is_requestor_selectable: false },
+    });
   });
 
   it('opens a delete confirmation with the standard copy', async () => {

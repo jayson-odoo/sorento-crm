@@ -1,9 +1,9 @@
 'use client';
 
-import { Suspense, useCallback, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { AlertCircle, ExternalLink } from 'lucide-react';
+import { AlertCircle, ExternalLink, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -13,6 +13,26 @@ import {
   InquiryFormTableRow,
   InquiryReadValue,
 } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
+
+interface StockInquiryViewAttachment {
+  id?: string;
+  file_name?: string | null;
+  original_filename?: string | null;
+  file_url?: string | null;
+  uploaded_at?: string | null;
+  /** 'user' = uploaded by CRM staff, 'contact' = uploaded by the submitting
+   *  contact, 'system' = worker-created. Absent/null on legacy rows. */
+  uploader_kind?: 'user' | 'contact' | 'system' | null;
+  uploaded_by_name?: string | null;
+  uploaded_by_role?: 'staff' | 'contact' | 'unknown';
+  /** false for staff ('user') uploads - this view has no unlink control at
+   *  all today, but the flag is honoured in case one is ever added here. */
+  can_unlink?: boolean;
+  mime_type?: string | null;
+}
 
 interface StockInquiryViewSummary {
   entity_type: string;
@@ -43,6 +63,7 @@ interface StockInquiryViewSummary {
   created_at?: string | null;
   updated_at?: string | null;
   portal_url?: string | null;
+  attachments?: StockInquiryViewAttachment[] | null;
 }
 
 function formatDateTimeStr(value: string | null | undefined): string {
@@ -64,6 +85,29 @@ function ViewStockInquiryContent() {
   const [revisePending, setRevisePending] = useState(false);
   const [reviseSuccess, setReviseSuccess] = useState<string | null>(null);
   const [reviseError, setReviseError] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const [staffPreviewOpen, setStaffPreviewOpen] = useState(false);
+
+  const attachments = useMemo(() => summary?.attachments ?? [], [summary?.attachments]);
+  const previewItems = useMemo<AttachmentPreviewItem[]>(
+    () =>
+      attachments.map((att, idx) => ({
+        id: att.id ?? String(idx),
+        name: att.original_filename ?? att.file_name ?? 'Attachment',
+        url: att.file_url ?? '',
+      })),
+    [attachments],
+  );
+
+  // Purchasing's own response attachments - surfaced in the reply banner,
+  // scoped away from the contact's own uploads shown in the list below.
+  const staffAttachments = attachments.filter((a) => a.uploader_kind === 'user');
+  const staffPreviewItems: AttachmentPreviewItem[] = staffAttachments.map((att, idx) => ({
+    id: att.id ?? `staff-${idx}`,
+    name: att.original_filename ?? att.file_name ?? 'Attachment',
+    url: att.file_url ?? '',
+  }));
 
   const fetchSummary = useCallback(async () => {
     if (!token) {
@@ -258,6 +302,22 @@ function ViewStockInquiryContent() {
           labelClassName="items-start pt-3 sm:whitespace-normal"
         >
           <InquiryReadValue>{summary?.purchasing_response}</InquiryReadValue>
+          {(summary?.purchasing_response ?? '').trim() && staffAttachments.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                {staffAttachments.length} attachment{staffAttachments.length === 1 ? '' : 's'} from
+                purchasing
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setStaffPreviewOpen(true)}
+              >
+                View attachment{staffAttachments.length === 1 ? '' : 's'} ({staffAttachments.length})
+              </Button>
+            </div>
+          )}
         </InquiryFormTableRow>
         {(summary?.last_responded_at || summary?.last_responded_by) && (
           <>
@@ -315,6 +375,38 @@ function ViewStockInquiryContent() {
         )}
       </ProductInquiryFormLayout>
 
+      {attachments.length > 0 && (
+        <div className="rounded-md border border-border bg-background px-4 py-3">
+          <p className="text-xs text-muted-foreground uppercase tracking-wide mb-3">Attachments</p>
+          <div className="space-y-2">
+            {attachments.map((att, idx) => {
+              const uploader = (att.uploaded_by_name ?? '').trim();
+              return (
+                <button
+                  key={att.id ?? att.file_name ?? idx}
+                  type="button"
+                  onClick={() => {
+                    setPreviewIndex(idx);
+                    setPreviewOpen(true);
+                  }}
+                  className="flex w-full items-start gap-2 text-left"
+                >
+                  <Eye className="h-4 w-4 shrink-0 mt-0.5 text-primary" />
+                  <span>
+                    <span className="block text-sm font-medium text-primary hover:underline break-all">
+                      {att.original_filename ?? att.file_name ?? 'Attachment'}
+                    </span>
+                    {uploader && (
+                      <span className="block text-xs text-muted-foreground">By {uploader}</span>
+                    )}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {summary && (
         <div className="rounded-md border border-border bg-muted/30 px-4 py-3 text-sm space-y-1">
           <div className="flex flex-wrap gap-x-4 gap-y-1">
@@ -331,6 +423,18 @@ function ViewStockInquiryContent() {
           </div>
         </div>
       )}
+
+      <AttachmentPreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        items={previewItems}
+        startIndex={previewIndex}
+      />
+      <AttachmentPreviewModal
+        open={staffPreviewOpen}
+        onOpenChange={setStaffPreviewOpen}
+        items={staffPreviewItems}
+      />
     </div>
   );
 }

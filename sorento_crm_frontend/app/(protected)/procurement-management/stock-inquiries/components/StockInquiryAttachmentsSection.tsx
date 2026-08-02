@@ -15,10 +15,12 @@ import {
 import { formatDate } from '@/lib/helpers';
 import {
   useDeleteStockInquiryAttachment,
+  useDeleteStockInquiryResponseAttachment,
 } from '../hooks/useStockInquiries';
 import { linkStockInquiryAttachment } from '../services/stockInquiryService';
 import type { StockInquiryAttachment } from '../types/stockInquiry.types';
 import ComplaintLinkAttachmentBrowserDialog from '@/app/(protected)/complaint-management/complaints/components/ComplaintLinkAttachmentBrowserDialog';
+import { attachmentUploaderLabel } from '@/app/(protected)/master-data-management/shared/lib/attachment-attribution';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -45,8 +47,14 @@ export default function StockInquiryAttachmentsSection({
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
-  const [unlinkTarget, setUnlinkTarget] = useState<{ id: string; name: string } | null>(null);
+  const [unlinkTarget, setUnlinkTarget] = useState<{
+    id: string;
+    name: string;
+    isResponseAttachment: boolean;
+  } | null>(null);
   const deleteMutation = useDeleteStockInquiryAttachment();
+  const deleteResponseAttachmentMutation = useDeleteStockInquiryResponseAttachment();
+  const unlinkPending = deleteMutation.isPending || deleteResponseAttachmentMutation.isPending;
 
   const attachments = useMemo(
     () =>
@@ -113,6 +121,7 @@ export default function StockInquiryAttachmentsSection({
               <TableHeader>
                 <TableRow>
                   <TableHead>File Name</TableHead>
+                  <TableHead>Uploaded By</TableHead>
                   <TableHead>File Size</TableHead>
                   <TableHead>Linked At</TableHead>
                   <TableHead>Actions</TableHead>
@@ -122,11 +131,21 @@ export default function StockInquiryAttachmentsSection({
                 {attachments.map((link, idx) => {
                   const displayName =
                     link.original_filename ?? link.file_name ?? 'Unnamed file';
+                  const isResponseAttachment = link.link_type === 'response_attachment';
+                  const uploaderLabel = attachmentUploaderLabel(
+                    link.uploaded_by_name,
+                    link.uploaded_by_role,
+                  );
                   return (
                     <TableRow key={link.id}>
                       <TableCell className="font-medium" title={displayName}>
                         <span className="truncate block max-w-[280px]" title={displayName}>
                           {displayName}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className="truncate block max-w-[200px] text-sm" title={uploaderLabel}>
+                          {uploaderLabel}
                         </span>
                       </TableCell>
                       <TableCell>{formatFileSize(link.file_size_bytes)}</TableCell>
@@ -163,9 +182,9 @@ export default function StockInquiryAttachmentsSection({
                             variant="destructive"
                             size="sm"
                             onClick={() =>
-                              setUnlinkTarget({ id: link.id, name: displayName })
+                              setUnlinkTarget({ id: link.id, name: displayName, isResponseAttachment })
                             }
-                            disabled={deleteMutation.isPending}
+                            disabled={unlinkPending}
                           >
                             <Trash2 className="size-4" />
                             Unlink
@@ -206,7 +225,13 @@ export default function StockInquiryAttachmentsSection({
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
-                if (unlinkTarget) deleteMutation.mutate(unlinkTarget.id);
+                if (unlinkTarget) {
+                  if (unlinkTarget.isResponseAttachment) {
+                    deleteResponseAttachmentMutation.mutate(unlinkTarget.id);
+                  } else {
+                    deleteMutation.mutate(unlinkTarget.id);
+                  }
+                }
                 setUnlinkTarget(null);
               }}
             >

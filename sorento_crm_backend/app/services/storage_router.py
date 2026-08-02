@@ -21,6 +21,8 @@ PROVIDER_S3 = "s3"
 PROVIDER_R2 = "r2"
 _VALID_PROVIDERS = {PROVIDER_S3, PROVIDER_R2}
 
+_env_loaded = False
+
 
 class StorageBackend(Protocol):
     """Common surface implemented by S3Service and R2Service."""
@@ -64,8 +66,37 @@ def normalize_provider(value: Optional[str]) -> str:
     return v if v in _VALID_PROVIDERS else PROVIDER_S3
 
 
+def _ensure_env_loaded() -> None:
+    """Populate os.environ from the backend .env once, mirroring s3_service/r2_service.
+
+    Only ``app.main`` calls ``load_dotenv``, so processes that never import it -
+    above all ``worker.py``, which owns every export/import job - saw an empty
+    ``STORAGE_DEFAULT_PROVIDER`` and silently fell back to S3. On a host without
+    the CloudFront signing key that turned into "CloudFront private key file not
+    found" on a stack configured for R2. Reading the file here makes the provider
+    resolve identically in the API and the worker.
+    """
+    global _env_loaded
+    if _env_loaded:
+        return
+    _env_loaded = True
+    try:
+        from pathlib import Path
+
+        from dotenv import load_dotenv
+
+        env_path = Path(__file__).parent.parent.parent / ".env"
+        if env_path.exists():
+            load_dotenv(env_path)
+        else:
+            load_dotenv()
+    except ImportError:  # python-dotenv absent: rely on a real environment
+        logger.warning("python-dotenv not installed; STORAGE_DEFAULT_PROVIDER must be exported")
+
+
 def default_provider() -> str:
     """Provider used when a caller has no row context (only a raw file_path)."""
+    _ensure_env_loaded()
     return normalize_provider(os.getenv("STORAGE_DEFAULT_PROVIDER", PROVIDER_S3))
 
 

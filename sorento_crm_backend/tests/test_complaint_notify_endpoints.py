@@ -1,8 +1,15 @@
 """Service-level tests for ComplaintService notify-salesperson methods.
 
-Mocks RespondClient.send_message and the outbound webhook enqueue helper so the
-flow exercises the real code path (message-builder, identifier resolution,
-integration log writes, ``*_notified_at`` persistence) without hitting Respond.io.
+``notify_root_cause_to_salesperson`` / ``notify_resolution_to_salesperson`` send
+via ``_send_respond_message_for_complaint`` -> the decoupled ``respond_io`` RQ
+queue every other complaint/stock-inquiry send uses (the call is enqueued, not
+fired synchronously), so we stub ``queue_service.enqueue_job`` to capture the
+payload without a worker -- mirroring test_complaint_do_notify.py. The
+integration_log write for the ACTUAL send happens worker-side in
+``_send_and_log`` (see test_whatsapp_notification_outbox_log.py /
+test_respond_outbox_no_bypass.py for that guarantee); this file stays scoped
+to the ComplaintService message-builder, identifier resolution, and
+``*_notified_at`` persistence.
 """
 from __future__ import annotations
 
@@ -58,36 +65,24 @@ def db() -> Iterator[Session]:
 
 
 def _patch_send(monkeypatch, captured: list[dict]):
-    """Stub Respond.io send + outbound webhook + identifier resolver."""
-    from app.services import integration_service, crm_chat_outbound_webhook
+    """Stub the ``respond_io`` RQ enqueue + identifier resolver.
+
+    ``captured[i]["args"]`` mirrors ``send_complaint_respond_message``'s
+    positional signature: (complaint_id, identifier, display_message,
+    respond_user_id, crm_sender_user_id, space_id, extra_context_vars).
+    """
+    from app.services import queue_service
     from app.services import respond_identifier
 
-    def fake_send_message(self, identifier, message, *a, **kw):  # noqa: ANN001
-        captured.append({"identifier": identifier, "message": message})
-        return {"id": "respond-msg-1", "status": "sent"}
+    def fake_enqueue(fn, *args, **kw):  # noqa: ANN001
+        captured.append({"fn": getattr(fn, "__name__", str(fn)), "args": args})
 
-    monkeypatch.setattr(integration_service.RespondClient, "send_message", fake_send_message)
+        class _Job:
+            id = "job-1"
 
-    # The 24h-window pre-check scans list_messages; return a recent incoming so
-    # the window is open and the plain-text branch is exercised (the template
-    # branch has its own coverage in test_respond_templates.py).
-    import time
+        return _Job()
 
-    def fake_list_messages(self, identifier, *a, **kw):  # noqa: ANN001
-        recent_ms = int((time.time() - 3600) * 1000)
-        return {"items": [{"traffic": "incoming", "status": [{"timestamp": recent_ms}]}]}
-
-    monkeypatch.setattr(integration_service.RespondClient, "list_messages", fake_list_messages)
-    monkeypatch.setattr(
-        crm_chat_outbound_webhook,
-        "enqueue_crm_chat_outbound_webhook",
-        lambda *a, **kw: None,
-    )
-    monkeypatch.setattr(
-        crm_chat_outbound_webhook,
-        "resolve_sla_assignee_respond_user_id",
-        lambda *a, **kw: None,
-    )
+    monkeypatch.setattr(queue_service, "enqueue_job", fake_enqueue)
     # Pretend the URL's last segment IS the respond_io_id (avoids needing a respond_contacts row).
     monkeypatch.setattr(
         respond_identifier,
@@ -130,8 +125,9 @@ def test_notify_root_cause_sends_respond_message_and_persists_timestamp(db: Sess
     assert rc.name in result["message"]
     assert "delivery order DO-9999" in result["message"]
     assert len(captured) == 1
-    assert captured[0]["identifier"] == "123456"
-    assert "There has been an update regarding your complaint" in captured[0]["message"]
+    _, identifier, display_message = captured[0]["args"][:3]
+    assert identifier == "123456"
+    assert "There has been an update regarding your complaint" in display_message
 
     db.expire_all()
     refreshed = db.query(Complaint).filter(Complaint.id == complaint.id).first()
@@ -206,23 +202,28 @@ def test_notify_resolution_sends_message_and_persists_timestamp(db: Session, mon
     assert "Resolution is identified as" in result["message"]
     assert res.name in result["message"]
     assert len(captured) == 1
+    _, identifier, display_message = captured[0]["args"][:3]
+    assert identifier == "9999"
+    assert res.name in display_message
 
     db.expire_all()
     refreshed = db.query(Complaint).filter(Complaint.id == c.id).first()
     assert refreshed is not None and refreshed.resolution_notified_at is not None
 
 
-def test_notify_writes_integration_log(db: Session, monkeypatch) -> None:
-    _patch_send(monkeypatch, [])
+def test_notify_enqueues_onto_the_respond_io_queue(db: Session, monkeypatch) -> None:
+    """The send is decoupled through the ``respond_io`` RQ queue -- same
+    guarantee as every other complaint/stock-inquiry send (worker-side
+    ``_send_and_log`` is what actually writes the integration_log outbox row
+    on success AND failure; covered by test_whatsapp_notification_outbox_log.py
+    / test_respond_outbox_no_bypass.py, not re-tested here)."""
+    captured: list[dict] = []
+    _patch_send(monkeypatch, captured)
 
     complaint, _ = _seed_complaint_with_root_cause(db, complaint_number="NOTIFY-TEST-LOG")
     ComplaintService(db).notify_root_cause_to_salesperson(complaint.id, respond_user_id="u-1")
 
-    rows = db.execute(
-        text(
-            "SELECT integration_channel, status FROM integration_log "
-            "WHERE business_table='complaints' AND business_id=:cid AND direction='outbound'"
-        ),
-        {"cid": complaint.id},
-    ).fetchall()
-    assert any(r[0] == "respond_io" and r[1] == "success" for r in rows), rows
+    assert len(captured) == 1
+    assert captured[0]["fn"] == "send_complaint_respond_message"
+    complaint_id_arg = captured[0]["args"][0]
+    assert complaint_id_arg == complaint.id

@@ -7,6 +7,9 @@ import { formatDate } from '@/lib/helpers';
 export type PurchaseRequestSignoffFields = {
   approval_status?: string | null;
   requested_by?: string | null;
+  /** Resolved live contact name when the requestor FK is set; falls back to
+   *  `requested_by` (point-in-time label) when absent. */
+  requested_by_contact_name?: string | null;
   approved_by?: string | null;
   approved_at?: string | null;
   approval_comments?: string | null;
@@ -45,6 +48,9 @@ export function PurchaseRequestSignoffFooter({
   const commentsLabel = isRejected ? 'Rejection comments' : 'Approval comments';
 
   const comments = (request.approval_comments ?? '').trim();
+  // D9: resolve the contact's live name when the requestor FK is set; the stored
+  // text stays the point-in-time record and the fallback for legacy FK-less rows.
+  const requestedByLabel = request.requested_by_contact_name || request.requested_by || '—';
 
   if (variant === 'publicCard') {
     return (
@@ -52,7 +58,7 @@ export function PurchaseRequestSignoffFooter({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-4">
           <div className="py-2 border-b border-border/60">
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">Requested by</p>
-            <p className="text-sm font-medium">{request.requested_by || '—'}</p>
+            <p className="text-sm font-medium">{requestedByLabel}</p>
           </div>
           <div className="py-2 border-b border-border/60">
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-0.5">
@@ -83,7 +89,7 @@ export function PurchaseRequestSignoffFooter({
         ) : (
           <>
             <p className="text-sm text-muted-foreground">Requested by</p>
-            <p className="font-medium">{request.requested_by || '—'}</p>
+            <p className="font-medium">{requestedByLabel}</p>
           </>
         )}
       </div>

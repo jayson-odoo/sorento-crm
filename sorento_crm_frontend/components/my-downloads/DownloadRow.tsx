@@ -20,6 +20,9 @@ import { fetchDownloadUrl, type MyDownload } from '@/services/myDownloadsService
 
 export const KIND_LABEL: Record<string, string> = {
   complaint_pdf: 'Complaint PDF',
+  // Named after the document itself - the form is headed PRODUCT INQUIRY FORM -
+  // while the entity key stays stock_inquiry.
+  stock_inquiry_pdf: 'Product Inquiry PDF',
   chat_history_export: 'Chat History CSV',
   promotions_pdf: 'Promotions PDF',
 };
@@ -92,7 +95,10 @@ export function DownloadRow({ row }: { row: MyDownload }) {
         </p>
         <p className="text-xs text-muted-foreground">
           {KIND_LABEL[row.kind] ?? row.kind}
-          {row.created_at ? ` · ${formatDateTimeInMalaysia(new Date(row.created_at))}` : ''}
+          {/* Pass the RAW string: the API sends naive UTC with no 'Z', and only the
+              string path appends it. Wrapping in new Date() first makes the browser
+              read it as local time, printing UTC digits 8 hours early. */}
+          {row.created_at ? ` · ${formatDateTimeInMalaysia(row.created_at)}` : ''}
         </p>
         <div className="mt-1 flex min-w-0 items-center gap-3">
           <StatusBadge status={row.status} />

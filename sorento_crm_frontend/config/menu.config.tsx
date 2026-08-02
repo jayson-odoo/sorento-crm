@@ -835,6 +835,11 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'system.numbering_rules.view',
       },
       {
+        title: 'Status Graphs',
+        path: '/system-management/status-graphs',
+        permission: 'system.statuses.view',
+      },
+      {
         title: 'Lookup Sets',
         path: '/master-data-management/lookup-sets',
         permission: 'master_data.lookup_sets.view',
@@ -1683,6 +1688,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Running Numbers',
         path: '/system-management/numbering-rules',
         permission: 'system.numbering_rules.view',
+      },
+      {
+        title: 'Status Graphs',
+        path: '/system-management/status-graphs',
+        permission: 'system.statuses.view',
       },
       {
         title: 'Lookup Sets',

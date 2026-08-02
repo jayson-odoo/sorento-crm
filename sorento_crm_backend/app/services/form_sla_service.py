@@ -105,7 +105,7 @@ def _working_due_naive(db: Session, start_dt: datetime, hours: float) -> datetim
     return start_dt + timedelta(hours=float(hours))
 
 
-# (table, number column) per form type — for resolving a human-readable document
+# (table, number column) per form type - for resolving a human-readable document
 # number instead of showing the raw UUID in notifications.
 _ENTITY_NUMBER_SOURCE: dict = {
     "complaint": ("complaints", "complaint_number"),
@@ -163,7 +163,7 @@ def _fmt_due(due_at) -> Optional[str]:
 
 
 # Per-stage human action verbs for the escalation reason, keyed by
-# (source_entity_type, team_set_code) — the same pair that uniquely identifies a
+# (source_entity_type, team_set_code) - the same pair that uniquely identifies a
 # form-SLA stage. `response` is the action that stops the response clock
 # (respond_event); `resolution` is the action that resolves the stage
 # (resolve_event). Stages where a single action satisfies both clocks omit
@@ -337,7 +337,7 @@ class FormSLAOrchestrator:
             )
         except Exception as e:
             # Table may not exist yet (migrations behind) or session may be in a bad
-            # state from a prior op — roll back so the parent transaction can keep
+            # state from a prior op - roll back so the parent transaction can keep
             # using this session for subsequent reads/writes.
             try:
                 self.db.rollback()
@@ -425,12 +425,12 @@ class FormSLAOrchestrator:
                 due_resolution = tracker.due_at_resolution
                 # Split-clock breach rule (mirrors conversation SLA list_due_escalations):
                 # the response clock STOPS on response, so once responded the response
-                # due_at must NOT gate escalation — only the resolution clock does. Without
+                # due_at must NOT gate escalation - only the resolution clock does. Without
                 # this guard a responded-on-time tracker whose response due_at has since
                 # lapsed keeps escalating (and extend, which only moves due_at_resolution,
                 # can't stop it). Pre-response -> response clock; post-response -> resolution.
                 # Each escalation resets both clocks, so this stays self-idempotent across
-                # ticks and progresses every tier (TCK-28 — removed the buggy escalated_at
+                # ticks and progresses every tier (TCK-28 - removed the buggy escalated_at
                 # guard that froze rows at tier 2).
                 responded = bool(getattr(tracker, "is_responded", False))
                 overdue = (
@@ -450,7 +450,7 @@ class FormSLAOrchestrator:
                 )
                 escalated_count += 1
             except FormEscalationBlocked:
-                # No next tier / no resolvable assignee — auto-scan skips silently.
+                # No next tier / no resolvable assignee - auto-scan skips silently.
                 skipped_count += 1
             except Exception as e:
                 logger.exception(
@@ -516,7 +516,7 @@ class FormSLAOrchestrator:
             raise FormEscalationBlocked("no_assignee", f"No available assignee for tier {actual_tier}.")
 
         # Coverage redirect: route escalation to the covered user's coverer. RR cursor
-        # already advanced to the covered user (fairness) — only swap the result.
+        # already advanced to the covered user (fairness) - only swap the result.
         from app.services.coverage_subscription_service import (
             resolve_assignee_with_coverage,
         )
@@ -668,7 +668,7 @@ class FormSLAOrchestrator:
             self.db.rollback()
             logger.exception("Commit failed after manual form SLA escalation: %s", e)
             raise
-        # Escalation changed owner/tier — void any pending takeover (AC-VOID-3).
+        # Escalation changed owner/tier - void any pending takeover (AC-VOID-3).
         from app.services.sla_takeover_service import SlaTakeoverService
 
         SlaTakeoverService(self.db).void_for_tracking(str(tracker.id), "escalated")
@@ -679,7 +679,7 @@ class FormSLAOrchestrator:
     def _active_tracker(
         self, config: FormSLAConfig, source_entity_id: str
     ) -> Optional[ConversationSLATracking]:
-        # Stage identity is (source_entity_type, team_set_code) — NOT policy_id.
+        # Stage identity is (source_entity_type, team_set_code) - NOT policy_id.
         # Stages of one form intentionally share a policy_id, so keying solely on
         # policy_id makes one stage's lookup return another stage's tracker: the
         # submit stage's resolve grabs (and resolves) the approval tracker, then the
@@ -687,7 +687,7 @@ class FormSLAOrchestrator:
         # team_set_code alone already separates stages, so scope to it (handling NULL
         # explicitly, since SQL `NULL = NULL` is never true). Do NOT filter on
         # policy_id: policy_id is a snapshot the tracker stored at create time, so
-        # editing a stage's policy afterward would orphan the live tracker — its
+        # editing a stage's policy afterward would orphan the live tracker - its
         # resolve/respond events would no longer find it.
         q = (
             self.db.query(ConversationSLATracking)
@@ -806,8 +806,18 @@ class FormSLAOrchestrator:
         if override_assignee is not None:
             assignee = override_assignee  # default-approver wins over round-robin
         else:
+            # Pin lookup keys on the REQUESTOR (who the form is for), not the
+            # submitter, so a salesman submitting on someone else's behalf still
+            # reaches that person's pinned CS. Falls back to the submitter when
+            # there is no requestor FK (legacy rows, complaint, internal-created).
+            # A requestor with no pin round-robins, never retries the submitter's
+            # pin (that was the bug). See PLAN-requested-by-contact-routing.md D2/E2.
+            routing_contact_id = (
+                self._routing_contact_id(config.source_entity_type, source_entity_id)
+                or contact_id
+            )
             assignee = self._resolve_pinned_assignee(
-                config.source_entity_type, contact_id, team_id, source_entity_id
+                config.source_entity_type, routing_contact_id, team_id, source_entity_id
             )
             if not assignee:
                 assignee = agent_svc.get_next_assignee(str(agent.id), team_id)
@@ -818,7 +828,7 @@ class FormSLAOrchestrator:
 
         # Coverage redirect: if the resolved assignee is on leave (covered), route
         # the task to their coverer instead. RR cursor already advanced to the
-        # covered user above (fairness, decision 4) — we only swap the result.
+        # covered user above (fairness, decision 4) - we only swap the result.
         from app.services.coverage_subscription_service import (
             resolve_assignee_with_coverage,
         )
@@ -852,7 +862,7 @@ class FormSLAOrchestrator:
             ),
             assigned_to_id=assignee["id"],
             # initiated_at is the true submit instant (audit); the tier clock starts
-            # when work can actually begin — the next working-window open.
+            # when work can actually begin - the next working-window open.
             initiated_at=now,
             current_tier_started_at=clock_start,
             due_at=_working_due_naive(self.db, clock_start, response_hrs),
@@ -914,6 +924,55 @@ class FormSLAOrchestrator:
                 exc_info=True,
             )
             return {}
+
+    def _routing_contact_id(
+        self,
+        source_entity_type: Optional[str],
+        source_entity_id: Optional[str],
+    ) -> Optional[str]:
+        """The contact the FORM WAS SUBMITTED FOR (the requestor), read from the
+        header row's FK. `purchase_request` / `sponsorship_form` share the
+        `purchase_requests` table (`requested_by_contact_id`); `stock_inquiry`
+        reads `stock_inquiries.salesperson_contact_id`. Anything else (complaint,
+        ticket) has no requestor FK and returns None.
+
+        Never raises: a missing table, missing row or bad FK degrades to None so
+        the caller falls back to the submitter (`contact_id`) exactly as before
+        this feature existed. See PLAN-requested-by-contact-routing.md UAC E3/E9.
+        """
+        if not source_entity_type or not source_entity_id:
+            return None
+        try:
+            from sqlalchemy import text as _sql_text
+
+            if source_entity_type in ("purchase_request", "sponsorship_form"):
+                table, column = "purchase_requests", "requested_by_contact_id"
+            elif source_entity_type == "stock_inquiry":
+                table, column = "stock_inquiries", "salesperson_contact_id"
+            else:
+                return None
+            row = self.db.execute(
+                _sql_text(f"SELECT {column} FROM {table} WHERE id = :id"),
+                {"id": str(source_entity_id)},
+            ).first()
+            return str(row[0]) if row and row[0] else None
+        except Exception:
+            # A failed SELECT aborts the Postgres transaction, so without this
+            # rollback the NEXT query in _start_for_config dies with
+            # InFailedSqlTransaction and NO tracker is created at all - the
+            # opposite of degrading gracefully. Same reason as the rollback in
+            # _advance_on_event's handler.
+            try:
+                self.db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            logger.warning(
+                "Routing contact lookup failed for %s/%s; falling back to submitter.",
+                source_entity_type,
+                source_entity_id,
+                exc_info=True,
+            )
+            return None
 
     def _resolve_pinned_assignee(
         self,
@@ -1035,7 +1094,7 @@ class FormSLAOrchestrator:
         tracker = self._active_tracker(config, source_entity_id)
         if not tracker or bool(getattr(tracker, "is_resolved", False)):
             return
-        # resolve implies responded — set both if not yet responded
+        # resolve implies responded - set both if not yet responded
         update_payload = {"is_resolved": True}
         if not bool(getattr(tracker, "is_responded", False)):
             update_payload["is_responded"] = True

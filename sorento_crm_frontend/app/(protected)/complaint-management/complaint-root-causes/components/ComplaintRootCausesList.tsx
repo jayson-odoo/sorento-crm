@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Plus, Search, Edit, Trash2, ChevronRight } from 'lucide-react';
 import {
   useReactTable,
@@ -21,9 +22,11 @@ import { useComplaintRootCauses } from '../hooks/useComplaintRootCauses';
 import ComplaintRootCauseTable from './ComplaintRootCauseTable';
 import ComplaintRootCauseFormDialog from './ComplaintRootCauseFormDialog';
 import ComplaintRootCauseDeleteDialog from './ComplaintRootCauseDeleteDialog';
+import { LinkedComplaintsChip } from '../../_shared/LinkedComplaintsChip';
 import type { ComplaintRootCause } from '../types/complaintRootCause.types';
 
 export default function ComplaintRootCausesList() {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
@@ -117,9 +120,12 @@ export default function ComplaintRootCausesList() {
         enableSorting: false,
         meta: { headerTitle: 'Complaints' },
         cell: ({ row }) => (
-          <Badge variant="secondary" size="sm" className="shrink-0 w-fit">
-            {row.original.complaint_count ?? 0}
-          </Badge>
+          <LinkedComplaintsChip
+            rootCauseId={row.original.id}
+            label={row.original.name}
+            count={row.original.complaint_count ?? 0}
+            detailHref={`/complaint-management/complaint-root-causes/${row.original.id}`}
+          />
         ),
       },
       {
@@ -181,6 +187,9 @@ export default function ComplaintRootCausesList() {
         table={table}
         recordCount={filtered.length}
         isLoading={isLoading}
+        onRowClick={(row) =>
+          router.push(`/complaint-management/complaint-root-causes/${row.id}`)
+        }
         tableLayout={{ width: 'fixed', columnsResizable: true }}
       >
         <Card>

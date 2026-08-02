@@ -16,6 +16,13 @@ export interface MarketSegment {
   description: string | null;
   is_active: boolean;
   sort_order: number | null;
+  /**
+   * Contacts tagged with a requestor-selectable segment are the ones offered in
+   * the "Requested by" / "Sales person" picker on PR / SF / stock inquiry. This
+   * flag is the admin-visible indicator for which segments feed that dropdown
+   * (UAC-requested-by-contact-routing group D).
+   */
+  is_requestor_selectable: boolean;
 }
 
 export interface MarketSegmentCreate {
@@ -24,10 +31,14 @@ export interface MarketSegmentCreate {
   description?: string | null;
   is_active?: boolean;
   sort_order?: number | null;
+  is_requestor_selectable?: boolean;
 }
 
 export type MarketSegmentUpdate = Partial<
-  Pick<MarketSegment, 'name' | 'description' | 'is_active' | 'sort_order'>
+  Pick<
+    MarketSegment,
+    'name' | 'description' | 'is_active' | 'sort_order' | 'is_requestor_selectable'
+  >
 >;
 
 const base = '/api/user-management/market-segments';

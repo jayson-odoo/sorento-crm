@@ -101,10 +101,50 @@ per-contact sponsorship rollout flag.
 
 ## 4. Slices
 
-**S0 — Prereq.** Merge `feat/promo-expiry-rule-engine` (carries `app/rule_engine`). Port
-`aggregates.py` + `lazy_registry`. *No feature work until this lands.*
+**S0 — Prereq. DONE.** `app/rule_engine` turned out to be on `main` already, so the blocker
+was stale; only `aggregates.py` and a shared `lazy_once` needed porting. The
+resolver is company-scoped as well as owner-scoped (defense in depth: a fact feeding an
+automatic transition must not lean on one layer). `rule_engine/registry.py`'s private
+`_lazy_once` now delegates to the shared helper rather than forking it.
+*Gate: 11 aggregate tests + 30 dependent tests green, no import cycle.*
 
-**S1 — Status engine as CORE** (ADR-0001). `statuses` + `status_transitions` + StatusEntity
+**S1 — DONE.** Notes below; original scope statement retained after them.
+
+Four things the build changed or found, worth carrying forward:
+
+1. **A NULL-uniqueness bug in the source.** The upstream
+   `UniqueConstraint(entity_type, tenant_id, scope_id, key)` is a **no-op for default
+   graphs** on Postgres: NULLs compare distinct, so two `(project, NULL, NULL,
+   'registered')` rows both insert. Both unique indexes here are `NULLS NOT DISTINCT`
+   (PG 15+; this deployment is 17.5). Verified in both directions: duplicate default keys
+   rejected, forks still free to reuse a key.
+2. **`scope_attr` could not express a task's graph.** Upstream names a column on the
+   record; a project task's graph belongs to its *project's* template, one hop away. The
+   registry takes a `scope_resolver` callable instead, covering direct and indirect with one
+   mechanism.
+3. **`extractApiError` prefers `detail` over `message`.** Any `AppException` carrying a
+   `detail` shows the user the detail and hides the message. Two errors here did that: the
+   blocked-delete buried its record count behind an internal hint about the migrate
+   endpoint, and the conflict handler would have shown a **raw Postgres constraint
+   violation**. Both now put everything in `message`, and
+   `test_user_facing_errors_never_hide_their_message_behind_detail` pins it.
+4. **A duplicate key escaped as an unhandled 500.** The DB index is the guarantee, but on
+   its own it surfaces as a Postgres constraint name. The route pre-checks in readable
+   language and translates a genuine race to a 409.
+
+Deliberately deferred, so nothing dead ships: time-conditioned auto edges (sorento's
+staleness ladder is an `automations` row, which already owns scheduling), self triggers, and
+the drag-and-drop graph editor. `derived.py` ships the trigger registry only; evaluation
+lands with the one real auto edge in S4. The admin UI creates **manual** transitions only and
+renders auto edges read-only, because authoring conditions needs the RuleBuilder.
+
+*Gate: 71 tests green (33 engine, 19 route, 6 additive-proof, 11 aggregate, plus 2 new
+error-shape tests); single alembic head; browser-verified through the sidebar (create status,
+duplicate-key rejection reaching the toast verbatim, create transition, self-loop excluded
+from the picker, both empty states), 0 console errors; **zero regressions** confirmed by
+diffing the full suite against `main` (95 pre-existing failures in both trees).*
+
+Original scope: `statuses` + `status_transitions` + StatusEntity
 registry + transition service + admin screens. Drop `workflow_stages`. `category` NOT NULL.
 Entity-default graph with per-template copy-on-write fork. Manual transitions only.
 Regression pass proving no existing status vocabulary changed. → UAC Group B.

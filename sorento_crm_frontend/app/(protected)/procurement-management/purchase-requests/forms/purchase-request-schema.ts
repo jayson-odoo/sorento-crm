@@ -46,6 +46,7 @@ export const PurchaseRequestSchema = z.object({
   expected_po_date: z.string().optional().nullable(),
   expected_po_date_text: z.string().max(500).optional().nullable(),
   requested_by: z.string().max(255).optional().nullable(),
+  requested_by_contact_id: z.string().max(255).optional().nullable(),
   requested_at: z.string().optional().nullable(),
   contact_id: z.string().max(500).optional().nullable(),
   space_id: z.string().max(500).optional().nullable(),

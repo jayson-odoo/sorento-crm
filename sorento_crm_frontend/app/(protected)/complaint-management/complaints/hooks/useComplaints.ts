@@ -7,6 +7,7 @@ import {
 } from '@/hooks/useRecordNeighbours';
 import {
   COMPLAINT_NEIGHBOURS_PATH,
+  complaintListExtraParams,
   type ComplaintsListParams,
 } from '../services/complaintService';
 import {
@@ -27,24 +28,27 @@ import {
   bulkDeleteComplaints,
   linkComplaintAttachment,
   deleteComplaintAttachment,
+  uploadComplaintResponseAttachment,
+  deleteComplaintResponseAttachment,
   syncComplaintAssigneeFromRespond,
+  type ResponseAttachmentUploadResult,
 } from '../services/complaintService';
 import type { ComplaintFormData } from '../types/complaint.types';
 
 /**
  * Prev/next neighbours of a complaint within the active filtered+sorted list set.
  * Serializes the list query (search/sort/assignee/status) with `buildDataGridParams`
- * — the same serialization the list page uses — so the backend honours filters
+ * - the same serialization the list page uses - so the backend honours filters
  * identically. `page`/`limit` are sent but ignored by the neighbours endpoint.
  */
 export function useComplaintNeighbours(
   complaintId: string | null,
   listParams: ComplaintsListParams,
 ): RecordNeighboursResult {
-  const params = buildDataGridParams(listParams, {
-    assigned_to: listParams.assigned_to,
-    status: listParams.status,
-  });
+  const params = buildDataGridParams(
+    listParams,
+    complaintListExtraParams(listParams),
+  );
   return useRecordNeighbours(COMPLAINT_NEIGHBOURS_PATH, complaintId, params);
 }
 
@@ -58,6 +62,9 @@ export function useComplaints(params: ComplaintsListParams) {
       params.searchQuery,
       params.assigned_to,
       params.status,
+      // Join, not the array: a fresh array literal each render would be a new key.
+      params.root_cause_ids?.join(',') ?? '',
+      params.resolution_ids?.join(',') ?? '',
     ],
     queryFn: () => getComplaints(params),
     staleTime: Infinity,
@@ -308,6 +315,51 @@ export function useDeleteComplaintAttachment() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (linkId: string) => deleteComplaintAttachment(linkId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['complaint'] });
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
+      toast.success('Attachment unlinked successfully');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to unlink attachment'),
+  });
+}
+
+/**
+ * Uploads staged response-attachment files sequentially (one request per file, per
+ * the backend contract). On a partial failure, best-effort rolls back the links
+ * already created in this batch so a failed submit never leaves an orphaned
+ * upload - the caller's Save/Update & Reply must not proceed on error.
+ */
+export function useUploadComplaintResponseAttachments() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ complaintId, files }: { complaintId: string; files: File[] }) => {
+      const uploaded: ResponseAttachmentUploadResult[] = [];
+      try {
+        for (const file of files) {
+          uploaded.push(await uploadComplaintResponseAttachment(complaintId, file));
+        }
+      } catch (err) {
+        await Promise.allSettled(
+          uploaded.map((u) => deleteComplaintResponseAttachment(u.link_id)),
+        );
+        throw err;
+      }
+      return uploaded;
+    },
+    onSuccess: (_data, { complaintId }) => {
+      queryClient.invalidateQueries({ queryKey: ['complaint', complaintId] });
+      queryClient.invalidateQueries({ queryKey: ['complaints'] });
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to upload attachment'),
+  });
+}
+
+export function useDeleteComplaintResponseAttachment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (linkId: string) => deleteComplaintResponseAttachment(linkId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['complaint'] });
       queryClient.invalidateQueries({ queryKey: ['complaints'] });

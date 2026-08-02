@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import type {
   StockInquiry,
   StockInquiryFormData,
@@ -171,6 +172,46 @@ export async function deleteStockInquiryAttachment(linkId: string): Promise<void
   }
 }
 
+export interface ResponseAttachmentUploadResult {
+  link_id: string;
+  attachment_id: string;
+  filename: string;
+  size: number;
+  url: string;
+  content_type: string;
+}
+
+/**
+ * Upload ONE file as a staff "purchasing response" attachment (its own
+ * `response_attachment` type/quota, separate from the contact's own uploads).
+ * Called once per file - loop for multiple.
+ */
+export async function uploadStockInquiryResponseAttachment(
+  inquiryId: string,
+  file: File,
+): Promise<ResponseAttachmentUploadResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${inquiryId}/response-attachments`,
+    { method: 'POST', body: formData },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to upload attachment'));
+  }
+  return response.json();
+}
+
+export async function deleteStockInquiryResponseAttachment(linkId: string): Promise<void> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/response-attachments/${linkId}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to unlink attachment'));
+  }
+}
+
 export interface ViewLinkResponse {
   view_token: string;
   view_url: string;
@@ -316,6 +357,35 @@ export interface RespondConversationResponse {
   pagination?: { next?: string; previous?: string };
   error?: string;
   contact?: { name?: string | null; phone?: string | null } | null;
+}
+
+export interface StockInquiryExportDownload {
+  id: string;
+  kind: string;
+  status: string;
+  filename?: string | null;
+}
+
+/**
+ * Queue a printable Stock Inquiry Form PDF (details + embedded attachments).
+ *
+ * Contract:
+ *   POST /api/v1/procurement/stock-inquiries/{id}/export/pdf
+ *   Auth: `procurement.stock_inquiries.view`
+ *   202-ish 200: { id, kind: 'stock_inquiry_pdf', status: 'pending', filename }
+ *   The PDF is rendered by the RQ worker and surfaces in My Downloads.
+ */
+export async function exportStockInquiryPdf(
+  id: string,
+): Promise<StockInquiryExportDownload> {
+  const response = await apiFetch(
+    `/api/v1/procurement/stock-inquiries/${id}/export/pdf`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to start PDF export'));
+  }
+  return response.json();
 }
 
 export async function getStockInquiryConversation(

@@ -39,6 +39,13 @@ from app.schemas.procurement import (
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
 from app.services.banner_person_service import wa_phone_for_user_id
 from app.services.validators import validate_project_value
+from app.services.requestor_options_service import (
+    apply_requestor_contact as _apply_requestor_contact,
+)
+
+# Sentinel: "the caller did not mention the requestor field at all", distinct
+# from an explicit None (which CLEARS the requestor + its label).
+_UNSET_REQUESTOR = object()
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -1189,7 +1196,7 @@ class SPOAllocationService:
             SPOWithAllocationsGroup,
         )
 
-        # Base filter query (no eager load) – reuse for count and for page of spo_numbers
+        # Base filter query (no eager load) - reuse for count and for page of spo_numbers
         q_base = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None))
         filters = []
         resolved_warehouse_ids = resolve_identifier(
@@ -2412,7 +2419,7 @@ class StockInquiryService:
         return (self._build_stock_inquiry_view_url(inquiry_id) or "").strip()
 
     def _build_stock_inquiry_internal_url(self, inquiry_id: str, base_url_override: Optional[str] = None) -> str:
-        """Build the IN-SYSTEM (login-required) detail link for a stock inquiry —
+        """Build the IN-SYSTEM (login-required) detail link for a stock inquiry
         used for STAFF team notifications (e.g. "New Stock Inquiry created"), so the
         recipient lands on the authenticated detail page. If not signed in, the
         protected layout sends them to /signin?callbackUrl=… and back here after
@@ -2717,8 +2724,14 @@ class StockInquiryService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         statuses: Optional[List[str]] = None,
+        viewer_user_id: Optional[str] = None,
     ):
-        """List stock inquiries."""
+        """List stock inquiries.
+
+        ``viewer_user_id`` drives the Print Count column: how many PDF exports the
+        CURRENT user has taken of each row (their own downloads only, batched into
+        one grouped query - never an N+1 count per row).
+        """
         q = self._build_list_query(
             query=query,
             sort_field=sort_field,
@@ -2732,6 +2745,7 @@ class StockInquiryService:
         offset = (page - 1) * limit
         inquiries = q.offset(offset).limit(limit).all()
         self._attach_sla_handlers(inquiries)
+        self._attach_print_counts(inquiries, viewer_user_id)
 
         from app.schemas.common import PaginationResponse
 
@@ -2741,8 +2755,26 @@ class StockInquiryService:
             "empty": total == 0
         }
 
+    def _attach_print_counts(self, items, viewer_user_id: Optional[str]) -> None:
+        """Set `print_count` on each inquiry: how many PDF exports the viewing user
+        has taken of that record. One grouped query for the page. With no viewer
+        (e.g. an API-key principal) every row reads 0 rather than another user's count.
+        """
+        if not items:
+            return
+        counts: dict = {}
+        if viewer_user_id:
+            from app.services.download_service import DownloadService
+            counts = DownloadService(self.db).count_map_for_user(
+                str(viewer_user_id),
+                "stock_inquiry",
+                [str(getattr(i, "id", "")) for i in items if getattr(i, "id", None)],
+            )
+        for it in items:
+            setattr(it, "print_count", int(counts.get(str(it.id), 0)))
+
     def _attach_sla_handlers(self, items) -> None:
-        """Set `assigned_to_id` / `assigned_to_name` (the SLA assignee — who the
+        """Set `assigned_to_id` / `assigned_to_name` (the SLA assignee - who the
         tracker is currently escalated/assigned to) and `handled_by_name` (the
         form-handling-lock holder, set only when someone clicks Claim) on each inquiry
         from the latest unresolved form-SLA tracker. Both live on the tracker, not the
@@ -2816,6 +2848,19 @@ class StockInquiryService:
             raise handle_not_found("Stock Inquiry", inquiry_id)
         return inquiry
 
+    def _resolve_requestor_display_name(self, contact_id: Optional[str]) -> Optional[str]:
+        """Display name of a requestor contact, or None. Read-only lookup - the
+        eligibility check + the actual stamping still go through
+        requestor_options_service.apply_requestor_contact."""
+        raw = str(contact_id).strip() if contact_id else ""
+        if not raw:
+            return None
+        from app.models.access import RespondContact
+        from app.services.requestor_options_service import contact_display_name
+
+        row = self.db.query(RespondContact).filter(RespondContact.id == raw).first()
+        return contact_display_name(row) if row is not None else None
+
     def _resolve_user_display_name(self, user_id: Optional[str]) -> Optional[str]:
         """Resolve user id (CRM id or respond_user_id) to display name (name or email)."""
         if not user_id or not str(user_id).strip():
@@ -2843,6 +2888,9 @@ class StockInquiryService:
         data["system_id"] = str(inquiry.id)
         data["form_type"] = "stock_inquiry"
         data["view_url"] = self._build_stock_inquiry_view_url(str(inquiry.id))
+        # `column_attrs` skips python properties, so the derived requestor name
+        # has to be copied in explicitly or the response returns null.
+        data["salesperson_contact_name"] = inquiry.salesperson_contact_name
         data["last_responded_by_name"] = (
             self._resolve_user_display_name(inquiry.last_responded_by) if inquiry.last_responded_by else None
         )
@@ -3226,10 +3274,15 @@ class StockInquiryService:
 
         column_keys = {a.key for a in inspect(inquiry).mapper.column_attrs}
         immutable = {"id", "created_at", "inquiry_number", "updated_at"}
+        requestor_value = data.pop("salesperson_contact_id", _UNSET_REQUESTOR)
         for key, value in list(data.items()):
             if key in immutable or key not in column_keys:
                 continue
             setattr(inquiry, key, value)
+        if requestor_value is not _UNSET_REQUESTOR:
+            _apply_requestor_contact(
+                self.db, inquiry, "salesperson_contact_id", "salesperson", requestor_value
+            )
 
         inquiry.status = new_status
 
@@ -3324,6 +3377,14 @@ class StockInquiryService:
         data = inquiry_data.model_dump()
         data.pop("inquiry_number", None)
         data.pop("user_confirmed", None)
+        # `salesperson` is a REQUIRED submission field, but the CRM form now
+        # offers a contact picker instead of the free-text input - so derive the
+        # label from the FK before the completeness gate, or a perfectly complete
+        # submission is rejected for a field the user can no longer type.
+        if data.get("salesperson_contact_id") and not (data.get("salesperson") or "").strip():
+            derived = self._resolve_requestor_display_name(data["salesperson_contact_id"])
+            if derived:
+                data["salesperson"] = derived
         self._require_complete_stock_inquiry_submission(
             {k: data.get(k) for k in self._STOCK_INQUIRY_SUBMISSION_REQUIRED_FIELDS},
             require_contact_scope=require_user_confirmation,
@@ -3351,7 +3412,14 @@ class StockInquiryService:
         generated = NumberingService(self.db).get_next_number("stock_inquiry", date_cls.today())
         if generated:
             data["inquiry_number"] = generated
-        inquiry = StockInquiry(**data)
+        # Filter the splat: a derived/display field that is not a column would
+        # raise TypeError and 500 the whole create route (mirrors create_request).
+        requestor_value = data.pop("salesperson_contact_id", None)
+        inquiry = StockInquiry(**{k: v for k, v in data.items() if hasattr(StockInquiry, k)})
+        if requestor_value:
+            _apply_requestor_contact(
+                self.db, inquiry, "salesperson_contact_id", "salesperson", requestor_value
+            )
         self.db.add(inquiry)
         self.db.commit()
         self.db.refresh(inquiry)
@@ -3660,9 +3728,18 @@ class StockInquiryService:
         elif contact_id is None and space_id is None:
             update_data["respond_inbox_url"] = None
 
+        # Requestor FK is validated + label-derived, never a bare setattr: the
+        # document / PDF / approval page print the TEXT label, so stamping the FK
+        # alone leaves them reading "-" (PLAN-requested-by-contact-routing D6/D9).
+        requestor_value = update_data.pop("salesperson_contact_id", _UNSET_REQUESTOR)
+
         # Status is only changed via workflow actions (submit/approve/reject/reopen) and update_and_reply
         for key, value in update_data.items():
             setattr(inquiry, key, value)
+        if requestor_value is not _UNSET_REQUESTOR:
+            _apply_requestor_contact(
+                self.db, inquiry, "salesperson_contact_id", "salesperson", requestor_value
+            )
 
         self.db.commit()
         self.db.refresh(inquiry)
@@ -3678,7 +3755,11 @@ class StockInquiryService:
         ": " is the body separator. Mirrors complaint reply normalization.
         """
         s = (raw or "").strip()
-        if not s.startswith("There is a response to your stock inquiry"):
+        # Both spellings: the module was renamed Stock Inquiry -> Stock Inquiry, and
+        # rows written before that carry the old preamble.
+        if not s.startswith(
+            ("There is a response to your stock inquiry", "There is a response to your stock inquiry")
+        ):
             return s
         idx = s.rfind(": ")
         return s[idx + 2 :].strip() if idx != -1 else s
@@ -3740,8 +3821,33 @@ class StockInquiryService:
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error("respond_inbox_url is missing or invalid; cannot send message.")
 
-        # Compose the full message (may include view link) — sent async via RQ after commit
+        # Compose the full message (may include view link) - sent async via RQ after commit
         message_to_send = str(message_text).strip()
+
+        # Attachment sentence (UAC D1-D4, D2 hard blocker): the sentence is
+        # composed here for the OUTGOING message only, from the count of
+        # staff-uploaded (uploader_kind='user') attachments already linked to
+        # this inquiry (staged in the "Edit purchasing response" modal). It is
+        # bare-stripped BEFORE appending, since _bare_stock_inquiry_reply's
+        # rfind(": ") would otherwise match the sentence's own "response: N"
+        # colon instead of the FE-composed preamble's, dropping the real reply
+        # body. purchasing_response itself is never touched: it was already
+        # popped from update_data above.
+        from app.services.entity_attachment_service import (
+            compose_response_attachment_sentence,
+            count_staff_attachments,
+        )
+
+        attachment_sentence = compose_response_attachment_sentence(
+            count_staff_attachments(self.db, "stock_inquiry", str(inquiry.id))
+        )
+        bare_reply = self._bare_stock_inquiry_reply(message_to_send)
+        if attachment_sentence:
+            outgoing_bare = f"{bare_reply}\n{attachment_sentence}"
+            outgoing_text = f"{message_to_send}\n{attachment_sentence}"
+        else:
+            outgoing_bare = bare_reply
+            outgoing_text = message_to_send
 
         now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         if transition_to_responded_workflow:
@@ -3794,17 +3900,18 @@ class StockInquiryService:
         self.db.commit()
         self.db.refresh(inquiry)
 
-        # Structured-template vars: bare purchasing_response text as `update`
-        # core + links. Mirrors complaint's bare `stored_body`.
+        # Structured-template vars: bare purchasing_response text (+ attachment
+        # sentence, D10) as `update` core + links. Mirrors complaint's bare
+        # `stored_body`.
         reply_extra_vars = {
-            "update": self._bare_stock_inquiry_reply(message_to_send),
+            "update": outgoing_bare,
             "portal_url": self._stock_inquiry_portal_or_view_url(inquiry, str(inquiry.id)),
             "view_url": (self._build_stock_inquiry_view_url(str(inquiry.id)) or "").strip(),
         }
         self._enqueue_stock_inquiry_respond_message(
             inquiry_id=inquiry_id,
             identifier=identifier,
-            message_text=message_to_send,
+            message_text=outgoing_text,
             respond_user_id=respond_user_id,
             crm_sender_user_id=crm_sender_user_id,
             space_id=getattr(inquiry, "space_id", None),
@@ -3870,7 +3977,7 @@ class StockInquiryService:
         self.db.commit()
         self.db.refresh(inquiry)
         # Notify the CONTACT that the inquiry advanced to purchasing review
-        # (template when the 24h window is closed). Best-effort post-commit — a
+        # (template when the 24h window is closed). Best-effort post-commit - a
         # send hiccup must not roll back the approved transition.
         try:
             inquiry_number = (getattr(inquiry, "inquiry_number", None) or str(inquiry.id)).strip()
@@ -3951,7 +4058,7 @@ class StockInquiryService:
             "stock_inquiry",
             str(inquiry.id),
         ) or view_url
-        # Structured-template vars: LEAN `update` core (status only) + links —
+        # Structured-template vars: LEAN `update` core (status only) + links
         # "Rejected, reason: X" (no preamble, no inline URL). Mirrors complaint.
         ps_reject_extra_vars = {
             "update": f"Rejected, reason: {reason_text}" if reason_text else "Rejected",
@@ -3968,7 +4075,7 @@ class StockInquiryService:
         # Notify AFTER the commit and best-effort, mirroring approve/submit. When
         # this ran first, a contact with no reachable Respond.io inbox (no
         # `respond_inbox_url`, e.g. a contact missing `respond_io_id`) raised here
-        # and aborted the whole rejection — the inquiry stayed pending and could
+        # and aborted the whole rejection - the inquiry stayed pending and could
         # never be rejected at all.
         try:
             self._send_stock_inquiry_contact_message(
@@ -4030,7 +4137,7 @@ class StockInquiryService:
             "stock_inquiry",
             str(inquiry.id),
         ) or view_url
-        # Structured-template vars: LEAN `update` core (status only) + links —
+        # Structured-template vars: LEAN `update` core (status only) + links
         # "Rejected, reason: X" (no preamble, no inline URL). Mirrors complaint.
         pur_reject_extra_vars = {
             "update": f"Rejected, reason: {reason_text}" if reason_text else "Rejected",
@@ -4332,7 +4439,7 @@ class PurchaseRequestService:
                 identifier=identifier,
             )
             # Structured-template vars (bare ``update`` core + portal_url) that can't
-            # be reconstructed from the row alone — merge over the auto-resolved vars.
+            # be reconstructed from the row alone - merge over the auto-resolved vars.
             if extra_context_vars:
                 context_vars.update(extra_context_vars)
             result = send_text_or_template(
@@ -4433,7 +4540,7 @@ class PurchaseRequestService:
         user = self.db.query(User).filter(User.id == uid).first()
         if user:
             return ((user.name or "").strip() or user.email or uid).strip() or ""
-        # Not a matching user row — echo back only if it isn't a bare UUID.
+        # Not a matching user row - echo back only if it isn't a bare UUID.
         return "" if self._UUID_RE.match(uid) else uid
 
     def attach_rejection_person(self, header: PurchaseRequestHeader) -> PurchaseRequestHeader:
@@ -4521,7 +4628,7 @@ class PurchaseRequestService:
                 f"Your purchase request {request_number} has been rejected due to {reason} by {approver}. "
                 f"Please view your submission here {view_url}"
             )
-        # Structured-template vars: LEAN `update` core (status only) + links —
+        # Structured-template vars: LEAN `update` core (status only) + links
         # "Rejected, reason: X" (no preamble, no inline URL). Mirrors complaint.
         reason_core = (getattr(header, "approval_comments", None) or "").strip()
         reject_extra_vars = {
@@ -4672,7 +4779,7 @@ class PurchaseRequestService:
         self.db.commit()
         self.db.refresh(header)
 
-        # Structured-template vars: LEAN `update` core (status only) + links —
+        # Structured-template vars: LEAN `update` core (status only) + links
         # "Processed by CS" / "Closed" (no preamble, no inline URL).
         finalize_update_core = "Processed by CS" if new_status == "processed_by_cs" else "Closed"
         finalize_extra_vars = {
@@ -5914,7 +6021,7 @@ class PurchaseRequestService:
             q = q.filter(PurchaseRequestHeader.contact_id == str(contact_id).strip())
         if assigned_to is not None and str(assigned_to).strip():
             # Filter by the latest unresolved form-SLA assignee (project-sales
-            # before approval, customer-service after) — mirrors complaint.
+            # before approval, customer-service after) - mirrors complaint.
             from app.models.sla import ConversationSLATracking
 
             base = self.db.query(ConversationSLATracking.source_entity_id).filter(
@@ -6202,7 +6309,14 @@ class PurchaseRequestService:
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
         if respond_inbox_url is not None:
             dump["respond_inbox_url"] = respond_inbox_url
+        requestor_value = dump.pop("requested_by_contact_id", None)
         header = PurchaseRequestHeader(**{k: v for k, v in dump.items() if hasattr(PurchaseRequestHeader, k)})
+        if requestor_value:
+            # Validated + label-derived, never a bare setattr: the document, the
+            # PDF and the public approval page print the TEXT label (D6/D9).
+            _apply_requestor_contact(
+                self.db, header, "requested_by_contact_id", "requested_by", requestor_value
+            )
         self.db.add(header)
         self.db.flush()
 
@@ -6239,9 +6353,14 @@ class PurchaseRequestService:
         elif contact_id is None and space_id is None:
             payload["respond_inbox_url"] = None
         self._apply_sponsor_subject_to_payload(payload, header)
+        requestor_value = payload.pop("requested_by_contact_id", _UNSET_REQUESTOR)
         for key, value in payload.items():
             if hasattr(header, key):
                 setattr(header, key, value)
+        if requestor_value is not _UNSET_REQUESTOR:
+            _apply_requestor_contact(
+                self.db, header, "requested_by_contact_id", "requested_by", requestor_value
+            )
 
         if data.products is not None:
             for line in list(header.lines or []):
@@ -6482,7 +6601,7 @@ class PurchaseRequestService:
         # No-op guard: only treat this as a real transition into pending when it
         # wasn't already pending. A redundant call (double-click before the FE
         # refetch hides the button, client/proxy retry, etc.) must NOT re-emit the
-        # 'send_for_approval' SLA event — that re-runs the approval-stage start and,
+        # 'send_for_approval' SLA event - that re-runs the approval-stage start and,
         # combined with stages sharing a policy, spawns a duplicate assignment +
         # duplicate WhatsApp. See _active_tracker stage-scoping fix in form_sla_service.
         already_pending = current == "pending"
@@ -6724,6 +6843,7 @@ class PurchaseRequestService:
             "sponsor_subject": getattr(header, "sponsor_subject", None),
             "sponsor_subject_other": getattr(header, "sponsor_subject_other", None),
             "requested_by": header.requested_by,
+            "requested_by_contact_name": header.requested_by_contact_name,
             "request_date": getattr(header, "request_date", None),
             "submitted_at": getattr(header, "submitted_at", None),
             "created_at": getattr(header, "created_at", None),
@@ -6879,6 +6999,7 @@ class PurchaseRequestService:
             "sponsor_subject": getattr(header, "sponsor_subject", None),
             "sponsor_subject_other": getattr(header, "sponsor_subject_other", None),
             "requested_by": header.requested_by,
+            "requested_by_contact_name": header.requested_by_contact_name,
             "request_date": getattr(header, "request_date", None),
             "requested_at": getattr(header, "requested_at", None),
             "submitted_at": getattr(header, "submitted_at", None),
@@ -6905,7 +7026,7 @@ class PurchaseRequestService:
         approval_comments: Optional[str] = None,
         actor_user_id: Optional[str] = None,
     ):
-        """Authenticated in-system approve/reject (no token) — the form's Approve/
+        """Authenticated in-system approve/reject (no token) - the form's Approve/
         Reject buttons. Same effect as the public link's ``submit_approval``: it
         runs the shared ``_apply_approval_decision``. Guards that the request is
         still awaiting a decision (approval_status == 'pending')."""
@@ -7053,7 +7174,7 @@ class PurchaseRequestService:
         except Exception as e:
             logger.warning("Form SLA emit '%s' failed for %s: %s", action, header.id, e)
         # Dispatch the approval automation AFTER the form-SLA event so the
-        # customer-service stage tracker (and its assigned PIC) already exists —
+        # customer-service stage tracker (and its assigned PIC) already exists
         # the "Assigned CS PIC" recipient option resolves from that tracker.
         if action == "approved":
             try:

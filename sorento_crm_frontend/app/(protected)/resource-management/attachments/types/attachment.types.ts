@@ -58,6 +58,8 @@ export interface AttachmentType {
   description?: string | null;
   allowed_extensions: string;
   max_file_size_mb: number;
+  /** Max attachments of this type per entity row; null = unlimited. */
+  max_count_per_entity?: number | null;
   supports_field_linkage?: boolean;
   created_at: Date;
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Plus, Search, Edit, Trash2, ChevronRight } from 'lucide-react';
 import {
   useReactTable,
@@ -21,9 +22,11 @@ import { useComplaintResolutions } from '../hooks/useComplaintResolutions';
 import ComplaintResolutionTable from './ComplaintResolutionTable';
 import ComplaintResolutionFormDialog from './ComplaintResolutionFormDialog';
 import ComplaintResolutionDeleteDialog from './ComplaintResolutionDeleteDialog';
+import { LinkedComplaintsChip } from '../../_shared/LinkedComplaintsChip';
 import type { ComplaintResolution } from '../types/complaintResolution.types';
 
 export default function ComplaintResolutionsList() {
+  const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | undefined>(undefined);
@@ -115,9 +118,12 @@ export default function ComplaintResolutionsList() {
         enableSorting: false,
         meta: { headerTitle: 'Complaints' },
         cell: ({ row }) => (
-          <Badge variant="secondary" size="sm" className="shrink-0 w-fit">
-            {row.original.complaint_count ?? 0}
-          </Badge>
+          <LinkedComplaintsChip
+            resolutionId={row.original.id}
+            label={row.original.name}
+            count={row.original.complaint_count ?? 0}
+            detailHref={`/complaint-management/complaint-resolutions/${row.original.id}`}
+          />
         ),
       },
       {
@@ -179,6 +185,9 @@ export default function ComplaintResolutionsList() {
         table={table}
         recordCount={filtered.length}
         isLoading={isLoading}
+        onRowClick={(row) =>
+          router.push(`/complaint-management/complaint-resolutions/${row.id}`)
+        }
         tableLayout={{ width: 'fixed', columnsResizable: true }}
       >
         <Card>

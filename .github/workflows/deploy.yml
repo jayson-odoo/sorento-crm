@@ -144,6 +144,34 @@ jobs:
             sorento-mcp:ci \
             python -c "import sorento_crm_mcp; print('import ok')"
 
+      # The image above is cache-hit almost every run, so it can keep passing on a
+      # months-old dependency resolution while the (uncached) deploy build picks up
+      # a brand-new release. That is exactly how mcp 2.0.0 - which removed
+      # `mcp.server.fastmcp` - reached the server: validation green, container
+      # crashlooping. Resolve dependencies from scratch and import the module the
+      # entrypoint actually needs, so a breaking release fails HERE.
+      - name: Build MCP image with fresh dependency resolution (no cache)
+        uses: docker/build-push-action@v5
+        with:
+          context: ./sorento_crm_mcp
+          platforms: linux/amd64
+          push: false
+          load: true
+          no-cache: true
+          tags: sorento-mcp:ci-nocache
+
+      - name: Smoke the real entrypoint imports (fresh resolution)
+        run: |
+          docker run --rm \
+            -e CRM_BASE_URL=http://localhost:8000 \
+            -e EXTERNAL_API_KEY=ci-dummy \
+            sorento-mcp:ci-nocache \
+            python -c "
+          from importlib.metadata import version
+          from sorento_crm_mcp.server import create_mcp_app
+          print('mcp', version('mcp'), 'entrypoint imports ok')
+          "
+
       # Full MCP suite as an executing gate. Unlike the backend and frontend
       # suites this one is green (131 passed) and deterministic, so gating on all
       # of it is safe. Tests are mounted because the runtime image ships only the

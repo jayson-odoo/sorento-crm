@@ -5,7 +5,14 @@ description = "Read-only MCP server proxying Sorento CRM /api/v1 GET APIs for n8
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "mcp>=1.2.0",
+    # Cap at <2: mcp 2.0.0 REMOVED `mcp.server.fastmcp` (FastMCP moved out of the
+    # SDK), and server.py imports `Context, FastMCP` from it. The unpinned
+    # `mcp>=1.2.0` resolved to 2.0.0 the day it released, so the deploy build
+    # produced an image whose container crashlooped on
+    # "ModuleNotFoundError: No module named 'mcp.server.fastmcp'" while the
+    # cached CI validation image still had 1.x and passed. Moving to FastMCP 2.x
+    # is a real migration (new package, changed API), not a version bump.
+    "mcp>=1.2.0,<2",
     "httpx>=0.27.0",
     "pydantic-settings>=2.0.0",
     "uvicorn>=0.30.0",

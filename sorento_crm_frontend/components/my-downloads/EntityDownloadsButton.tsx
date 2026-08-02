@@ -88,7 +88,7 @@ export function EntityDownloadsButton({
           e.stopPropagation();
           setOpen(true);
         }}
-        title="View downloads for this complaint"
+        title="View downloads for this record"
         className={cn(
           'inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-sm transition-colors hover:bg-muted',
           displayCount > 0 ? 'text-foreground' : 'text-muted-foreground',

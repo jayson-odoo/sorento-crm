@@ -126,7 +126,7 @@ class MarketSegment(Base):
     __tablename__ = "market_segments"
 
     # uuid surrogate PK (design principle: every domain table has a uuid `id`).
-    # `code` stays the human-facing business key — unique, and the FK target for
+    # `code` stays the human-facing business key - unique, and the FK target for
     # customers / respond_contact_market_segments / team_member_market_segments.
     id = Column(UUID(as_uuid=False), primary_key=True, server_default=text("gen_random_uuid()"))
     code = Column(String(50), unique=True, nullable=False)
@@ -136,6 +136,13 @@ class MarketSegment(Base):
     sort_order = Column(Integer, nullable=True)
     # SCM (M2): default demand nature for customers in this segment (continuous | spike).
     demand_nature = Column(String(20), nullable=True)
+    # When true, contacts in this segment are offered in the "Requested by" /
+    # "Salesperson" requestor picker on PR / SF / stock inquiry (portal + CRM).
+    # Fail closed: no flagged segment means the picker offers only the submitter
+    # and the currently-saved requestor. Admin-visible in Market Segments.
+    is_requestor_selectable = Column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -200,7 +207,7 @@ class RespondContact(Base):
     last_name = Column(Text, nullable=True)
     respond_io_id = Column(Text, nullable=True)  # Respond.io contact id for inbox URL
     # Stable opaque slug for the bookmarkable portal URL /portal/c/{slug}.
-    # Identity hint, not a credential — lazily minted on first portal-link use.
+    # Identity hint, not a credential - lazily minted on first portal-link use.
     portal_slug = Column(String(16), nullable=True, unique=True, index=True)
     workspace_id = Column(UUID(as_uuid=False), ForeignKey("respond_workspaces.id", ondelete="SET NULL"), nullable=True)
     # Arbitrary per-contact conversation state. Read/overwritten wholesale by
@@ -285,7 +292,7 @@ class RespondContactCsRouting(Base):
     cs_pic = relationship("User")
 
     __table_args__ = (
-        # Uniqueness is (respond_contact_id, use_case, md5(match_conditions::text)) —
+        # Uniqueness is (respond_contact_id, use_case, md5(match_conditions::text))
         # one pin per distinct condition-set per contact+use_case. It is an EXPRESSION
         # unique index (uq_cs_routing_contact_use_case_conditions), created in the
         # migration; SQLAlchemy can't model an md5(jsonb) expression index inline.
@@ -383,7 +390,7 @@ class TeamMember(Base):
     sort_order = Column(Integer, nullable=True)
     # Per-team round-robin eligibility. Default true = receives auto-assignments.
     # Per-team (NOT per-user): a multi-team member can be RR-eligible in one team and
-    # excluded in another. Governs AUTO distribution only — manual takeover/reassign
+    # excluded in another. Governs AUTO distribution only - manual takeover/reassign
     # can still target an excluded member, and they still appear in Team Tasks.
     include_in_round_robin = Column(
         Boolean, default=True, nullable=False, server_default=text("true")
@@ -465,7 +472,7 @@ class AgentTeamRoundRobinCursor(Base):
     agent_id = Column(UUID(as_uuid=False), ForeignKey("access_agents.id", ondelete="CASCADE"), nullable=False)
     team_id = Column(UUID(as_uuid=False), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
     # Market-segment discriminator for the rotation. '' = the legacy / no-segment
-    # cursor (used when next-assignee gets no contact_id — unchanged behaviour).
+    # cursor (used when next-assignee gets no contact_id - unchanged behaviour).
     # Non-empty = sorted '|'-joined contact segment codes (e.g. 'project|retail').
     segment_key = Column(String(120), nullable=False, server_default=text("''"))
     last_assigned_user_id = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

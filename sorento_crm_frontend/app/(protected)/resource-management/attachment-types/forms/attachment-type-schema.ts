@@ -18,6 +18,14 @@ export const AttachmentTypeSchema = z.object({
     .number()
     .min(1, { message: 'Max file size must be at least 1 MB.' })
     .max(10000, { message: 'Max file size must not exceed 10000 MB.' }),
+  // Blank = unlimited. Enforced per entity row by the portal upload quota check.
+  max_count_per_entity: z
+    .number()
+    .int({ message: 'Max attachments per record must be a whole number.' })
+    .min(1, { message: 'Max attachments per record must be at least 1.' })
+    .max(1000, { message: 'Max attachments per record must not exceed 1000.' })
+    .nullable()
+    .optional(),
   supports_field_linkage: z.boolean().optional(),
 });
 

@@ -1,4 +1,5 @@
 """SLA service for business logic."""
+import logging
 import re
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func, update
@@ -11,6 +12,8 @@ from app.schemas.sla import (
     ConversationSLATrackingCreate, ConversationSLATrackingUpdate, ConversationSLAEventLogCreate
 )
 from app.services.error_handler import handle_not_found, handle_conflict, handle_validation_error
+
+_module_logger = logging.getLogger(__name__)
 
 # Malaysia timezone (UTC+8) for all SLA timestamps
 MALAYSIA_TZ = timezone(timedelta(hours=8))
@@ -1073,6 +1076,27 @@ class ConversationSLATrackingService:
 
     # ---- Team Tasks: visibility, listing, takeover, reassign ----------------
 
+    def _is_admin(self, user_id: str) -> bool:
+        """Admin / superadmin bypass the team-membership scope.
+
+        Team scope is "permission == visibility": you may act on the tasks that
+        show up in YOUR Team Tasks. An admin opening a form detail page can see
+        the form and its open SLA task, so refusing the action there (and doing
+        it with a "not found" message) reads as a bug. Mirrors the
+        superadmin/admin short-circuit used by the module guards.
+        """
+        try:
+            from app.services.user_service import UserPermissionService
+
+            slugs = UserPermissionService(self.db).get_user_role_slugs(str(user_id))
+            return bool({"admin", "superadmin"} & set(slugs or ()))
+        except Exception:  # noqa: BLE001
+            # Fail CLOSED: a role lookup failure must not widen anyone's scope.
+            _module_logger.warning(
+                "Role lookup failed for %s; treating as non-admin.", user_id
+            )
+            return False
+
     def _visible_team_ids(self, user_id: str) -> set:
         """Teams the user is a member of ∪ all their descendants (recursive)."""
         from app.models.access import TeamMember
@@ -1135,6 +1159,8 @@ class ConversationSLATrackingService:
         assignee = getattr(tracking, "assigned_to_id", None)
         if assignee is not None and str(assignee) == str(user_id):
             return True
+        if self._is_admin(user_id):
+            return True
         if assignee is None:
             return False
         members = self._members_of_teams(self._visible_team_ids(user_id))
@@ -1142,8 +1168,33 @@ class ConversationSLATrackingService:
 
     def list_visible_users(self, user_id: str) -> list[dict]:
         """Scope-B picker source: users I can see (members of my visible teams),
-        excluding myself. Human-readable name, no UUIDs in the label."""
+        excluding myself. Admins see every user, so the picker matches what their
+        bypass actually allows them to save. Human-readable name, no UUIDs."""
         from app.models.user import User
+
+        if self._is_admin(user_id):
+            # Every user who belongs to at least one team, i.e. everyone who can
+            # actually own an SLA task (22 people here, vs ~2.5k user rows). An
+            # unfiltered user list would make the picker unusable.
+            from app.models.access import TeamMember
+
+            member_ids = {
+                str(uid) for (uid,) in self.db.query(TeamMember.user_id).distinct().all()
+            }
+            member_ids.discard(str(user_id))
+            if not member_ids:
+                return []
+            rows = self.db.query(User).filter(User.id.in_(list(member_ids))).all()
+            out = [
+                {
+                    "id": str(u.id),
+                    "name": (u.name or u.email or "").strip() or None,
+                    "email": u.email,
+                }
+                for u in rows
+            ]
+            out.sort(key=lambda x: (x["name"] or x["email"] or "").lower())
+            return out
 
         member_ids = self._members_of_teams(self._visible_team_ids(user_id))
         member_ids.discard(str(user_id))
@@ -1584,14 +1635,23 @@ class ConversationSLATrackingService:
         if bool(getattr(tracking, "is_resolved", False)):
             raise handle_validation_error("Cannot reassign a resolved SLA task.")
         if not self.can_user_act_on_tracking(user_id, tracking):
-            raise handle_not_found("SLA Tracking", tracking_id)
-
-        # scope-B: target must be a member of the actor's visible teams.
-        visible_members = self._members_of_teams(self._visible_team_ids(user_id))
-        if str(target_user_id) not in visible_members:
+            # The row EXISTS here (get_tracking already 404'd otherwise), so the
+            # old handle_not_found read "SLA Tracking not found. Someone might
+            # have deleted it already." on a task the user is looking at. Say
+            # what is actually wrong, without confirming the id to a stranger.
             raise handle_validation_error(
-                "You can only reassign to users in your teams or their child teams."
+                "This SLA task is assigned outside your teams, so you cannot reassign it. "
+                "Ask an admin or a member of the owning team."
             )
+
+        # scope-B: target must be a member of the actor's visible teams (admins
+        # may hand off to anyone, matching their bypass above).
+        if not self._is_admin(user_id):
+            visible_members = self._members_of_teams(self._visible_team_ids(user_id))
+            if str(target_user_id) not in visible_members:
+                raise handle_validation_error(
+                    "You can only reassign to users in your teams or their child teams."
+                )
         target = self.db.query(User).filter(User.id == str(target_user_id)).first()
         if not target:
             raise handle_not_found("User", target_user_id)
