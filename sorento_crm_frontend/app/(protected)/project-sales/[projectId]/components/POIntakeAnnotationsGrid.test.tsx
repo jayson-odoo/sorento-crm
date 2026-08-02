@@ -1,15 +1,37 @@
 /**
- * P5 - the handwriting review cards (AC-D4, AC-D6, D11).
+ * P5 - the handwriting review rows (AC-D4, AC-D6, D11).
  *
  * The invariant under test is that the paper never moves a line on its own: a strike-through
- * arrives as a PROPOSAL, the card says which lines accepting it will change and in what
+ * arrives as a PROPOSAL, the row says which lines accepting it will change and in what
  * money, and a rejection is recorded with a reason rather than deleted.
+ *
+ * The second invariant is the shape: this is the shared DataGrid, keyed on a stable listing
+ * key, not a bespoke card grid. A document carries a dozen notes and every other list in the
+ * product is a table.
  */
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { POAnnotation, POVersionLine } from '../../_shared/types/poIntake.types';
-import { POIntakeAnnotationCards } from './POIntakeAnnotationCards';
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  usePathname: () => '/project-sales/p1/purchase-orders/v1',
+  useSearchParams: () => ({ get: () => null }),
+}));
+
+// The shared DataGrid holds its skeleton rows until the column-preferences query settles, and
+// under jsdom it never does. The spy doubles as the assertion that the listing key is the
+// stable one rather than the pathname, which carries a version id.
+const prefsSpy = vi.fn((_args: unknown) => ({ resetToDefaults: vi.fn(), isLoading: false }));
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: (args: unknown) => prefsSpy(args),
+}));
+
+import {
+  POIntakeAnnotationsGrid,
+  PO_INTAKE_ANNOTATIONS_LISTING_KEY,
+} from './POIntakeAnnotationsGrid';
 
 if (!window.matchMedia) {
   (window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -65,12 +87,12 @@ const onReject = vi.fn(async () => {});
 const onShowPage = vi.fn();
 const onFocusLineNo = vi.fn();
 
-function renderCards(
+function renderGrid(
   annotations: POAnnotation[],
   options: { readOnly?: boolean; saving?: string[] } = {},
 ) {
   return render(
-    <POIntakeAnnotationCards
+    <POIntakeAnnotationsGrid
       annotations={annotations}
       lines={[line()]}
       readOnly={options.readOnly ?? false}
@@ -88,27 +110,91 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('POIntakeAnnotationCards', () => {
-  it('says nothing was found rather than rendering an empty gap', () => {
-    renderCards([]);
+describe('POIntakeAnnotationsGrid', () => {
+  it('says nothing was found rather than rendering an empty table', () => {
+    renderGrid([]);
 
     expect(screen.getByText(/No handwriting was found on this scan/i)).toBeInTheDocument();
     expect(screen.getByText(/page through the scan on the left/i)).toBeInTheDocument();
+    expect(screen.queryByRole('table')).toBeNull();
+  });
+
+  it('is one table row per note, not a card', () => {
+    renderGrid([
+      annotation(),
+      annotation({ id: 'a2', interpretation: 'signature', refers_to_lines: [] }),
+      annotation({ id: 'a3', interpretation: 'other', refers_to_lines: [] }),
+    ]);
+
+    // One header row plus one row per note.
+    expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(4);
+    expect(
+      screen.getByRole('columnheader', { name: /What is written/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('columnheader', { name: /What accepting does/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: /Reviewed/i })).toBeInTheDocument();
+  });
+
+  it('keys column preferences on the listing key, never on a path holding a version id', () => {
+    renderGrid([annotation()]);
+
+    expect(PO_INTAKE_ANNOTATIONS_LISTING_KEY).toBe(
+      'projects.projects.view::po-annotations',
+    );
+    expect(prefsSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ listingKey: PO_INTAKE_ANNOTATIONS_LISTING_KEY }),
+    );
   });
 
   it('shows the crop, the reading, and what the line still is until it is accepted', () => {
-    renderCards([annotation()]);
+    renderGrid([annotation()]);
 
     expect(screen.getByRole('img', { name: /cancel item \(7\)/i })).toBeInTheDocument();
     expect(screen.getByText('Not reviewed')).toBeInTheDocument();
     expect(screen.getByText('Cancels a line')).toBeInTheDocument();
-    expect(screen.getByText(/This line is still live until you accept/i)).toBeInTheDocument();
+    expect(screen.getByText('15/5/26')).toBeInTheDocument();
+    // In the row, in plain sight, not behind a hover.
+    expect(
+      screen.getByText(/This line is still live until you accept/i),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps every fact the note carries on its row', () => {
+    renderGrid([annotation()]);
+
+    const row = screen.getByRole('img', { name: /cancel item \(7\)/i }).closest('tr');
+    expect(row).not.toBeNull();
+    const cells = within(row as HTMLElement);
+    expect(cells.getByText('Not reviewed')).toBeInTheDocument();
+    expect(cells.getByText('Cancels a line')).toBeInTheDocument();
+    expect(
+      cells.getByText(/cancel item \(7\) due to changed the price/),
+    ).toBeInTheDocument();
+    expect(cells.getByText('15/5/26')).toBeInTheDocument();
+    expect(cells.getByRole('button', { name: 'Page 4' })).toBeInTheDocument();
+    expect(cells.getByRole('button', { name: 'Line 7' })).toBeInTheDocument();
+    expect(
+      cells.getByText(/Cancels line 7 \(SRTFV1001, 16 NOS, RM 600\.00\)/),
+    ).toBeInTheDocument();
+  });
+
+  it('truncates the long text with the whole of it on the title', () => {
+    renderGrid([annotation()]);
+
+    const written = screen.getByText(/cancel item \(7\) due to changed the price/);
+    expect(written).toHaveClass('truncate');
+    expect(written).toHaveAttribute(
+      'title',
+      'cancel item (7) due to changed the price, refer to new P/O HQ/26/05/087',
+    );
   });
 
   it('spells out the effect in the line and the money before accepting', () => {
-    renderCards([annotation()]);
+    renderGrid([annotation()]);
 
-    fireEvent.click(screen.getByRole('button', { name: /^Accept$/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Accept note 1' }));
 
     const dialogText = screen.getByRole('alertdialog').textContent ?? '';
     expect(dialogText).toMatch(/line 7 \(SRTFV1001, 16 NOS, RM 600\.00\)/);
@@ -119,7 +205,7 @@ describe('POIntakeAnnotationCards', () => {
   });
 
   it('names the replacement PO and says the link waits for it', () => {
-    renderCards([
+    renderGrid([
       annotation({
         id: 'a2',
         interpretation: 'successor_po',
@@ -131,13 +217,14 @@ describe('POIntakeAnnotationCards', () => {
     expect(
       screen.getByText(/Records HQ\/26\/05\/087 as the PO that replaces this one/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/link is made when that PO is uploaded/i)).toBeInTheDocument();
+    // Not a cancellation, so the row does not warn about a live line.
+    expect(screen.queryByText(/still live until you accept/i)).toBeNull();
   });
 
   it('refuses a rejection with no reason, then records the reason', () => {
-    renderCards([annotation()]);
+    renderGrid([annotation()]);
 
-    fireEvent.click(screen.getByRole('button', { name: /^Reject$/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reject note 1' }));
     const rejectButton = screen.getByRole('button', { name: /Reject the note/i });
     expect(rejectButton).toBeDisabled();
 
@@ -150,14 +237,14 @@ describe('POIntakeAnnotationCards', () => {
   });
 
   it("sends the human's reading, keeping keys the extractor set", async () => {
-    renderCards([
+    renderGrid([
       annotation({
         interpretation: 'amend_code',
         interpretation_json: { line_nos: [7], code: 'SRTFV1001', confidence: 0.4 },
       }),
     ]);
 
-    fireEvent.click(screen.getByRole('button', { name: /Edit the reading/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit the reading of note 1' }));
     fireEvent.change(screen.getByLabelText(/New code/i), {
       target: { value: 'SRTFV1002' },
     });
@@ -173,8 +260,8 @@ describe('POIntakeAnnotationCards', () => {
     });
   });
 
-  it('records a reviewed card with who, when and why, and offers no second action', () => {
-    renderCards([
+  it('records a reviewed note with who, when and why, and offers no second action', () => {
+    renderGrid([
       annotation({
         state: 'rejected',
         actioned_by_name: 'Yana Abdullah',
@@ -188,32 +275,55 @@ describe('POIntakeAnnotationCards', () => {
     expect(
       screen.getByText('This is the approval signature, not an amendment.'),
     ).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Accept$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Accept note/ })).toBeNull();
   });
 
-  it('says plainly when no crop of the handwriting was captured', () => {
-    renderCards([annotation({ crop_url: null })]);
+  it('leaves the crop cell empty rather than apologising once per note', () => {
+    renderGrid([
+      annotation({ crop_url: null }),
+      annotation({ id: 'a2', crop_url: null, raw_text: 'confirm 16 nos' }),
+    ]);
 
-    expect(
-      screen.getByText(/No crop of this handwriting was captured/i),
-    ).toBeInTheDocument();
+    expect(screen.queryByText(/No crop/i)).toBeNull();
+    expect(screen.queryByRole('img')).toBeNull();
+    // The note itself is still fully readable without its crop.
+    expect(screen.getByText('confirm 16 nos')).toBeInTheDocument();
   });
 
   it('offers no write affordance to a reader, but still shows the note', () => {
-    renderCards([annotation()], { readOnly: true });
+    renderGrid([annotation()], { readOnly: true });
 
     expect(screen.getByText('Cancels a line')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Accept$/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /^Reject$/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Accept note/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Reject note/ })).toBeNull();
   });
 
-  it('lets a card drive the page image and the line in focus', () => {
-    renderCards([annotation()]);
+  it('holds the actions still while one of them is in flight', () => {
+    renderGrid([annotation()], { saving: ['a1'] });
+
+    expect(screen.getByRole('button', { name: 'Accept note 1' })).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Edit the reading of note 1' }),
+    ).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Reject note 1' })).toBeDisabled();
+  });
+
+  it('lets a row drive the page image and the line in focus', () => {
+    renderGrid([annotation()]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Page 4' }));
     expect(onShowPage).toHaveBeenCalledWith(4);
 
     fireEvent.click(screen.getByRole('button', { name: 'Line 7' }));
     expect(onFocusLineNo).toHaveBeenCalledWith(7);
+  });
+
+  it('names each action after the note it acts on, so a dozen rows are not a dozen Accepts', () => {
+    renderGrid([annotation(), annotation({ id: 'a2' })]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Accept note 2' }));
+    fireEvent.click(screen.getByRole('button', { name: /Accept and cancel/i }));
+
+    expect(onAccept).toHaveBeenCalledWith('a2');
   });
 });

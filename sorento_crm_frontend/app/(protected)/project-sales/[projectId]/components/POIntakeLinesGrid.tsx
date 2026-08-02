@@ -561,7 +561,18 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
             }}
           >
             <div className="min-w-0 rounded-lg border border-border">
-              <ScrollArea className="max-h-[60vh] w-full">
+              {/* The cap goes on the scrolling VIEWPORT, never on the box around it. Radix
+                  gives the viewport `h-full`, and a percentage height against a parent
+                  that only has a max-height resolves to auto: the viewport grew to all 51
+                  rows and the root clipped it, so every row rendered and none below the
+                  fold could be reached. `type="auto"` enables the overflow from the
+                  content rather than from a pointer hover, so a wheel, a keyboard and a
+                  jump from the banner all reach the last line. */}
+              <ScrollArea
+                type="auto"
+                className="w-full"
+                viewportClassName="max-h-[calc(100vh-14rem)]"
+              >
                 <DataGridTable />
                 <ScrollBar orientation="horizontal" />
               </ScrollArea>

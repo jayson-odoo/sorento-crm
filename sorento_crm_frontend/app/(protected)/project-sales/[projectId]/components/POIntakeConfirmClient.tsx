@@ -11,7 +11,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useProject } from '../../_shared/hooks/useProjects';
 import { usePOIntakeController } from '../../_shared/hooks/usePOIntake';
 import type { POVersion, POVersionLine } from '../../_shared/types/poIntake.types';
-import { POIntakeAnnotationCards } from './POIntakeAnnotationCards';
+import { POIntakeAnnotationsGrid } from './POIntakeAnnotationsGrid';
 import { POIntakeDocumentViewer } from './POIntakeDocumentViewer';
 import {
   POIntakeExtractionFailed,
@@ -62,7 +62,7 @@ export function POIntakeConfirmClient({
   const canEdit = project.data ? project.data.can_edit !== false : true;
 
   const gridRef = React.useRef<POIntakeLinesGridHandle>(null);
-  const cardsRef = React.useRef<HTMLDivElement>(null);
+  const notesRef = React.useRef<HTMLDivElement>(null);
   const [page, setPage] = React.useState(1);
   const [focusedLineId, setFocusedLineId] = React.useState<string | null>(null);
   const [uploading, setUploading] = React.useState(false);
@@ -188,7 +188,7 @@ export function POIntakeConfirmClient({
                     size="sm"
                     className="h-auto p-0 text-xs"
                     onClick={() =>
-                      cardsRef.current?.scrollIntoView?.({
+                      notesRef.current?.scrollIntoView?.({
                         block: 'start',
                         behavior: 'smooth',
                       })
@@ -256,6 +256,9 @@ export function POIntakeConfirmClient({
             <div className="min-w-0 lg:w-[38%]">
               <POIntakeDocumentViewer
                 documentUrl={version.document_url}
+                // The version id, so a re-signed URL for the same scan is not treated as
+                // a different document and the reader keeps their place.
+                documentKey={version.id}
                 pageCount={version.page_count}
                 page={page}
                 onPageChange={setPage}
@@ -305,7 +308,7 @@ export function POIntakeConfirmClient({
                 </CardContent>
               </Card>
 
-              <div ref={cardsRef} className="min-w-0">
+              <div ref={notesRef} className="min-w-0">
                 <Card>
                   <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <CardTitle className="text-sm">Handwriting on the paper</CardTitle>
@@ -314,7 +317,7 @@ export function POIntakeConfirmClient({
                     )}
                   </CardHeader>
                   <CardContent>
-                    <POIntakeAnnotationCards
+                    <POIntakeAnnotationsGrid
                       annotations={version.annotations}
                       lines={version.lines}
                       readOnly={readOnly}
