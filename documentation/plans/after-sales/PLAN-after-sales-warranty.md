@@ -309,7 +309,35 @@ This works because the bindings get populated: Sorento configures dealer contact
 
 ## S2 - Warranty engine
 
-Satisfies **AC-D1 to AC-D15**. This is a **deterministic engine, so it is test-first**: the golden set is written as failing tests before any implementation, per `PRINCIPLES.md` step 4.
+Satisfies **AC-D1 to AC-D7, AC-D13, AC-D15**. This is a **deterministic engine, so it is test-first**: the golden set is written as failing tests before any implementation, per `PRINCIPLES.md` step 4.
+
+### Split into S2 and S2b - decided 2026-08-02, before the slice started
+
+**The original S2 bundled two modules and this section still shows both.** The schema below carries the
+warranty tables AND `consumer_profiles` / `consumer_purchases` / `consumer_purchase_lines` /
+`warranty_assessments` - and the plan's own comment already marks the second group `module: consumers
+(NOT warranty, NOT core - fork 7)`. They are separated because they genuinely are separable, not to make
+the slice smaller:
+
+`resolve(kind, purchase_date, defect_type, registered?)` takes **plain values, not a purchase row**. The
+entitlement engine never reads a consumer, a profile or a receipt: it answers from the policy in force on
+a date. So the deterministic core can be built and proven against the golden set with no consumer table
+in existence, which is exactly the property that makes it testable first.
+
+- **S2 (this slice)** - `warranty_product_kinds`, `warranty_kind_rules`, `warranty_policies`,
+  `warranty_terms`, the `resolve` algorithm, the golden set, and the AC-D13 guard. Pure, deterministic,
+  no AI, no identity, no consent.
+- **S2b** - the consumer module: `consumer_profiles` (consent, provisional promotion, anonymisation),
+  `consumer_purchases` + lines (the dedupe key), `warranty_assessments` (one per complaint product line),
+  and AC-D8's auto-created Registration. This is where PDPA-shaped decisions live, and it deserves its
+  own grill rather than riding along behind a lookup table.
+- **AC-D14 (policy Q&A)** is an AI surface restricted to `policy_text`, so it is a different risk class
+  again and lands with S2b at the earliest. It cannot be built before `warranty_policies` exists, which
+  is this slice.
+
+Keeping them together would have meant writing the consent model, the anonymisation path and the receipt
+dedupe key in the same breath as a date-arithmetic function whose whole virtue is that it is boring and
+provable.
 
 ### Schema
 
