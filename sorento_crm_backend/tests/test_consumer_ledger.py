@@ -1105,19 +1105,36 @@ def test_one_receipt_writes_one_header_and_several_lines(db):
 
 
 def test_a_line_carries_a_kind_a_nullable_product_and_the_claimed_text():
-    """AC-L15. ``product_id`` is nullable; ``kind_id`` is not.
+    """AC-L15 and AC-L36. ``product_id`` is nullable; the Kind is SNAPSHOTTED.
 
     ``SRTWC8152`` matches three real variants and resolves to none of them, so cover
     must be decidable from the Kind alone (AC-C17). A NOT NULL product_id would make
-    the ordinary receipt unwritable; a nullable kind_id would make it unassessable.
+    the ordinary receipt unwritable.
+
+    The Kind is carried twice on purpose (AC-L36). ``kind_code`` is NOT NULL and is what
+    keeps the line assessable and readable forever; ``kind_id`` is the live link and is
+    NULLABLE with ON DELETE SET NULL. This version first required ``kind_id`` NOT NULL,
+    which contradicted ``test_purging_warranty_leaves_the_consumer_ledger_standing``:
+    no ON DELETE action preserves a child row whose column is NOT NULL, so purging
+    warranty could not leave the ledger standing, which is the entire reason fork 7 put
+    the ledger outside the warranty module. Deferring the constraint made both tests
+    green while a real purge still failed at COMMIT - a green test masking a production
+    failure. The ledger is a historical record of what was bought and must not lose its
+    meaning because a module was uninstalled.
     """
     columns = _columns(_model("ConsumerPurchaseLine"))
-    for name in ("purchase_id", "product_id", "kind_id", "claimed_text", "quantity", "line_value"):
+    for name in (
+        "purchase_id", "product_id", "kind_id", "kind_code", "claimed_text", "quantity", "line_value"
+    ):
         assert name in columns, f"consumer_purchase_lines.{name} is missing (AC-L15)."
     assert columns["product_id"].nullable, "The variant is routinely unresolved (AC-C17)."
-    assert not columns["kind_id"].nullable, (
-        "kind_id is what cover resolves from. A line with no Kind cannot be assessed "
-        "and would silently produce no verdict at all."
+    assert not columns["kind_code"].nullable, (
+        "kind_code is what cover resolves from once the Kind row may be gone. A line "
+        "with no Kind at all cannot be assessed and would silently produce no verdict."
+    )
+    assert columns["kind_id"].nullable, (
+        "kind_id must go NULL when a warranty purge removes the Kind (AC-L2, AC-L36); "
+        "kind_code is what survives."
     )
     assert not columns["purchase_id"].nullable
     assert {fk.target_fullname for fk in columns["kind_id"].foreign_keys} == {

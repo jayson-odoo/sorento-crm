@@ -125,12 +125,34 @@ class ComplaintProductLine(Base):
     quantity = Column(Text, nullable=True)  # free text to mirror complaints.quantity ("5" or "5 boxes")
     product_type = Column(Text, nullable=True)  # auto-derived from product master category
     sort_order = Column(Integer, nullable=False, server_default="0")
+    # AC-L16. Cover is per product and per part, so a warranty assessment reaches its
+    # purchase DATE through this line, never through the complaint. Nullable: a
+    # complaint routinely arrives before any receipt does, and blocking intake on it
+    # is exactly what AC-C14 forbids.
+    consumer_purchase_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("consumer_purchase_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # AC-L31. AC-D5 makes the defect type part of entitlement and the
+    # `complaints_defect_type` vocabulary was seeded for it, but until now nothing on
+    # a complaint pointed at it - so the engine was called with defect_type_id=None on
+    # every complaint and every defect-restricted term, including the lifetime ceramic
+    # body (crack and leak only), answered `unknown` forever.
+    # `complaints.defects_discovered` is NOT this: it is the
+    # `complaints_defects_discovered` lookup, which records WHEN a defect was noticed
+    # ("Upon delivery after unloading"), not what it is.
+    defect_type_id = Column(
+        UUID(as_uuid=False), ForeignKey("lookup_options.id", ondelete="SET NULL"), nullable=True
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     complaint = relationship("Complaint", back_populates="product_lines")
 
     __table_args__ = (
         Index("ix_complaint_product_lines_complaint_id", "complaint_id"),
+        Index("ix_complaint_product_lines_purchase_line", "consumer_purchase_line_id"),
+        Index("ix_complaint_product_lines_defect_type_id", "defect_type_id"),
     )
 
 

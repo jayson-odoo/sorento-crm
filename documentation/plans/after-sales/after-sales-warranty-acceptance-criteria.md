@@ -650,6 +650,27 @@ Owned by a new **`consumers` MODULE**, not by `warranty` and not by core.
   false collision refuses nothing, it attaches the second complaint to the first purchase's **date**, so
   an over-eager normaliser mis-dates a warranty.
 
+- **AC-L36** `[BE][MIG]` **A purchase line SNAPSHOTS its Kind: `kind_code` NOT NULL text, alongside a
+  NULLABLE `kind_id` with `ON DELETE SET NULL`.** Ruled 2026-08-02 after the implementation surfaced a
+  contradiction between two gate tests, both of which were individually right:
+  - AC-L15 wants `kind_id` NOT NULL, because a line with no Kind cannot be assessed and would silently
+    produce no verdict at all.
+  - AC-L2 wants a `warranty` purge to delete the Kinds and **leave the ledger standing**, which is the
+    entire reason fork 7 put the profile and the ledger outside the warranty module.
+
+  Under an immediately-checked FK these cannot both hold: the parent delete is refused, and no `ON DELETE`
+  action preserves a child row whose column is NOT NULL. Making the constraint `DEFERRABLE INITIALLY
+  DEFERRED` turns both tests green **and leaves production broken** - the purge test never commits, so a
+  real warranty purge against a non-empty ledger still fails at COMMIT. A green test that masks a
+  production failure is worse than a red one, and AC-L2 would have been reported as delivered when it was
+  not.
+
+  The snapshot resolves it without weakening either intent. The ledger is a **historical record of what
+  was bought**, so it must not lose its meaning because a module was uninstalled: `kind_code` keeps the
+  line assessable and human-readable forever, and `kind_id` is the live link that legitimately goes NULL
+  when the Kind does. Reinstalling `warranty` re-seeds Kinds on their stable codes (S2's seed upserts on
+  exactly that), so the link is recoverable rather than lost. The deferred constraint is removed.
+
 ## Group E - Complaint lifecycle
 
 - **AC-E1** `[BE]` Given ADR-0008, Then no Complaint has a parent Complaint, and a `parent_complaint_id` column does not exist.

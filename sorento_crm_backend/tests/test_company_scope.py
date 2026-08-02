@@ -295,9 +295,16 @@ def test_every_company_id_table_is_registered():
     # adds the 35th, `warranty_policies`, deliberately (AC-D16): `companies` holds
     # both Sorento and Mocha and the two brands publish DIFFERENT durations for the
     # same product kinds, so a policy row that cannot say which company published it
-    # would answer a Sorento customer with Mocha's terms. The count is a tripwire, so
-    # it stays an exact equality: raising it is a decision, never a fix.
-    assert len(owned) == 35, f"expected 35 owned tables, found {len(owned)}: {sorted(owned)}"
+    # would answer a Sorento customer with Mocha's terms. After-sales S2b adds the
+    # 36th and 37th, `consumer_profiles` and `consumer_purchases` (AC-L29 plus one
+    # the AC stops short of): the profile is PDPA-relevant personal data, and the
+    # purchase is scoped too because its profile link is NULLABLE (fork 2), so an
+    # unscoped ledger holds rows belonging to no company and Mocha's CS can read
+    # Sorento's dealer sell-through. `consumer_purchase_lines` is deliberately NOT
+    # scoped: it is reachable only through its header, and a second copy of the same
+    # fact can disagree with the first. The count is a tripwire, so it stays an exact
+    # equality: raising it is a decision, never a fix.
+    assert len(owned) == 37, f"expected 37 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

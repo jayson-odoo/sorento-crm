@@ -372,6 +372,22 @@ PERMISSION_REGISTRY.append({
 })
 
 
+# Consumer ledger (AC-L24). ONE slug, and it grants nothing by itself: the value on
+# a purchase is what the dealer printed on their own receipt, so it exposes retail
+# pricing and therefore channel margin. Off by default means no role is seeded with
+# it here (sync_permissions creates permissions and grants none), so retail prices
+# do not appear on every CS screen where a dealer's own staff might be
+# shoulder-reading during a support call.
+PERMISSION_REGISTRY.append({
+    "slug": "consumers.purchase_value.view",
+    "name": "View Consumer Purchase Value",
+    "description": (
+        "See the value printed on a consumer's dealer receipt. Without this the "
+        "amount is omitted entirely rather than shown as empty."
+    ),
+})
+
+
 # Status engine (ADR-0001) — CORE plumbing that other modules ride. Configuring a
 # state machine changes what every record of that entity can legally do, so edit is
 # a deliberately separate grant from view.

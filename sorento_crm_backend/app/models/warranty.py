@@ -66,6 +66,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.orm import relationship
 
 from app.database import Base
 from app.models.base import CompanyScopedMixin
@@ -216,4 +217,102 @@ class WarrantyTerm(Base):
             "policy_id", "kind_id", "part_name", name="uq_warranty_terms_policy_kind_part"
         ),
         Index("ix_warranty_terms_policy_kind", "policy_id", "kind_id"),
+    )
+
+
+class WarrantyAssessment(Base):
+    """The engine's answer, written down against a real complaint (AC-D10 to AC-D12).
+
+    In the WARRANTY module rather than the consumer one (fork 7): it points at a
+    term, so uninstalling warranty must take it. The ledger it reads through stays.
+
+    **One row per (complaint product line, TERM), unique on the pair** (AC-L30). The
+    plan said one row per complaint product line and that cannot be built: a Water
+    Closet resolves to THREE terms at once - ceramic body, flushing fittings, seat
+    cover - and they disagree on the expiry, the defect scope and who pays for the
+    callout. A single `term_id` per line holds one of the three, so CS would read
+    the ceramic body's `covered` and dispatch against a seat cover whose two years
+    had run out. The whole reason `resolve` returns a sequence is that no product
+    gets one answer.
+
+    `term_id` is NULLABLE because `unknown` and `no_term` are real verdicts with no
+    term behind them (AC-D17) - a calendar gap and a policy that is silent about
+    this Kind are exactly the two answers that matter most, and a NOT NULL term
+    makes both unstorable.
+
+    **`computed_*` and `confirmed_*` sit side by side and neither overwrites the
+    other** (AC-D11). Six months later the interesting question is "what did the
+    engine say, and who decided otherwise", and an overwritten row cannot answer
+    either half.
+
+    `part_name`, `policy_version` and the rest are SNAPSHOTS. A verdict must still
+    read correctly after its term is edited or its policy superseded, and it must
+    not need a join into tables the warranty module may no longer own.
+    """
+
+    __tablename__ = "warranty_assessments"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    complaint_product_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("complaint_product_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # SET NULL, not CASCADE: re-publishing a policy must not silently delete the
+    # verdicts a human already acted on.
+    term_id = Column(
+        UUID(as_uuid=False), ForeignKey("warranty_terms.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # --- what the engine computed. Never overwritten by a human decision.
+    computed_verdict = Column(String(32), nullable=False)
+    computed_expiry = Column(Date, nullable=True)
+    computed_at = Column(DateTime(timezone=False), nullable=False, server_default=func.now())
+    computed_reason = Column(Text, nullable=True)
+    part_name = Column(String(120), nullable=True)
+    is_lifetime = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    # Who pays for the callout (clause 15). Not derivable from anything else on the
+    # row, and getting it wrong bills a customer who is inside warranty.
+    installation_included = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    bonus_months_applied = Column(Integer, nullable=False, default=0, server_default="0")
+    policy_id = Column(UUID(as_uuid=False), nullable=True)
+    policy_version = Column(String(32), nullable=True)
+
+    # AC-D12. NOT NULL: a NULL renders as "no" on every screen, and a verdict that
+    # cannot say whether its date was machine-read is a verdict CS over-trusts.
+    # Snapshotted at compute time, never re-read from the purchase.
+    is_recommendation = Column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+
+    # --- what a human decided. Text `confirmed_by`, mirroring complaints.resolved_by.
+    confirmed_verdict = Column(String(32), nullable=True)
+    confirmed_by = Column(Text, nullable=True)
+    confirmed_at = Column(DateTime(timezone=False), nullable=True)
+    # Mandatory only when the human DISAGREES with the engine. Demanding a reason to
+    # agree trains CS to type "ok" and destroys the signal.
+    override_reason = Column(Text, nullable=True)
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=False), nullable=True)
+
+    term = relationship("WarrantyTerm", foreign_keys=[term_id], lazy="joined")
+
+    __table_args__ = (
+        # A unique INDEX rather than a unique constraint, because it also has to be
+        # the lookup path: every read of this table is "the verdicts for this
+        # complaint line", and the leading column serves it.
+        #
+        # Postgres does not collide NULLs, so the `unknown` / `no_term` rows (whose
+        # `term_id` is NULL by design) are not protected by this index. The upsert in
+        # warranty_assessment_service matches them in Python instead.
+        Index(
+            "uq_warranty_assessments_line_term",
+            "complaint_product_line_id",
+            "term_id",
+            unique=True,
+        ),
+        Index("ix_warranty_assessments_term_id", "term_id"),
     )

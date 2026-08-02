@@ -618,7 +618,48 @@ class PortalService:
         new_token.verified_at = now
         new_token.expires_at = now + PORTAL_VERIFIED_TOKEN_TTL
         self.db.commit()
+        self._promote_consumer_profile(contact)
         return new_token
+
+    def _promote_consumer_profile(self, contact) -> None:
+        """A completed OTP login promotes a provisional consumer profile (AC-L6).
+
+        This is the ONLY code in the repository that completes an OTP login, so it
+        is the only place the promotion can honestly live. A promotion function
+        nothing calls leaves `is_provisional` true forever, and AC-L7's headline
+        count silently degrades to "everyone is provisional" while a unit test on
+        the promotion alone keeps passing.
+
+        Best-effort by design: the login has already committed. Raising here would
+        hand a 500 to somebody whose login actually succeeded, and the retry would
+        take the same path and fail again. Imported locally to keep the portal free
+        of an import-time dependency on the consumer module.
+        """
+        try:
+            from app.services.consumer_service import promote_profile_on_otp
+
+            promoted = promote_profile_on_otp(
+                self.db,
+                respond_contact_id=contact.id,
+                phone=getattr(contact, "phone_number", None),
+            )
+            if promoted is not None:
+                self.db.commit()
+        except Exception:  # noqa: BLE001
+            # The rollback is the load-bearing half. Swallowing the exception is not
+            # enough: a failed statement leaves the Postgres transaction aborted, so
+            # every later query on this session raises InFailedSqlTransaction and the
+            # request fails anyway - a "best effort" that takes the caller down with
+            # it. The token is already committed, so nothing real is discarded here.
+            try:
+                self.db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            logger.warning(
+                "Consumer profile promotion failed after OTP for contact %s",
+                getattr(contact, "id", None),
+                exc_info=True,
+            )
 
     @staticmethod
     def _mask_phone(phone: Optional[str]) -> Optional[str]:

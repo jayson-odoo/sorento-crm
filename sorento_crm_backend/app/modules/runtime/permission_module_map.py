@@ -31,5 +31,9 @@ def module_for_permission(permission_slug: str) -> Optional[str]:
         "workflow_forms": "workflow_forms",
         "resource": "resources",
         "audit": "audit",
+        # An unmapped prefix returns None, which means "never module-gated" - the
+        # permission would survive uninstalling the module that gives it meaning.
+        "consumers": "consumers",
+        "warranty": "warranty",
     }
     return mapping.get(prefix)

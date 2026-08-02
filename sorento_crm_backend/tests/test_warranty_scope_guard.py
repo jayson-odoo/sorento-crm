@@ -50,14 +50,11 @@ from app.models.product import Product
 BACKEND_ROOT = pathlib.Path(__file__).resolve().parents[1]
 APP_ROOT = BACKEND_ROOT / "app"
 
-# S2b's tables. Named as strings because none of them exists yet and importing a
-# model to prove it is absent is circular.
-S2B_TABLES = (
-    "consumer_profiles",
-    "consumer_purchases",
-    "consumer_purchase_lines",
-    "warranty_assessments",
-)
+# S2b HAS LANDED (2026-08-02). `consumer_profiles`, `consumer_purchases`,
+# `consumer_purchase_lines` and `warranty_assessments` now exist, so the guard that
+# asserted their absence during S2 is deleted here, exactly as its own docstring
+# instructed ("S2b DELETES THIS TEST"). The boundary it protected held: `resolve`
+# still takes plain values and never a purchase row.
 
 PATTERNS = {
     "products.warranty_months": (
@@ -93,26 +90,6 @@ BANNED_PRODUCT_COLUMNS = (
     "warranty_policy_id",
     "warranty_term_id",
 )
-
-
-@pytest.mark.parametrize("table", S2B_TABLES)
-def test_s2_does_not_create_an_s2b_table(table):
-    """The slice boundary decided 2026-08-02, as a guard rather than as prose.
-
-    **S2b DELETES THIS TEST.** A red here means either S2 over-reached or S2b landed
-    without removing the guard - check which before "fixing" it.
-
-    The reason the split is real and not just sequencing convenience: ``resolve``
-    takes plain values, never a purchase row, so the entitlement engine can be
-    proven with no consumer table in existence. Stubbing one here would mean writing
-    the consent model, the anonymisation path and the receipt dedupe key in the same
-    breath as a date-arithmetic function - and those deserve their own grill, not a
-    ride behind a lookup table.
-    """
-    assert table not in Base.metadata.tables, (
-        f"{table} appeared. It belongs to S2b (the consumer module), not to the "
-        "warranty engine. If S2b has landed, delete this parametrisation."
-    )
 
 
 @pytest.mark.parametrize("column", BANNED_PRODUCT_COLUMNS)
