@@ -4,6 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import {
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   ExternalLink,
   Loader2,
@@ -285,12 +286,24 @@ export function DeliveryScheduleReviewClient({
       </header>
 
       {version.confirmed_at && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-accent px-3 py-2 text-sm">
-          <CheckCircle2 className="size-4 text-[var(--color-success-accent,var(--color-green-500))]" aria-hidden />
-          <span>
-            {`Confirmed ${formatDateTimeInMalaysia(version.confirmed_at)}`}
-            {version.confirmed_by_name ? ` by ${version.confirmed_by_name}` : ''}
-          </span>
+        <div className="flex flex-col gap-3 rounded-lg border border-border bg-accent px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <CheckCircle2 className="size-4 text-[var(--color-success-accent,var(--color-green-500))]" aria-hidden />
+            <span className="break-words">
+              {`Confirmed ${formatDateTimeInMalaysia(version.confirmed_at)}`}
+              {version.confirmed_by_name ? ` by ${version.confirmed_by_name}` : ''}
+            </span>
+          </div>
+          {/* Confirming is the end of this screen's job and the start of the next one.
+              Without a way onward, the person who just finished has to work out for
+              themselves that sales orders live back on the project, which is exactly
+              the dead end they hit after confirming a PO. */}
+          <Button asChild size="sm" variant="outline" className="shrink-0">
+            <Link href={`/project-sales/${projectId}?tab=sales-orders`}>
+              Back to the project to build the sales orders
+              <ArrowRight className="size-4" aria-hidden />
+            </Link>
+          </Button>
         </div>
       )}
 

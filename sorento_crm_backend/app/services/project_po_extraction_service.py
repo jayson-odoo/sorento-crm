@@ -1131,7 +1131,9 @@ class ProjectPOExtractionService:
             line_no = (max(used_line_nos) if used_line_nos else 0) + 1
         used_line_nos.add(line_no)
 
-        product_id, source = self._resolve_product(stock_code, description)
+        product_id, source = self._resolve_product(
+            stock_code, description, company_id=version.company_id
+        )
         line = ProjectPOLine(
             company_id=version.company_id,
             po_version_id=version.id,
@@ -1158,9 +1160,20 @@ class ProjectPOExtractionService:
         return pages if isinstance(pages, dict) else {}
 
     def _resolve_product(
-        self, stock_code: Optional[str], description: Optional[str]
+        self,
+        stock_code: Optional[str],
+        description: Optional[str],
+        *,
+        company_id: Optional[str] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """Recover our product from what the paper printed.
+
+        ``company_id`` is not optional in spirit. One product code exists once per
+        company, so a lookup that spans companies can attach a Mocha row to a Sorento
+        purchase order: the code is right and the row belongs to somebody else. That
+        really happened, and it surfaced two screens away, as a delivery schedule
+        failing to reconcile against its own PO because the two had resolved the same
+        code to different rows. Callers pass the PO's company.
 
         The customer's stock-code COLUMN is truncated by their own printing, so the
         column is tried first and the DESCRIPTION second, where the full code survives
@@ -1169,10 +1182,13 @@ class ProjectPOExtractionService:
         """
         from app.models.product import Product
 
+        def _scoped(query):
+            return query.filter(Product.company_id == company_id) if company_id else query
+
         code = (stock_code or "").strip().upper()
         if code:
             product = (
-                self.db.query(Product)
+                _scoped(self.db.query(Product))
                 .filter(func.upper(Product.product_code) == code)
                 .first()
             )
@@ -1190,7 +1206,7 @@ class ProjectPOExtractionService:
             candidates.sort(key=len, reverse=True)
             matches = {
                 str(product.product_code or "").upper(): product.id
-                for product in self.db.query(Product)
+                for product in _scoped(self.db.query(Product))
                 .filter(func.upper(Product.product_code).in_(candidates))
                 .all()
             }
@@ -1204,10 +1220,10 @@ class ProjectPOExtractionService:
         # that is not in the item master at all. Telling those two apart is the whole
         # job, so the tiers below relax the comparison in ways that cannot change WHICH
         # product is meant, and stop rather than guess when more than one could be.
-        return self._resolve_product_loosely(code, candidates)
+        return self._resolve_product_loosely(code, candidates, company_id=company_id)
 
     def _resolve_product_loosely(
-        self, code: str, description_codes: List[str]
+        self, code: str, description_codes: List[str], *, company_id: Optional[str] = None
     ) -> Tuple[Optional[str], Optional[str]]:
         """Match the way a person reads a code, not the way a string comparison does.
 
@@ -1234,7 +1250,10 @@ class ProjectPOExtractionService:
         # One pass over the catalogue's shapes. `product_code` is indexed but none of
         # these comparisons can use that index, so the work is done in Python against a
         # projection rather than as several LIKE scans per line.
-        rows = self.db.query(Product.id, Product.product_code).all()
+        catalogue = self.db.query(Product.id, Product.product_code)
+        if company_id:
+            catalogue = catalogue.filter(Product.company_id == company_id)
+        rows = catalogue.all()
         # Keyed by CODE, not by row. This catalogue holds several rows under one code
         # (`C-FH12` appears twice), and counting rows made every such product look
         # ambiguous and refuse itself. The real question is whether more than one
@@ -1487,7 +1506,7 @@ class ProjectPOExtractionService:
             # Re-resolve off the corrected text, but never over a person's own pick:
             # they chose it BECAUSE the automatic reading was wrong.
             product_id, source = self._resolve_product(
-                line.stock_code_raw, line.description_raw
+                line.stock_code_raw, line.description_raw, company_id=line.company_id
             )
             line.resolved_product_id = product_id
             line.resolution_source = source
@@ -2044,7 +2063,7 @@ class ProjectPOExtractionService:
                 line.stock_code_raw = code[:180]
                 if line.resolution_source != "manual":
                     line.resolved_product_id, line.resolution_source = self._resolve_product(
-                        line.stock_code_raw, line.description_raw
+                        line.stock_code_raw, line.description_raw, company_id=line.company_id
                     )
                 applied["amended_line_nos"].append(line.line_no)
         elif interpretation == INTERP_AMEND_DESCRIPTION:

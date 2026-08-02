@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -255,6 +256,7 @@ export function ProjectsGrid({
     [],
   );
 
+  const router = useRouter();
   const table = useReactTable({
     columns,
     data: projects,
@@ -282,6 +284,10 @@ export function ProjectsGrid({
   return (
     <DataGrid
       table={table}
+      // A row IS the record, so clicking it opens the record. Every list in this
+      // product behaves this way, and a table whose rows do nothing teaches people to
+      // hunt for the one cell that happens to be a link.
+      onRowClick={(row) => router.push(`/project-sales/${row.id}`)}
       recordCount={total}
       isLoading={isLoading}
       listingKey={listingKey}
