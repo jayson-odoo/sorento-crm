@@ -39,6 +39,7 @@ from app.schemas.project_po_intake import (
 )
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
+from app.models.project_so import ProjectPOVersion
 from app.services.project_po_extraction_service import ProjectPOExtractionService
 from app.services.uuid_path_param import validate_uuid_path
 
@@ -158,6 +159,49 @@ async def upload_purchase_order_document(
 
 
 # -------------------------------------------------------------------- version read
+
+
+@router.get("/purchase-orders/{po_id}/versions")
+async def list_purchase_order_versions(
+    po_id: str,
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Every document uploaded against this PO, newest first.
+
+    A revision is a new version of the same commitment rather than a new PO, so the
+    history is the only way to see what the customer sent and when. Deliberately a
+    thin row: the confirm screen fetches the version it opens, and this list exists to
+    reach it, not to duplicate it.
+    """
+    try:
+        validate_uuid_path(po_id, resource="purchase order")
+        service = ProjectPOExtractionService(db)
+        po = service.get_po(po_id)
+        projects.get_project_or_404(db, po.project_id)
+        rows = (
+            db.query(ProjectPOVersion)
+            .filter(ProjectPOVersion.purchase_order_id == po.id)
+            .order_by(ProjectPOVersion.version_no.desc())
+            .all()
+        )
+        return {
+            "data": [
+                {
+                    "id": str(row.id),
+                    "version_no": row.version_no,
+                    "extraction_state": row.extraction_state,
+                    "page_count": row.page_count,
+                    "source_filename": row.source_filename,
+                    "confirmed_at": row.confirmed_at,
+                    "created_at": row.created_at,
+                }
+                for row in rows
+            ]
+        }
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
 @router.get(
