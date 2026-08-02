@@ -1,6 +1,17 @@
 # PLAN — SLA "Extend" resolution deadline
 
-**Status:** Designed (grilled 2026-06-24). Not started.
+**Status:** BUILT. Designed (grilled 2026-06-24), implemented since, verified 2026-08-02.
+
+This line read "Not started" until 2026-08-02, when the after-sales Group M slotting pass went looking
+for an Extend mechanism to satisfy AC-M6 and found one already in the codebase. Present today:
+`sla_service.compute_extension` / `evaluate_extension_warnings` / `extend_tracking`, both `/extend`
+routes, `extension_count` and `extension_days_total` on the tracking model, the FE `ExtendDueDialog.tsx`
+and `SlaExtendAction.tsx`, and `tests/test_sla_extend_deadline.py`.
+
+A stale "Not started" on a plan whose feature exists is how a thing gets built twice: the same trap cost
+real time at after-sales S0, where the status engine had already been ported (see
+`adr/0012-adopt-the-existing-status-engine-rather-than-porting-it-twice.md`). Grep before believing a
+status line, and update it when you disprove it.
 
 Adds an **Extend** action alongside Takeover / Escalate / Resolve / Reassign on SLA task
 rows. Lets the current assignee push out the **resolution** deadline (`due_at_resolution`)

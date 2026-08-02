@@ -276,18 +276,56 @@ resolving that would have shipped a Site the very next slice had to migrate. Two
   written. AC-M38 (pin optional, geocode at dispatch) and AC-M39 (both kept, neither reconciled) stay with
   the consumer form in S3; AC-M40 (referrer-restricted key) is a deployment gate, not a slice.
 
-- **AC-M8, AC-M9, AC-M10 and AC-M13 are ALREADY BUILT** and must not be built again.
+- **AC-M8, AC-M9 and AC-M10 are ALREADY BUILT** and must not be built again. **AC-M13 is only
+  HALF built** - corrected 2026-08-02 after the slotting pass checked the code rather than the option
+  list. The `nothing_to_collect` option and the `disposition_reason` column both exist, but
+  `set_line_disposition` (`workflow_forms_service.py`) accepts `disposition_reason=None`, so the
+  **mandatory reason is not enforced**. AC-M13 says a line never silently vanishes; today it can. The
+  slice that owns the collection gate owns that guard. My original claim here was wrong: an option
+  existing is not the rule being enforced.
   `workflow_submission_line_disposition.py` (F1a) seeds exactly the option set AC-M8 names - `write_off`,
   `cn_cancellation`, `replacement_same_model`, `replacement_equivalent_value`, `replacement_wrong_model`,
   `repair`, `maintenance` - plus `nothing_to_collect` for AC-M13.
   `workflow_submission_derived_status.py` derives the header from the lines, closing when every line is
   terminal and **reopening** when one stops being decided, which is AC-M10; per-line independence is
   AC-M9. This is ADR-0011 paying off rather than a coincidence: the goods track asked for line-level
-  disposition, and the case was already a form submission. S7 inherits these instead of implementing them,
-  and its remaining work is the RMA container (AC-M11, AC-M14, AC-M15, AC-M16) and the collection gate
-  (AC-M17 to AC-M19).
+  disposition, and the case was already a form submission.
 
-The rest of group M is slotted in `PLAN-after-sales-warranty.md` under "Slice sequence".
+  **Amended 2026-08-02:** this block said "S7 inherits these". The slotting pass split the goods track
+  into S7 / S11 / S12 and placed the inheritance on **S11** (collection readiness, AC-M17 to AC-M19,
+  plus the AC-M13 guard above) and the RMA container on **S12** (AC-M11, AC-M14, AC-M15, AC-M16). That
+  placement is better than mine and stands: S11 is gated on forms-platform F0-F2 and S7 is not, so
+  naming S7 would have coupled a gated inheritance to an ungated slice. See
+  `PLAN-after-sales-warranty.md`, "Group M slotting".
+
+The rest of group M is slotted in `PLAN-after-sales-warranty.md` under "Slice sequence", which also
+records ten conflicts found while slotting. Four are contradictions INSIDE Group M, so the UAC has to
+answer them rather than the plan. Rulings, binding on the slices that inherit them:
+
+- **AC-M1 lists no `dealer` party, but AC-M18 requires `waiting_on = dealer`.** The AC contradicts
+  itself. Ruling: the waiting **party is configurable master data**, exactly like the reason, seeded
+  with the AC-M1 list plus `dealer`. A closed enum was going to be wrong again the first time a party
+  nobody listed shows up, and this is a dimension operations should own.
+- **AC-M1 puts waiting on the case; AC-M7 attributes it per breach.** A case runs several concurrent
+  stage trackers and a mutable column cannot answer "what were we waiting on when this breached".
+  Ruling: the column answers "what now", and the breach event log **captures the waiting party and
+  reason point-in-time**. Reporting reads the captured value, never the live column, or every historical
+  breach silently re-attributes itself the next time someone edits the case.
+- **AC-M34 says no new table; AC-M35 needs an inbox of calls attached to no case.**
+  `activity_events.entity_type` / `entity_id` are both NOT NULL, so an unattached call has nowhere to
+  sit. Ruling: an unattached call is **keyed to the contact** (`entity_type = 'respond_contact'`), which
+  satisfies both ACs with no schema change and no nullable-FK. Attribution later re-points it at the
+  case. Relaxing the NOT NULL would weaken a core table for every activity type to solve one.
+- **AC-M4 "waiting_on is mandatory before further action" is unspecified**, and would be the third
+  write guard on the same actions beside `assert_transition_allowed` and `handling_lock_service`. Not
+  ruled here: whoever builds S4a must name the exact action set, and per ADR-0013 rule 7 it belongs in
+  the service, not on the routes.
+
+**Flagged, NOT ruled, because it changes live behaviour for four existing form types:** AC-M33 turns a
+`raise` into a fallback inside CORE form-SLA code (`_start_for_config`), which PR, SF, stock inquiry and
+complaint all share. "Never silently dropped" is a good property for all four, but this is a behaviour
+change to production paths that no after-sales AC governs, and it needs its own decision and its own
+tests rather than arriving as a side effect of S4.
 
 ### Waiting attribution - the single design behind R2, R7, R8, R12
 

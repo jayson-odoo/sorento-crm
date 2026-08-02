@@ -4,6 +4,10 @@
 2026-08-01 after discovering the status engine already existed (ADR-0012): engine adopted, sibling alembic
 heads merged, complaint registration in progress. Forms-platform F0 is in build in parallel (343 tests
 authored test-first, implementation under way).
+**Group M slotted 2026-08-02, before S1.** All of `AC-M1` to `AC-M40` now belongs to a slice - see
+"Group M slotting" under the slice sequence. Two slices added (**S2a** core attachment validator, **S4a**
+waiting attribution); ten conflicts between Group M and existing slice text are recorded under
+"Group M conflicts with existing slice text" and need decisions before the slices they sit in are built.
 **UAC (the contract this fulfils):** `after-sales-warranty-acceptance-criteria.md` - every section below cites the ACs it satisfies.
 **Decisions:** `adr/0008` one Complaint per issue - `adr/0009` Service Job is requester-agnostic - `adr/0010` Warranty Terms scope to Kind - `adr/0001` status engine is core - `adr/0007` a Dealer is a Customer.
 **Vocabulary:** root `CONTEXT.md` (`Complaint`, `Submitter`, `Service Job`, `Site`, `Technician`, `Warranty Term`, `Warranty Product Kind`, `Dealer`, `Consumer`).
@@ -83,18 +87,51 @@ Each slice is a tracer bullet: schema -> service -> route -> UI -> tests, shippa
 | **S0** | complaint registered on the ADOPTED status engine (CORE) - not a port, see ADR-0012 | the engine reaching `main` (`0ec9875d2`, currently on the project-sales branches). **Dealer Kit S2.5 shares this dependency** |
 | **S1** | parties: the portal knows who you are without asking | S0 |
 | **S2** | warranty engine + policy Q&A: CS sees a verdict, AI answers policy questions | S1 |
-| **S3** | consumer portal intake: a Consumer can lodge a Complaint | S1, S2, **S3-pre spike**, bilingual consent notice (available) |
-| **S4** | notification spine + Respond outbox: everyone is told | S1 |
-| **S5** | WhatsApp AI intake: Sean's eight seconds | S3 (contract), S4 |
-| **S6** | Service Jobs, dispatch board, technician portal | S0, S4 |
+| **S2a** | **core attachment validator** (`resources`): typed upload guidance, synchronous AI score, retake affordance | nothing after-sales-specific (`resources` + `ai_prompt_registry` both exist). **Must land before S3** |
+| **S3** | consumer portal intake: a Consumer can lodge a Complaint | S1, S2, **S2a**, **S3-pre spike**, bilingual consent notice (available) |
+| **S4** | notification spine + Respond outbox + calls + assignment fallback: everyone is told, nobody is silently unassigned | S1 |
+| **S4a** | **waiting attribution**: the system can say "waiting on someone who is not us" | S4. **Must land before S6, S11, S12 and S9** |
+| **S5** | WhatsApp AI intake: Sean's eight seconds. Plus the `On Call ended` automatic call path | S3 (contract), S4 |
+| **S6** | Service Jobs, dispatch board, technician portal, external providers and case cost | S0, S4, **S4a** |
 | **S7** | goods track: RMA/REP link roles | S4 |
 | **S8** | feedback survey on workflow forms | S4, S6 |
-| **S11** | **exchange/return request flow**: dealer submits, CS gates per line, dispositions, readiness gate | F0-F2, F1a, S4 |
+| **S11** | **exchange/return request flow**: dealer submits, CS gates per line, dispositions, readiness gate | F0-F2, F1a, S4, **S2a**, **S4a** |
 | **S12** | **RMA lifecycle**: own status, age, owner; cross-request container; closes against REP or CN. Retires the "RMA summary" Excel | S11, S7 |
 | **S10** | **dealer reciprocal view**: a Dealer sees complaints and service history for their own customers | S6, S7 |
-| **S9** | reporting and dashboards, incl. dealer sell-through | S2, S6, S7, S8, S10 |
+| **S9** | reporting and dashboards, incl. dealer sell-through | S2, **S4a**, S6, S7, S8, S10 |
 
 **The two WhatsApp groups can only be retired after S5 + S6 + S7.** Until all three land, some traffic has nowhere to go. State this to Sorento explicitly; a half-retired group is worse than an intact one.
+
+### Group M slotting (added 2026-08-02)
+
+Group M (`AC-M1` to `AC-M40`) arrived from the 2026-08-01 requirements grill **after** this sequence was
+written, and no slice claimed any of it. Every AC is placed below. Nothing is silently dropped, and nothing
+appears twice. Two slices are new (**S2a**, **S4a**); the reasoning for each is in its own section.
+
+| AC | slice | note |
+|---|---|---|
+| AC-M1 to AC-M7 | **S4a** (new) | waiting attribution. The single design behind R2, R7, R8, R12. See "Why its own slice" below |
+| AC-M8, AC-M9, AC-M10 | **S11** | **ALREADY BUILT** by forms-platform F1a. S11 inherits, does not implement |
+| AC-M11 | S12 | RMA as a cross-request collection container |
+| AC-M12 | S12 | RMA link is a LINE attribute. **Conflicts with S7's header-grain link table - see S7** |
+| AC-M13 | **S11** | disposition option **already built**; the mandatory reason is **not enforced** - S11 owns that thin guard |
+| AC-M14, AC-M15, AC-M16 | S12 | RMA own lifecycle / closes against REP or CN / local versus outstation sequencing |
+| AC-M17, AC-M18, AC-M19 | S11 | collection readiness gate. AC-M18 depends on S4a |
+| AC-M20 to AC-M25, AC-M27 | **S2a** (new) | the validator mechanism, in `resources`, used by S3, S6 and S11 |
+| AC-M26 | S11 | the `rma_readiness` type and its three guidance strings: **data seeded by S11**, not a feature |
+| AC-M28, AC-M29, AC-M30, AC-M31 | S6 | `external_providers` master + `case_cost_lines`, bookkeeping only |
+| AC-M32 | S9 | spend per provider and cost per case in reporting |
+| AC-M33 | S4 | assignment fallback. **Changes CORE form-SLA behaviour - see S4** |
+| AC-M34, AC-M35 | S4 | the manual call path and the attribution rule. Stands alone (AC-M36e) |
+| AC-M36, AC-M36a, AC-M36b, AC-M36c, AC-M36e, AC-M36f | S5 | the `On Call ended` automatic path: n8n owns the subscription, CRM exposes `call_log_submit` |
+| AC-M36d | **S4a** | repeated unanswered calls are the evidence that justifies `waiting_on = customer` |
+| AC-M37 | S1 | Site carries `latitude` / `longitude` / `place_id` **and** the typed address (settled 2026-08-02) |
+| AC-M38, AC-M39 | S3 | pin optional, never blocking; pin and address both kept, neither reconciled |
+| AC-M40 | S3 | **deployment gate, not build work.** Rides S3's release checklist because S3 is what puts a Maps key on a public page |
+
+**Where Group M contradicts a slice**, the contradiction is stated in that slice's section rather than
+resolved by quietly editing the slice. There are six, and they are listed together under
+"Group M conflicts with existing slice text" at the end of this document.
 
 ---
 
@@ -152,7 +189,7 @@ Reporting groups by `key`, never by status id (forked graphs re-key ids) and nev
 
 ## S1 - Parties and identity
 
-Satisfies **AC-B1 to AC-B12**.
+Satisfies **AC-B1 to AC-B12**, **AC-M37**.
 
 ### Schema
 
@@ -170,9 +207,25 @@ ALTER TABLE complaints
   ADD COLUMN site_address text,
   ADD COLUMN site_contact_name text,
   ADD COLUMN site_contact_phone text,
-  ADD COLUMN site_maps_url text;
+  -- AC-M37: the Site is a typed address AND a pin. site_maps_url is NOT created.
+  ADD COLUMN site_latitude numeric(10,7),
+  ADD COLUMN site_longitude numeric(10,7),
+  ADD COLUMN site_place_id varchar(128);
 ALTER TABLE complaints ADD COLUMN reported_by_role varchar(20);   -- ADDED, not renamed
 ```
+
+### What AC-M37 changes about this slice
+
+**Schema only, and only by getting the Site right the first time.** S1 originally gave the Site a single
+`site_maps_url text`. AC-M37 says a Site carries `latitude`, `longitude`, `place_id` **and** the typed
+address. Defining the Site twice - a pasted URL now, coordinates later - is a second migration on the same
+concept plus a decision about whether the URL survives, so `site_maps_url` is **dropped from this slice
+before it is ever written**. No behaviour is added here: capturing a pin is the consumer form's job
+(AC-M38, S3) and navigating to one is the technician's (S6). S1 only provides somewhere for it to land.
+
+A pasted `maps.app.goo.gl` link (which the chat log shows people already doing by hand) is not a
+substitute: it is opaque, it cannot be geocoded, and it cannot be reverse-looked-up to a place. If a
+paste-a-link affordance is wanted later it resolves to these three columns rather than adding a fourth.
 
 **Additive, not a rename.** `reported_by_role` is a new column backfilled from `customer_type` via a documented mapping (`Project`, `SMC`, `E Commerce` were account categories, not reporters; the 7 blanks become `cs`). `customer_type` is **left in place, read-only, for one release** and dropped later, exactly like `customer_name` and `salesperson`. Renaming a column on a live table with 50 rows buys nothing and makes the migration irreversible mid-release; adding one is reversible by ignoring it. A guard test asserts nothing **reads** the legacy columns, so the eventual drop is a pure deletion.
 
@@ -357,9 +410,62 @@ The AI is restricted to `warranty_policies.policy_text` for the version in force
 
 ---
 
+## S2a - Core attachment validator (NEW, added 2026-08-02 for Group M)
+
+Satisfies **AC-M20 to AC-M25, AC-M27**. Supersedes **AC-F10 to AC-F18** as the *mechanism* those ACs
+described; S6 keeps only their technician-facing use.
+
+### Why this is its own slice, and why it sits before S3
+
+R5's grill outcome moved photo validation out of `service_jobs` and into a **core attachment validator in
+the `resources` module** (AC-M21). That makes it not after-sales work at all: it ships to every module that
+already depends on `resources`. Three separate slices consume it - S3 (consumer intake evidence), S6
+(technician proof) and S11 (`rma_readiness` collection proof) - and the first of those is S3.
+
+Leaving it inside S6, where the plan currently parks the `attachment_types` ALTER, has one concrete cost:
+S3's flow already says "proof photos (validated live)", so S3 would either ship without validation and be
+re-shaped later, or build a second validator. AC-M23's synchronous-on-upload behaviour is a **UI shape**
+(spinner, score, a prominent Retake, a reason-gated "Use anyway"), not a decoration bolted on afterwards -
+exactly the thing the Phase 1 prototype is supposed to settle once.
+
+It also **shrinks S6**, which was the largest slice in the sequence.
+
+### What changes
+
+**Schema.** `attachment_types` gains `validation_guidance`, `min_score`, `validate_on_upload` (AC-M20). **No
+new tables** - it is already the per-type upload policy table beside `allowed_extensions`,
+`max_file_size_mb`, `max_count_per_entity`, `supports_field_linkage`. The link row
+`entity_attachment_links` gains `ai_score`, `ai_suggestion`, `override_reason`, `latitude`, `longitude`
+(AC-M22). One link table serves forms submissions, complaints and service jobs
+(`workflow_submission_attachments.py:59` already routes submission and line attachments through it), so
+the validator reaches all three without a per-domain path.
+
+**Behaviour.** Validation runs **synchronously on upload** when the type says so (AC-M23), scores the file
+against that type's `validation_guidance`, and returns a score plus a suggestion. Below `min_score` the FE
+shows the suggestion, makes **Retake** prominent, and allows **Use anyway** only with a reason (AC-M24).
+Score, suggestion and override reason all persist - the override reason is itself the metric that says the
+guidance is wrong rather than the uploader.
+
+**No hardcoded branch per type** (AC-M25). The prompt lives in `ai_prompt_registry`; per-type behaviour is
+the `validation_guidance` string. A new photo type is admin data entry, not a deployment.
+
+**Geolocation never blocks** (AC-M27). Denied or unavailable means the coordinates are omitted and the
+upload still succeeds.
+
+**Admin surface.** `validation_guidance` / `min_score` / `validate_on_upload` join the existing attachment
+type dialog, the same way `max_count_per_entity` did.
+
+### Risk this slice carries
+
+Synchronous AI on a bad phone connection. Same mitigation as before: a hard timeout that degrades to
+"unvalidated" rather than blocking the upload. A validator that can block a technician closing a job at
+6pm in a basement is worse than no validator.
+
+---
+
 ## S3 - Consumer portal intake
 
-Satisfies **AC-C10 to AC-C19**.
+Satisfies **AC-C10 to AC-C19**, **AC-M38, AC-M39, AC-M40**.
 
 ### S3-pre: extraction accuracy spike (approved 2026-07-26, blocks S3)
 
@@ -420,15 +526,36 @@ Resolution ladder: exact code -> dash-strip -> `SRT` prefix-strip (`WC189-G2` ->
 
 **Nothing blocks submission.** Low confidence submits and flags for CS (**AC-C14**).
 
+### What AC-M38 / AC-M39 / AC-M40 change about this slice
+
+**Behaviour, plus one release gate.** The consumer form gains a **map pin step** writing the three Site
+columns S1 created.
+
+- **The pin is optional and never blocks submission** (AC-M38). No pin means the typed address is geocoded
+  **at dispatch**, not at submit: a consumer who denies location permission or cannot find their own roof
+  on a map must still be able to lodge a complaint. This is the same rule as photo geotagging (AC-M27) and
+  the same rule as low-confidence extraction (AC-C14) - nothing in this journey blocks on a nicety.
+- **Pin and address are both kept and neither is reconciled** (AC-M39). They answer different questions:
+  the pin is what the technician navigates to, the address is what appears on documents. A reconciliation
+  step would force a consumer to resolve a disagreement they do not perceive, and would throw away the
+  half that the other consumer needs.
+- **AC-M40 is a deployment gate, not build work.** A Google Maps key rendered on a public portal page is
+  scrapable and billable, so the key must be **HTTP-referrer restricted** before this page is public. It
+  rides S3's release checklist because S3 is the slice that first exposes a key publicly. S6's technician
+  screen must reuse the restricted key or carry its own, never an unrestricted one.
+
+This adds a step to the Journey between "site address" and "submit", so the Phase 1 prototype must include
+it: pin present, pin skipped, and permission denied are three states to draw, not one.
+
 ### UI rules
 
 No SKU, product code or UUID ever shown to a Consumer; no dealer picker (**AC-C11**). Tiled chooser reads `warranty_product_kinds.consumer_label` / `consumer_icon`. Usable at 375px and 1280px; modals scroll to their submit button.
 
 ---
 
-## S4 - Notification spine and the Respond outbox
+## S4 - Notification spine, the Respond outbox, calls and assignment fallback
 
-Satisfies **AC-H1 to AC-H14**.
+Satisfies **AC-H1 to AC-H14**, **AC-M33, AC-M34, AC-M35**.
 
 ```sql
 ALTER TABLE notifications ALTER COLUMN user_id DROP NOT NULL;
@@ -456,11 +583,165 @@ Non-negotiables carried from existing lessons: log on success **and** failure (l
 
 Escalation notifies **only the tier escalated to**, via `resolve_team_with_tier_fallback`, gated by the stage's `notify_on_escalation` and each member's own toggles. No fixed recipient list (**AC-H6**).
 
+### AC-M33 - nobody assignable is a routing outcome, not an exception
+
+**Behaviour change, and it reaches beyond after-sales.** Today `FormSLAOrchestrator._start_for_config`
+(`sorento_crm_backend/app/services/form_sla_service.py:836`) **raises** a validation error when
+`resolve_team_with_tier_fallback` finds no team at or above the start tier. That is loud, but it is loud in
+the wrong place: the caller creating the case gets an error, and whether a case exists at all now depends
+on team configuration.
+
+AC-M33 requires the opposite shape: route to a **configured fallback** (the after-sales team lead), flag
+the case `assignment unresolved`, and never leave a clock running on nobody. This is the same pattern
+AC-B10 already uses for an unresolved salesperson, which is why it belongs in S4 beside the rest of the
+assignment-and-notify machinery rather than in a new slice.
+
+**Loud flag: this is a CORE form-SLA change with blast radius past this module.** `_start_for_config` is
+shared by purchase requests, sponsorship forms, stock inquiries and complaints. Turning a raise into a
+fallback changes what those flows do when misconfigured. Two things must be decided before build, and are
+**not** decided here:
+
+1. **Where the fallback is configured** - a column on `form_sla_configs`, a `system_settings` key, or an
+   agent-level default. A per-config column is the most precise and the most rows to fill in.
+2. **Whether the change applies to all form types or only to after-sales configs.** Applying it
+   selectively means two behaviours in one function, which is how this kind of guard rots.
+
+The `assignment unresolved` flag renders on the pending-task row built in S4a, beside the waiting label.
+
+### AC-M34 / AC-M35 - calls are the third channel, and this slice owns the manual path
+
+**Behaviour, no new table.** A call becomes a **`call` activity** in the existing `activities` module
+(`app/models/activities.py`), the per-entity feed that already carries notes and system events, recording
+outcome and next action. This grows S4's remit from "outbound machine messages" to "the case's
+communication record", which is a deliberate scope decision: the outbox screen is already the place a CS
+member goes to ask "what have we actually told this person", and a phone call is the channel that leaves
+no trace today.
+
+**Attribution is deliberately conservative** (AC-M35): a call auto-attaches only when the contact has
+**exactly one** open case. More than one and it waits in a per-contact inbox for one-click attachment. A
+wrong attribution puts false evidence into the record CS relies on, and the existing system already makes
+the same compromise for messages (the Respond thread is contact-keyed and merely surfaced on the case via
+`respond_inbox_url`).
+
+**Two things to resolve before build, flagged not guessed:**
+
+- **`activity_events.kind` is `system` | `user_update` today, and `entity_type` / `entity_id` are both NOT
+  NULL.** An unattached call has no entity, so AC-M35's per-contact inbox has nowhere to sit under a strict
+  reading of AC-M34's "no new table". The cheapest reading that honours both is to park unattached calls
+  as `entity_type = 'respond_contact'` and re-key them on attachment. That is a decision about what an
+  activity's entity *means*, so it needs an explicit yes rather than being assumed.
+- **Structured outcome and duration** (`answered` / `missed` / `no_answer`, AC-M36c) have to live
+  somewhere. `system_payload` JSONB is the existing shape; whether reporting needs them as columns is a
+  question for S9, not for this slice.
+
+The automatic path (Respond.io `On Call ended` via n8n) is **S5**, because it is the same MCP write-tool
+machinery as `complaint_intake_submit`. AC-M36e is explicit that the manual path stands alone, so R9 ships
+whether or not the webhook does.
+
 ---
 
-## S5 - WhatsApp AI intake
+## S4a - Waiting attribution (NEW, added 2026-08-02 for Group M)
 
-Satisfies **AC-C1 to AC-C9**. Depends on S3's extraction contract and S4's spine.
+Satisfies **AC-M1 to AC-M7**, **AC-M36d**.
+
+### Why this is its own slice
+
+The 2026-08-01 grill's own closing observation is that R2, R7, R8 and R12 are one gap, not four: **the
+system cannot express "waiting on someone who is not us"**, so every delay reads as internal inaction and
+every metric blames whoever holds the record. Four slices consume the answer and none of them owns it:
+
+| consumer | what it needs from this slice |
+|---|---|
+| S6 | R12 - a customer rejecting a visit sets `waiting_on = customer` on the Schedule stage |
+| S11 | AC-M18 - the collection gate is **only safe** because an unacknowledged request reads as the Dealer's delay |
+| S12 | an RMA that sits open needs a party attached to the sitting |
+| S9 | AC-M7 - "of 40 breaches, 26 were waiting on an external party" |
+
+Folding it into **S6** was the obvious alternative, since S6 already carries the `service_jobs` ALTER. It
+is rejected for two reasons. First, S6 was already the largest slice in the sequence, and this is a
+cross-cutting SLA and dashboard dimension, not a service-jobs feature. Second, **S11's readiness gate is
+unsafe without it** - a hard gate that blocks collection until a Dealer acknowledges is only defensible
+when the dashboard says the delay is the Dealer's. Ordering S11 behind S6 would work, but it would tie a
+commercial-flow safety property to a technician-portal slice for no reason.
+
+Folding it into **S4** was the other alternative. S4 is notifications; this is SLA semantics and reporting
+attribution. The only overlap is that both eventually render on a dashboard.
+
+So: **its own slice, immediately after S4, before S6 / S11 / S12 / S9.** It needs no forms-platform slice:
+`workflow_submissions` and `conversation_sla_tracking` both exist today.
+
+### What it changes
+
+**Schema.** Three fields on the case, and the same three on `service_jobs` (moved here out of S6):
+`waiting_on_party`, `waiting_on_reason_id` (FK to configurable master data), `waiting_since` (AC-M1). **One
+shared reason vocabulary** serves both the pending reason and the overdue reason: "pending plumber" is the
+same fact whether or not the clock has expired, and two lists would drift. The vocabulary is a
+`lookup_sets` / `lookup_options` / `lookup_bindings` triple, the same shape the seven existing bindings use
+and the same shape F1a used for line dispositions - dropdowns, not free text, and the admin can add one
+without a migration.
+
+**The clock is not touched** (AC-M2). Time spent waiting on an external party still counts toward
+resolution. Pausing makes "how long did this take from the customer's point of view" unanswerable - their
+toilet is broken whether or not our clock runs - and it is the classic gamed metric, where a queue parked
+on "pending customer" reports a perfect SLA. The accepted consequence is that SLA numbers will look worse;
+attribution is what makes that honest rather than merely bad.
+
+**A genuine deadline move is Extend, and only Extend** (AC-M6). See the note below: **Extend is already
+built**, so this slice's work here is to surface it on after-sales cases and to assert nothing else writes
+`due_at_resolution`.
+
+**`waiting_on` becomes mandatory once overdue** (AC-M4) - a write guard, not a nag.
+
+**The pending-task row reads the truth** (AC-M3, AC-M5): "waiting on maintenance since 3 Aug", never "stuck
+at CS". Rows are coloured by breach risk **and** carry the waiting party as a text label, because colour is
+never the only signal (accessibility, and the code-review rule already forbids it). The surface is the
+existing `MyPendingSLAWidget` plus the in-form SLA banner, which already colour an overdue due date
+`text-destructive` - so this is an addition to a live component, not a new dashboard.
+
+**AC-M36d** lands here rather than with calls: repeated unanswered calls are what *justify*
+`waiting_on = customer`. "We called three times, no answer" is the defensible version of blaming the
+customer for a delay, and it is the rule for setting the field, not a property of the call log.
+
+### Three things this slice must decide, flagged not guessed
+
+1. **AC-M4's "before further action" is not specified.** Candidates: any status transition on the case, any
+   resolve or escalate on the SLA tracker, or any save at all. These are very different guards with very
+   different friction. Note it would be the **third** write guard on the same actions, beside the status
+   engine's `assert_transition_allowed` and `handling_lock_service.assert_can_act_on_form`, so where it
+   sits in that stack matters.
+2. **AC-M1 puts the field on the case; AC-M7 needs it per breach.** A case runs several form-SLA stage
+   trackers concurrently (Acknowledge, Assess, Schedule, Resolve, Fulfil, each its own
+   `conversation_sla_tracking` row keyed by `(source_entity_type, team_set_code)`). One case-level column
+   paints the same waiting label onto every open stage, and a mutable column cannot answer "what were we
+   waiting on **when this breached**". Attribution reporting therefore needs a **point-in-time record** -
+   the natural home is a `conversation_sla_event_log` row on every waiting change, which is the same trail
+   Extend already writes to. Whether the column also lives per-tracker is the open decision.
+3. **The party vocabulary in AC-M1 does not contain `dealer`, but AC-M18 requires
+   `waiting_on = dealer`.** AC-M1 lists `cs | maintenance | plumber | customer | supplier | warehouse`.
+   This is an inconsistency inside Group M itself, not between Group M and the plan. Recommendation: make
+   the **party** configurable master data too, exactly like the reason, rather than shipping a code enum
+   that is already one value short on day one. Flagged for the UAC owner.
+
+### Extend is already built (correcting `PLAN-sla-extend-deadline.md`)
+
+That plan's status line still reads "Designed (grilled 2026-06-24). Not started." It is **wrong**. The
+mechanism exists end to end:
+
+- `sla_service.py` - `compute_extension`, `evaluate_extension_warnings`, `extend_tracking`
+- `POST /conversation-sla-tracking/{id}/extend` and `.../extend/preview`, assignee-gated
+- `conversation_sla_tracking.extension_count` / `extension_days_total` on the model
+- FE `ExtendDueDialog.tsx`, `ExtendDueButton.tsx`, `SlaExtendAction.tsx`, wired into `MyPendingSLAWidget`
+- `sorento_crm_backend/tests/test_sla_extend_deadline.py`
+
+So AC-M6 costs this slice **no engine work**. What it costs is a rule and its guard: the after-sales case
+surfaces Extend, and **nothing else may move `due_at_resolution`** - in particular a waiting flag must not,
+which is the whole point of AC-M2. Someone should also fix that plan's status line.
+
+---
+
+## S5 - WhatsApp AI intake, and the automatic call path
+
+Satisfies **AC-C1 to AC-C9**, **AC-M36, AC-M36a, AC-M36b, AC-M36c, AC-M36e, AC-M36f**. Depends on S3's extraction contract and S4's spine.
 
 ### Architecture: n8n is the pump, the CRM is the tool (AC-C0a to AC-C0d)
 
@@ -498,11 +779,47 @@ Prompts live in `ai_prompt_registry`; every turn stamps `metadata_json.prompt_ve
 
 A **forwarded** group message is accepted during cutover, tagged removable (**AC-C9**).
 
+### The automatic call path rides the same machinery (AC-M36, AC-M36a to AC-M36f)
+
+**Behaviour only. No schema beyond what S4 already built for the manual path.** Respond.io exposes calls
+through the n8n node's **`On Call ended`** trigger, verified 2026-08-01 from the node's trigger list, so
+**n8n owns the subscription** exactly as it owns the message pump (AC-M36). The CRM neither polls nor
+subscribes.
+
+This is placed in S5 rather than S4 because it is the identical shape to `complaint_intake_submit` and
+would otherwise be built twice: `call_log_submit` is a **write MCP tool** named `*_submit` so
+`_is_write_tool` strips it from prompt dry-runs, registered in `sorento_crm_mcp.catalog.CATALOG` **with the
+MCP process restarted** (a catalog entry alone does not register it with FastMCP), `agent_mcp_tools`
+seeded by the startup hook with intent keywords on the `ToolSpec`, and **idempotent on the call id** so an
+n8n retry cannot double-log (AC-M36a).
+
+**The webhook does not make attribution solvable** (AC-M36b). The event is contact-keyed and carries no
+case reference, so AC-M35's rule is unchanged: auto-attach only when the contact has exactly one open
+case, otherwise the per-contact inbox. Automation fills the same model faster; it does not license a
+guess.
+
+**Record the outcome, not the event** (AC-M36c). `answered` / `missed` / `no_answer` plus duration. **A
+call that ended is not a call that connected**, and that distinction is the entire requirement: Fanny's
+complaint was *"customer didn't receive any call from maintenance"*, so the evidence needed is whether
+contact was actually made.
+
+**Two verification gates before this can be built, and neither blocks R9:**
+
+- **AC-M36e** - the `On Call ended` **payload shape** (direction, duration, outcome, handler, recording) is
+  still unverified. One test call is required before AC-M36c can be implemented. The manual path from S4
+  stands alone, so R9 ships regardless.
+- **AC-M36f** - the installed n8n Respond.io node reports **1.12.0 (Legacy)** with an update available.
+  Confirm `On Call ended` exists and behaves identically on the current package before depending on it.
+
+If either gate fails, this subsection drops out of S5 with no other change to the slice, and calls remain
+manual. That is the reason it is a subsection and not a dependency.
+
 ---
 
 ## S6 - Service Jobs, dispatch and the technician
 
-Satisfies **AC-F1 to AC-F23**.
+Satisfies **AC-F1 to AC-F23** (except **AC-F10 to AC-F18**, whose mechanism moved to **S2a**), plus
+**AC-M28, AC-M29, AC-M30, AC-M31**. Consumes **S2a** (validator) and **S4a** (waiting attribution).
 
 ```sql
 CREATE TABLE technicians (
@@ -516,7 +833,9 @@ CREATE TABLE service_jobs (
   source_entity_type varchar(40) NOT NULL,                -- 'complaint' (NO FK - adr/0009)
   source_entity_id uuid NOT NULL,
   status_id uuid REFERENCES statuses(id),
-  site_address text, site_contact_name text, site_contact_phone text, site_maps_url text,
+  -- AC-M37: site_maps_url is NOT created here either. The job copies the Site S1 defines:
+  site_address text, site_contact_name text, site_contact_phone text,
+  site_latitude numeric(10,7), site_longitude numeric(10,7), site_place_id varchar(128),
   scheduled_from timestamp, scheduled_to timestamp,
   proposed_at timestamp, confirmed_at timestamp, customer_agreed_by text,
   arrived_at timestamp, completed_at timestamp, verified_at timestamp,
@@ -549,15 +868,12 @@ A CI guard asserts `service_jobs` declares no FK to `complaints` and the module 
 
 ### New tables from the 2026-08-01 requirements grill
 
-```sql
--- waiting attribution: the single design behind R2/R7/R8/R12 (AC-M1 to AC-M7)
--- Applied to the case (a form submission per adr/0011) and to service_jobs.
-ALTER TABLE service_jobs
-  ADD COLUMN waiting_on_party varchar(24),          -- cs|maintenance|plumber|customer|supplier|warehouse
-  ADD COLUMN waiting_on_reason_id uuid REFERENCES lookup_values(id),
-  ADD COLUMN waiting_since timestamp;
--- The SLA clock is NEVER paused. A real deadline move is Extend (PLAN-sla-extend-deadline.md).
+**Waiting attribution moved out of this slice to S4a** (added 2026-08-02). The `service_jobs` columns
+`waiting_on_party` / `waiting_on_reason_id` / `waiting_since` and the shared reason vocabulary are now
+S4a's, so the case and the job get one design rather than two. S6 keeps only its **consumption** of them,
+described under "R12" below.
 
+```sql
 CREATE TABLE external_providers (                 -- generic, NOT plumber-specific, NOT suppliers
   id uuid PRIMARY KEY, name varchar(255) NOT NULL,
   provider_type varchar(32) NOT NULL,             -- plumber | contract_technician | courier | ...
@@ -575,9 +891,36 @@ CREATE TABLE case_cost_lines (                    -- money OUT; independent of c
 CREATE INDEX ON case_cost_lines (source_entity_type, source_entity_id);
 ```
 
-Site geolocation (AC-M37 to AC-M40) adds `latitude`, `longitude`, `place_id` alongside the existing
-`site_address`. Calls are a **`call` activity** in the existing `activities` module - no new table
-(AC-M34).
+Site geolocation is **S1's** (AC-M37); the job copies the same three columns. Calls are **S4's** (AC-M34,
+AC-M35) with the automatic path in **S5** (AC-M36 and its sub-clauses).
+
+### AC-M28 to AC-M31 - external providers and what a case costs
+
+**Schema plus one new admin CRUD, no behaviour attached.** `external_providers` is a **generic** master
+with a `provider_type` discriminator (plumber, contract technician, courier, and so on), not a
+plumber-specific table (AC-M28) - the discovery study already shows the role blurring (*"forward the
+details to the plumber; can be an outstation technician"*). It is deliberately **not** `suppliers`, which
+carries purchasing semantics (payment terms, lead times, SPO linkage) and would couple after-sales to
+`procurement` for nothing.
+
+A cost line carries the case, the provider, the amount, and **what it was for** (labour / parts / travel,
+AC-M29). One number per complaint would not answer Ms Tan's costing question, which is the requirement's
+whole origin.
+
+**Money out is independent of money in** (AC-M30). A warranty job can be free to the consumer and still
+cost Sorento a plumber fee, so `case_cost_lines` is never part of `charge_state`. The two live side by
+side on the job and neither derives from the other.
+
+**Recording needs no approval** (AC-M31). It is bookkeeping; reporting surfaces outliers. An approval queue
+for a RM80 plumber callout would add friction exactly where CS already gates the case. Reporting on it
+(spend per provider, cost per case) is **AC-M32 in S9**.
+
+### R12 - what S6 consumes from S4a
+
+A customer rejecting the technician's visit returns the job to *Proposed* with the rejected attempt kept in
+history (never overwritten), and sets `waiting_on = customer` on the Schedule stage. **Rejected attempts
+are excluded from the technician's attend-time metric**, or the metric punishes the wrong person - which
+also means the exclusion has to be explicit in the S9 query, not assumed.
 
 ### Dispatch board (AC-F3 to AC-F5)
 
@@ -587,21 +930,30 @@ Grouped by day and technician, drag to reassign. **No availability grid, skills 
 
 One screen. Today's jobs only - no listings, no search, no records but their own. Job view shows site, contact, fault and the Consumer's photos. Actions: *On my way* -> *Arrived* -> photos -> diagnosis -> *Complete*. Verified at 375px.
 
-### Photo validation (AC-F10 to AC-F18)
+### Photo validation - the mechanism is S2a's, this slice only uses it
 
-```
-POST /api/v1/service-jobs/{id}/photos   (multipart)
-->  { photo_id, ai_score: 0.42, ai_suggestion: "The whole product isn't visible - step back
-      and include the pipe joint.", below_threshold: true }
-```
+**AC-F10 to AC-F18 are superseded by AC-M20 to AC-M27 and built in S2a.** S6 no longer builds a validator.
+What remains here is configuration and one screen: the technician photo types, their
+`validation_guidance` strings, their `min_score`, and the on-site upload UI.
 
-**Synchronous, on upload, while the technician is still on site.** A few seconds with a spinner. Async validation that flags a bad photo after the van has left is worth nothing - the entire value is the retake, and the retake is only possible on site.
+> **CONFLICT, flagged not silently rewritten.** The endpoint contract printed in earlier revisions of this
+> slice -
+> `POST /api/v1/service-jobs/{id}/photos -> { photo_id, ... }` -
+> contradicts **AC-M21** ("the validator lives once, in the `resources` module") and the deletion of
+> `service_job_photos`. A per-domain `service-jobs/{id}/photos` route re-creates exactly the special case
+> R5's grill removed. Technician photos must upload through the shared attachment path against
+> `entity_attachment_links`, returning `attachment_id` with `ai_score` / `ai_suggestion` on the link row.
+> The old contract above is retired; S2a owns the real one.
 
-Below `min_score`: show the suggestion, make **Retake** prominent, allow **Use anyway** only with a reason. Score, suggestion and override reason all persist. The override reason is itself a metric - a photo type overridden by everyone means the `guidance` is wrong, not the technicians.
+**Synchronous, on upload, while the technician is still on site** (AC-M23). A few seconds with a spinner.
+Async validation that flags a bad photo after the van has left is worth nothing - the entire value is the
+retake, and the retake is only possible on site.
 
-The validator's prompt lives in `ai_prompt_registry` and the per-type `guidance` is data. **No hardcoded branch per photo type.** The same validator checks Consumer intake photos (**AC-F18**), because bad evidence at intake is what wastes a visit.
+Below `min_score`: show the suggestion, make **Retake** prominent, allow **Use anyway** only with a reason
+(AC-M24). The override reason is itself a metric - a photo type overridden by everyone means the guidance
+is wrong, not the technicians.
 
-**Geotag is captured in the background and never blocks.** Permission denied or no GPS omits coordinates and the job still completes. A technician who cannot close a job at 6pm in a basement will phone the office and have someone close it for them, which is worse data than not asking.
+**Geotag is captured in the background and never blocks** (AC-M27). Permission denied or no GPS omits coordinates and the job still completes. A technician who cannot close a job at 6pm in a basement will phone the office and have someone close it for them, which is worse data than not asking.
 
 No offline sync queue. Progress saves server-side as they go and uploads retry, so a dropped signal costs a retry, not a revisit (**AC-F17**).
 
@@ -630,6 +982,33 @@ RMA and REP already arrive from AutoCount as `orders`: **1,732 `RMA-*` rows (1,7
 
 So this slice is **linking, not generating**. No RMA, REP or credit note document is produced by this module. Backfill the existing 12 rows by inspecting each linked order's `order_type`. A collect-back and a replacement coexist on one Complaint with distinct roles and a single SLA thread (*"this item already discon & no stock, I will arrange to collect back defect unit first ya"*). The existing `processed_by_cs` <-> `fulfilled` recompute and `LINKABLE_STATUSES` gating must keep working with roles present.
 
+### Group M owns no AC here, and that is itself a finding
+
+The UAC's slotting note (2026-08-02) says **"S7 inherits"** the already-built dispositions and **"its
+remaining work is the RMA container and the collection gate"**. That reads S7 as *the goods track as a
+whole*. **In this plan the goods track is three slices**, and the note's contents map onto the other two:
+
+| the note says | this plan |
+|---|---|
+| line dispositions, per-line approve/reject, derived header (AC-M8 to AC-M10, AC-M13) | **S11**, the exchange/return request flow |
+| collection gate (AC-M17 to AC-M19) | **S11**, "readiness gate" in its own one-line description |
+| RMA container (AC-M11, AC-M14, AC-M15, AC-M16) | **S12**, "RMA lifecycle: own status, age, owner; cross-request container" |
+| RMA/REP `link_role` (AC-G1 to AC-G6) | **S7**, this slice, unchanged |
+
+Slotted to S11 / S12 accordingly. **Flagged rather than assumed** - if the intent really was to collapse
+S7, S11 and S12 into one slice, that is a sequence change that needs saying out loud, because S11 is gated
+on forms-platform F0 to F2 and S7 is not.
+
+> **CONFLICT with AC-M12, and it is a grain conflict, not a wording one.** AC-M12 says *"the RMA link is a
+> **line** attribute, not a request attribute"*. This slice's `complaint_fulfilment_orders` is
+> **header-grain**: `(complaint_id, order_id)` with no line column
+> (`sorento_crm_backend/app/models/complaints.py:151`). Adding `link_role` to it does not make the link
+> per-line, so a complaint with three products where only one is collected back cannot express which one.
+> The two are reconcilable in either direction - S7 stays header-grain for the legacy complaint flow and
+> S12 introduces a line-grain link for the new request flow, or the link table gains a nullable line
+> reference - but **that is a decision, and S12 must make it explicitly** rather than discovering it while
+> wiring the container.
+
 ---
 
 ## S8 - Feedback survey
@@ -652,9 +1031,103 @@ Fired one **working** day after resolution via `work_calendar_configs` + `public
 
 ---
 
+## S11 - Exchange / return request flow
+
+Satisfies **AC-M8, AC-M9, AC-M10, AC-M13** (**inherited, already built**), **AC-M17, AC-M18, AC-M19,
+AC-M26**. Gated by forms-platform **F0 to F2** and **F1a**, plus **S2a** (validator) and **S4a** (waiting
+attribution). Section added 2026-08-02 - this slice previously existed only as a row in the sequence table.
+
+### What is already built, and must not be built again
+
+Verified in this tree on 2026-08-02. **ADR-0011 paying off rather than a coincidence:** the goods track
+asked for line-level disposition, and the case was already a form submission.
+
+| AC | already provided by | evidence |
+|---|---|---|
+| AC-M8 (seven dispositions) | `app/services/workflow_submission_line_disposition.py` | `LINE_DISPOSITION_OPTIONS` seeds exactly `write_off`, `cn_cancellation`, `replacement_same_model`, `replacement_equivalent_value`, `replacement_wrong_model`, `repair`, `maintenance` - as admin-editable lookup master data, so nothing branches on the values |
+| AC-M9 (approve some, reject others) | `app/services/workflow_submission_line_status_graph.py` | lines carry their own entity type and graph, scoped to the definition; a decision is per item |
+| AC-M10 (derived header, both directions) | `app/services/workflow_submission_derived_status.py` | derives from `is_terminal` over the non-`is_archived` population, reopens when a line stops being decided, and refuses the manual path into or out of the derived pair |
+| AC-M13 (nothing to collect) | same disposition module | the `nothing_to_collect` option exists and `disposition_reason` is a real column |
+
+**The one gap inside that inheritance:** AC-M13 says the disposition **requires a reason**, and nothing
+enforces it. `WorkflowFormsService.set_line_disposition`
+(`sorento_crm_backend/app/services/workflow_forms_service.py:1322`) accepts `nothing_to_collect` with
+`disposition_reason=None`. That is a thin guard, and **S11 owns it** - it is the exact failure the
+discovery study names, where RMAs stay open forever because nobody recorded why nothing came back. Whether
+"requires a reason" is a property of the option (data, so the admin can mark any option reason-required)
+or a hardcoded check on that one value is a small design call this slice should make rather than inherit.
+
+### Collection readiness gate (AC-M17 to AC-M19)
+
+**Behaviour, and it is a hard gate.** When collection is arranged the Dealer is notified and must
+**acknowledge with photos** before collection is scheduled (AC-M17). The photos are proof of readiness
+**before** dispatch, not proof of handover after it - the failure being prevented is a truck arriving and
+finding nothing collectable.
+
+The gate is **only safe because of S4a** (AC-M18). An unacknowledged request sits at `waiting_on = dealer`
+with `waiting_since`, so the delay is visibly theirs and CS is not blamed for it. Without waiting
+attribution this is a hard block that makes CS's numbers worse for someone else's inaction, which is
+precisely the complaint R2 came from. **S11 must not ship ahead of S4a.**
+
+CS may override (*collect anyway*) **with a required, recorded reason** (AC-M19). An unoverridable gate
+would be routed around by phone within a week.
+
+> Note the party vocabulary problem flagged in S4a: AC-M1's list does not contain `dealer`, yet AC-M18
+> requires it. Resolve that in S4a, not here.
+
+### `rma_readiness` is data, not a third feature (AC-M26)
+
+R5's three checks - the claimed model, the claimed quantity, defect visibility - are **three sentences in
+one `validation_guidance` string** on a new `rma_readiness` attachment type, using the S2a mechanism. If
+this slice finds itself writing code per check, S2a's AC-M25 ("no hardcoded branch per type") was not
+actually delivered, and that is the signal to go back rather than to special-case here.
+
+---
+
+## S12 - RMA lifecycle
+
+Satisfies **AC-M11, AC-M12, AC-M14, AC-M15, AC-M16**. Gated by **S11** and **S7**. Section added
+2026-08-02 - this slice previously existed only as a row in the sequence table.
+
+### What Group M asks for
+
+**An RMA that is a first-class thing rather than an order number in a spreadsheet.** Today all 1,732 RMA
+rows carry only `NEW` / `DELIVERED` and the truth lives in an Excel file called "RMA summary" (AC-M14). So
+the RMA gains its **own lifecycle status, age and owner**, not the outbound order vocabulary, and it
+**closes against its REP or CN** (AC-M15).
+
+**It is a cross-request collection container** (AC-M11): lines from several requests may attach to one
+RMA, and lines may be added to an **existing open** RMA. That is forced by the SOP (*"items can be added
+onto an existing RMA"*), and it is what makes the RMA an entity rather than a per-request child.
+
+**Sequencing is expressible per line** (AC-M16): local allows REP before RMA; outstation requires RMA first
+so it is one trip, not two. Per line, because one request's lines do not all move together.
+
+### Two decisions this slice must make explicitly
+
+1. **What the container actually is.** S7 established that RMAs **arrive from AutoCount as `orders`** and
+   that this module does **not** generate documents. But AC-M11 needs a container that can exist and
+   accept lines **before** an AutoCount RMA number exists, and AC-M14 needs a lifecycle the `orders`
+   vocabulary does not have. Either the container is a CRM-side row that later binds to the AutoCount
+   order, or it is the order plus a CRM-side lifecycle sidecar. **Not resolved here** - it decides whether
+   S7's "linking, not generating" survives intact.
+2. **The line-grain link** (AC-M12). See the conflict recorded under S7: `complaint_fulfilment_orders` is
+   header-grain, and AC-M12 requires the RMA link to be a **line** attribute so that a line settled by a
+   CN alone closes with no RMA. This slice either adds a line-grain link for the new request flow and
+   leaves S7's header-grain table alone for the legacy complaint flow, or unifies them. Both are
+   defensible; drifting into one by accident is not.
+
+---
+
+## S10 - Dealer reciprocal view
+
+No Group M ACs. Unchanged by the 2026-08-01 grill.
+
+---
+
 ## S9 - Reporting
 
-Satisfies **AC-J1 to AC-J11**. Three views per BRD Req #13: operational (open by stage and PIC, SLA risk colour-coded), performance (response and resolution by week / month / PIC / category / dealer, in **working hours**), customer experience (survey trend, complaints by category, recurring defect types from diagnosis).
+Satisfies **AC-J1 to AC-J11**, **AC-M32**. Renders the attribution S4a captures (**AC-M7**). Three views per BRD Req #13: operational (open by stage and PIC, SLA risk colour-coded), performance (response and resolution by week / month / PIC / category / dealer, in **working hours**), customer experience (survey trend, complaints by category, recurring defect types from diagnosis).
 
 Stage clocks are chained `form_sla_configs` rows (**AC-E3**) - `Acknowledge` -> `Assess` -> `Schedule` -> `Resolve` -> `Fulfil`, linked by `next_config_id`, each with its own `team_set_code`, policy and accountable assignee. Nothing new is built for timing: `conversation_sla_tracking` already stores `response_time`, `resolution_duration`, `assigned_to_id`, `responded_by`, `handled_by_id`, `resolved_by`, `escalated_at`.
 
@@ -663,6 +1136,23 @@ Stage clocks are chained `form_sla_configs` rows (**AC-E3**) - `Acknowledge` -> 
 **Stall time** is the metric that does not exist today: time in a state with nobody acting. It is what `No arrange??` is, and it would have caught every failure in the retired groups.
 
 Rejection is a **terminal outcome that counts** in resolution statistics, so rejecting is not the fast path to a good number (**AC-E16**).
+
+### What Group M changes about this slice
+
+**Two report surfaces, no new capture.**
+
+- **Breach attribution (AC-M7).** "Of 40 breaches, 26 were waiting on an external party" is the sentence
+  that makes AC-M2's decision (never pause the clock) survivable. It **cannot** be computed from a mutable
+  case-level column, because by report time the case is waiting on something else or nothing at all. S4a
+  must therefore capture waiting changes as point-in-time records; **S9 reads them, and this slice fails
+  if S4a shipped only the column.** Say so during S4a's review, not here.
+- **Cost reporting (AC-M32).** Spend per provider and cost per case, from `case_cost_lines`. Both are
+  needed: per provider answers "who are we paying", per case answers Ms Tan's original question "what did
+  this complaint cost us". Neither is derivable from the other.
+
+**One exclusion to write explicitly, or the metric lies:** rejected visit attempts (R12) are excluded from
+technician attend time, while still counting toward the case's own resolution clock. An implicit exclusion
+here is the same failure as a paused clock elsewhere.
 
 Every listing uses shared `DataGrid` (`tableLayout: {width:'fixed', columnsResizable:true}`, explicit `size`, `truncate` + `title`); every dropdown uses `SearchableSelect`; every detail page renders **all** sections with explicit empty states; datetimes render via `formatDateTimeInMalaysia(rawString)`.
 
@@ -696,6 +1186,32 @@ Every listing uses shared `DataGrid` (`tableLayout: {width:'fixed', columnsResiz
 | **AI photo validation adds latency on a bad phone connection** | synchronous but with a hard timeout that degrades to "unvalidated" rather than blocking completion |
 | **`notifications` is a core table used everywhere** | the NOT NULL drop plus two partial unique indexes is a migration, not a redesign; existing user-only paths keep their index shape |
 | **Clause 17 unresolved** (residential-only versus 23 Project complaints) | modelled, not enforced; flagged to Sorento; the engine reports it as a qualification rather than a refusal |
+| **SLA numbers get worse the day S4a ships**, because time waiting on a plumber still counts (AC-M2) and nothing is paused | accepted deliberately, not a defect. Attribution is the mitigation: "of 40 breaches, 26 were waiting on an external party" (AC-M7) is more useful than a clean number that hides them. Tell Sorento **before** the first report, not after |
+| **S11's collection gate shipping ahead of S4a** would hard-block CS on a Dealer's inaction with no way to say whose delay it is | ordering is a stated gate on S11, not a preference. If S4a slips, the gate ships advisory (notify, do not block) rather than hard |
+| **S4a's waiting field captured as a mutable column only**, making AC-M7 uncomputable at report time and discovered in S9 | point-in-time capture is an S4a acceptance condition, reviewed at S4a, not at S9 |
+
+## Group M conflicts with existing slice text (added 2026-08-02)
+
+Recorded loudly rather than resolved by editing a slice quietly. Each one needs a decision before the
+slice it sits in is built.
+
+| # | conflict | where | resolution needed from |
+|---|---|---|---|
+| 1 | **`site_maps_url` is declared twice.** The UAC's slotting note caught S1's copy; `service_jobs` in S6 declared the same column. AC-M37's three fields replace both | S1, S6 | already applied in this plan; no decision needed, but the S6 occurrence was missed by the note |
+| 2 | **A per-domain photo endpoint contradicts a core validator.** S6 printed `POST /api/v1/service-jobs/{id}/photos -> { photo_id }`, which is exactly the special case AC-M21 removes | S6 | applied: retired in favour of the shared attachment path. Verify at S2a review that no domain re-adds one |
+| 3 | **AC-M12's line-grain RMA link versus S7's header-grain link table.** `complaint_fulfilment_orders` is `(complaint_id, order_id)`; a per-line RMA cannot be expressed on it | S7, S12 | **S12 must decide**: separate line-grain link for the new flow, or unify |
+| 4 | **AC-M11 needs an RMA container that can exist before an AutoCount RMA number does**, while S7 says this module never generates RMA documents | S7, S12 | **S12 must decide**: CRM-side container that binds later, or order-plus-sidecar |
+| 5 | **The UAC slotting note assigns Group M's goods-track ACs to "S7"**, but this plan splits the goods track into S7 / S11 / S12 and the note's contents map onto S11 and S12 | slice sequence | slotted to S11 / S12 here. If a slice merge was intended, that is a sequence change and needs saying |
+| 6 | **AC-M33 turns a raise into a fallback in CORE form-SLA code** shared by PR, SF, stock inquiry and complaint, not just after-sales | S4 | where the fallback is configured, and whether it applies to all form types |
+| 7 | **AC-M1's party list has no `dealer`, but AC-M18 requires `waiting_on = dealer`.** An inconsistency inside Group M itself | S4a, S11 | UAC owner. Recommendation: make the party configurable master data, like the reason |
+| 8 | **AC-M34's "no new table" versus AC-M35's inbox of unattached calls.** `activity_events.entity_type` / `entity_id` are NOT NULL, so a call with no case has nowhere to sit | S4 | whether an unattached call parks as `entity_type = 'respond_contact'` |
+| 9 | **AC-M4's "mandatory before further action" is unspecified**, and would be the third write guard on the same actions beside the status engine and the handling lock | S4a | which actions the guard covers, and where it sits in the stack |
+| 10 | **AC-M1 puts waiting on the case; AC-M7 needs it per breach.** A mutable column cannot answer "what were we waiting on when this breached", and one case runs several stage trackers | S4a, S9 | point-in-time capture (event log) is required; per-tracker column is the open call |
+
+**Also corrected:** `documentation/plans/PLAN-sla-extend-deadline.md` still reads *"Not started"*. Extend is
+**built** - service, both endpoints, model counters, FE dialog and button, and
+`tests/test_sla_extend_deadline.py`. AC-M6 therefore costs no engine work. Someone should fix that status
+line.
 
 ## Open, pending Sorento (not blocking build)
 
@@ -711,3 +1227,8 @@ Optimising scheduler (availability, skills, geo-clustering, capacity) - full bil
 ## Next step
 
 **Grill this plan** before writing code (`PRINCIPLES.md` step 1: "Grill the plan itself before coding"). Weakest areas, in order: the S3 extraction contract under real receipt variety, the S0/Dealer-Kit coordination, and whether S2's golden set actually covers the policy's 31 kinds or just the seven cases written above.
+
+**Since 2026-08-02, add to that list the ten items under "Group M conflicts with existing slice text".**
+Three of them gate a slice that is already in the sequence and cannot be started without an answer:
+AC-M4's enforcement point and AC-M1-versus-AC-M7's grain (both **S4a**), and the RMA container's identity
+(**S12**).
