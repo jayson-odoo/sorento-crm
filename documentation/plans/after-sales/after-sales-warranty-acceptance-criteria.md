@@ -586,6 +586,70 @@ Owned by a new **`consumers` MODULE**, not by `warranty` and not by core.
 - **AC-L28** `[BE]` Given reporting, Then Sorento can answer per Consumer (which Dealers, what they own) and per Dealer (which Consumers, what volume) - the sell-through visibility the dealer channel currently hides.
 - **AC-L29** `[BE][T]` Given consumer personal data, Then `consumer_profiles` is company-scoped, carries audit listeners, and its retention is documented. **PDPA-relevant, collected for a warranty purpose - see fork 6.**
 
+### Group L corrections - after the red suite (2026-08-02)
+
+80 red, 8 guards green. Six findings; two change the shape of the slice.
+
+- **AC-L30** `[BE][MIG]` **An assessment is one row per `(complaint_product_line_id, term_id)`, NOT one per
+  line.** The plan's "one per complaint product line" cannot hold: `resolve` returns THREE verdicts for a
+  Water Closet, and a row carrying a single `term_id` holds one of them. CS would see the ceramic body's
+  **covered** and dispatch against a seat cover whose two years had run out, or refuse a lifetime crack
+  because the fittings expired. Unique on the pair. `term_id` is **nullable**, because `unknown` and
+  `no_term` have no term behind them. This is the largest structural correction in the slice and it
+  follows directly from the property S2 exists to protect: a product never gets one answer.
+- **AC-L31** `[BE][MIG]` **`complaint_product_lines` gains `defect_type_id`** (FK `lookup_options.id`),
+  and S2b adds it. Without it AC-D10 is unsatisfiable and **S2's engine is inert for its most valuable
+  promise**: S2 seeded the `complaints_defect_type` vocabulary (AC-D18) but nothing on a complaint points
+  at it, so `resolve` is called with `defect_type_id=None` on every complaint and every defect-restricted
+  term - which is exactly the lifetime ceramic body, crack and leak only - answers `unknown` forever.
+  `complaints.defects_discovered` is NOT this: it is the `complaints_defects_discovered` lookup, which
+  records *when* a defect was noticed, not what it is. No AC in Group D or L asked for this column.
+- **AC-D8 is narrowed.** "Auto-create the Registration when absent" became under-defined the moment
+  registration became a `registered_at` timestamp on a purchase: with no purchase there is no purchase
+  date, and inventing one **fabricates the single number every verdict is computed from**. Ruling:
+  `ensure_registration_on_complaint` **stamps an existing unregistered purchase and never creates one**. A
+  receipt-less complaint gets one `unknown` verdict and is never blocked.
+- **AC-L35** `[BE]` **An auto-created registration earns ZERO bonus months**, and the source is a declared
+  constant (`BONUS_EARNING_REGISTRATION_SOURCES`, excluding `auto_on_complaint`) rather than a boolean
+  derived inline from `registered_at is not None`. Clause 26 pays 12 months for **online registration**, a
+  deliberate consumer act Sorento gets data for. Composed naively, lodging a complaint would buy the
+  complainant a third year of cover on a booster pump **at the exact moment of the claim, in the direction
+  that makes the claim succeed, invisibly**. The derived-boolean shape is the bug; the constant exists to
+  forbid it.
+- **AC-L32** `[BE][MIG]` **`consumer_profiles.respond_contact_id` is TEXT, not uuid.**
+  `respond_contacts.id` is a TEXT column and Postgres refuses an FK from uuid to text. This is the third
+  time this trap has been hit in this build (S1's `respondent_contact_id`, S1's `user_id`, now this).
+- **AC-L33** `[BE][MIG]` **AC-L8's E.164 dedupe needs its own column: `consumer_profiles.phone_e164`,
+  uniquely indexed.** The profile is 1:1 with `respond_contacts`, whose `phone_number` is unique on the
+  RAW string, so `0166372304` and `+60166372304` already coexist there as two rows and a profile keyed
+  only on the contact **inherits the exact split AC-L8 exists to prevent**. The existing
+  `app/utils/phone_normalize.py` is digits-only and cannot satisfy this.
+- **AC-L34** `[BE][MIG]` **S2 shipped four warranty tables and no `warranty` module manifest at all**, so
+  the warranty tables are currently ungoverned by the App Store: not installable, not disableable, not
+  purgeable, and `warranty` cannot declare its dependency on `consumers` (AC-L1) without one. S2b creates
+  **both** manifests. My error in S2, recorded rather than quietly fixed.
+- **`consumer_purchases` is company-scoped too.** AC-L29 stops at the profile, but the profile link is
+  nullable (fork 2), so an unscoped ledger would let Mocha's CS read Sorento's sell-through. Lines are not
+  separately scoped; they are reachable only through the header.
+- **Anonymisation clears `respond_contact_id`.** Leaving it set means one join recovers the person and the
+  erasure is cosmetic. **Stated gap, not solved:** `respond_contacts` itself is NOT scrubbed. That row is
+  shared with complaints, chat history, SLA and the portal, so deleting it is a larger decision than S2b
+  owns, and residual reachability through other modules is real.
+- **No implicit back-link** from an orphan purchase to a profile that later appears on the same phone. A
+  household shares a number, so back-linking on a phone match attaches a stranger's receipt to whoever
+  authenticates first, years later, silently. A deliberate CS surface may do it; a rule must not.
+- **AC-D12 lands in both places, with different jobs:** `consumer_purchases.purchase_date_source` is a
+  fact about the receipt; `warranty_assessments.is_recommendation` is **snapshotted at compute time**, so
+  correcting a purchase later cannot retro-label a verdict a human already acted on. NOT NULL, because
+  NULL renders as "no" on every screen.
+- **An unnumbered receipt is not a duplicate.** Two receipts sharing a dealer and a date where one has no
+  document number both write, and the incomplete one is flagged `dedupe_pending`. `normalize_document_number`
+  collides on case, whitespace and separators only: it must NOT strip leading zeros (`INV-0001` is not
+  `INV-001`) and must return None rather than `""` for an absent number, or every unnumbered receipt from
+  one dealer on one day collapses into a single row. Accepted risk, stated: under "link, never reject" a
+  false collision refuses nothing, it attaches the second complaint to the first purchase's **date**, so
+  an over-eager normaliser mis-dates a warranty.
+
 ## Group E - Complaint lifecycle
 
 - **AC-E1** `[BE]` Given ADR-0008, Then no Complaint has a parent Complaint, and a `parent_complaint_id` column does not exist.
