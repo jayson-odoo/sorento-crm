@@ -192,6 +192,71 @@ originals are kept below the rewrite so the change of premise is auditable.
 - **AC-B11** `[BE]` Given the salesman-code map, Then suffixed codes (`SEAN` / `SEAN I` / `SEAN III` / `SEAN IV`) map many-to-one onto a single user where they are the same person, as configured. The suffix is **not** company: every suffix appears under both Sorento and Mocha in `orders`.
 - **AC-B12** `[MIG]` Given testing needs dealer contacts, Then a seed script populates representative `respond_contacts.customer_id` bindings. **Production bindings are configured manually by Sorento**; no bulk import is shipped.
 
+### Group B corrections - after the red suite (2026-08-02)
+
+58 red, 0 passed. Nine findings; these are the rulings. Where a correction contradicts the AC above or
+the S1 schema in `PLAN-after-sales-warranty.md`, the correction wins.
+
+- **AC-B13** `[BE][MIG]` **AC-B1's third binding is deferred to S6.** `technicians` does not exist - not
+  in `app/models/`, not in any alembic revision - and AC-F6 (S6) is what creates it. Postgres cannot
+  create `technician_id uuid REFERENCES technicians(id)` against a table that is not there. S1 ships
+  **two** bindings, `customer_id` and `user_id`; S6 adds `technician_id` in the slice that gives it a
+  target. Building a stub `technicians` table here would hand S6 a half-defined core entity to migrate,
+  which is worse than an absent one. Adding a nullable FK later is cheap and additive.
+- **AC-B14** `[BE]` **Kind precedence is `technician` > `staff` > `dealer` > `consumer`.** AC-B2 permits
+  several bindings at once and named no order, so the portal door, the notification spine and the
+  dashboard would each have resolved it their own way. Most specific role wins. `technician` is
+  unreachable until S6 lands its binding and is declared now so the order never changes later. This does
+  NOT affect AC-B3: Sanimart resolves the Site from the Complaint, not from the kind.
+- **AC-B15** `[BE]` **Kind and journey share one vocabulary** (`consumer` / `dealer` / `staff` /
+  `technician`) and derivation is a **pure function of the contact row**, no query. Two vocabularies
+  would need a translation table, and a translation table drifts.
+- **AC-B6a is REPLACED.** As written it is false on arrival and cannot become true in S1: five files
+  read `complaints.customer_type`, four read `customer_name`, three read `salesperson`. It also
+  contradicts AC-B6's own wording, since a column left "read-only for one release" is by definition
+  still read. Written literally it is a refactor request, not an acceptance criterion. Instead:
+  - **AC-B6b** `[BE][T]` A **frozen reader inventory** lists every module that reads a legacy column
+    today. The test fails when the list grows, so the eventual drop has a finite, known worklist.
+  - **AC-B6c** `[BE][T]` A **module-scoped** guard asserts the new party service reads none of them.
+  - **AC-B6d** `[BE][T]` A **behavioural** test: a customer whose orders name a salesman but whose
+    `account_owner_user_id` is NULL resolves to `None`. The resolver never falls back to the legacy
+    column, which is the property AC-B9 was really asking for.
+- **AC-B9 is narrowed the same way.** `orders.salesman` is read today by `app/schemas/order.py` (it is
+  serialized on the orders API), `app/services/order_service.py` (import column map) and
+  `app/services/embedding_worker.py` (embedded verbatim into RAG text). A repo-wide guard is permanently
+  red. AC-B9 now means: **no NEW runtime path reads it, and salesperson resolution never does.**
+- **AC-B16** `[BE][MIG]` **The `customer_type` backfill mapping is corrected against live data.** The
+  plan's "the 7 blanks become `cs`" is wrong twice: there are **3 NULLs and 7 `SMC` rows**, so the 7 was
+  the SMC count, and mapping an unknown value to `cs` asserts Customer Service reported those
+  complaints, which nothing supports. **Blanks backfill to NULL.** `reported_by_role` is nullable. A
+  backfill that guesses is worse than one that leaves NULL, because a guess cannot be told from a fact
+  afterwards.
+- **AC-B17** `[BE]` **The mapping must cover `Salesperson`** (5 of 47 live rows), which is absent from
+  the `complaints_customer_type` lookup set (Dealer / Project / SMC / E Commerce / End User). A mapping
+  derived from the configured options alone silently misses those rows.
+- **AC-B18** `[BE][MIG]` **The `salesman_code` -> `users` map needs a persisted home.** AC-B11 says "as
+  configured" and never says configured where. `users` has no salesman-code column, and one person needs
+  four codes (`SEAN` / `SEAN I` / `SEAN III` / `SEAN IV`), so a column could not hold them. S1 creates a
+  small upsertable mapping table; the seed reads it and never hardcodes the map.
+- **AC-B19** `[BE]` **AC-B8 gets a deterministic tie-break.** "Most-recent-order-wins" is not idempotent
+  without one, and `orders.order_date` is **nullable** while Postgres sorts NULLs **first** on `DESC` -
+  so the naive query hands the account owner to whichever order forgot its date. Order by
+  `order_date DESC NULLS LAST`, then by a stable unique tiebreaker. An idempotent seed that picks a
+  different winner per run is not idempotent.
+- **AC-B20** `[BE]` **The seed must set its own company scope explicitly.** A bare `SessionLocal` is
+  `UNSET`, which is fail-closed to zero rows, so the seed would **exit successfully having done
+  nothing** - the silent-no-op class again. AC-B11 confirms the suffixed codes appear under both Sorento
+  and Mocha, so the scope must span both.
+- **AC-B21** `[BE][MIG]` **`latitude` / `longitude` are `Numeric` with scale >= 6**, never Float or Text.
+  Float loses precision at the metre scale a technician navigates by.
+- **AC-B4's dead end is real and stays open.** A Consumer with no receipt and no order number has no
+  route in Group B. AC-C14 (S3) owns the never-blocked guarantee. S1 pins only that an unmatched order
+  number returns 200 with `matched: false`, never a 4xx.
+- **AC-M37 is columns on `complaints`, one Site per Complaint.** ADR-0008 gives one Complaint per issue
+  and AC-F1 gives `service_jobs` their own site, so a second visit to a different address is expressible
+  on the Job. Known limit, accepted: a multi-line Complaint whose lines sit at different addresses is
+  not expressible, and nothing in Groups B, E or M requires it today.
+
 ## Group C - Intake
 
 ### C.1 WhatsApp AI intake (primary front door)
