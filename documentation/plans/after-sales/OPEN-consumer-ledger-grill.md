@@ -1,8 +1,13 @@
 # OPEN - Consumer Profile and Purchase Ledger: forks to grill
 
-**Status:** Ungrilled. Group L in the UAC and the purchase-ledger DDL in the plan were written from a
-review annotation on 2026-07-26, **not** from a grill. Both are marked UNGRILLED and must not be
-implemented until this file is resolved.
+**Status:** GRILLED. All seven forks answered between 2026-07-29 and 07-31. The "Ungrilled, must not be
+implemented" wording below this line was the state on 2026-07-26 and was left stale; corrected 2026-08-02
+when S2b was about to start and the header would have blocked a slice its own contents had already
+cleared. Group L and the purchase-ledger DDL are now buildable.
+
+**S2b is NOT blocked.** The two consequences still open gate LATER slices: the fork 4 / fork 5
+margin-granularity conflict is a reporting question due before **S9**, and the service-only consent
+one-way door is due before **S3**. Neither changes a table S2b creates.
 
 Seven forks. **ALL ANSWERED (2026-07-29 to 07-31).**
 **Two consequences still need a decision:** the fork 4 / fork 5 margin-granularity conflict (before S9),
