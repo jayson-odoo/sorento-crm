@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
+from typing import Optional
 from pathlib import Path
 
 import pytest
@@ -571,6 +572,201 @@ def test_editing_a_line_recomputes_its_arithmetic_and_the_totals(seeded):
     assert service.recompute_totals(version)["lines_total"] == Decimal("102.00")
 
 
+# ------------------------------------------- binding the confirmed PO to a quotation
+#
+# The hole this closes was visible on the client's own PO: 51 lines, every one of them
+# flagged "not quoted", and the panel saying -- accurately -- that nothing was being
+# compared against a quoted price. `quotation_version_id` existed and phase 1's
+# cross-check was already written; the document path simply never set it, so a PO that
+# arrived as a scan got none of the checking a hand-recorded PO gets.
+
+
+def _quotation(db, project, owner, scope: str, priced):
+    """One quotation scope, version 1, priced OFF-CATALOG.
+
+    Off-catalog on purpose: a scanned PO gives us the code the customer printed, and the
+    cross-check matches that against the code the quotation printed. Going through a
+    catalogue product would test a path the scan cannot reach.
+    """
+    from app.services import project_quotation_service as quotes
+
+    quotation = quotes.create_quotation(
+        db, project=project, actor_user_id=owner, payload={"scope_label": scope}
+    )
+    version = quotes.current_version(db, quotation.id)
+    for code, price in priced:
+        quotes.upsert_line(
+            db,
+            version=version,
+            actor_user_id=owner,
+            payload={
+                "product_code_snapshot": code,
+                "description_snapshot": f"{code} as quoted",
+                "unit_price": price,
+                "quantity": 1,
+            },
+        )
+    return quotation, version
+
+
+def _priced_page() -> PageResult:
+    """Three printed lines: one quoted at the quoted price, one quoted at another price,
+    one never quoted at all. Every verdict the cross-check can reach, in one page."""
+    return _page(
+        1,
+        header={"po_number": "HQ/26/01/121"},
+        lines=[
+            {"no": 1, "stock_code": "SRTWC86", "qty": 2, "unit_price": 392.85,
+             "amount": 785.70},
+            {"no": 2, "stock_code": "SRTFV1001", "qty": 1, "unit_price": 295.85,
+             "amount": 295.85},
+            {"no": 3, "stock_code": "SRTNEW9", "qty": 1, "unit_price": 100.00,
+             "amount": 100.00},
+        ],
+    )
+
+
+def _flags(db, po):
+    return {
+        line.product_code: (line.model_mismatch, line.price_mismatch)
+        for line in db.query(ProjectPurchaseOrderLine)
+        .filter(ProjectPurchaseOrderLine.po_id == po.id)
+        .all()
+    }
+
+
+def test_confirming_binds_the_po_to_the_quotation_and_populates_the_flags(seeded):
+    """The whole point: a scanned PO comes out of confirm checked, not unchecked."""
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    _quotation(
+        db,
+        project,
+        owner,
+        "House Units",
+        [("SRTWC86", "392.85"), ("SRTFV1001", "250.00")],
+    )
+    po = _po(db, project, owner, "HQ/26/01/121")
+    assert po.quotation_version_id is None
+    version = _version(db, po)
+    service.persist_pages(version, [_priced_page()])
+
+    result = service.confirm_version(version=version, actor_user_id=owner)
+
+    quoted_version_id = po.quotation_version_id
+    assert quoted_version_id is not None, "a confirmed PO must be checked against something"
+    assert _flags(db, po) == {
+        # Quoted, at the quoted price: nothing to chase.
+        "SRTWC86": (False, False),
+        # Quoted at 250.00 and ordered at 295.85.
+        "SRTFV1001": (False, True),
+        # Never quoted, so there is no price to disagree with -- one problem, one flag.
+        "SRTNEW9": (True, False),
+    }
+    assert result["model_mismatch_count"] == 1
+    assert result["price_mismatch_count"] == 1
+
+
+def test_a_project_with_nothing_quoted_confirms_and_stays_unbound(seeded):
+    """No quotation is not a failure to bind, it is the absence of anything to bind to.
+    The panel's "not tied to a quotation version" sentence is the truth in that case."""
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    po = _po(db, project, owner, "HQ/26/01/121")
+    version = _version(db, po)
+    service.persist_pages(version, [_priced_page()])
+
+    result = service.confirm_version(version=version, actor_user_id=owner)
+
+    assert po.quotation_version_id is None
+    assert result["line_count"] == 3
+    assert version.confirmed_at is not None
+    assert all(model is True for model, _price in _flags(db, po).values())
+
+
+def test_a_po_already_bound_to_a_superseded_version_is_not_re_pointed(seeded):
+    """The contractor buys off the document they were given, which is frequently not the
+    newest one. An existing binding is a decision somebody made, and moving it would
+    silently change what this PO was checked against."""
+    db, project, owner = seeded
+    from app.services import project_po_service as po_svc
+    from app.services import project_quotation_service as quotes
+
+    service = ProjectPOExtractionService(db)
+    quotation, first = _quotation(
+        db, project, owner, "House Units", [("SRTWC86", "392.85")]
+    )
+    po = po_svc.create_po(
+        db,
+        project=project,
+        actor_user_id=owner,
+        payload={
+            "po_number": "HQ/26/01/121",
+            "po_source": "contractor_direct",
+            "quotation_version_id": first.id,
+        },
+    )
+
+    # v2 re-prices the same line. The PO in hand was issued against v1.
+    second = quotes.revise(db, quotation=quotation, actor_user_id=owner)
+    quotes.upsert_line(
+        db,
+        version=second,
+        actor_user_id=owner,
+        payload={"unit_price": "500.00"},
+        line=quotes.list_lines(db, second.id)[0],
+    )
+
+    version = _version(db, po)
+    service.persist_pages(version, [_priced_page()])
+    service.confirm_version(version=version, actor_user_id=owner)
+
+    assert po.quotation_version_id == first.id
+    # Checked against v1's 392.85, so the line the customer ordered at the price they
+    # were quoted is not flagged.
+    assert _flags(db, po)["SRTWC86"] == (False, False)
+
+
+def test_two_equally_good_scopes_leave_the_po_unbound(seeded):
+    """A development is quoted in scopes. Binding to the wrong one would flag correctly
+    priced lines as "price differs", and a wrong comparison is worse than a stated
+    absence of one, so the scope stays a person's call."""
+    db, project, owner = seeded
+    service = ProjectPOExtractionService(db)
+    _quotation(db, project, owner, "House Units", [("SRTWC86", "392.85")])
+    _quotation(db, project, owner, "Common Area", [("SRTWC86", "500.00")])
+    po = _po(db, project, owner, "HQ/26/01/121")
+    version = _version(db, po)
+    service.persist_pages(version, [_priced_page()])
+
+    service.confirm_version(version=version, actor_user_id=owner)
+
+    assert po.quotation_version_id is None
+
+
+def test_the_won_scope_is_preferred_over_an_open_one(seeded):
+    """A PO follows from a scope somebody won, so that scope is the obvious candidate
+    even when another is still being negotiated."""
+    db, project, owner = seeded
+    from app.services import project_quotation_service as quotes
+
+    service = ProjectPOExtractionService(db)
+    won, won_version = _quotation(
+        db, project, owner, "House Units", [("SRTWC86", "392.85")]
+    )
+    _quotation(db, project, owner, "Common Area", [("SRTWC86", "500.00")])
+    quotes.set_outcome(db, quotation=won, outcome=quotes.OUTCOME_WON_Q)
+
+    po = _po(db, project, owner, "HQ/26/01/121")
+    version = _version(db, po)
+    service.persist_pages(version, [_priced_page()])
+
+    service.confirm_version(version=version, actor_user_id=owner)
+
+    assert po.quotation_version_id == won_version.id
+    assert _flags(db, po)["SRTWC86"] == (False, False)
+
+
 # ------------------------------------------------------------ upload and versioning
 
 
@@ -994,3 +1190,166 @@ def test_golden_set_the_real_buimaco_po(seeded, golden_document):
     assert after["lines_total"] == GOLDEN_LIVE_TOTAL
     assert after["cancelled_total"] == Decimal("4733.60")
     assert {line.line_no for line in lines if line.is_cancelled} == {7}
+
+
+# ------------------------------------------- reading a code the way a person reads it
+
+
+def _catalogue(db, *codes: str, company_id: Optional[str] = None) -> dict[str, str]:
+    """Put codes in the item master and hand back their ids.
+
+    ``company_id`` exists because one product code legitimately appears once PER
+    COMPANY (`uq_products_company_product_code` allows exactly that), and a resolver
+    running across companies therefore sees the same code twice. That is not two
+    candidate products, and mistaking it for ambiguity is what made the first version
+    of the loose matcher resolve nothing at all on the client's real document.
+    """
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+
+    # Real parent rows for the NOT NULL foreign keys. Postgres enforces what sqlite
+    # silently accepted, so an invented uuid here aborts the transaction rather than
+    # quietly pointing at nothing.
+    suffix = str(uuid.uuid4())[:8]
+    category_id = str(uuid.uuid4())
+    uom_id = str(uuid.uuid4())
+    db.add(ProductCategory(id=category_id, category_code=f"{MARKER}-CAT-{suffix}",
+                           category_name=f"{MARKER} category"))
+    db.add(UnitOfMeasure(id=uom_id, uom_code=f"{MARKER}-UOM-{suffix}",
+                         uom_name=f"{MARKER} uom"))
+    db.flush()
+
+    out: dict[str, str] = {}
+    for code in codes:
+        product = Product(
+            id=str(uuid.uuid4()),
+            product_code=code,
+            product_name=f"{MARKER} {code}",
+            category_id=category_id,
+            base_uom_id=uom_id,
+            list_price=0,
+            is_active=True,
+            **({"company_id": company_id} if company_id else {}),
+        )
+        db.add(product)
+        db.flush()
+        out.setdefault(code, str(product.id))
+    return out
+
+
+def test_a_code_spelt_with_different_punctuation_is_the_same_product(seeded):
+    """Their paper says SRTFH15CR, our item master says SRTFH15-CR. One product.
+
+    Taken from line 30 of the client's real purchase order.
+    """
+    db, _project, _owner = seeded
+    ids = _catalogue(db, "SRTFH15-CR")
+    service = ProjectPOExtractionService(db)
+
+    product_id, source = service._resolve_product(
+        "IFH15CR", "ADJUSTABLE WATER FLOW RATE SORENTO SRTFH15CR FLEXIBLE HOSE 1.5M"
+    )
+
+    assert product_id == ids["SRTFH15-CR"]
+    assert source == "code_normalised"
+
+
+def test_a_code_whose_parts_are_in_another_order_is_the_same_product(seeded):
+    """They write B2155-BLUE-NL, we stock B2155-NL-BLUE. Lines 4, 19 and 22 of the
+    real PO, which is three lines of one document lost to a word order."""
+    db, _project, _owner = seeded
+    ids = _catalogue(db, "B2155-NL-BLUE")
+    service = ProjectPOExtractionService(db)
+
+    product_id, source = service._resolve_product(
+        "CB2155-BLUE", "SORENTO B2155-BLUE-NL ANGLE VALVE"
+    )
+
+    assert product_id == ids["B2155-NL-BLUE"]
+    assert source == "code_reordered"
+
+
+def test_a_truncated_column_plus_the_description_names_one_product(seeded):
+    """The customer's stock-code column is narrow and cuts the code off.
+
+    Line 1 of the real PO prints `SRTWC86` in the column, and the description carries
+    the rest. Neither half identifies the product alone: the prefix matches dozens, and
+    the description spells it `SRTW8613-RL` where we spell it `SRTWC8613-RL`. Together
+    they are unambiguous, which is exactly how a person reads that row.
+    """
+    db, _project, _owner = seeded
+    ids = _catalogue(db, "SRTWC8613-RL", "SRTWC8608-SC", "SRTWC8640-P")
+    service = ProjectPOExtractionService(db)
+
+    product_id, source = service._resolve_product(
+        "SRTWC86", "SORENTO SRTW8613-RL ONE PIECE WC - SET - Washdown One-Piece WC"
+    )
+
+    assert product_id == ids["SRTWC8613-RL"]
+    assert source == "code_truncated"
+
+
+def test_one_code_stocked_by_two_companies_is_one_answer_not_an_ambiguity(seeded):
+    """The same code exists once per company, so a cross-company read sees it twice.
+
+    That is one product spelt once, not two candidates. Counting ROWS rather than
+    distinct CODES is the bug that made the loose matcher resolve nothing at all on the
+    client's real document, where the item master carries `C-FH12` for both companies.
+    """
+    from app.models.company import Company
+
+    db, _project, _owner = seeded
+    other_company = str(uuid.uuid4())
+    db.add(Company(id=other_company, name=f"{MARKER} Other", code=str(uuid.uuid4())[:8]))
+    db.flush()
+
+    ids = _catalogue(db, "C-FH16")
+    _catalogue(db, "C-FH16", company_id=other_company)
+    service = ProjectPOExtractionService(db)
+
+    product_id, source = service._resolve_product("CFH16", "CABANA C-FH16 FLEXIBLE HOSE")
+
+    assert product_id in {ids["C-FH16"], product_id}
+    assert product_id is not None
+    assert source == "code_normalised"
+
+
+def test_two_different_codes_that_both_fit_are_left_for_a_person(seeded):
+    """Refusing is the feature. On a 1.8 million ringgit order, quietly attaching the
+    wrong product costs more than asking, so a relaxed form that fits two DIFFERENT
+    codes resolves to neither."""
+    db, _project, _owner = seeded
+    _catalogue(db, "SRT-100-A", "SRT-100-B")
+    service = ProjectPOExtractionService(db)
+
+    product_id, source = service._resolve_product("SRT100", "SORENTO SRT100 SOMETHING")
+
+    assert product_id is None
+    assert source is None
+
+
+def test_a_product_that_is_simply_not_stocked_stays_unresolved(seeded):
+    """Half the client's unresolved lines name something genuinely absent from the item
+    master. Saying so is the correct answer, and inventing a near neighbour is not."""
+    db, _project, _owner = seeded
+    _catalogue(db, "SRTWC8613-RL")
+    service = ProjectPOExtractionService(db)
+
+    product_id, source = service._resolve_product(
+        "SRTCB2829", "SORENTO SRTCB2829 DECK MOUNT KITCHEN SINK TAP"
+    )
+
+    assert product_id is None
+    assert source is None
+
+
+def test_an_exact_code_still_wins_before_anything_is_relaxed(seeded):
+    """Order matters: the loose tiers must never pre-empt a character-for-character
+    match, or a correct resolution could be replaced by a plausible one."""
+    db, _project, _owner = seeded
+    ids = _catalogue(db, "SRTWC8613-RL", "SRTWC8613RL")
+    service = ProjectPOExtractionService(db)
+
+    product_id, source = service._resolve_product("SRTWC8613-RL", "SORENTO ONE PIECE WC")
+
+    assert product_id == ids["SRTWC8613-RL"]
+    assert source == "code"

@@ -51,7 +51,16 @@ from app.models.project_so import (
     ProjectPOLine,
     ProjectPOVersion,
 )
-from app.models.projects import Project, ProjectPurchaseOrder, ProjectPurchaseOrderLine
+from app.models.projects import (
+    QUOTATION_OUTCOME_LOST,
+    QUOTATION_OUTCOME_OPEN,
+    QUOTATION_OUTCOME_WON,
+    Project,
+    ProjectPurchaseOrder,
+    ProjectPurchaseOrderLine,
+    ProjectQuotation,
+    ProjectQuotationVersion,
+)
 from app.services.error_handler import AppException
 
 logger = logging.getLogger(__name__)
@@ -150,6 +159,16 @@ _SIGNATURE_WORDS = ("signature", "signed", "chop", "initial")
 _AMEND_WORDS = ("amend", "change", "revise", "correct", "replace", "update")
 
 _HEADER_TOTAL_KEYS = ("total", "grand_total", "total_amount", "po_total", "amount_total")
+
+# How good a quotation scope is as the thing a confirmed PO should be checked against. A
+# won scope is what a PO follows from; a lost one is still a document the customer was
+# given, so it is a last resort rather than no candidate at all.
+_OUTCOME_RANK = {
+    QUOTATION_OUTCOME_WON: 0,
+    QUOTATION_OUTCOME_OPEN: 1,
+    QUOTATION_OUTCOME_LOST: 2,
+}
+_OUTCOME_RANK_DEFAULT = 1
 
 # Where the extractor's header keys land on our own header block.
 _HEADER_ALIASES = {
@@ -323,6 +342,25 @@ def _looks_like_code(token: str) -> bool:
         and any(character.isdigit() for character in token)
         and any(character.isalpha() for character in token)
     )
+
+
+def _squash(text: Optional[str]) -> str:
+    """A code with its punctuation dropped, for comparing spellings of one product.
+
+    `SRTFH15CR` and `SRTFH15-CR` are the same thing written by two people. Nothing here
+    reorders or truncates, so two codes that squash alike really are the same code.
+    """
+    return re.sub(r"[^A-Z0-9]", "", (text or "").upper())
+
+
+def _code_tokens(text: Optional[str]) -> List[str]:
+    """The parts of a code, so a reordering can be recognised.
+
+    The client writes `B2155-BLUE-NL` for what we stock as `B2155-NL-BLUE`. Same
+    product, same parts, different order, and comparing the SET of parts sees that
+    while comparing the strings never will.
+    """
+    return [part for part in re.split(r"[^A-Z0-9]+", (text or "").upper()) if part]
 
 
 def _proposed_code(text: Optional[str]) -> Optional[str]:
@@ -1159,6 +1197,99 @@ class ProjectPOExtractionService:
             for candidate in candidates:
                 if candidate in matches:
                     return matches[candidate], "description"
+
+        # Nothing matched CHARACTER FOR CHARACTER, which on real paper is the common
+        # case rather than the exception. Measured on the client's own PO: of 14 lines
+        # that got this far, half name a product we genuinely stock and half name one
+        # that is not in the item master at all. Telling those two apart is the whole
+        # job, so the tiers below relax the comparison in ways that cannot change WHICH
+        # product is meant, and stop rather than guess when more than one could be.
+        return self._resolve_product_loosely(code, candidates)
+
+    def _resolve_product_loosely(
+        self, code: str, description_codes: List[str]
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Match the way a person reads a code, not the way a string comparison does.
+
+        Three things the customer's paper does that an equality test cannot survive,
+        all taken from their real purchase order:
+
+        * punctuation drifts. They write `SRTFH15CR`, the catalogue says `SRTFH15-CR`.
+        * the tokens get reordered. They write `B2155-BLUE-NL`, we stock `B2155-NL-BLUE`.
+        * their stock-code column is narrow and TRUNCATES, so `SRTWC8613-RL` prints as
+          `SRTWC86` and the rest of the code survives only in the description.
+
+        None of these is ambiguity, they are the same product spelled differently, and a
+        person resolves them in a second. What IS ambiguity is a relaxed form matching
+        more than one catalogue code, and every tier below refuses in that case rather
+        than picking a winner. On a 1.8 million ringgit order the cost of quietly
+        attaching the wrong product is far higher than the cost of asking.
+        """
+        from app.models.product import Product
+
+        wanted = [c for c in ([code] if code else []) + list(description_codes) if c]
+        if not wanted:
+            return None, None
+
+        # One pass over the catalogue's shapes. `product_code` is indexed but none of
+        # these comparisons can use that index, so the work is done in Python against a
+        # projection rather than as several LIKE scans per line.
+        rows = self.db.query(Product.id, Product.product_code).all()
+        # Keyed by CODE, not by row. This catalogue holds several rows under one code
+        # (`C-FH12` appears twice), and counting rows made every such product look
+        # ambiguous and refuse itself. The real question is whether more than one
+        # DISTINCT code fits, so the first row of each code is what a code resolves to.
+        by_squashed: Dict[str, Dict[str, str]] = {}
+        by_tokens: Dict[frozenset, Dict[str, str]] = {}
+        for product_id, product_code in rows:
+            raw = str(product_code or "").upper()
+            if not raw:
+                continue
+            by_squashed.setdefault(_squash(raw), {}).setdefault(raw, product_id)
+            by_tokens.setdefault(frozenset(_code_tokens(raw)), {}).setdefault(raw, product_id)
+
+        def _only(bucket: Optional[Dict[str, str]]) -> Optional[str]:
+            """One code is an answer. Two different codes is a question for a person."""
+            if not bucket or len(bucket) != 1:
+                return None
+            return next(iter(bucket.values()))
+
+        # Tier 1: same characters once punctuation is dropped.
+        for candidate in sorted(wanted, key=len, reverse=True):
+            hit = _only(by_squashed.get(_squash(candidate)))
+            if hit:
+                return hit, "code_normalised"
+
+        # Tier 2: same tokens in a different order.
+        for candidate in sorted(wanted, key=len, reverse=True):
+            hit = _only(by_tokens.get(frozenset(_code_tokens(candidate))))
+            if hit:
+                return hit, "code_reordered"
+
+        # Tier 3: the truncated column names the start of a code, and something in the
+        # description confirms which one. Neither half is enough alone: a short prefix
+        # matches dozens of products, and the description often carries the customer's
+        # own spelling rather than ours. Together they identify one product.
+        prefix = _squash(code)
+        if len(prefix) >= 4 and description_codes:
+            confirmed: Dict[str, str] = {}
+            for squashed, codes in by_squashed.items():
+                if not squashed.startswith(prefix):
+                    continue
+                # The description's spelling need not equal ours; it needs to agree
+                # about the distinctive tail. `SRTW8613RL` confirms `SRTWC8613RL`
+                # because both end the same way, and the column already agreed about
+                # the start.
+                if any(
+                    squashed.endswith(_squash(d)[-6:])
+                    for d in description_codes
+                    if len(_squash(d)) >= 6
+                ):
+                    confirmed.update(codes)
+            hit = _only(confirmed)
+            if hit:
+                return hit, "code_truncated"
+
         return None, None
 
     def _carried_annotation_states(
@@ -1521,6 +1652,13 @@ class ProjectPOExtractionService:
         if remark:
             po.notes = remark
 
+        # Bound BEFORE the lines are written, because `upsert_line` reads
+        # `po.quotation_version_id` and is the one place the cross-check runs. A PO that
+        # arrived as a scan used to reach here unbound and so got none of the checking a
+        # hand-recorded PO gets: every line came out "not quoted" and the panel said, quite
+        # correctly, that nothing had been compared against a quoted price.
+        self._bind_quotation_version(po)
+
         # Rewritten, not merged: the confirmed version IS the current statement of what
         # the customer committed to, and a merge would leave lines from a superseded
         # reading standing beside it.
@@ -1575,6 +1713,69 @@ class ProjectPOExtractionService:
             "model_mismatch_count": sum(1 for line in written if line.model_mismatch),
             "price_mismatch_count": sum(1 for line in written if line.price_mismatch),
         }
+
+    def _bind_quotation_version(
+        self, po: ProjectPurchaseOrder
+    ) -> Optional[ProjectQuotationVersion]:
+        """Point an unbound PO at the quotation it should be checked against.
+
+        Three rules, and the last one is the reason this is not a one-liner:
+
+        * **An existing binding is never moved.** It was chosen by a person, or by an
+          earlier confirm, and re-pointing it would silently change what this PO was
+          checked against. A binding to a SUPERSEDED version is legitimate and stays: the
+          contractor buys off the document they were given, which is frequently not the
+          newest one.
+        * **A project with nothing quoted stays unbound.** The panel already says the PO
+          is not tied to a quotation version and that nothing is being compared, which is
+          the truth in that case.
+        * **An ambiguous project stays unbound too.** A development is quoted in scopes,
+          and binding to the wrong scope would flag correctly priced lines as "price
+          differs" and correctly ordered models as "not quoted". A wrong comparison is
+          worse than a stated absence of one, so we bind only when one scope is the
+          obvious candidate and leave the manual pick on the PO dialog otherwise.
+        """
+        if po.quotation_version_id:
+            return None
+
+        quotations = (
+            self.db.query(ProjectQuotation)
+            .filter(ProjectQuotation.project_id == po.project_id)
+            .all()
+        )
+        if not quotations:
+            return None
+
+        best_rank = min(_OUTCOME_RANK.get(q.outcome, _OUTCOME_RANK_DEFAULT) for q in quotations)
+        candidates = [
+            q
+            for q in quotations
+            if _OUTCOME_RANK.get(q.outcome, _OUTCOME_RANK_DEFAULT) == best_rank
+        ]
+        if len(candidates) != 1:
+            logger.info(
+                "PO %s left unbound: %s quotation scopes on project %s are equally good "
+                "candidates, so the scope is a person's call",
+                po.id,
+                len(candidates),
+                po.project_id,
+            )
+            return None
+
+        # Current is MAX(version_no) -- the quotation model has no current pointer and no
+        # frozen flag, and reading it any other way would invent a second source of truth.
+        version = (
+            self.db.query(ProjectQuotationVersion)
+            .filter(ProjectQuotationVersion.quotation_id == candidates[0].id)
+            .order_by(ProjectQuotationVersion.version_no.desc())
+            .first()
+        )
+        if version is None:
+            return None
+
+        po.quotation_version_id = version.id
+        self.db.flush()
+        return version
 
     # -------------------------------------------------------- approval handshake
 
