@@ -38,6 +38,13 @@ interface PrintPayload {
    * default is by definition not the design the brochure on screen is using.
    */
   tileTemplates?: Record<string, TileField[]>;
+  /**
+   * assetId -> signed URL for the section backgrounds. Sent with the payload for
+   * the same reason as the templates, and with one extra consequence: these
+   * become CSS backgrounds, which are not `<img>` elements and therefore are not
+   * covered by `document.images`. See the readiness effect below.
+   */
+  assets?: Record<string, string>;
 }
 
 function apiBase(): string {
@@ -133,12 +140,26 @@ export default function CataloguePrintPage({
 
   // Wait for images before declaring the page ready. A half-loaded photo prints
   // as a blank box, and the worker cannot tell the difference.
+  //
+  // Section BACKGROUNDS have to be waited for explicitly. They are CSS
+  // `background-image`, not `<img>`, so `document.images` does not see them at
+  // all - and a section background is the largest thing on the page, so the one
+  // asset most likely to still be in flight is the one nothing was watching.
+  // Loading each URL through an Image object puts it in the same HTTP cache the
+  // CSS reads, so this waits for the real fetch rather than a copy of it.
   useEffect(() => {
     if (!payload) return;
 
     let cancelled = false;
-    const images = Array.from(document.images);
-    const pending = images.filter((image) => !image.complete);
+    const pending: HTMLImageElement[] = Array.from(document.images).filter(
+      (image) => !image.complete,
+    );
+
+    for (const url of Object.values(payload.assets ?? {})) {
+      const preload = new Image();
+      preload.src = url;
+      if (!preload.complete) pending.push(preload);
+    }
 
     if (pending.length === 0) {
       setImagesSettled(true);
@@ -213,6 +234,7 @@ export default function CataloguePrintPage({
           sections={payload.doc?.sections ?? []}
           resolvedCollections={payload.collections}
           tileTemplates={payload.tileTemplates}
+          assets={payload.assets}
           breakpoint={breakpoint}
         />
       )}

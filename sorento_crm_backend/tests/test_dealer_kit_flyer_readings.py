@@ -35,6 +35,7 @@ from fastapi.testclient import TestClient
 # MUST be first app import - resolves a circular import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 
+from tests._fake_storage import patch_storage
 from tests._pg_fixture import blank_session, unique_code
 
 FIXTURE_PDF = Path(__file__).parent / "fixtures" / "dealer_kit" / "flyer_sample.pdf"
@@ -108,12 +109,16 @@ def _seed_roles(db) -> None:
 
 
 @pytest.fixture
-def api():
+def api(monkeypatch):
     """The route stack with a switchable principal AND a switchable company.
 
     The company has to move because "another company's reading is 404" cannot be
     asserted from a fixture pinned to one - and the pin is necessary, since the
     real resolver reads a bearer token these tests do not send.
+
+    Storage is faked even though nothing here asserts on a stored byte: an upload
+    stores the flyer's banners, and unfaked that is a live PUT to the real bucket
+    (see tests/_fake_storage.py).
     """
     from app.dependencies import (
         get_current_user,
@@ -125,6 +130,7 @@ def api():
 
     with blank_session() as db:
         _seed_roles(db)
+        patch_storage(monkeypatch)
         here = {"company": _SORENTO}
 
         def _override_get_db():
@@ -467,6 +473,14 @@ class TestTheReportIsDerived:
         Only the codes are needed to MATCH, so a serialiser that dropped the
         printed rows would pass every other test here and then seed a catalogue
         with no layout at all.
+
+        Two fields are cleared before comparing, and only two: where each page's
+        banner ended up in the asset library, and how it should be laid out. A
+        plain extraction cannot know either - they are filled in by the upload,
+        once the bytes have actually been stored - so keeping them in would
+        assert that the reading equals something it is deliberately richer than.
+        Everything the serialiser IS responsible for (cards, printed rows,
+        artwork geometry and crop, headings) is still compared whole.
         """
         db, _as, _scope = api
 
@@ -478,8 +492,16 @@ class TestTheReportIsDerived:
             reading_id = _upload(c).json()["id"]
 
         row = db.query(FlyerReadingRecord).filter(FlyerReadingRecord.id == reading_id).one()
+        stored = to_reading(row)
 
-        assert to_reading(row) == extract_flyer(_pdf_bytes())
+        # The upload really did bind some artwork, or clearing it below would
+        # quietly turn this into a weaker test than it looks.
+        assert any(page.banner_asset_id for page in stored.pages)
+        for page in stored.pages:
+            page.banner_asset_id = None
+            page.banner_fit = None
+
+        assert stored == extract_flyer(_pdf_bytes())
 
 
 # --------------------------------------------------------------------------- #

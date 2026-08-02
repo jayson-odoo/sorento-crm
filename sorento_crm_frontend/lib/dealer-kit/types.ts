@@ -95,9 +95,28 @@ export interface Block {
   hideInPrint?: boolean;
 }
 
+/** How a bound background asset is laid out behind its section. */
+export type SectionBackgroundFit = 'width' | 'cover';
+
 export interface SectionStyle {
   background?: string;
   paddingY?: 'none' | 'sm' | 'md' | 'lg' | 'xl';
+  /**
+   * The artwork behind this section, as an asset ID and never a URL.
+   *
+   * An ID because the file gets renamed, re-signed and (one day) migrated
+   * between storage providers, and none of those may break a page that has
+   * already been published. The reader's URL is resolved at request time and
+   * arrives alongside the document in `assets`.
+   */
+  backgroundAssetId?: string;
+  /**
+   * A flyer's header band is roughly 4:1 and belongs across the top at its own
+   * proportions; artwork that WAS the whole printed page fills the section.
+   * Sections are as tall as their content, so telling a band to cover magnifies
+   * it until only a smear shows.
+   */
+  backgroundFit?: SectionBackgroundFit;
 }
 
 export interface Section {

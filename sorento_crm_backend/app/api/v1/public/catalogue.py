@@ -30,7 +30,7 @@ from app.models.base import company_scope
 from app.models.company import Company
 from app.models.dealer_kit import Collection
 from app.schemas.dealer_kit import PublicPage
-from app.services.dealer_kit import collection_service
+from app.services.dealer_kit import asset_service, collection_service
 from app.services.dealer_kit import page_service as svc
 from app.services.dealer_kit.viewer import ANONYMOUS
 from app.services.error_handler import AppException
@@ -130,6 +130,10 @@ def read_published_page(company_code: str, slug: str, db: Session = Depends(get_
                 )
 
         templates = _tile_templates_for(db, doc)
+        # Assets are company-scoped too, so they resolve INSIDE the pinned
+        # scope - outside it this comes back empty and every seeded section
+        # silently loses its banner.
+        assets = asset_service.background_urls(db, doc)
 
     return PublicPage(
         name=live["name"],
@@ -139,4 +143,5 @@ def read_published_page(company_code: str, slug: str, db: Session = Depends(get_
             key: [_tile_out(tile) for tile in tiles] for key, tiles in collections.items()
         },
         tile_templates=templates,
+        assets=assets,
     )

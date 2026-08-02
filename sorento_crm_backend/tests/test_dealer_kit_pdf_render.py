@@ -23,6 +23,22 @@ from app.tasks import dealer_kit_export_tasks as task
 from tests._pg_fixture import unique_code
 
 PRINT_BASE = os.environ.get("DEALER_KIT_PRINT_BASE_URL", "http://localhost:3020")
+
+# ONE statement of where the frontend is, for the probe below AND for the task
+# that actually drives the browser.
+#
+# There were two, and they disagreed. This file defaults to :3020; the task
+# defaults to :3000 (`dealer_kit_export_tasks.DEFAULT_PRINT_BASE`) and reads the
+# variable from `os.environ`, which pytest never populates - nothing in the test
+# path calls `load_dotenv`, so the value sitting in `.env` is invisible here. The
+# result was the worst possible shape: the probe found :3020 up and let the tests
+# run, then every render went to :3000, found nothing, and failed 60 seconds
+# later with "timed out waiting for [data-dk-print-ready='true']" - which reads
+# like a broken print page rather than a URL nobody set. All seven failed that
+# way and none of them was about the code under test.
+#
+# `setdefault`, so an explicit variable still wins.
+os.environ.setdefault("DEALER_KIT_PRINT_BASE_URL", PRINT_BASE)
 _USER = "00000000-0000-4000-8000-00000000e001"
 
 # The one way to say "I know, and I am choosing not to run them".

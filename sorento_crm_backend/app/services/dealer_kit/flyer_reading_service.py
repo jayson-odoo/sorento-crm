@@ -27,12 +27,15 @@ returns 202 with a row to watch, exactly as the catalogue PDF export does.
 from __future__ import annotations
 
 import hashlib
+import logging
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.dealer_kit import FlyerReadingRecord
+from app.services.dealer_kit import asset_service
 from app.services.dealer_kit.flyer_extraction import (
+    UNCROPPED,
     EncryptedFlyerError,
     FlyerArtwork,
     FlyerCard,
@@ -43,6 +46,8 @@ from app.services.dealer_kit.flyer_extraction import (
 )
 from app.services.dealer_kit.flyer_matching import MatchReport, match_reading
 from app.services.error_handler import AppException
+
+logger = logging.getLogger(__name__)
 
 # The ceiling on an uploaded flyer.
 #
@@ -105,6 +110,12 @@ def _page_json(page: FlyerPage) -> dict:
         "width": page.width,
         "height": page.height,
         "heading": page.heading,
+        # Where the page's banner ended up in the asset library, and how a
+        # section should lay it out. The BYTES are never in here: they went to
+        # storage, and a document binds an id so renaming the file cannot break
+        # a published page (AC-D3).
+        "banner_asset_id": page.banner_asset_id,
+        "banner_fit": page.banner_fit,
         "cards": [_card_json(card) for card in page.cards],
         # Rows reference their cards by code rather than repeating them. A code
         # is unique within a page (the extractor dedupes), and one copy of a card
@@ -120,6 +131,10 @@ def _page_json(page: FlyerPage) -> dict:
                 "width_pct": art.width_pct,
                 "height_pct": art.height_pct,
                 "xref": art.xref,
+                # Which part of the source image was on the page. Kept so the
+                # reading says what was cut and why, rather than only what
+                # survived.
+                "crop": list(art.crop),
             }
             for art in page.artwork
         ],
@@ -157,6 +172,8 @@ def deserialise(payload: dict) -> FlyerReading:
             width=entry["width"],
             height=entry["height"],
             heading=entry.get("heading"),
+            banner_asset_id=entry.get("banner_asset_id"),
+            banner_fit=entry.get("banner_fit"),
         )
         page.cards = cards
         page.grids = [
@@ -173,6 +190,9 @@ def deserialise(payload: dict) -> FlyerReading:
                 width_pct=raw["width_pct"],
                 height_pct=raw["height_pct"],
                 xref=raw["xref"],
+                # Rows written before S7.5 have no crop, and "the whole image"
+                # is what they meant.
+                crop=tuple(raw.get("crop") or UNCROPPED),  # type: ignore[arg-type]
             )
             for raw in entry.get("artwork", [])
         ]
@@ -240,7 +260,11 @@ def create_reading(
     locked file and upload it again.
     """
     try:
-        reading = extract_flyer(data)
+        # WITH the artwork this time. The upload is the one moment the PDF's
+        # bytes exist in this process - the reading deliberately keeps the
+        # structure and not the file - so if the banners are not lifted out
+        # here, nothing later can lift them out at all.
+        reading = extract_flyer(data, with_artwork_images=True)
     except EncryptedFlyerError as exc:
         raise AppException(
             status_code=400,
@@ -260,6 +284,11 @@ def create_reading(
             code="FLYER_NOT_A_PDF",
         ) from exc
 
+    # Before the record, and inside the SAME transaction: the ids the banners
+    # come back with are serialised INTO ``reading_json`` below, so an asset
+    # committed without its reading would be a library row nothing points at.
+    _store_banners(db, reading, filename=filename, user_id=user_id)
+
     record = FlyerReadingRecord(
         filename=(filename or "flyer.pdf")[:255],
         byte_size=len(data),
@@ -271,6 +300,63 @@ def create_reading(
     db.commit()
     db.refresh(record)
     return record
+
+
+def _store_banners(
+    db: Session,
+    reading: FlyerReading,
+    *,
+    filename: Optional[str],
+    user_id: Optional[str],
+) -> None:
+    """Put each page's banner in the asset library and note where it went.
+
+    Best-effort per page, deliberately. A storage outage costs the backgrounds
+    and nothing else: the reading is what a seed is BUILT from, and throwing
+    away a 36 page extraction because a bucket was briefly unreachable would be
+    a far worse trade than a draft somebody has to re-upload for its artwork.
+    The banners are also the only images stored - one row per flyer page that
+    has one, not one per picture on the paper, or a library a human is supposed
+    to browse would fill with product shots.
+
+    Each attempt gets its own SAVEPOINT, and that is the whole point rather than
+    a detail. "Best-effort" has to mean the caller is no worse off than if the
+    effort had never been made, and a bare ``db.rollback()`` in the handler
+    breaks that promise in the loudest possible way: it throws away everything
+    the caller has written and not yet committed, so a request that goes on to
+    return 201 has silently discarded rows it already wrote. A savepoint undoes
+    the half-written asset and nothing else, which is what the word meant.
+
+    (The project's usual rule is to commit before a best-effort side effect
+    rather than reach for ``begin_nested``. That rule is for effects that happen
+    AFTER the main operation, where there is a natural commit point to sit
+    behind. This one runs in the MIDDLE of building a reading, where there is no
+    such point and a savepoint is the only tool that undoes a part.)
+    """
+    label = (filename or "flyer.pdf").rsplit(".", 1)[0]
+
+    for page in reading.pages:
+        if page.banner is None:
+            continue
+        try:
+            with db.begin_nested():
+                asset = asset_service.create_from_bytes(
+                    db,
+                    content=page.banner.image,
+                    name=f"{label} page {page.number} banner",
+                    mime=page.banner.mime,
+                    tags=["flyer", "banner"],
+                    user_id=user_id,
+                )
+        except Exception as exc:  # noqa: BLE001 - artwork is never worth the reading
+            logger.warning(
+                "Flyer banner for page %s of %s could not be stored: %s",
+                page.number,
+                label,
+                exc,
+            )
+            continue
+        page.banner_asset_id = asset.id
 
 
 def get_reading(db: Session, reading_id: str) -> FlyerReadingRecord:

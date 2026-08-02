@@ -149,6 +149,13 @@ class PublicPage(BaseModel):
     tile_templates: dict[str, list[str]] = Field(
         default_factory=dict, serialization_alias="tileTemplates"
     )
+    # assetId -> signed URL, for the artwork sections use as a background. Sent
+    # WITH the page rather than fetched per section: the same renderer is
+    # printed by headless Chromium, which declares itself finished when the
+    # network goes idle, and a background that arrives after that is a blank
+    # band in a PDF nobody re-checks. An asset that cannot be signed is absent,
+    # never a URL the CDN will answer 403 to.
+    assets: dict[str, str] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

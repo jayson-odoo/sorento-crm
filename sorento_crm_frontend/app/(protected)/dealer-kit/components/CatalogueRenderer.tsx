@@ -132,6 +132,49 @@ export interface RenderedCatalogueData {
   collections?: Record<string, ResolvedTile[]>;
   /** tileTemplateId -> the fields that design binds. */
   tileTemplates?: Record<string, TileField[]>;
+  /** assetId -> signed URL for the section backgrounds this document binds. */
+  assets?: Record<string, string>;
+}
+
+/**
+ * The surface a section is painted on, artwork included.
+ *
+ * The artwork is a BACKGROUND and the heading stays a text block on top of it.
+ * Keeping the heading inside the bitmap, where the designer originally put it,
+ * would look identical in a screenshot and would be a heading nobody can
+ * correct, search for or translate - and the flyer extractor is known to misread
+ * them (one page of the real flyer reads "Transforming Your" where the paper
+ * says "BATHTUB COLLECTION").
+ *
+ * An asset with no entry in `assets` renders as no artwork at all. The server
+ * signs strictly and omits anything it could not sign, because the section has a
+ * designed state for "no picture" and none whatsoever for "a picture the CDN
+ * answers 403 to".
+ */
+function sectionSurface(
+  section: Section,
+  assets: Record<string, string> | undefined,
+): React.CSSProperties | undefined {
+  const base = section.style.background ? { background: section.style.background } : undefined;
+
+  const assetId = section.style.backgroundAssetId;
+  const url = assetId ? assets?.[assetId] : undefined;
+  if (!url) return base;
+
+  const cover = section.style.backgroundFit === 'cover';
+  return {
+    // The plain background stays underneath, and stays FIRST: `background` is a
+    // shorthand, so declaring it after the image would reset the image away.
+    ...base,
+    backgroundImage: `url(${JSON.stringify(url)})`,
+    // `100%` is the one-value form of "full width, height from the aspect
+    // ratio". Written as one value rather than `100% auto` because that is what
+    // every CSSOM round trip gives back anyway, and two spellings of one
+    // declaration is one more than a test can assert.
+    backgroundSize: cover ? 'cover' : '100%',
+    backgroundRepeat: 'no-repeat',
+    backgroundPosition: cover ? 'center center' : 'center top',
+  } as React.CSSProperties;
 }
 
 function bindingFor(block: Block, data: RenderedCatalogueData) {
@@ -193,7 +236,7 @@ function RenderedSection({
   return (
     <section
       className={cn('w-full', padding)}
-      style={section.style.background ? { background: section.style.background } : undefined}
+      style={sectionSurface(section, data.assets)}
       data-dk-section-id={section.id}
       aria-label={section.name}
     >
@@ -221,6 +264,7 @@ export function CatalogueRenderer({
   className,
   resolvedCollections,
   tileTemplates,
+  assets,
   /**
    * Which breakpoint this rendering IS.
    *
@@ -246,6 +290,15 @@ export function CatalogueRenderer({
   className?: string;
   resolvedCollections?: Record<string, ResolvedTile[]>;
   tileTemplates?: Record<string, TileField[]>;
+  /**
+   * assetId -> signed URL, resolved by the server and sent WITH the document.
+   *
+   * Not fetched per section on purpose: this same renderer is printed by
+   * headless Chromium, which decides it has finished when the page says so, and
+   * artwork that starts loading after that prints as a blank band in a PDF
+   * nobody re-checks.
+   */
+  assets?: Record<string, string>;
   breakpoint?: Breakpoint | 'responsive';
 }) {
   // Responsive placement is chosen per width by CSS, but density is data and
@@ -254,6 +307,7 @@ export function CatalogueRenderer({
   const data: RenderedCatalogueData = {
     collections: resolvedCollections,
     tileTemplates,
+    assets,
   };
   if (sections.length === 0) {
     // Published but empty is a real state, and it says so rather than rendering

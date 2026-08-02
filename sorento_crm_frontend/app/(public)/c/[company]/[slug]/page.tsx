@@ -124,6 +124,7 @@ export default function PublicCataloguePage({
           sections={status.page.doc.sections ?? []}
           resolvedCollections={status.page.collections}
           tileTemplates={status.page.tileTemplates}
+          assets={status.page.assets}
         />
       </CataloguePickingProvider>
 

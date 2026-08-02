@@ -280,3 +280,105 @@ describe('where a fold is allowed to land', () => {
     expect(css).toMatch(/\[data-dk-tile\]\s*{[^}]*break-inside:\s*avoid/);
   });
 });
+
+/**
+ * The flyer's own artwork, on paper.
+ *
+ * A seeded section carries its banner as a section BACKGROUND, which is a CSS
+ * `background-image` and therefore not an `<img>`. That distinction is the whole
+ * risk: the readiness flag was counting `document.images`, which does not
+ * include backgrounds, so the largest picture on the page was the one thing
+ * nothing waited for - and a background that arrives after the worker has
+ * printed is a blank band in a PDF nobody re-checks.
+ */
+describe('the printed section artwork', () => {
+  const BANNER = 'https://cdn.test/banner.jpg';
+
+  function bannerPayload(assets: Record<string, string> = { a1: BANNER }) {
+    const base = payload(['name', 'price']);
+    return {
+      ...base,
+      doc: {
+        ...base.doc,
+        sections: [
+          {
+            ...base.doc.sections[0],
+            style: {
+              background: 'transparent',
+              backgroundAssetId: 'a1',
+              backgroundFit: 'width',
+            },
+          },
+        ],
+      },
+      assets,
+    };
+  }
+
+  /** An `Image` that never loads on its own, so a test can decide when it does. */
+  class PendingImage {
+    static created: PendingImage[] = [];
+    complete = false;
+    src = '';
+    private handlers: Record<string, Array<() => void>> = {};
+
+    constructor() {
+      PendingImage.created.push(this);
+    }
+
+    addEventListener(type: string, handler: () => void) {
+      (this.handlers[type] ??= []).push(handler);
+    }
+
+    fire(type: string) {
+      (this.handlers[type] ?? []).forEach((handler) => handler());
+    }
+  }
+
+  function stubImageAndFetch(assets?: Record<string, string>) {
+    PendingImage.created = [];
+    vi.stubGlobal('Image', PendingImage);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: async () => bannerPayload(assets) }),
+    );
+  }
+
+  it('paints the banner the payload signed behind its section', async () => {
+    stubImageAndFetch();
+
+    const { container } = await renderPrintPage();
+    const section = container.querySelector('[data-dk-section-id="s1"]') as HTMLElement;
+
+    expect(section.style.backgroundImage).toContain(BANNER);
+    expect(section.style.backgroundSize).toBe('100%');
+  });
+
+  it('does not declare itself ready until the background has loaded', async () => {
+    stubImageAndFetch();
+
+    const { container } = await renderPrintPage();
+    const main = container.querySelector('main[data-dk-print-ready]') as HTMLElement;
+
+    expect(PendingImage.created).toHaveLength(1);
+    expect(PendingImage.created[0].src).toBe(BANNER);
+    expect(main.dataset.dkPrintReady).toBe('false');
+
+    await act(async () => PendingImage.created[0].fire('load'));
+
+    expect(main.dataset.dkPrintReady).toBe('true');
+  });
+
+  it('is ready anyway when the document binds no artwork', async () => {
+    // An asset the server could not sign is ABSENT from the map rather than a
+    // URL the CDN answers 403 to. Nothing to wait for, and the section falls
+    // back to its plain background.
+    stubImageAndFetch({});
+
+    const { container } = await renderPrintPage();
+    const main = container.querySelector('main[data-dk-print-ready]') as HTMLElement;
+
+    expect(PendingImage.created).toHaveLength(0);
+    expect(main.dataset.dkPrintReady).toBe('true');
+  });
+});

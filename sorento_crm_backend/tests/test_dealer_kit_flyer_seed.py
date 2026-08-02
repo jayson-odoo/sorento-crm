@@ -46,6 +46,7 @@ from fastapi.testclient import TestClient
 # MUST be first app import - resolves a circular import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 
+from tests._fake_storage import patch_storage
 from tests._pg_fixture import blank_session, unique_code
 
 FIXTURE_PDF = Path(__file__).parent / "fixtures" / "dealer_kit" / "flyer_sample.pdf"
@@ -134,8 +135,13 @@ def _seed_roles(db) -> None:
 
 
 @pytest.fixture
-def api():
-    """The route stack with a switchable principal AND a switchable company."""
+def api(monkeypatch):
+    """The route stack with a switchable principal AND a switchable company.
+
+    Storage is faked even though nothing here asserts on a stored byte: seeding
+    starts with an upload, an upload stores the flyer's banners, and unfaked that
+    is a live PUT to the real bucket (see tests/_fake_storage.py).
+    """
     from app.dependencies import (
         get_current_user,
         get_current_user_or_api_key,
@@ -146,6 +152,7 @@ def api():
 
     with blank_session() as db:
         _seed_roles(db)
+        patch_storage(monkeypatch)
         here = {"company": _SORENTO}
 
         def _override_get_db():

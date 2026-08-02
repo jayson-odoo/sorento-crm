@@ -10,7 +10,7 @@
  * CONTRACT
  *
  * GET /api/v1/public/c/{companyCode}/{slug}
- *     -> { name, slug, doc, collections, tileTemplates }
+ *     -> { name, slug, doc, collections, tileTemplates, assets }
  *
  * 404 covers all three of "no such company", "no such page" and "not
  * published" - on purpose. An anonymous reader does not get to tell them apart.
@@ -29,6 +29,14 @@ export interface PublishedCatalogue {
    */
   collections?: Record<string, ResolvedTile[]>;
   tileTemplates?: Record<string, TileField[]>;
+  /**
+   * assetId -> signed URL for the section backgrounds this document binds.
+   *
+   * Signed SERVER-side and strictly: an asset that could not be signed is absent
+   * from the map rather than present as a URL the CDN answers 403 to, and the
+   * renderer treats absent as "no artwork" - which is a state the design has.
+   */
+  assets?: Record<string, string>;
 }
 
 export class CatalogueNotFoundError extends Error {

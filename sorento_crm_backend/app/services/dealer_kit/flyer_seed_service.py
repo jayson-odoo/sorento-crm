@@ -351,7 +351,7 @@ def _section(
             # page number rather than left blank: a section a reviewer cannot
             # place is worse than one with a dull name.
             "name": flyer_page.heading or f"Page {flyer_page.number}",
-            "style": {"background": "transparent", "paddingY": "lg"},
+            "style": _section_style(flyer_page),
             "blocks": blocks,
             "layouts": _layouts(placements),
             # Uniformly, including on the first section: the paginator already
@@ -361,6 +361,31 @@ def _section(
         },
         collections,
     )
+
+
+def _section_style(flyer_page: FlyerPage) -> dict:
+    """The section's own surface, including the flyer's banner behind it (AC-F3).
+
+    The banner is a BACKGROUND and the heading stays a block on top of it. It
+    would be less work to keep the heading where the designer put it - inside
+    the bitmap - and the result would look identical in a screenshot. It would
+    also be a heading nobody can correct, search for or translate, and this
+    extractor is KNOWN to misread headings: fixture page 2 reads "Transforming
+    Your" where the paper says "BATHTUB COLLECTION". A misread block is a five
+    second fix on the review screen; a misread bitmap is a re-export.
+
+    ``backgroundAssetId`` is an id, never a URL, so re-signing or renaming the
+    file cannot break a published page.
+    """
+    style = {"background": "transparent", "paddingY": "lg"}
+    if flyer_page.banner_asset_id:
+        style["backgroundAssetId"] = flyer_page.banner_asset_id
+        # A band lies across the top at its own proportions; artwork that was
+        # the whole printed page fills the section. A section is as tall as its
+        # content, so telling a 4:1 header band to cover magnifies it until only
+        # a smear of it shows.
+        style["backgroundFit"] = flyer_page.banner_fit or "width"
+    return style
 
 
 def _columns(printed: int) -> dict:

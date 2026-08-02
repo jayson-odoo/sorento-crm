@@ -18,7 +18,12 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.base import company_scope
 from app.models.dealer_kit import Collection, Page
-from app.services.dealer_kit import collection_service, export_service, render_token
+from app.services.dealer_kit import (
+    asset_service,
+    collection_service,
+    export_service,
+    render_token,
+)
 from app.services.error_handler import AppException
 
 router = APIRouter()
@@ -119,6 +124,11 @@ def read_print_payload(
         # pinned scope - outside it this silently returns {} and every tile
         # falls back to a default field list.
         templates = _tile_templates_for(db, doc)
+        # Section backgrounds, signed for this render. Sent with the payload
+        # so the print page never fetches an image of its own: the worker
+        # waits on one ready flag, and a background loaded after it prints
+        # as a blank band.
+        assets = asset_service.background_urls(db, doc)
 
     return {
         "pageName": page.name,
@@ -126,6 +136,8 @@ def read_print_payload(
         "version": inputs["version"],
         "audience": inputs["audience"],
         "doc": doc,
+        # assetId -> signed URL for every section background on the page.
+        "assets": assets,
         # collectionId -> tiles, already priced for this audience.
         "collections": {
             collection_id: [
