@@ -291,8 +291,13 @@ def test_every_company_id_table_is_registered():
         f"Tables have a company_id column but are not CompanyScopedMixin subclasses "
         f"(add the mixin or allowlist them): {offenders}"
     )
-    # Foundation slice ships exactly 34 owned tables (PLAN §4.1).
-    assert len(owned) == 34, f"expected 34 owned tables, found {len(owned)}: {sorted(owned)}"
+    # Foundation slice ships exactly 34 owned tables (PLAN §4.1). After-sales S2
+    # adds the 35th, `warranty_policies`, deliberately (AC-D16): `companies` holds
+    # both Sorento and Mocha and the two brands publish DIFFERENT durations for the
+    # same product kinds, so a policy row that cannot say which company published it
+    # would answer a Sorento customer with Mocha's terms. The count is a tripwire, so
+    # it stays an exact equality: raising it is a decision, never a fix.
+    assert len(owned) == 35, f"expected 35 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------

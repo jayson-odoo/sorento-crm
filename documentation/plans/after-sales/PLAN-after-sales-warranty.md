@@ -354,12 +354,23 @@ CREATE TABLE warranty_kind_rules (          -- how a product resolves to a Kind
   match_value text, priority int            -- most specific wins
 );
 
-CREATE TABLE warranty_policies (            -- versioned, dated
+CREATE TABLE warranty_policies (            -- versioned, dated, COMPANY-SCOPED (AC-D16)
   id uuid PRIMARY KEY, version varchar(32),           -- 'v15'
-  effective_from date, effective_to date,
+  effective_from date NOT NULL, effective_to date,    -- both ends inclusive
   source_attachment_id uuid REFERENCES attachments(id),  -- the PDF, for Req #12
-  policy_text text                          -- extracted, what the AI is restricted to
+  policy_text text,                         -- extracted, what the AI is restricted to
+  company_id uuid NOT NULL REFERENCES companies(id),  -- AC-D16, see the note below
+  UNIQUE (company_id, version)
 );
+-- company_id is AC-D16 and was NOT in the original plan. `companies` holds both Sorento and Mocha
+-- and the two publish DIFFERENT durations for the same product kinds (flushing fittings 5y vs 3y,
+-- seat cover 2y vs 1y, SS304 kitchen sink 25y vs 10y, no booster pump at all). A policy row that
+-- cannot say which company published it answers a Sorento customer with Mocha's terms. Resolution
+-- is "the policy in force FOR THIS COMPANY on that date", enforced by CompanyScopedMixin, so
+-- `resolve` never filters by company by hand. Deliberately NO Sorento server-default (unlike
+-- migration 306's idiom): a raw insert that forgets the company must fail loudly, not silently
+-- become Sorento. `warranty_terms` is NOT separately scoped - it is only reachable via policy_id,
+-- and a second copy of the same fact can disagree with the first.
 
 CREATE TABLE warranty_terms (
   id uuid PRIMARY KEY, policy_id uuid REFERENCES warranty_policies(id),
@@ -468,6 +479,34 @@ Never returns one answer for a product. A water closet reports ceramic body (lif
 | Sensor Tap, `Sensor Eye`, bought 2024-06-01 | expired 2025-06-01, **installation excluded** -> callout chargeable |
 
 Postgres only. No sqlite - a mostly-zero UUID gets coerced to an integer under NUMERIC affinity. Use `tests/_pg_fixture.py` `blank_session()`, seed real FK targets, and scope every cleanup `DELETE` to marker rows (the local DB is a copy of production data).
+
+> **Build status, 2026-08-02: S2 is COMPLETE. 79 gate tests and 12 guards green.**
+>
+> BLOCKER 1 is cleared. Warranty Policy v15 was supplied by the user and is committed at
+> `sorento_crm_backend/scripts/data/warranty_policy_sorento_v15.pdf` plus its extracted text.
+> `scripts/seed_warranty_policy_v15.py` transcribes clause 6 item by item: **31 product kinds, the
+> v15 policy row with its full text, 41 terms and 2 kind rules.** Every duration, lifetime flag,
+> installation answer, qualification and exclusion is read off the document, never off the golden
+> set. Each Kind carries the document's verbatim `Product(s)` cell in the seed so a row can be
+> checked against the PDF in one step, and the document's own item numbering is the `sort_order`.
+>
+> BLOCKER 2 is cleared by a DATA decision, as proposed: **v15 is RETROACTIVE** (user ruling,
+> 2026-08-02), seeded `effective_from = 2000-01-01` with `effective_to` NULL, so the 2015 golden row
+> has a policy in force. A later version must CLOSE this window rather than edit the row.
+>
+> Six things the document does not answer are printed by the seed on every run and are S3's or
+> Sorento's, not S2's: kind rules for 29 of the 31 kinds (clause 6 states the mapping for only item
+> 9's *Honeycomb Series* and item 10's model list, both of which ARE seeded); item 11's `Product(s)`
+> cell, which ends at "Concealed Shower Mixer & Cold" and reads as truncated; item 23, which states
+> no installation answer at all (set to excluded to match every comparable fitting row, and the one
+> installation value in the seed not read off a cell); `consumer_label` / `consumer_icon` chooser
+> copy; the defect vocabulary beyond the four clause 6 and the golden set name; and whether a v16
+> exists.
+>
+> One seeded label differs from the document by one word: the Water Closet's third part is
+> `Seat Cover Soft Close` (AC-D4's name, which the gate, the CS panel and the portal all key on)
+> where the document's cell reads "Seat Cover Soft Close System". Same part, same 2 years, same
+> installation answer.
 
 ### Policy Q&A (AC-D14, BRD Req #12)
 

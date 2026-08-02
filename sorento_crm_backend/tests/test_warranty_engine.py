@@ -1145,9 +1145,19 @@ def test_month_arithmetic_clamps_and_never_rolls_forward(db, purchase, months, e
 
 
 def test_a_lifetime_term_never_expires(db):
-    """AC-D4. "Lifetime" is not a number of months and must not be turned into one."""
+    """AC-D4. "Lifetime" is not a number of months and must not be turned into one.
+
+    The fixture policy is backdated to 1990 so the 1995 purchase sits INSIDE a window.
+    As first written it used the default `effective_from` of 2000-01-01, which put the
+    purchase before its own policy and made this test demand `covered` for exactly the
+    shape `test_a_purchase_date_in_no_policy_window_is_unknown_not_uncovered` demands
+    `unknown` for. No implementation could satisfy both. The point here is that lifetime
+    survives 65 years, not that a purchase outside every window is covered.
+    """
     resolve = _resolve()
-    kind, _, _ = _simple_case(db, is_lifetime=True, duration_months=None)
+    kind, _, _ = _simple_case(
+        db, effective_from=date(1990, 1, 1), is_lifetime=True, duration_months=None
+    )
     entry = _only(
         resolve(db, kind_id=kind.id, purchase_date=date(1995, 5, 5), as_of=date(2060, 1, 1))
     )
