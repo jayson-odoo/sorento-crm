@@ -87,6 +87,96 @@ def test_incoming_list_one_item_per_line_with_attachment():
     assert out["intro"] == "I have attached the file(s) below."
 
 
+def test_incoming_list_allocation_flags_and_unallocated_field():
+    """Allocation signal: MCP owns the truth (booleans + number), n8n owns the badge.
+
+    Line A is fully allocated, B carries no allocation at all, C is partially
+    allocated (backend gap = 40). The two flags are mutually exclusive.
+    """
+    out = env("crm_incoming_stock_list", {
+        "data": [{
+            "shipment_number": "OOLKSF6417",
+            "estimated_arrival_date": "2026-01-24",
+            "lines": [
+                {"product_code": "A", "remaining_incoming_quantity": 100,
+                 "unallocated_quantity": None,
+                 "warehouse_allocations": [{"warehouse_code": "BRW", "allocated_quantity": 100}]},
+                {"product_code": "B", "remaining_incoming_quantity": 34,
+                 "unallocated_quantity": None, "warehouse_allocations": []},
+                {"product_code": "C", "remaining_incoming_quantity": 40,
+                 "unallocated_quantity": 40,
+                 "warehouse_allocations": [{"warehouse_code": "BRW", "allocated_quantity": 60}]},
+            ],
+        }],
+    })
+    a, b, c = out["items"]
+    assert a["flags"]["unallocated"] is False
+    assert a["flags"]["partially_allocated"] is False
+    assert "Unallocated Quantity" not in {f["label"] for f in a["fields"]}
+
+    assert b["flags"]["unallocated"] is True
+    assert b["flags"]["partially_allocated"] is False
+    # Pending allocation needs no number — the badge alone carries the signal.
+    assert "Unallocated Quantity" not in {f["label"] for f in b["fields"]}
+
+    assert c["flags"]["unallocated"] is False
+    assert c["flags"]["partially_allocated"] is True
+    fc = {f["label"]: f["value"] for f in c["fields"]}
+    assert fc["Unallocated Quantity"] == 40
+    # Existing flags survive unchanged.
+    assert c["flags"]["discontinued"] is False
+
+
+def test_incoming_list_missing_gap_key_claims_no_partial():
+    """Forward-compat: an older backend omits `unallocated_quantity`.
+
+    Allocations exist, so `unallocated` is false; without the gap the presenter
+    must NOT guess a partial from `remaining_incoming_quantity`.
+    """
+    out = env("crm_incoming_stock_list", {
+        "data": [{
+            "shipment_number": "SH1",
+            "lines": [
+                {"product_code": "A", "remaining_incoming_quantity": 100,
+                 "warehouse_allocations": [{"warehouse_code": "BRW", "allocated_quantity": 60}]},
+            ],
+        }],
+    })
+    flags = out["items"][0]["flags"]
+    assert flags["unallocated"] is False
+    assert flags["partially_allocated"] is False
+
+
+def test_incoming_by_product_allocation_flags():
+    out = env("crm_incoming_stock_by_product", {
+        "data": [{
+            "product_code": "A", "product_name": "A",
+            "shipments": [
+                {"shipping_container_number": "C1", "remaining_incoming_quantity": 34,
+                 "unallocated_quantity": None, "warehouse_allocations": []},
+                {"shipping_container_number": "C2", "remaining_incoming_quantity": 40,
+                 "unallocated_quantity": 25,
+                 "warehouse_allocations": [{"warehouse_code": "BRW", "allocated_quantity": 75}]},
+            ],
+        }],
+    })
+    first, second = out["items"]
+    assert first["flags"]["unallocated"] is True
+    assert second["flags"]["partially_allocated"] is True
+    assert {f["label"]: f["value"] for f in second["fields"]}["Unallocated Quantity"] == 25
+
+
+def test_incoming_shipments_carry_no_allocation_flags_set():
+    """Shipment-level rows have no allocations — both flags stay false."""
+    out = env("crm_incoming_stock_shipments", {
+        "data": [{"shipment_number": "SH1", "total_remaining_incoming_quantity": 90,
+                  "distinct_products_incoming": 2}],
+    })
+    flags = out["items"][0]["flags"]
+    assert flags["unallocated"] is False
+    assert flags["partially_allocated"] is False
+
+
 def test_promotions_header_only_with_pdf():
     out = env("crm_marketing_promotions_list", {
         "data": [{
