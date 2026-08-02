@@ -324,6 +324,80 @@ CRM-side. Putting the LLM in n8n forks the prompt registry and duplicates the re
 - **AC-D14** `[E2E][AI]` Given a policy question from a Consumer or Dealer, Then the AI answers **only** from the stored policy text, quoting it, and routes to Customer Service when the situation is ambiguous or outside the document (BRD Req #12).
 - **AC-D15** `[BE]` Given clause 17 (residential only, commercial and industrial excluded) and 23 of 50 existing Complaints being `reported_by_role`-adjacent `Project` cases, Then the restriction is **modelled but not enforced**, and the open question is flagged in the plan pending Sorento's ruling.
 
+### Group D corrections - after the red suite (2026-08-02)
+
+79 red, 12 guards green. Two findings BLOCK part of the slice; the rest are rulings.
+
+**BLOCKER 1 - the golden set is validated against a document nobody has supplied.**
+The plan's golden set cites "Warranty Policy v15". That document is **not in the repo, not in the
+`attachments` table, and not on disk.** The only warranty document that exists anywhere is the **Mocha
+Warranty Policy, Version 4, updated Jun 26** (`attachments.original_filename = 'Warranty Policy.pdf'`,
+stored on R2), and it **contradicts the golden set on most rows**:
+
+| product / part | golden set expects | Mocha v4 actually says |
+|---|---|---|
+| Water Closet, Flushing Fittings | 5 years (to 2030-10-16) | **3 years** |
+| Water Closet, Seat Cover Soft Close | 2 years (to 2027-10-16) | **1 year** |
+| Stainless Steel 304 Kitchen Sink | 25 years (to 2049-01-01) | **10 years** |
+| Booster Pump, registration bonus | 2y / 3y (clause 26) | **absent entirely** |
+| Water Closet, Ceramic Body | lifetime, crack + leak only, installation included | matches |
+| Sensor Eye | 1 year | matches |
+
+So the seed CANNOT be written faithfully, and the golden set cannot be trusted, until Sorento supplies
+v15. **No agent may invent a duration**: these are customer-facing legal terms and a wrong number tells a
+real person their claim is refused. The engine, the boundaries, the arithmetic and the tie-breaks are all
+independent of the numbers and are built now; the policy-data seed and the golden-value assertions stay
+RED until the document arrives. Red for a missing document is the honest state.
+
+- **AC-D16** `[BE][MIG]` **`warranty_policies` is COMPANY-SCOPED.** New, and the plan does not have it.
+  `companies` holds both `Sorento` and `Mocha`, and the table above proves the two brands publish
+  different durations for the same product kinds. A policy row that cannot say which company it belongs
+  to would answer a Sorento customer with Mocha's terms, silently and plausibly. Resolution is "the
+  policy in force **for this company** on that date". Retrofitting this after terms exist would mean
+  re-scoping live warranty data, which is why it lands before a single row is written.
+
+**BLOCKER 2 - AC-D6 versus the golden set, independent of which document wins.** AC-D6 judges
+entitlement by the policy in force **on the purchase date**, and five of seven golden rows are purchases
+from 2015, 2024 and 2025 while the policy is dated 2026. If `effective_from` is the publication date those
+rows fall in no window and the engine correctly answers `unknown`, so the slice fails its own acceptance
+test. Ruled: the fix is in the **data** (the earliest seeded policy is backdated far enough to judge the
+golden set), NOT in the algorithm. Clamping an out-of-range date to the nearest policy was explicitly
+rejected: it judges a 2015 purchase by 2026 terms, which is precisely what AC-D6 exists to forbid, and it
+makes a genuine calendar gap unreportable. **Sorento must confirm v15 is to be treated as retroactive.**
+
+- **AC-D17** `[BE]` **`unknown` is a distinct verdict from "not covered", and `resolve` NEVER returns an
+  empty sequence.** No policy in force yields one entry with `verdict='unknown'`. An empty list reads as
+  "no cover" to every caller, which refuses a customer over a data-entry hole. `no_term` (a policy exists
+  but is silent about this Kind) is a third, separate answer: `unknown` is a calendar gap to fix,
+  `no_term` is a scope question for Sorento, and collapsing them loses the only signal saying which.
+- **AC-D18** `[BE]` **AC-D5 is unsatisfiable as written: this codebase has no defect-type vocabulary.**
+  `covered_defect_type_ids` points at rows nothing creates. The nearest lookup set,
+  `complaints_defects_discovered`, enumerates **when** a defect was noticed ("Upon delivery after
+  unloading"), not **what** it is, so "crack and leak only" is inexpressible. S2 seeds the vocabulary it
+  points at, under key `complaints_defect_type`. Recorded for the record and not fixable in S2: **an
+  array column cannot carry a foreign key**, so deleting a defect type silently narrows every term that
+  referenced it.
+- **AC-D19** `[BE]` **The expiry date itself is covered**, and refusal starts the next day; the purchase
+  date is covered too. Month arithmetic **clamps to the last valid day and never rolls forward** (2023-01-31
+  +1m is 2023-02-28, never 3 March). Customer-favourable where the AC was silent.
+- **AC-D20** `[BE]` **Kind-rule precedence is a total order**, because ambiguous data must never raise (a
+  complaint would stop) and must never answer differently on two calls (CS and the portal would
+  disagree): explicit `priority` first, then `KIND_RULE_SPECIFICITY = ("model_list", "model_prefix",
+  "series", "category")`, then the longest matched value, then kind `code` ascending.
+- **AC-D21** `[BE]` **AC-D2's `series` match type has nothing to match on.** `products` carries code,
+  name, category and brand and no series column, so `series` is implemented as a case-insensitive
+  substring of the product name and is a **placeholder** until Sorento supplies real series data.
+- **AC-D13 is false on arrival**, exactly as AC-B9 was in S1, and gets the same treatment: a frozen
+  reader inventory (`app/schemas/product.py`, `app/schemas/marketing.py`,
+  `app/services/field_linkage/registry.py`) plus a module-scoped guard that the new warranty code never
+  mentions `warranty_months`. Migration 128 also registers it as a products list-query field, so the drop
+  slice retires a column-config **row**; a migration is history and is never edited.
+- **Reassigned to S2b**: AC-D8, AC-D10, AC-D11, AC-D12, AC-D14, and the E2E half of AC-D9. S2 covers
+  AC-D1 to AC-D7, the rule half of AC-D9, AC-D13 (narrowed), AC-D15 to AC-D21.
+- **Noted for S3, not S2's to fix:** the plan's S3 block references
+  `complaint_product_lines.defect_type_id uuid REFERENCES lookup_values(id)`. That table does not exist;
+  it is `lookup_options`.
+
 ## Group M - Requirements grilled 2026-08-01
 
 From `REQUIREMENTS-inbox-2026-08-01.md` (R1-R12, all resolved) and the CS discovery study
