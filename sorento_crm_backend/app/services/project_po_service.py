@@ -523,6 +523,40 @@ def serialize_pos(
     model_flags = _flag_count(ProjectPurchaseOrderLine.model_mismatch)
     price_flags = _flag_count(ProjectPurchaseOrderLine.price_mismatch)
 
+    # Which POs have been agreed, and which have a delivery programme agreed too. Two
+    # set lookups rather than a query per row: this list renders every PO on a project.
+    confirmed_po_ids: set = set()
+    scheduled_po_ids: set = set()
+    if ids:
+        from app.models.project_so import (
+            DeliverySchedule,
+            DeliveryScheduleVersion,
+            ProjectPOVersion,
+        )
+
+        confirmed_po_ids = {
+            row[0]
+            for row in db.query(ProjectPOVersion.purchase_order_id)
+            .filter(
+                ProjectPOVersion.purchase_order_id.in_(ids),
+                ProjectPOVersion.confirmed_at.isnot(None),
+            )
+            .all()
+        }
+        scheduled_po_ids = {
+            row[0]
+            for row in db.query(DeliverySchedule.purchase_order_id)
+            .join(
+                DeliveryScheduleVersion,
+                DeliveryScheduleVersion.delivery_schedule_id == DeliverySchedule.id,
+            )
+            .filter(
+                DeliverySchedule.purchase_order_id.in_(ids),
+                DeliveryScheduleVersion.confirmed_at.isnot(None),
+            )
+            .all()
+        }
+
     party_ids = {po.issuing_party_id for po in purchase_orders if po.issuing_party_id}
     parties: Dict[str, str] = {}
     if party_ids:
@@ -569,6 +603,13 @@ def serialize_pos(
                 "notes": po.notes,
                 "line_count": line_count,
                 "line_total": line_total,
+                # What the PO still needs before it can become sales orders. Sent from
+                # here rather than inferred on the screen, because the screen would
+                # have to load every version and every schedule of every PO to work it
+                # out, and a next step that is wrong is worse than none.
+                "status": po.status,
+                "po_confirmed": bool(confirmed_po_ids and po.id in confirmed_po_ids),
+                "schedule_confirmed": bool(scheduled_po_ids and po.id in scheduled_po_ids),
                 "model_mismatch_count": model_flags.get(po.id, 0),
                 "price_mismatch_count": price_flags.get(po.id, 0),
                 "v1_total": drift["v1_total"],

@@ -20,6 +20,7 @@ import {
   usePurchaseOrderMutations,
   usePurchaseOrders,
 } from '../../_shared/hooks/useProjects';
+import { POToSalesOrderStep } from './POToSalesOrderStep';
 import type { Project, ProjectPurchaseOrder } from '../../_shared/types/project.types';
 import { formatMyr } from './QuotationsPanel';
 import { PurchaseOrderDialog } from './PurchaseOrderDialog';
@@ -235,6 +236,16 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
                     )}
                   </div>
 
+                  {openId === po.id && project.can_edit && (
+                    <POToSalesOrderStep
+                      projectId={project.id}
+                      purchaseOrder={po}
+                      readiness={{
+                        poConfirmed: Boolean(po.po_confirmed),
+                        scheduleConfirmed: Boolean(po.schedule_confirmed),
+                      }}
+                    />
+                  )}
                   {openId === po.id && (
                     <div className="space-y-3 border-t border-border p-3">
                       <POIntakeVersionsStrip

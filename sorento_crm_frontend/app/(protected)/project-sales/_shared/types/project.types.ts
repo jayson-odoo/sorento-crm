@@ -755,6 +755,11 @@ export interface ProjectPurchaseOrder {
 
   line_count: number;
   line_total: string;
+  /** What still stands between this PO and its sales orders. Sent by the server, since
+   *  deriving it here would mean loading every version and schedule of every PO. */
+  status?: string | null;
+  po_confirmed?: boolean;
+  schedule_confirmed?: boolean;
   model_mismatch_count: number;
   price_mismatch_count: number;
 

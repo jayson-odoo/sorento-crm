@@ -1144,6 +1144,10 @@ class ProjectPurchaseOrderResponse(BaseModel):
 
     line_count: int = 0
     line_total: Decimal = Decimal("0")
+    # What still stands between this PO and its sales orders (see the serializer).
+    status: Optional[str] = None
+    po_confirmed: bool = False
+    schedule_confirmed: bool = False
     model_mismatch_count: int = 0
     price_mismatch_count: int = 0
 
