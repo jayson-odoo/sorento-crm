@@ -82,6 +82,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import pathlib
+import re
 import uuid
 from datetime import date, timedelta
 
@@ -856,14 +857,37 @@ def test_the_party_module_never_mentions_orders_salesman():
     The repo-wide version of this guard cannot pass today (the orders API serializes
     the column and the embedding worker embeds it - see
     ``test_after_sales_legacy_column_guard.py``), so the enforceable form is that the
-    NEW runtime module contains no reference to it at all.
+    NEW runtime module never READS one.
+
+    **Attribute-access and lookup-key patterns only**, matching the sibling guard file.
+    An earlier version banned the bare substrings, which made the gate contradict
+    itself: ``test_reported_by_role_mapping_is_a_pinned_case_table`` requires a public
+    function whose NAME contains ``customer_type``, so no single module could satisfy
+    both, and the implementation was pushed into a second module plus a star import to
+    keep a substring out of one file. A guard that dictates module boundaries is
+    measuring the wrong thing. Naming a legacy column is not reading it; reading it
+    looks like an attribute access or a dict key.
     """
     source = pathlib.Path(_party().__file__).read_text(encoding="utf-8")
-    for banned in ("salesman", "customer_type", "Complaint.customer_name", "complaint.customer_name"):
-        assert banned not in source, (
-            f"{PARTY_MODULE} references {banned!r}. Runtime resolution reads "
-            "customers.account_owner_user_id and nothing else; the legacy columns are "
-            "read-only for one release and then dropped."
+    banned_patterns = (
+        r"\bComplaint\.customer_type\b",
+        r"\bcomplaint\.customer_type\b",
+        r'"customer_type"',
+        r"'customer_type'",
+        r"\bComplaint\.customer_name\b",
+        r"\bcomplaint\.customer_name\b",
+        r'"customer_name"',
+        r"'customer_name'",
+        r"\bOrder\.salesman\b",
+        r"\.salesman\b",
+        r'"salesman"',
+        r"'salesman'",
+    )
+    for pattern in banned_patterns:
+        assert re.search(pattern, source) is None, (
+            f"{PARTY_MODULE} reads a legacy party column (matched {pattern!r}). Runtime "
+            "resolution reads customers.account_owner_user_id and nothing else; the "
+            "legacy columns are read-only for one release and then dropped."
         )
 
 

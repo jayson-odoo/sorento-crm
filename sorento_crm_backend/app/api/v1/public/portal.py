@@ -28,7 +28,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -346,6 +346,88 @@ def portal_impersonation_stop(
     )
     db.commit()
     return {"ended": True, "session_id": session_row.id}
+
+
+# ---------- The door: there isn't one (AC-B4, AC-B5, AC-B5a) ----------
+
+
+class PortalJourneyResponse(BaseModel):
+    """What track this contact is on, and (if any) the Dealer they report for.
+
+    Carries no identifiers on purpose. The portal is a frontend, so a uuid may not
+    appear in it, and this response is the one shape that covers the dealer case as
+    well as the consumer case - a customer_id leaked here is a raw uuid rendered on
+    a consumer's phone.
+    """
+
+    journey: str
+    dealer_name: Optional[str] = None
+
+
+class PortalOrderLookupPayload(BaseModel):
+    order_number: str = Field(..., min_length=1, max_length=100)
+
+    @field_validator("order_number")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        cleaned = (value or "").strip()
+        if not cleaned:
+            # A blank string is not a lookup, it is a scan of the orders table.
+            raise ValueError("order_number must not be blank.")
+        return cleaned
+
+
+class PortalOrderLookupResponse(PortalJourneyResponse):
+    matched: bool
+
+
+@router.get("/journey", response_model=PortalJourneyResponse)
+def portal_journey(
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Which journey this phone number is on. No question is ever asked (AC-B4).
+
+    Dealer staff are known from their `customer_id` binding and Sorento staff from
+    `user_id`; anything else is a Consumer by elimination. Kind is derived on every
+    call rather than stored, so a binding configured five minutes ago takes effect
+    on the next landing with no backfill.
+    """
+    from app.services import party_service
+
+    contact = PortalService(db).get_contact(token)
+    return PortalJourneyResponse(
+        journey=party_service.derive_contact_kind(contact),
+        dealer_name=party_service.dealer_display_name(db, contact),
+    )
+
+
+@router.post("/journey/order-lookup", response_model=PortalOrderLookupResponse)
+def portal_journey_order_lookup(
+    payload: PortalOrderLookupPayload,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Repair a missing dealer binding from a quoted Sorento order number (AC-B5a).
+
+    An unbound dealer contact would otherwise be mis-routed to the Consumer journey
+    and asked for a receipt they do not hold. Quoting an order number resolves the
+    Dealer, writes the binding, and switches them to the dealer track - silently,
+    with no question asked, which also fixes contacts nobody remembered to configure.
+
+    **An unmatched number is a 200 with `matched: false`, never a 4xx.** A Consumer
+    holding a dealer's own receipt quotes formats that do not exist in `orders`, and
+    blocking them here would wall off exactly the people this was not aimed at.
+    """
+    from app.services import party_service
+
+    contact = PortalService(db).get_contact(token)
+    outcome = party_service.self_heal_dealer_binding(db, contact, payload.order_number)
+    return PortalOrderLookupResponse(
+        matched=outcome["matched"],
+        journey=party_service.derive_contact_kind(contact),
+        dealer_name=party_service.dealer_display_name(db, contact),
+    )
 
 
 # ---------- Lookups (gated by portal token) ----------

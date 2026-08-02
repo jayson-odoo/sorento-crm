@@ -62,6 +62,35 @@ class Complaint(Base):
     portal_draft_at = Column(DateTime(timezone=False), nullable=True)  # set while user is editing in submission portal; cleared on Submit
     required_on_site_support = Column(Boolean, nullable=False, server_default="false")
 
+    # --- Parties and the Site (after-sales S1: AC-B1, AC-B6, AC-M37) ---------
+    # The Dealer gets a real home. The free-text customer_name above is superseded
+    # and read-only for one release (AC-B6); it is dropped in a later slice.
+    customer_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("customers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # The Site is whatever was REPORTED, never the Dealer's address. AC-B3: a
+    # dealer's owner reporting a fault in his own home carries a dealer binding and
+    # a residential Site on the same row. Deriving the Site from the customer record
+    # sends a technician to a shop.
+    site_address = Column(Text, nullable=True)
+    site_contact_name = Column(Text, nullable=True)
+    site_contact_phone = Column(Text, nullable=True)
+    # AC-M37 / AC-B21: the pin is what a technician navigates to, so it is Numeric
+    # with scale 7 (about 1cm). Float does not round-trip a value copied between
+    # systems and text cannot be bounded-box queried. Precision 10 leaves 3 integer
+    # digits, which covers longitude to 180. Deliberately NOT reconciled against
+    # site_address (AC-M39): the pin is for navigation, the address for documents.
+    latitude = Column(Numeric(10, 7), nullable=True)
+    longitude = Column(Numeric(10, 7), nullable=True)
+    place_id = Column(String(128), nullable=True)
+    # ADDED, never a rename of customer_type (AC-B6). Nullable because most live
+    # rows carry an account category (Project / SMC / E Commerce) that says nothing
+    # about who reported the fault, and NULL is the honest value for them (AC-B16).
+    # Vocabulary: app.services.party_service.REPORTED_BY_ROLES.
+    reported_by_role = Column(String(20), nullable=True)
+
     attachments = relationship("ComplaintAttachment", back_populates="complaint")
     root_cause = relationship("ComplaintRootCause", foreign_keys=[root_cause_id])
     resolution = relationship("ComplaintResolution", foreign_keys=[resolution_id])
@@ -82,6 +111,7 @@ class Complaint(Base):
         Index("ix_complaints_complaint_number", "complaint_number"),
         Index("ix_complaints_root_cause_id", "root_cause_id"),
         Index("ix_complaints_resolution_id", "resolution_id"),
+        Index("ix_complaints_customer_id", "customer_id"),
     )
 
 

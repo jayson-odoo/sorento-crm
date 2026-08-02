@@ -5,7 +5,7 @@ from app.models.company import Company, UserCompany, RespondContactCompany
 from app.models.user import User, UserRole, UserRoleAssignment, UserPermission, UserRolePermission, SystemLog, SystemSetting, UserQuickAccess, UserListColumnConfig
 from app.models.auth import VerificationToken
 from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
-from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
+from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine, SalesmanCodeUser
 from app.models.inventory import Warehouse, StorageZone, Stock, StockBatch, StockLedger
 from app.models.procurement import Supplier, ProductSupplier, InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine, StockInquiry, PurchaseRequestHeader, PurchaseRequestLine, PurchaseOrder, PurchaseOrderLine
 from app.models.marketing import Promotion, PromotionGroup, PromotionProduct, CampaignType, MarketingCampaign
@@ -108,6 +108,7 @@ __all__ = [
     "Order",
     "OrderStatus",
     "Customer",
+    "SalesmanCodeUser",
     "CustomerContact",
     "OrderLine",
     "SalesOrder",

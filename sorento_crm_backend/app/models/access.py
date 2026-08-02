@@ -156,6 +156,29 @@ class RespondContact(Base):
     # Arbitrary per-contact conversation state. Read/overwritten wholesale by
     # GET|PUT /api/v1/external/conversation-variables/{respond_io_id}.
     session_vars = Column(JSONB(astext_type=Text()), nullable=False, server_default=text("'{}'::jsonb"))
+    # --- Party bindings (after-sales S1, AC-B1/AC-B13) -----------------------
+    # "Who is this phone number", answered without ever asking. Both nullable and
+    # independent: a contact may carry neither (a Consumer by elimination), one, or
+    # both (a Sorento salesman who is also a dealer's configured shop contact).
+    # The derived kind is NEVER stored - see app.services.party_service. A stored
+    # party_kind would be a second source of truth that can disagree with these.
+    #
+    # S1 ships TWO bindings. The third, technician_id, is deferred to S6 (AC-B13):
+    # `technicians` does not exist yet and a stub table would hand S6 a half-defined
+    # core entity to migrate. derive_contact_kind already reads the third binding
+    # defensively, so S6 is a column addition and nothing else.
+    customer_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("customers.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # varchar, NOT uuid: users.id is Column(String) and stays that way until the
+    # uuid-id PR stack converts it. A uuid column cannot foreign-key a text one.
+    user_id = Column(
+        String,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)
@@ -187,6 +210,8 @@ class RespondContact(Base):
         Index("ix_respond_contacts_phone_number", "phone_number"),
         Index("ix_respond_contacts_respond_io_id", "respond_io_id"),
         Index("ix_respond_contacts_workspace_id", "workspace_id"),
+        Index("ix_respond_contacts_customer_id", "customer_id"),
+        Index("ix_respond_contacts_user_id", "user_id"),
     )
 
 

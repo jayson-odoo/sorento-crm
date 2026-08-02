@@ -104,6 +104,44 @@ class Customer(Base, CompanyScopedMixin):
     )
 
 
+class SalesmanCodeUser(Base):
+    """Maps a legacy `orders` sales-agent code to the `users` row that is that person.
+
+    AC-B18. `customers.account_owner_user_id` is seeded from the sales-agent code on
+    a customer's most recent order, and AC-B11 says the codes map "as configured"
+    without saying configured where. It cannot be a column on `users`: one person
+    carries four codes (`SEAN` / `SEAN I` / `SEAN III` / `SEAN IV`), so the
+    relationship is many-to-one and needs its own row per code.
+
+    Deliberately NOT CompanyScopedMixin: AC-B11 confirms every suffix appears under
+    BOTH Sorento and Mocha in `orders`, so the suffix is not a company split and one
+    global vocabulary is correct. Scoping it would hide half the map from the seed.
+
+    Upsertable so the next suffix Sorento invents is a row, not a deploy. Read by
+    `scripts/seed_customer_account_owner.py`; no runtime path reads it, because
+    runtime salesperson resolution reads `customers.account_owner_user_id` and
+    nothing else (AC-B9).
+    """
+
+    __tablename__ = "salesman_code_users"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    # Stored normalized (upper-cased, whitespace collapsed) so "sean iii" and
+    # "SEAN  III" cannot become two rows pointing at the same person.
+    salesman_code = Column(String(100), nullable=False, unique=True)
+    # varchar, not uuid: users.id is Column(String). See the AC-A2 boundary note.
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_salesman_code_users_user_id", "user_id"),
+    )
+
+
 class CustomerContact(Base, CompanyScopedMixin):
     """Main or stakeholder person linked to a business customer profile."""
 

@@ -189,16 +189,30 @@ Reporting groups by `key`, never by status id (forked graphs re-key ids) and nev
 
 ## S1 - Parties and identity
 
-Satisfies **AC-B1 to AC-B12**, **AC-M37**.
+Satisfies **AC-B1 to AC-B12** (as corrected by **AC-B13 to AC-B21**), **AC-M37**. `technician_id` is
+**not** in S1: AC-B13 defers it to S6. AC-B6a is unsatisfiable as written and was replaced by
+AC-B6b / AC-B6c / AC-B6d.
+
+**Status: implemented 2026-08-02.** Migration `316_after_sales_parties`; gate
+`tests/test_after_sales_parties.py` (55) + `tests/test_after_sales_legacy_column_guard.py` (12) green.
+The shared dev database is stamped on another worktree's chain, so the DDL is applied there by hand;
+until it is, every live-DB (`pg_session`) suite touching `respond_contacts` / `complaints` fails with
+`column "customer_id" ... does not exist`.
 
 ### Schema
 
+**Updated 2026-08-02 to what actually shipped** in `alembic/versions/316_after_sales_parties.py`.
+Three corrections against the original block, each forced by the red suite: the third binding is
+deferred (AC-B13), the Site pin columns are unprefixed, and the code map needed a table.
+
 ```sql
--- respond_contacts: three independent nullable bindings, NO party_kind column
+-- respond_contacts: TWO independent nullable bindings, NO party_kind column.
+-- technician_id is DEFERRED to S6 (AC-B13): `technicians` does not exist, so the
+-- constraint cannot be created here, and a stub table would hand S6 a half-defined
+-- core entity to migrate. derive_contact_kind already reads it defensively.
 ALTER TABLE respond_contacts
-  ADD COLUMN customer_id   uuid REFERENCES customers(id) ON DELETE SET NULL,
-  ADD COLUMN user_id       varchar REFERENCES users(id)  ON DELETE SET NULL,
-  ADD COLUMN technician_id uuid REFERENCES technicians(id) ON DELETE SET NULL;
+  ADD COLUMN customer_id uuid    REFERENCES customers(id) ON DELETE SET NULL,
+  ADD COLUMN user_id     varchar REFERENCES users(id)     ON DELETE SET NULL;
 -- no door_answered_at: there is no door question to remember (see "The door" below)
 
 -- complaints: parties get real homes
@@ -207,11 +221,26 @@ ALTER TABLE complaints
   ADD COLUMN site_address text,
   ADD COLUMN site_contact_name text,
   ADD COLUMN site_contact_phone text,
-  -- AC-M37: the Site is a typed address AND a pin. site_maps_url is NOT created.
-  ADD COLUMN site_latitude numeric(10,7),
-  ADD COLUMN site_longitude numeric(10,7),
-  ADD COLUMN site_place_id varchar(128);
+  -- AC-M37 / AC-B21: the Site is a typed address AND a pin. site_maps_url is NOT
+  -- created. Unprefixed names, matching the S1 gate: there is exactly one Site per
+  -- Complaint, so `complaints.site_latitude` would repeat the table it sits on.
+  ADD COLUMN latitude numeric(10,7),
+  ADD COLUMN longitude numeric(10,7),
+  ADD COLUMN place_id varchar(128);
 ALTER TABLE complaints ADD COLUMN reported_by_role varchar(20);   -- ADDED, not renamed
+
+-- AC-B18: the sales-agent code map needs a persisted, upsertable home. `users` has
+-- no code column and one person carries four codes, so a column could not hold them.
+-- Deliberately NOT company-partitioned: every suffix appears under both Sorento and
+-- Mocha, so the suffix is not a company split.
+CREATE TABLE salesman_code_users (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  salesman_code varchar(100) NOT NULL UNIQUE,
+  user_id varchar NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  notes text,
+  created_at timestamp NOT NULL DEFAULT now(),
+  updated_at timestamp NOT NULL DEFAULT now()
+);
 ```
 
 ### What AC-M37 changes about this slice
@@ -227,35 +256,50 @@ A pasted `maps.app.goo.gl` link (which the chat log shows people already doing b
 substitute: it is opaque, it cannot be geocoded, and it cannot be reverse-looked-up to a place. If a
 paste-a-link affordance is wanted later it resolves to these three columns rather than adding a fourth.
 
-**Additive, not a rename.** `reported_by_role` is a new column backfilled from `customer_type` via a documented mapping (`Project`, `SMC`, `E Commerce` were account categories, not reporters; the 7 blanks become `cs`). `customer_type` is **left in place, read-only, for one release** and dropped later, exactly like `customer_name` and `salesperson`. Renaming a column on a live table with 50 rows buys nothing and makes the migration irreversible mid-release; adding one is reversible by ignoring it. A guard test asserts nothing **reads** the legacy columns, so the eventual drop is a pure deletion.
+**Additive, not a rename.** `reported_by_role` is a new column backfilled from `customer_type` via a documented mapping (`Project`, `SMC`, `E Commerce` were account categories, not reporters). ~~the 7 blanks become `cs`~~ **corrected 2026-08-02 (AC-B16): blanks backfill to NULL.** Counted against the live table (47 rows): `Project` 24, `SMC` 7, `Salesperson` 5, `Dealer` 4, NULL 3, `End User` 3, `E Commerce` 1 - so the "7" was the `SMC` count, and mapping an unknown value to `cs` would assert Customer Service reported those complaints, which nothing supports. 32 of 47 rows stay NULL. `Salesperson` is in the map despite being absent from the configured lookup options (AC-B17). `customer_type` is **left in place, read-only, for one release** and dropped later, exactly like `customer_name` and `salesperson`. Renaming a column on a live table with 50 rows buys nothing and makes the migration irreversible mid-release; adding one is reversible by ignoring it. A guard test asserts nothing **reads** the legacy columns, so the eventual drop is a pure deletion.
 
 ### Kind derivation (AC-B2)
 
 Never stored. `customer_id` set means dealer staff; `user_id` set means Sorento staff; `technician_id` set means technician; none set means Consumer. **More than one may be set** - the Sanimart case (a dealer's owner reporting a fault in his own home) sets `customer_id` and still resolves the Site to his house, because the Site lives on the Complaint (**AC-B3**).
 
+**As shipped:** `app/services/party_service.py`. Precedence is declared data, not branches - `KIND_PRECEDENCE = ("technician", "staff", "dealer", "consumer")` (AC-B14), with `BINDING_FOR_KIND` naming the column per kind so S6 adds one entry and changes nothing else. `derive_contact_kind(contact)` is a pure function of the row, no query (AC-B15), and reads the deferred third binding via `getattr(contact, "technician_id", None)`. All four kinds ship in S1 even though `technician` is unreachable: the journey route is a public contract consumed by the portal FE and by n8n, neither of which deploys atomically with the backend, so widening a three-member literal later would be a breaking change with a silent failure mode.
+
 ### Salesperson: seed once, read forever (AC-B7 to AC-B11)
 
 `customers.account_owner_user_id` is 0 of 3,284. A one-off script, not a runtime path:
 
-1. Build a `salesman_code -> users.id` map. **Sorento creates the `users` rows** for salesmen (needed for Project Management anyway); the seed script creates stand-in users locally for testing only. 83 distinct codes; suffixes (`SEAN` / `SEAN I` / `SEAN III` / `SEAN IV`) collapse many-to-one where they are one person. **Confirmed not a company split** - every suffix appears under both Sorento and Mocha in `orders`. Junk codes (`0`, `ACT`, `CS01`, `WH02`, `MARKETING`, `SAMPLE`, `FUNITURE`, `TERA`) map to nothing.
+1. Build a `salesman_code -> users.id` map, **persisted in `salesman_code_users`** and read by the seed, never hardcoded (AC-B18): `load_salesman_code_map(db)` / `upsert_salesman_code(db, code, user_id)`. **Sorento creates the `users` rows** for salesmen (needed for Project Management anyway); the seed script creates stand-in users locally for testing only. 83 distinct codes; suffixes (`SEAN` / `SEAN I` / `SEAN III` / `SEAN IV`) collapse many-to-one where they are one person. **Confirmed not a company split** - every suffix appears under both Sorento and Mocha in `orders`. Junk codes (`0`, `ACT`, `CS01`, `WH02`, `MARKETING`, `SAMPLE`, `FUNITURE`, `TERA`) map to nothing.
 2. Per customer, take the salesman on their **most recent** order. 2,191 resolve to a single code; 322 are multi and get most-recent-wins as a seed.
 3. Write `account_owner_user_id`. Idempotent JOIN-based "set where mismatch", so a re-run corrects a prior bad run (**AC-K1**).
 
-Page by **keyset**, not `yield_per` - a named cursor dies on commit. Dry-run must assign nothing (beware autoflush) and be verified at `--batch 1`.
+Page by **keyset**, not `yield_per` - a named cursor dies on commit. Dry-run must assign nothing (beware autoflush) and be verified at `--batch 1`. Most-recent-wins is ordered `order_date DESC NULLS LAST, order_number DESC, id DESC` (**AC-B19**): `order_date` is nullable and Postgres sorts NULLs first on `DESC`, and a same-day tie broken arbitrarily makes the seed non-idempotent. The seed **sets its own company scope to all-companies** (**AC-B20**) - a bare `SessionLocal` is `UNSET`, which is fail-closed to zero rows, so the naive script exits 0 having done nothing.
 
-**Runtime reads only `customers.account_owner_user_id`.** A guard test asserts no module code references `orders.salesman` (**AC-B9**). Unresolved (~770 dealers with no orders) routes to the after-sales team lead and flags the Complaint `salesperson unresolved` - never silently dropped (**AC-B10**).
+**Runtime reads only `customers.account_owner_user_id`.** A **module-scoped** guard asserts the new party service references none of the legacy columns (**AC-B6c**); the repo-wide form of **AC-B9** is permanently red and was replaced by the frozen reader inventory (**AC-B6b**) plus the behavioural test (**AC-B6d**). Unresolved (~770 dealers with no orders) routes to the after-sales team lead and flags the Complaint `salesperson unresolved` - never silently dropped (**AC-B10**).
 
 ### The door: there isn't one (AC-B4, AC-B5, AC-B5a, AC-B5b)
 
 **No question is asked.** Kind resolves by elimination: `customer_id` means dealer staff, `user_id` means Sorento staff, `technician_id` means technician, **nothing set means Consumer**.
 
 ```
-GET /api/v1/public/portal/journey  -> { journey: 'consumer'|'dealer'|'staff'|'technician' }
+GET  /api/v1/public/portal/journey
+     -> { journey: 'consumer'|'dealer'|'staff'|'technician', dealer_name: string|null }
+
+POST /api/v1/public/portal/journey/order-lookup   { order_number }
+     -> { matched: bool, journey: ..., dealer_name: string|null }
 ```
+
+Both require `X-Portal-Token` (401 without). The response carries **no identifiers** - the portal is a
+frontend, so the Dealer is named, never identified. An unresolvable order number is a **200 with
+`matched: false`**, never a 4xx (AC-B4's dead end / AC-C14): a Consumer holding a dealer's own receipt
+will type something that does not exist in `orders`, and a wall there hits exactly the people the
+self-heal was not aimed at. A blank / whitespace-only `order_number` is a 422 - that is a scan of the
+orders table, not a lookup.
 
 This works because the bindings get populated: Sorento configures dealer contacts manually and creates `users` rows for salesmen (they need them for Project Management regardless). Reuses `PortalToken` + OTP; no new auth.
 
 **The failure mode, and how it self-heals.** An unbound dealer contact would be mis-routed to the Consumer journey and asked for a receipt they do not hold. So the Consumer journey's first step accepts **either a receipt photo or a typed order number**. A quoted Sorento order number resolves against `orders`, and we write `respond_contacts.customer_id` from that order's customer and switch them to the dealer track. The binding repairs itself, silently, without a question ever being asked - which is strictly better than a door question, because it also fixes contacts nobody remembered to configure.
+
+**An existing binding is never re-pointed.** The self-heal repairs an ABSENT binding only. A contact Sorento configured is a deliberate act, and moving them to another Dealer because somebody pasted an order number would silently re-route their complaints, their notifications and their salesperson. The write lives in `party_service.self_heal_dealer_binding`, not on the route, so the S5 WhatsApp intake inherits the same rule (ADR-0013 rule 7).
 
 ### Seeding for test (AC-B12)
 
