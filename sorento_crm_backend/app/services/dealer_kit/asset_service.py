@@ -14,14 +14,20 @@ image where the section already has a perfectly good plain background. So an
 unsignable asset is simply ABSENT from the map, and the renderer treats an
 absent background as no background. Not hypothetical - 181 of 2,472 product
 image links could not be signed on one environment.
+
+**An asset dies when the last thing that names it dies.** The library also owns
+that rule, and owns it ALONE, because every deleter needs the same answer to
+"is anything still showing this" and two implementations of it would drift the
+first time a document changed shape. See ``referenced_asset_ids``.
 """
 from __future__ import annotations
 
 import hashlib
 import logging
 import uuid
-from typing import Iterable, Optional
+from typing import Iterable, NamedTuple, Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.dealer_kit import Asset
@@ -30,7 +36,10 @@ from app.services.image_thumbnailer import store_thumbnail
 from app.services.storage_router import (
     cdn_base_url,
     default_provider,
+    delete_object_best_effort,
+    extract_key,
     get_backend,
+    normalize_provider,
     resolve_signed_url,
     sanitize_storage_filename,
 )
@@ -172,11 +181,199 @@ def _filename(name: str, mime: str) -> str:
     return f"{stem}.{extension}"
 
 
+# --------------------------------------------------------------------------- #
+# Death
+#
+# Everything above puts artwork INTO the library. Nothing used to take it out,
+# and the bill for that was 1,356 objects in a live bucket with no row anywhere
+# pointing at them: a flyer reading created an asset per page banner, and
+# deleting the reading deleted only the reading. They could not be tidied up
+# afterwards either - ``asset.attachment_id`` is ON DELETE RESTRICT, so the
+# attachment refused to go while the asset row lived, and nothing deleted the
+# asset.
+#
+# The obvious fix is the wrong one. A banner is a section BACKGROUND in every
+# brochure seeded from that reading, and a reading is a working artefact people
+# tidy away, so a cascade would blank the artwork on a published catalogue
+# somebody approved. A reader losing a background they can currently see is far
+# worse than an orphan row.
+#
+# So the rule is neither "always" nor "never": an asset dies when the LAST thing
+# that names it dies. That also makes the order irrelevant - delete the brochure
+# then the reading, or the reading then the brochure, and whichever goes last
+# takes the artwork with it.
+# --------------------------------------------------------------------------- #
+class StoredObject(NamedTuple):
+    """One object in storage, and which provider holds it.
+
+    The provider travels WITH the key because it is read off the attachment row,
+    and by the time the bytes are purged that row is gone. Falling back to
+    ``STORAGE_DEFAULT_PROVIDER`` at purge time would delete from the wrong
+    bucket during the S3-to-R2 transition, which is a silent no-op on one side
+    and a live object left behind on the other.
+    """
+
+    provider: str
+    key: str
+
+
+def referenced_asset_ids(db: Session, asset_ids: Iterable[str]) -> set[str]:
+    """Of these assets, the ones something can still show.
+
+    Two things name an asset:
+
+    * a ``page_version.doc`` binding it as ``style.backgroundAssetId`` - ANY
+      version, published, staging or an unlabelled draft. Rollback is a label
+      move, so an older version is one click from being what readers see, and
+      the reviewer opening a draft in the builder is the person the whole
+      seeding slice exists for. "Only the published one counts" would blank both.
+    * a ``flyer_reading.reading_json`` still claiming it as a page banner, which
+      is what lets a brochure be deleted before its reading without stranding
+      the artwork.
+
+    A jsonb containment test per candidate, OR'd into ONE statement, so the
+    database hands back only documents that really name one of them; which ids
+    those are is then decided by the same helpers that read a background out of
+    a document and a banner out of a reading. Two definitions of "a background
+    binding" would disagree the first time the document shape moved.
+
+    Deliberately NOT filtered to one company: this is the guard that decides
+    whether something is safe to destroy, so it fails closed. An asset is
+    company-scoped and a cross-company reference should be impossible, but
+    "should be impossible" is not a reason to delete artwork somebody is looking
+    at.
+    """
+    ids = {value for value in asset_ids if value}
+    if not ids:
+        return set()
+
+    from app.models.dealer_kit import FlyerReadingRecord, PageVersion
+
+    # Local: ``flyer_reading_service`` imports this module, and the reading's
+    # JSON shape belongs to it rather than to the library.
+    from app.services.dealer_kit import flyer_reading_service
+
+    referenced: set[str] = set()
+
+    docs = (
+        db.query(PageVersion.doc)
+        .filter(
+            or_(
+                *[
+                    PageVersion.doc.contains(
+                        {"sections": [{"style": {"backgroundAssetId": value}}]}
+                    )
+                    for value in ids
+                ]
+            )
+        )
+        .all()
+    )
+    for (doc,) in docs:
+        referenced |= background_asset_ids(doc) & ids
+
+    readings = (
+        db.query(FlyerReadingRecord.reading_json)
+        .filter(
+            or_(
+                *[
+                    FlyerReadingRecord.reading_json.contains(
+                        {"pages": [{"banner_asset_id": value}]}
+                    )
+                    for value in ids
+                ]
+            )
+        )
+        .all()
+    )
+    for (payload,) in readings:
+        referenced |= flyer_reading_service.banner_asset_ids(payload) & ids
+
+    return referenced
+
+
+def delete_unreferenced(db: Session, asset_ids: Iterable[str]) -> list[StoredObject]:
+    """Delete the rows for every one of these assets nothing names any more.
+
+    ROWS only, inside the caller's transaction, exactly as ``create_from_bytes``
+    writes without committing. The bytes come back as a list for the caller to
+    purge AFTER its commit - see ``purge_objects`` - because a delete that
+    removed the object first and then failed to commit would leave a live asset
+    row pointing at nothing.
+
+    The asset row is deleted BEFORE its attachment, with a flush between them,
+    and that is the entire reason this has to be a function rather than two
+    ``db.delete`` calls at each call site: ``asset.attachment_id`` is ON DELETE
+    RESTRICT, so the other order is an IntegrityError and a 500 for a delete
+    that was perfectly legal. The constraint is right - an attachment vanishing
+    under a live asset would leave a library row pointing at nothing - so the
+    order is what adapts to it.
+    """
+    ids = {value for value in asset_ids if value}
+    if not ids:
+        return []
+
+    doomed = ids - referenced_asset_ids(db, ids)
+    if not doomed:
+        return []
+
+    rows = (
+        db.query(Asset, Attachment)
+        .join(Attachment, Attachment.id == Asset.attachment_id)
+        .filter(Asset.id.in_(doomed))
+        .all()
+    )
+
+    objects: list[StoredObject] = []
+    attachments: list[Attachment] = []
+    for asset, attachment in rows:
+        provider = normalize_provider(attachment.storage_provider)
+        # The thumbnail is a SEPARATE object with its own key. Half the bucket
+        # litter was thumbnails, so forgetting it here would fix the defect by
+        # half and look complete.
+        for path in (attachment.file_path, attachment.thumbnail_path):
+            key = extract_key(path)
+            if key:
+                objects.append(StoredObject(provider, key))
+        db.delete(asset)
+        attachments.append(attachment)
+
+    db.flush()
+    for attachment in attachments:
+        db.delete(attachment)
+    db.flush()
+
+    return objects
+
+
+def purge_objects(objects: Iterable[StoredObject]) -> None:
+    """Remove the bytes. Called AFTER the caller commits, never before.
+
+    Deleting them is the right answer even though it cannot be undone. Once the
+    asset row is gone the object is unreachable by every path this product has -
+    nothing can list it, sign it or delete it - so keeping it buys no recovery,
+    only storage cost and a bucket nobody can audit. A missing object under a
+    LIVE row is the state worth avoiding, and that is what the ordering here is
+    for.
+
+    Best-effort per object: a bucket that is unreachable costs an orphan, never
+    the delete the user asked for. They would otherwise be handed a row they
+    cannot remove, for a reason nothing on their screen could explain, and the
+    retry would hit the same wall.
+    """
+    for stored in objects:
+        delete_object_best_effort(stored.provider, stored.key)
+
+
 __all__ = [
     "DECORATIVE",
     "STORAGE_ENTITY_TYPE",
+    "StoredObject",
     "background_asset_ids",
     "background_urls",
     "create_from_bytes",
+    "delete_unreferenced",
+    "purge_objects",
+    "referenced_asset_ids",
     "urls_for",
 ]

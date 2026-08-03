@@ -97,6 +97,57 @@ export async function purgeWithFreshLogin(browser: Browser, baseURL?: string): P
 }
 
 /**
+ * The signed background URLs a page currently binds, read BEFORE it is deleted.
+ *
+ * There is no assets endpoint, and there should not be one just so a test can
+ * tidy up. The editor payload already resolves `{assetId: signedUrl}` for the
+ * document it is about to open, and that is enough: a URL that still answers
+ * 200 after the run's pages and readings are deleted is a storage object nobody
+ * can reach any more, which is exactly the leak that put 1,356 orphans in the
+ * bucket.
+ */
+export async function boundBackgroundUrls(
+  request: APIRequestContext,
+  token: string,
+  pageIds: string[],
+): Promise<string[]> {
+  const urls: string[] = [];
+  for (const id of new Set(pageIds)) {
+    const response = await request.get(`${API_BASE}/api/v1/dealer-kit/pages/${id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok()) continue;
+    const body = (await response.json()) as { assets?: Record<string, string> };
+    urls.push(...Object.values(body.assets ?? {}));
+  }
+  return urls;
+}
+
+/**
+ * Of those URLs, the ones whose bytes are still there.
+ *
+ * Empty is the only acceptable answer once the run's rows are gone. The signed
+ * link stays valid for an hour, so what this fetches is the OBJECT and not the
+ * signature: a 200 means the row was deleted and the bytes were not.
+ */
+export async function stillStoredUrls(
+  request: APIRequestContext,
+  urls: string[],
+): Promise<string[]> {
+  const leaked: string[] = [];
+  for (const url of new Set(urls)) {
+    try {
+      const response = await request.get(url);
+      if (response.ok()) leaked.push(url.split('?')[0]);
+    } catch {
+      // Unreachable is not "still stored". A network failure here must not be
+      // reported as a leak, or the suite fails for the wrong reason.
+    }
+  }
+  return leaked;
+}
+
+/**
  * Delete selections by id.
  *
  * Selections cannot be found by the `zzt-` name prefix - the designer creates

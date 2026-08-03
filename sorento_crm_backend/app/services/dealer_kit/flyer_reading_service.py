@@ -227,6 +227,22 @@ def page_count(record: FlyerReadingRecord) -> int:
     return len((record.reading_json or {}).get("pages", []))
 
 
+def banner_asset_ids(payload: Optional[dict]) -> set[str]:
+    """Every asset a stored reading claims as a page banner.
+
+    Read straight off the JSON rather than through ``deserialise``: this is
+    asked while deciding what a delete may destroy, and rebuilding a 998 card
+    reading to find two uuids would be work in the one place that must not be
+    slow or clever. It is the reading's half of "is anything still naming this
+    asset" - see ``asset_service.referenced_asset_ids``.
+    """
+    return {
+        page["banner_asset_id"]
+        for page in (payload or {}).get("pages", []) or []
+        if page.get("banner_asset_id")
+    }
+
+
 def code_count(record: FlyerReadingRecord) -> int:
     codes = {
         card["code"]
@@ -387,10 +403,37 @@ def list_readings(db: Session) -> list[FlyerReadingRecord]:
 
 
 def delete_reading(db: Session, reading_id: str) -> None:
-    """Hard delete. A reading is a working artefact, not a record to retain."""
+    """Hard delete, and take the artwork nothing else is showing.
+
+    A reading is a working artefact, not a record to retain - but its BANNERS
+    are not. Each one is a row in the asset library backed by real bytes, and a
+    brochure seeded from this reading binds them as section backgrounds, so a
+    cascade would blank the artwork on a catalogue that may already be published.
+    Somebody tidying the flyer list must never cost a reader a background they
+    can currently see.
+
+    The reading row is deleted and FLUSHED before the sweep, deliberately: the
+    reading is itself one of the things that names an asset, so leaving it
+    visible would make every banner look in-use and nothing would ever be
+    collected. After the flush the only claims left are real ones.
+
+    Refusing the delete outright was the alternative, and it is worse: every
+    reading that was ever seeded would be undeletable forever, and the flyer
+    list would fill with rows nobody may remove - which is the same litter this
+    is meant to stop, moved from the bucket to the screen.
+    """
     record = get_reading(db, reading_id)
+    banners = banner_asset_ids(record.reading_json)
+
     db.delete(record)
+    db.flush()
+
+    doomed = asset_service.delete_unreferenced(db, banners)
     db.commit()
+
+    # After the commit, never before: bytes are the one part of this no
+    # rollback can undo.
+    asset_service.purge_objects(doomed)
 
 
 def report_for(

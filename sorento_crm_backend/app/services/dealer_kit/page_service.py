@@ -23,6 +23,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.dealer_kit import Page, PageLabel, PageVersion
+from app.services.dealer_kit import asset_service
 from app.services.error_handler import AppException
 
 DEFAULT_PRINT_PROFILE = {
@@ -214,10 +215,35 @@ def set_promotion(db: Session, page_id: str, promotion_id: Optional[str]) -> Pag
 
 
 def delete_page(db: Session, page_id: str) -> None:
-    """Hard delete. Versions and labels cascade with it."""
+    """Hard delete. Versions and labels cascade with it.
+
+    And so does the artwork this was the last brochure to show. Backgrounds are
+    bound as asset ids in the versions about to be cascaded away, so without
+    this the assets survive with nothing naming them - unfindable, unsignable
+    and unremovable, since ``asset.attachment_id`` is ON DELETE RESTRICT.
+
+    Only what nothing else names, which is why the ids are collected BEFORE the
+    delete and swept AFTER it: another brochure may show the same banner, and
+    the flyer reading that produced it usually still claims it, in which case
+    the artwork stays and goes later with the reading. Either order leaves
+    nothing behind, and neither order can strip a page somebody is reading.
+    """
     page = _require_page(db, page_id)
+    backgrounds = {
+        value
+        for version in db.query(PageVersion.doc).filter(PageVersion.page_id == page_id).all()
+        for value in asset_service.background_asset_ids(version[0])
+    }
+
     db.delete(page)
+    db.flush()
+
+    doomed = asset_service.delete_unreferenced(db, backgrounds)
     db.commit()
+
+    # After the commit, never before: bytes are the one part of this no
+    # rollback can undo.
+    asset_service.purge_objects(doomed)
 
 
 def list_versions(db: Session, page_id: str) -> list[PageVersion]:

@@ -2,6 +2,8 @@ import { test, expect, type APIRequestContext, type Page } from '@playwright/tes
 import fs from 'fs';
 import path from 'path';
 
+import { boundBackgroundUrls, stillStoredUrls } from './dealerKitCleanup';
+
 /**
  * The builder shows the artwork, and it is the SAME artwork the reader gets.
  *
@@ -33,6 +35,15 @@ import path from 'path';
  * BY ID afterwards. Deleting the page cascades its versions, labels and
  * page-scoped collections. There is no unscoped DELETE anywhere in this file,
  * and nothing here writes to products or promotions.
+ *
+ * ## And so is the bucket
+ *
+ * Playwright drives the real backend, so `tests/_fake_storage.py` cannot reach
+ * it: every upload here writes REAL banner objects to the live storage bucket.
+ * Deleting the reading removes the assets, their attachments and their bytes,
+ * and the teardown fetches the signed URLs it noted beforehand to prove it. A
+ * surviving object fails the run rather than being logged - nothing else
+ * notices one, which is how 1,356 unreachable objects accumulated unobserved.
  */
 
 const EMAIL = process.env.REQUEST_BATCH_E2E_EMAIL;
@@ -198,12 +209,21 @@ test.describe('Dealer Kit builder backgrounds', () => {
       baseURL: testInfo.project.use.baseURL,
     });
     const page = await context.newPage();
+    let leaked: string[] = [];
     try {
       await login(page);
       const token = await apiToken(context.request);
 
+      // The artwork this run put in the library, noted while its brochure can
+      // still name it. This spec exists to prove the banner reaches a reader,
+      // so it is also the spec that writes the most real objects into the live
+      // bucket - and until the delete sweep landed, none of them ever left.
+      const backgrounds = await boundBackgroundUrls(context.request, token, createdPages);
+
       // By id, never by pattern. The page delete cascades its versions,
-      // labels and the page-scoped collections the seed created with it.
+      // labels and the page-scoped collections the seed created with it, and
+      // takes any background nothing else names. The reading still claims its
+      // banners here, so they go on the next step.
       for (const id of new Set(createdPages)) {
         const response = await context.request.delete(`${KIT}/pages/${id}`, {
           headers: auth(token),
@@ -211,6 +231,9 @@ test.describe('Dealer Kit builder backgrounds', () => {
         if (!response.ok())
           console.warn(`[cleanup] page ${id} survived: ${response.status()}`);
       }
+      // Last claim gone: this is what removes the assets, their attachments and
+      // their stored objects, through the product's own delete rather than a
+      // side channel written for a test.
       for (const id of new Set(createdReadings)) {
         const response = await context.request.delete(`${KIT}/flyer-readings/${id}`, {
           headers: auth(token),
@@ -218,11 +241,16 @@ test.describe('Dealer Kit builder backgrounds', () => {
         if (!response.ok())
           console.warn(`[cleanup] reading ${id} survived: ${response.status()}`);
       }
+
+      leaked = await stillStoredUrls(context.request, backgrounds);
     } catch (error) {
       console.warn(`[cleanup] skipped: ${String(error).slice(0, 200)}`);
     } finally {
       await context.close();
     }
+
+    // Outside the catch on purpose: a leak is a REGRESSION, not a hiccup to log.
+    expect(leaked, 'the run left storage objects behind that no row can reach').toEqual([]);
   });
 
   test("the seeded flyer artwork is on the builder canvas, and it is the reader's artwork", async ({

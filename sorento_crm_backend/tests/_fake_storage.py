@@ -27,6 +27,7 @@ class FakeStorage:
     def __init__(self) -> None:
         self.objects: dict[str, tuple[bytes, str | None]] = {}
         self.signing_fails = False
+        self.deleting_fails = False
 
     def upload_file(self, *, file_content: bytes, file_path: str, content_type=None):
         self.objects[file_path] = (file_content, content_type)
@@ -36,6 +37,19 @@ class FakeStorage:
         if self.signing_fails:
             raise RuntimeError("no signing key on this environment")
         return f"https://cdn.test/{key}?sig=zzt"
+
+    def delete_file(self, key: str) -> bool:
+        """Forget an object, so "the bytes went too" is an assertion and not a hope.
+
+        Without this the fake could only ever show that a ROW was deleted, and
+        the whole reason the bucket filled up is that rows and objects have
+        separate lifetimes. ``deleting_fails`` exists for the same reason
+        ``signing_fails`` does: a bucket that refuses is a state the caller has
+        to survive, not a state the test gets to skip.
+        """
+        if self.deleting_fails:
+            raise RuntimeError("the bucket is unreachable")
+        return self.objects.pop(key, None) is not None
 
 
 def patch_storage(monkeypatch) -> FakeStorage:
