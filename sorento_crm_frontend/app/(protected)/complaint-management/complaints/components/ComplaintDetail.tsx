@@ -8,6 +8,11 @@ import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
 import { useHandlingLock } from '@/app/(protected)/sla-management/_shared/useHandlingLock';
+import { useFormSkip } from '@/app/(protected)/sla-management/_shared/useFormSkip';
+import {
+  FormSkipDialog,
+  FormSkipMenuItem,
+} from '@/app/(protected)/sla-management/_shared/FormSkipAction';
 import { HandlingLockBanner } from '@/app/(protected)/sla-management/_shared/HandlingLockBanner';
 import { HandlingLockReleaseMenuItem } from '@/app/(protected)/sla-management/_shared/HandlingLockActions';
 import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
@@ -145,6 +150,23 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   // A voided complaint is fully read-only - suppress every business CTA.
   const isVoided = (complaint?.status ?? '').trim().toLowerCase() === 'voided';
   const businessCtasEnabled = handlingLock.businessCtasEnabled && !isVoided;
+  // "Settled on site" - the third technical-team outcome beside Approve and Reject.
+  // The technician fixed the issue during the visit, so no replacement DO is arranged
+  // and the customer-service stage never spawns. Config-driven: the item only appears
+  // when the ACTIVE stage declares a skip, which is why it can't leak into the CS stage
+  // (that config declares none). The status gate mirrors Approve/Reject.
+  const [skipDialogOpen, setSkipDialogOpen] = useState(false);
+  const formSkip = useFormSkip({
+    sourceEntityType: 'complaint',
+    sourceEntityId: isValidId ? complaintId : null,
+    permission: 'complaint_management.complaints.settle_on_site',
+    entityKey: complaint?.status,
+    enabled: businessCtasEnabled && complaint?.status === 'responded',
+    onSkipped: () => {
+      setSkipDialogOpen(false);
+      queryClient.invalidateQueries({ queryKey: ['complaint', complaintId] });
+    },
+  });
   const voidMutation = useFormVoid('complaints-management/complaints', complaintId, {
     queryKeysToInvalidate: [['complaint', complaintId]],
   });
@@ -410,6 +432,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               state={handlingLock.state}
               onRelease={handlingLock.release}
             />
+            <FormSkipMenuItem skip={formSkip} onSelect={() => setSkipDialogOpen(true)} />
             {businessCtasEnabled && complaint.status === 'approved' && canClose && (
               <DropdownMenuItem
                 disabled={closeComplaintMutation.isPending}
@@ -576,6 +599,14 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <FormSkipDialog
+        skip={formSkip}
+        open={skipDialogOpen}
+        onOpenChange={setSkipDialogOpen}
+        consequence="The technician settled this complaint during the site visit, so no replacement will be arranged and customer service will not be assigned."
+        detail="The complaint is closed as settled on site."
+      />
 
       <AlertDialog open={processDialogOpen} onOpenChange={setProcessDialogOpen}>
         <AlertDialogContent>

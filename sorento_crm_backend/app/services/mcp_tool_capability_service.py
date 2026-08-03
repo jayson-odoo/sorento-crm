@@ -1554,10 +1554,13 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "'complaint status', 'how many complaints do we have'. All filters are OPTIONAL — call "
             "with none to get the newest complaints page.\n\n"
             "`status` is an EXACT single value; known statuses are draft, submitted, new, responded, "
-            "updated, approved, rejected, processed_by_cs, fulfilled, closed. There is NO combined "
-            "'open' status: for open / unresolved complaints either omit status (list all, newest "
-            "first via sort=complaint_date&dir=desc) or pass one concrete in-progress status — "
-            "closed / fulfilled are the terminal states. `query` is a free-text LIKE over "
+            "updated, approved, rejected, processed_by_cs, fulfilled, settled_on_site, closed. There "
+            "is NO combined 'open' status: for open / unresolved complaints either omit status (list "
+            "all, newest first via sort=complaint_date&dir=desc) or pass one concrete in-progress "
+            "status - closed / fulfilled / settled_on_site are the terminal states. settled_on_site "
+            "means the technician fixed the issue during the site visit, so no replacement delivery "
+            "order was arranged and customer service was never involved; fulfilled means a "
+            "replacement delivery order was delivered. `query` is a free-text LIKE over "
             "complaint_number, delivery_order_number, customer_name, contact_person, product_code, "
             "product_type, complaint_type, defect_description, salesperson and project_title, so use "
             "it for 'complaints about ACME' or 'complaints for SKU CB600'. `assigned_to` filters by "
@@ -1577,6 +1580,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
             "Show complaints assigned to me.",
             "What is the status of complaint CMP-20260504-0004?",
             "List rejected / approved / fulfilled complaints.",
+            "Which complaints were settled on site by the technician?",
             "Which complaints are waiting on CS?",
         ),
         aliases=(

@@ -408,6 +408,7 @@ export default function ComplaintsList() {
                         { value: 'responded', label: 'Responded' },
                         { value: 'approved', label: 'Approved' },
                         { value: 'rejected', label: 'Rejected' },
+                        { value: 'settled_on_site', label: 'Settled on site' },
                       ]}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
