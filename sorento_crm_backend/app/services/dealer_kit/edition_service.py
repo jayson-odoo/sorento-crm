@@ -5,15 +5,25 @@ than an ``if``. The graph seeded by migration 318 is the authority on what is
 legal, so adding a state later is a seeding change and not a hunt through this
 file for the branch that also needs it.
 
-**``done`` is the only thing that publishes** (AC-L7). Approving does not move
-the ``published`` label; it records that a human read the catalogue. Whoever
-publishes then decides WHEN, and that is a separate permission because moving
-the label is what a reader actually sees.
+**``done`` is the only transition HERE that publishes** (AC-L7). Approving does
+not move the ``published`` label; it records that a human read the catalogue.
+Whoever publishes then decides WHEN, and that is a separate permission because
+moving the label is what a reader actually sees.
+
+That used to be written as "the only thing that publishes", full stop, and it
+was not true: ``PUT /pages/{id}/labels/published`` moves the label at any
+version on ``page.publish`` alone, and the page editor wires its header Publish
+button straight to it. The workflow was advisory until
+``page_service._assert_no_open_edition_bypass`` closed it. Read that function
+alongside this file - between them they are the guarantee, and neither is it
+on its own.
 
 **Both version ids are recorded, and they are not the same fact.**
 ``approved_version_id`` is what the Approver read; ``done_version_id`` is what
-went live. They are usually equal. Storing only one would leave the deferred
-price-drift work (AC-L4 to AC-L6) with nothing to compare - see
+went live. On any row that reaches ``done`` they are now necessarily EQUAL,
+because publish refuses unless the latest version is the approved one. The
+columns stay separate because the deferred price-drift work (AC-L4 to AC-L6)
+relaxes exactly that refusal, at which point they diverge again - see
 ``PLAN-edition-approval.md``.
 """
 from __future__ import annotations
@@ -36,6 +46,12 @@ PENDING_APPROVAL = "pending_approval"
 APPROVED = "approved"
 REJECTED = "rejected"
 DONE = "done"
+
+# The states that occupy a page's one open slot. Same set as the partial unique
+# index `uq_dealer_kit_edition_one_open_per_page` and migration 318's
+# `_OPEN_KEYS`, and named rather than derived as "not done" so a state added
+# later has to be classified on purpose.
+OPEN_STATUS_KEYS = (DRAFT, PENDING_APPROVAL, APPROVED, REJECTED)
 
 
 def _status_by_key(db: Session, key: str) -> Status:
@@ -164,6 +180,19 @@ def _move(
     return edition
 
 
+def _void_approval(edition: Edition) -> None:
+    """Forget an approval that no longer holds.
+
+    All THREE fields, always. An `approved_by` left on a row that has gone back
+    in the queue reads as approved to every screen that shows it, and an
+    `approved_version_id` left behind is what `publish` compares against - so a
+    stale one is not cosmetic, it decides whether a publish is allowed.
+    """
+    edition.approved_by = None
+    edition.approved_at = None
+    edition.approved_version_id = None
+
+
 def submit(db: Session, edition_id: str, *, user_id: Optional[str] = None) -> Edition:
     """Designer: this is ready for somebody to look at.
 
@@ -191,6 +220,11 @@ def submit(db: Session, edition_id: str, *, user_id: Optional[str] = None) -> Ed
         # Cleared on re-submission: a reason from the previous round shown
         # beside a fresh submission reads as a fresh rejection.
         edition.rejection_reason = None
+        # This function serves TWO edges - draft -> pending_approval and
+        # approved -> pending_approval - and on the second one the approval it
+        # is leaving behind is void. Left stamped, the detail page renders
+        # "Approved: <date>" beside a "Pending approval" pill.
+        _void_approval(edition)
 
     return _move(db, edition, PENDING_APPROVAL, apply=_stamp)
 
@@ -235,8 +269,7 @@ def reject(
 
     def _stamp() -> None:
         edition.rejection_reason = reason
-        edition.approved_by = None
-        edition.approved_at = None
+        _void_approval(edition)
 
     return _move(db, edition, REJECTED, apply=_stamp)
 
@@ -254,17 +287,22 @@ def reopen(db: Session, edition_id: str, *, user_id: Optional[str] = None) -> Ed
 def send_back_on_edit(db: Session, page_id: str) -> Optional[Edition]:
     """A save invalidates an approval. Move the Edition back to the Approver.
 
-    The ``approved -> pending_approval`` edge has been in the graph since
-    migration 318, whose note says "ANY edit to an approved Edition sends it
-    back". Nothing performed it, so an Approver could sign off version 3 and
-    have version 4 published without ever seeing it.
+    This is what performs the ``approved -> pending_approval`` edge that
+    migration 318 seeded and described. For a while nothing did, and an Approver
+    could sign off version 3 while version 4 went live.
 
     Blunt on purpose. AC-L4/L5 wanted price-only edits to keep the approval
     alive; that is deferred because the document stores no prices and an Edition
     cannot detect a price change by diffing its own versions. Sending back too
     often is a nuisance; not sending back ships a document nobody read.
 
-    Returns the Edition it moved, or None when there was nothing to move.
+    Returns the Edition it moved, or None when there was nothing to move - AND
+    None when company scope hid it. Every caller today is request-scoped and the
+    page id already partitions the query, so the injected predicate is
+    redundant. Under UNSET scope (a worker, a backfill) it is `false()`, this
+    returns None, and `save_version`'s best-effort wrapper logs NOTHING, because
+    nothing raised. If this ever gains a background caller, read it under
+    `company_scope(db, None)` the way `bootstrap._count_editions` does.
     """
     edition = (
         db.query(Edition)
@@ -274,14 +312,7 @@ def send_back_on_edit(db: Session, page_id: str) -> Optional[Edition]:
     if edition is None:
         return None
 
-    def _void() -> None:
-        # Cleared, not kept. An approved_by left on a row that is back in the
-        # queue reads as approved to every screen that shows it.
-        edition.approved_by = None
-        edition.approved_at = None
-        edition.approved_version_id = None
-
-    return _move(db, edition, PENDING_APPROVAL, apply=_void)
+    return _move(db, edition, PENDING_APPROVAL, apply=lambda: _void_approval(edition))
 
 
 def publish(db: Session, edition_id: str, *, user_id: Optional[str] = None) -> Edition:

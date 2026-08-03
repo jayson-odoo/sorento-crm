@@ -24,10 +24,10 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.dealer_kit import Page, PageLabel, PageVersion
-
-logger = logging.getLogger(__name__)
 from app.services.dealer_kit import asset_service
 from app.services.error_handler import AppException
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PRINT_PROFILE = {
     "pageSize": "A4",
@@ -323,9 +323,11 @@ def save_version(
     #
     # Best-effort: the save has already committed, and raising here would hand
     # back a 500 for a save that succeeded (the retry then writes a SECOND
-    # version). The hard guarantee is publish's own check that the version it is
-    # about to publish is the one that was approved - this is what puts the
-    # Edition back in front of a human, not what enforces the rule.
+    # version). The hard guarantees are elsewhere and there are two of them:
+    # `edition_service.publish` refuses a version that is not the approved one,
+    # and `_assert_no_open_edition_bypass` below refuses a direct label move
+    # while a cycle is open. This is what puts the Edition back in front of a
+    # human; it is not what enforces the rule.
     try:
         from app.services.dealer_kit import edition_service
 
@@ -338,6 +340,57 @@ def save_version(
         )
 
     return version
+
+
+def _assert_no_open_edition_bypass(db: Session, page_id: str, version_id: str) -> None:
+    """Refuse a direct publish that sidesteps an approval cycle already open.
+
+    Without this the Edition workflow is advisory. This endpoint moves the
+    published label at any version on `dealer_kit.page.publish` alone, and the
+    page editor wires its header **Publish** button straight to it - so the
+    Designer who cannot approve their own Edition could publish the unapproved
+    version anyway, in one click, from the screen they are already on.
+
+    The rule is deliberately narrow:
+
+    * A page with NO open Edition publishes exactly as it did in S1 to S3.
+      Editions are not mandatory and this does not make them so.
+    * A version some Edition already published stays reachable, because
+      re-pointing the label at previously approved content is a ROLLBACK, not a
+      way to ship something nobody read.
+    * Everything else, while a cycle is open, has to go through that cycle.
+
+    `staging` is untouched: it is not what readers see.
+    """
+    # Imported here rather than at module scope: edition_service imports this
+    # module for get_page and move_label.
+    from app.services.dealer_kit.edition_service import OPEN_STATUS_KEYS
+    from app.models.dealer_kit import Edition
+
+    open_edition = (
+        db.query(Edition)
+        .filter(Edition.page_id == page_id, Edition.status_key.in_(OPEN_STATUS_KEYS))
+        .first()
+    )
+    if open_edition is None:
+        return
+
+    already_published = (
+        db.query(Edition.id)
+        .filter(Edition.page_id == page_id, Edition.done_version_id == version_id)
+        .first()
+    )
+    if already_published is not None:
+        return
+
+    raise AppException(
+        status_code=422,
+        message=(
+            f"This catalogue has an Edition in progress ('{open_edition.name}'). "
+            "Publish it from that Edition so it goes past an approver, or "
+            "reject it first."
+        ),
+    )
 
 
 def move_label(
@@ -367,6 +420,9 @@ def move_label(
         # Guarding page_id too: a label must never be able to point at another
         # page's version.
         raise AppException(status_code=404, message="Version not found on this page")
+
+    if label == PUBLISHED:
+        _assert_no_open_edition_bypass(db, page_id, version_id)
 
     row = (
         db.query(PageLabel)

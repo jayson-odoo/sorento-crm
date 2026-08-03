@@ -216,7 +216,15 @@ describe('EditionDetail, what it tells the designer', () => {
   });
 
   it('prints no uuid anywhere', async () => {
-    mockGet.mockResolvedValue(edition('approved', { approvedVersionId: 'v-1' }));
+    // Real uuids in the fixture, or the regex below has nothing it COULD match
+    // and the test passes even when the component renders {edition.id}.
+    mockGet.mockResolvedValue(
+      edition('approved', {
+        id: '3f8d1c2a-9b4e-4f1a-8c7d-2e5a6b7c8d9e',
+        pageId: '7a1b2c3d-4e5f-4a6b-8c9d-0e1f2a3b4c5d',
+        approvedVersionId: 'b2c3d4e5-6f7a-4b8c-9d0e-1f2a3b4c5d6e',
+      }),
+    );
 
     renderDetail();
     await screen.findByText('Spring 2026');
@@ -370,6 +378,19 @@ describe('EditionDetail, what changed since last time', () => {
     expect(fresh).toHaveTextContent('12 in stock');
     // The unchanged product is counted, not listed - the list is what to look at.
     expect(fresh).not.toHaveTextContent('SRTOLD1');
+  });
+
+  it('keeps the section when the comparison itself failed', async () => {
+    // A card that vanishes on error answers "nothing changed", which is a
+    // different and much calmer statement than "we could not work it out".
+    mockGet.mockResolvedValue(edition('draft'));
+    mockReview.mockRejectedValue(new Error('backend down'));
+
+    renderDetail();
+    await screen.findByText('Spring 2026');
+
+    expect(await screen.findByText(/could not work out what changed/i)).toBeInTheDocument();
+    expect(screen.getByText('What changed')).toBeInTheDocument();
   });
 
   it('still renders when nothing changed, because that is the answer', async () => {

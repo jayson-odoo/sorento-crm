@@ -18,7 +18,8 @@ than the AC, and it cannot ship a silently altered catalogue.
 
 Idempotent throughout. The dev database is shared across worktrees, and the
 statuses table already carries graphs seeded from another branch, so every insert
-is ON CONFLICT guarded and the DDL is skipped when the table already exists.
+is SELECT-then-INSERT guarded on (entity_type, key) and the DDL is skipped when
+the table already exists.
 """
 import uuid
 

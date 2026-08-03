@@ -1,6 +1,6 @@
 """Dealer Kit module bootstrap.
 
-Registers the module's status-engine entities. The registry ships empty and
+Registers the module's status-engine entity. The registry ships empty and
 every entity arrives from a module bootstrap (``status_engine.registry``), and
 the Edition is the FIRST entity in this system to ride the engine - so if
 something here looks like it is establishing a convention, it is.

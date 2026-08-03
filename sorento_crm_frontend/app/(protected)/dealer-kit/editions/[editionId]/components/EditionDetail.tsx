@@ -267,7 +267,25 @@ function EditionChanges({ editionId }: { editionId: string }) {
   const { data, isLoading, isError } = useEditionReviewQuery(editionId);
 
   if (isLoading) return <Skeleton className="h-32 w-full" />;
-  if (isError || !data) return null;
+
+  // The section stays, per the CRUD standard and for the same reason the empty
+  // case renders: somebody came here to find out what changed, and a card that
+  // vanishes answers "nothing" when the truth is "we could not work it out".
+  if (isError || !data) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm">What changed</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <AlertCircle className="size-4 shrink-0" />
+            Could not work out what changed. Reload to try again.
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const newSince = data.members.filter((row) => row.isNewSincePrevious);
 

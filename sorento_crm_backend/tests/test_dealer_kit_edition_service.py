@@ -327,6 +327,145 @@ class TestFinishingFreesThePage:
         assert edition.status_key == "approved"
 
 
+class TestTheApprovalCannotBeSidesteppedByTheLabel:
+    """`PUT /pages/{id}/labels/published` moves the label at any version and
+    knew nothing about Editions, so the whole workflow was advisory.
+
+    It is not a back door somebody has to look for: the page editor renders
+    **Publish** as a header button wired straight to it, and migration 309 hands
+    `page.publish` to marketing_manager and marketing_executive WITHOUT
+    `edition.approve` - the exact population the split exists to constrain held
+    the bypass.
+
+    The rule is narrow on purpose. Publishing without an Edition is how S1 to S3
+    shipped and stays legal; what is refused is sidestepping an approval cycle
+    that is ALREADY OPEN on that page. Rollback to something an Edition did
+    publish stays legal too, because that is returning to approved content, not
+    shipping unapproved content.
+    """
+
+    def test_a_direct_publish_is_refused_while_an_edition_is_open(self, db) -> None:
+        page = _page(db)
+        _version(db, page, 1)
+        second = _version(db, page, 2)
+        _started(db, page)  # draft - not approved, not even submitted
+
+        with pytest.raises(AppException) as caught:
+            page_service.move_label(
+                db, page.id, page_service.PUBLISHED, version_id=second.id, user_id=USER
+            )
+
+        assert caught.value.status_code == 422
+        assert "edition" in caught.value.detail["message"].lower()
+        assert db.query(PageLabel).filter(PageLabel.page_id == page.id).count() == 0
+
+    def test_a_page_with_no_edition_publishes_exactly_as_before(self, db) -> None:
+        # S1 to S3 behaviour. Editions are not mandatory.
+        page = _page(db)
+        version = _version(db, page, 1)
+
+        row = page_service.move_label(
+            db, page.id, page_service.PUBLISHED, version_id=version.id, user_id=USER
+        )
+
+        assert row.version_id == version.id
+
+    def test_the_edition_route_still_publishes_while_its_own_edition_is_open(
+        self, db
+    ) -> None:
+        # The guard must not lock out the one path that is allowed to publish.
+        page = _page(db)
+        version = _version(db, page, 1)
+        edition = _through_to_approved(db, page)
+
+        edition_service.publish(db, edition.id, user_id=APPROVER)
+
+        assert edition.status_key == "done"
+        label = (
+            db.query(PageLabel)
+            .filter(PageLabel.page_id == page.id, PageLabel.label == "published")
+            .one()
+        )
+        assert label.version_id == version.id
+
+    def test_rolling_back_to_previously_published_content_stays_legal(self, db) -> None:
+        # An emergency rollback during an open cycle is returning to a version
+        # an Approver already signed off, so it is not the failure being guarded.
+        page = _page(db)
+        first = _version(db, page, 1)
+        done = _through_to_approved(db, page)
+        edition_service.publish(db, done.id, user_id=APPROVER)
+
+        _version(db, page, 2)
+        _started(db, page)  # a fresh cycle is now open
+
+        row = page_service.move_label(
+            db, page.id, page_service.PUBLISHED, version_id=first.id, user_id=USER
+        )
+
+        assert row.version_id == first.id
+
+    def test_a_finished_edition_does_not_lock_the_page_forever(self, db) -> None:
+        page = _page(db)
+        _version(db, page, 1)
+        edition = _through_to_approved(db, page)
+        edition_service.publish(db, edition.id, user_id=APPROVER)
+
+        third = _version(db, page, 3)
+        row = page_service.move_label(
+            db, page.id, page_service.PUBLISHED, version_id=third.id, user_id=USER
+        )
+
+        assert row.version_id == third.id
+
+    def test_the_staging_label_is_not_restricted(self, db) -> None:
+        # Only `published` is what readers see. Staging is for review.
+        page = _page(db)
+        version = _version(db, page, 1)
+        _started(db, page)
+
+        row = page_service.move_label(
+            db, page.id, page_service.STAGING, version_id=version.id, user_id=USER
+        )
+
+        assert row.version_id == version.id
+
+
+class TestSubmitClearsAnApprovalToo:
+    """`submit` serves TWO edges - draft -> pending_approval and
+    approved -> pending_approval - and only cleared the rejection reason.
+
+    So an Edition sent back round after approval kept approved_by / approved_at
+    / approved_version_id, and the detail page renders "Approved: <date>" beside
+    a "Pending approval" pill. Exactly what send_back_on_edit._void was written
+    to prevent, one function away in the same file.
+    """
+
+    def test_resubmitting_an_approved_edition_voids_the_approval(self, db) -> None:
+        page = _page(db)
+        _version(db, page, 1)
+        edition = _through_to_approved(db, page)
+
+        edition_service.submit(db, edition.id, user_id=USER)
+
+        assert edition.status_key == "pending_approval"
+        assert edition.approved_by is None
+        assert edition.approved_at is None
+        assert edition.approved_version_id is None
+
+    def test_rejecting_clears_the_approved_version_too(self, db) -> None:
+        # reject cleared approved_by and approved_at but left the version id,
+        # where _void clears all three.
+        page = _page(db)
+        _version(db, page, 1)
+        edition = _through_to_approved(db, page)
+        edition_service.submit(db, edition.id, user_id=USER)
+
+        edition_service.reject(db, edition.id, reason="No", user_id=APPROVER)
+
+        assert edition.approved_version_id is None
+
+
 class TestAnApprovalDoesNotSurviveAnEdit:
     """The graph has carried an ``approved -> pending_approval`` edge since
     migration 318, whose docstring says "ANY edit to an approved Edition sends
