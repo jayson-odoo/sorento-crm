@@ -172,7 +172,21 @@ line by line.
   claimed against a purchase years later, so the commercial and warranty record survives while the person
   does not.
 - **PDPA 2010 s.7(2): the collection notice must be in Bahasa Malaysia AND English.** Build requirement.
-  The Malay wording is not drafted and needs someone who writes it properly.
+  ~~The Malay wording is not drafted and needs someone who writes it properly.~~
+  **BUILT 2026-08-03.** The notice is versioned, immutable-once-published, admin-editable
+  configuration (`consent_notices`, migration 322), seeded with v1 in both languages covering
+  every element s.7(1) enumerates. Publishing without either language is refused, so the
+  statute is enforced by the code rather than remembered. The Malay is written as Malay, not
+  transliterated, and **still wants sign-off from whoever approves Malay legal wording for
+  Sorento** - now a review of real text at
+  **System Management -> Consent Notices**, not a blocking blank.
+
+  Two things the build corrected. `consumer_service` stamped a literal
+  (`2026-08-BM-EN-DRAFT`) that resolved to no text at all, so the column answered nothing.
+  And a staff-created profile now claims **no** notice: `ensure_profile` runs where nobody is
+  shown anything, and stamping a version there asserts somebody read words that were never on
+  their screen. `record_consent` stamps it only when a portal displays the notice, and fails
+  closed when none is published.
 
 > **ONE-WAY DOOR, flagged.** Service-only consent means these profiles **cannot be used for SMC
 > broadcasting or any marketing**, now or later, without fresh consent from each person. And re-contacting

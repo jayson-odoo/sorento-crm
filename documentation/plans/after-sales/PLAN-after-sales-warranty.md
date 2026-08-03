@@ -2,8 +2,11 @@
 
 **Status:** **In build. S0, S1, S2, S2a, S2b, S4 and S4a implemented; forms-platform F0 to F2c implemented
 alongside them.** Migrations 310 to 321. **S3-pre is RUN (2026-08-03) and passed** - see
-`S3-pre-extraction-accuracy.md`. Next slice: **S3** (consumer portal intake), now gated only on
-the Malay PDPA wording and Sorento's call on the 31 missing `consumer_icon`s. Everything below the "In build, S0" history is the
+`S3-pre-extraction-accuracy.md`. **Fork 6's PDPA notice is BUILT** (migration 322,
+versioned + bilingual + admin-editable), so S3's second hard gate is closed too. Next slice:
+**S3** (consumer portal intake). Outstanding for Sorento rather than for the build: sign-off
+on the Malay wording, and whether the 31 `warranty_product_kinds` get real
+`consumer_icon`s or the AC-C11 tiles fall back to text. Everything below the "In build, S0" history is the
 original plan text, amended in place.
 
 Plan written 2026-07-26 from a completed grill (19 decisions). S0 rewritten
