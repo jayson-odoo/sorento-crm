@@ -26,8 +26,8 @@ prices; a consumer sees consumer prices. **One document, resolved per reader.**
 | **S1 builder core** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 | **S2 collections + bundles** | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
 | **S3 PDF export** | n/a (no new UI surface) | **PASSED** 2026-07-26 | **PASSED** 2026-07-26 | **APPROVED** |
-| **S7 flyer seeding** | **PASSED** 2026-08-02 | **PASSED** 2026-08-03 | not run | **BUILT, UNREVIEWED** |
-| **S2.5 Edition approval** | **SKIPPED** (see below) | **PASSED** 2026-08-03 | author read-through 2026-08-03, `/code-review` not run | **BUILT, SELF-REVIEWED** |
+| **S7 flyer seeding** | **PASSED** 2026-08-02 | **PASSED** 2026-08-03 | **REVIEWED** 2026-08-03, blockers fixed | **BUILT, REVIEWED** |
+| **S2.5 Edition approval** | **SKIPPED** (see below) | **PASSED** 2026-08-03 | **REVIEWED** 2026-08-03, blockers fixed | **BUILT, REVIEWED** |
 
 ---
 
@@ -858,6 +858,56 @@ There is no e2e spec for the approval cycle - `DataGridTable` does not mount its
 row body under jsdom, so rows, status pills and the empty message are asserted
 nowhere. S7 has had no review pass at all. The price-only revision rule (AC-L4
 to AC-L6) is deferred by decision.
+
+---
+
+## Phase 3 - the review pass on S7 and S2.5 (2026-08-03)
+
+Both slices were reviewed properly for the first time. Neither came back clean,
+and the pattern across the two is worth naming before the findings: **the code
+was good and its documentation was not.** The most serious defect in each slice
+was a comment asserting a behaviour that nothing implemented.
+
+### Fixed
+
+| # | Slice | What it was |
+|---|---|---|
+| B1 | S2.5 | **The approval workflow was advisory.** `PUT /pages/{id}/labels/published` moves the label at any version on `page.publish` alone, and the page editor wires its header Publish button straight to it. Migration 309 grants `page.publish` to marketing_manager and marketing_executive WITHOUT `edition.approve`, so the population the split exists to constrain held the bypass. Now fenced by `_assert_no_open_edition_bypass`. |
+| 1 | S7 | **A re-seed re-priced the LIVE brochure.** The promotion lives on the page and `published_doc` reads it from there, so sending the review screen's header promotion changed what readers were charged before anybody published. The panel promised the opposite three lines from the button. Now applied on creation only, mirroring the print-profile rule beside it. |
+| B3 | S2.5 | `_move` was a read-then-unconditional-write, so Publish racing Save could take `done -> pending_approval`, an edge the graph does not have. Now re-reads under `FOR UPDATE`. |
+| 4 | S7 | A failed asset write left its uploaded bytes in the bucket - the savepoint undoes rows, not objects. Same orphan family as the original 1,356. Now swept. |
+| 2 | S7 | The slice's only Playwright spec asserted copy the "fewer words" commit had removed, so it had been red and invisible behind `test.skip`. |
+| S3 | S2.5 | `submit` serves two edges and left the approval stamped on the second. |
+| 3 | S7 | Migration 317's downgrade could not run: it deleted attachments before the assets that RESTRICT them. |
+| S2 | S2.5 | The seeded statuses were not `is_system`, so renaming one in the admin UI bricked the workflow. |
+| S5, S6, S8, S10, 6, 7 | both | A registry failure logged at the wrong volume, a section that vanished on error, six false comments, a stale plan Status line, a contract doc contradicting its consumer, a public address hint missing its company segment. |
+
+### Known, and deliberately NOT fixed
+
+- **B2: published content is not version-pinned.** An approval attests to a
+  `page_version` id, but the live page is that id plus two mutable joins -
+  collections resolve at read time, and the promotion lives on the page. So
+  `PUT /collections/{id}` still changes what a published catalogue shows
+  without any Edition noticing. The re-seed half of this is closed; the general
+  case is a design decision about whether publishing should snapshot its
+  bindings, and it is too big to take on the back of a review.
+- **S1: the one-open-per-page index hardcodes four status keys.** A status
+  added through the status admin is outside the predicate, i.e. silently
+  treated as closed, and migrating Editions into it produces two open Editions
+  on one page. Reproduced. The fix is a classification the graph itself carries,
+  which is an engine change, not a Dealer Kit one.
+- **S7 (perf): `GET /editions` is unbounded and resolves the graph per row.**
+  `page_service.list_pages` solved the same problem and left the lesson in a
+  comment. Fine at current volumes.
+- **S9: no Playwright spec for the approval cycle**, and none for S7's own
+  round trip beyond the one spec fixed above. `DataGridTable` does not mount
+  rows under jsdom, so rows, status pills and empty messages are asserted
+  nowhere on either slice.
+- **S7 #5: lost artwork is still invisible.** Both banner-loss paths only warn,
+  and nothing on the review screen reports how many pages got a background.
+  Migration 317's docstring records what that looked like in the field.
+- **`FlyerReviewScreen` has a load-sensitive flaky test** - passes alone, fails
+  in a full-suite run at ~3s. Not caused by this session's changes.
 
 ---
 
