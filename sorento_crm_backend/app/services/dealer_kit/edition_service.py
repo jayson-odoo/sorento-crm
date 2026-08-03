@@ -148,7 +148,25 @@ def _move(
     ``apply`` stamps whatever else the transition records, and runs only AFTER
     the move is known to be legal - so a rejected transition cannot leave an
     ``approved_by`` behind on a record that never moved.
+
+    **The row is locked and re-read first.** Without it this is a
+    read-then-unconditional-write: the legality check runs against whatever the
+    session already had, and the UPDATE carries no `WHERE status_key = <from>`,
+    so two concurrent transitions both pass against the same pre-state and the
+    second commit silently wins. The reachable version is a Publisher clicking
+    Publish while the Designer clicks Save - the Edition ends up
+    `pending_approval` with a `done_version_id` and the published label already
+    moved, having taken `done -> pending_approval`, an edge the graph does not
+    have. Double-clicking Approve, or two Approvers, gets there faster.
+
+    ``create_edition`` reasons about exactly this hazard and answers it with a
+    database constraint; this is the same hazard on the UPDATE side, and a row
+    lock is the equivalent answer.
     """
+    # Re-read under a row lock, so a concurrent transition blocks here and then
+    # finds the state its own check has to be made against.
+    db.refresh(edition, with_for_update=True)
+
     target = _status_by_key(db, to_key)
     status_service.assert_transition_allowed(
         db,

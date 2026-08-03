@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from sqlalchemy import update
 
 from app.models.dealer_kit import Edition, Page, PageLabel, PageVersion
 from app.services.dealer_kit import edition_service, page_service
@@ -429,6 +430,63 @@ class TestTheApprovalCannotBeSidesteppedByTheLabel:
         )
 
         assert row.version_id == version.id
+
+
+class TestATransitionChecksTheCommittedState:
+    """`_move` used to check legality against whatever the session had cached
+    and then UPDATE unconditionally, with no `WHERE status_key = <from>`.
+
+    Two concurrent transitions both passed against the same pre-state and the
+    second commit won. The reachable one is Publish racing Save: the Edition
+    lands on `pending_approval` while holding a `done_version_id` and a moved
+    published label, having taken `done -> pending_approval` - an edge the graph
+    does not have and `test_a_finished_edition_cannot_be_reopened` asserts is
+    impossible.
+
+    Simulated here by moving the row underneath the session, which is what the
+    losing transaction sees once the winner commits.
+    """
+
+    def test_a_stale_session_does_not_get_a_move_the_graph_forbids(self, db) -> None:
+        page = _page(db)
+        _version(db, page, 1)
+        edition = _through_to_approved(db, page)
+        assert edition.status_key == "approved"
+
+        # The winning transaction, applied straight to the row.
+        #
+        # A Core UPDATE through the mapped class, NOT hand-written SQL naming
+        # `dealer_kit.edition`: blank_session runs in a scratch schema, so a
+        # hardcoded schema name does not resolve to this test's table at all -
+        # it silently matches nothing and the test passes while proving nothing.
+        # synchronize_session=False leaves the in-memory copy stale, which is
+        # the whole point; assigning to the object instead would mark it dirty
+        # and autoflush would push that value out ahead of the re-read.
+        db.execute(
+            update(Edition)
+            .where(Edition.id == edition.id)
+            .values(status_id=_status_id(db, "done"), status_key="done")
+            .execution_options(synchronize_session=False)
+        )
+
+        # The loser still believes it holds an approved Edition.
+        assert edition.status_key == "approved"
+
+        with pytest.raises(AppException):
+            edition_service.submit(db, edition.id, user_id=USER)
+
+        db.refresh(edition)
+        assert edition.status_key == "done", "a terminal Edition was reopened"
+
+
+def _status_id(db, key: str) -> str:
+    from app.models.status import Status
+
+    return (
+        db.query(Status.id)
+        .filter(Status.entity_type == "dealer_kit_edition", Status.key == key)
+        .scalar()
+    )
 
 
 class TestSubmitClearsAnApprovalToo:
