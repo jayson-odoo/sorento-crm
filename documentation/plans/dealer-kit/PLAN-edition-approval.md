@@ -118,21 +118,29 @@ the Kit.
 **S2.5.6 - The screens.** Designer's submit, Approver's queue and decision,
 rejection reason on the Designer's side.
 
-## Open questions for the grill
+## Settled by the user, 2026-08-03
 
-1. **Is `done` terminal or not?** AC-L8 moves `done -> draft`, so it cannot be
-   `is_terminal` in the engine's sense. Either AC-L8 means "start a NEW Edition
-   from this one" (which is AC-L9, and then `done` IS terminal), or Editions are
-   genuinely reopenable. These are different products and the ACs currently
-   imply both.
-2. **What exactly is "a price field"** for AC-L4/L5? A tile shows bound prices
-   resolved per viewer, and the document stores no prices at all (a price string
-   in a saved doc is a defect, per S1). So a "price edit" is not an edit to the
-   document - it is a change to a promotion or a price list OUTSIDE it. That may
-   mean AC-L4/L5 are about something the Edition cannot observe by diffing its
-   own versions, which would change the design substantially.
-3. **One Edition open per page, or several?** The plan assumes one; nothing in
+**`done` IS terminal.** `is_terminal = true`, and there is no `done -> draft`
+edge. **AC-L8 is therefore withdrawn** - a `done` Edition is finished, and the
+way to revise a live catalogue is AC-L9: duplicate it into a NEW Edition, which
+starts at `draft` while the old one keeps the `published` label. That answers
+AC-L8's actual worry (the live catalogue must not disappear when a revision
+starts) without a reopen path, because the published label never moves until the
+new Edition reaches `done` itself.
+
+**The price-only drop-back is deferred.** **AC-L4, AC-L5 and AC-L6 are out of
+scope for the first build.** The reasoning that made them doubtful stands: the
+document stores no prices, so an Edition cannot detect a price change by diffing
+its own versions, and the diff AC-L6 asks for has nothing to diff. Until that is
+designed, the rule is the simple one - **any** edit to an `approved` Edition
+drops it to `pending_approval`. Stricter than AC-L4, never wrong, and it cannot
+ship a silently altered catalogue. `approved_version_id` and `done_version_id`
+are still stored so the deferred work has its raw material.
+
+## Still open for the grill
+
+1. **One Edition open per page, or several?** The plan assumes one; nothing in
    Group L says so.
-4. **Does rejection go back to `draft` or stay `rejected`** until the Designer
+2. **Does rejection go back to `draft` or stay `rejected`** until the Designer
    picks it up? Affects whether `rejected` is a state or an event.
-5. **Who is the Approver in practice** - a role, or a named person per page?
+3. **Who is the Approver in practice** - a role, or a named person per page?
