@@ -43,6 +43,40 @@ import { WorkflowHeaderSectionsEditor } from './WorkflowHeaderSectionsEditor';
 import { emptyHeaderSections, flattenHeaderFields, normalizeWorkflowFormSchema } from '../utils/workflowFormSchema';
 import { getOrigin, workflowNewBlankUrl } from '../utils/workflowShareLinks';
 
+/**
+ * Whether the stored draft is the CURRENT document model, which this builder cannot author.
+ *
+ * F0 replaced `workflow_form_versions.schema` with `app.form_engine`'s document -
+ * `{schemaVersion, pages[] -> sections[] -> fields[]}` - and said outright that the cost
+ * would be the FE builder, deferred to F3. F3 is not built. So this screen speaks the
+ * retired shape (`header_fields`, `header_sections`, `line_groups`, `states`,
+ * `transitions`, `notification_rules`) and the backend forbids every one of those keys:
+ * `_assert_document_shape` validates each draft save against a `FormDocument` whose config
+ * is `extra="forbid"`.
+ *
+ * The result, verified in a browser: the tabs render an EMPTY form over a definition that
+ * really does have fields, and "Save draft schema" returns a bare 422 the user cannot act
+ * on. The stored document survives - the guard does its job - but presenting an editor that
+ * silently shows nothing and cannot save is worse than admitting it does not work yet,
+ * because the empty screen reads as "this form has no fields" and invites somebody to
+ * rebuild it from scratch.
+ */
+function isCurrentDocumentModel(draft: unknown): boolean {
+  if (!draft || typeof draft !== 'object') return false;
+  const doc = draft as Record<string, unknown>;
+  const legacyKeys = [
+    'header_fields',
+    'header_sections',
+    'line_groups',
+    'states',
+    'transitions',
+    'notification_rules',
+  ];
+  const hasLegacy = legacyKeys.some((k) => doc[k] !== undefined);
+  const hasCurrent = Array.isArray(doc.pages) || doc.schemaVersion !== undefined;
+  return hasCurrent && !hasLegacy;
+}
+
 function emptySchema(): WorkflowFormSchema {
   return {
     header_sections: emptyHeaderSections(),
@@ -70,6 +104,12 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
   const [description, setDescription] = useState('');
   const [isActive, setIsActive] = useState(true);
   const [previewHeaderData, setPreviewHeaderData] = useState<Record<string, unknown>>({});
+  // Settings, Publish and Share still work on a current-model document - they never touch
+  // the schema shape. Only the visual editor is out of date.
+  const schemaEditorUnavailable = useMemo(
+    () => isCurrentDocumentModel(def?.draft_schema),
+    [def?.draft_schema],
+  );
 
   useEffect(() => {
     if (!def) return;
@@ -305,10 +345,12 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
         >
           Save settings
         </Button>
-        <Button size="sm" onClick={() => saveSchema()} disabled={updateMut.isPending}>
-          <Save className="size-4 mr-1" />
-          Save draft schema
-        </Button>
+        {schemaEditorUnavailable ? null : (
+          <Button size="sm" onClick={() => saveSchema()} disabled={updateMut.isPending}>
+            <Save className="size-4 mr-1" />
+            Save draft schema
+          </Button>
+        )}
         <Button
           size="sm"
           variant="primary"
@@ -396,6 +438,25 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
         </CardContent>
       </Card>
 
+      {schemaEditorUnavailable ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Visual builder not available for this form</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2 text-sm text-muted-foreground">
+            <p>
+              This form uses the current document model (pages, sections and fields). The
+              visual builder still speaks the earlier one, so it would show you an empty form
+              and could not save your changes.
+            </p>
+            <p>
+              Nothing is wrong with the form itself and nothing has been lost. Its settings
+              above can be edited, and the published version can still be shared. Editing the
+              fields needs the rebuilt builder.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
       <Tabs defaultValue="form">
         <TabsList className="flex flex-wrap h-auto gap-1">
           <TabsTrigger value="form">Form fields</TabsTrigger>
@@ -764,6 +825,7 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
           {flowBlock}
         </TabsContent>
       </Tabs>
+      )}
     </div>
   );
 }
