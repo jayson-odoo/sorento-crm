@@ -41,7 +41,7 @@ vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
 }));
 
-import type { MatchReport } from '../../services/flyerReadingService';
+import type { MatchReport, PageHeading } from '../../services/flyerReadingService';
 import { MatchReportSections } from './MatchReportSections';
 
 const EMPTY: MatchReport = {
@@ -105,7 +105,19 @@ const FULL: MatchReport = {
   promotionId: 'promo-1',
 };
 
-function renderReport(report: MatchReport, promotionLabel: string | null = null, codeCount = 61) {
+/** The fixture flyer's own three pages: page 2 is the known misread. */
+const HEADINGS: PageHeading[] = [
+  { page: 1, text: 'Inspiring Designs, Exciting Promotions' },
+  { page: 2, text: 'Transforming Your' },
+  { page: 3, text: 'WATER CLOSET' },
+];
+
+function renderReport(
+  report: MatchReport,
+  promotionLabel: string | null = null,
+  codeCount = 61,
+  headings: PageHeading[] = HEADINGS,
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   return render(
     <QueryClientProvider client={client}>
@@ -114,6 +126,7 @@ function renderReport(report: MatchReport, promotionLabel: string | null = null,
         report={report}
         codeCount={codeCount}
         promotionLabel={promotionLabel}
+        headings={headings}
       />
     </QueryClientProvider>,
   );
@@ -270,11 +283,59 @@ describe('MatchReportSections, what the draft gets wrong', () => {
   });
 });
 
+describe('MatchReportSections, what each page will be called', () => {
+  it('lists every page in printed order, so the list reads beside the paper', () => {
+    renderReport(FULL, 'A3 Flyer 2026');
+
+    const section = screen.getByTestId('dk-fr-headings');
+    const text = section.textContent ?? '';
+    expect(text).toContain('Page 1');
+    expect(text).toContain('Page 2');
+    expect(text).toContain('Page 3');
+    expect(text.indexOf('Page 1')).toBeLessThan(text.indexOf('Page 2'));
+    expect(text.indexOf('Page 2')).toBeLessThan(text.indexOf('Page 3'));
+  });
+
+  it('shows the misread heading rather than hiding it', () => {
+    // Fixture page 2 is headed "BATHTUB COLLECTION" on the paper and the
+    // heuristic reads "Transforming Your". Showing the WRONG value is the point
+    // of the section: a reviewer can only correct what they can see.
+    renderReport(FULL, 'A3 Flyer 2026');
+
+    expect(screen.getByTestId('dk-fr-headings')).toHaveTextContent('Transforming Your');
+  });
+
+  it('says what happens to a page the reader found no heading on', () => {
+    renderReport(FULL, 'A3 Flyer 2026', 61, [
+      { page: 1, text: null },
+      { page: 2, text: 'WATER CLOSET' },
+    ]);
+
+    const section = screen.getByTestId('dk-fr-headings');
+    expect(section).toHaveTextContent('Page 1');
+    expect(section).toHaveTextContent(/no heading found/i);
+    expect(section).toHaveTextContent(/named after its page/i);
+  });
+
+  it('renders as an empty state rather than a blank block when nothing was read', () => {
+    renderReport(EMPTY, null, 0, []);
+
+    expect(screen.getByText(/no pages were read/i)).toBeInTheDocument();
+  });
+});
+
 describe('MatchReportSections, every section renders', () => {
-  it('shows all five sections on an empty report', () => {
+  it('shows all six sections on an empty report', () => {
     renderReport(EMPTY);
 
-    for (const id of ['unmatched', 'not-promoted', 'dimensions', 'duplicates', 'known-gaps']) {
+    for (const id of [
+      'unmatched',
+      'not-promoted',
+      'dimensions',
+      'duplicates',
+      'headings',
+      'known-gaps',
+    ]) {
       expect(document.querySelector(`[data-dk-fr-section="${id}"]`)).not.toBeNull();
     }
   });

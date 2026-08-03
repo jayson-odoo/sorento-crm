@@ -420,15 +420,38 @@ class FlyerReadingSummary(BaseModel):
     uploaded_at: datetime = Field(serialization_alias="uploadedAt")
 
 
+class PageHeadingOut(BaseModel):
+    """What the reader thinks page N is called.
+
+    Heading detection is a heuristic (the largest non-card text in the top
+    band) and it is wrong wherever the heading is part of the artwork. The
+    review screen therefore has to show the heading rather than only warn that
+    headings are guessed: a reviewer can correct only what they can see.
+
+    ``text`` is null for a page the reader found no heading on. That page is
+    still listed, because one missing from the list is one nobody checks.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    page: int
+    text: Optional[str] = None
+
+
 class FlyerReadingOut(FlyerReadingSummary):
     """One flyer and what it means right now.
 
     ``report`` is recomputed on every read and never stored - see
     ``flyer_reading_service``. That is why it lives on the detail response and
     not on the row.
+
+    ``headings`` comes off the STORED reading rather than the report: it is
+    what the reader found, not what the master says, and the seed writes the
+    same values as its section names.
     """
 
     report: MatchReportOut
+    headings: list[PageHeadingOut] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

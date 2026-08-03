@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, Copy, SearchX, Tag } from 'lucide-react';
+import { AlertTriangle, Copy, Heading, SearchX, Tag } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import type {
   MatchReport,
   MatchedCode,
+  PageHeading,
   UnmatchedCode,
 } from '../../services/flyerReadingService';
 import { DimensionReviewSection } from './DimensionReviewSection';
@@ -74,6 +75,13 @@ export interface MatchReportSectionsProps {
   codeCount: number;
   /** The promotion the report was computed against, by NAME. Never an id. */
   promotionLabel: string | null;
+  /**
+   * What the reader called each page. Off the reading, not the report - see the
+   * service docblock. Shown WRONG values and all: this section exists so the
+   * misreads are visible before the seed rather than found in the builder after
+   * it.
+   */
+  headings: PageHeading[];
 }
 
 export function MatchReportSections({
@@ -81,6 +89,7 @@ export function MatchReportSections({
   report,
   codeCount,
   promotionLabel,
+  headings,
 }: MatchReportSectionsProps) {
   const duplicateRows = useMemo(
     () =>
@@ -226,6 +235,42 @@ export function MatchReportSections({
     [],
   );
 
+  const headingColumns = useMemo<ColumnDef<PageHeading>[]>(
+    () => [
+      {
+        accessorKey: 'page',
+        header: 'Flyer page',
+        cell: ({ row }) => (
+          <span className="text-sm text-muted-foreground">Page {row.original.page}</span>
+        ),
+        size: 140,
+        minSize: 90,
+        meta: { headerTitle: 'Flyer page' },
+      },
+      {
+        id: 'text',
+        header: 'Section will be called',
+        cell: ({ row }) =>
+          row.original.text ? (
+            <div className="truncate text-sm text-foreground" title={row.original.text}>
+              {row.original.text}
+            </div>
+          ) : (
+            // Not an em dash and not a blank cell: a blank reads as a render
+            // that failed, and the reviewer needs to know the seed will fall
+            // back to the page number rather than leave the section unnamed.
+            <span className="text-sm text-amber-600">
+              No heading found - the section will be named after its page
+            </span>
+          ),
+        size: 420,
+        minSize: 200,
+        meta: { headerTitle: 'Section will be called' },
+      },
+    ],
+    [],
+  );
+
   return (
     <div className="flex flex-col gap-8">
       <section className="flex flex-col gap-3" data-dk-fr-section="summary">
@@ -347,6 +392,31 @@ export function MatchReportSections({
       </Section>
 
       <Section
+        id="headings"
+        icon={<Heading className="size-4" />}
+        title="What each page will be called"
+        description={
+          <>
+            One section per flyer page, named by what the reader found at the top of it. The
+            reader takes the largest piece of text near the top, so a page whose heading is
+            part of the artwork comes through wrong. Read these against the paper.
+          </>
+        }
+      >
+        <ReportGrid
+          columns={headingColumns}
+          rows={headings}
+          getRowId={(row) => String(row.page)}
+          data-testid="dk-fr-headings"
+          emptyMessage={
+            <Empty tone="neutral" title="No pages were read">
+              This reading has no pages, which means the upload produced nothing to review.
+            </Empty>
+          }
+        />
+      </Section>
+
+      <Section
         id="known-gaps"
         icon={<AlertTriangle className="size-4" />}
         title="What the draft will not have right"
@@ -364,7 +434,8 @@ export function MatchReportSections({
           <li>
             <strong className="text-foreground">Headings are guessed.</strong> The reader takes
             the largest piece of text near the top of each page, which is wrong wherever the
-            heading is part of the artwork. Check every section heading against the paper.
+            heading is part of the artwork. Check every section heading against the paper - they
+            are listed above, page by page.
           </li>
           <li>
             <strong className="text-foreground">Product photos are blank.</strong> No product has

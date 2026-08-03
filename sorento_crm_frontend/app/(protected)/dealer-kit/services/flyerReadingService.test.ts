@@ -57,12 +57,15 @@ beforeEach(() => {
 });
 
 describe('listFlyerReadings', () => {
-  it('asks for the list and drops the report the endpoint never sends', async () => {
+  it('asks for the list and carries no detail field the endpoint never sends', async () => {
     mockFetch.mockResolvedValue(ok([{ id: 'r-1', filename: 'flyer.pdf', pageCount: 3 }]));
 
     const rows = await listFlyerReadings();
 
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/dealer-kit/flyer-readings');
+    // An exact match, not a subset: the row used to be built as a whole reading
+    // and stripped back down, so a detail field added later appeared here empty
+    // rather than absent. `toEqual` is what catches the next one.
     expect(rows).toEqual([
       {
         id: 'r-1',
@@ -73,6 +76,17 @@ describe('listFlyerReadings', () => {
         uploadedAt: '',
       },
     ]);
+  });
+
+  it('ignores a detail field the endpoint sends anyway', async () => {
+    mockFetch.mockResolvedValue(
+      ok([{ id: 'r-1', filename: 'flyer.pdf', headings: [{ page: 1, text: 'X' }], report: {} }]),
+    );
+
+    const rows = await listFlyerReadings();
+
+    expect(rows[0]).not.toHaveProperty('headings');
+    expect(rows[0]).not.toHaveProperty('report');
   });
 
   it('surfaces the message the backend gave rather than a generic one', async () => {
@@ -116,6 +130,30 @@ describe('getFlyerReading', () => {
       duplicates: {},
       promotionId: null,
     });
+    expect(reading.headings).toEqual([]);
+  });
+
+  it('carries the headings through, misreads and all', async () => {
+    // The normaliser rebuilds the reading field by field, so a field it forgets
+    // is dropped silently and the section renders empty against a response that
+    // carried it. That is exactly what happened when `headings` was added.
+    mockFetch.mockResolvedValue(
+      ok({
+        id: 'r-1',
+        filename: 'f.pdf',
+        headings: [
+          { page: 1, text: 'Transforming Your' },
+          { page: 2, text: null },
+        ],
+      }),
+    );
+
+    const reading = await getFlyerReading('r-1', null);
+
+    expect(reading.headings).toEqual([
+      { page: 1, text: 'Transforming Your' },
+      { page: 2, text: null },
+    ]);
   });
 });
 

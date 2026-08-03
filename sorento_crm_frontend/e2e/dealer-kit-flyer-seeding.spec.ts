@@ -268,7 +268,14 @@ test.describe('Dealer Kit flyer seeding', () => {
 
     // ---- step 2: review -------------------------------------------------
     // Every section renders, including the ones that are empty for this flyer.
-    for (const section of ['unmatched', 'not-promoted', 'dimensions', 'duplicates', 'known-gaps']) {
+    for (const section of [
+      'unmatched',
+      'not-promoted',
+      'dimensions',
+      'duplicates',
+      'headings',
+      'known-gaps',
+    ]) {
       await expect(
         page.locator(`[data-dk-fr-section="${section}"]`),
         `the ${section} section should render even when empty`,
@@ -292,15 +299,26 @@ test.describe('Dealer Kit flyer seeding', () => {
       await expect(page.getByText(/every printed code resolved to a product/i)).toBeVisible();
     }
 
-    // Sizes are a report. Nothing on this screen may offer to write one.
+    // Sizes are never written as a side effect of READING the flyer. S7.6 gave
+    // this section a mutation of its own, so the invariant moved from "nothing
+    // here writes" to "only what you tick writes" - the assertion follows the
+    // invariant rather than the old sentence.
     const dimensions = page.locator('[data-dk-fr-section="dimensions"]');
-    await expect(dimensions).toContainText(/nothing here is written to the product master/i);
+    await expect(dimensions).toContainText(/only the rows you tick are written/i);
 
     // And the headings are guessed. The fixture's page 2 reads "Transforming
     // Your" where the paper says "BATHTUB COLLECTION", so the expectation is set
     // here rather than discovered in the builder.
     await expect(page.getByTestId('dk-fr-known-gaps')).toContainText(/headings are guessed/i);
     await expect(page.getByTestId('dk-fr-known-gaps')).toContainText(/product photos are blank/i);
+
+    // The misread itself is on the screen, not only the warning that misreads
+    // happen. This is the round trip the field was added for: the extractor
+    // read it, the API carried it, and the reviewer can see it before seeding.
+    const headingsSection = page.getByTestId('dk-fr-headings');
+    await expect(headingsSection).toContainText('Transforming Your');
+    await expect(headingsSection).toContainText('WATER CLOSET');
+    await expect(headingsSection).toContainText('Page 1');
 
     // No uuid anywhere on the review screen.
     const reviewText = await page.locator('main, body').first().innerText();
@@ -407,7 +425,12 @@ test.describe('Dealer Kit flyer seeding', () => {
     await page.waitForURL(new RegExp(`flyer-readings/${readingId}`), { timeout: 30_000 });
 
     await tap(page.getByLabel('An existing brochure'));
-    await tap(page.locator('#dk-fr-page'));
+    // The picker is `disabled` while the brochure list loads, and `tap` only
+    // waits for VISIBLE - so clicking too early is a no-op and the option that
+    // never appears reads as a missing brochure rather than a race.
+    const brochurePicker = page.locator('#dk-fr-page');
+    await expect(brochurePicker).toBeEnabled({ timeout: 20_000 });
+    await tap(brochurePicker);
     await tap(page.getByText(BROCHURE_NAME, { exact: false }).last());
 
     // The screen states what it is about to do, because "seed into an existing
@@ -474,7 +497,11 @@ test.describe('Dealer Kit flyer review at 375px', () => {
 
     // The upload modal has to be usable on a phone, submit button included.
     await tap(page.getByRole('button', { name: /read a flyer/i }).first());
-    const dialog = page.getByRole('dialog');
+    // BY NAME. The navigation drawer this test came through is also a dialog and
+    // Radix leaves it mounted at `data-state="closed"`, so a bare
+    // `getByRole('dialog')` matches two elements and fails strict mode - which
+    // reads exactly like the upload modal never opening.
+    const dialog = page.getByRole('dialog', { name: /read a flyer/i });
     await expect(dialog).toBeVisible({ timeout: 15_000 });
     const box = await page.getByTestId('dk-fr-upload-submit').boundingBox();
     expect(box, 'the submit button should be laid out').not.toBeNull();

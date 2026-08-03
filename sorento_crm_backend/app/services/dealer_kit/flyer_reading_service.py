@@ -252,6 +252,29 @@ def code_count(record: FlyerReadingRecord) -> int:
     return len(codes)
 
 
+def headings(record: FlyerReadingRecord) -> list[tuple[int, Optional[str]]]:
+    """``(page number, heading)`` for EVERY page, in printed order.
+
+    Straight off the JSON for the same reason as ``page_count``: this asks two
+    fields of each page and rebuilding the cards to reach them is work nobody
+    asked for.
+
+    Every page is listed, including the ones with no heading. A reviewer works
+    down this list with the flyer in front of them, so a page that silently
+    dropped out would be a page they never compared - and a three page flyer
+    reporting two headings reads as a merge rather than a gap.
+
+    Printed order for the same reason: an arbitrary order turns "check these
+    against the paper" into a search. The extractor emits pages in order and
+    ``serialise`` preserves it, so this is a read rather than a sort - sorting
+    here would hide a reading whose page order had gone wrong upstream.
+    """
+    return [
+        (page["number"], page.get("heading"))
+        for page in (record.reading_json or {}).get("pages", []) or []
+    ]
+
+
 # --------------------------------------------------------------------------- #
 # Persistence
 # --------------------------------------------------------------------------- #

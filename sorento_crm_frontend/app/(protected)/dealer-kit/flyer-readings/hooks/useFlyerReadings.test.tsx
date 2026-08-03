@@ -53,6 +53,7 @@ const READING: FlyerReading = {
   pageCount: 3,
   codeCount: 61,
   uploadedAt: '2026-08-01T02:00:00',
+  headings: [{ page: 1, text: 'WATER CLOSET' }],
   report: {
     matched: [],
     unmatched: [],

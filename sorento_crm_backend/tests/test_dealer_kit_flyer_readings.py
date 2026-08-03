@@ -739,3 +739,94 @@ class TestCompanyScope:
         _scope(_SORENTO)
         with TestClient(app) as c:
             assert c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# Headings
+#
+# The extractor reads a heading per page and the seed writes it as the section
+# name, but the detail response did not carry it - so the review screen could
+# say headings are guessed without showing WHICH ones were guessed wrong, and a
+# reviewer had to open the builder and compare against the paper by hand.
+# --------------------------------------------------------------------------- #
+CORRECT_HEADING = "WATER CLOSET"  # fixture page 3, which the heuristic gets right
+MISREAD_HEADING = "Transforming Your"  # fixture page 2, headed "BATHTUB COLLECTION"
+
+
+class TestHeadings:
+    def test_every_page_reports_the_heading_the_reader_found(self, api) -> None:
+        """One entry per page, in printed order, so it reads beside the paper.
+
+        Page order is the whole ergonomic: a reviewer holds the flyer and goes
+        down the list. An arbitrary order would make them search for each page.
+        """
+        _db, _as, _scope = api
+
+        with TestClient(app) as c:
+            body = _upload(c).json()
+
+        headings = body["headings"]
+        assert [entry["page"] for entry in headings] == [1, 2, 3]
+        assert headings[2]["text"] == CORRECT_HEADING
+
+    def test_a_misread_heading_is_shown_and_not_quietly_repaired(self, api) -> None:
+        """Fixture page 2 is headed "BATHTUB COLLECTION" on the paper.
+
+        The heuristic reads "Transforming Your" instead. Surfacing the WRONG
+        value is the entire point of the field: a reviewer can only correct what
+        they can see, and a response that hid the misread would leave the screen
+        saying headings need checking with nothing to check them against.
+        """
+        _db, _as, _scope = api
+
+        with TestClient(app) as c:
+            body = _upload(c).json()
+
+        assert body["headings"][1]["text"] == MISREAD_HEADING
+
+    def test_a_page_with_no_heading_is_still_listed(self, api) -> None:
+        """A page that vanishes from the list is a page nobody checks.
+
+        A pure-artwork flyer page yields no heading at all, and the seed names
+        that section after its flyer page instead. The review list has to show
+        the same page so the reviewer knows it needs a name, rather than seeing
+        two entries for a three page flyer and assuming one was merged.
+        """
+        db, _as, _scope = api
+
+        from app.models.dealer_kit import FlyerReadingRecord
+
+        with TestClient(app) as c:
+            reading_id = _upload(c).json()["id"]
+
+            record = (
+                db.query(FlyerReadingRecord)
+                .filter(FlyerReadingRecord.id == reading_id)
+                .one()
+            )
+            stripped = dict(record.reading_json)
+            stripped["pages"] = [dict(page) for page in stripped["pages"]]
+            stripped["pages"][0]["heading"] = None
+            record.reading_json = stripped
+            db.commit()
+
+            body = c.get(f"/api/v1/dealer-kit/flyer-readings/{reading_id}").json()
+
+        headings = body["headings"]
+        assert [entry["page"] for entry in headings] == [1, 2, 3]
+        assert headings[0]["text"] is None
+
+    def test_the_list_screen_carries_no_headings(self, api) -> None:
+        """Same reasoning as the report: the list says which flyers were read.
+
+        Headings are a review concern. Putting them on the row would grow a
+        screen nobody reviews from, for a field nobody reads there.
+        """
+        _db, _as, _scope = api
+
+        with TestClient(app) as c:
+            _upload(c, filename="zzt-headings-list.pdf")
+            rows = c.get("/api/v1/dealer-kit/flyer-readings").json()
+
+        assert rows
+        assert all("headings" not in row for row in rows)

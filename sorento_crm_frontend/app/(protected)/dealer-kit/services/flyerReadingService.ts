@@ -46,13 +46,13 @@
  * permission, names the codes it is applying, and refuses to overwrite a value
  * the master already holds unless it is told to.
  *
- * ## What the API does NOT carry, and the screen therefore cannot show
- *
- * The section HEADINGS the extractor read are stored on the reading but are not
- * on `FlyerReadingOut`. Heading detection is a heuristic - it reads
- * "Transforming Your" where the paper says "BATHTUB COLLECTION" - so the review
- * screen can only say headings need checking, not show which ones are wrong.
- * Surfacing them would be an additive field on the detail response.
+ * **`headings` is what the READER found, not what the paper says.** Detection is
+ * a heuristic - it reads "Transforming Your" where the paper says "BATHTUB
+ * COLLECTION" - and the wrong value is shown deliberately, because a reviewer
+ * can only correct what they can see. It comes off the stored reading rather
+ * than the report, so unlike everything else here it does not move when a
+ * product is created, and the seed writes these same values as its section
+ * names.
  */
 
 import { apiFetch } from '@/lib/api';
@@ -120,8 +120,17 @@ export interface FlyerReadingSummary {
   uploadedAt: string;
 }
 
+/** What the reader thinks one flyer page is called. */
+export interface PageHeading {
+  page: number;
+  /** Null where the reader found no heading. The page is still listed. */
+  text: string | null;
+}
+
 export interface FlyerReading extends FlyerReadingSummary {
   report: MatchReport;
+  /** Every page, in printed order, so the list reads beside the paper. */
+  headings: PageHeading[];
 }
 
 /** Why a named code was not written. Each one sends a reviewer somewhere else. */
@@ -206,7 +215,16 @@ function toReport(wire: Partial<MatchReport> | undefined): MatchReport {
   };
 }
 
-function toReading(wire: Partial<FlyerReading>): FlyerReading {
+/**
+ * The fields a ROW carries, and only those.
+ *
+ * Split out from `toReading` so the list cannot grow detail fields by accident.
+ * It used to build a whole reading and destructure `report` back off, which
+ * meant every field added to the detail response had to be remembered and
+ * stripped here too - and the first one that was not (`headings`) put an empty
+ * list on every row of a screen whose endpoint never sends one.
+ */
+function toSummary(wire: Partial<FlyerReadingSummary>): FlyerReadingSummary {
   return {
     id: String(wire.id ?? ''),
     filename: wire.filename ?? 'Untitled flyer',
@@ -214,7 +232,17 @@ function toReading(wire: Partial<FlyerReading>): FlyerReading {
     pageCount: wire.pageCount ?? 0,
     codeCount: wire.codeCount ?? 0,
     uploadedAt: wire.uploadedAt ?? '',
+  };
+}
+
+function toReading(wire: Partial<FlyerReading>): FlyerReading {
+  return {
+    ...toSummary(wire),
     report: toReport(wire.report),
+    // Absent means the reader found no pages, not that headings are unknown -
+    // so an empty list, and the section renders its own empty state rather than
+    // every caller guarding the same field.
+    headings: wire.headings ?? [],
   };
 }
 
@@ -232,11 +260,7 @@ export async function listFlyerReadings(): Promise<FlyerReadingSummary[]> {
   }
 
   const rows = (await response.json()) as Partial<FlyerReadingSummary>[];
-  return (Array.isArray(rows) ? rows : []).map((row) => {
-    const { report, ...summary } = toReading(row);
-    void report;
-    return summary;
-  });
+  return (Array.isArray(rows) ? rows : []).map(toSummary);
 }
 
 export async function getFlyerReading(

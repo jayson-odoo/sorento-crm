@@ -69,6 +69,7 @@ COVER_PAIR = ["SRTBF11102", "SRTWT51012"]
 # see TestHeading.
 MISREAD_HEADING = "Transforming Your"
 CORRECT_HEADING = "WATER CLOSET"  # fixture page 3, which the heuristic gets right
+COVER_HEADING = "Inspiring Designs, Exciting Promotions"  # fixture page 1
 
 _SORENTO = "00000000-0000-0000-0000-000000000001"
 
@@ -1045,3 +1046,72 @@ class TestCompanyScope:
         collections = db.query(Collection).filter(Collection.page_id == body["pageId"]).all()
         assert collections
         assert {row.company_id for row in collections} == {_SORENTO}
+
+
+class TestTheReviewedHeadingIsTheSeededHeading:
+    """The cross-check that makes the review screen's heading list worth having.
+
+    The reading detail reports headings so a reviewer can compare them against
+    the paper BEFORE seeding. That is only useful if what they were shown is
+    what the seed actually writes - two independent readers of
+    ``page["heading"]`` could drift apart and the review would quietly be of
+    something else.
+    """
+
+    def test_what_the_review_reports_is_what_the_sections_are_named(
+        self, api
+    ) -> None:
+        db, _as, _scope = api
+
+        with TestClient(app) as c:
+            reading_id = _upload(c)
+            reported = [
+                entry["text"]
+                for entry in c.get(
+                    f"/api/v1/dealer-kit/flyer-readings/{reading_id}"
+                ).json()["headings"]
+            ]
+            body = _seed(c, reading_id).json()
+
+        sections = _doc(db, body["pageId"])["sections"]
+        assert reported == [COVER_HEADING, MISREAD_HEADING, CORRECT_HEADING]
+        assert [section["name"] for section in sections] == reported
+
+    def test_a_page_with_no_heading_reports_null_and_seeds_its_page_number(
+        self, api
+    ) -> None:
+        """The two sides answer the SAME gap differently, and both are right.
+
+        The review says null, because "the reader found nothing here" is the
+        thing a reviewer needs to know. The seed names the section after its
+        flyer page, because an unnamed section cannot be placed in the editor's
+        list. Pinned together so neither is changed to match the other by
+        somebody who sees only one of them.
+        """
+        db, _as, _scope = api
+
+        from app.models.dealer_kit import FlyerReadingRecord
+
+        with TestClient(app) as c:
+            reading_id = _upload(c)
+
+            record = (
+                db.query(FlyerReadingRecord)
+                .filter(FlyerReadingRecord.id == reading_id)
+                .one()
+            )
+            stripped = dict(record.reading_json)
+            stripped["pages"] = [dict(page) for page in stripped["pages"]]
+            stripped["pages"][0]["heading"] = None
+            record.reading_json = stripped
+            db.commit()
+
+            reported = c.get(
+                f"/api/v1/dealer-kit/flyer-readings/{reading_id}"
+            ).json()["headings"]
+            body = _seed(c, reading_id).json()
+
+        assert reported[0]["text"] is None
+        sections = _doc(db, body["pageId"])["sections"]
+        assert sections[0]["name"] != ""
+        assert "1" in sections[0]["name"]

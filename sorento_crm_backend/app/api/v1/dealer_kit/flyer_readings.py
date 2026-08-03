@@ -36,6 +36,7 @@ from app.schemas.dealer_kit import (
     DimensionApplyOut,
     DimensionCandidateOut,
     FlyerReadingOut,
+    PageHeadingOut,
     FlyerReadingSummary,
     FlyerSeedIn,
     FlyerSeedOut,
@@ -176,6 +177,14 @@ def _detail(db: Session, record, promotion_id: Optional[UUID]) -> FlyerReadingOu
         report=_report_out(
             svc.report_for(db, record, str(promotion_id) if promotion_id else None)
         ),
+        # Off the stored reading, not the report: a heading is what the reader
+        # found on the paper and has nothing to say about the master, so it
+        # does not move when a product is created. The seed writes these same
+        # values as its section names.
+        headings=[
+            PageHeadingOut(page=number, text=text)
+            for number, text in svc.headings(record)
+        ],
     )
 
 
