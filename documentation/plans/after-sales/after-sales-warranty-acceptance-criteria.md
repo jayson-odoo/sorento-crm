@@ -561,6 +561,55 @@ The plan flags four things as "must be decided before build, not decided here". 
   the outbox exists to provide. This is easy to write correctly and easy to regress later, which is why it
   is pinned rather than assumed.
 
+### S4 corrections - after the red suite (2026-08-03)
+
+54 red, 21 guards green. Eight findings; four change what the slice must build.
+
+- **AC-H1a** `[BE][MIG]` **`notifications.respond_contact_id` is TEXT, not uuid.** `respond_contacts.id`
+  is a TEXT column and Postgres refuses a uuid foreign key onto it. **This is the FOURTH slice in this
+  build to hit the same trap** (AC-A2, AC-F2b-1, S1's two columns, now this). Any future AC that names a
+  uuid FK into `respond_contacts` is wrong on sight.
+- **AC-H1b** `[BE][MIG]` **The existing unique index must be DROPPED, not merely "become partial".**
+  `uq_notification_user_dedup_event` is `(user_id, source_entity_type, dedup_key, event_type)`. Once
+  `user_id` is nullable, Postgres NULL-distinctness means it stops deduplicating **every contact row** -
+  no error, just duplicate WhatsApp messages to a customer. Both replacement partial indexes must be
+  proven by provoking a real `IntegrityError`, because an index that exists and does not dedupe looks
+  identical to one that does.
+- **AC-M33c** `[BE]` **There are TWO raise sites in `_start_for_config`, not the one the plan quotes.** It
+  raises when no team resolves at or above the tier, and raises again on "No members in tier N team for
+  agent". An empty team row is the likelier misconfiguration of the two, so a fallback wired into only the
+  first still crashes. Both sites route through the fallback. A dangling or inactive configured fallback
+  falls through to the **original** raise rather than crashing one line later.
+- **AC-H2a** `[BE]` **The WORKER silently discards every contact delivery today, and the plan never
+  mentions it.** `notification_tasks.send_notification_deliveries` does `user = db.query(User)...; if not
+  user: return`. That is correct while `user_id` is NOT NULL and fatal the moment it is nullable: the
+  notification row is written, the delivery row is written, and nothing is ever sent. S4 must fix the
+  worker, not only the schema.
+- **AC-H3a** `[BE]` **"No preference toggles" is not the same as "leave the defaults".**
+  `create_with_channel_preferences` gates WhatsApp on `getattr(user, whatsapp_pref_attr)`, which resolves
+  to `None` for a contact and therefore turns WhatsApp **off**. AC-H3 says contacts get WhatsApp plus
+  portal always, so this needs an explicit contact branch, not an omission. Contact channels are
+  `whatsapp` and `in_app`, where `in_app` IS the portal record.
+- **AC-H8b** `[BE]` **The live code disagrees with AC-H8 and the AC wins.** The WhatsApp path today stamps
+  `business_table = notification.source_entity_type` - which is `"complaint"`, an entity type, not a table
+  name - and `business_id = notification.id`. AC-H8 and AC-H11 require the table (`complaints`) and the
+  complaint id, so the outbox can render event-first.
+- **AC-M35b** `[BE]` **"Exactly one OPEN case" uses a purpose-specific status set, and S4 does NOT change
+  the complaint graph.** `COMPLAINT_STATUS_SEEDS` marks only `closed` and `voided` terminal, so `rejected`,
+  `fulfilled`, `resolved` and `settled_on_site` all read as open - meaning a contact whose only case was
+  **rejected in 2024** would have today's call auto-attached to it. The precedent for a purpose-specific
+  set already exists (`complaint_fulfilment_service.LINKABLE_STATUSES`), and call attribution is a
+  different question from editability: a case can be uneditable and still obviously be what the call is
+  about. So S4 declares its own documented set.
+
+  **Flagged, deliberately not fixed here:** the complaint graph is probably wrong - `rejected` and
+  `resolved` look like end states carrying `is_terminal = False`. Marking them terminal changes complaint
+  editability for live records, which is the same class of live behaviour change as AC-M33b, and it gets
+  its own decision and its own tests rather than riding along inside S4.
+- **F2c drift is resolved: the spine wins.** `workflow_submission_notify` becomes a caller rather than a
+  second mechanism for telling a contact. Rows it already wrote keep `correlation_id` NULL permanently,
+  which is a second independent reason AC-H8a's LEFT JOIN is load-bearing.
+
 ### S2a corrections - after the red suite (2026-08-03)
 
 77 red, 9 guards green. Three findings block the slice as specified.
