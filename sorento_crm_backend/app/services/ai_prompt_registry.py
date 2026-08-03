@@ -465,6 +465,48 @@ class PromptKeySpec:
     fallback: Callable[[], str]
 
 
+def _intake_extractor_fallback() -> str:
+    """System prompt for WhatsApp complaint intake (S5, AC-C7).
+
+    Replaces the job the office does by hand a day later. A dealer sends a burst of
+    photos and one line of text to a group; somebody eventually asks *"this one wat
+    issue? for which dealer? for wat model?"*.
+
+    The prompt asks for a SHAPE and never for a decision. It reads a shop NAME, a model
+    CODE and a defect; the CRM's own resolvers decide which dealer and which product
+    those mean, because the consumer portal and this path have to reach the same answer
+    for the same words. An extractor that returned a `customer_id` would be a second
+    resolver, and the day the two disagree the ledger disagrees with itself.
+    """
+    return (
+        "WHATSAPP COMPLAINT INTAKE\n"
+        "You read one burst of WhatsApp messages from a Sorento dealer and return JSON. "
+        "You are not a chat assistant. You never reply to the dealer, never ask a "
+        "question, and never refuse.\n\n"
+        "The burst is ONE complaint however many messages it spans. Photos often arrive "
+        "BEFORE the words that explain them; that is normal, not a mistake.\n\n"
+        "RETURN THIS SHAPE:\n"
+        "{\n"
+        '  "shop_name": "the dealer who is reporting, as written, or null",\n'
+        '  "lines": [{"claimed_text": "verbatim", "model_code_raw": "SRTWC8152", '
+        '"quantity": 1}],\n'
+        '  "defect_description": "what is wrong, in the dealer\'s own words, or null",\n'
+        '  "requested_resolution": "replace_to_shop | site_visit | refund | null"\n'
+        "}\n\n"
+        "RULES\n"
+        "1. NEVER invent a value. `null` is a complete answer and the correct one when "
+        "the burst does not say. A guessed model number becomes a warranty verdict.\n"
+        "2. One entry in `lines` per product named, in the order written. "
+        "'SRTWC8366 x 1 / SRTWC8152 x 1' is TWO entries, not one.\n"
+        "3. `claimed_text` is verbatim. It is what a human reads when your extraction is "
+        "wrong, so it is the one field that must never be tidied up.\n"
+        "4. A shop name is the DEALER reporting the fault. Never answer 'Sorento'.\n"
+        "5. Malay, English, and both mixed in one sentence are all ordinary input. So are "
+        "'pls', 'tq', missing punctuation and a model number typed without spaces.\n"
+        "6. Return the JSON object and nothing else."
+    )
+
+
 PROMPT_KEYS: dict[str, PromptKeySpec] = {
     # --- Active front-of-pipeline node (M0) ---
     "semantic_parser": PromptKeySpec(
@@ -543,6 +585,14 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     #     module that uploads through an attachment type with validate_on_upload.
     #     Its own key, NOT `validator` below: that one is the assistant's answer
     #     gate, and one shared version chain would republish both at once. ---
+    "intake_extractor": PromptKeySpec(
+        name="intake_extractor",
+        role="WhatsApp intake extractor - read a dealer's message burst, emit a complaint shape (JSON)",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_intake_extractor_fallback,
+    ),
     "attachment_validator": PromptKeySpec(
         name="attachment_validator",
         role="Attachment validator — score an uploaded file against its type's guidance",

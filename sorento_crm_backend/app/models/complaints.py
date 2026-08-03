@@ -62,6 +62,20 @@ class Complaint(Base):
     portal_draft_at = Column(DateTime(timezone=False), nullable=True)  # set while user is editing in submission portal; cleared on Submit
     required_on_site_support = Column(Boolean, nullable=False, server_default="false")
 
+    # --- S5: the WhatsApp intake burst -------------------------------------
+    # The idempotency key n8n retries against (AC-C0d), carrying a PARTIAL UNIQUE index
+    # (migration 324) so the database refuses a duplicate rather than the application
+    # hoping to notice one: two retries arriving together would both find nothing on a
+    # lookup-then-insert and both write.
+    intake_burst_key = Column(String(120), nullable=True)
+    # The burst verbatim, in the order sent. What a human reads when the extraction is
+    # wrong - and the ORDER is evidence in itself, since photos arriving before the words
+    # that explain them is the ordinary shape of a real report (AC-C3). Deliberately NOT
+    # folded into defect_description, which holds what the extractor MADE of the burst:
+    # conflating them loses the ability to tell a bad extraction from a badly-worded
+    # message.
+    intake_transcript = Column(Text, nullable=True)
+
     # --- Parties and the Site (after-sales S1: AC-B1, AC-B6, AC-M37) ---------
     # The Dealer gets a real home. The free-text customer_name above is superseded
     # and read-only for one release (AC-B6); it is dropped in a later slice.
