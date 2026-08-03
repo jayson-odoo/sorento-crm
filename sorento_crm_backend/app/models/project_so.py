@@ -623,3 +623,96 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (Index("ix_order_inquiry_rows_inquiry", "order_inquiry_id"),)
+
+
+# ------------------------------------------------------------------------ allocation
+
+ALLOC_SOURCE_BRW = "brw"
+ALLOC_SOURCE_OWN = "own"
+ALLOC_SOURCE_OTHER_PROJECT = "other_project"
+ALLOC_SOURCE_ORDER = "order"
+
+CLAIM_REQUESTED = "requested"
+CLAIM_ACCEPTED = "accepted"
+CLAIM_REFUSED = "refused"
+
+
+class SOLineAllocation(Base, CompanyScopedMixin):
+    """Where one sales-order line's stock is coming from, once a person has said so (D17).
+
+    Ranked candidates are computed live from `stock`, never stored: a snapshot of somebody
+    else's on-hand goes stale the moment they ship, and acting on a stale figure is the
+    failure this slice exists to stop. Only the DECISION is persisted here.
+
+    `source_type = "order"` is the honest fourth option: no existing stock covers the line
+    and it has to be bought. It carries no warehouse, which is what makes it different from
+    a location that happens to hold zero.
+    """
+
+    __tablename__ = "so_line_allocations"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    so_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_sales_order_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_type = Column(String(16), nullable=False)
+    warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
+    # The project the stock is being taken FROM, when it is held for someone else.
+    source_project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
+    qty = Column(Numeric(15, 4), nullable=False)
+    claim_id = Column(
+        UUID(as_uuid=False), ForeignKey("allocation_claims.id", ondelete="SET NULL"), nullable=True
+    )
+    confirmed_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    confirmed_at = Column(DateTime(timezone=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (Index("ix_so_line_allocations_line", "so_line_id"),)
+
+
+class AllocationClaim(Base, CompanyScopedMixin):
+    """One project asking another for stock it is holding (AC-H4).
+
+    Nothing moves on silence. A claim sits in `requested` until the other project's CS
+    accepts or refuses it, and a refusal must carry a reason: "no" without one sends the
+    asker back to a person rather than to another source.
+    """
+
+    __tablename__ = "allocation_claims"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    from_project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    to_project_id = Column(
+        UUID(as_uuid=False), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    so_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("project_sales_order_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False
+    )
+    warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
+    qty = Column(Numeric(15, 4), nullable=False)
+    state = Column(String(16), nullable=False, server_default=CLAIM_REQUESTED)
+    reason = Column(Text, nullable=True)
+    requested_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    decided_by = Column(String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    decided_at = Column(DateTime(timezone=False), nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_allocation_claims_to_project", "to_project_id", "state"),
+        Index("ix_allocation_claims_line", "so_line_id"),
+    )
