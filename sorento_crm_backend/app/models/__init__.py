@@ -35,6 +35,7 @@ from app.models.entity_conversation import EntityConversationMessage
 from app.models.integration import Integration, IntegrationApiKey, IntegrationLog
 from app.models.integration_reference import IntegrationReference
 from app.models.import_log import ImportLog
+from app.models.import_alias import ImportFieldAlias
 from app.models.calendar import PublicHoliday, WorkCalendarConfig
 from app.models.job import ImportJob, ImportJobRow
 from app.models.download import UserDownload, DownloadStatus
@@ -86,9 +87,12 @@ from app.models.scm import (
     MarketSignal,
     ScmAnalyticsRun,
     MarketResearchRun,
+    PriorityPolicy,
 )
 
 __all__ = [
+    "ImportFieldAlias",
+    "PriorityPolicy",
     "Company",
     "UserCompany",
     "RespondContactCompany",

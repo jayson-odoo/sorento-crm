@@ -292,6 +292,11 @@ class SalesOrder(Base, CompanyScopedMixin):
     # (when the SO was raised); drives the FE "requested_delivery_date" column.
     requested_delivery_date = Column(Date, nullable=True)
     order_type = Column(String(50), nullable=True)  # lookup code (continuous / spike vocab)
+    # project | retail, resolved from the customer's market segment at import. Belongs to
+    # the DEMAND, not the buyer: the same customer can place both kinds, and fulfilment
+    # priority is decided by this. Nullable because a row whose class cannot be resolved is
+    # rejected at import rather than silently defaulted to retail.
+    demand_class = Column(String(32), nullable=True)
     priority = Column(String(20), nullable=True)
     status = Column(String(50), default="open", nullable=False)
     source_system = Column(String, nullable=True)
@@ -324,6 +329,11 @@ class SalesOrderLine(Base, CompanyScopedMixin):
     qty_ordered = Column(Numeric(15, 4), default=0, nullable=False)
     qty_delivered = Column(Numeric(15, 4), default=0, nullable=False)
     priority = Column(String(20), nullable=True)  # inherit from header / override
+    # When this line's quantity must be on hand. PER LINE, not per header: the order
+    # inquiry the business works from states a delivery date per line and one SO routinely
+    # carries several, so the header's requested_delivery_date cannot drive netting.
+    # Without this the Coverage Timeline has no time axis at all (ADR-0011).
+    required_date = Column(Date, nullable=True)
     line_status = Column(String(50), default="open", nullable=False)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)

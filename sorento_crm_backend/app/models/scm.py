@@ -453,3 +453,38 @@ class MarketResearchRun(Base):
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+
+class PriorityPolicy(Base):
+    """Fulfilment Priority: the order in which competing demand gets scarce stock.
+
+    Module-side on purpose. This is a tuning knob, and a tenant without SCM has no
+    allocation suggestions to rank, so it dies with the module while the OUTCOMES it
+    produced (SPO allocations, sent notices) survive in ``public``.
+
+    Applied at BOTH allocation moments - what goes in a container, and which order
+    arriving stock is assigned to. The same row must serve both or the two decisions
+    contradict each other.
+
+    ``factors`` and ``demand_class_weights`` are JSONB rather than a column per factor so
+    adding a factor, or a third demand class, is a data change and never a migration.
+    Exactly one row may be active, enforced by a partial unique index rather than by
+    remembering to check (the ``system_settings`` singleton lesson).
+    """
+    __tablename__ = "priority_policy"
+    __table_args__ = {"schema": "scm"}
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    name = Column(String(120), nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    # e.g. {"po_document_sequence": 1.0, "need_by_date": 0.0, "demand_class": 0.0}
+    # Seeded to reproduce today's manual answer so week-one output is checkable by hand.
+    factors = Column(JSONB, nullable=False, default=dict)
+    # e.g. {"project": 1.0, "retail": 0.4}. Keyed by market_segments.code, so a new class
+    # is a row plus a weight.
+    demand_class_weights = Column(JSONB, nullable=False, default=dict)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

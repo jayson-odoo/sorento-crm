@@ -211,11 +211,21 @@ class SPOAllocation(Base, CompanyScopedMixin):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     created_by = Column(UUID(as_uuid=False), nullable=True)
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
+    # Which Supply PO line this allocation draws down. The chain is PO -> SPO -> GRN, and
+    # this table carried no PO reference at all; only picking_lines.po_line_id existed,
+    # which is one step too late (goods-received, after the allocation was decided).
+    # NULLABLE: 860 pre-existing rows have no PO, and stock can arrive against no PO.
+    po_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     synced_to_excel = Column(Boolean, default=False, nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     last_synced_to_excel = Column(DateTime(timezone=False), nullable=True)
     
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
+    po_line = relationship("PurchaseOrderLine", foreign_keys=[po_line_id])
     warehouse = relationship("Warehouse", back_populates="spo_allocations")
     storage_zone = relationship("StorageZone", back_populates="spo_allocations")
     product = relationship("Product", back_populates="spo_allocations")

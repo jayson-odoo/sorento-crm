@@ -1,6 +1,6 @@
 """Inventory management models."""
 import enum
-from sqlalchemy import Boolean, Column, Computed, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Column, Computed, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -32,6 +32,22 @@ class Warehouse(Base, CompanyScopedMixin):
     location = Column(String(255), nullable=True)
     manager_id = Column(UUID(as_uuid=False), nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)
+    # Does this location's stock count as available to plan against. CONFIG, defaulting to
+    # true for every location: deriving it from the code naming convention would bake one
+    # client's convention into the engine and would silently exclude stock. An admin turns
+    # one off.
+    counts_as_available = Column(
+        Boolean, default=True, server_default=text("true"), nullable=False
+    )
+    # Which shared pool this location may draw on. The STRUCTURAL half, and what lets a
+    # shortage in BRW-BB be covered from BRW instead of triggering a purchase. Seeded from
+    # the SITE-SUFFIX convention but STORED, never parsed at runtime, so a client whose
+    # codes look nothing like Sorento's repoints rows instead of needing code.
+    # Distinct from counts_as_available on purpose: BRW-BB stock IS sellable yet can only
+    # serve customer BB, so one flag cannot express both (ADR-0011 amendment).
+    pool_warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
     
