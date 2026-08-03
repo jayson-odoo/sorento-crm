@@ -663,9 +663,28 @@ A **Consumer 360 page** ships with this slice: profile, every purchase (dealer, 
   so 323 adds only the remaining four and is idempotent per column. `defect_type_id` points
   at `lookup_options`, not `lookup_values` as written below.
 
-Still open in Phase 2: the extract endpoint, the public portal route, the resolution ladder
-(AC-C16 to C18) beyond exact-unique-code, Consumer 360, wiring the FE off `lodgeMocks.ts`,
-and vitest + playwright coverage.
+- `product_resolution_service` (commit 6a2885fc2, 20 tests). The ladder of AC-C16 to C18:
+  exact, dash-strip, the `SRT` prefix the carton omits, a trailing unit the consumer added,
+  the base-code family, then trigram neighbours. An earlier rung always wins, and rungs 2
+  to 4 fire only when they land on exactly one product. `ambiguous` is normal traffic and
+  keeps `product_id` NULL so the Kind decides cover.
+- Three routes under the existing portal-token auth (same commit, 12 tests):
+  `GET /portal/lodge/kinds`, `POST /portal/lodge/resolve` (side-effect free, re-runnable),
+  `POST /portal/lodge`. The contact comes from the resolved token and the body's copy is
+  ignored, so a valid token cannot lodge against somebody else's contact.
+- FE off mocks (commit 5dc8f11ef, 10 vitest). `LodgeFlow` now takes a `LodgeBackend`:
+  `/portal/lodge` keeps the four-scenario prototype, and `/portal/c/{slug}/lodge` runs the
+  real endpoints with the phone and name taken from the token. Editing the shop name
+  re-runs the dealer match on blur.
+
+**The extract endpoint was NOT built, deliberately.** `POST /portal/ai-extract` already
+reads receipts and returns a generic per-form shape; mapping it onto this journey is its
+own piece of work, and blocking the whole path on it would have left nothing usable. The
+live backend therefore resolves what the consumer TYPES rather than pretending to read a
+photo, which still gives a real dealer match against the real customer table. Wiring
+ai-extract into `LodgeBackend.extract` is a contained follow-up: one method, one shape map.
+
+Still open in Phase 2: that extract mapping, Consumer 360, and a playwright spec.
 
 **Unrelated flaky test found while verifying, NOT caused by this slice and not fixed here.**
 `test_complaint_analytics::test_group_by_product_ranked_desc` passes or fails run to run on
