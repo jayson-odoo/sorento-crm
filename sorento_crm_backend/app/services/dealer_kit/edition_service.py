@@ -251,6 +251,39 @@ def reopen(db: Session, edition_id: str, *, user_id: Optional[str] = None) -> Ed
     return _move(db, get_edition(db, edition_id), DRAFT)
 
 
+def send_back_on_edit(db: Session, page_id: str) -> Optional[Edition]:
+    """A save invalidates an approval. Move the Edition back to the Approver.
+
+    The ``approved -> pending_approval`` edge has been in the graph since
+    migration 318, whose note says "ANY edit to an approved Edition sends it
+    back". Nothing performed it, so an Approver could sign off version 3 and
+    have version 4 published without ever seeing it.
+
+    Blunt on purpose. AC-L4/L5 wanted price-only edits to keep the approval
+    alive; that is deferred because the document stores no prices and an Edition
+    cannot detect a price change by diffing its own versions. Sending back too
+    often is a nuisance; not sending back ships a document nobody read.
+
+    Returns the Edition it moved, or None when there was nothing to move.
+    """
+    edition = (
+        db.query(Edition)
+        .filter(Edition.page_id == page_id, Edition.status_key == APPROVED)
+        .first()
+    )
+    if edition is None:
+        return None
+
+    def _void() -> None:
+        # Cleared, not kept. An approved_by left on a row that is back in the
+        # queue reads as approved to every screen that shows it.
+        edition.approved_by = None
+        edition.approved_at = None
+        edition.approved_version_id = None
+
+    return _move(db, edition, PENDING_APPROVAL, apply=_void)
+
+
 def publish(db: Session, edition_id: str, *, user_id: Optional[str] = None) -> Edition:
     """Move the published label, and finish the Edition. AC-L7.
 
@@ -267,6 +300,18 @@ def publish(db: Session, edition_id: str, *, user_id: Optional[str] = None) -> E
             message=(
                 "This catalogue has no saved version to publish. "
                 "Save the page first."
+            ),
+        )
+    if latest.id != edition.approved_version_id:
+        # The invariant, and it holds even if send_back_on_edit never ran - it
+        # is best-effort by design, and this is not. Publishing a version other
+        # than the approved one is the exact failure the workflow exists to
+        # stop: a document going live that nobody signed off.
+        raise AppException(
+            status_code=422,
+            message=(
+                "This catalogue has changed since it was approved. "
+                "Send it for approval again before publishing."
             ),
         )
 

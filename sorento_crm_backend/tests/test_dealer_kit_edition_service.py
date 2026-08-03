@@ -327,6 +327,96 @@ class TestFinishingFreesThePage:
         assert edition.status_key == "approved"
 
 
+class TestAnApprovalDoesNotSurviveAnEdit:
+    """The graph has carried an ``approved -> pending_approval`` edge since
+    migration 318, whose docstring says "ANY edit to an approved Edition sends
+    it back". Nothing performed that transition.
+
+    So: an Approver approves version 3, the Designer saves version 4, and
+    publish shipped version 4 - a document nobody had read. The row even
+    recorded the discrepancy (``approved_version_id`` 3, ``done_version_id`` 4)
+    and no screen looked at it.
+
+    Two halves. Saving sends the Edition back, which is the part that puts it in
+    front of the Approver again. Publish refuses a version that was not the one
+    approved, which is the part that holds even if the send-back never ran.
+    """
+
+    def test_saving_the_page_sends_an_approved_edition_back(self, db) -> None:
+        page = _page(db)
+        _version(db, page, 1)
+        edition = _through_to_approved(db, page)
+
+        page_service.save_version(
+            db, page.id, doc={"sections": []}, commit_message=None, user_id=USER
+        )
+
+        assert edition.status_key == "pending_approval"
+
+    def test_the_void_approval_is_cleared_rather_than_left_lying(self, db) -> None:
+        page = _page(db)
+        _version(db, page, 1)
+        edition = _through_to_approved(db, page)
+
+        page_service.save_version(
+            db, page.id, doc={"sections": []}, commit_message=None, user_id=USER
+        )
+
+        assert edition.approved_by is None
+        assert edition.approved_at is None
+        assert edition.approved_version_id is None
+
+    def test_a_draft_edition_is_left_alone(self, db) -> None:
+        # Saving while still drafting is the normal thing to do. Only an
+        # approval is invalidated by an edit.
+        page = _page(db)
+        _version(db, page, 1)
+        edition = _started(db, page)
+
+        page_service.save_version(
+            db, page.id, doc={"sections": []}, commit_message=None, user_id=USER
+        )
+
+        assert edition.status_key == "draft"
+
+    def test_a_page_with_no_edition_saves_normally(self, db) -> None:
+        page = _page(db)
+
+        version = page_service.save_version(
+            db, page.id, doc={"sections": []}, commit_message=None, user_id=USER
+        )
+
+        assert version.version == 1
+
+    def test_publishing_a_version_nobody_approved_is_refused(self, db) -> None:
+        """The backstop. Reached by approving, then writing a newer version
+        without going through save_version's send-back."""
+        page = _page(db)
+        _version(db, page, 1)
+        edition = _through_to_approved(db, page)
+        _version(db, page, 2)
+
+        with pytest.raises(AppException) as caught:
+            edition_service.publish(db, edition.id, user_id=APPROVER)
+
+        assert caught.value.status_code == 422
+        assert "approved" in caught.value.detail["message"].lower()
+        assert edition.status_key == "approved"
+        assert (
+            db.query(PageLabel).filter(PageLabel.page_id == page.id).count() == 0
+        ), "a refused publish must not have moved the label"
+
+    def test_publishing_the_approved_version_still_works(self, db) -> None:
+        page = _page(db)
+        version = _version(db, page, 1)
+        edition = _through_to_approved(db, page)
+
+        edition_service.publish(db, edition.id, user_id=APPROVER)
+
+        assert edition.status_key == "done"
+        assert edition.done_version_id == version.id
+
+
 class TestACatalogueWithNothingSavedNeverReachesAnApprover:
     """The walkthrough that found this: a brand new page, an Edition started on
     it, sent for approval, approved, and only THEN refused at publish because

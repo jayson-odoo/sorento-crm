@@ -17,12 +17,15 @@ thing to reason about.
 """
 from __future__ import annotations
 
+import logging
 from typing import Iterable, Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.dealer_kit import Page, PageLabel, PageVersion
+
+logger = logging.getLogger(__name__)
 from app.services.dealer_kit import asset_service
 from app.services.error_handler import AppException
 
@@ -313,6 +316,27 @@ def save_version(
     db.add(version)
     db.commit()
     db.refresh(version)
+
+    # An edit invalidates an approval, so an approved Edition goes back to the
+    # Approver. Imported here rather than at module scope because
+    # edition_service imports this module.
+    #
+    # Best-effort: the save has already committed, and raising here would hand
+    # back a 500 for a save that succeeded (the retry then writes a SECOND
+    # version). The hard guarantee is publish's own check that the version it is
+    # about to publish is the one that was approved - this is what puts the
+    # Edition back in front of a human, not what enforces the rule.
+    try:
+        from app.services.dealer_kit import edition_service
+
+        edition_service.send_back_on_edit(db, page_id)
+    except Exception:  # pragma: no cover - defensive
+        logger.warning(
+            "Could not send the approved Edition on page %s back after a save",
+            page_id,
+            exc_info=True,
+        )
+
     return version
 
 
