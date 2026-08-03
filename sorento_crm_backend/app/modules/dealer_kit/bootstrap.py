@@ -5,8 +5,14 @@ every entity arrives from a module bootstrap (``status_engine.registry``), and
 the Edition is the FIRST entity in this system to ride the engine - so if
 something here looks like it is establishing a convention, it is.
 
-Imported for its side effect from ``app.api.v1.dealer_kit``, which the router
-mount loads at startup. Registration is idempotent, so a re-import is free.
+Imported for its side effect by ``status_engine.registry._register_core``, via
+``_MODULE_BOOTSTRAPS``. Registration is idempotent, so a re-import is free.
+
+It used to hang off importing ``app.api.v1.dealer_kit`` instead, which meant
+the entity existed only in a process that had mounted the routers. A worker or
+a script touching an Edition saw an UNREGISTERED entity and failed somewhere
+unhelpful. The registry pulling its own bootstraps is what makes registration a
+property of the engine rather than of the web app.
 """
 
 MODULE_KEY = "dealer_kit"
