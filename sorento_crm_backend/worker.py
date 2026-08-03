@@ -99,10 +99,19 @@ if __name__ == '__main__':
     # `catalogue_render` is separate on purpose: a Chromium render is slow and
     # memory-hungry, and sharing the imports queue means one catalogue PDF
     # blocks every Excel upload behind it.
-    worker = ForkSafeWorker(
-        ['imports', 'respond_io', 'catalogue_render'], connection=redis_conn
-    )
-    logger.info(
-        "Starting RQ worker for 'imports', 'respond_io' and 'catalogue_render' queues..."
-    )
+    #
+    # WORKER_QUEUES makes the list overridable, matching the project-sales
+    # checkout. Every worktree on this machine points at the SAME Redis db 0, so
+    # a hardcoded list means whichever worker happens to be running drains
+    # another checkout's `imports` jobs with its own branch's task code. It also
+    # lets a checkout run a worker for only the queues it cares about.
+    queues = [
+        q.strip()
+        for q in os.getenv(
+            'WORKER_QUEUES', 'imports,respond_io,catalogue_render'
+        ).split(',')
+        if q.strip()
+    ]
+    worker = ForkSafeWorker(queues, connection=redis_conn)
+    logger.info("Starting RQ worker for queues: %s", ', '.join(queues))
     worker.work()
