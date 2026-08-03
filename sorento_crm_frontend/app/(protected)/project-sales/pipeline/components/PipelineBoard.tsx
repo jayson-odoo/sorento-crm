@@ -93,7 +93,7 @@ export function PipelineBoard({
                   href={`/project-sales/${project.id}`}
                   className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs hover:bg-accent"
                 >
-                  <span className="font-mono text-muted-foreground">
+                  <span className="text-muted-foreground">
                     {project.project_code}
                   </span>
                   <span className="max-w-[16rem] truncate" title={project.title}>
@@ -214,7 +214,7 @@ function ProjectCard({
             href={`/project-sales/${project.id}`}
             className="block space-y-0.5 hover:underline"
           >
-            <span className="font-mono text-[11px] text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {project.project_code}
             </span>
             <p className="line-clamp-2 text-sm font-medium leading-snug" title={project.title}>

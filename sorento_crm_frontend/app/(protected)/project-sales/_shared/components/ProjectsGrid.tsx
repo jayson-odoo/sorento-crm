@@ -12,6 +12,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
+import { describeLastActivity } from '../lib/lastActivity';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -82,7 +83,7 @@ export function ProjectsGrid({
         cell: ({ row }) => (
           <Link
             href={`/project-sales/${row.original.id}`}
-            className="font-mono text-xs hover:underline"
+            className="hover:underline"
           >
             {row.original.project_code}
           </Link>
@@ -225,19 +226,19 @@ export function ProjectsGrid({
       {
         accessorKey: 'last_meaningful_activity_at',
         header: ({ column }) => <DataGridColumnHeader title="Last activity" column={column} />,
-        size: 130,
+        size: 170,
         meta: { headerTitle: 'Last activity' },
-        cell: ({ row }) =>
-          row.original.days_since_last_activity === null ||
-          row.original.days_since_last_activity === undefined ? (
-            <Muted>No activity</Muted>
+        // The stamp itself, not "today" or "3d ago". A relative label cannot be compared
+        // between two rows or quoted back to anyone, and it changes meaning depending on
+        // when the page was loaded.
+        cell: ({ row }) => {
+          const when = describeLastActivity(row.original.last_meaningful_activity_at);
+          return when ? (
+            <span className="tabular-nums">{when}</span>
           ) : (
-            <span className="tabular-nums">
-              {row.original.days_since_last_activity === 0
-                ? 'today'
-                : `${row.original.days_since_last_activity}d ago`}
-            </span>
-          ),
+            <Muted>No activity</Muted>
+          );
+        },
       },
       {
         id: 'flags',

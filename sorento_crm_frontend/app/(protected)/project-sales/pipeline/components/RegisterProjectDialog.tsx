@@ -416,7 +416,7 @@ function TakeoverRequestDialog({
         >
           <DialogBody className="max-h-[60vh] space-y-3 overflow-y-auto">
             <div className="rounded-md border border-border bg-muted/40 p-2.5 text-sm">
-              <span className="font-mono text-xs text-muted-foreground">
+              <span className="text-sm text-muted-foreground">
                 {candidate.project_code}
               </span>
               <p className="font-medium">{candidate.title}</p>

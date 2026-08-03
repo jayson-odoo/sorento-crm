@@ -1,13 +1,18 @@
 /**
- * S3 - PricingConfigClient (AC-E5, AC-E8, AC-E9).
+ * S3 - PricingConfigClient (AC-E5, AC-E8, AC-E9), now on the shared DataGrid.
  *
  * The two things worth pinning are that a floor is READABLE as a sentence rather than as
  * a mode plus a number, and that the list keeps the server's specificity order. An admin
  * who cannot tell which rule wins cannot set the rules.
+ *
+ * Both policies are standard lists: each owns ONE toolbar row carrying its Add action
+ * beside Columns, Export and Refresh, and each pins its own listing key. The empty-state
+ * COPY survived the conversion unchanged, because naming the consequence of the policy
+ * not existing is the only reason an admin sets it.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PriceFloorRule, ProjectSeries } from '../../_shared/types/project.types';
 
@@ -23,6 +28,22 @@ if (!window.matchMedia) {
 
 const listSeries = vi.fn();
 const listPriceFloors = vi.fn();
+const listingKeys: (string | null | undefined)[] = [];
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/project-sales/pricing',
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+}));
+
+// The DataGrid persists column preferences over the network and shows skeleton rows
+// until they resolve; stub that away, and record the key each grid was given so the
+// pathname fallback cannot creep back in.
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: ({ listingKey }: { listingKey?: string | null }) => {
+    listingKeys.push(listingKey);
+    return { resetToDefaults: async () => {}, isLoading: false };
+  },
+}));
 
 vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   const actual = await importOriginal<
@@ -83,6 +104,7 @@ function renderClient() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  listingKeys.length = 0;
   listSeries.mockResolvedValue([]);
   listPriceFloors.mockResolvedValue([]);
 });
@@ -167,5 +189,67 @@ describe('PricingConfigClient', () => {
     );
 
     expect(await screen.findByText(/deactivate it instead/i)).toBeInTheDocument();
+  });
+
+  it('pins a listing key per list rather than falling back to the pathname', async () => {
+    renderClient();
+
+    await waitFor(() => expect(listingKeys.length).toBeGreaterThan(1));
+    expect(listingKeys).toContain('projects.types.view::series');
+    expect(listingKeys).toContain('projects.types.view::price-floors');
+    expect(listingKeys).not.toContain('/project-sales/pricing');
+  });
+
+  it('gives each list one toolbar row carrying Add, Columns, Export and Refresh', async () => {
+    renderClient();
+
+    const seriesHeader = (
+      await screen.findByRole('heading', { name: 'Series' })
+    ).closest('[data-slot="card-header"]') as HTMLElement;
+    expect(
+      within(seriesHeader).getByRole('button', { name: 'Add series' }),
+    ).toBeInTheDocument();
+    expect(within(seriesHeader).getByRole('button', { name: /columns/i })).toBeInTheDocument();
+    expect(within(seriesHeader).getByRole('button', { name: /^export$/i })).toBeInTheDocument();
+    expect(
+      within(seriesHeader).getByRole('button', { name: 'Refresh list' }),
+    ).toBeInTheDocument();
+
+    const floorsHeader = (
+      await screen.findByRole('heading', { name: 'Price floors' })
+    ).closest('[data-slot="card-header"]') as HTMLElement;
+    expect(
+      within(floorsHeader).getByRole('button', { name: 'Add floor' }),
+    ).toBeInTheDocument();
+    expect(within(floorsHeader).getByRole('button', { name: /columns/i })).toBeInTheDocument();
+  });
+
+  it('renders a row per series and a row per floor', async () => {
+    listSeries.mockResolvedValue([
+      series({ id: 's1', name: 'Sorento Project Series' }),
+      series({ id: 's2', name: 'Mocha Contract Series', brand_name: 'Mocha' }),
+    ]);
+    listPriceFloors.mockResolvedValue([
+      floor({ id: 'f1', level: 'product', product_code: 'SRT-WC-01' }),
+    ]);
+
+    renderClient();
+
+    expect(await screen.findByText('Sorento Project Series')).toBeInTheDocument();
+    expect(screen.getByText('Mocha Contract Series')).toBeInTheDocument();
+    expect(screen.getByText('SRT-WC-01')).toBeInTheDocument();
+    // Two lists, both grids, both with the toolbar above them.
+    expect(screen.getAllByRole('table')).toHaveLength(2);
+  });
+
+  it('opens the add dialog from the empty state as well as the toolbar', async () => {
+    renderClient();
+
+    expect(
+      await screen.findByRole('button', { name: 'Add the first series' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Set the first floor' }),
+    ).toBeInTheDocument();
   });
 });

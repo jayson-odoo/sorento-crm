@@ -1,9 +1,15 @@
 'use client';
 
 import * as React from 'react';
-import { KanbanSquare, Plus, Search, Table2, X } from 'lucide-react';
+import { Filter, KanbanSquare, Plus, Search, Table2, X } from 'lucide-react';
 import type { PaginationState, SortingState } from '@tanstack/react-table';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -60,6 +66,13 @@ export function PipelineClient() {
     const timer = window.setTimeout(() => setDebouncedSearch(search.trim()), 300);
     return () => window.clearTimeout(timer);
   }, [search]);
+
+  // Narrowing the set changes which rows exist, so page 3 of the old set is a page of
+  // nothing in the new one. Now that the filters live in the grid toolbar, landing on a
+  // blank page would read as "the filter found nothing".
+  React.useEffect(() => {
+    setPagination((previous) => ({ ...previous, pageIndex: 0 }));
+  }, [debouncedSearch, developerFilter, typeFilter, onlyCritical]);
 
   const graph = useStatusGraph('project', null, false);
   const developers = useProjectParties({ party_type: 'developer', limit: 200 });
@@ -138,6 +151,78 @@ export function PipelineClient() {
     </div>
   );
 
+  const activeFilterCount =
+    (developerFilter ? 1 : 0) + (typeFilter ? 1 : 0) + (onlyCritical ? 1 : 0);
+
+  function clearFilters() {
+    setSearch('');
+    setDeveloperFilter('');
+    setOwnerFilter('');
+    setTypeFilter('');
+    setOnlyCritical(false);
+  }
+
+  // One definition of "the pipeline filters", fed to the grid toolbar in Grid view and
+  // to the board's own Filters button in Board view. Two copies would be two places for
+  // a filter to be added and one place for it to be forgotten.
+  const filterContent = (
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <Label htmlFor="filter-developer" className="text-xs text-muted-foreground">
+          Developer
+        </Label>
+        <SearchableSelect
+          id="filter-developer"
+          value={developerFilter}
+          onChange={setDeveloperFilter}
+          clearable
+          options={(developers.data?.data ?? []).map((party) => ({
+            value: party.id,
+            label: party.name,
+          }))}
+          placeholder="All developers"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="filter-type" className="text-xs text-muted-foreground">
+          Type
+        </Label>
+        <SearchableSelect
+          id="filter-type"
+          value={typeFilter}
+          onChange={setTypeFilter}
+          clearable
+          options={(types.data ?? []).map((type) => ({
+            value: type.id,
+            label: type.name,
+          }))}
+          placeholder="All types"
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <Switch
+          id="filter-critical"
+          checked={onlyCritical}
+          onCheckedChange={setOnlyCritical}
+        />
+        <Label htmlFor="filter-critical" className="text-xs">
+          Critical only
+        </Label>
+      </div>
+      {hasFilters && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="w-full"
+          onClick={clearFilters}
+        >
+          Clear filters
+        </Button>
+      )}
+    </div>
+  );
+
   return (
     <div className="space-y-5">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -181,73 +266,32 @@ export function PipelineClient() {
         </div>
       </header>
 
-      <section className="grid gap-3 rounded-lg border border-border bg-muted/30 p-3 sm:grid-cols-2 lg:grid-cols-4">
-        {view === 'board' && <div className="sm:col-span-2 lg:col-span-1">{searchSlot}</div>}
-        <div className="space-y-1.5">
-          <Label htmlFor="filter-developer" className="text-xs">
-            Developer
-          </Label>
-          <SearchableSelect
-            id="filter-developer"
-            value={developerFilter}
-            onChange={setDeveloperFilter}
-            clearable
-            size="sm"
-            options={(developers.data?.data ?? []).map((party) => ({
-              value: party.id,
-              label: party.name,
-            }))}
-            placeholder="All developers"
-          />
+      {/* Board has no grid toolbar to host them, so it carries the same two controls in
+          the same order the toolbar uses. Grid view feeds them into the toolbar instead,
+          so the filters never sit in a second card above the table. */}
+      {view === 'board' && (
+        <div className="flex flex-wrap items-center gap-2">
+          {searchSlot}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-1.5">
+                <Filter className="size-4" aria-hidden />
+                Filters
+                {activeFilterCount > 0 && (
+                  <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
+                    {activeFilterCount}
+                  </Badge>
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-72 p-3">
+              {filterContent}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="filter-type" className="text-xs">
-            Type
-          </Label>
-          <SearchableSelect
-            id="filter-type"
-            value={typeFilter}
-            onChange={setTypeFilter}
-            clearable
-            size="sm"
-            options={(types.data ?? []).map((type) => ({
-              value: type.id,
-              label: type.name,
-            }))}
-            placeholder="All types"
-          />
-        </div>
-        <div className="flex items-end gap-4">
-          <div className="flex items-center gap-2">
-            <Switch
-              id="filter-critical"
-              checked={onlyCritical}
-              onCheckedChange={setOnlyCritical}
-            />
-            <Label htmlFor="filter-critical" className="text-xs">
-              Critical only
-            </Label>
-          </div>
-          {hasFilters && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setSearch('');
-                setDeveloperFilter('');
-                setOwnerFilter('');
-                setTypeFilter('');
-                setOnlyCritical(false);
-              }}
-            >
-              Clear
-            </Button>
-          )}
-        </div>
-      </section>
+      )}
 
-      {!projects.isLoading && total === 0 ? (
+      {view === 'board' && !projects.isLoading && total === 0 ? (
         hasFilters ? (
           <EmptyState
             title="No projects match these filters"
@@ -283,10 +327,30 @@ export function PipelineClient() {
           onSortingChange={setSorting}
           onRefresh={() => void projects.refetch()}
           searchSlot={searchSlot}
+          filters={{
+            kind: 'custom',
+            active: activeFilterCount > 0,
+            activeCount: activeFilterCount,
+            content: filterContent,
+          }}
           // Its own key, separate from the Projects list: the same table serves two
           // jobs here, and a manager reading the pipeline arranges it differently
           // from somebody working the flat list.
           listingKey="projects.projects.view::pipeline"
+          emptyMessage={
+            <div className="px-6 py-10 text-center">
+              <p className="text-sm font-semibold">
+                {hasFilters
+                  ? 'No projects match these filters'
+                  : 'No projects registered yet'}
+              </p>
+              <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                {hasFilters
+                  ? 'Widen or clear the filters to see the rest of the pipeline.'
+                  : 'Register the development you are pursuing. Claiming it early is what stops two people quoting the same tender.'}
+              </p>
+            </div>
+          }
         />
       )}
 

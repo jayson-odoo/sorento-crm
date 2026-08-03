@@ -1,7 +1,9 @@
 /**
- * P1 - LeadDetailClient (AC-A1, AC-A2, AC-A4, AC-A5).
+ * P1 - LeadDetailClient (AC-A1, AC-A2, AC-A4, AC-A5) as URL-routed tabs.
  *
  * What is pinned here:
+ *   - one concern per tab, the tab read from `?tab=`, and an unknown tab falling back
+ *   - every tab renders its own loading, empty, error and data states
  *   - the informant renders as names, never as an id, and never as the buyer
  *   - a lead with no buyer says so deliberately and offers the next step
  *   - Accept and Decline belong to the person holding the lead and nobody else
@@ -34,8 +36,33 @@ const getUsersSelect = vi.fn();
 
 let sessionUserId: string | undefined = 'u-ali';
 
+/**
+ * The router mock is reactive on purpose. The component reads the active tab from the
+ * URL and writes it back with `replace`, so a mock that only records the call would let
+ * a broken read pass: clicking a tab has to actually change what is on screen.
+ */
+let currentSearch = '';
+const searchListeners = new Set<() => void>();
+const subscribeSearch = (listener: () => void) => {
+  searchListeners.add(listener);
+  return () => {
+    searchListeners.delete(listener);
+  };
+};
+const readSearch = () => currentSearch;
+const routerPush = vi.fn();
+const routerReplace = vi.fn((url: string) => {
+  const marker = url.indexOf('?');
+  currentSearch = marker === -1 ? '' : url.slice(marker + 1);
+  searchListeners.forEach((listener) => listener());
+});
+
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: routerPush, replace: routerReplace }),
+  useSearchParams: () =>
+    new URLSearchParams(
+      React.useSyncExternalStore(subscribeSearch, readSearch, readSearch),
+    ),
 }));
 
 vi.mock('next-auth/react', () => ({
@@ -166,8 +193,14 @@ function renderDetail() {
   );
 }
 
+/** Tabs are plain buttons, exactly as on the project detail page. */
+async function openTab(name: string) {
+  fireEvent.click(await screen.findByRole('button', { name }));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  currentSearch = '';
   sessionUserId = 'u-ali';
   getLead.mockResolvedValue(lead());
   updateLead.mockResolvedValue(lead());
@@ -182,7 +215,7 @@ beforeEach(() => {
   ]);
 });
 
-describe('LeadDetailClient', () => {
+describe('LeadDetailClient page states', () => {
   it('shows a skeleton while the lead loads', () => {
     getLead.mockReturnValue(new Promise(() => {}));
     const { container } = renderDetail();
@@ -196,11 +229,135 @@ describe('LeadDetailClient', () => {
     expect(screen.getByRole('link', { name: 'Back to leads' })).toBeInTheDocument();
   });
 
-  it('renders the informant by name and never by id', async () => {
+  it('keeps the header above the tab strip, with the code, status and the handshake', async () => {
     renderDetail();
 
-    expect(await screen.findByText('Who told us')).toBeInTheDocument();
-    expect(screen.getByText('Veritas Architects Sdn Bhd')).toBeInTheDocument();
+    expect(await screen.findByText('LEAD-000001')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Tower behind the showroom' })).toBeInTheDocument();
+    expect(screen.getByText('open')).toBeInTheDocument();
+    expect((await screen.findAllByText('Awaiting acceptance by Ali')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Waiting 2 days').length).toBeGreaterThan(0);
+  });
+});
+
+describe('LeadDetailClient tabs', () => {
+  it('offers one tab per concern and opens on Overview', async () => {
+    renderDetail();
+
+    const strip = within(await screen.findByRole('navigation', { name: 'Lead sections' }));
+    for (const label of [
+      'Overview',
+      'Who told us',
+      'Handover',
+      'Buyer',
+      'Projects',
+      'Activity',
+    ]) {
+      expect(strip.getByRole('button', { name: label })).toBeInTheDocument();
+    }
+
+    expect(strip.getByRole('button', { name: 'Overview' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(screen.getByText('What we heard')).toBeInTheDocument();
+  });
+
+  it('renders one panel at a time, so the page never stacks into a scroll', async () => {
+    renderDetail();
+
+    await screen.findByText('What we heard');
+    // The strip always names every tab, so a second match is the panel: while Overview
+    // is open the other panels must contribute nothing beyond their tab button.
+    expect(screen.getAllByText('Who told us')).toHaveLength(1);
+    expect(screen.getAllByText('Handover')).toHaveLength(1);
+
+    await openTab('Handover');
+    await waitFor(() => expect(screen.getAllByText('Handover')).toHaveLength(2));
+    expect(screen.queryByText('What we heard')).not.toBeInTheDocument();
+  });
+
+  it('writes the chosen tab to the url and marks it current', async () => {
+    renderDetail();
+
+    await openTab('Projects');
+
+    expect(routerReplace).toHaveBeenCalledWith('/project-sales/leads/l1?tab=projects', {
+      scroll: false,
+    });
+    const strip = within(screen.getByRole('navigation', { name: 'Lead sections' }));
+    expect(strip.getByRole('button', { name: 'Projects' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+
+  it('drops the parameter again on the way back to Overview, so the plain url is the plain page', async () => {
+    renderDetail();
+
+    await openTab('Buyer');
+    await openTab('Overview');
+
+    expect(routerReplace).toHaveBeenLastCalledWith('/project-sales/leads/l1', {
+      scroll: false,
+    });
+    expect(await screen.findByText('What we heard')).toBeInTheDocument();
+  });
+
+  it('opens on the tab named in the url', async () => {
+    currentSearch = 'tab=buyer';
+    renderDetail();
+
+    expect(await screen.findByText('No buyer yet')).toBeInTheDocument();
+    expect(screen.queryByText('What we heard')).not.toBeInTheDocument();
+  });
+
+  it('falls back to Overview when the url names a tab that does not exist', async () => {
+    currentSearch = 'tab=invoices';
+    renderDetail();
+
+    expect(await screen.findByText('What we heard')).toBeInTheDocument();
+  });
+
+  it('keeps any other query parameter when switching tabs', async () => {
+    currentSearch = 'from=worklist';
+    renderDetail();
+
+    await openTab('Activity');
+
+    expect(routerReplace).toHaveBeenCalledWith(
+      '/project-sales/leads/l1?from=worklist&tab=activity',
+      { scroll: false },
+    );
+  });
+});
+
+describe('LeadDetailClient Overview tab', () => {
+  it('shows what was heard, and says so when nobody wrote a note', async () => {
+    renderDetail();
+
+    expect(await screen.findByText('Setia Land')).toBeInTheDocument();
+    expect(screen.getByText('Setia Alam')).toBeInTheDocument();
+    expect(screen.getByText(/No notes yet/)).toBeInTheDocument();
+  });
+
+  it('shows the note and the rough value when there are some', async () => {
+    getLead.mockResolvedValue(
+      lead({ notes: 'Piling started, tender closes March', estimated_value: '2500000' }),
+    );
+    renderDetail();
+
+    expect(await screen.findByText('Piling started, tender closes March')).toBeInTheDocument();
+    expect(screen.getByText('RM 2,500,000')).toBeInTheDocument();
+  });
+});
+
+describe('LeadDetailClient Who told us tab', () => {
+  it('renders the informant by name and never by id', async () => {
+    renderDetail();
+    await openTab('Who told us');
+
+    expect(await screen.findByText('Veritas Architects Sdn Bhd')).toBeInTheDocument();
     expect(screen.getByText('Lim, QS')).toBeInTheDocument();
     expect(screen.getByText('BCI-778812')).toBeInTheDocument();
     expect(screen.getByText('BCI')).toBeInTheDocument();
@@ -209,25 +366,293 @@ describe('LeadDetailClient', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('says the buyer is not known yet, and offers to set it', async () => {
+  it('says the buyer is not known yet rather than leaving the row blank', async () => {
     renderDetail();
+    await openTab('Who told us');
 
     expect(await screen.findByText('Not known yet')).toBeInTheDocument();
-    expect(screen.getByText('No buyer yet')).toBeInTheDocument();
+  });
 
+  it('asks for a source when the lead carries none', async () => {
+    getLead.mockResolvedValue(
+      lead({
+        informant_source: null,
+        informant_ref: null,
+        informant_party_id: null,
+        informant_party_label: null,
+        informant_contact_name: null,
+      }),
+    );
+    renderDetail();
+    await openTab('Who told us');
+
+    expect(await screen.findByText(/Nobody is recorded as the source/)).toBeInTheDocument();
+  });
+
+  it('never sends an owner through the edit form, because that would skip the handshake', async () => {
+    renderDetail();
+    await openTab('Who told us');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    expect(screen.queryByLabelText('Search people')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(updateLead).toHaveBeenCalled());
+    const body = updateLead.mock.calls[0][1] as Record<string, unknown>;
+    expect(body).not.toHaveProperty('owner_user_id');
+  });
+
+  it('saves the informant and the buyer together', async () => {
+    renderDetail();
+    await openTab('Who told us');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    fireEvent.change(await screen.findByLabelText('Not known yet'), {
+      target: { value: 'c1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(updateLead).toHaveBeenCalledWith(
+        'l1',
+        expect.objectContaining({
+          customer_id: 'c1',
+          informant_source: 'bci',
+          informant_ref: 'BCI-778812',
+          informant_contact_name: 'Lim, QS',
+          informant_party_id: '11111111-1111-1111-1111-111111111111',
+        }),
+      ),
+    );
+  });
+});
+
+describe('LeadDetailClient Handover tab', () => {
+  it('shows who holds it and since when', async () => {
+    renderDetail();
+    await openTab('Handover');
+
+    expect(await screen.findByText('Ali')).toBeInTheDocument();
+    expect(screen.getByText('Not accepted yet')).toBeInTheDocument();
+  });
+
+  it('records the decline reason on the lead once declined', async () => {
+    getLead.mockResolvedValue(
+      lead({
+        acceptance_state: 'declined',
+        owner_user_id: null,
+        owner_name: null,
+        declined_reason: 'Johor team covers Nusajaya',
+        declined_at: '2026-08-01T02:00:00',
+      }),
+    );
+    renderDetail();
+    await openTab('Handover');
+
+    expect(await screen.findByText('Johor team covers Nusajaya')).toBeInTheDocument();
+    expect(screen.getAllByText('Declined').length).toBeGreaterThan(0);
+  });
+
+  it('says nobody holds it, and offers the way out of that', async () => {
+    sessionUserId = 'u-marketing';
+    getLead.mockResolvedValue(
+      lead({ acceptance_state: null, owner_user_id: null, owner_name: null }),
+    );
+    renderDetail();
+    await openTab('Handover');
+
+    expect(await screen.findByText(/Nobody holds this lead/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Assign it/ }));
+    expect(await screen.findByLabelText('Search people')).toBeInTheDocument();
+  });
+});
+
+describe('LeadDetailClient Buyer tab', () => {
+  it('says there is no buyer yet, and offers to set it', async () => {
+    renderDetail();
+    await openTab('Buyer');
+
+    expect(await screen.findByText('No buyer yet')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Set the buyer' }));
     expect(await screen.findByText('Who told us, and who buys')).toBeInTheDocument();
   });
 
-  it('shows the acceptance state and how long it has been waiting', async () => {
-    renderDetail();
+  it('shows a skeleton while the account loads', async () => {
+    getLead.mockResolvedValue(lead({ customer_id: 'c1', customer_name: 'Sunway' }));
+    getCustomerPortfolio.mockReturnValue(new Promise(() => {}));
+    const { container } = renderDetail();
+    await openTab('Buyer');
 
-    expect(
-      (await screen.findAllByText('Awaiting acceptance by Ali')).length,
-    ).toBeGreaterThan(0);
-    expect(screen.getAllByText('Waiting 2 days').length).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0),
+    );
   });
 
+  it('reports an account that could not be loaded', async () => {
+    getLead.mockResolvedValue(lead({ customer_id: 'c1', customer_name: 'Sunway' }));
+    getCustomerPortfolio.mockRejectedValue(new Error('Account service is down'));
+    renderDetail();
+    await openTab('Buyer');
+
+    expect(await screen.findByText('Account service is down')).toBeInTheDocument();
+  });
+
+  it('lists the rest of the account once it loads', async () => {
+    getLead.mockResolvedValue(lead({ customer_id: 'c1', customer_name: 'Sunway' }));
+    getCustomerPortfolio.mockResolvedValue({
+      leads: [
+        { id: 'l1', lead_code: 'LEAD-000001', title: 'Tower behind the showroom' },
+        { id: 'l2', lead_code: 'LEAD-000002', title: 'Second phase' },
+      ],
+      projects: [
+        {
+          id: 'p1',
+          project_code: 'PRJ-000009',
+          title: 'Phase one podium',
+          lead_id: 'l1',
+          outcome: 'open',
+          status_label: 'Tendering',
+        },
+      ],
+    });
+    renderDetail();
+    await openTab('Buyer');
+
+    expect(await screen.findByText(/LEAD-000002/)).toBeInTheDocument();
+    expect(screen.getByText(/PRJ-000009/)).toBeInTheDocument();
+    // Its own lead is never listed back at it as another lead.
+    expect(screen.queryByText(/LEAD-000001 ·/)).not.toBeInTheDocument();
+  });
+
+  it('says the account is otherwise empty rather than hiding the section', async () => {
+    getLead.mockResolvedValue(lead({ customer_id: 'c1', customer_name: 'Sunway' }));
+    renderDetail();
+    await openTab('Buyer');
+
+    expect(await screen.findByText('This is their only lead so far.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Nothing registered against this account yet.'),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('LeadDetailClient Projects tab', () => {
+  it('names the next step when the lead has produced nothing', async () => {
+    renderDetail();
+    await openTab('Projects');
+
+    expect(await screen.findByText(/Nothing registered from this lead yet/)).toBeInTheDocument();
+  });
+
+  it('lists the projects the lead produced', async () => {
+    getLead.mockResolvedValue(
+      lead({ customer_id: 'c1', customer_name: 'Sunway', project_count: 1 }),
+    );
+    getCustomerPortfolio.mockResolvedValue({
+      leads: [],
+      projects: [
+        {
+          id: 'p1',
+          project_code: 'PRJ-000009',
+          title: 'Phase one podium',
+          lead_id: 'l1',
+          outcome: 'open',
+          status_label: 'Tendering',
+        },
+        {
+          id: 'p2',
+          project_code: 'PRJ-000010',
+          title: 'Another account project',
+          lead_id: 'l9',
+          outcome: 'open',
+          status_label: 'Tendering',
+        },
+      ],
+    });
+    renderDetail();
+    await openTab('Projects');
+
+    expect(await screen.findByText(/PRJ-000009/)).toBeInTheDocument();
+    expect(screen.queryByText(/PRJ-000010/)).not.toBeInTheDocument();
+  });
+
+  it('reports a failure to load them', async () => {
+    getLead.mockResolvedValue(lead({ customer_id: 'c1', customer_name: 'Sunway' }));
+    getCustomerPortfolio.mockRejectedValue(new Error('Account service is down'));
+    renderDetail();
+    await openTab('Projects');
+
+    expect(await screen.findByText('Account service is down')).toBeInTheDocument();
+  });
+
+  it('shows a skeleton while they load', async () => {
+    getLead.mockResolvedValue(lead({ customer_id: 'c1', customer_name: 'Sunway' }));
+    getCustomerPortfolio.mockReturnValue(new Promise(() => {}));
+    const { container } = renderDetail();
+    await openTab('Projects');
+
+    await waitFor(() =>
+      expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0),
+    );
+  });
+});
+
+describe('LeadDetailClient Activity tab', () => {
+  it('builds the history out of the stamps the lead already carries', async () => {
+    getLead.mockResolvedValue(
+      lead({
+        created_at: '2026-07-01T02:00:00',
+        accepted_at: '2026-07-03T02:00:00',
+        qualified_at: '2026-07-09T02:00:00',
+        project_count: 2,
+      }),
+    );
+    renderDetail();
+    await openTab('Activity');
+
+    expect(await screen.findByText('Lead recorded')).toBeInTheDocument();
+    expect(screen.getByText('Assigned to Ali')).toBeInTheDocument();
+    expect(screen.getByText('Accepted by Ali')).toBeInTheDocument();
+    expect(screen.getByText('Qualified')).toBeInTheDocument();
+    expect(screen.getByText('2 projects registered')).toBeInTheDocument();
+  });
+
+  it('keeps an undated entry rather than dropping it', async () => {
+    getLead.mockResolvedValue(
+      lead({
+        outcome: 'disqualified',
+        disqualified_reason: 'no_budget',
+        acceptance_state: null,
+        assigned_at: null,
+        owner_user_id: null,
+        owner_name: null,
+      }),
+    );
+    renderDetail();
+    await openTab('Activity');
+
+    expect(await screen.findByText('Disqualified')).toBeInTheDocument();
+    expect(screen.getByText('no budget')).toBeInTheDocument();
+    expect(screen.getByText('Time not recorded')).toBeInTheDocument();
+  });
+
+  it('says nothing has happened yet instead of showing an empty box', async () => {
+    getLead.mockResolvedValue(
+      lead({
+        acceptance_state: null,
+        assigned_at: null,
+        owner_user_id: null,
+        owner_name: null,
+      }),
+    );
+    renderDetail();
+    await openTab('Activity');
+
+    expect(await screen.findByText(/Nothing has happened to this lead yet/)).toBeInTheDocument();
+  });
+});
+
+describe('LeadDetailClient header actions', () => {
   it('offers Accept and Decline to the person holding it', async () => {
     renderDetail();
 
@@ -239,7 +664,7 @@ describe('LeadDetailClient', () => {
     sessionUserId = 'u-marketing';
     renderDetail();
 
-    await screen.findByText('Who told us');
+    await screen.findByText('What we heard');
     expect(screen.queryByRole('button', { name: /Accept/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Decline$/ })).not.toBeInTheDocument();
     // Marketing can still hand it to somebody else.
@@ -284,22 +709,6 @@ describe('LeadDetailClient', () => {
     );
   });
 
-  it('records the decline reason on the lead once declined', async () => {
-    getLead.mockResolvedValue(
-      lead({
-        acceptance_state: 'declined',
-        owner_user_id: null,
-        owner_name: null,
-        declined_reason: 'Johor team covers Nusajaya',
-        declined_at: '2026-08-01T02:00:00',
-      }),
-    );
-    renderDetail();
-
-    expect(await screen.findByText('Johor team covers Nusajaya')).toBeInTheDocument();
-    expect(screen.getAllByText('Declined').length).toBeGreaterThan(0);
-  });
-
   it('offers Assign on a declined lead, which is where marketing picks it back up', async () => {
     sessionUserId = 'u-marketing';
     getLead.mockResolvedValue(
@@ -316,40 +725,5 @@ describe('LeadDetailClient', () => {
     // Not "Reassign": nobody holds it.
     expect(await screen.findByRole('button', { name: /^Assign$/ })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Reassign/ })).not.toBeInTheDocument();
-  });
-
-  it('never sends an owner through the edit form, because that would skip the handshake', async () => {
-    renderDetail();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
-    expect(screen.queryByLabelText('Search people')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => expect(updateLead).toHaveBeenCalled());
-    const body = updateLead.mock.calls[0][1] as Record<string, unknown>;
-    expect(body).not.toHaveProperty('owner_user_id');
-  });
-
-  it('saves the informant and the buyer together', async () => {
-    renderDetail();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
-    fireEvent.change(await screen.findByLabelText('Not known yet'), {
-      target: { value: 'c1' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() =>
-      expect(updateLead).toHaveBeenCalledWith(
-        'l1',
-        expect.objectContaining({
-          customer_id: 'c1',
-          informant_source: 'bci',
-          informant_ref: 'BCI-778812',
-          informant_contact_name: 'Lim, QS',
-          informant_party_id: '11111111-1111-1111-1111-111111111111',
-        }),
-      ),
-    );
   });
 });

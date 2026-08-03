@@ -99,7 +99,7 @@ export function AwaitingAcceptanceClient() {
             >
               {row.original.title}
             </Link>
-            <span className="block truncate font-mono text-[11px] text-muted-foreground">
+            <span className="block truncate text-xs text-muted-foreground">
               {row.original.lead_code}
             </span>
           </div>

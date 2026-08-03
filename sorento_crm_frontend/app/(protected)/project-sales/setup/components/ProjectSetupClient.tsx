@@ -1,11 +1,27 @@
 'use client';
 
 import * as React from 'react';
-import { CalendarClock, Layers, Pencil, Plus, Trash2 } from 'lucide-react';
+import {
+  ColumnDef,
+  PaginationState,
+  SortingState,
+  getCoreRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
+import { CalendarClock, Check, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardFooter, CardHeader, CardTable, CardTitle } from '@/components/ui/card';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridTable } from '@/components/ui/data-grid-table';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import {
   useProjectTemplateMutations,
@@ -25,6 +41,12 @@ import { TemplateChecklistPanel } from './TemplateChecklistPanel';
  *
  * Splitting these across three admin pages was the alternative. It hides the thing the
  * admin needs to see: which template a project gets, and therefore which checklist.
+ *
+ * Each level is a standard list with its own toolbar rather than a stack of cards with
+ * floating icons, so the same reading rules apply here as on every other screen. The
+ * master-detail link survives: picking a TYPE row filters the templates list, picking a
+ * TEMPLATE row loads its checklist below. The picked row carries a tick in its first
+ * column, which is the only thing a list needs to say "this one".
  */
 export function ProjectSetupClient() {
   const types = useProjectTypes();
@@ -58,10 +80,24 @@ export function ProjectSetupClient() {
 
   const selectedTemplate = templateRows.find((row) => row.id === selectedTemplateId) ?? null;
 
+  // Stable identities: the grids build their columns in a `useMemo` keyed on these, and
+  // a fresh arrow per render would rebuild every column on every keystroke elsewhere.
+  const addType = React.useCallback(() => setTypeDialog({ type: null }), []);
+  const editType = React.useCallback((type: ProjectType) => setTypeDialog({ type }), []);
+  const addTemplate = React.useCallback(() => setTemplateDialog({ template: null }), []);
+  const editTemplate = React.useCallback(
+    (template: ProjectTemplate) => setTemplateDialog({ template }),
+    [],
+  );
+  const selectTemplate = React.useCallback(
+    (id: string) => setSelectedTemplateId((previous) => (previous === id ? null : id)),
+    [],
+  );
+
   return (
     <div className="space-y-5">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
+        <div className="min-w-0 break-words">
           <h1 className="text-xl font-semibold">Project setup</h1>
           <p className="text-sm text-muted-foreground">
             What kinds of project we pursue, and what a new one starts with.
@@ -69,224 +105,31 @@ export function ProjectSetupClient() {
         </div>
       </header>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="lg:col-span-1">
-          <CardHeader className="flex flex-row items-center justify-between gap-2">
-            <CardTitle className="text-sm">Project types</CardTitle>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setTypeDialog({ type: null })}
-            >
-              <Plus className="size-4" aria-hidden />
-              Add
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {types.isLoading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-12 w-full" />
-                <Skeleton className="h-12 w-full" />
-              </div>
-            ) : typeRows.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center">
-                <h3 className="text-sm font-semibold">No project types yet</h3>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  A type is the kind of job: property development, hotel, fitout.
-                </p>
-                <Button
-                  type="button"
-                  className="mt-3"
-                  onClick={() => setTypeDialog({ type: null })}
-                >
-                  <Plus className="size-4" aria-hidden />
-                  Add the first type
-                </Button>
-              </div>
-            ) : (
-              <ul className="space-y-1.5">
-                {typeRows.map((type) => (
-                  <li key={type.id}>
-                    <div
-                      className={
-                        selectedTypeId === type.id
-                          ? 'flex items-center gap-2 rounded-lg border border-primary bg-primary/5 px-3 py-2'
-                          : 'flex items-center gap-2 rounded-lg border border-border px-3 py-2'
-                      }
-                    >
-                      <button
-                        type="button"
-                        onClick={() => setSelectedTypeId(type.id)}
-                        className="min-w-0 flex-1 text-left"
-                        aria-current={selectedTypeId === type.id ? 'true' : undefined}
-                      >
-                        <span className="flex flex-wrap items-center gap-1.5">
-                          <span className="truncate text-sm font-medium" title={type.name}>
-                            {type.name}
-                          </span>
-                          {!type.is_active && (
-                            <Badge variant="outline" className="text-[11px]">
-                              Inactive
-                            </Badge>
-                          )}
-                          {type.derives_delivery_from_launch && (
-                            <Badge variant="secondary" className="gap-1 text-[11px]">
-                              <CalendarClock className="size-3" aria-hidden />
-                              Delivery from launch
-                            </Badge>
-                          )}
-                        </span>
-                        <span className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                          <Layers className="size-3" aria-hidden />
-                          {type.template_count ?? 0} template
-                          {(type.template_count ?? 0) === 1 ? '' : 's'}
-                        </span>
-                      </button>
-                      <div className="flex shrink-0 gap-1">
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setTypeDialog({ type })}
-                          aria-label={`Edit ${type.name}`}
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeletingType(type)}
-                          aria-label={`Delete ${type.name}`}
-                        >
-                          <Trash2 className="size-3.5 text-destructive" />
-                        </Button>
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <ProjectTypesGrid
+          rows={typeRows}
+          isLoading={types.isLoading}
+          isFetching={types.isFetching}
+          selectedTypeId={selectedTypeId}
+          onSelect={setSelectedTypeId}
+          onRefresh={() => void types.refetch()}
+          onAdd={addType}
+          onEdit={editType}
+          onDelete={setDeletingType}
+        />
 
-        <Card className="lg:col-span-2">
-          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <CardTitle className="text-sm">Templates</CardTitle>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                A template decides the stakeholder roles offered and the checklist a new
-                project copies in.
-              </p>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={!selectedTypeId}
-              onClick={() => setTemplateDialog({ template: null })}
-            >
-              <Plus className="size-4" aria-hidden />
-              Add template
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {!selectedTypeId ? (
-              <p className="text-sm text-muted-foreground">
-                Select a project type to see its templates.
-              </p>
-            ) : templates.isLoading ? (
-              <div className="space-y-2">
-                <Skeleton className="h-12 w-full" />
-                <Skeleton className="h-12 w-full" />
-              </div>
-            ) : templateRows.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-border px-4 py-8 text-center">
-                <h3 className="text-sm font-semibold">This type has no templates</h3>
-                <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                  Without one, a project of this type has no roles to pick from and no
-                  checklist to start with.
-                </p>
-                <Button
-                  type="button"
-                  className="mt-3"
-                  onClick={() => setTemplateDialog({ template: null })}
-                >
-                  <Plus className="size-4" aria-hidden />
-                  Add the first template
-                </Button>
-              </div>
-            ) : (
-              <ul className="space-y-1.5">
-                {templateRows.map((template) => (
-                  <li key={template.id}>
-                    <div
-                      className={
-                        selectedTemplateId === template.id
-                          ? 'flex items-center gap-2 rounded-lg border border-primary bg-primary/5 px-3 py-2'
-                          : 'flex items-center gap-2 rounded-lg border border-border px-3 py-2'
-                      }
-                    >
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setSelectedTemplateId((previous) =>
-                            previous === template.id ? null : template.id,
-                          )
-                        }
-                        className="min-w-0 flex-1 text-left"
-                      >
-                        <span className="flex flex-wrap items-center gap-1.5">
-                          <span className="truncate text-sm font-medium" title={template.name}>
-                            {template.name}
-                          </span>
-                          {!template.is_active && (
-                            <Badge variant="outline" className="text-[11px]">
-                              Inactive
-                            </Badge>
-                          )}
-                          {template.has_forked_status_graph && (
-                            <Badge variant="secondary" className="text-[11px]">
-                              Own stage graph
-                            </Badge>
-                          )}
-                        </span>
-                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                          {template.roles.filter((role) => role.is_active).length} roles:{' '}
-                          {template.roles
-                            .filter((role) => role.is_active)
-                            .map((role) => role.name)
-                            .join(', ') || 'none'}
-                        </span>
-                      </button>
-                      <div className="flex shrink-0 gap-1">
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setTemplateDialog({ template })}
-                          aria-label={`Edit ${template.name}`}
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeletingTemplate(template)}
-                          aria-label={`Delete ${template.name}`}
-                        >
-                          <Trash2 className="size-3.5 text-destructive" />
-                        </Button>
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardContent>
-        </Card>
+        <ProjectTemplatesGrid
+          rows={templateRows}
+          isLoading={Boolean(selectedTypeId) && templates.isLoading}
+          isFetching={templates.isFetching}
+          hasType={Boolean(selectedTypeId)}
+          selectedTemplateId={selectedTemplateId}
+          onSelect={selectTemplate}
+          onRefresh={() => void templates.refetch()}
+          onAdd={addTemplate}
+          onEdit={editTemplate}
+          onDelete={setDeletingTemplate}
+        />
       </div>
 
       {selectedTemplate ? (
@@ -355,4 +198,439 @@ export function ProjectSetupClient() {
       />
     </div>
   );
+}
+
+function ProjectTypesGrid({
+  rows,
+  isLoading,
+  isFetching,
+  selectedTypeId,
+  onSelect,
+  onRefresh,
+  onAdd,
+  onEdit,
+  onDelete,
+}: {
+  rows: ProjectType[];
+  isLoading: boolean;
+  isFetching: boolean;
+  selectedTypeId: string | null;
+  onSelect: (id: string) => void;
+  onRefresh: () => void;
+  onAdd: () => void;
+  onEdit: (type: ProjectType) => void;
+  onDelete: (type: ProjectType) => void;
+}) {
+  const [pagination, setPagination] = React.useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 10,
+  });
+  const [sorting, setSorting] = React.useState<SortingState>([
+    { id: 'sort_order', desc: false },
+  ]);
+
+  const columns = React.useMemo<ColumnDef<ProjectType>[]>(
+    () => [
+      selectedMarkerColumn<ProjectType>(selectedTypeId),
+      {
+        accessorKey: 'name',
+        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
+        size: 220,
+        meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-32" /> },
+        cell: ({ row }) => (
+          <div className="min-w-0">
+            <span className="block truncate font-medium" title={row.original.name}>
+              {row.original.name}
+            </span>
+            <span
+              className="block truncate text-xs text-muted-foreground"
+              title={row.original.code}
+            >
+              {row.original.code}
+            </span>
+          </div>
+        ),
+      },
+      {
+        id: 'template_count',
+        accessorFn: (row) => row.template_count ?? 0,
+        header: ({ column }) => <DataGridColumnHeader title="Templates" column={column} />,
+        size: 130,
+        meta: { headerTitle: 'Templates', skeleton: <Skeleton className="h-4 w-14" /> },
+        cell: ({ row }) => {
+          const count = row.original.template_count ?? 0;
+          return (
+            <span className="tabular-nums">
+              {count} template{count === 1 ? '' : 's'}
+            </span>
+          );
+        },
+      },
+      {
+        accessorKey: 'derives_delivery_from_launch',
+        header: ({ column }) => <DataGridColumnHeader title="Delivery" column={column} />,
+        size: 190,
+        meta: { headerTitle: 'Delivery', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) =>
+          row.original.derives_delivery_from_launch ? (
+            <Badge variant="secondary" className="gap-1">
+              <CalendarClock className="size-3" aria-hidden />
+              Delivery from launch
+            </Badge>
+          ) : (
+            <span className="text-muted-foreground">Stated per project</span>
+          ),
+      },
+      {
+        accessorKey: 'is_active',
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        size: 110,
+        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-16" /> },
+        cell: ({ row }) =>
+          row.original.is_active ? (
+            <Badge variant="outline">Active</Badge>
+          ) : (
+            <Badge variant="secondary">Inactive</Badge>
+          ),
+      },
+      {
+        accessorKey: 'sort_order',
+        header: ({ column }) => <DataGridColumnHeader title="Order" column={column} />,
+        size: 90,
+        meta: { headerTitle: 'Order', skeleton: <Skeleton className="h-4 w-8" /> },
+        cell: ({ row }) => <span className="tabular-nums">{row.original.sort_order}</span>,
+      },
+      rowActionsColumn<ProjectType>({
+        editLabel: (type) => `Edit ${type.name}`,
+        deleteLabel: (type) => `Delete ${type.name}`,
+        onEdit,
+        onDelete,
+      }),
+    ],
+    [selectedTypeId, onEdit, onDelete],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId: (row) => row.id,
+    state: { pagination, sorting },
+    onPaginationChange: setPagination,
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+    defaultColumn: { minSize: 44, maxSize: 800, size: 150 },
+  });
+
+  return (
+    <DataGrid
+      table={table}
+      // Clicking a type row is what filters the templates list beside it.
+      onRowClick={(row) => onSelect(row.id)}
+      recordCount={rows.length}
+      isLoading={isLoading}
+      listingKey="projects.types.view::types"
+      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      emptyMessage={
+        <div className="px-6 py-10 text-center">
+          <p className="text-sm font-semibold">No project types yet</p>
+          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+            A type is the kind of job: property development, hotel, fitout.
+          </p>
+          <Button type="button" className="mt-4" onClick={onAdd}>
+            <Plus className="size-4" aria-hidden />
+            Add the first type
+          </Button>
+        </div>
+      }
+    >
+      <Card>
+        <CardHeader className="block pt-5">
+          <CardTitle className="text-sm">Project types</CardTitle>
+          <DataGridListToolbar
+            table={table}
+            exportConfig={{ filename: 'project_types_export.xlsx' }}
+            onRefresh={onRefresh}
+            isRefreshing={isFetching && !isLoading}
+            primaryAction={
+              <Button type="button" size="sm" onClick={onAdd}>
+                <Plus className="size-4" aria-hidden />
+                Add type
+              </Button>
+            }
+          />
+        </CardHeader>
+        <CardTable>
+          <ScrollArea>
+            <DataGridTable />
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
+        </CardTable>
+        <CardFooter>
+          <DataGridPagination />
+        </CardFooter>
+      </Card>
+    </DataGrid>
+  );
+}
+
+function ProjectTemplatesGrid({
+  rows,
+  isLoading,
+  isFetching,
+  hasType,
+  selectedTemplateId,
+  onSelect,
+  onRefresh,
+  onAdd,
+  onEdit,
+  onDelete,
+}: {
+  rows: ProjectTemplate[];
+  isLoading: boolean;
+  isFetching: boolean;
+  hasType: boolean;
+  selectedTemplateId: string | null;
+  onSelect: (id: string) => void;
+  onRefresh: () => void;
+  onAdd: () => void;
+  onEdit: (template: ProjectTemplate) => void;
+  onDelete: (template: ProjectTemplate) => void;
+}) {
+  const [pagination, setPagination] = React.useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 10,
+  });
+  const [sorting, setSorting] = React.useState<SortingState>([{ id: 'name', desc: false }]);
+
+  const columns = React.useMemo<ColumnDef<ProjectTemplate>[]>(
+    () => [
+      selectedMarkerColumn<ProjectTemplate>(selectedTemplateId),
+      {
+        accessorKey: 'name',
+        header: ({ column }) => <DataGridColumnHeader title="Template" column={column} />,
+        size: 220,
+        meta: { headerTitle: 'Template', skeleton: <Skeleton className="h-4 w-32" /> },
+        cell: ({ row }) => (
+          <span className="block truncate font-medium" title={row.original.name}>
+            {row.original.name}
+          </span>
+        ),
+      },
+      {
+        id: 'roles',
+        accessorFn: (row) =>
+          row.roles
+            .filter((role) => role.is_active)
+            .map((role) => role.name)
+            .join(', '),
+        header: ({ column }) => <DataGridColumnHeader title="Roles" column={column} />,
+        size: 260,
+        enableSorting: false,
+        meta: { headerTitle: 'Roles', skeleton: <Skeleton className="h-4 w-36" /> },
+        cell: ({ row }) => {
+          const active = row.original.roles.filter((role) => role.is_active);
+          const names = active.map((role) => role.name).join(', ');
+          const text = `${active.length} roles: ${names || 'none'}`;
+          return (
+            <span className="block truncate" title={text}>
+              {text}
+            </span>
+          );
+        },
+      },
+      {
+        accessorKey: 'has_forked_status_graph',
+        header: ({ column }) => <DataGridColumnHeader title="Stages" column={column} />,
+        size: 160,
+        meta: { headerTitle: 'Stages', skeleton: <Skeleton className="h-4 w-20" /> },
+        cell: ({ row }) =>
+          row.original.has_forked_status_graph ? (
+            <Badge variant="secondary">Own stage graph</Badge>
+          ) : (
+            <span className="text-muted-foreground">Shared stages</span>
+          ),
+      },
+      {
+        accessorKey: 'is_active',
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        size: 110,
+        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-16" /> },
+        cell: ({ row }) =>
+          row.original.is_active ? (
+            <Badge variant="outline">Active</Badge>
+          ) : (
+            <Badge variant="secondary">Inactive</Badge>
+          ),
+      },
+      rowActionsColumn<ProjectTemplate>({
+        editLabel: (template) => `Edit ${template.name}`,
+        deleteLabel: (template) => `Delete ${template.name}`,
+        onEdit,
+        onDelete,
+      }),
+    ],
+    [selectedTemplateId, onEdit, onDelete],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: hasType ? rows : [],
+    getRowId: (row) => row.id,
+    state: { pagination, sorting },
+    onPaginationChange: setPagination,
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+    defaultColumn: { minSize: 44, maxSize: 800, size: 150 },
+  });
+
+  return (
+    <DataGrid
+      table={table}
+      // Clicking a template row is what loads its checklist below.
+      onRowClick={(row) => onSelect(row.id)}
+      recordCount={hasType ? rows.length : 0}
+      isLoading={isLoading}
+      listingKey="projects.types.view::templates"
+      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      emptyMessage={
+        !hasType ? (
+          <div className="px-6 py-10 text-center">
+            <p className="text-sm font-semibold">No project type selected</p>
+            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+              Select a project type to see its templates.
+            </p>
+          </div>
+        ) : (
+          <div className="px-6 py-10 text-center">
+            <p className="text-sm font-semibold">This type has no templates</p>
+            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+              Without one, a project of this type has no roles to pick from and no
+              checklist to start with.
+            </p>
+            <Button type="button" className="mt-4" onClick={onAdd}>
+              <Plus className="size-4" aria-hidden />
+              Add the first template
+            </Button>
+          </div>
+        )
+      }
+    >
+      <Card>
+        <CardHeader className="block pt-5">
+          <CardTitle className="text-sm">Templates</CardTitle>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            A template decides the stakeholder roles offered and the checklist a new
+            project copies in.
+          </p>
+          <DataGridListToolbar
+            table={table}
+            exportConfig={{ filename: 'project_templates_export.xlsx' }}
+            onRefresh={onRefresh}
+            isRefreshing={isFetching && !isLoading}
+            primaryAction={
+              <Button type="button" size="sm" disabled={!hasType} onClick={onAdd}>
+                <Plus className="size-4" aria-hidden />
+                Add template
+              </Button>
+            }
+          />
+        </CardHeader>
+        <CardTable>
+          <ScrollArea>
+            <DataGridTable />
+            <ScrollBar orientation="horizontal" />
+          </ScrollArea>
+        </CardTable>
+        <CardFooter>
+          <DataGridPagination />
+        </CardFooter>
+      </Card>
+    </DataGrid>
+  );
+}
+
+/**
+ * The master-detail tick.
+ *
+ * Master-detail needs the list to say which row the panel below is describing. A tick in
+ * a fixed leading column does that without borrowing row SELECTION, which the toolbar
+ * reads as "the user picked rows to act on" and would answer with a bulk-action strip.
+ */
+function selectedMarkerColumn<TRow extends { id: string }>(
+  selectedId: string | null,
+): ColumnDef<TRow> {
+  return {
+    id: 'selected',
+    header: () => <span className="sr-only">Selected</span>,
+    size: 44,
+    enableSorting: false,
+    enableHiding: false,
+    enableResizing: false,
+    cell: ({ row }) =>
+      row.original.id === selectedId ? (
+        <Check className="size-4 text-primary" aria-label="Selected" />
+      ) : (
+        <span className="sr-only">Not selected</span>
+      ),
+  };
+}
+
+function rowActionsColumn<TRow extends { id: string }>({
+  editLabel,
+  deleteLabel,
+  onEdit,
+  onDelete,
+}: {
+  editLabel: (row: TRow) => string;
+  deleteLabel: (row: TRow) => string;
+  onEdit: (row: TRow) => void;
+  onDelete: (row: TRow) => void;
+}): ColumnDef<TRow> {
+  return {
+    id: 'actions',
+    header: () => <span className="sr-only">Actions</span>,
+    size: 110,
+    enableSorting: false,
+    enableHiding: false,
+    cell: ({ row }) => (
+      <div className="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => onEdit(row.original)}
+              aria-label={editLabel(row.original)}
+            >
+              <Pencil className="size-4 text-muted-foreground" aria-hidden />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Edit</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+              onClick={() => onDelete(row.original)}
+              aria-label={deleteLabel(row.original)}
+            >
+              <Trash2 className="size-4 text-destructive" aria-hidden />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Delete</TooltipContent>
+        </Tooltip>
+      </div>
+    ),
+  };
 }

@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { RotateCcw, Ban, Check, Loader2, Pencil, Trash2, UserPlus, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -26,10 +26,17 @@ import { LeadAcceptanceBadge } from '../../components/LeadAcceptanceBadge';
 import { canAssignLead, informantSourceLabel } from '../../components/acceptance';
 import { DisqualifyLeadDialog } from './DisqualifyLeadDialog';
 import { EditLeadInformantDialog } from './EditLeadInformantDialog';
+import { LeadTimelinePanel } from './LeadTimelinePanel';
 import { QualifyLeadDialog } from './QualifyLeadDialog';
 
 /**
  * One recorded sighting: who told us, what we heard, and what it became.
+ *
+ * URL-routed tabs, the same shape the project detail page uses, because a lead and a
+ * project are read by the same people minutes apart and a detail surface that scrolls
+ * where its sibling tabs is read as a different product. One concern per tab, and every
+ * tab renders even when it holds nothing, with the next step spelled out: a section that
+ * vanishes when empty makes the feature look absent rather than unused.
  *
  * The two terminal rungs are NOT in the status dropdown. Qualified and Disqualified are
  * reached through their own buttons because each does work the rung alone cannot: one
@@ -37,8 +44,24 @@ import { QualifyLeadDialog } from './QualifyLeadDialog';
  * reportable reason. The server refuses a bare move onto either, so the UI matching
  * that is honesty rather than duplication.
  */
+const TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'informant', label: 'Who told us' },
+  { id: 'handover', label: 'Handover' },
+  { id: 'buyer', label: 'Buyer' },
+  { id: 'projects', label: 'Projects' },
+  { id: 'activity', label: 'Activity' },
+] as const;
+
+type TabId = (typeof TABS)[number]['id'];
+
 export function LeadDetailClient({ leadId }: { leadId: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedTab = searchParams.get('tab') as TabId | null;
+  const activeTab: TabId =
+    requestedTab && TABS.some((tab) => tab.id === requestedTab) ? requestedTab : 'overview';
+
   const { data: lead, isLoading, isError, error } = useLead(leadId);
   const graph = useStatusGraph('project_lead', null, false);
   const { move, disqualify, reopen, remove, update } = useLeadMutations();
@@ -51,10 +74,21 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
   const [editingWho, setEditingWho] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState(false);
 
+  function selectTab(tab: TabId) {
+    const next = new URLSearchParams(searchParams.toString());
+    if (tab === 'overview') next.delete('tab');
+    else next.set('tab', tab);
+    const query = next.toString();
+    router.replace(`/project-sales/leads/${leadId}${query ? `?${query}` : ''}`, {
+      scroll: false,
+    });
+  }
+
   if (isLoading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-10 w-2/3" />
+        <Skeleton className="h-9 w-full" />
         <Skeleton className="h-48 w-full" />
       </div>
     );
@@ -97,10 +131,12 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
 
   return (
     <div className="space-y-5">
+      {/* flex-col until sm: a long title and the action buttons cannot share a row at
+          phone width without overlapping and forcing page-wide horizontal overflow. */}
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0 break-words">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-xs text-muted-foreground">{lead.lead_code}</span>
+            <span className="text-sm text-muted-foreground">{lead.lead_code}</span>
             <Badge variant={isOpen ? 'outline' : 'secondary'} className="capitalize">
               {lead.outcome}
             </Badge>
@@ -204,6 +240,8 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
         </div>
       </header>
 
+      {/* Above the strip, not inside a tab: it is true of the whole record, and somebody
+          reading the buyer tab still needs to know two people recorded this development. */}
       {lead.possible_duplicates.length > 0 && (
         <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-sm">
           <Users className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -217,59 +255,58 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="space-y-4 lg:col-span-2">
-          <InformantCard
-            lead={view}
-            canEdit={lead.can_edit}
-            onEdit={() => setEditingWho(true)}
-          />
+      {/* Horizontal scroll on the tab strip only, so six tabs never make the page itself
+          scroll sideways at phone width. */}
+      <nav
+        className="-mx-1 flex gap-1 overflow-x-auto border-b border-border px-1"
+        aria-label="Lead sections"
+      >
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => selectTab(tab.id)}
+            aria-current={activeTab === tab.id ? 'page' : undefined}
+            className={
+              activeTab === tab.id
+                ? 'shrink-0 border-b-2 border-primary px-3 py-2 text-sm font-medium text-foreground'
+                : 'shrink-0 border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground hover:text-foreground'
+            }
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
 
-          <AcceptanceCard lead={view} />
+      {activeTab === 'overview' && <HeardCard lead={view} />}
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">What we heard</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-                <Fact label="Developer" value={lead.developer_name} />
-                <Fact label="Location" value={lead.location} />
-                <Fact
-                  label="Source"
-                  value={lead.source ? lead.source.replace(/_/g, ' ') : null}
-                />
-                <Fact label="Who said what" value={lead.source_detail} />
-                <Fact
-                  label="Rough value"
-                  value={lead.estimated_value ? formatMyr(lead.estimated_value) : null}
-                />
-                <Fact
-                  label="Disqualified because"
-                  value={
-                    lead.disqualified_reason
-                      ? lead.disqualified_reason.replace(/_/g, ' ')
-                      : null
-                  }
-                />
-              </dl>
-              {lead.notes && (
-                <p className="mt-4 break-words rounded-md bg-muted/60 px-3 py-2 text-sm">
-                  {lead.notes}
-                </p>
-              )}
-            </CardContent>
-          </Card>
+      {activeTab === 'informant' && (
+        <InformantCard
+          lead={view}
+          canEdit={lead.can_edit}
+          onEdit={() => setEditingWho(true)}
+        />
+      )}
 
-          <QualifiedProjects lead={view} />
-        </div>
+      {activeTab === 'handover' && (
+        <AcceptanceCard
+          lead={view}
+          canAssign={canAssign}
+          onAssign={() => setAssigning(true)}
+        />
+      )}
 
+      {activeTab === 'buyer' && (
         <AccountPanel
           lead={view}
           canEdit={lead.can_edit}
           onSetBuyer={() => setEditingWho(true)}
         />
-      </div>
+      )}
+
+      {activeTab === 'projects' && <QualifiedProjects lead={view} />}
+
+      {activeTab === 'activity' && <LeadTimelinePanel lead={view} />}
 
       {qualifying && (
         <QualifyLeadDialog lead={lead} onDone={() => setQualifying(false)} />
@@ -337,8 +374,52 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
   );
 }
 
+/** The sighting itself: what was said, and what it was worth if anybody guessed. */
+function HeardCard({ lead }: { lead: LeadWithAcceptance }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm">What we heard</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+          <Fact label="Developer" value={lead.developer_name} />
+          <Fact label="Location" value={lead.location} />
+          <Fact
+            label="Source"
+            value={lead.source ? lead.source.replace(/_/g, ' ') : null}
+          />
+          <Fact label="Who said what" value={lead.source_detail} />
+          <Fact
+            label="Rough value"
+            value={lead.estimated_value ? formatMyr(lead.estimated_value) : null}
+          />
+          <Fact
+            label="Disqualified because"
+            value={
+              lead.disqualified_reason
+                ? lead.disqualified_reason.replace(/_/g, ' ')
+                : null
+            }
+          />
+        </dl>
+        {lead.notes ? (
+          <p className="mt-4 break-words rounded-md bg-muted/60 px-3 py-2 text-sm">
+            {lead.notes}
+          </p>
+        ) : (
+          <p className="mt-4 text-sm text-muted-foreground">
+            No notes yet. Whatever was actually said belongs here, since the fields above
+            only hold what fits in them.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 /**
- * Who told us. Its own card, above the buyer, so the two are never read as one thing:
+ * Who told us. Its own tab, apart from the buyer, so the two are never read as one thing:
  * an informant is a data source and never issues a purchase order.
  */
 function InformantCard({
@@ -350,6 +431,12 @@ function InformantCard({
   canEdit: boolean;
   onEdit: () => void;
 }) {
+  const nothingRecorded =
+    !lead.informant_source &&
+    !lead.informant_ref &&
+    !lead.informant_party_label &&
+    !lead.informant_contact_name;
+
   return (
     <Card>
       <CardHeader className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -361,7 +448,7 @@ function InformantCard({
           </Button>
         )}
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-3">
         <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
           <Fact label="Source" value={informantSourceLabel(lead.informant_source)} />
           <Fact label="Their reference" value={lead.informant_ref} />
@@ -377,13 +464,29 @@ function InformantCard({
             emptyText="Not known yet"
           />
         </dl>
+        {nothingRecorded && (
+          <p className="text-sm text-muted-foreground">
+            Nobody is recorded as the source. Naming them is what lets the next person
+            chase the same tender back to a human.
+          </p>
+        )}
       </CardContent>
     </Card>
   );
 }
 
 /** The handshake: who holds it, since when, and what they said if they said no. */
-function AcceptanceCard({ lead }: { lead: LeadWithAcceptance }) {
+function AcceptanceCard({
+  lead,
+  canAssign,
+  onAssign,
+}: {
+  lead: LeadWithAcceptance;
+  canAssign: boolean;
+  onAssign: () => void;
+}) {
+  const unheld = !lead.owner_user_id;
+
   return (
     <Card>
       <CardHeader>
@@ -414,6 +517,22 @@ function AcceptanceCard({ lead }: { lead: LeadWithAcceptance }) {
           />
           <Fact label="Declined because" value={lead.declined_reason} />
         </dl>
+        {/* Unheld is the state this whole handshake exists to make visible, so the tab
+            offers the move out of it rather than leaving the reader to find the header. */}
+        {unheld && (
+          <div className="space-y-2 border-t border-border pt-3">
+            <p className="text-sm text-muted-foreground">
+              Nobody holds this lead. It stays nobody&apos;s job until a salesperson
+              accepts it.
+            </p>
+            {canAssign && (
+              <Button type="button" variant="outline" size="sm" onClick={onAssign}>
+                <UserPlus className="size-4" aria-hidden />
+                Assign it
+              </Button>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -435,7 +554,13 @@ function QualifiedProjects({ lead }: { lead: LeadWithAcceptance }) {
         <CardTitle className="text-sm">Projects from this lead</CardTitle>
       </CardHeader>
       <CardContent>
-        {portfolio.isLoading ? (
+        {portfolio.isError ? (
+          <p className="text-sm text-destructive">
+            {portfolio.error instanceof Error
+              ? portfolio.error.message
+              : 'The projects on this account could not be loaded.'}
+          </p>
+        ) : portfolio.isLoading ? (
           <Skeleton className="h-12 w-full" />
         ) : projects.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -493,7 +618,7 @@ function AccountPanel({
       <CardContent className="space-y-3">
         {!lead.customer_id ? (
           <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               A buyer is named once a contractor is awarded.
             </p>
             {canEdit && (
@@ -502,6 +627,12 @@ function AccountPanel({
               </Button>
             )}
           </div>
+        ) : portfolio.isError ? (
+          <p className="text-sm text-destructive">
+            {portfolio.error instanceof Error
+              ? portfolio.error.message
+              : 'This account could not be loaded.'}
+          </p>
         ) : portfolio.isLoading ? (
           <Skeleton className="h-24 w-full" />
         ) : (

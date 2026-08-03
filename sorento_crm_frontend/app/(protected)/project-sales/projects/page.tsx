@@ -1,42 +1,15 @@
-import { Metadata } from 'next';
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from '@/components/ui/breadcrumb';
-import { Container } from '@/components/common/container';
-import RequireAccess from '@/app/components/common/RequireAccess';
-import { ProjectsClient } from './components/ProjectsClient';
+import { redirect } from 'next/navigation';
 
-export const metadata: Metadata = {
-  title: 'Projects',
-  description: 'Every registered project, its stage, its value and who owns it.',
-};
-
+/**
+ * Projects folded into Pipeline.
+ *
+ * Pipeline already carries both views behind its own Board / Grid toggle, and its Grid
+ * is the same list this page rendered. Two menu entries onto one screen is a choice the
+ * user has to make and cannot get right, so the menu entry is gone.
+ *
+ * The route stays as a redirect rather than being deleted: bookmarks, older emails and
+ * anything that linked here should land on the screen that replaced it, not on a 404.
+ */
 export default function ProjectsPage() {
-  return (
-    <RequireAccess permission="projects.projects.view">
-      <Container className="space-y-6">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink href="/">Home</BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Project Sales</BreadcrumbPage>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>Projects</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-        <ProjectsClient />
-      </Container>
-    </RequireAccess>
-  );
+  redirect('/project-sales/pipeline');
 }

@@ -86,7 +86,7 @@ export function LeadsGrid({
         cell: ({ row }) => (
           <Link
             href={`/project-sales/leads/${row.original.id}`}
-            className="font-mono text-xs hover:underline"
+            className="hover:underline"
           >
             {row.original.lead_code}
           </Link>

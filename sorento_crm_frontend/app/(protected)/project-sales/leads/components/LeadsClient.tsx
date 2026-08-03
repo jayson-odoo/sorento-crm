@@ -4,17 +4,11 @@ import * as React from 'react';
 import type { PaginationState, SortingState } from '@tanstack/react-table';
 import { Plus, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import {
-  useLeadMetrics,
-  useLeadMutations,
-  useLeads,
-} from '../../_shared/hooks/useProjects';
+import { useLeadMutations, useLeads } from '../../_shared/hooks/useProjects';
 import { useLeadAcceptanceMutations } from '../../_shared/hooks/useLeadAcceptance';
 import type { LeadWithAcceptance } from '../../_shared/types/leadAcceptance.types';
 import { AssignLeadDialog } from './AssignLeadDialog';
@@ -44,10 +38,13 @@ const SOURCE_OPTIONS = [
  * stay one filter click away rather than being hidden.
  *
  * The rows are the shared DataGrid, the same one every other list in the product uses.
- * Search and the two filters live in that grid's toolbar rather than in a bespoke bar
- * above it, so this screen is read exactly like the pipeline and the acceptance
- * worklist. The conversion tiles stay above the grid: they answer a question about the
- * whole funnel, not about the page of rows currently loaded.
+ * Search, the two filters and Export all live on that grid's ONE toolbar row rather than
+ * in a bespoke bar above it, so this screen is read exactly like the users list, the
+ * pipeline and the acceptance worklist.
+ *
+ * There are no summary tiles above the grid. Conversion is a reporting question and it
+ * is answered on the reports screen; on a worklist it pushed the rows below the fold to
+ * say something nobody came here to read.
  */
 export function LeadsClient() {
   const [wizardOpen, setWizardOpen] = React.useState(false);
@@ -138,8 +135,6 @@ export function LeadsClient() {
           Record a lead
         </Button>
       </header>
-
-      <ConversionStrip />
 
       {leads.isError ? (
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
@@ -261,64 +256,6 @@ export function LeadsClient() {
         }}
         successMessage="Lead deleted"
       />
-    </div>
-  );
-}
-
-/**
- * Conversion at the top of the list, because it is the number the module was asked
- * for: "lead-to-project conversion rate becomes a real metric".
- *
- * Renders "no decisions yet" rather than 0% when nothing is decided. Zero would read
- * as "we convert nothing", which is a different and wrong statement.
- */
-function ConversionStrip() {
-  const metrics = useLeadMetrics();
-  const data = metrics.data;
-
-  if (metrics.isLoading) return <Skeleton className="h-16 w-full" />;
-  if (metrics.isError || !data) return null;
-
-  return (
-    <Card>
-      <CardContent className="grid gap-4 py-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Metric label="Open" value={String(data.open)} />
-        <Metric label="Qualified" value={String(data.qualified)} />
-        <Metric label="Disqualified" value={String(data.disqualified)} />
-        <Metric
-          label="Conversion"
-          value={
-            data.conversion_rate === null || data.conversion_rate === undefined
-              ? 'No decisions yet'
-              : `${Math.round(data.conversion_rate * 100)}%`
-          }
-          hint={
-            data.decided > 0
-              ? `${data.qualified} of ${data.decided} decided`
-              : 'Measured once leads are qualified or disqualified'
-          }
-        />
-      </CardContent>
-    </Card>
-  );
-}
-
-function Metric({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-}) {
-  return (
-    <div className="min-w-0">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="truncate text-lg font-semibold" title={value}>
-        {value}
-      </p>
-      {hint && <p className="truncate text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }

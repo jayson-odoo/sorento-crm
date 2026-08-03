@@ -1,62 +1,67 @@
 'use client';
 
 import * as React from 'react';
+import { useRouter } from 'next/navigation';
+import {
+  ColumnDef,
+  PaginationState,
+  SortingState,
+  getCoreRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
 import { Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Textarea } from '@/components/ui/textarea';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { usePartyMutations, useProjectParties } from '../../_shared/hooks/useProjects';
-import type { PartyType, ProjectParty } from '../../_shared/types/project.types';
-
-const PARTY_TYPE_OPTIONS: { value: PartyType; label: string; hint: string }[] = [
-  {
-    value: 'developer',
-    label: 'Developer',
-    hint: 'Owns the development. Identity for the registration lock.',
-  },
-  {
-    value: 'architect',
-    label: 'Architect',
-    hint: 'Specifies products. Never buys, which is why they are not a customer.',
-  },
-  { value: 'main_contractor', label: 'Main contractor', hint: 'Builds it.' },
-  { value: 'trading_house', label: 'Trading house', hint: 'Buys on the project’s behalf.' },
-  { value: 'consultant', label: 'Consultant', hint: 'QS, M&E, ID and similar.' },
-];
-
-const TYPE_LABEL: Record<string, string> = Object.fromEntries(
-  PARTY_TYPE_OPTIONS.map((option) => [option.value, option.label]),
-);
+import type { ProjectParty } from '../../_shared/types/project.types';
+import { PartyFormDialog } from './PartyFormDialog';
+import { PARTY_TYPE_OPTIONS, TYPE_LABEL } from './partyTypes';
 
 /**
- * The organisation master.
+ * The organisation master, as the same list every other screen in the product uses.
+ *
+ * It was a wall of type-grouped cards. Grouping put the type in a heading and the
+ * count in a badge, which reads well and sorts, filters and exports like nothing else
+ * in the system. Type is a COLUMN now, and "which architects do we know" is the type
+ * filter in the toolbar.
  *
  * One row per firm, reused across projects. That reuse is the entire value: "which
  * architects should we prioritise visiting" is only answerable when Veritas Architects
- * is one record rather than four spellings, which is why the project count sits on
- * every card and why same-name duplicates are refused rather than merged.
+ * is one record rather than four spellings, which is why the project count is a column
+ * and why same-name duplicates are refused rather than merged.
+ *
+ * Search and type are served by the SERVER (the same params the cards used). Paging is
+ * client-side over the loaded set, because the endpoint is asked for the whole master
+ * in one page and always was.
  */
 export function PartiesClient() {
+  const router = useRouter();
   const [search, setSearch] = React.useState('');
   const [debounced, setDebounced] = React.useState('');
   const [typeFilter, setTypeFilter] = React.useState('');
   const [editing, setEditing] = React.useState<ProjectParty | null>(null);
   const [creating, setCreating] = React.useState(false);
   const [deleting, setDeleting] = React.useState<ProjectParty | null>(null);
+  const [pagination, setPagination] = React.useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: 25,
+  });
+  const [sorting, setSorting] = React.useState<SortingState>([{ id: 'name', desc: false }]);
 
   const { remove } = usePartyMutations();
 
@@ -65,6 +70,12 @@ export function PartiesClient() {
     return () => window.clearTimeout(timer);
   }, [search]);
 
+  // Narrowing the set changes which rows exist, so page 3 of the old set is a page of
+  // nothing in the new one.
+  React.useEffect(() => {
+    setPagination((previous) => ({ ...previous, pageIndex: 0 }));
+  }, [debounced, typeFilter]);
+
   const parties = useProjectParties({
     query: debounced || undefined,
     party_type: typeFilter || undefined,
@@ -72,23 +83,174 @@ export function PartiesClient() {
     limit: 200,
   });
 
-  // Memoised so the grouping below is not rebuilt on every render by a fresh []
-  // literal from the ?? fallback.
   const rows = React.useMemo(() => parties.data?.data ?? [], [parties.data]);
-  const grouped = React.useMemo(() => {
-    const map = new Map<string, ProjectParty[]>();
-    PARTY_TYPE_OPTIONS.forEach((option) => map.set(option.value, []));
-    rows.forEach((party) => {
-      if (!map.has(party.party_type)) map.set(party.party_type, []);
-      map.get(party.party_type)!.push(party);
-    });
-    return map;
-  }, [rows]);
+  const filtered = Boolean(debounced || typeFilter);
+
+  const columns = React.useMemo<ColumnDef<ProjectParty>[]>(
+    () => [
+      {
+        accessorKey: 'name',
+        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
+        size: 260,
+        meta: { headerTitle: 'Name', skeleton: <Skeleton className="h-4 w-40" /> },
+        cell: ({ row }) => (
+          <div className="min-w-0">
+            <span className="block truncate font-medium" title={row.original.name}>
+              {row.original.name}
+            </span>
+            {row.original.registration_no && (
+              <span
+                className="block truncate text-xs text-muted-foreground"
+                title={row.original.registration_no}
+              >
+                {row.original.registration_no}
+              </span>
+            )}
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'party_type',
+        header: ({ column }) => <DataGridColumnHeader title="Type" column={column} />,
+        size: 160,
+        meta: { headerTitle: 'Type', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => {
+          const label = TYPE_LABEL[row.original.party_type] ?? row.original.party_type;
+          return (
+            <Badge variant="secondary" className="truncate" title={label}>
+              {label}
+            </Badge>
+          );
+        },
+      },
+      {
+        id: 'project_count',
+        accessorFn: (row) => row.project_count ?? 0,
+        header: ({ column }) => <DataGridColumnHeader title="Projects" column={column} />,
+        size: 120,
+        meta: { headerTitle: 'Projects', skeleton: <Skeleton className="h-4 w-14" /> },
+        // The count is the reason the master exists: it is what turns "we know some
+        // architects" into "these are the ones worth visiting".
+        cell: ({ row }) => {
+          const count = row.original.project_count ?? 0;
+          return count > 0 ? (
+            <span className="tabular-nums">
+              {count} project{count === 1 ? '' : 's'}
+            </span>
+          ) : (
+            <Muted>None yet</Muted>
+          );
+        },
+      },
+      {
+        id: 'customer_name',
+        accessorFn: (row) => row.customer_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Buys as" column={column} />,
+        size: 190,
+        meta: { headerTitle: 'Buys as', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.customer_name ?? ''}>
+            {row.original.customer_name ?? <Muted>Not a buyer</Muted>}
+          </span>
+        ),
+      },
+      {
+        id: 'contact',
+        accessorFn: (row) => [row.phone, row.email].filter(Boolean).join(' · '),
+        header: ({ column }) => <DataGridColumnHeader title="Contact" column={column} />,
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Contact', skeleton: <Skeleton className="h-4 w-28" /> },
+        cell: ({ row }) => {
+          const contact = [row.original.phone, row.original.email]
+            .filter(Boolean)
+            .join(' · ');
+          return contact ? (
+            <span className="block truncate" title={contact}>
+              {contact}
+            </span>
+          ) : (
+            <Muted>Not recorded</Muted>
+          );
+        },
+      },
+      {
+        accessorKey: 'is_active',
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        size: 120,
+        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-16" /> },
+        cell: ({ row }) =>
+          row.original.is_active ? (
+            <Badge variant="outline">Active</Badge>
+          ) : (
+            <Badge variant="secondary">Inactive</Badge>
+          ),
+      },
+      {
+        id: 'actions',
+        header: () => <span className="sr-only">Actions</span>,
+        size: 110,
+        enableSorting: false,
+        enableHiding: false,
+        cell: ({ row }) => (
+          <div
+            className="flex items-center gap-1"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setEditing(row.original)}
+                  aria-label={`Edit ${row.original.name}`}
+                >
+                  <Pencil className="size-4 text-muted-foreground" aria-hidden />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Edit</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  onClick={() => setDeleting(row.original)}
+                  aria-label={`Delete ${row.original.name}`}
+                >
+                  <Trash2 className="size-4 text-destructive" aria-hidden />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Delete</TooltipContent>
+            </Tooltip>
+          </div>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId: (row) => row.id,
+    state: { pagination, sorting },
+    onPaginationChange: setPagination,
+    onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getPaginationRowModel: getPaginationRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+    defaultColumn: { minSize: 60, maxSize: 800, size: 150 },
+  });
 
   return (
     <div className="space-y-5">
       <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
+        <div className="min-w-0 break-words">
           <h1 className="text-xl font-semibold">Parties</h1>
           <p className="text-sm text-muted-foreground">
             Developers, architects, contractors and consultants, reused across projects.
@@ -100,151 +262,114 @@ export function PartiesClient() {
         </Button>
       </header>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-        <div className="relative flex-1">
-          <Search
-            className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            placeholder="Search by name…"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            className="ps-9"
-            aria-label="Search parties"
-          />
-          {search && (
-            <Button
-              mode="icon"
-              variant="dim"
-              className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
-              onClick={() => setSearch('')}
-              aria-label="Clear search"
-            >
-              <X />
-            </Button>
-          )}
-        </div>
-        <div className="w-full space-y-1.5 sm:w-56">
-          <Label htmlFor="party-type-filter" className="text-xs">
-            Type
-          </Label>
-          <SearchableSelect
-            id="party-type-filter"
-            value={typeFilter}
-            onChange={setTypeFilter}
-            clearable
-            size="sm"
-            options={PARTY_TYPE_OPTIONS.map((option) => ({
-              value: option.value,
-              label: option.label,
-            }))}
-            placeholder="All types"
-          />
-        </div>
-      </div>
-
-      {parties.isLoading ? (
-        <div className="space-y-3">
-          <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-24 w-full" />
-        </div>
-      ) : rows.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border px-6 py-12 text-center">
-          <h3 className="text-sm font-semibold">
-            {debounced || typeFilter ? 'No parties match' : 'No parties yet'}
-          </h3>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            {debounced || typeFilter
-              ? 'Clear the filters to see everything.'
-              : 'Add the developer you are about to register a project with. Every project references one.'}
-          </p>
-          {!debounced && !typeFilter && (
-            <Button type="button" className="mt-4" onClick={() => setCreating(true)}>
-              <Plus className="size-4" aria-hidden />
-              Add the first party
-            </Button>
-          )}
-        </div>
-      ) : (
-        // Grouped by type rather than one flat table: the question is almost always
-        // "which architects do we know", not "list every organisation".
-        <div className="space-y-6">
-          {PARTY_TYPE_OPTIONS.filter(
-            (option) => (grouped.get(option.value) ?? []).length > 0,
-          ).map((option) => (
-            <section key={option.value} className="space-y-2">
-              <div className="flex flex-wrap items-baseline gap-2">
-                <h2 className="text-sm font-semibold">{option.label}</h2>
-                <Badge variant="secondary">{grouped.get(option.value)!.length}</Badge>
-                <p className="text-xs text-muted-foreground">{option.hint}</p>
-              </div>
-              <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {grouped.get(option.value)!.map((party) => (
-                  <li
-                    key={party.id}
-                    className="rounded-lg border border-border bg-background p-3"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0 space-y-1">
-                        <p className="truncate font-medium" title={party.name}>
-                          {party.name}
-                        </p>
-                        {party.registration_no && (
-                          <p className="truncate text-xs text-muted-foreground">
-                            {party.registration_no}
-                          </p>
-                        )}
-                        <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                          <Badge variant="outline" className="text-[11px]">
-                            {party.project_count ?? 0} project
-                            {(party.project_count ?? 0) === 1 ? '' : 's'}
-                          </Badge>
-                          {party.customer_name && (
-                            <Badge variant="secondary" className="text-[11px]">
-                              Buys as {party.customer_name}
-                            </Badge>
-                          )}
-                          {!party.is_active && (
-                            <Badge variant="outline" className="text-[11px]">
-                              Inactive
-                            </Badge>
-                          )}
-                        </div>
-                        {(party.phone || party.email) && (
-                          <p className="truncate pt-0.5 text-xs text-muted-foreground">
-                            {[party.phone, party.email].filter(Boolean).join(' · ')}
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex shrink-0 gap-1">
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setEditing(party)}
-                          aria-label={`Edit ${party.name}`}
-                        >
-                          <Pencil className="size-3.5" />
-                        </Button>
-                        <Button
-                          mode="icon"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleting(party)}
-                          aria-label={`Delete ${party.name}`}
-                        >
-                          <Trash2 className="size-3.5 text-destructive" />
-                        </Button>
-                      </div>
+      <DataGrid
+        table={table}
+        // A row IS the record, so clicking it opens the record.
+        onRowClick={(row) => router.push(`/project-sales/parties/${row.id}`)}
+        recordCount={rows.length}
+        isLoading={parties.isLoading}
+        // Pinned, never the pathname default: the fallback keys column preferences on
+        // the current URL, so any route carrying an id would write one preferences row
+        // per record. This is the parties listing, and it has exactly one key.
+        listingKey="projects.parties.view"
+        tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+        emptyMessage={
+          <div className="px-6 py-10 text-center">
+            <p className="text-sm font-semibold">
+              {filtered ? 'No parties match' : 'No parties yet'}
+            </p>
+            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+              {filtered
+                ? 'Clear the filters to see everything.'
+                : 'Add the developer you are about to register a project with. Every project references one.'}
+            </p>
+            {!filtered && (
+              <Button type="button" className="mt-4" onClick={() => setCreating(true)}>
+                <Plus className="size-4" aria-hidden />
+                Add the first party
+              </Button>
+            )}
+          </div>
+        }
+      >
+        <Card>
+          <CardHeader className="block">
+            <DataGridListToolbar
+              table={table}
+              searchSlot={
+                <div className="relative w-full max-w-xs">
+                  <Search
+                    className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden
+                  />
+                  <Input
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Search by name…"
+                    className="ps-9"
+                    aria-label="Search parties"
+                  />
+                  {search && (
+                    <Button
+                      mode="icon"
+                      variant="dim"
+                      className="absolute end-1.5 top-1/2 h-6 w-6 -translate-y-1/2"
+                      onClick={() => setSearch('')}
+                      aria-label="Clear search"
+                    >
+                      <X />
+                    </Button>
+                  )}
+                </div>
+              }
+              filters={{
+                kind: 'custom',
+                active: Boolean(typeFilter),
+                activeCount: typeFilter ? 1 : 0,
+                content: (
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">Type</Label>
+                      <SearchableSelect
+                        value={typeFilter}
+                        onChange={setTypeFilter}
+                        clearable
+                        options={PARTY_TYPE_OPTIONS.map((option) => ({
+                          value: option.value,
+                          label: option.label,
+                        }))}
+                        placeholder="All types"
+                      />
                     </div>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))}
-        </div>
-      )}
+                    {typeFilter && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => setTypeFilter('')}
+                      >
+                        Clear filters
+                      </Button>
+                    )}
+                  </div>
+                ),
+              }}
+              exportConfig={{ filename: 'parties_export.xlsx' }}
+              onRefresh={() => void parties.refetch()}
+              isRefreshing={parties.isFetching && !parties.isLoading}
+            />
+          </CardHeader>
+          <CardTable>
+            <ScrollArea>
+              <DataGridTable />
+              <ScrollBar orientation="horizontal" />
+            </ScrollArea>
+          </CardTable>
+          <CardFooter>
+            <DataGridPagination />
+          </CardFooter>
+        </Card>
+      </DataGrid>
 
       {(creating || editing) && (
         <PartyFormDialog
@@ -276,166 +401,6 @@ export function PartiesClient() {
   );
 }
 
-function PartyFormDialog({
-  party,
-  onDone,
-}: {
-  party: ProjectParty | null;
-  onDone: () => void;
-}) {
-  const { create, update } = usePartyMutations();
-  const [partyType, setPartyType] = React.useState<string>(party?.party_type ?? 'developer');
-  const [name, setName] = React.useState(party?.name ?? '');
-  const [registrationNo, setRegistrationNo] = React.useState(party?.registration_no ?? '');
-  const [phone, setPhone] = React.useState(party?.phone ?? '');
-  const [email, setEmail] = React.useState(party?.email ?? '');
-  const [address, setAddress] = React.useState(party?.address ?? '');
-  const [notes, setNotes] = React.useState(party?.notes ?? '');
-  const [isActive, setIsActive] = React.useState(party?.is_active ?? true);
-
-  const isEdit = Boolean(party);
-  const pending = create.isPending || update.isPending;
-  const selectedHint = PARTY_TYPE_OPTIONS.find((option) => option.value === partyType)?.hint;
-
-  return (
-    <Dialog open onOpenChange={(next) => !next && onDone()}>
-      <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
-        <DialogHeader>
-          <DialogTitle>{isEdit ? `Edit ${party?.name}` : 'Add a party'}</DialogTitle>
-          <DialogDescription>
-            One record per organisation. Reuse it on every project they appear on.
-          </DialogDescription>
-        </DialogHeader>
-
-        <form
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const body = {
-              party_type: partyType as PartyType,
-              name: name.trim(),
-              registration_no: registrationNo.trim() || null,
-              phone: phone.trim() || null,
-              email: email.trim() || null,
-              address: address.trim() || null,
-              notes: notes.trim() || null,
-              is_active: isActive,
-            };
-            if (party) {
-              await update.mutateAsync({ id: party.id, body });
-            } else {
-              await create.mutateAsync(body);
-            }
-            onDone();
-          }}
-        >
-          <DialogBody className="max-h-[65vh] space-y-4 overflow-y-auto">
-            <div className="space-y-1.5">
-              <Label htmlFor="party-type">
-                Type <span className="text-destructive">*</span>
-              </Label>
-              <SearchableSelect
-                id="party-type"
-                value={partyType}
-                onChange={setPartyType}
-                options={PARTY_TYPE_OPTIONS.map((option) => ({
-                  value: option.value,
-                  label: option.label,
-                }))}
-                placeholder="Select a type"
-              />
-              {selectedHint && (
-                <p className="text-xs text-muted-foreground">{selectedHint}</p>
-              )}
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="party-name">
-                Name <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="party-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="e.g. SP Setia Berhad"
-                required
-              />
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="party-reg">Registration no.</Label>
-                <Input
-                  id="party-reg"
-                  value={registrationNo}
-                  onChange={(event) => setRegistrationNo(event.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="party-phone">Phone</Label>
-                <Input
-                  id="party-phone"
-                  value={phone}
-                  onChange={(event) => setPhone(event.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label htmlFor="party-email">Email</Label>
-                <Input
-                  id="party-email"
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="party-address">Address</Label>
-              <Textarea
-                id="party-address"
-                value={address}
-                onChange={(event) => setAddress(event.target.value)}
-                rows={2}
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="party-notes">Notes</Label>
-              <Textarea
-                id="party-notes"
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                rows={2}
-                placeholder="Who to speak to, what they specify, past history"
-              />
-            </div>
-
-            {isEdit && (
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={isActive}
-                  onChange={(event) => setIsActive(event.target.checked)}
-                  className="size-4 rounded border-border"
-                />
-                Active. Inactive parties stay on their projects but stop appearing in
-                pickers
-              </label>
-            )}
-          </DialogBody>
-
-          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
-            <Button type="button" variant="outline" onClick={onDone}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!name.trim() || pending}>
-              {isEdit ? 'Save changes' : 'Add party'}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
+function Muted({ children }: { children: React.ReactNode }) {
+  return <span className="text-muted-foreground">{children}</span>;
 }
-
-export { TYPE_LABEL };

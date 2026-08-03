@@ -7,12 +7,12 @@
  *     to re-learn
  *   - a duplicate is SURFACED, never enforced, and it names the other person so the
  *     race becomes a conversation
- *   - conversion reads "no decisions yet" rather than 0%, because zero is a different
- *     and wrong claim
+ *   - search, filters and export share ONE toolbar row and nothing sits above the grid:
+ *     the summary tiles were removed, and the metrics request with them
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LeadWithAcceptance } from '../../_shared/types/leadAcceptance.types';
 
@@ -239,29 +239,33 @@ describe('LeadsClient', () => {
     expect(screen.getByRole('button', { name: /filters/i })).toBeInTheDocument();
   });
 
-  it('says "no decisions yet" instead of 0% conversion', async () => {
+  it('carries no summary tiles above the grid, and never asks for the metrics', async () => {
+    // The tiles pushed the rows below the fold to answer a reporting question on a
+    // worklist. The client asked for them gone; the request that fed them goes too.
     renderClient();
 
-    expect(await screen.findByText('No decisions yet')).toBeInTheDocument();
-    expect(screen.queryByText('0%')).not.toBeInTheDocument();
+    await waitFor(() => expect(listLeads).toHaveBeenCalled());
+    expect(getLeadMetrics).not.toHaveBeenCalled();
+    expect(screen.queryByText('Conversion')).not.toBeInTheDocument();
+    expect(screen.queryByText('No decisions yet')).not.toBeInTheDocument();
   });
 
-  it('reports a real conversion rate against decided leads', async () => {
-    getLeadMetrics.mockResolvedValue({
-      ...NO_METRICS,
-      total: 5,
-      open: 2,
-      qualified: 2,
-      disqualified: 1,
-      decided: 3,
-      conversion_rate: 0.6667,
-      projects_from_leads: 2,
-    });
-
+  it('lays search, filters and export out on the grid toolbar, in one row', async () => {
     renderClient();
 
-    expect(await screen.findByText('67%')).toBeInTheDocument();
-    expect(screen.getByText('2 of 3 decided')).toBeInTheDocument();
+    const toolbar = (await screen.findByPlaceholderText(/Search title or lead code/i))
+      .closest('[data-slot="card-header"]');
+    expect(toolbar).not.toBeNull();
+    // Filters and Export sit beside the search box rather than in a strip of their own.
+    expect(
+      within(toolbar as HTMLElement).getByRole('button', { name: /filters/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(toolbar as HTMLElement).getByRole('button', { name: /^export$/i }),
+    ).toBeInTheDocument();
+    expect(
+      within(toolbar as HTMLElement).getByRole('button', { name: /columns/i }),
+    ).toBeInTheDocument();
   });
 
   it('surfaces a duplicate by naming the other owner, and never as a warning', async () => {

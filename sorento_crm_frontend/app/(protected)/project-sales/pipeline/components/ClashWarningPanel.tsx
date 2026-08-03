@@ -124,7 +124,7 @@ function IncumbentRow({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="font-mono text-xs text-muted-foreground">
+            <span className="text-sm text-muted-foreground">
               {candidate.project_code}
             </span>
             <span className="truncate text-sm font-medium" title={candidate.title}>

@@ -608,14 +608,10 @@ export const MENU_SIDEBAR: MenuConfig = [
     moduleKey: 'projects',
     children: [
       {
-        // The flat list of everything registered. Above Pipeline because a board
-        // answers "where is everything in the funnel" and a list answers "take me to
-        // this one"; without its own entry the only way into a project was the board.
-        title: 'Projects',
-        path: '/project-sales/projects',
-        permission: 'projects.projects.view',
-      },
-      {
+        // Pipeline carries both views behind its own Board / Grid toggle, and the Grid
+        // is the same list a separate "Projects" entry used to show. Two menu entries
+        // onto one screen is a choice the user has to make and cannot get right.
+        // /project-sales/projects still resolves, it redirects here.
         title: 'Pipeline',
         path: '/project-sales/pipeline',
         permission: 'projects.projects.view',
@@ -1521,14 +1517,10 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
     moduleKey: 'projects',
     children: [
       {
-        // The flat list of everything registered. Above Pipeline because a board
-        // answers "where is everything in the funnel" and a list answers "take me to
-        // this one"; without its own entry the only way into a project was the board.
-        title: 'Projects',
-        path: '/project-sales/projects',
-        permission: 'projects.projects.view',
-      },
-      {
+        // Pipeline carries both views behind its own Board / Grid toggle, and the Grid
+        // is the same list a separate "Projects" entry used to show. Two menu entries
+        // onto one screen is a choice the user has to make and cannot get right.
+        // /project-sales/projects still resolves, it redirects here.
         title: 'Pipeline',
         path: '/project-sales/pipeline',
         permission: 'projects.projects.view',
