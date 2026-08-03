@@ -2098,6 +2098,11 @@ class ProjectSODraftService:
             "project_code": project.project_code if project else None,
             "project_title": project.title if project else None,
             "created_at": order.created_at,
+            # The frontend keys its divergence lookup on this, so an ingest that adopts a
+            # document number or raises a difference makes the amend button re-evaluate.
+            # Both this and the schema field are needed: a manual dict builder drops
+            # anything not listed here, whatever the schema inherits.
+            "updated_at": order.updated_at,
         }
 
     def serialize_detail(self, order: ProjectSalesOrder) -> Dict[str, Any]:

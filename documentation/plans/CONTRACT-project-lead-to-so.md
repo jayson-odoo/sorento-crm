@@ -746,9 +746,66 @@ Both are best-effort, because the sales order is already published when they run
 ## 7. What is deliberately not in this contract tonight
 
 Allocation (P9) has since landed and is section 6b above; the order inquiry and SCM
-handoff (P10) is section 6c. Still out: pre-order and sponsorship
-paths (P12), the ESB swap and real AR ingest (P13), and divergence reconciliation (P8a).
+handoff (P10) is section 6c; divergence reconciliation (P8a) is section 6d. Still out:
+pre-order and sponsorship paths (P12), and the ESB swap plus real AR ingest (P13).
 The publish path stops at the import file. Nothing above depends on them.
+
+---
+
+## 6d. Divergence reconciliation (P8a)
+
+Full design in `PLAN-project-so-divergence.md`. What the wire looks like:
+
+### `POST /sales-orders/ingest` and `POST /sales-orders/ingest-file`
+
+The first takes the canonical document and is the seam the ESB takes in stage 2; the second
+takes the AutoCount export a CS uploads today (CSV or XLSX, 10 MB ceiling) and parses it
+into the same shape. **Both mount before `/sales-orders/{pso_id}`**, which is the same path
+shape, so the router would otherwise read `ingest` as a document id.
+
+Match back is a natural key - customer + customer PO number + area group - with the line
+fingerprint as the TIE BREAKER only. A divergent document has a different fingerprint by
+definition, so keying on it would report every divergence as unmatched.
+
+```json
+{ "outcome": "matched | divergent | ambiguous | unmatched",
+  "project_sales_order_id": "…", "divergence_id": "…",
+  "differing_count": 4, "candidate_ids": [], "message": "" }
+```
+
+Always 200, never a 404 for an unmatched document: the caller has to tell a person WHY, and
+`message` carries the key that was tried. `ambiguous` writes nothing at all.
+
+Re-ingesting is idempotent: one OPEN divergence per sales order, recomputed rather than
+stacked. A document that now agrees RESOLVES the open one, which is how a difference is
+retired when somebody fixes it on their side.
+
+### `GET /divergences` and `GET /divergences/{id}`
+
+The list carries `age_days` (AC-N6). The detail carries every compared row including the
+ones that AGREE, with `needs_answer` false on them: the screen collapses them behind a
+count, and a count nobody wrote down is not a count.
+
+### `POST /divergences/{id}/rows/{row_id}/resolve`
+
+`{"resolution": "accept_theirs" | "keep_ours", "reason": "…"}`. The reason is required
+(422 without it). Accept theirs applies their values and recomputes the order total, EXCEPT
+on a header row, where the decision is recorded and nothing is rewritten - the customer's
+own document is not AutoCount's to edit. A line AutoCount dropped goes to quantity 0 rather
+than being deleted, because allocations, claims and inquiry rows point at it. Keep ours sets
+`corrective_publish_required`.
+
+### `GET /divergences/{id}/corrective-import-file`
+
+Our values going back to AutoCount, as CSV. 409 `divergence_no_corrective_publish` when
+nothing was answered KEEP OURS. Generated per request and stamped when taken, exactly as
+the original import file is.
+
+### The amendment block (AC-N5)
+
+`assert_amendable` runs on amendment CREATE and on PUBLISH, not only create: a divergence
+can land between proposing an amendment and publishing it, which is when publishing it does
+the damage. Refusal is 409 `so_divergence_unresolved`.
 
 ---
 

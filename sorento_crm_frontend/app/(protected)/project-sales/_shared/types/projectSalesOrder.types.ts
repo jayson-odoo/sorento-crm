@@ -59,6 +59,9 @@ export interface ProjectSalesOrderRow {
   customer_name?: string | null;
   po_number?: string | null;
   created_at?: string | null;
+  /** Bumped by any write, including an ingest that adopts a document number. The
+   *  divergence lookup keys on it so the amend gate re-evaluates. */
+  updated_at?: string | null;
 
   /**
    * Not promised by the contract. When present it saves resolving the PO by its number;

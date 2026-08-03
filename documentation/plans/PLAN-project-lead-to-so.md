@@ -1,25 +1,27 @@
 # PLAN - Lead to Sales Order (module `projects`, phase 2)
 
-**Status:** P1-P8 and P11 BUILT and client-reviewed (2026-08-02/03). P8a, P9, P10, P12 and
-P13 remain, and are the set named in CONTRACT section 7 as out of scope for that build.
-Grilled with the client 2026-08-01 (24 decisions, D1-D24), then the PLAN itself grilled
-against the source documents (9 findings, G1-G9, all resolved).
+**Status:** P1-P11 BUILT, including P8a as of 2026-08-03. Only P12 and P13 remain.
+P1-P8 and P11 were client-reviewed 2026-08-02/03. Grilled with the client 2026-08-01
+(24 decisions, D1-D24), then the PLAN itself grilled against the source documents
+(9 findings, G1-G9, all resolved).
 
 **Built:** P1 lead informant + handshake, P2 company profile, P3 quotation publish, P4 PO
 intake, P5 handwriting cards, P6 schedule intake, P7 SO draft + gate, P8 publish + import
-file, P11 amendments/OCN/delta. Proven against the client's own 10 page PO: 51 lines,
+file, P8a divergence reconciliation, P9 allocation, P10 order inquiry + SCM handoff,
+P11 amendments/OCN/delta. Proven against the client's own 10 page PO: 51 lines,
 1,810,640.62 to the cent, and the handwritten cancellation reconciling to the quotation
 total.
 
-**Not built, in dependency order:** P8a divergence reconciliation, P9 allocation, P10 order
-inquiry + SCM handoff (the gap between an SO existing and SCM being told what to buy), P12
-pre-order and sponsorship paths, P13 ESB outbound swap + real AR ingest (blocked on the ESB
-team, not on us).
+**Not built, in dependency order:** P12 pre-order and sponsorship paths, P13 ESB outbound
+swap + real AR ingest (blocked on the ESB team, not on us).
 
 **Known gaps inside what is built:** the multi-code line split (a description naming A, B
 and C becoming three lines) is unbuilt because zero of the client's 51 lines exhibit it,
 so there is nothing to verify against. The reconciliation fix actions are unit-tested but
-not yet exercised against a live unconfirmed schedule.
+not yet exercised against a live unconfirmed schedule. P8a's stage 1 upload parser reads by
+column heading because AutoCount's real export layout has not been seen yet: one real
+export from the client would confirm it, and changing it then costs a mapping table rather
+than a rebuild.
 **Acceptance criteria:** `UAC-project-lead-to-so.md` (binding). The Journey there governs.
 **Slug:** project-lead-to-so
 **Classification:** extends the existing MODULE `projects`; `public` schema, normal FKs,
@@ -176,9 +178,9 @@ Tests land in phase 2 of each slice, never deferred.
 | **P6** | Schedule intake + phases | AC-E1..E7. Matrix extraction, confirm grid, checksum against PO, customer code map, phases as first class rows | P4 |
 | **P7** | SO draft: explosion, split, gate | AC-F1..F9, F12. Set explosion with cached mappings, area split, cross check, hard stops and warnings, SLA + handling lock on drafts | P3, P5, P6 |
 | **P8** | Publish + AutoCount round trip (stage 1) | AC-F10, F11. Import file with our ref, adopt returned doc number, ingest match back rather than duplicate | P7 |
-| **P8a** | Divergence reconciliation | AC-N1..N7. Line by line compare on ingest, reconciliation screen, accept theirs / keep ours with a corrective publish, amendment block while unresolved, management list | P8 |
-| **P9** | Allocation | AC-H1..H5. Ranked sources with live figures, per line confirm, cross project claims | P7 |
-| **P10** | Order inquiry + SCM handoff | AC-I1..I7. Derived rows, verb vocabulary, pre-order and inbound netting, SCM task, Excel export, row state | P8, P9 |
+| **P8a** | Divergence reconciliation (BUILT) | AC-N1..N7 plus AC-F11/F11a, which turned out to be unbuilt. Natural-key match back, line by line compare on ingest, reconciliation screen, accept theirs / keep ours with a corrective publish, amendment block while unresolved, management list. See `PLAN-project-so-divergence.md` | P8 |
+| **P9** | Allocation (BUILT) | AC-H1..H5. Ranked sources with live figures, per line confirm, cross project claims | P7 |
+| **P10** | Order inquiry + SCM handoff (BUILT) | AC-I1..I7. Derived rows, verb vocabulary, pre-order and inbound netting, SCM task, Excel export, row state | P8, P9 |
 | **P11** | Amendments, OCN, delta engine | AC-G1..G7. Version diffing, verb proposals, phase matching, auto drafted OCN, amend in place vs re-point with cancelled balance | P8, P10 |
 | **P12** | Pre-order and sponsorship paths | AC-J1..J5, AC-K1..K5 | P11 |
 | **P13** | ESB outbound swap + AR ingest | D3 stage 2, AC-F9 real credit figures | ESB team, ESB inbound |

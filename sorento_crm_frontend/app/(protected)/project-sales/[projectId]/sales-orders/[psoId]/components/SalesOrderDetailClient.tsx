@@ -2,7 +2,14 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ClipboardList, Download, GitCompareArrows, Send, Shuffle } from 'lucide-react';
+import {
+  ClipboardList,
+  Download,
+  FileDiff,
+  GitCompareArrows,
+  Send,
+  Shuffle,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,6 +20,7 @@ import {
   useSalesOrderMutations,
 } from '../../../../_shared/hooks/useProjectSalesOrders';
 import { useProject } from '../../../../_shared/hooks/useProjects';
+import { useOpenDivergenceForOrder } from '../../../../_shared/hooks/useSoDivergence';
 import type { ProjectSalesOrderFinding } from '../../../../_shared/types/projectSalesOrder.types';
 import { SalesOrderAcknowledgeDialog } from '../../../components/SalesOrderAcknowledgeDialog';
 import { SalesOrderFindingsSection } from '../../../components/SalesOrderFindingsSection';
@@ -43,6 +51,10 @@ export function SalesOrderDetailClient({
   const project = useProject(projectId);
   const salesOrder = useProjectSalesOrder(psoId);
   const { acknowledge, regroup, publish } = useSalesOrderMutations(projectId, psoId);
+  // Called above the early returns, as every hook must be. Keyed on the order's
+  // `updated_at` so an ingest or a publish refetches it: this is what disables the amend
+  // button, and a stale answer either blocks a clean order or lets a wrong amendment past.
+  const { divergence } = useOpenDivergenceForOrder(psoId, salesOrder.data?.updated_at);
 
   const [acknowledging, setAcknowledging] = React.useState<ProjectSalesOrderFinding | null>(null);
   const [regrouping, setRegrouping] = React.useState(false);
@@ -125,12 +137,40 @@ export function SalesOrderDetailClient({
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button asChild variant="outline" size="sm">
-            <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/revisions`}>
-              <GitCompareArrows className="size-4" aria-hidden />
-              Review a revision
-            </Link>
+          {/* Disabled rather than hidden while a difference is open: the reviewer has to
+              learn WHY they cannot amend, and a button that vanished teaches nothing.
+              The server refuses it too (AC-N5) - this only saves the round trip. */}
+          <Button
+            asChild={!divergence}
+            variant="outline"
+            size="sm"
+            disabled={Boolean(divergence)}
+            title={
+              divergence
+                ? 'Reconcile the AutoCount differences before amending this order'
+                : undefined
+            }
+          >
+            {divergence ? (
+              <span>
+                <GitCompareArrows className="size-4" aria-hidden />
+                Review a revision
+              </span>
+            ) : (
+              <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/revisions`}>
+                <GitCompareArrows className="size-4" aria-hidden />
+                Review a revision
+              </Link>
+            )}
           </Button>
+          {isPublished && (
+            <Button asChild variant={divergence ? 'primary' : 'outline'} size="sm">
+              <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/divergence`}>
+                <FileDiff className="size-4" aria-hidden />
+                {divergence ? 'Reconcile AutoCount' : 'Compare with AutoCount'}
+              </Link>
+            </Button>
+          )}
           {canEdit && !isPublished && (
             <Button
               type="button"
@@ -167,6 +207,35 @@ export function SalesOrderDetailClient({
           )}
         </div>
       </div>
+
+      {/* Above the summary, because it changes what the reviewer is allowed to do with
+          everything below it. */}
+      {divergence && (
+        <div
+          className="rounded-lg border border-amber-500/50 bg-amber-500/5 px-4 py-3 text-sm"
+          role="status"
+        >
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <span className="font-semibold text-amber-700 dark:text-amber-400">
+                {`AutoCount disagrees on ${divergence.differing_count} row${divergence.differing_count === 1 ? '' : 's'}.`}
+              </span>{' '}
+              <span className="text-muted-foreground break-words">
+                Our values are unchanged, and amendments are blocked until each row is
+                answered.
+                {divergence.age_days > 0
+                  ? ` Waiting ${divergence.age_days} day${divergence.age_days === 1 ? '' : 's'}.`
+                  : ''}
+              </span>
+            </div>
+            <Button asChild size="sm" className="shrink-0">
+              <Link href={`/project-sales/${projectId}/sales-orders/${psoId}/divergence`}>
+                Reconcile
+              </Link>
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Card>
         <CardHeader>

@@ -47,6 +47,15 @@ vi.mock('../../../../_shared/services/projectSalesOrderService', () => ({
   listPoVersions: vi.fn(async () => []),
 }));
 
+const listDivergences = vi.fn();
+vi.mock('../../../../_shared/services/soDivergenceService', () => ({
+  listDivergences: (...args: unknown[]) => listDivergences(...args),
+  getDivergence: vi.fn(),
+  ingestSalesOrderFile: vi.fn(),
+  resolveDivergenceRow: vi.fn(),
+  downloadCorrectiveImportFile: vi.fn(),
+}));
+
 vi.mock('../../../../_shared/hooks/useProjects', () => ({
   useProject: () => ({ data: { id: 'p1', can_edit: true }, isLoading: false, isError: false }),
   usePurchaseOrders: () => ({ data: [], isLoading: false, isError: false }),
@@ -164,8 +173,39 @@ function renderDetail() {
   );
 }
 
+function openDivergence(overrides: Record<string, unknown> = {}) {
+  return {
+    data: [
+      {
+        id: 'd1',
+        project_sales_order_id: 'so-1',
+        project_id: 'p1',
+        project_title: 'Tuju Residences',
+        sales_order_ref: 'SO397450',
+        provisional_ref: 'PSO-000123',
+        autocount_doc_no: 'SO397450',
+        status: 'open',
+        compared_count: 52,
+        agreeing_count: 48,
+        differing_count: 4,
+        unresolved_count: 4,
+        corrective_publish_required: false,
+        detected_at: '2026-08-01T02:00:00',
+        resolved_at: null,
+        age_days: 3,
+        ...overrides,
+      },
+    ],
+    total: 1,
+    page: 1,
+    limit: 100,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: AutoCount agrees, so the amend path is open.
+  listDivergences.mockResolvedValue({ data: [], total: 0, page: 1, limit: 100 });
 });
 
 describe('SalesOrderDetailClient', () => {
@@ -407,5 +447,51 @@ describe('SalesOrderDetailClient', () => {
         { area_group: 'COMMON AREA', line_ids: ['l2'] },
       ]),
     );
+  });
+
+  // ---------------------------------------------------------------- P8a (AC-N5)
+
+  it('blocks the revision review while AutoCount is unreconciled', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail({ status: 'published' }));
+    listDivergences.mockResolvedValue(openDivergence());
+
+    renderDetail();
+
+    // Disabled rather than hidden: a button that vanished teaches nobody why.
+    const amend = await screen.findByRole('button', { name: /review a revision/i });
+    expect(amend).toBeDisabled();
+    expect(screen.queryByRole('link', { name: /review a revision/i })).not.toBeInTheDocument();
+  });
+
+  it('says how many rows differ and how long they have waited', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail({ status: 'published' }));
+    listDivergences.mockResolvedValue(openDivergence());
+
+    renderDetail();
+
+    expect(await screen.findByText(/autocount disagrees on 4 rows/i)).toBeInTheDocument();
+    expect(screen.getByText(/waiting 3 days/i)).toBeInTheDocument();
+    expect(screen.getByText(/our values are unchanged/i)).toBeInTheDocument();
+  });
+
+  it('offers a way to the reconciliation screen', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail({ status: 'published' }));
+    listDivergences.mockResolvedValue(openDivergence());
+
+    renderDetail();
+
+    const link = await screen.findByRole('link', { name: /^reconcile$/i });
+    expect(link).toHaveAttribute('href', '/project-sales/p1/sales-orders/so-1/divergence');
+  });
+
+  it('leaves the revision review reachable when AutoCount agrees', async () => {
+    getProjectSalesOrder.mockResolvedValue(detail({ status: 'published' }));
+
+    renderDetail();
+
+    expect(
+      await screen.findByRole('link', { name: /review a revision/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/autocount disagrees/i)).not.toBeInTheDocument();
   });
 });

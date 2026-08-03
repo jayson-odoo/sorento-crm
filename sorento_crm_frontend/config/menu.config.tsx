@@ -642,6 +642,14 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'projects.projects.view',
       },
       {
+        // Cross-project for the same reason claims are: a reconciliation belongs to one
+        // sales order, but the point of the list is that a STACK of unanswered ones is
+        // visible to management rather than discovered (AC-N6).
+        title: 'AutoCount Differences',
+        path: '/project-sales/divergences',
+        permission: 'projects.projects.view',
+      },
+      {
         title: 'Forecast & Reports',
         path: '/project-sales/reports',
         permission: 'projects.projects.view',
@@ -1555,6 +1563,14 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         // answered by another project's CS, so it cannot live under either project.
         title: 'Stock Claims',
         path: '/project-sales/stock-claims',
+        permission: 'projects.projects.view',
+      },
+      {
+        // Cross-project for the same reason claims are: a reconciliation belongs to one
+        // sales order, but the point of the list is that a STACK of unanswered ones is
+        // visible to management rather than discovered (AC-N6).
+        title: 'AutoCount Differences',
+        path: '/project-sales/divergences',
         permission: 'projects.projects.view',
       },
       {
