@@ -1,8 +1,9 @@
 # PLAN - After-Sales, Warranty & Service Scheduling
 
 **Status:** **In build. S0, S1, S2, S2a, S2b, S4 and S4a implemented; forms-platform F0 to F2c implemented
-alongside them.** Migrations 310 to 321. Next slice: **S3** (consumer portal intake), which still needs the
-S3-pre extraction spike and the Malay PDPA wording. Everything below the "In build, S0" history is the
+alongside them.** Migrations 310 to 321. **S3-pre is RUN (2026-08-03) and passed** - see
+`S3-pre-extraction-accuracy.md`. Next slice: **S3** (consumer portal intake), now gated only on
+the Malay PDPA wording and Sorento's call on the 31 missing `consumer_icon`s. Everything below the "In build, S0" history is the
 original plan text, amended in place.
 
 Plan written 2026-07-26 from a completed grill (19 decisions). S0 rewritten
@@ -585,9 +586,41 @@ Satisfies **AC-C10 to AC-C19**, **AC-M38, AC-M39, AC-M40**.
 
 ### S3-pre: extraction accuracy spike (approved 2026-07-26, blocks S3)
 
+**RUN 2026-08-03. Verdict: proceed. Full write-up: `S3-pre-extraction-accuracy.md`.**
+
 Before S3 is committed, a throwaway harness scores extraction over **50 real dealer receipts** from the corpus (`After-Sales/**/*.pdf` plus receipt photos). Measure three numbers separately: shop-name -> `customers` match rate, purchase-date extraction rate, model-code extraction rate. Publish them.
 
 The whole consumer journey assumes these are high. If shop-name match lands under ~75%, Customer Service ends up fixing bad guesses instead of reading a clean template, and the feature inverts - it becomes more work than the WhatsApp group it replaced. That is worth half a day to learn now rather than after S3 ships. Throwaway code, not merged.
+
+**Measured, over 38 consumer-track receipts** (12 of the 50 were Sorento-issued, which is
+AC-C13's dealer track and scored separately): shop name read **87%**, dealer resolved exactly
+**68%**, purchase date **97%**, model code **97%**, illegible **0%**.
+
+**68% passes, and the 75% bar was aimed at the wrong risk.** Misses are cheap - AC-C14 submits
+anyway, AC-C10a makes every field editable, AC-C10c re-matches on correction. The expensive
+failure is a **confident wrong** match, and three receipts produced one (`SENG HUAT` ->
+`CHENG HUAT HARDWARE`, `LEHAO FURNITURE` -> `LEGIT INTERIOR DESIGN`, `IRC HOME DECOR` ->
+`DE HARMONI HOME DECO`). The score distribution is bimodal - 26 receipts at exactly 1.00 and
+**nothing between 0.70 and 0.99** - so there is no threshold to tune: a match is the dealer or
+it is noise.
+
+Three contract changes fall out, and they bind the slice below:
+
+1. **The extract response returns a dealer match STATE** (`resolved | candidate | unmatched`),
+   decided server-side, **not** a confidence float the FE thresholds itself. Only `resolved`
+   pre-fills.
+2. **Normalisation is contractual**: strip corporate suffixes AND bracketed branch qualifiers
+   from both sides before comparing. Unstripped, "SORENTO SDN BHD" matched "SL & A SDN BHD" at
+   0.42 on the strength of "SDN BHD" alone; stripping branches lifted exact resolution from 23
+   to 26 of 38.
+3. **The dealer track is 24% of real traffic**, not an edge case. It gets first-class treatment
+   in the Phase 1 prototype.
+
+Two things the spike found that are NOT extraction problems: `warranty_product_kinds` has 31
+`consumer_label`s and **zero** `consumer_icon`s, so AC-C11's tiled picture chooser has no
+pictures (Sorento's call); and a short-edit-distance fallback for OCR typos
+(`SAINMART`/`SANIMART`) is the obvious next lever, deliberately left for S3 with a test rather
+than bolted into a spike.
 
 ### The slice proper
 
