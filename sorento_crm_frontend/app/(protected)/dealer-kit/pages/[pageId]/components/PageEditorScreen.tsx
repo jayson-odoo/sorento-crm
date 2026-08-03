@@ -17,6 +17,8 @@ import { toast } from 'sonner';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -150,56 +152,15 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
             />
           </div>
 
+          {/* Two buttons and a gear. This row carried SIX actions - export,
+              view live, design a room, history, save, publish - all competing
+              at the same weight, and the two that change the catalogue were
+              the hardest to find among them. Everything that is not "save what
+              I typed" or "put it in front of readers" now lives under the gear,
+              which is the pattern the rest of the system already uses
+              (DetailActionsMenu: complaints, purchase requests, stock
+              inquiries). */}
           <div className="flex flex-wrap items-center gap-2">
-            {publishedVersion && (
-              // Only once something is live: exporting a draft nobody published
-              // would produce a file that disagrees with the catalogue.
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={exporting}
-                onClick={async () => {
-                  setExporting(true);
-                  try {
-                    await requestExport(pageId, 'staff');
-                    toast.success('Building your PDF. It will appear in My Downloads.');
-                  } catch (error) {
-                    toast.error(
-                      error instanceof Error ? error.message : 'Could not start the export.',
-                    );
-                  } finally {
-                    setExporting(false);
-                  }
-                }}
-              >
-                <FileDown className="size-4" />
-                {exporting ? 'Starting' : 'Export PDF'}
-              </Button>
-            )}
-
-            {publishedVersion && page.publicPath && (
-              // Only once something is live: a link to a page that 404s reads
-              // as a broken feature rather than an unpublished draft.
-              <Button variant="outline" size="sm" asChild>
-                <a href={page.publicPath} target="_blank" rel="noreferrer">
-                  <ExternalLink className="size-4" />
-                  View live
-                </a>
-              </Button>
-            )}
-            {/* The journey is catalogue -> room, and until now there was no way
-                to make that move: you had to go back to the sidebar and start
-                the designer cold, having just chosen the products. */}
-            <Button variant="outline" size="sm" asChild>
-              <Link href={`/dealer-kit/design?from=${pageId}`}>
-                <Box className="size-4" />
-                Design a room
-              </Link>
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowHistory((open) => !open)}>
-              <History className="size-4" />
-              History
-            </Button>
             <Button variant="outline" size="sm" onClick={handleSave} disabled={!dirty || saving}>
               <Save className="size-4" />
               {saving ? 'Saving' : 'Save'}
@@ -213,6 +174,58 @@ export function PageEditorScreen({ pageId }: { pageId: string }) {
               <CloudUpload className="size-4" />
               Publish
             </Button>
+            <DetailActionsMenu ariaLabel="Catalogue actions">
+              <DropdownMenuItem onClick={() => setShowHistory((open) => !open)}>
+                <History className="size-4" />
+                {showHistory ? 'Hide version history' : 'Version history'}
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                {/* The journey is catalogue -> room. Before this link existed
+                    you had to go back to the sidebar and start the designer
+                    cold, having just chosen the products. */}
+                <Link href={`/dealer-kit/design?from=${pageId}`}>
+                  <Box className="size-4" />
+                  Design a room
+                </Link>
+              </DropdownMenuItem>
+              {/* Both of these need something LIVE. Exporting a draft nobody
+                  published produces a file that disagrees with the catalogue,
+                  and a link to an unpublished page 404s and reads as a broken
+                  feature. Hidden rather than disabled: an item that can never
+                  be used on a draft is noise on a draft. */}
+              {publishedVersion && (
+                <DropdownMenuItem
+                  disabled={exporting}
+                  onSelect={async (event) => {
+                    // The menu would close under the await and the toast would
+                    // arrive with nothing on screen to attach it to.
+                    event.preventDefault();
+                    setExporting(true);
+                    try {
+                      await requestExport(pageId, 'staff');
+                      toast.success('Building your PDF. It will appear in My Downloads.');
+                    } catch (error) {
+                      toast.error(
+                        error instanceof Error ? error.message : 'Could not start the export.',
+                      );
+                    } finally {
+                      setExporting(false);
+                    }
+                  }}
+                >
+                  <FileDown className="size-4" />
+                  {exporting ? 'Starting export' : 'Export PDF'}
+                </DropdownMenuItem>
+              )}
+              {publishedVersion && page.publicPath && (
+                <DropdownMenuItem asChild>
+                  <a href={page.publicPath} target="_blank" rel="noreferrer">
+                    <ExternalLink className="size-4" />
+                    View live
+                  </a>
+                </DropdownMenuItem>
+              )}
+            </DetailActionsMenu>
           </div>
         </CardContent>
       </Card>

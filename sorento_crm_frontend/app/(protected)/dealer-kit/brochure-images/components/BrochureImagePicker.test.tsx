@@ -494,7 +494,7 @@ describe('BrochureImagePicker, a company with no product photos at all', () => {
     await waitFor(() =>
       expect(container.querySelector('[data-dk-bi-no-photos]')).not.toBeNull(),
     );
-    expect(screen.getByText(/no product here has a photo to choose from yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/no product here has a photo yet/i)).toBeInTheDocument();
     expect(screen.queryByText(/11390 of 11390 still to choose/i)).toBeNull();
   });
 

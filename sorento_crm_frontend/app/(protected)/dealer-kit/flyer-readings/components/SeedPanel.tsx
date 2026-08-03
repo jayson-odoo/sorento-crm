@@ -134,8 +134,7 @@ export function SeedPanel({
       <CardContent className="flex flex-col gap-5">
         <p className="text-sm text-muted-foreground">
           {matchedCount} product{matchedCount === 1 ? '' : 's'} will be laid out, one section per
-          flyer page. Nothing is published: the draft is a version no reader can reach until
-          somebody approves it.
+          flyer page. Nothing is published.
         </p>
 
         {unmatched.length > 0 && (
@@ -233,8 +232,8 @@ export function SeedPanel({
             </p>
           ) : (
             <p className="text-sm text-muted-foreground" data-testid="dk-fr-seed-promotion">
-              No promotion. Every tile shows its list price, which is a finished answer rather
-              than a missing one. Choose one above to price the brochure from an offer.
+              No promotion. Every tile shows its list price. Choose one above to price the
+              brochure from an offer.
             </p>
           )}
         </div>
@@ -273,7 +272,7 @@ export function SeedResult({ result }: { result: FlyerSeedResult }) {
           {result.sectionCount} section{result.sectionCount === 1 ? '' : 's'},{' '}
           {result.collectionCount} printed row{result.collectionCount === 1 ? '' : 's'} and{' '}
           {result.seededProductCount} product{result.seededProductCount === 1 ? '' : 's'}.
-          Nothing is published: no reader can reach this version until it is approved.
+          Nothing is published yet.
         </p>
 
         {result.skipped.length > 0 ? (
@@ -300,9 +299,11 @@ export function SeedResult({ result }: { result: FlyerSeedResult }) {
           </p>
         )}
 
+        {/* The review screen already listed every heading beside its page and
+            said they are guessed. Repeating the explanation here is the third
+            time one screen has made the same point. */}
         <p className="text-sm text-muted-foreground">
-          The headings came through as the reader found them, which is wrong wherever the
-          heading was part of the artwork. That is the first thing to fix in the builder.
+          Check the headings first - they are the likeliest thing to be wrong.
         </p>
       </CardContent>
 

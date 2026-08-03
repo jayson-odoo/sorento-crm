@@ -292,7 +292,7 @@ describe('SeedResult', () => {
     render(<SeedResult result={RESULT} />);
 
     expect(screen.getByTestId('dk-fr-seed-result')).toHaveTextContent(
-      /headings came through as the reader found them/i,
+      /check the headings first/i,
     );
   });
 

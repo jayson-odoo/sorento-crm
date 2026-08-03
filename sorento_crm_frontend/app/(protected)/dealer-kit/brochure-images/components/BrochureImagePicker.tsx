@@ -247,12 +247,11 @@ export function BrochureImagePicker() {
         <Card data-dk-bi-no-photos>
           <CardContent className="flex flex-col items-center gap-2 py-14 text-center">
             <ImageOff className="size-8 text-muted-foreground" />
-            <div className="text-base font-medium">
-              No product here has a photo to choose from yet
-            </div>
+            <div className="text-base font-medium">No product here has a photo yet</div>
+            {/* One line and the CTA. The longer version explained what this
+                screen is FOR, which is a feature explanation in the UI. */}
             <p className="max-w-md text-sm text-muted-foreground">
-              This screen picks which of a product&apos;s photos goes on a brochure tile, so it
-              needs photos attached first. Attach them to the products, then come back and choose.
+              Attach photos to the products first, then come back and choose.
             </p>
             <Button variant="outline" size="sm" className="mt-2" asChild>
               <Link href="/resource-management/attachment-directories">Go to Files</Link>

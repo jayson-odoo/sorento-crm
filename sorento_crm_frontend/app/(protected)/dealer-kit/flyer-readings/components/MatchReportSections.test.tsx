@@ -256,20 +256,24 @@ describe('MatchReportSections, sizes', () => {
 });
 
 describe('MatchReportSections, what the draft gets wrong', () => {
-  it('sets the expectation that headings are the first thing to fix', () => {
+  it('names the three things the draft will get wrong', () => {
+    // The warning, not the lesson. This used to be four bullets explaining how
+    // the extractor works, which is a feature explanation inside the UI - the
+    // repo's cursor rules ban those. What a reviewer needs before they seed is
+    // WHICH things need correcting, and that is what is asserted.
     renderReport(FULL, 'A3 Flyer 2026');
 
     const gaps = screen.getByTestId('dk-fr-known-gaps');
     expect(gaps).toHaveTextContent(/headings are guessed/i);
-    expect(gaps).toHaveTextContent(/check every section heading against the paper/i);
+    expect(gaps).toHaveTextContent(/no photo until one is chosen/i);
+    expect(gaps).toHaveTextContent(/rows\s+split/i);
   });
 
-  it('says blank product photos are the state of the data, not a failed seed', () => {
+  it('promises that reading a flyer writes nothing on its own', () => {
     renderReport(FULL, 'A3 Flyer 2026');
 
     const gaps = screen.getByTestId('dk-fr-known-gaps');
-    expect(gaps).toHaveTextContent(/product photos are blank/i);
-    expect(gaps).toHaveTextContent(/not a failed seed/i);
+    expect(gaps).toHaveTextContent(/reading a flyer changes no product/i);
     expect(screen.getByRole('link', { name: /choose brochure photos/i })).toHaveAttribute(
       'href',
       '/dealer-kit/brochure-images',

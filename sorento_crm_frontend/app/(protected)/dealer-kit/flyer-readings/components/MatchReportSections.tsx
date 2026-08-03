@@ -313,7 +313,7 @@ export function MatchReportSections({
         id="unmatched"
         icon={<SearchX className="size-4" />}
         title="Codes the product master does not have"
-        description="Each one is a product printed on the flyer that the brochure will not contain. The nearest existing code is a guess and is never applied for you."
+        description="These will not be in the brochure. Suggestions are never applied for you."
       >
         <ReportGrid
           data-testid="dk-fr-unmatched-grid"
@@ -376,7 +376,7 @@ export function MatchReportSections({
         id="duplicates"
         icon={<Copy className="size-4" />}
         title="Printed on more than one page"
-        description="One product, printed twice. Each is seeded once per page it appears on, exactly as the flyer prints it."
+        description="Seeded once per page, exactly as the flyer prints it."
       >
         <ReportGrid
           data-testid="dk-fr-duplicates-grid"
@@ -395,13 +395,7 @@ export function MatchReportSections({
         id="headings"
         icon={<Heading className="size-4" />}
         title="What each page will be called"
-        description={
-          <>
-            One section per flyer page, named by what the reader found at the top of it. The
-            reader takes the largest piece of text near the top, so a page whose heading is
-            part of the artwork comes through wrong. Read these against the paper.
-          </>
-        }
+        description="Guessed from the page. Check them against the paper."
       >
         <ReportGrid
           columns={headingColumns}
@@ -416,42 +410,31 @@ export function MatchReportSections({
         />
       </Section>
 
+      {/* Was four bullets and about a hundred words explaining how the
+          extractor works - a feature explanation inside the UI, which the
+          repo's own cursor rules ban. The WARNING does real work (a reviewer
+          should know the draft needs corrections before they seed it), so it
+          stays; the lesson on heuristics does not. The detail moved to the
+          user guide, where the assistant can serve it on demand. */}
       <Section
         id="known-gaps"
         icon={<AlertTriangle className="size-4" />}
-        title="What the draft will not have right"
-        description="Known, and deliberate. Correcting these is the work the seed leaves you."
+        title="The draft will need corrections"
+        description="Known, and expected."
         action={
           <Button variant="outline" size="sm" asChild>
             <Link href="/dealer-kit/brochure-images">Choose brochure photos</Link>
           </Button>
         }
       >
-        <ul
-          className="flex list-disc flex-col gap-2 rounded-lg border border-border px-6 py-4 text-sm text-muted-foreground"
+        <p
+          className="rounded-lg border border-border px-4 py-3 text-sm text-muted-foreground"
           data-testid="dk-fr-known-gaps"
         >
-          <li>
-            <strong className="text-foreground">Headings are guessed.</strong> The reader takes
-            the largest piece of text near the top of each page, which is wrong wherever the
-            heading is part of the artwork. Check every section heading against the paper - they
-            are listed above, page by page.
-          </li>
-          <li>
-            <strong className="text-foreground">Product photos are blank.</strong> No product has
-            a brochure photo chosen yet, so tiles come through without a picture. That is the
-            current state of the data, not a failed seed.
-          </li>
-          <li>
-            <strong className="text-foreground">Sizes are not applied on their own.</strong>{' '}
-            Reading a flyer changes no product. The sizes above go to the master only for the
-            rows you tick, and never over a value somebody entered unless you confirm it.
-          </li>
-          <li>
-            <strong className="text-foreground">Some printed rows split.</strong> A row whose
-            cards sit slightly off the same baseline comes through as two grids.
-          </li>
-        </ul>
+          Headings are guessed, tiles have no photo until one is chosen, and some printed rows
+          split in two. Reading a flyer changes no product: sizes reach the master only for the
+          rows you tick.
+        </p>
       </Section>
     </div>
   );
