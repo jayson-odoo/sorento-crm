@@ -364,7 +364,18 @@ def _store_banners(
     breaks that promise in the loudest possible way: it throws away everything
     the caller has written and not yet committed, so a request that goes on to
     return 201 has silently discarded rows it already wrote. A savepoint undoes
-    the half-written asset and nothing else, which is what the word meant.
+    the half-written asset ROWS and nothing else, which is what the word meant.
+
+    **Rows, though - not bytes.** ``create_from_bytes`` PUTs the image (and its
+    thumbnail, a second object) into the bucket BEFORE it flushes, so a failure
+    at the flush - a company-scope refusal, a constraint, the very CHECK that
+    migration 317 widened - rolls the rows back and leaves the objects behind.
+    That is the orphan family this module's "Death" section exists to close,
+    reappearing on the error path, and it is bounded: two objects per failed
+    page, only on a failure that is already being logged. Closing it properly
+    means create_from_bytes taking responsibility for its own uploads when the
+    flush fails, which is a change to that function rather than to this loop -
+    so it is named here and not papered over.
 
     (The project's usual rule is to commit before a best-effort side effect
     rather than reach for ``begin_nested``. That rule is for effects that happen

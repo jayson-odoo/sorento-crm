@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.models.dealer_kit import Asset
 from app.models.resources import Attachment
-from app.services.image_thumbnailer import store_thumbnail
+from app.services.image_thumbnailer import store_thumbnail, thumbnail_key_for
 from app.services.storage_router import (
     cdn_base_url,
     default_provider,
@@ -92,6 +92,64 @@ def create_from_bytes(
         file_content=content, file_path=key, content_type=mime
     )
 
+    # From here on the bytes are already in the bucket, and a rollback cannot
+    # reach them. A caller's savepoint undoes the ROWS; the objects would stay
+    # forever, which is exactly the orphan family the "Death" note above exists
+    # to close. So this function owns what it uploaded until the rows are
+    # safely flushed, and sweeps on the way out if they are not.
+    #
+    # Reachable, not theoretical: a company-scope refusal on the insert, or any
+    # constraint on `attachments` - migration 317 shipped one that fired.
+    uploaded: list[str] = [stored_key]
+    try:
+        return _persist_asset(
+            db,
+            backend=backend,
+            provider=provider,
+            uploaded=uploaded,
+            attachment_id=attachment_id,
+            filename=filename,
+            stored_key=stored_key,
+            name=name,
+            mime=mime,
+            kind=kind,
+            tags=tags,
+            content=content,
+            user_id=user_id,
+        )
+    except Exception:
+        for orphan in uploaded:
+            delete_object_best_effort(provider, orphan)
+        raise
+
+
+def _persist_asset(
+    db: Session,
+    *,
+    backend,
+    provider: str,
+    uploaded: list[str],
+    attachment_id: str,
+    filename: str,
+    stored_key: str,
+    name: str,
+    mime: str,
+    kind: str,
+    tags: Optional[list[str]],
+    content: bytes,
+    user_id: Optional[str],
+) -> Asset:
+    """The row half of ``create_from_bytes``, split out so its caller can sweep.
+
+    ``uploaded`` is appended to as objects are written, so the caller's handler
+    knows what to remove. The thumbnail is the second one and is written here.
+    """
+    # store_thumbnail returns a CDN URL, not a key, so the key is derived the
+    # same way it derives it. Deleting the URL would silently remove nothing.
+    thumbnail = store_thumbnail(backend, provider, stored_key, content, mime)
+    if thumbnail:
+        uploaded.append(thumbnail_key_for(stored_key))
+
     attachment = Attachment(
         id=attachment_id,
         original_filename=filename,
@@ -99,7 +157,7 @@ def create_from_bytes(
         file_path=cdn_base_url(provider, stored_key),
         # Best-effort, and never fatal: a library grid that has to paint the
         # full-resolution banner is slow, not wrong.
-        thumbnail_path=store_thumbnail(backend, provider, stored_key, content, mime),
+        thumbnail_path=thumbnail,
         file_size_bytes=len(content),
         mime_type=mime,
         file_hash=hashlib.sha256(content).hexdigest(),

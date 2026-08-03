@@ -67,8 +67,27 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Any Kit asset rows would violate the narrower constraint, so they go first.
-    # They are library rows for artwork the Kit can re-extract from the flyer,
-    # and leaving them would make the downgrade fail outright instead.
+    # They are library rows for artwork the Kit can re-extract from the flyer.
+    #
+    # The ASSETS have to go before their attachments: dealer_kit.asset.
+    # attachment_id is ON DELETE RESTRICT, so deleting the attachments first
+    # raises a foreign key violation - which is exactly the situation this
+    # delete exists to avoid, i.e. the downgrade failed whenever there was
+    # anything to clean up and worked only when there was not.
+    #
+    # Guarded on the table existing: a downgrade run from a checkout where the
+    # Kit schema was never created should not fail on a missing table.
+    op.execute(
+        text(
+            "DO $$ BEGIN"
+            "  IF to_regclass('dealer_kit.asset') IS NOT NULL THEN"
+            "    DELETE FROM dealer_kit.asset WHERE attachment_id IN ("
+            "      SELECT id FROM attachments WHERE entity_type = 'dealer_kit_asset'"
+            "    );"
+            "  END IF;"
+            "END $$;"
+        )
+    )
     op.execute(
         text("DELETE FROM attachments WHERE entity_type = 'dealer_kit_asset'")
     )

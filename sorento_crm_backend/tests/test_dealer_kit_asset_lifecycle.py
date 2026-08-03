@@ -62,6 +62,21 @@ PAGES_WITH_A_BANNER = 2
 # with its own key, which is exactly how half the bucket litter got there.
 OBJECTS_PER_BANNER = 2
 
+def _png_bytes() -> bytes:
+    """A real PNG, because store_thumbnail decodes what it is given.
+
+    Handing it invented bytes would make the thumbnail step fail for the wrong
+    reason and the test would pass without exercising the second upload.
+    """
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (64, 48), (200, 120, 60)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 _SORENTO = "00000000-0000-0000-0000-000000000001"
 _ADMIN_ID = "5c2e7b81-4a39-5f60-b8d2-1e7a4c9b3d05"
 _ADMIN_ROLE = "8d4b6f29-3c17-5a82-9e50-2b7d1f4a6c93"
@@ -637,6 +652,64 @@ def test_the_sweep_only_ever_touches_the_readings_own_banners(api) -> None:
 
     assert _asset_ids(db) == kept
     assert len(_objects(storage)) == PAGES_WITH_A_BANNER * OBJECTS_PER_BANNER
+
+
+class TestAFailedWriteLeavesNoBytesBehind:
+    """The savepoint the banner loop wraps each asset in undoes ROWS.
+
+    ``create_from_bytes`` PUTs the image and its thumbnail before it flushes, so
+    a failure at the flush rolled the rows back and left two objects in the
+    bucket per failed page - unreferenced, forever. Reachable through a
+    company-scope refusal or any constraint on `attachments`, and it is the same
+    orphan family the module's "Death" note exists to close, reappearing on the
+    error path.
+    """
+
+    def test_the_objects_go_when_the_rows_cannot_be_written(
+        self, api, monkeypatch
+    ) -> None:
+        from app.services.dealer_kit import asset_service
+
+        db, storage = api
+        before = _objects(storage)
+
+        # Fail where the real defects fail - after both uploads, while writing
+        # the rows - WITHOUT naming any private function, so this still exercises
+        # the sweep if the row-writing is ever restructured again. Constructing
+        # the Attachment is the first thing that happens after the bytes land.
+        class _Exploding:
+            def __init__(self, *_a, **_k):
+                raise RuntimeError("attachments constraint")
+
+        monkeypatch.setattr(asset_service, "Attachment", _Exploding)
+
+        with pytest.raises(RuntimeError):
+            asset_service.create_from_bytes(
+                db,
+                content=_png_bytes(),
+                name="ZZT orphan banner",
+                mime="image/png",
+                user_id=None,
+            )
+
+        assert _objects(storage) == before, "the uploaded bytes were left behind"
+
+    def test_a_successful_write_keeps_its_bytes(self, api) -> None:
+        # The sweep must follow the failure, not run unconditionally.
+        from app.services.dealer_kit import asset_service
+
+        db, storage = api
+        before = _objects(storage)
+
+        asset_service.create_from_bytes(
+            db,
+            content=_png_bytes(),
+            name="ZZT kept banner",
+            mime="image/png",
+            user_id=None,
+        )
+
+        assert len(_objects(storage)) == len(before) + OBJECTS_PER_BANNER
 
 
 class TestTheGuardCannotBeBlindedByScope:
