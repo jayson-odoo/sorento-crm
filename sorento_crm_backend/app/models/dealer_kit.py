@@ -30,6 +30,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import relationship
@@ -489,3 +490,101 @@ class SelectionLine(Base):
     created_at = _created_at()
 
     selection = relationship("Selection", back_populates="lines")
+
+
+class Edition(Base, CompanyScopedMixin):
+    """One named revision cycle over a catalogue page (S2.5).
+
+    An Edition is NOT a second document. The page, its immutable
+    ``PageVersion`` rows and the movable ``PageLabel`` already hold the
+    catalogue and decide what readers see; an Edition wraps that machinery in
+    the question "has a human signed this off", and answers it with the core
+    status engine rather than a bespoke enum (AC-L1).
+
+    **``done`` is terminal.** There is no reopen path: revising a live
+    catalogue means duplicating this Edition into a new one (AC-L9), which
+    starts at ``draft`` while this one keeps the ``published`` label. That is
+    what stops the live catalogue disappearing the moment somebody starts a
+    revision, without a ``done -> draft`` edge that would let a finished record
+    come back to life.
+
+    **Two version ids, not one.** ``approved_version_id`` is what the Approver
+    actually read; ``done_version_id`` is what went live. They are usually the
+    same and are stored separately anyway, because the deferred price-drift work
+    (AC-L4 to AC-L6) has nothing to compare without them - see
+    ``PLAN-edition-approval.md``.
+    """
+
+    __tablename__ = "edition"
+    __table_args__ = (
+        # One OPEN Edition per page. Two people revising one catalogue against
+        # each other has no story: whichever published second would silently
+        # discard the first. Terminal Editions are excluded so a page can be
+        # revised again and again - that is AC-L9's whole mechanism - and the
+        # predicate names the open states rather than negating `done`, so a
+        # status added later has to be classified deliberately.
+        Index(
+            "uq_dealer_kit_edition_one_open_per_page",
+            "page_id",
+            unique=True,
+            postgresql_where=text(
+                "status_key IN ('draft', 'pending_approval', 'approved', 'rejected')"
+            ),
+        ),
+        Index("ix_dealer_kit_edition_company_page", "company_id", "page_id"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    page_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.page.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # "Spring 2027". The one thing starting an Edition asks for.
+    name = Column(String(200), nullable=False)
+
+    status_id = Column(
+        UUID(as_uuid=False), ForeignKey("statuses.id"), nullable=False
+    )
+    # A DENORMALISED copy of the status's key, carried so the partial unique
+    # index above can be expressed at all: a partial index cannot reach through
+    # a foreign key. Written only by the transition service, never by a caller,
+    # and asserted equal to the status row in the service's own tests - a drift
+    # here would let a second open Edition exist.
+    status_key = Column(String(64), nullable=False)
+
+    approved_version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.page_version.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    done_version_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.page_version.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # What this Edition was duplicated from, so AC-L9 can badge "new since the
+    # last Edition" without guessing. SET NULL rather than CASCADE: deleting an
+    # old Edition must not delete the one that succeeded it.
+    previous_edition_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.edition.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    submitted_by = Column(UUID(as_uuid=False), nullable=True)
+    submitted_at = Column(DateTime(timezone=False), nullable=True)
+    approved_by = Column(UUID(as_uuid=False), nullable=True)
+    approved_at = Column(DateTime(timezone=False), nullable=True)
+    # Kept on the Edition rather than in an event log because it is what the
+    # Designer is shown when they pick the work back up, and a rejection with no
+    # reason is a rejection they cannot act on.
+    rejection_reason = Column(Text, nullable=True)
+
+    created_by = Column(UUID(as_uuid=False), nullable=True)
+    created_at = _created_at()
+    updated_at = _updated_at()
+
+    page = relationship("Page")

@@ -139,15 +139,42 @@ def list_status_entities() -> List[StatusEntity]:
     return sorted(_REGISTRY.values(), key=lambda e: e.label)
 
 
+# Module bootstraps that register status entities. Imported for their side
+# effect the first time anything reads the registry.
+#
+# Loaded HERE rather than from each module's router package, which is where the
+# Dealer Kit bootstrap was first hooked. A router-mount side effect registers the
+# entity in the API process and nowhere else: the RQ worker, a management script
+# and a test that touches the registry without building the app would every one
+# of them see an unregistered entity, and the symptom is a status graph that
+# reports no records using it - which is the answer that makes a status DELETABLE
+# out from under live rows.
+_MODULE_BOOTSTRAPS = ("app.modules.dealer_kit.bootstrap",)
+
+
 def _register_core() -> None:
-    """Core registers no entities.
+    """Core registers no entities; modules append from their bootstraps.
 
     The engine is infrastructure: it ships with an empty registry and every
     entity arrives from a module bootstrap. Existing hardcoded status vocabularies
     (complaints, PR/SF, stock inquiries, orders) are deliberately NOT migrated
     here -- they move entity by entity, later (ADR-0001).
+
+    An import failure is swallowed with a warning rather than raised. This runs
+    on the first read of the registry, which can be deep inside an unrelated
+    request, and one module failing to import must not take down every status
+    surface in the system.
     """
-    return None
+    import importlib
+    import logging
+
+    for module in _MODULE_BOOTSTRAPS:
+        try:
+            importlib.import_module(module)
+        except Exception:  # pragma: no cover - defensive
+            logging.getLogger(__name__).warning(
+                "Status entity bootstrap %s failed to import", module, exc_info=True
+            )
 
 
 _ensure_core = lazy_once(_register_core)

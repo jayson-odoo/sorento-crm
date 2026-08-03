@@ -314,9 +314,18 @@ def test_every_company_id_table_is_registered():
     #                               in both companies, so an unscoped reading
     #                               would seed one company's catalogue with the
     #                               other's product ids.
+    # S2.5.1 then adds one:
+    #   edition                   - a named revision cycle over a page. Owned
+    #                               because it is the record of who approved
+    #                               WHICH company's catalogue: unscoped, one
+    #                               company's Approver would see, and could
+    #                               decide on, the other's pending Editions.
+    #                               `status_id` points at a shared graph and is
+    #                               not company data, which is why the graph
+    #                               itself stays unowned.
     # The count is asserted on purpose: a new owned table must be an explicit
     # decision here, not something that slips in and silently misses the filter.
-    assert len(owned) == 42, f"expected 42 owned tables, found {len(owned)}: {sorted(owned)}"
+    assert len(owned) == 43, f"expected 43 owned tables, found {len(owned)}: {sorted(owned)}"
 
 
 # --- AC-D4 system write rejected (UNSET/empty only) ---------------------------
