@@ -24,9 +24,17 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.models.dealer_kit import Page
-from app.schemas.dealer_kit import EditionCreateIn, EditionOut, EditionRejectIn
+from app.schemas.dealer_kit import (
+    DroppedProductOut,
+    EditionCreateIn,
+    EditionOut,
+    EditionRejectIn,
+    EditionReviewOut,
+    ReviewedProductOut,
+)
 from app.services import status_service
 from app.modules.dealer_kit.bootstrap import EDITION_ENTITY
+from app.services.dealer_kit import edition_review_service as review_service
 from app.services.dealer_kit import edition_service as svc
 
 router = APIRouter()
@@ -95,6 +103,43 @@ def get_edition(
     _user: dict = Depends(_VIEW),
 ):
     return _out(db, svc.get_edition(db, edition_id))
+
+
+@router.get("/editions/{edition_id}/review", response_model=EditionReviewOut)
+def review_edition(
+    edition_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """What changed in the catalogue since the previous Edition (AC-L9).
+
+    Derived on every read, never stored. It is a comparison against the product
+    master as it stands NOW, and a stored answer would keep telling a Designer
+    to remove a product somebody reinstated last week.
+    """
+    result = review_service.review(db, svc.get_edition(db, edition_id))
+    return EditionReviewOut(
+        members=[
+            ReviewedProductOut(
+                product_id=entry.product_id,
+                product_code=entry.product_code,
+                product_name=entry.product_name,
+                stock_on_hand=entry.stock_on_hand,
+                is_new_since_previous=entry.is_new_since_previous,
+            )
+            for entry in result.members
+        ],
+        dropped=[
+            DroppedProductOut(
+                product_id=entry.product_id,
+                product_code=entry.product_code,
+                product_name=entry.product_name,
+                reason=entry.reason,
+            )
+            for entry in result.dropped
+        ],
+        previous_edition_name=result.previous_edition_name,
+    )
 
 
 @router.post("/editions", response_model=EditionOut, status_code=status.HTTP_201_CREATED)

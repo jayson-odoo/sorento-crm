@@ -7,6 +7,7 @@ import {
   approveEdition,
   createEdition,
   getEdition,
+  getEditionReview,
   listEditions,
   publishEdition,
   reopenEdition,
@@ -97,5 +98,13 @@ export function useCreateEdition() {
       toast.success(`${edition.name} started`);
     },
     onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+export function useEditionReviewQuery(editionId: string) {
+  return useQuery({
+    queryKey: [EDITIONS_QUERY_KEY, 'review', editionId],
+    queryFn: () => getEditionReview(editionId),
+    enabled: Boolean(editionId),
   });
 }

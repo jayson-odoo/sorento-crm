@@ -134,3 +134,50 @@ export const rejectEdition = (id: string, reason: string) =>
   act(id, 'reject', { reason });
 export const reopenEdition = (id: string) => act(id, 'reopen');
 export const publishEdition = (id: string) => act(id, 'publish');
+
+/** Why a product this catalogue names can no longer be shown. */
+export type DroppedReason = 'discontinued' | 'inactive' | 'missing';
+
+export interface ReviewedProduct {
+  productId: string;
+  productCode: string;
+  productName: string;
+  stockOnHand: number;
+  isNewSincePrevious: boolean;
+}
+
+export interface DroppedProduct {
+  productId: string;
+  /** Null when the row is gone entirely - there is nothing left to name it by. */
+  productCode: string | null;
+  productName: string | null;
+  reason: DroppedReason;
+}
+
+export interface EditionReview {
+  members: ReviewedProduct[];
+  dropped: DroppedProduct[];
+  /** Null on a first Edition, which is why nothing is badged as new. */
+  previousEditionName: string | null;
+}
+
+/**
+ * What changed since the previous Edition (AC-L9).
+ *
+ * `dropped` is the one that matters. The collection resolver filters
+ * discontinued and inactive products out of its candidate set, so a product
+ * discontinued since the catalogue was built does not render struck through -
+ * it vanishes, and the tile count quietly drops. This is where it resurfaces.
+ */
+export async function getEditionReview(editionId: string): Promise<EditionReview> {
+  const response = await apiFetch(`${BASE}/${editionId}/review`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Could not work out what changed'));
+  }
+  const body = (await response.json()) as Partial<EditionReview>;
+  return {
+    members: body.members ?? [],
+    dropped: body.dropped ?? [],
+    previousEditionName: body.previousEditionName ?? null,
+  };
+}

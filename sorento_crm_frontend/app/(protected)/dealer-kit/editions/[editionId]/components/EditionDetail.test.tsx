@@ -47,6 +47,7 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 
 vi.mock('../../../services/editionService', () => ({
   getEdition: vi.fn(),
+  getEditionReview: vi.fn(),
   listEditions: vi.fn(),
   createEdition: vi.fn(),
   submitEdition: vi.fn(),
@@ -59,6 +60,7 @@ vi.mock('../../../services/editionService', () => ({
 import {
   approveEdition,
   getEdition,
+  getEditionReview,
   publishEdition,
   rejectEdition,
   submitEdition,
@@ -68,6 +70,7 @@ import {
 import { EditionDetail } from './EditionDetail';
 
 const mockGet = vi.mocked(getEdition);
+const mockReview = vi.mocked(getEditionReview);
 const mockSubmit = vi.mocked(submitEdition);
 const mockApprove = vi.mocked(approveEdition);
 const mockReject = vi.mocked(rejectEdition);
@@ -120,8 +123,11 @@ function headerActions(): string[] {
     .filter(Boolean);
 }
 
+const EMPTY_REVIEW = { members: [], dropped: [], previousEditionName: null };
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mockReview.mockResolvedValue(EMPTY_REVIEW);
 });
 
 describe('EditionDetail, one decision at a time', () => {
@@ -286,5 +292,93 @@ describe('EditionDetail, the transitions fire', () => {
     fireEvent.click(screen.getByRole('button', { name: /publish/i }));
 
     await waitFor(() => expect(mockPublish).toHaveBeenCalledWith('ed-1'));
+  });
+});
+
+describe('EditionDetail, what changed since last time', () => {
+  it('surfaces a product the resolver silently dropped', async () => {
+    // The reason this section exists. resolve_members filters discontinued
+    // products out of its candidate set, so the tile does not render struck
+    // through - it vanishes and the count quietly falls. This is the only
+    // place that says so.
+    mockGet.mockResolvedValue(edition('draft'));
+    mockReview.mockResolvedValue({
+      members: [],
+      dropped: [
+        {
+          productId: 'p-9',
+          productCode: 'SRTWC286-SH',
+          productName: 'One Piece Water Closet',
+          reason: 'discontinued',
+        },
+      ],
+      previousEditionName: 'Autumn 2026',
+    });
+
+    renderDetail();
+
+    const dropped = await screen.findByTestId('dk-ed-dropped');
+    expect(dropped).toHaveTextContent('SRTWC286-SH');
+    expect(dropped).toHaveTextContent(/discontinued/i);
+    expect(screen.getByText(/what changed since autumn 2026/i)).toBeInTheDocument();
+  });
+
+  it('names a deleted product as deleted rather than hiding it', async () => {
+    mockGet.mockResolvedValue(edition('draft'));
+    mockReview.mockResolvedValue({
+      members: [],
+      dropped: [
+        { productId: 'p-gone', productCode: null, productName: null, reason: 'missing' },
+      ],
+      previousEditionName: null,
+    });
+
+    renderDetail();
+
+    const dropped = await screen.findByTestId('dk-ed-dropped');
+    expect(dropped).toHaveTextContent(/unknown product/i);
+    expect(dropped).toHaveTextContent(/deleted/i);
+  });
+
+  it('badges what walked into the catalogue on its own', async () => {
+    mockGet.mockResolvedValue(edition('draft'));
+    mockReview.mockResolvedValue({
+      members: [
+        {
+          productId: 'p-1',
+          productCode: 'SRTNEW1',
+          productName: 'New Basin',
+          stockOnHand: 12,
+          isNewSincePrevious: true,
+        },
+        {
+          productId: 'p-2',
+          productCode: 'SRTOLD1',
+          productName: 'Old Basin',
+          stockOnHand: 3,
+          isNewSincePrevious: false,
+        },
+      ],
+      dropped: [],
+      previousEditionName: 'Autumn 2026',
+    });
+
+    renderDetail();
+
+    const fresh = await screen.findByTestId('dk-ed-new-since');
+    expect(fresh).toHaveTextContent('SRTNEW1');
+    expect(fresh).toHaveTextContent('12 in stock');
+    // The unchanged product is counted, not listed - the list is what to look at.
+    expect(fresh).not.toHaveTextContent('SRTOLD1');
+  });
+
+  it('still renders when nothing changed, because that is the answer', async () => {
+    mockGet.mockResolvedValue(edition('draft'));
+
+    renderDetail();
+
+    const counts = await screen.findByTestId('dk-ed-change-counts');
+    expect(counts).toHaveTextContent(/no longer available/i);
+    expect(screen.queryByTestId('dk-ed-dropped')).toBeNull();
   });
 });

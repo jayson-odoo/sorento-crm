@@ -32,6 +32,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   useApproveEdition,
   useEditionQuery,
+  useEditionReviewQuery,
   usePublishEdition,
   useRejectEdition,
   useReopenEdition,
@@ -178,6 +179,8 @@ export function EditionDetail({ editionId }: { editionId: string }) {
         </Alert>
       )}
 
+      <EditionChanges editionId={editionId} />
+
       <Card>
         <CardHeader>
           <CardTitle className="text-sm">History</CardTitle>
@@ -240,6 +243,111 @@ function Fact({ label, value }: { label: string; value: string }) {
     <div className="flex flex-col gap-0.5">
       <span className="text-xs text-muted-foreground">{label}</span>
       <span className="text-sm">{value}</span>
+    </div>
+  );
+}
+
+const DROPPED_REASON: Record<string, string> = {
+  discontinued: 'Discontinued',
+  inactive: 'Deactivated',
+  missing: 'Deleted',
+};
+
+/**
+ * What the inherited catalogue no longer says truthfully (AC-L9).
+ *
+ * `dropped` is the load-bearing half. The collection resolver filters
+ * discontinued and inactive products out of its candidate set, so a product
+ * discontinued since the catalogue was built does NOT render struck through -
+ * it disappears and the tile count quietly falls. This is the only screen that
+ * says so, which is why it renders even when the list is empty: "nothing has
+ * gone" is the answer somebody came here for.
+ */
+function EditionChanges({ editionId }: { editionId: string }) {
+  const { data, isLoading, isError } = useEditionReviewQuery(editionId);
+
+  if (isLoading) return <Skeleton className="h-32 w-full" />;
+  if (isError || !data) return null;
+
+  const newSince = data.members.filter((row) => row.isNewSincePrevious);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm">
+          What changed
+          {data.previousEditionName ? ` since ${data.previousEditionName}` : ''}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex flex-wrap gap-2" data-testid="dk-ed-change-counts">
+          <Count label="In the catalogue" value={data.members.length} />
+          <Count label="No longer available" value={data.dropped.length} tone="warn" />
+          <Count label="New since last time" value={newSince.length} />
+        </div>
+
+        {data.dropped.length > 0 && (
+          <ul
+            className="flex flex-col gap-1 rounded-lg border border-border px-4 py-3 text-sm"
+            data-testid="dk-ed-dropped"
+          >
+            {data.dropped.map((row) => (
+              <li key={row.productId} className="flex flex-wrap items-center gap-2">
+                <span className="font-mono line-through text-muted-foreground">
+                  {row.productCode ?? 'Unknown product'}
+                </span>
+                <span className="truncate text-muted-foreground">{row.productName ?? ''}</span>
+                <span className={`${STATUS_PILL_BASE} bg-amber-100 text-amber-800`}>
+                  {DROPPED_REASON[row.reason] ?? row.reason}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {newSince.length > 0 && (
+          <ul
+            className="flex flex-col gap-1 rounded-lg border border-border px-4 py-3 text-sm"
+            data-testid="dk-ed-new-since"
+          >
+            {newSince.map((row) => (
+              <li key={row.productId} className="flex flex-wrap items-center gap-2">
+                <span className="font-mono">{row.productCode}</span>
+                <span className="truncate text-muted-foreground">{row.productName}</span>
+                <span className={`${STATUS_PILL_BASE} bg-sky-100 text-sky-800`}>New</span>
+                <span className="text-xs text-muted-foreground">
+                  {row.stockOnHand} in stock
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function Count({
+  label,
+  value,
+  tone = 'plain',
+}: {
+  label: string;
+  value: number;
+  tone?: 'plain' | 'warn';
+}) {
+  return (
+    <div className="rounded-lg border border-border px-3 py-2">
+      <p
+        className={
+          tone === 'warn' && value > 0
+            ? 'text-xl font-semibold text-amber-600'
+            : 'text-xl font-semibold text-foreground'
+        }
+      >
+        {value}
+      </p>
+      <p className="text-xs text-muted-foreground">{label}</p>
     </div>
   );
 }

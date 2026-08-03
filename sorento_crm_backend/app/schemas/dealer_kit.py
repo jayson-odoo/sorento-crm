@@ -815,3 +815,42 @@ class EditionOut(BaseModel):
         default=None, serialization_alias="rejectionReason"
     )
     created_at: datetime = Field(serialization_alias="createdAt")
+
+
+class ReviewedProductOut(BaseModel):
+    """One product the inherited catalogue still shows."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    product_id: str = Field(serialization_alias="productId")
+    product_code: str = Field(serialization_alias="productCode")
+    product_name: str = Field(serialization_alias="productName")
+    stock_on_hand: int = Field(serialization_alias="stockOnHand")
+    is_new_since_previous: bool = Field(serialization_alias="isNewSincePrevious")
+
+
+class DroppedProductOut(BaseModel):
+    """A product this catalogue names and can no longer show.
+
+    ``productCode`` is null when the row is gone entirely - there is nothing
+    left to name it by, and inventing a placeholder would read as a real code.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    product_id: str = Field(serialization_alias="productId")
+    product_code: Optional[str] = Field(default=None, serialization_alias="productCode")
+    product_name: Optional[str] = Field(default=None, serialization_alias="productName")
+    reason: str
+
+
+class EditionReviewOut(BaseModel):
+    """What changed in the catalogue since the previous Edition (AC-L9)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    members: list[ReviewedProductOut] = Field(default_factory=list)
+    dropped: list[DroppedProductOut] = Field(default_factory=list)
+    previous_edition_name: Optional[str] = Field(
+        default=None, serialization_alias="previousEditionName"
+    )
