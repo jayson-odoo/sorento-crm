@@ -1,9 +1,9 @@
 # Running a catalogue PDF export in a container
 
-**Status: still not executed, but the diagnosis is now VERIFIED rather than
-derived.** Docker was started on 2026-08-03 and `docker compose --profile blue
-config` was resolved. It confirms every claim below against the resolver rather
-than against a reading of the YAML:
+**Status: the image is proven, the running-stack export is not.** Docker was
+started on 2026-08-03 and `docker compose --profile blue config` resolved, so
+the compose diagnosis below is checked against the resolver rather than against
+a reading of the YAML:
 
 | Service | `sorento_network` alias | `DEALER_KIT_PRINT_BASE_URL` |
 |---|---|---|
@@ -15,8 +15,14 @@ than against a reading of the YAML:
 So the two changes below are exactly the two that are missing, and nothing else
 is.
 
-**Why it still was not run** is a different blocker from the original one, and
-a more interesting one. See "What stops `up` on this machine".
+**What IS now proven end to end: the image renders.** Chromium builds into the
+worker image, resolves at the path the worker looks in, launches, and produces
+a real PDF. That took fixing a Dockerfile that did not build - see "The image
+itself".
+
+**What is still NOT proven: the export path inside a running stack.** Two
+blockers, neither of them about the Dealer Kit, both in "What stops `up` on
+this machine".
 
 Compose is deliberately not in the repo (`docker-compose.yml` at the
 `sorento_crm/` root is gitignored, and CI ships only the deploy script), so the
@@ -110,19 +116,45 @@ docker build -t sorento-crm:dealer-kit-worker-test \
 
 and point the compose `worker` service at that tag for the test.
 
-## What is already handled in the image
+## The image itself: BUILT and PROVEN on 2026-08-03
 
-Read off this branch's `sorento_crm_backend/Dockerfile`:
+The first attempt at that build **failed**, and had failed for anyone who had
+ever tried it, which is nobody:
 
-- `playwright install-deps chromium` runs as root (system libraries).
-- `USER appuser` comes BEFORE `playwright install chromium`, so the browser
-  lands in `/home/appuser/.cache/ms-playwright`. This ordering is load-bearing:
-  installed as root it goes to `/root/.cache`, which appuser cannot read, and
-  the render fails with a missing-executable error that reads like a bad image
-  rather than a permissions problem.
-- The render runs in a **spawned** subprocess (`app.tasks.catalogue_render_cli`),
-  never in RQ's forked work-horse. That was for a macOS segfault, and it also
-  keeps Chromium's memory out of the worker in Linux.
+```
+RUN playwright install-deps chromium
+ModuleNotFoundError: No module named 'playwright'
+```
+
+Every dependency is `pip install --user` in the builder stage and copied to
+`/home/appuser/.local`, so it sits on APPUSER's user-site path. That step runs
+as root, and root's interpreter does not read another user's site directory -
+the `playwright` shim resolves off `PATH` and then cannot import the package it
+is a shim for. Fixed by pointing `PYTHONPATH` at that directory for the root
+step (`Dockerfile`, this branch).
+
+With that in, the image builds and the browser works. Verified by running it,
+not by reading the Dockerfile:
+
+| Claim | How it was checked | Result |
+|---|---|---|
+| Chromium lands under appuser | `ls ~/.cache/ms-playwright` as appuser | `chromium-1234`, `chromium_headless_shell-1234`, `ffmpeg-1011` |
+| The worker can find it | `p.chromium.executable_path` + `os.path.exists` | `/home/appuser/.cache/ms-playwright/chromium-1234/chrome-linux/chrome`, exists, executable bit set |
+| It actually renders | `launch()` -> `new_page()` -> `page.pdf()` | 6346 bytes starting `%PDF-` |
+
+So the `USER appuser` ordering is load-bearing exactly as the Dockerfile
+comment says - installed as root the browser goes to `/root/.cache`, which
+appuser cannot read, and the render fails with a missing-executable error that
+reads like a bad image rather than a permissions problem.
+
+Still read rather than run: the render happens in a **spawned** subprocess
+(`app.tasks.catalogue_render_cli`), never in RQ's forked work-horse. That was
+for a macOS segfault, and it also keeps Chromium's memory out of the worker on
+Linux.
+
+**The scratch tag `sorento-crm:dealer-kit-worker-test` (4.09 GB) is left on the
+machine** so the export test does not need a ten minute rebuild.
+`docker rmi sorento-crm:dealer-kit-worker-test` when it is no longer wanted.
 
 ## What stops `up` on this machine
 
