@@ -207,7 +207,8 @@ def _execute_run(db: Session, run_id: str) -> dict:
         if run.buy_scope == "network":
             recs = _plan_network(db, run_id, rows, policies, today, last_move, wh_meta)
         else:
-            recs = _plan_per_warehouse(db, run_id, rows, policies, today, last_move)
+            recs = _plan_per_warehouse(db, run_id, rows, policies, today, last_move,
+                                       wh_meta)
 
         # M4 cash stage — compute + FREEZE each buy's rank_score / rank / rank_factors
         # (funded/deferred is computed live at view-time against a budget, not here).
@@ -301,9 +302,48 @@ def _last_movement_map(db: Session, product_ids: list[str],
 # per-warehouse planning (buy_scope=warehouse)
 # ===========================================================================
 
+def _pool_map(db: Session, rows: list[dict]) -> dict[str, str]:
+    """``{warehouse_id: pool_id}`` for the planned locations.
+
+    A location with no ``pool_warehouse_id`` is its own pool, which is what makes this
+    change safe: over singleton pools, grouping by pool IS grouping by warehouse. See
+    ADR-0011's pool-scope amendment.
+    """
+    wids = list({str(r["warehouse_id"]) for r in rows})
+    if not wids:
+        return {}
+    found = db.execute(text(
+        "SELECT id, COALESCE(pool_warehouse_id, id) AS pool_id "
+        "FROM warehouses WHERE id::text = ANY(:wids)"
+    ), {"wids": wids}).fetchall()
+    out = {str(r[0]): str(r[1]) for r in found}
+    # Anything the lookup missed still gets a pool: itself. Falling back to "no pool" would
+    # silently drop the location from planning.
+    for wid in wids:
+        out.setdefault(wid, wid)
+    return out
+
+
 def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: list[dict],
-                        today: date, last_move: dict) -> list[ReorderRecommendation]:
+                        today: date, last_move: dict,
+                        wh_meta: Optional[dict] = None) -> list[ReorderRecommendation]:
+    """Plan each SKU against each fulfilment POOL, not each warehouse.
+
+    A shortage in one bin is covered from the shared pool its site draws on before it is
+    ever a purchase; netting strictly per location recommended buying 67 units of an item
+    holding 4,397 (ADR-0011). A location with no pool pointer is its own pool, so a tenant
+    that has configured no pooling gets byte-identical output to before - pinned by
+    ``tests/scm/test_pool_netting_parity.py``.
+
+    Disposition and transfer flags stay per LOCATION: "this stock has not moved in a year"
+    and "this bin is overstocked while that one is short" are statements about a place, and
+    aggregating them away would hide the very thing they exist to surface.
+    """
     recs: list[ReorderRecommendation] = []
+    wh_meta = wh_meta or {str(r["warehouse_id"]): (r["warehouse_code"], r["warehouse_name"])
+                          for r in rows}
+    pool_of = _pool_map(db, rows)
+
     # group by product so transfer flags can see all warehouses of a SKU
     by_product: dict[str, list[dict]] = {}
     for r in rows:
@@ -316,8 +356,109 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
             c = _compute_cell(db, r, policies, cands, today, last_move)
             computed.append(c)
         flags = _transfer_flags_for(prows, computed)
+
+        by_pool: dict[str, list[tuple[dict, dict]]] = {}
         for r, c in zip(prows, computed):
-            recs.extend(_emit_cell(run_id, r, c, flags.get(str(r["warehouse_id"]))))
+            by_pool.setdefault(pool_of[str(r["warehouse_id"])], []).append((r, c))
+
+        for pool_id, members in by_pool.items():
+            if len(members) == 1:
+                # The degenerate case, and the common one. Unchanged arithmetic.
+                r, c = members[0]
+                recs.extend(_emit_cell(run_id, r, c, flags.get(str(r["warehouse_id"]))))
+            else:
+                recs.extend(_emit_pool(db, run_id, pool_id, members, policies, cands,
+                                       flags, wh_meta))
+    return recs
+
+
+def _emit_pool(db: Session, run_id: str, pool_id: str,
+               members: list[tuple[dict, dict]], policies: list[dict], cands: list[dict],
+               flags: dict, wh_meta: dict) -> list[ReorderRecommendation]:
+    """One buy decision for a multi-location pool, apportioned back to its locations.
+
+    Reuses ``aggregate_network`` and ``allocate`` rather than growing a second netting
+    implementation: "add up demand and net across these locations, size one buy, split it
+    by deficit" is the same operation whether the set of locations is a network or a pool.
+    Both are already covered by the M3 golden set.
+
+    Unlike the network scope this buy is tied to a REAL warehouse - the pool itself - so no
+    recommendation is emitted against a synthetic aggregate row (M8-D5).
+    """
+    recs: list[ReorderRecommendation] = []
+    prows = [r for r, _ in members]
+    cells = [c for _, c in members]
+
+    # Policy is resolved for the pool, so one pool cannot be planned under two policies.
+    policy = eng.resolve_policy_for_sku(db, str(prows[0]["product_id"]), pool_id,
+                                        policies) or {}
+    tog = eng.policy_toggles(policy)
+    sel = eng.select_supplier(cands, selection=tog["supplier_selection"])
+    chosen = sel["chosen"]
+    by_id = {c["supplier_id"]: c for c in cands}
+    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) for a in sel["alternatives"]
+                   if a["supplier_id"] in by_id]
+
+    lead = float(chosen["lead_time_days"]) if chosen else float(tog["lead_time_default_days"])
+    moq = _fnum(chosen.get("moq")) if chosen else None
+    order_multiple = _fnum(chosen.get("order_multiple")) if chosen else None
+    safety_days = float(policy.get("safety_days") or eng.DEFAULT_SAFETY_DAYS)
+    review_days = float(policy.get("review_period_days") or eng.DEFAULT_REVIEW_PERIOD_DAYS)
+
+    wh_inputs = [{"warehouse_id": str(r["warehouse_id"]),
+                  "demand_rate": float(r["avg_daily_demand"] or 0.0),
+                  "net": float(r["net_position"] or 0.0)} for r in prows]
+    agg = eng.aggregate_network(wh_inputs, lead_time_days=lead, safety_days=safety_days,
+                                review_days=review_days, moq=moq,
+                                order_multiple=order_multiple)
+
+    policy_type = policy.get("policy_type") or "reorder_point"
+    min_override = _fnum(policy.get("min_override"))
+    max_override = _fnum(policy.get("max_override"))
+    agg_net = float(agg["agg_net"])
+    if policy_type == "min_max" and max_override is not None:
+        target_oup = float(max_override)
+    else:
+        target_oup = float(agg["order_up_to"])
+    triggered, reason_label = eng.trigger(
+        policy_type, net=agg_net, rop=float(agg["reorder_point"]),
+        min_level=min_override, oup=target_oup, on_cadence=True)
+    recommended, rounded = eng.order_qty(
+        triggered, net=agg_net, oup=target_oup, moq=moq, order_multiple=order_multiple)
+
+    # Emit the buy against the pool's own row when it is one of the planned locations, so
+    # the recommendation names a place a buyer recognises.
+    anchor = next((r for r in prows if str(r["warehouse_id"]) == pool_id), prows[0])
+    agg_cell = _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq,
+                                 order_multiple, prows, policy_type=policy_type,
+                                 min_override=min_override, max_override=max_override,
+                                 target_oup=target_oup, triggered=triggered,
+                                 reason_label=reason_label, recommended=recommended,
+                                 rounded=rounded)
+    if triggered and rounded > 0:
+        allocation = _allocation_lines(eng.allocate(rounded, agg["warehouses"]), wh_meta)
+        if chosen:
+            recs.append(_build_rec(run_id, "buy", anchor, agg_cell,
+                                   warehouse_id=pool_id, order_qty=recommended,
+                                   rounded=rounded, allocation=allocation))
+        else:
+            recs.append(_build_rec(
+                run_id, "exception", anchor, agg_cell, warehouse_id=pool_id,
+                order_qty=None, rounded=None,
+                reason_label="no linked supplier - cannot source this pool reorder"))
+
+    # Disposition stays per location: idle stock is a fact about one bin.
+    for r, cell in zip(prows, cells):
+        disp = cell["disposition"]
+        if disp:
+            action = "discontinue" if disp["type"] == "dead" else "hold"
+            recs.append(_build_rec(run_id, "disposition", r, cell,
+                                   warehouse_id=str(r["warehouse_id"]),
+                                   order_qty=None, rounded=None,
+                                   reason_enum=disp["type"],
+                                   reason_label=_disposition_label(disp["type"], cell),
+                                   disposition_action=action,
+                                   transfer_flag=flags.get(str(r["warehouse_id"]))))
     return recs
 
 

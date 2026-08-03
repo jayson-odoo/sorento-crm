@@ -144,6 +144,15 @@ def test_migration_downgrade_upgrade_isolated(conn):
         # rollback restores them) before exercising 273's down/up.
         for _v in ("net_position_v", "on_order_v", "committed_v", "consumption_v", "receipt_lead_v"):
             conn.execute(text(f"DROP VIEW IF EXISTS scm.{_v} CASCADE"))
+        # Same reasoning one step further on. Migration 311 adds
+        # `spo_allocations.po_line_id` referencing `purchase_order_lines`, which 273's
+        # downgrade drops. In the real chain 311 downgrades first and removes the FK, so
+        # this only bites because the test deliberately runs 273 out of order. Dropped
+        # inside the savepoint, exactly like the views above, and restored by the rollback.
+        conn.execute(text(
+            "ALTER TABLE IF EXISTS spo_allocations "
+            "DROP CONSTRAINT IF EXISTS fk_spo_allocations_po_line_id"
+        ))
         ctx = MigrationContext.configure(conn)
         # Operations.context(ctx) installs the module-level `op` proxy the migration uses
         with Operations.context(ctx):

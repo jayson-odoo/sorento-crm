@@ -81,25 +81,33 @@ def create_views() -> None:
 
     from app.database import engine
 
-    mig = (
-        Path(__file__).resolve().parent.parent
-        / "alembic"
-        / "versions"
-        / "274_scm_m0_views_reg.py"
-    )
-    spec = importlib.util.spec_from_file_location("_scm_views_mig", mig)
-    module = importlib.util.module_from_spec(spec)
-    # The migration imports `alembic.op` at module scope only inside functions,
-    # so loading it for its constants is safe.
-    spec.loader.exec_module(module)
+    versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+
+    def _load(filename: str):
+        spec = importlib.util.spec_from_file_location(
+            f"_scm_views_{filename}", versions / filename
+        )
+        module = importlib.util.module_from_spec(spec)
+        # The migrations import `alembic.op` only inside functions, so loading one
+        # for its module-level constants is safe.
+        spec.loader.exec_module(module)
+        return module
+
+    base = _load("274_scm_m0_views_reg.py")
 
     ordered = [
-        module._ON_ORDER_V,
-        module._COMMITTED_V,
-        module._CONSUMPTION_V,
-        module._RECEIPT_LEAD_V,
-        module._NET_POSITION_V,
+        base._ON_ORDER_V,
+        base._COMMITTED_V,
+        base._CONSUMPTION_V,
+        base._RECEIPT_LEAD_V,
+        base._NET_POSITION_V,
     ]
+
+    # A later revision may redefine a view. Because this function executes DDL instead
+    # of running migration bodies, those redefinitions have to be replayed here too or a
+    # freshly built database silently keeps the original definition while every migrated
+    # database has the new one. Appended in revision order so the last write wins.
+    ordered.extend(_load("311_scm_purchasing_base.py")._REDEFINED_VIEWS)
     with engine.begin() as conn:
         for ddl in ordered:
             # The migration's DDL uses bare CREATE VIEW; make re-runs idempotent.

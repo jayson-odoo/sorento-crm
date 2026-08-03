@@ -47,6 +47,52 @@ depends_on = None
 # to seed pool membership, never to decide availability - see the docstring.
 _STATE_SUFFIXES = ("HOLD", "REWO", "RSV", "DFCT", "DISP", "CLR")
 
+
+# Views this revision redefines. Module-level constants because `scripts/bootstrap_env`
+# builds a fresh database by executing the view DDL straight out of the migration files
+# instead of running migration bodies, so it has to be able to import the CURRENT
+# definition. Migration 274 stays frozen as the original: it has already run everywhere,
+# and editing a shipped migration's DDL would change history without changing any
+# existing database. Ordered committed_v before net_position_v, which selects from it.
+_COMMITTED_V = """
+CREATE VIEW scm.committed_v AS
+SELECT sol.product_id, sol.warehouse_id,
+       SUM(sol.qty_ordered - sol.qty_delivered) AS committed
+FROM sales_order_lines sol
+JOIN sales_orders so ON so.id = sol.sales_order_id
+WHERE so.status = 'open'
+  AND sol.line_status = 'open'   -- a line closed short is no longer a commitment
+  AND sol.qty_ordered > sol.qty_delivered
+GROUP BY sol.product_id, sol.warehouse_id;
+"""
+
+# Recreated unchanged from migration 274. Dropping committed_v with CASCADE takes
+# net_position_v with it, and net_position_v is what every downstream consumer reads.
+_NET_POSITION_V = """
+CREATE VIEW scm.net_position_v AS
+WITH keys AS (
+    SELECT product_id, warehouse_id FROM stock
+    UNION
+    SELECT product_id, warehouse_id FROM scm.on_order_v
+    UNION
+    SELECT product_id, warehouse_id FROM scm.committed_v
+)
+SELECT k.product_id, k.warehouse_id,
+       COALESCE(s.quantity_on_hand, 0) AS quantity_on_hand,
+       COALESCE(oo.on_order, 0) AS on_order,
+       COALESCE(cm.committed, 0) AS committed,
+       COALESCE(s.quantity_on_hand, 0) + COALESCE(oo.on_order, 0)
+           - COALESCE(cm.committed, 0) AS net_position
+FROM keys k
+LEFT JOIN stock s ON s.product_id = k.product_id AND s.warehouse_id = k.warehouse_id
+LEFT JOIN scm.on_order_v oo
+  ON oo.product_id = k.product_id AND oo.warehouse_id = k.warehouse_id
+LEFT JOIN scm.committed_v cm
+  ON cm.product_id = k.product_id AND cm.warehouse_id = k.warehouse_id;
+"""
+
+_REDEFINED_VIEWS = (_COMMITTED_V, _NET_POSITION_V)
+
 # Seeded so day-one ranking reproduces today's manual answer (PO document sequence
 # dominant). The fairer need-by-within-class weighting ships in the same release but off,
 # so Ms Tee can check the system against her own working before changing the rule.
@@ -355,6 +401,24 @@ def upgrade() -> None:
                     ),
                 },
             )
+
+    # --- 8. one definition of committed demand -------------------------------------
+    # `scm.committed_v` (migration 274) counted every outstanding line on an open sales
+    # order, with no line-level predicate. The Coverage Timeline resolver requires
+    # `line_status = 'open'`, because a line closed short is no longer a commitment:
+    # its remaining quantity will never be delivered. Two readers disagreeing about
+    # what "committed" means is the failure that makes a planning report untrustworthy
+    # (the dashboard and the plan would print different figures for one SKU), so the
+    # view is aligned to the resolver rather than the divergence being left latent.
+    #
+    # Numerically a no-op on today's data: every outstanding line on an open SO is
+    # already `open`, verified before writing this. It changes behaviour only once
+    # cancelled or short-closed lines exist, which is precisely when the old view
+    # would have started over-counting.
+    op.execute("DROP VIEW IF EXISTS scm.net_position_v CASCADE")
+    op.execute("DROP VIEW IF EXISTS scm.committed_v CASCADE")
+    for ddl in _REDEFINED_VIEWS:
+        op.execute(ddl)
 
 
 def downgrade() -> None:

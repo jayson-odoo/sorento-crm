@@ -215,9 +215,17 @@ class SPOAllocation(Base, CompanyScopedMixin):
     # this table carried no PO reference at all; only picking_lines.po_line_id existed,
     # which is one step too late (goods-received, after the allocation was decided).
     # NULLABLE: 860 pre-existing rows have no PO, and stock can arrive against no PO.
+    # The constraint is named explicitly so a create_all schema and a migrated schema agree.
+    # Left implicit, Postgres names it `spo_allocations_po_line_id_fkey` under create_all
+    # while migration 311 creates `fk_spo_allocations_po_line_id`, and anything that drops
+    # the constraint by name then works on one path and fails on the other.
     po_line_id = Column(
         UUID(as_uuid=False),
-        ForeignKey("purchase_order_lines.id", ondelete="SET NULL"),
+        ForeignKey(
+            "purchase_order_lines.id",
+            ondelete="SET NULL",
+            name="fk_spo_allocations_po_line_id",
+        ),
         nullable=True,
     )
     synced_to_excel = Column(Boolean, default=False, nullable=False)
