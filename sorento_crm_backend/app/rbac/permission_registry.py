@@ -397,6 +397,42 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# SCM (supply chain) — these five were previously created ONLY by migration 274's data
+# seed. Any database built the way CI and `scripts/bootstrap_env` build one (create_all
+# from the ORM, seed reference data, stamp alembic at head) never executes that seed, so
+# the slugs did not exist and every SCM route answered 403 "Permission required:
+# scm.dashboard.view". Declaring them here is what makes them real on a fresh database;
+# migration 274 stays as the path for databases that were already migrated. `sync_permissions`
+# skips slugs that exist, so the two paths cannot conflict.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "scm.dashboard.view",
+        "name": "View SCM dashboard",
+        "description": "View the supply-chain / reorder dashboard and position views.",
+    },
+    {
+        "slug": "scm.reorder.run",
+        "name": "Run reorder engine",
+        "description": "Trigger a reorder run that produces recommendations.",
+    },
+    {
+        "slug": "scm.recommendation.manage",
+        "name": "Manage reorder recommendations",
+        "description": "Review, override, approve, or reject reorder recommendations.",
+    },
+    {
+        "slug": "scm.policy.manage",
+        "name": "Manage reorder policies",
+        "description": "Create, update, and delete reorder / scoring / demand policies.",
+    },
+    {
+        "slug": "scm.config.manage",
+        "name": "Manage SCM configuration",
+        "description": "Manage SCM module configuration, budgets, and reason vocabularies.",
+    },
+])
+
+
 def sync_permissions(db: Session, created_by_user_id: Optional[str] = None) -> int:
     """
     Idempotent sync: ensure every slug in PERMISSION_REGISTRY exists in user_permissions.

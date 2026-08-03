@@ -92,11 +92,17 @@ class Stock(Base, CompanyScopedMixin):
     product_id = Column(UUID(as_uuid=False), ForeignKey("products.id", ondelete="CASCADE"), nullable=False)
     warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="CASCADE"), nullable=False)
     zone_id = Column(UUID(as_uuid=False), nullable=True)
-    quantity_on_hand = Column(Integer, default=0, nullable=False)
-    quantity_reserved = Column(Integer, default=0, nullable=False)
+    # `default=0` is applied by SQLAlchemy and so covers ORM inserts only. The migrated
+    # database also carries a DB-level DEFAULT 0, which is what lets a raw
+    # `INSERT INTO stock (...)` omit these columns. Without `server_default` here,
+    # `create_all` built a schema with no default, so those raw inserts succeeded against
+    # a migrated database and failed against a freshly created one. Declaring it keeps the
+    # two paths behaving identically.
+    quantity_on_hand = Column(Integer, default=0, server_default=text("0"), nullable=False)
+    quantity_reserved = Column(Integer, default=0, server_default=text("0"), nullable=False)
     # DB-generated column: GENERATED ALWAYS AS (quantity_on_hand - quantity_reserved) STORED
     quantity_available = Column(Integer, Computed("(quantity_on_hand - quantity_reserved)"), nullable=False)
-    quantity_damaged = Column(Integer, default=0, nullable=False)
+    quantity_damaged = Column(Integer, default=0, server_default=text("0"), nullable=False)
     reorder_point = Column(Integer, nullable=True)
     last_count_date = Column(Date, nullable=True)
     synced_to_excel = Column(Boolean, default=False, nullable=False)

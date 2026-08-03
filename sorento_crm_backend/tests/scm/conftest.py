@@ -44,6 +44,93 @@ requires_pg = pytest.mark.skipif(
 )
 
 
+# Reference rows this suite assumes exist. Codes are marker-prefixed so they cannot
+# collide with anything real on the local prod-copy database.
+_REF_CATEGORY_CODE = "ZZSCMREF-CAT"
+_REF_UOM_CODE = "ZZSCMREF-UOM"
+_REF_PRODUCT_CODE = "ZZSCMREF-PRODUCT"
+_REF_WAREHOUSE_CODE = "ZZSCMREF-WH"
+
+
+def ensure_reference_data(db) -> None:
+    """Guarantee the shared reference rows the SCM helpers borrow with ``LIMIT 1``.
+
+    Many helpers in this suite resolve their FK targets by borrowing an existing row,
+    for example ``SELECT category_id, base_uom_id FROM products WHERE category_id IS
+    NOT NULL LIMIT 1``. On the local prod-copy database that silently finds something
+    real, which is why the pattern went unnoticed; on a freshly bootstrapped database
+    (how CI builds one) it returns ``None`` and the helper dies unpacking it. That one
+    borrowed lookup accounted for 97 failures.
+
+    Seeding here rather than rewriting every helper is deliberate: it makes the suite
+    environment-independent in one place, and it runs inside the caller's savepoint so
+    the rows are rolled back with everything else. It does NOT make the borrows correct
+    in principle, and new tests must still seed their own chain.
+    """
+    from app.models.inventory import Warehouse
+    from app.models.product import Product, ProductCategory, UnitOfMeasure
+
+    cat = (
+        db.query(ProductCategory)
+        .filter(ProductCategory.category_code == _REF_CATEGORY_CODE)
+        .one_or_none()
+    )
+    if cat is None:
+        cat = ProductCategory(
+            id=str(uuid.uuid4()),
+            category_code=_REF_CATEGORY_CODE,
+            category_name="SCM test reference category",
+        )
+        db.add(cat)
+        db.flush()
+
+    uom = (
+        db.query(UnitOfMeasure)
+        .filter(UnitOfMeasure.uom_code == _REF_UOM_CODE)
+        .one_or_none()
+    )
+    if uom is None:
+        uom = UnitOfMeasure(
+            id=str(uuid.uuid4()), uom_code=_REF_UOM_CODE, uom_name="SCM test reference unit"
+        )
+        db.add(uom)
+        db.flush()
+
+    # The borrow requires a product carrying BOTH a category and a base uom, so this row
+    # exists to satisfy that predicate specifically.
+    product = (
+        db.query(Product).filter(Product.product_code == _REF_PRODUCT_CODE).one_or_none()
+    )
+    if product is None:
+        db.add(
+            Product(
+                id=str(uuid.uuid4()),
+                product_code=_REF_PRODUCT_CODE,
+                product_name="SCM test reference product",
+                category_id=cat.id,
+                base_uom_id=uom.id,
+                list_price=0,
+            )
+        )
+        db.flush()
+
+    wh = (
+        db.query(Warehouse)
+        .filter(Warehouse.warehouse_code == _REF_WAREHOUSE_CODE)
+        .one_or_none()
+    )
+    if wh is None:
+        db.add(
+            Warehouse(
+                id=str(uuid.uuid4()),
+                warehouse_code=_REF_WAREHOUSE_CODE,
+                warehouse_name="SCM test reference warehouse",
+                is_active=True,
+            )
+        )
+        db.flush()
+
+
 @pytest.fixture()
 def scm_app():
     """Yields (app, db, get_current_user, get_current_user_or_api_key).
@@ -65,6 +152,8 @@ def scm_app():
     def _restart_savepoint(session, transaction):  # noqa: ANN001
         if transaction.nested and not transaction._parent.nested:
             session.begin_nested()
+
+    ensure_reference_data(db)
 
     def _get_db():
         yield db
