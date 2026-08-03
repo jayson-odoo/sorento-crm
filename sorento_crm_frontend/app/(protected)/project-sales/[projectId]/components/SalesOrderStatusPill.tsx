@@ -12,6 +12,8 @@ const PALETTE_KEY: Record<SalesOrderStatus, string> = {
   draft: 'draft',
   blocked: 'rejected',
   ready: 'approved',
+  // Waiting on somebody, which is what the palette's pending key already says.
+  awaiting_costing: 'pending',
   published: 'processed_by_cs',
   amended: 'updated',
 };
@@ -20,6 +22,7 @@ const STATUS_LABEL: Record<SalesOrderStatus, string> = {
   draft: 'Draft',
   blocked: 'Blocked',
   ready: 'Ready',
+  awaiting_costing: 'Awaiting costing',
   published: 'Published',
   amended: 'Amended',
 };

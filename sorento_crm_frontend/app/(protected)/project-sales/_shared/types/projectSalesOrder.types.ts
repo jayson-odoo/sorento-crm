@@ -10,7 +10,14 @@
  * them yet renders a stated absence rather than crashing.
  */
 
-export type SalesOrderStatus = 'draft' | 'blocked' | 'ready' | 'published' | 'amended';
+export type SalesOrderStatus =
+  | 'draft'
+  | 'blocked'
+  | 'ready'
+  /** Sponsorship only (AC-K3): drafted at price zero, waiting on Accounts. Gates publish. */
+  | 'awaiting_costing'
+  | 'published'
+  | 'amended';
 
 /** Where the area split came from. The split is a proposal, never a rule (AC-F4a). */
 export type GroupingOrigin = 'area' | 'learned' | 'manual' | 'subset';

@@ -321,6 +321,64 @@ async def publish_sales_order(
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
+# ------------------------------------------------------------------- sponsorship
+#
+# Group K (P12). Mounted under the sales-order router because what comes back IS a sales
+# order, even though the thing it is built from lives in procurement.
+
+
+@router.post(
+    "/sponsorship-forms/{form_id}/build-sales-order",
+    response_model=ProjectSalesOrderDetail,
+)
+async def build_sponsorship_sales_order(
+    form_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """An approved sponsorship form becomes a draft at price zero (AC-K1).
+
+    Rights are the PROJECT's, checked in the service once the form names one: whoever may
+    work the pursuit may draft against it, and a form with no project is refused outright.
+    """
+    try:
+        validate_uuid_path(form_id, resource="Sponsorship form")
+        service = ProjectSODraftService(db)
+        order = service.build_from_sponsorship_form(
+            form_id, actor_user_id=current_user["id"]
+        )
+        project = projects.get_project_or_404(db, order.project_id)
+        projects.assert_can_edit_project(
+            db, project, current_user["id"], permission_slugs(db, current_user["id"])
+        )
+        body = service.serialize_detail(order)
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post(
+    "/sales-orders/{pso_id}/confirm-costing", response_model=ProjectSalesOrderDetail
+)
+async def confirm_sales_order_costing(
+    pso_id: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Accounts releases the costing hold (AC-K3, D28), handing it to the normal gate."""
+    try:
+        service, order = _order_for_edit(db, pso_id, current_user)
+        service.confirm_costing(order, actor_user_id=current_user["id"])
+        body = service.serialize_detail(order)
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
 @router.get("/sales-orders/{pso_id}/import-file")
 async def sales_order_import_file(
     pso_id: str,

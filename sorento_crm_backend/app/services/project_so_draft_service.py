@@ -37,6 +37,8 @@ import io
 import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime
+import calendar
+import uuid
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -50,6 +52,7 @@ from app.models.project_so import (
     SEVERITY_INFO,
     SEVERITY_WARN,
     SO_STATUS_AMENDED,
+    SO_STATUS_AWAITING_COSTING,
     SO_STATUS_BLOCKED,
     SO_STATUS_DRAFT,
     SO_STATUS_PUBLISHED,
@@ -64,6 +67,7 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
     SODraftFinding,
 )
+from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine
 from app.models.projects import (
     Project,
     ProjectParty,
@@ -229,6 +233,17 @@ def _qty_str(value: Decimal) -> str:
     what keeps it plain.
     """
     return format(value.normalize(), "f")
+
+
+def month_end(year: int, month: int) -> date:
+    """The LAST day of a month (D29).
+
+    A sponsorship form commits to a month, not a day. The last day is chosen over the first
+    deliberately: netting is FIFO by delivery date (AC-I3a), so the last day is the latest
+    date the commitment can be honoured and therefore never claims covering stock ahead of
+    a dated commercial line in the same month.
+    """
+    return date(year, month, calendar.monthrange(year, month)[1])
 
 
 def _norm_code(value: Optional[str]) -> str:
@@ -1709,6 +1724,17 @@ class ProjectSODraftService:
                 message=f"{order.provisional_ref} is already published.",
                 code="so_already_published",
             )
+        # AC-K3 / D28: a giveaway does not reach AutoCount before Accounts has attended to
+        # it. The status is the gate, not a label.
+        if order.status == SO_STATUS_AWAITING_COSTING:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{order.provisional_ref} is waiting on Accounts to cost it. Confirm "
+                    "the costing before publishing."
+                ),
+                code="so_awaiting_costing",
+            )
         lines = self._lines_of(order.id)
         if not lines:
             raise AppException(
@@ -1761,6 +1787,217 @@ class ProjectSODraftService:
             "total_amount": _money(_dec(order.total_amount)),
             "line_count": len(lines),
         }
+
+    # ------------------------------------------------------------- sponsorship
+    #
+    # Group K (P12). A sponsorship form is not a purchase order, so it does not go through
+    # `build`: there is no quotation to price against, no schedule to reconcile, and the
+    # commitment is a giveaway rather than a sale. What it DOES share is everything that
+    # protects the warehouse - product resolution and the discontinued check - because a
+    # code nobody stocks cannot be shipped whether or not money changes hands (AC-K2).
+
+    def build_from_sponsorship_form(
+        self, form_id: str, *, actor_user_id: Optional[str] = None
+    ) -> ProjectSalesOrder:
+        """An approved sponsorship form becomes a draft at price zero (AC-K1).
+
+        Idempotent per FORM: rebuilding replaces the draft this form produced before, the
+        same rule `build` follows per (po_version, schedule_version). A published order is
+        never rewritten - it is already in AutoCount.
+        """
+        form = (
+            self.db.query(PurchaseRequestHeader)
+            .filter(PurchaseRequestHeader.id == form_id)
+            .first()
+        )
+        if form is None:
+            raise AppException(
+                status_code=404,
+                message="Sponsorship form not found.",
+                code="sponsorship_form_not_found",
+            )
+        if (form.request_type or "") != "sponsorship_form":
+            raise AppException(
+                status_code=422,
+                message=(
+                    "That form is a purchase request, not a sponsorship form. Only a "
+                    "sponsorship produces a sales order at price zero."
+                ),
+                code="sponsorship_wrong_form_type",
+            )
+        if (form.approval_status or "") != "approved":
+            raise AppException(
+                status_code=409,
+                message=(
+                    "That sponsorship has not been approved yet. Stock is committed on "
+                    "approval, not on submission."
+                ),
+                code="sponsorship_not_approved",
+            )
+        if not form.project_id:
+            raise AppException(
+                status_code=422,
+                message=(
+                    "Link this sponsorship to a project first: the project is what the "
+                    "spend rolls up against, and a sales order has nothing to hang on "
+                    "without it."
+                ),
+                code="sponsorship_no_project",
+            )
+        project = self._project_or_404(form.project_id)
+        form_lines = (
+            self.db.query(PurchaseRequestLine)
+            .filter(PurchaseRequestLine.purchase_request_id == form.id)
+            .order_by(PurchaseRequestLine.sort_order.asc().nullslast())
+            .all()
+        )
+        if not form_lines:
+            raise AppException(
+                status_code=422,
+                message="That sponsorship form has no items on it.",
+                code="sponsorship_has_no_lines",
+            )
+
+        existing = (
+            self.db.query(ProjectSalesOrder)
+            .filter(
+                ProjectSalesOrder.sponsorship_form_id == form.id,
+                ProjectSalesOrder.status.notin_((SO_STATUS_PUBLISHED, SO_STATUS_AMENDED)),
+            )
+            .first()
+        )
+        if existing is None:
+            order = ProjectSalesOrder(
+                company_id=project.company_id,
+                project_id=project.id,
+                provisional_ref=self._sponsorship_ref(form, project),
+                is_sponsorship=True,
+                sponsorship_form_id=form.id,
+                # Not an area split: a sponsorship has one destination and no schedule.
+                grouping_origin="subset",
+                status=SO_STATUS_AWAITING_COSTING,
+            )
+            self.db.add(order)
+            self.db.flush()
+        else:
+            order = existing
+            self.db.query(ProjectSalesOrderLine).filter(
+                ProjectSalesOrderLine.project_sales_order_id == order.id
+            ).delete(synchronize_session=False)
+            self.db.query(SODraftFinding).filter(
+                SODraftFinding.project_sales_order_id == order.id
+            ).delete(synchronize_session=False)
+            order.status = SO_STATUS_AWAITING_COSTING
+            self.db.flush()
+
+        delivery = form.expected_delivery_date
+        for index, source in enumerate(form_lines, start=1):
+            product = self._product_by_code(source.item_code)
+            line = ProjectSalesOrderLine(
+                company_id=order.company_id,
+                project_sales_order_id=order.id,
+                line_no=index,
+                product_id=product.id if product else None,
+                description=(source.item_code or "").strip() or None,
+                qty=_dec(source.quantity),
+                uom=None,
+                # AC-K1: price zero, and the form's own indicative price is ignored. The
+                # money on a sponsorship form is what it is WORTH, not what we charge.
+                unit_price=_ZERO,
+                amount=_ZERO,
+                delivery_date=delivery,
+                explosion_source="direct",
+            )
+            self.db.add(line)
+            self.db.flush()
+            self._sponsorship_findings(order, line, source, product)
+
+        self._recompute_total(order)
+        self.db.flush()
+        return order
+
+    def confirm_costing(
+        self, order: ProjectSalesOrder, *, actor_user_id: Optional[str] = None
+    ) -> ProjectSalesOrder:
+        """Accounts has attended to it; hand it back to the normal gate (D28).
+
+        This releases the costing hold ONLY. It is not a way past the arithmetic gate: the
+        order lands on ``ready`` or ``blocked`` exactly as any other draft would, so a hard
+        stop still refuses the publish afterwards.
+        """
+        if order.status != SO_STATUS_AWAITING_COSTING:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{order.provisional_ref} is not waiting on costing, so there is "
+                    "nothing to confirm."
+                ),
+                code="so_not_awaiting_costing",
+            )
+        order.status = SO_STATUS_DRAFT
+        self.db.flush()
+        self._refresh_status(order)
+        return order
+
+    def _sponsorship_ref(self, form: PurchaseRequestHeader, project: Project) -> str:
+        """Carries the FORM number, because that is the document Accounts is holding."""
+        number = (form.request_number or "").strip()
+        base = f"SP-{number}" if number else self._next_ref(project.company_id)
+        taken = (
+            self.db.query(ProjectSalesOrder.id)
+            .filter(
+                ProjectSalesOrder.company_id == project.company_id,
+                ProjectSalesOrder.provisional_ref == base,
+            )
+            .first()
+        )
+        return base if taken is None else f"{base}-{str(uuid.uuid4())[:4].upper()}"
+
+    def _sponsorship_findings(
+        self,
+        order: ProjectSalesOrder,
+        line: ProjectSalesOrderLine,
+        source: PurchaseRequestLine,
+        product: Optional[Product],
+    ) -> None:
+        """Only the checks that still MEAN something without a quotation (AC-K2)."""
+        if product is None:
+            self.db.add(
+                SODraftFinding(
+                    company_id=order.company_id,
+                    project_sales_order_id=order.id,
+                    line_id=line.id,
+                    severity=SEVERITY_HARD,
+                    code="unresolved_product",
+                    detail=(
+                        f"'{(source.item_code or '').strip() or 'blank'}' does not match a "
+                        "product. Resolve it before this sponsorship is committed."
+                    ),
+                )
+            )
+        elif not bool(getattr(product, "is_active", True)):
+            self.db.add(
+                SODraftFinding(
+                    company_id=order.company_id,
+                    project_sales_order_id=order.id,
+                    line_id=line.id,
+                    severity=SEVERITY_WARN,
+                    code="product_discontinued",
+                    detail=(
+                        f"{product.product_code} is discontinued. Confirm there is stock "
+                        "to give away, or substitute it."
+                    ),
+                )
+            )
+        self.db.flush()
+
+    def _product_by_code(self, code: Optional[str]) -> Optional[Product]:
+        cleaned = (code or "").strip()
+        if not cleaned:
+            return None
+        return (
+            self.db.query(Product).filter(Product.product_code.ilike(cleaned)).first()
+        )
 
     def import_file(self, order: ProjectSalesOrder) -> Tuple[str, str]:
         """The stage 1 AutoCount import file, as CSV. Returns (filename, body).

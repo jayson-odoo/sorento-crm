@@ -1,8 +1,10 @@
 # PLAN - Pre-order and sponsorship paths (slice P12, module `projects`)
 
-**Status:** GAP AUDIT DONE 2026-08-03, pre-code. Four product decisions are open (section 4)
-and the build shape depends on them, so nothing is implemented yet.
-**Acceptance criteria:** `UAC-project-lead-to-so.md` Groups J (AC-J1..J5) and K (AC-K1..K5).
+**Status:** Decisions D26-D29 answered by the client 2026-08-03 (section 4). **Group J is out
+of scope: no pre-order sales order.** Scope is now Group K only: AC-K4 pinned, AC-K5 built in
+phase 1, AC-K1/K2/K3 are the build.
+**Acceptance criteria:** `UAC-project-lead-to-so.md` Group K (AC-K1..K5). Group J (AC-J1..J5)
+is WITHDRAWN, see D26.
 **Slug:** project-pre-order-sponsorship
 **Builds on:** P1-P11, all built. Phase 1's `sponsorship_link_service` already exists.
 
@@ -93,9 +95,40 @@ line it feeds must never both be open for the same quantity, or the reorder engi
 twice. That is why J4 moves quantity rather than copying it, and why the remainder is
 cancelled rather than left dangling.
 
-## 4. Open decisions - these block the build
+## 4. Decisions - ANSWERED by the client 2026-08-03
 
-Each of these changes what gets written, so they are asked rather than assumed.
+**D26 + D27: there is no pre-order sales order. Group J (AC-J1..J5) is OUT OF SCOPE.**
+The client does not want pre-orders represented as sales orders in the CRM, which answers
+the re-point question too: with nothing to re-point from, AC-J4/J5 do not arise.
+
+Consequence worth stating, because it is not obvious. The pre-order covering pool in
+`project_order_inquiry_service._pre_order_pools` reads ONLY
+`project_sales_orders WHERE is_pre_order = true`. With none ever created that pool is always
+empty and the `PRE_ORDERED_DO_NOT_ORDER` verb becomes unreachable. But the client's own file
+(`(04).03.2026 MARYAM TUJU RESIDENCE.xlsx`) carries an ORDER row for 600 CB6633 that their
+5,950 pre-order already covered - the row P10 exists to remove. That netting therefore has to
+come from the INBOUND SPO pool (`_inbound_pools`, reading `SPOAllocation` on shipments that
+have not landed), which is where a supplier-side pre-order actually lives.
+
+**The pool code is kept, not deleted.** An empty pool emits nothing, so it is harmless; and
+deleting it would be an irreversible bet that no CRM-side pre-order is ever wanted. The
+`is_pre_order` column stays for the same reason. **To confirm with the client:** that their
+pre-orders reach us as inbound SPOs, because if they do not, the 600 CB6633 row comes back.
+
+**D28: `awaiting_costing` is a STATUS** on `project_sales_orders`, not a finding. It gates the
+publish: Accounts has to cost a sponsorship before it goes to AutoCount.
+
+**D29: a month becomes the LAST DAY of that month.** Chosen deliberately over the first:
+netting is FIFO by delivery date (AC-I3a), and the last day is the latest date the commitment
+can be honoured, so it never claims covering stock ahead of a dated commercial line in the
+same month. Where a sponsorship form carries no delivery date at all, the line stays undated
+and the netting engine already serves undated demand last.
+
+---
+
+## 4a. Superseded: the questions as originally asked
+
+Kept for the record. Each changed what would get written, which is why they were asked.
 
 **D26. How does a pre-order sales order get created?** There is no PO to build from.
 Candidates: (a) a new "buy ahead" screen that takes product + qty + delivery date directly

@@ -346,6 +346,10 @@ SO_STATUS_BLOCKED = "blocked"
 SO_STATUS_READY = "ready"
 SO_STATUS_PUBLISHED = "published"
 SO_STATUS_AMENDED = "amended"
+# Sponsorship only (AC-K3, D28). A giveaway is drafted at price zero and Accounts has to
+# attend to it before it reaches AutoCount, so this status GATES the publish rather than
+# merely labelling the row. A commercial draft never enters it.
+SO_STATUS_AWAITING_COSTING = "awaiting_costing"
 
 SEVERITY_HARD = "hard"
 SEVERITY_WARN = "warn"
